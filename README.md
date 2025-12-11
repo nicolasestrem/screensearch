@@ -10,6 +10,12 @@
 [![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4.svg)](https://www.microsoft.com)
 
+<br/>
+
+### 📥 [**Download Latest Release (v0.1.0)**](https://github.com/nicolasestrem/screensearch/releases/latest)
+
+**Windows 10/11** • **11MB** • **No installation required** • **Just extract and run**
+
 </div>
 
 ---
