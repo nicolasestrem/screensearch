@@ -1,0 +1,111 @@
+[workspace]
+resolver = "2"
+members = [
+    "screensearch-capture",
+    "screensearch-db",
+    "screensearch-api",
+    "screensearch-automation",
+]
+
+[package]
+name = "screensearch"
+version = "0.1.0"
+edition = "2021"
+authors = ["Nicolas Estrem"]
+license = "MIT"
+repository = "https://github.com/nicolasestrem/screensearch"
+
+[[bin]]
+name = "screensearch"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace crates
+screensearch-capture = { path = "screensearch-capture" }
+screensearch-db = { path = "screensearch-db" }
+screensearch-api = { path = "screensearch-api" }
+screensearch-automation = { path = "screensearch-automation" }
+
+# Async runtime
+tokio = { workspace = true }
+futures = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "0.8"
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# Browser automation
+webbrowser = "1.0"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Nicolas Estrem"]
+license = "MIT"
+repository = "https://github.com/nicolasestrem/screensearch"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+futures = "0.3"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
+
+# HTTP server
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Windows-specific
+windows = "0.52"
+uiautomation = "0.16.1"
+windows-capture = "2.0.0-alpha.7"
+
+# Image processing
+image = "0.24"
+
+# Concurrency
+crossbeam = "0.8"
+
+# Screen capture
+screenshots = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.bench]
+inherits = "release"
+strip = false

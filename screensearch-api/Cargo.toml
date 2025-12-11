@@ -1,0 +1,58 @@
+[package]
+name = "screensearch-api"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# HTTP server framework
+axum = { workspace = true, features = ["macros"] }
+tower-http = { workspace = true, features = ["cors", "trace", "fs"] }
+tower = { version = "0.4", features = ["util"] }
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Regex for validation
+regex = "1.10"
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Internal dependencies
+screensearch-db = { path = "../screensearch-db" }
+screensearch-automation = { path = "../screensearch-automation" }
+
+# HTTP Client
+reqwest = { version = "0.11", features = ["json"] }
+
+# URL parsing and validation
+url = "2.5"
+
+# Embedded static assets
+rust-embed = "8.0"
+
+[dev-dependencies]
+
+
+[lib]
+name = "screensearch_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "screensearch-api"
+path = "src/main.rs"

@@ -1,0 +1,39 @@
+[package]
+name = "screensearch-db"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Database
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros", "chrono"] }
+
+# Vector embeddings (placeholder for future semantic search)
+# sqlite-vec will be integrated when needed
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+tempfile = "3.8"
+
+[lib]
+name = "screensearch_db"
+path = "src/lib.rs"

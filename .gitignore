@@ -1,0 +1,52 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo
+Cargo.lock
+**/Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.local
+
+# Screenshots and captured data
+/captures/
+/data/
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+#Old docs
+/docs/archived
+CLAUDE.md
+/FOUND
+/.claude
+docs/troubleshooting-2025-12-11.md
+/screen-ui/captures
+/screensearch-ui/captures

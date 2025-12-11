@@ -1,0 +1,128 @@
+# ScreenSearch Configuration File
+
+[capture]
+# Capture interval in milliseconds (default: 3000 = 3 seconds)
+interval_ms = 3000
+
+# Enable frame differencing to skip unchanged content
+enable_frame_diff = true
+
+# Frame difference threshold (0.0 - 1.0)
+# Default 0.006 means skip if < 0.6% change
+diff_threshold = 0.006
+
+# Maximum frames to buffer in memory
+max_frames_buffer = 30
+
+# Monitor indices to capture (empty = all monitors)
+monitor_indices = []
+
+# Whether to include cursor in capture
+include_cursor = true
+
+# Whether to draw border around captured window
+draw_border = false
+
+[ocr]
+# OCR engine: "windows" (Windows OCR API) or "tesseract"
+engine = "windows"
+
+# Minimum confidence threshold for storing OCR results (0.0 - 1.0)
+# Results below this threshold are discarded
+min_confidence = 0.7
+
+# Number of concurrent OCR processing worker threads
+worker_threads = 2
+
+# Maximum retry attempts for failed OCR operations
+max_retries = 3
+
+# Backoff duration between retries (milliseconds)
+retry_backoff_ms = 1000
+
+# Whether to store frames with no text detected
+store_empty_frames = true
+
+# Channel buffer size for frame queue
+channel_buffer_size = 100
+
+# Enable performance metrics logging
+enable_metrics = true
+
+# Metrics reporting interval (seconds)
+metrics_interval_secs = 60
+
+[api]
+# Host address to bind to
+host = "127.0.0.1"
+
+# Port to listen on
+port = 3131
+
+# CORS origin (empty = permissive)
+cors_origin = ""
+
+# Set to false to disable automatic browser launch on startup
+# Useful for headless servers, Docker containers, or when running in background
+auto_open_browser = true
+
+[database]
+# Path to SQLite database file
+path = "screensearch.db"
+
+# Maximum number of connections in pool
+max_connections = 50
+
+# Minimum number of connections in pool
+min_connections = 3
+
+# Connection acquire timeout in seconds
+acquire_timeout_secs = 10
+
+# Enable WAL mode for concurrent access
+enable_wal = true
+
+# Cache size in KB (negative = KB of memory)
+# Default -2000 = 2MB of memory
+cache_size_kb = -2000
+
+[privacy]
+# List of applications to exclude from capture
+# Process names or window titles (case-insensitive substring match)
+excluded_apps = [
+    "1Password",
+    "KeePass",
+    "Bitwarden",
+    "LastPass",
+    "Password",
+    "Bank",
+    "Chase",
+    "Wells Fargo",
+    "PayPal",
+]
+
+# Pause capture when screen is locked
+pause_on_lock = true
+
+[performance]
+# Maximum CPU usage percentage target (0-100)
+max_cpu_percent = 5
+
+# Maximum memory usage in MB
+max_memory_mb = 500
+
+[logging]
+# Log level: "trace", "debug", "info", "warn", "error"
+level = "info"
+
+# Log to file
+log_to_file = true
+
+# Log file path
+log_file = "screensearch.log"
+
+# Maximum log file size in MB (0 = unlimited)
+max_log_size_mb = 100
+
+# Number of old log files to retain
+log_rotation_count = 5

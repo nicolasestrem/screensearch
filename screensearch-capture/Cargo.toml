@@ -1,0 +1,63 @@
+[package]
+name = "screensearch-capture"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Windows screen capture
+windows-capture = { workspace = true }
+screenshots = { workspace = true }
+windows = { workspace = true, features = [
+    "Media_Ocr",
+    "Graphics_Imaging",
+    "Graphics_Capture",
+    "Storage_Streams",
+    "Media_Core",
+    "Globalization",
+    "Foundation",
+    "Foundation_Collections",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Direct3D11",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Accessibility",
+] }
+
+# Image processing
+image = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["sync", "time", "rt-multi-thread", "macros"] }
+futures = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+
+# Concurrency utilities
+crossbeam = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lib]
+name = "screensearch_capture"
+path = "src/lib.rs"
