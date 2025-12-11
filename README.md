@@ -145,6 +145,31 @@ npm run dev
 
 ---
 
+## 🔒 Security & Trust
+
+### Windows SmartScreen Warning
+
+On first launch, Windows may display a SmartScreen warning:
+> "Windows protected your PC - Unknown publisher"
+
+**This is expected behavior** because the executable is not code-signed with a certificate (which requires an expensive annual subscription).
+
+**To run the application:**
+1. Click **"More info"**
+2. Click **"Run anyway"**
+
+### Binary Verification
+
+You can verify the safety of the binary:
+
+- **VirusTotal Scans:**
+  - [EXE Scan Results](https://www.virustotal.com/gui/file/807707d80a0886dd635e8cfbcb96d8670c2531176d248206decd248c00961eb0/detection) - 0/72 detections ✅
+  - [ZIP Scan Results](https://www.virustotal.com/gui/file/6b3c93398cf3c720da3e9c88a58bce93e9a9ee016819a9ab26005ef6bde90003) - 0/68 detections ✅
+- **Open Source:** All source code is available in this repository for review
+- **Build From Source:** Follow the [Developer Guide](docs/developer-guide.md) to compile yourself
+
+---
+
 ## 📚 Documentation
 
 | Document | Purpose |
