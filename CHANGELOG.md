@@ -5,29 +5,20 @@ All notable changes to ScreenSearch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-## [0.1.0] - 2025-12-11
-
-### Changed
-- **BREAKING**: Complete rebrand from "screen-memory"/"screen-memories" to "screensearch"
-- Updated all package names, workspace crates, and binary name
-- New GitHub repository: https://github.com/nicolasestrem/screensearch
-- New project domain: screensearch.app
-- Updated author: Nicolas Estrem (formerly "Screen Memory Project")
-- Default database file: `screensearch.db` (was `screen_memories.db`)
-- Default log file: `screensearch.log` (was `screen_memories.log`)
-- Binary executable: `screensearch.exe` (was `screen-memories.exe`)
-
-### Notes
-- This is a fresh repository with clean commit history
-- Old repository (screen-memory) has been made private
-- No migration path provided as there are no existing users
-- All functionality remains identical to previous version
-
 ---
 
 ## Previous History (from screen-memory repository)
+
+## [0.1.3] - 2025-12-12
+
+### Added
+- **Storage Optimization**: Implemented JPEG compression for captured frames (default quality 80) to significantly reduce storage usage.
+- **Image Resizing**: Added automatic resizing of captured frames to a maximum width (default 1920px) to further reduce file size.
+- **Automatic Cleanup**: Implemented a background task that runs every 24 hours to enforce the data retention policy (deletes old frames based on `retention_days` setting).
+- **Configuration**: Added `[storage]` section to `config.toml` for customizing format, quality, and max width.
+
+### Changed
+- **Default Image Format**: Changed default capture format from PNG to JPEG.
 
 ## [0.1.2] - 2025-12-11
 

@@ -797,7 +797,8 @@ video_chunks (1) ──< (0..n) frames
 | FTS5 index | ~50% of text size | ~150 MB | ~1.5 GB |
 | Indexes | ~20% of table size | ~100 MB | ~1 GB |
 | **Total (DB file)** | - | **~570 MB** | **~5.7 GB** |
-| Images (PNG, 1920x1080) | ~1.5 MB each | ~150 GB | ~1.5 TB |
+| Images (JPEG, Q80, 1920px) | ~100 KB each | ~10 GB | ~100 GB |
+| Images (Legacy PNG) | ~1.5 MB each | ~150 GB | ~1.5 TB |
 
 ---
 
@@ -1153,6 +1154,11 @@ Main Thread (tokio runtime)
     ├─ Timer: tokio::time::interval(60s)
     ├─ Reads: ocr_metrics (atomic reads)
     ├─ Logs: via tracing::info!()
+    └─ Shutdown: via broadcast::Receiver
+
+└─> Task 6: Background Cleanup (spawned with tokio::spawn)
+    ├─ Timer: tokio::time::interval(24h)
+    ├─ Action: db.cleanup_old_data(retention_days)
     └─ Shutdown: via broadcast::Receiver
 ```
 

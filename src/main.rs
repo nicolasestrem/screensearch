@@ -35,6 +35,14 @@ struct AppConfig {
     #[allow(dead_code)]
     performance: PerformanceSettings,
     logging: LoggingSettings,
+    storage: StorageSettings,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StorageSettings {
+    format: String,
+    jpeg_quality: u8,
+    max_width: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -181,6 +189,11 @@ impl Default for AppConfig {
                 log_file: "screensearch.log".to_string(),
                 max_log_size_mb: 100,
                 log_rotation_count: 5,
+            },
+            storage: StorageSettings {
+                format: "jpeg".to_string(),
+                jpeg_quality: 80,
+                max_width: 1920,
             },
         }
     }
@@ -348,6 +361,9 @@ impl App {
         // Use bounded channels to match OcrProcessor::start_processing signature
         let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(100); // Buffer of 100 frames
         let (processed_tx, mut processed_rx) = tokio::sync::mpsc::channel(100);
+        
+        // Clone config for the database loop
+        let app_config_clone = self.config.clone();
 
         // Clone for tasks
         let db_clone = Arc::clone(&db);
@@ -406,7 +422,8 @@ impl App {
                 tokio::select! {
                     Some(processed) = processed_rx.recv() => {
                         // Store frame in database
-                        match store_processed_frame(&db_clone, processed).await {
+                        let storage_config = &app_config_clone.storage;
+                        match store_processed_frame(&db_clone, processed, storage_config).await {
                             Ok(_) => {},
                             Err(e) => error!("Failed to store frame: {}", e),
                         }
@@ -456,6 +473,43 @@ impl App {
         } else {
             None
         };
+
+        // Task 6: Cleanup loop (Storage Retention)
+        let db_cleanup = Arc::clone(&db);
+        let mut shutdown_rx6 = self.shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            info!("Starting cleanup loop");
+            // Check immediately on startup, then every 24 hours
+            let cleanup_interval = tokio::time::Duration::from_secs(24 * 60 * 60);
+          
+            loop {
+                 // Run cleanup logic
+                 match db_cleanup.get_settings().await {
+                     Ok(settings) => {
+                         let retention_days = settings.retention_days;
+                         if retention_days > 0 {
+                             info!("Running automatic cleanup (retention: {} days)", retention_days);
+                             match db_cleanup.cleanup_old_data(retention_days as i32).await {
+                                 Ok(deleted) => info!("Cleanup completed: {} frames removed", deleted),
+                                 Err(e) => error!("Cleanup failed: {}", e),
+                             }
+                         } else {
+                             info!("Automatic cleanup disabled (retention_days = 0)");
+                         }
+                     },
+                     Err(e) => error!("Failed to fetch settings for cleanup: {}", e),
+                 }
+
+                 // Wait for next interval or shutdown
+                 tokio::select! {
+                     _ = tokio::time::sleep(cleanup_interval) => {},
+                     _ = shutdown_rx6.recv() => {
+                         info!("Cleanup loop shutting down");
+                         break;
+                     }
+                 }
+            }
+        });
 
         // Auto-open browser (if enabled in config)
         if self.config.api.auto_open_browser {
@@ -519,14 +573,33 @@ impl App {
 async fn store_processed_frame(
     db: &DatabaseManager,
     processed: screensearch_capture::ProcessedFrame,
+    config: &StorageSettings,
 ) -> Result<i64> {
     use screensearch_db::{NewFrame, NewOcrText};
+    use image::DynamicImage;
+    use std::io::Cursor;
 
-    // Save image to disk (temporary approach - could be optimized)
+    // Process image: Resize -> Compress
+    let mut image = DynamicImage::ImageRgba8(processed.frame.image.clone());
+
+    // Resize if needed
+    if config.max_width > 0 && image.width() > config.max_width {
+        let n_width = config.max_width;
+        let n_height = (image.height() as f64 * (n_width as f64 / image.width() as f64)) as u32;
+        image = image.resize(n_width, n_height, image::imageops::FilterType::Lanczos3);
+    }
+    
+    // Determine format and extension
+    let (ext, format) = if config.format.to_lowercase() == "jpeg" || config.format.to_lowercase() == "jpg" {
+        ("jpg", image::ImageOutputFormat::Jpeg(config.jpeg_quality))
+    } else {
+        ("png", image::ImageOutputFormat::Png)
+    };
+
     let timestamp_str = processed.frame.timestamp.format("%Y%m%d_%H%M%S_%3f");
     let image_filename = format!(
-        "frame_{}_{}.png",
-        processed.frame.monitor_index, timestamp_str
+        "frame_{}_{}.{}",
+        processed.frame.monitor_index, timestamp_str, ext
     );
     let image_path = PathBuf::from("captures").join(&image_filename);
 
@@ -535,12 +608,9 @@ async fn store_processed_frame(
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    // Save image
-    processed
-        .frame
-        .image
-        .save(&image_path)
-        .context("Failed to save frame image")?;
+    // Save image with specific format/quality
+    let mut file = std::fs::File::create(&image_path)?;
+    image.write_to(&mut file, format).context("Failed to save frame image")?;
 
     // Insert frame record
     let new_frame = NewFrame {
@@ -548,8 +618,8 @@ async fn store_processed_frame(
         device_name: format!("monitor-{}", processed.frame.monitor_index),
         file_path: image_path.to_string_lossy().to_string(),
         monitor_index: processed.frame.monitor_index as i32,
-        width: processed.frame.image.width() as i32,
-        height: processed.frame.image.height() as i32,
+        width: image.width() as i32,
+        height: image.height() as i32,
         offset_index: 0,
         chunk_id: None,
         active_window: processed.frame.active_window,

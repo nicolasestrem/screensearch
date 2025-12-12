@@ -248,6 +248,28 @@ The system begins capturing immediately. After 10-15 seconds, you should see:
 
 All backend configuration is managed through `config.toml` in the project root directory. Edit this file before starting the application to customize behavior.
 
+### Storage Settings
+**(New in v0.1.3)**
+
+**Section**: `[storage]`
+
+```toml
+# Image format for stored frames
+# Options: "png" (lossless, large), "jpeg" (compressed, small)
+format = "jpeg"
+
+# JPEG quality (1-100)
+# Only used if format is "jpeg"
+# 80 = Good balance of quality/size
+jpeg_quality = 80
+
+# Maximum width for stored images
+# Images larger than this will be resized down
+# 0 = No resizing (original resolution)
+# 1920 = Standard HD (good for readability)
+max_width = 1920
+```
+
 ### Capture Settings
 
 **Section**: `[capture]`

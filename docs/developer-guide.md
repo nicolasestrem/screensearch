@@ -149,6 +149,7 @@ Screen Memory uses a Cargo workspace architecture with five crates plus a fronte
 screen-memories/
 ├── Cargo.toml                 # Workspace manifest
 ├── config.toml                # Application configuration
+                                  # [storage]: format="jpeg", quality=80, max_width=1920
 ├── src/
 │   └── main.rs               # Main binary - integrates all crates
 │
