@@ -245,6 +245,11 @@ enable_frame_diff = true        # Skip unchanged frames
 diff_threshold = 0.006          # Change threshold (0.6%)
 max_frames_buffer = 30          # Frame buffer size
 
+[storage]
+format = "jpeg"                 # Image format (png/jpeg)
+jpeg_quality = 80               # JPEG quality (1-100)
+max_width = 1920                # Max image width (0 = original)
+
 [ocr]
 engine = "windows"              # OCR engine
 min_confidence = 0.7            # Confidence threshold

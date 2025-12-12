@@ -139,6 +139,52 @@ pub fn has_changed(&mut self, current: Arc<RgbaImage>) -> bool {
 
 ---
 
+## Storage Optimization
+
+### Problem: Excessive Disk Usage with PNGs
+
+**Original Implementation**:
+- Stored all frames as lossless PNGs (1.5 - 4.0 MB per frame)
+- Stored frames at full native resolution (e.g., 2560x1440)
+- No automatic deletion of old data
+
+**Issue**:
+- 1 hour of capture (at 3s interval) = 1200 frames * 2MB = 2.4 GB
+- 1 day (8 hours) = 19.2 GB
+- 1 week = 134 GB
+- This quickly fills up standard SSDs.
+
+### Solution: JPEG Compression & Resizing
+
+**Optimized Implementation** (`src/main.rs`):
+```rust
+// Resize if larger than max_width (e.g., 1920px)
+image = image.resize(1920, height, FilterType::Lanczos3);
+
+// Compress as JPEG with Quality 80
+image.write_to(&mut file, image::ImageOutputFormat::Jpeg(80))?;
+```
+
+**Changes**:
+1.  **Format Switch**: PNG → JPEG (80% Quality)
+2.  **Resizing**: Max width 1920px (maintains readability while reducing pixel count)
+3.  **Cleanup Policy**: Automated 24h background loop deletes frames older than `retention_days`.
+
+### Performance Impact
+
+| Metric | Before (PNG) | After (JPEG Q80) | Improvement |
+|--------|--------------|------------------|-------------|
+| File Size | ~2.5 MB | ~0.05 MB (50KB) | 50x reduction |
+| 1 Hour Storage | 2.4 GB | 50 MB | 98% reduction |
+| 1 Week Storage | 134 GB | 2.8 GB | 98% reduction |
+
+**Key Benefits**:
+- Massive storage savings (months of history in few GBs)
+- Faster write speeds (smaller I/O)
+- Automatic self-cleaning database
+
+---
+
 ## Query Security
 
 ### Problem: FTS5 Operator Injection

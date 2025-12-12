@@ -23,6 +23,14 @@ include_cursor = true
 # Whether to draw border around captured window
 draw_border = false
 
+[storage]
+# Image format: "jpeg" or "png"
+format = "jpeg"
+# JPEG quality: 1-100 (default: 80)
+jpeg_quality = 80
+# Max width in pixels (default: 1920). 0 = no resizing
+max_width = 1920
+
 [ocr]
 # OCR engine: "windows" (Windows OCR API) or "tesseract"
 engine = "windows"

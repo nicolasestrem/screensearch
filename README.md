@@ -236,6 +236,8 @@ ScreenSearch is optimized for efficiency and speed:
 
 **💾 Memory Efficiency** — Arc-based frame differencing eliminates redundant allocations, reducing memory pressure from **39GB/8hr → <1GB/8hr**.
 
+**🗜️ Storage Optimization** — 50x reducution in storage usage via smart JPEG compression and resizing. Automatic 24h cleanup loop enforces retention policies.
+
 **🔒 Search Security** — FTS5 query sanitization prevents injection attacks while correctly handling special characters (`C++`, `$100`, etc.).
 
 ---

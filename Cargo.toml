@@ -47,6 +47,7 @@ chrono = { workspace = true }
 
 # Browser automation
 webbrowser = "1.0"
+image = { workspace = true }
 
 [workspace.package]
 version = "0.1.0"
