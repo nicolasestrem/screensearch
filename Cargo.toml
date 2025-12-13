@@ -10,7 +10,7 @@ members = [
 
 [package]
 name = "screensearch"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Nicolas Estrem"]
 license = "MIT"
@@ -56,8 +56,14 @@ winit = "0.30.12"
 # Concurrency
 crossbeam = { workspace = true }
 
+# Update checking
+reqwest = { version = "0.11", features = ["json"] }
+
+# Platform directories (for AppData paths)
+dirs = "5.0"
+
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Nicolas Estrem"]
 license = "MIT"
