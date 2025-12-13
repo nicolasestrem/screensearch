@@ -23,6 +23,8 @@
 - **OCR Text Extraction**: Windows OCR API with bounding box coordinates and confidence scores
 - **Full-Text Search**: FTS5-powered search with BM25 ranking across all captured text
 - **REST API**: 27 endpoints for search, automation, and tag management on localhost:3131
+- **Timeline Visualization**: Activity density graph showing daily screen usage patterns
+- **System Tray Integration**: Background operation with quick access menu (Open/Quit)
 - **UI Automation**: Programmatic control of Windows applications via accessibility APIs
 - **Privacy Controls**: Exclude sensitive applications, pause on screen lock
 
@@ -467,6 +469,8 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 windows = "0.52"
 uiautomation = "0.16.1"
 windows-capture = "2.0.0-alpha.7"
+tray-icon = "0.14.3"
+winit = "0.29.15"
 
 # Image processing
 image = "0.24"
@@ -481,18 +485,18 @@ crossbeam = "0.8"
 
 ### Recent Optimizations
 
-**⚡ Zero-Copy OCR Pipeline**
+**[+] Zero-Copy OCR Pipeline**
 - **Location**: `screen-capture/src/ocr.rs`
 - **Improvement**: Direct `SoftwareBitmap` creation eliminates PNG encoding/decoding
 - **Impact**: 60-93ms savings per frame (53% faster)
 - **Enables**: 1-second capture intervals
 
-**💾 Memory Efficiency**
+**[+] Memory Efficiency**
 - **Location**: `screen-capture/src/frame_diff.rs`
 - **Improvement**: Arc-based frame differencing eliminates redundant allocations
 - **Impact**: Memory pressure reduced from 39GB/8hr → <1GB/8hr
 
-**🔒 Search Security**
+**[+] Search Security**
 - **Location**: `screen-db/src/queries.rs`
 - **Improvement**: FTS5 query sanitization
 - **Impact**: Prevents injection attacks while handling special characters
@@ -555,6 +559,6 @@ We welcome contributions! See the [Developer Guide](./developer-guide.md) for:
 
 ---
 
-**Last Updated**: 2025-12-10
-**Version**: 0.1.0
+**Last Updated**: 2025-12-13
+**Version**: 0.2.0
 **Maintainer**: ScreenSearch Project

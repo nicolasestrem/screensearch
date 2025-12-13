@@ -9,3 +9,10 @@ pub use search::*;
 pub use system::*;
 pub mod ai;
 pub use ai::*;
+pub mod embeddings;
+pub use embeddings::*;
+pub mod rag_helpers;
+pub mod reranker;
+
+
+

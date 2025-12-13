@@ -70,6 +70,7 @@ impl fmt::Debug for UIElement {
 
 impl UIElement {
     /// Create a new UIElement from raw UIAutomation types
+    #[allow(clippy::arc_with_non_send_sync)]
     pub(crate) fn new(element: uiautomation::UIElement, automation: &ThreadSafeAutomation) -> Self {
         Self {
             element: ThreadSafeElement(Arc::new(element)),

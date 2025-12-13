@@ -70,12 +70,8 @@ port = 3131
 # CORS origin (empty = permissive)
 cors_origin = ""
 
-# Set to false to disable automatic browser launch on startup
-# Useful for headless servers, Docker containers, or when running in background
-auto_open_browser = true
-
 [database]
-# Path to SQLite database file
+# Database file path
 path = "screensearch.db"
 
 # Maximum number of connections in pool
@@ -84,53 +80,113 @@ max_connections = 50
 # Minimum number of connections in pool
 min_connections = 3
 
-# Connection acquire timeout in seconds
+# Connection acquire timeout (seconds)
 acquire_timeout_secs = 10
 
-# Enable WAL mode for concurrent access
+# Enable WAL mode for better concurrency
 enable_wal = true
 
 # Cache size in KB (negative = KB of memory)
-# Default -2000 = 2MB of memory
 cache_size_kb = -2000
 
+[video]
+# Enable video chunk creation
+enabled = true
+
+# Chunk duration in seconds
+chunk_duration_secs = 300
+
+# Video codec: "h264", "h265", or "vp9"
+codec = "h264"
+
+# Video quality (CRF): 0-51 (lower = better quality, larger file)
+# Default 23 is good balance
+crf = 23
+
+# Frames per second for video
+fps = 2
+
+# Maximum video file size in MB (0 = unlimited)
+max_file_size_mb = 100
+
+# Delete individual frames after video creation
+delete_frames_after_video = false
+
+[cleanup]
+# Enable automatic cleanup of old data
+enabled = true
+
+# Number of days to retain data (default: 30)
+retention_days = 30
+
+# Run cleanup at startup
+cleanup_on_startup = true
+
+# Run cleanup periodically (hours between runs)
+cleanup_interval_hours = 24
+
 [privacy]
-# List of applications to exclude from capture
-# Process names or window titles (case-insensitive substring match)
+# Privacy: Excluded applications (won't be captured)
+# These apps are excluded for privacy/security reasons
 excluded_apps = [
     "1Password",
     "KeePass",
     "Bitwarden",
     "LastPass",
-    "Password",
-    "Bank",
-    "Chase",
-    "Wells Fargo",
-    "PayPal",
+    "Dashlane"
 ]
-
 # Pause capture when screen is locked
 pause_on_lock = true
 
 [performance]
-# Maximum CPU usage percentage target (0-100)
-max_cpu_percent = 5
-
-# Maximum memory usage in MB
-max_memory_mb = 500
+# Target FPS for capture (default: 2)
+capture_fps = 2.0
+# Number of threads for image processing
+process_threads = 2
+# Compression level (0-9)
+compression_level = 6
+# Maximum CPU usage percent (0 = unlimited)
+max_cpu_percent = 0
+# Maximum memory usage in MB (0 = unlimited)
+max_memory_mb = 0
 
 [logging]
-# Log level: "trace", "debug", "info", "warn", "error"
+# Log level: "error", "warn", "info", "debug", "trace"
 level = "info"
-
-# Log to file
+# Whether to write logs to a file
 log_to_file = true
-
 # Log file path
 log_file = "screensearch.log"
-
-# Maximum log file size in MB (0 = unlimited)
+# Maximum log file size in MB
 max_log_size_mb = 100
-
-# Number of old log files to retain
+# Number of rotated log files to keep
 log_rotation_count = 5
+
+[embeddings]
+# Enable semantic search with embeddings for RAG-enhanced reports
+enabled = false
+
+# Embedding model: "local" (bundled multilingual MiniLM) or "api" (use LLM provider)
+model = "local"
+
+# Model name for local embeddings
+model_name = "paraphrase-multilingual-MiniLM-L12-v2"
+
+# Embedding dimension (384 for MiniLM models)
+embedding_dim = 384
+
+# Batch size for background embedding generation
+batch_size = 50
+
+# Maximum text length per chunk (tokens)
+max_chunk_tokens = 256
+
+# Chunk overlap (tokens) for context preservation
+chunk_overlap = 32
+
+# Hybrid search weight (0.0 = all FTS5, 1.0 = all vector)
+# Default 0.3 means 70% FTS5, 30% vector similarity
+hybrid_search_alpha = 0.3
+
+# Maximum number of relevant chunks to include in LLM context
+max_context_chunks = 20

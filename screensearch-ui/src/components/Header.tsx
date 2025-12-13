@@ -17,7 +17,7 @@ export function Header() {
                 <Activity className="h-6 w-6 text-primary-foreground" />
               </div>
               <div>
-                <h1 className="text-xl font-bold tracking-tight">Screen Memory</h1>
+                <h1 className="text-xl font-bold tracking-tight">ScreenSearch</h1>
                 <p className="text-xs text-muted-foreground">
                   Your searchable screen capture history
                 </p>

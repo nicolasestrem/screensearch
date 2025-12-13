@@ -36,6 +36,7 @@ tracing-subscriber = { workspace = true }
 # Internal dependencies
 screensearch-db = { path = "../screensearch-db" }
 screensearch-automation = { path = "../screensearch-automation" }
+screensearch-embeddings = { path = "../screensearch-embeddings" }
 
 # HTTP Client
 reqwest = { version = "0.11", features = ["json"] }

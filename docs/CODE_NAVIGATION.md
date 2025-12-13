@@ -1,6 +1,6 @@
 # Code Navigation Guide
 
-## 🗺️ Quick Reference for Navigating the ScreenSearch Codebase
+## [>] Quick Reference for Navigating the ScreenSearch Codebase
 
 This guide helps you quickly find the code you need, whether you're debugging, adding features, or understanding how the system works.
 
@@ -98,7 +98,7 @@ screensearch/
 
 ---
 
-## 🔍 Find Code by Feature
+## [>] Find Code by Feature
 
 ### Screen Capture
 
@@ -166,6 +166,19 @@ screensearch/
 | Graceful shutdown | `src/main.rs` | Lines 425-452 |
 | Database frame storage | `src/main.rs` | `store_processed_frame()` at line 457 |
 
+### Frontend Navigation (screensearch-ui)
+
+| What | Where | File |
+|------|-------|------|
+| **Main Application Layout** | `screensearch-ui/src/App.tsx` | Root layout, Grid background, Footer integration |
+| **Timeline View** | `screensearch-ui/src/components/Timeline.tsx` | Main timeline container and logic |
+| **Activity Graph** | `screensearch-ui/src/components/timeline/ActivityGraph.tsx` | Density visualization (Daily activity bars) |
+| **Sidebar Navigation** | `screensearch-ui/src/components/Sidebar.tsx` | Main navigation menu |
+| **Search Functionality** | `screensearch-ui/src/components/SearchBar.tsx` | Global search input |
+| **Frame Display** | `screensearch-ui/src/components/FrameCard.tsx` | Individual capture card |
+| **Footer** | `screensearch-ui/src/components/Footer.tsx` | App footer with credits |
+| **Data Hooks** | `screensearch-ui/src/hooks/` | `useDailyActivity`, `useFrames` |
+
 ---
 
 ## 🧩 Common Tasks - Where to Start
@@ -209,7 +222,7 @@ screensearch/
 
 ---
 
-## 🔧 Configuration - Where to Find It
+## [>] Configuration - Where to Find It
 
 ### Runtime Configuration
 
@@ -235,7 +248,7 @@ screensearch/
 
 ---
 
-## 📊 Data Flow - Follow the Data
+## [>] Data Flow - Follow the Data
 
 ### Capture → Database Flow
 
@@ -439,5 +452,5 @@ warn!("Search query returned 0 results for: {}", query);
 
 ---
 
-**Last Updated**: 2025-12-10
-**Version**: 0.1.0
+**Last Updated**: 2025-12-13
+**Version**: 0.2.0

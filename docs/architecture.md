@@ -1,7 +1,7 @@
 # ScreenSearch - System Architecture Documentation
 
-**Version**: 0.1.0
-**Last Updated**: 2025-12-11
+**Version**: 0.2.0
+**Last Updated**: 2025-12-13
 **Status**: Production Ready
 
 ## Table of Contents
@@ -33,6 +33,7 @@ ScreenSearch is a high-performance, locally-run screen capture and OCR system de
 │  │                       Main Binary (src/main.rs)                   │   │
 │  │  - Configuration loading (config.toml)                            │   │
 │  │  - Service orchestration & lifecycle management                   │   │
+│  │  - System Tray integration (tray-icon + winit event loop)         │   │
 │  │  - Graceful shutdown handling (Ctrl+C signal)                     │   │
 │  │  - Channel-based task coordination                                │   │
 │  │  - Metrics aggregation & reporting                                │   │
@@ -65,6 +66,7 @@ ScreenSearch is a high-performance, locally-run screen capture and OCR system de
 | API Server | screen-api | Rust | REST API on localhost:3131 |
 | UI Automation | screen-automation | Rust | Windows UIAutomation for control |
 | Main Binary | src/main.rs | Rust | Service orchestration & lifecycle |
+| Embedding Engine | screensearch-embeddings | Rust | Vector embedding generation (ONNX) |
 
 ### 1.3 Technology Stack
 
@@ -605,6 +607,40 @@ let info = window.get_info().await?;  // title, process, rect
 
 ---
 
+### 2.6 Front-End Architecture (screen-ui)
+
+**Purpose**: Modern, responsive web interface for interacting with the system.
+
+**Tech Stack**:
+- **Framework**: React 18
+- **Build Tool**: Vite
+- **State Management**: Zustand
+- **Data Fetching**: TanStack Query (React Query)
+- **Styling**: Tailwind CSS + CSS Modules
+- **Icons**: Lucide React
+
+**Key Components**:
+- **Timeline**: Virtualized grid/list view of captured frames.
+- **Activity Graph**: D3/SVG-based visualization of daily activity density.
+- **Search**: Real-time search with debounce and highlighting.
+- **Footer**: Sticky footer with branding and links.
+
+**Integration**:
+- Communicates with `screen-api` via REST calls.
+- Assets are embedded into the Rust binary (`rust-embed`) for single-file deployment.
+
+---
+
+### 2.7 Embedding Engine (screensearch-embeddings crate)
+
+**Purpose**: Generates high-dimensional vector embeddings for screen content to enable semantic search (RAG).
+
+**Architecture**:
+- **Engine**: ONNX Runtime (ort) pinned to version 1.17.1 equivalent (2.0.0-rc.0).
+- **Model**: BGE-M3 or MiniLM-L12 (configurable).
+- **Operation**: Background worker task processing frames from `ocr_text`.
+- **Output**: 384/1024-dimension float vectors stored as BLOBs.
+
 ## 3. Database Schema
 
 ### 3.1 Core Tables
@@ -717,6 +753,21 @@ CREATE TABLE metadata (
 );
 ```
 
+**embeddings** - Vector embeddings for semantic search:
+```sql
+CREATE TABLE embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    frame_id INTEGER NOT NULL,
+    model_name TEXT NOT NULL,
+    embedding BLOB NOT NULL,     -- Serialized Vec<f32>
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (frame_id) REFERENCES frames(id) ON DELETE CASCADE
+);
+
+-- Indexes:
+CREATE INDEX idx_embeddings_frame_id ON embeddings(frame_id);
+```
+
 ### 3.2 Full-Text Search (FTS5)
 
 **ocr_text_fts** - Virtual table for full-text search:
@@ -801,6 +852,23 @@ video_chunks (1) ──< (0..n) frames
 | Images (Legacy PNG) | ~1.5 MB each | ~150 GB | ~1.5 TB |
 
 ---
+
+### 3.6 Vector Search (RAG)
+
+ScreenSearch implements a **Hybrid Search** system combining FTS5 (Sparse) and Vector Search (Dense):
+
+**In-Memory Vector Search**:
+Due to Windows DLL limitations with `sqlite-vec`, vector search is performed in-memory:
+1.  **Load**: On demand/startup, embeddings are loaded into memory (optimized `Vec<f32>`).
+2.  **Query**: Incoming query is embedded using the ONNX engine.
+3.  **Similarity**: Cosine similarity is calculated against all frame embeddings.
+4.  **Top-K**: Top results are identified and joined with SQLite metadata.
+
+**Reranker**:
+A heuristic reranker refines results by:
+-   Boosting recent frames (time decay).
+-   Boosting exact keyword matches in OCR text.
+-   Deduplicating multiple chunks from the same frame.
 
 ## 4. Data Flow
 
@@ -1160,6 +1228,11 @@ Main Thread (tokio runtime)
     ├─ Timer: tokio::time::interval(24h)
     ├─ Action: db.cleanup_old_data(retention_days)
     └─ Shutdown: via broadcast::Receiver
+
+└─> Task 7: Embedding Worker (spawned via ApiServer)
+    ├─ Channel: Receives frame IDs from OCR/db
+    ├─ Process: Generates embeddings via ONNX
+    └─ Store: Inserts into `embeddings` table
 ```
 
 ### 5.2 Communication Channels
@@ -1345,6 +1418,11 @@ min_connections = 3               # Connection pool min
 acquire_timeout_secs = 10         # Connection acquire timeout
 enable_wal = true                 # WAL mode (recommended)
 cache_size_kb = -2000             # Page cache (-2000 = 2MB)
+
+[embeddings]
+enabled = true                    # Enable semantic search
+model_path = "models/bge-m3"      # Path to ONNX model
+tokenizer_path = "models/tokenizer.json"
 
 [privacy]
 excluded_apps = [                 # Apps to skip capturing
@@ -1674,11 +1752,12 @@ std::panic::set_hook(Box::new(|panic_info| {
 
 | Component | CPU (Idle) | CPU (Active) | Memory | Disk I/O |
 |-----------|------------|--------------|--------|----------|
-| Capture Engine | 1-2% | 5-10% | ~50 MB | Minimal |
-| OCR Processor | 0% | 10-20% per worker | ~100 MB | None |
+| Capture Engine | 1-3% | 5-10% | ~50 MB | Minimal |
+| OCR Processor | 0% | Varies | ~200 MB | None |
+| Embedding Engine | 0% | Varies | ~600 MB | None |
 | Database Manager | <1% | 2-5% | ~150 MB | Medium |
 | API Server | <1% | 1-2% | ~50 MB | None |
-| **Total System** | **<5%** | **20-35%** | **~350 MB** | **Low** |
+| **Total System** | **<5%** | **Varies** | **Varies** | **Low** |
 
 **Notes**:
 - Idle: Waiting for next capture interval (most of the time)
@@ -1770,12 +1849,22 @@ API Server (Axum):
 **Memory Scalability**:
 ```
 Base memory: ~350 MB
++ Embedding Model (ONNX): ~600 MB (loaded in memory)
 + Frame buffer: ~5 MB per frame in queue (max 30 frames) = 150 MB
 + DB cache: Configurable (default 2 MB)
 + Connection pool overhead: ~200 KB per connection (50 max) = 10 MB
 + Image processing: ~6 MB per active OCR task (2 workers) = 12 MB
 
-Worst case: ~520 MB
+**Memory Scalability**:
+```
+Base memory: ~350 MB
++ Embedding Model (ONNX): ~600 MB (loaded in memory)
++ Frame buffer: ~5 MB per frame in queue (max 30 frames) = 150 MB
++ DB cache: Configurable (default 2 MB)
++ Connection pool overhead: ~200 KB per connection (50 max) = 10 MB
++ Image processing: ~6 MB per active OCR task (2 workers) = 12 MB
+
+Worst case: Varies by model
 ```
 
 ### 8.5 Performance Optimization Techniques

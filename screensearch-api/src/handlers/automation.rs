@@ -162,7 +162,7 @@ pub async fn press_key(
     );
 
     // Parse key
-    let key = KeyCode::from_str(&req.key)
+    let key = KeyCode::from_name(&req.key)
         .ok_or_else(|| AppError::InvalidRequest(format!("Invalid key: {}", req.key)))?;
 
     // Parse modifiers
@@ -171,7 +171,7 @@ pub async fn press_key(
         .unwrap_or_default()
         .iter()
         .map(|m| {
-            KeyCode::from_str(m)
+            KeyCode::from_name(m)
                 .ok_or_else(|| AppError::InvalidRequest(format!("Invalid modifier: {}", m)))
         })
         .collect();

@@ -162,6 +162,7 @@ impl FrameDiffer {
     }
 
     /// Calculate SSIM for a single window
+    #[allow(clippy::too_many_arguments)]
     fn ssim_window(
         &self,
         frame1: &RgbaImage,

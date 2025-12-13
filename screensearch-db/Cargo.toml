@@ -10,8 +10,10 @@ repository.workspace = true
 # Database
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros", "chrono"] }
 
-# Vector embeddings (placeholder for future semantic search)
-# sqlite-vec will be integrated when needed
+# Vector embeddings for semantic search
+# Note: Using sqlite-vec as a loadable extension, not via rusqlite binding
+# The vec0 table operations are performed via raw SQL queries
+zerocopy = "0.8"  # Efficient f32 vector serialization
 
 # Serialization
 serde = { workspace = true }

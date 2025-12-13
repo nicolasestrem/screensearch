@@ -7,7 +7,7 @@ use crate::state::AppState;
 use axum::extract::{Json, State};
 use chrono::{DateTime, Duration, Utc};
 use reqwest::RequestBuilder;
-use screensearch_db::{FrameFilter, Pagination};
+
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
@@ -85,6 +85,7 @@ pub struct AiReportResponse {
     pub report: String,
     pub model_used: String,
     pub tokens_used: Option<u32>,
+    pub context_source: String,
 }
 
 // OpenAI Chat Completion Request Schema (Simplified)
@@ -208,80 +209,62 @@ pub async fn generate_report(
 ) -> Result<Json<AiReportResponse>> {
     debug!("Generating AI report with model {}", payload.model);
 
-    // 1. Fetch Data Context
+    // 1. Fetch Data Context using RAG
     let end_time = payload.end_time.unwrap_or_else(Utc::now);
     let start_time = payload
         .start_time
         .unwrap_or_else(|| end_time - Duration::hours(24));
 
-    let filter = FrameFilter {
-        start_time: Some(start_time),
-        end_time: Some(end_time),
-        app_name: None,
-        device_name: None,
-        tag_ids: None,
-        monitor_index: None,
-    };
-
-    // We fetch a summary of activity.
-    // Optimization: Don't fetch *all* frames if there are thousands.
-    // Maybe just get the counts and unique apps, or latest 50-100 frames text.
-    let pagination = Pagination {
-        limit: 100,
-        offset: 0,
-    };
-
-    let frames = state
-        .db
-        .get_frames_in_range(start_time, end_time, filter, pagination)
-        .await
-        .map_err(AppError::Database)?;
-
-    // Summarize data for the prompt
-    // This is a naive summarization. In production, we'd want more sophisticated aggregation.
-    let total_frames = frames.len();
-    let mut app_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let mut timeline_text = String::new();
-
-    for frame in &frames {
-        let app = frame
-            .active_process
-            .clone()
-            .unwrap_or_else(|| "Unknown".to_string());
-        *app_counts.entry(app.clone()).or_insert(0) += 1;
-
-        // Add some timeline details (maybe sampled)
-        let window = frame.active_window.clone().unwrap_or_default();
-        timeline_text.push_str(&format!(
-            "- [{}] App: {}, Window: {}\n",
-            frame.timestamp.format("%H:%M"),
-            app,
-            window
-        ));
-    }
-
-    let most_used_apps = app_counts
-        .iter()
-        .map(|(k, v)| format!("{}: {} frames", k, v))
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    // 2. Construct Prompt
-    let system_prompt = "You are an intelligent assistant analyzing the user's computer activity history. \
-    Your goal is to provide a concise, insightful summary of their work and activities based on the provided logs. \
-    Focus on productivity, time usage, and main activities. Use Markdown for formatting.";
-
-    let user_prompt = payload.prompt.unwrap_or_else(|| {
+    // Get or create the user's query for semantic search
+    let user_query = payload.prompt.clone().unwrap_or_else(|| {
         format!(
-            "Analyze the following activity log from {} to {}.\n\n\
-        Summary Data:\n\
-        - Total Snapshots: {}\n\
-        - App Usage Distribution: {}\n\n\
-        Detailed Log (Sample):\n\
-        {}",
-            start_time, end_time, total_frames, most_used_apps, timeline_text
+            "Summarize computer activity and productivity from {} to {}",
+            start_time.format("%Y-%m-%d %H:%M"),
+            end_time.format("%Y-%m-%d %H:%M")
         )
     });
+
+    // Build context using RAG (hybrid search) or traditional approach
+    let (context_text, context_source) = crate::handlers::rag_helpers::build_rag_context(
+        &state,
+        &user_query,
+        start_time,
+        end_time,
+    )
+    .await?;
+
+    // 2. Construct Prompt (Senior Productivity Analyst Persona)
+    let system_prompt = r#"You are ScreenSearch Intelligence, a Senior Productivity Analyst.
+Your goal is to reconstruct a cohesive narrative of the user's work session based on fragmented screen capture logs and OCR text.
+
+INPUT DATA EXPLANATION:
+- You will receive a list of "Frames" or "Context Chunks".
+- Each item contains Timestamp, App Name, Window Title, and OCR Text (text visible on screen).
+- OCR text may be fragmented or partial.
+- RAG (retrieval) has prioritized relevant chunks based on the user's query.
+
+ANALYSIS INSTRUCTIONS:
+1. SYNTHESIZE, DON'T LIST: Do not just list what the user opened. Explain *what they were doing*. (e.g., instead of "User opened VS Code, then Chrome", say "User was implementing the login feature in VS Code, referencing documentation in Chrome").
+2. USE OCR CONTEXT: Use the OCR text to identify specific topics, document names, or code functions being worked on.
+3. IDENTIFY FLOWS: Group related activities into workflows (e.g., "Research Phase", "Coding Phase", "Communication").
+4. HIGHLIGHT INTERRUPTIONS: Note if the user was frequently context-switching between unrelated apps.
+
+OUTPUT FORMAT (Markdown):
+# Executive Summary
+(2-3 sentences summarizing the main focus of the period)
+
+## Key Activities
+- **[Activity Name]**: Description of work done, citing specific apps and context found in OCR.
+
+## Productivity Analysis
+- **Focus**: [High/Medium/Low] - Explanation.
+- **Tools Used**: List primary tools.
+
+## Timeline
+(Bulleted list of major state changes or milestones)
+"#;
+
+    let user_prompt = format!("{}\n\nContext:\n{}", user_query, context_text);
 
     // 3. Call AI Provider
 
@@ -377,9 +360,12 @@ pub async fn generate_report(
         .map(|c| c.message.content.clone())
         .unwrap_or_else(|| "No report generated.".to_string());
 
+    let final_report = format!("{}\n\n---\n*Context: {}*", report_content, context_source);
+
     Ok(Json(AiReportResponse {
-        report: report_content,
+        report: final_report,
         model_used: payload.model,
         tokens_used: response_body.usage.map(|u| u.total_tokens),
+        context_source,
     }))
 }

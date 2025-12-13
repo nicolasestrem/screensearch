@@ -57,7 +57,7 @@ pub enum KeyCode {
 
 impl KeyCode {
     /// Parse KeyCode from string
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_name(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "enter" | "return" => Some(KeyCode::Enter),
             "escape" | "esc" => Some(KeyCode::Escape),
@@ -77,7 +77,7 @@ impl KeyCode {
     }
 
     /// Convert KeyCode to SendKeys notation
-    pub(crate) fn to_sendkeys(&self) -> &str {
+    pub(crate) fn to_sendkeys(self) -> &'static str {
         match self {
             KeyCode::Enter => "{ENTER}",
             KeyCode::Escape => "{ESC}",

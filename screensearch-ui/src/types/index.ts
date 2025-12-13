@@ -38,6 +38,17 @@ export interface Frame {
   thumbnail?: string;
 }
 
+export interface FrameResponse {
+  id: number;
+  timestamp: string;
+  file_path: string;
+  app_name: string;
+  window_name: string;
+  ocr_text: string;
+  tags: Tag[];
+  thumbnail?: string;
+}
+
 // Tag Types
 export interface Tag {
   id: number;

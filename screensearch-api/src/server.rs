@@ -126,6 +126,33 @@ impl ApiServer {
 
         Ok(())
     }
+
+    /// Start the background embedding worker
+    pub async fn start_embedding_worker(
+        &self,
+        config: crate::workers::embedding_worker::EmbeddingWorkerConfig,
+    ) -> anyhow::Result<()> {
+        if !config.enabled {
+            return Ok(());
+        }
+
+        tracing::info!("Initializing embedding engine for background worker...");
+        
+        // Force initialization of embedding engine
+        let engine = self.state.get_embedding_engine().await
+            .map_err(|e| anyhow::anyhow!("Failed to initialize embedding engine: {}", e))?;
+
+        tracing::info!("Starting background embedding worker...");
+        
+        // Spawn worker
+        crate::workers::embedding_worker::spawn_embedding_worker(
+            std::sync::Arc::clone(&self.state.db),
+            engine,
+            config,
+        );
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

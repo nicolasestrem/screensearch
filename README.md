@@ -1,6 +1,15 @@
 <div align="center">
 
-# 🎬 ScreenSearch
+```
+   _____                           _____                     _     
+  / ____|                         / ____|                   | |    
+ | (___   ___ _ __ ___  ___ _ __ | (___   ___  __ _ _ __ ___| |__  
+  \___ \ / __| '__/ _ \/ _ \ '_ \ \___ \ / _ \/ _` | '__/ __| '_ \ 
+  ____) | (__| | |  __/  __/ | | |____) |  __/ (_| | | | (__| | | |
+ |_____/ \___|_|  \___|\___|_| |_|_____/ \___|\__,_|_|  \___|_| |_|
+                                                                   
+                                                                   
+```
 
 ### Your screen history, searchable and automated
 
@@ -12,7 +21,7 @@
 
 <br/>
 
-### 📥 [**Download Latest Release (v0.1.0)**](https://github.com/nicolasestrem/screensearch/releases/latest)
+### [>] [**Download Latest Release (v0.1.0)**](https://github.com/nicolasestrem/screensearch/releases/latest)
 
 **Windows 10/11** • **11MB** • **No installation required** • **Just extract and run**
 
@@ -20,7 +29,11 @@
 
 ---
 
-##  See It In Action
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      SEE IT IN ACTION                           │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 <div align="center">
   <img src="screenshots/hero-capture-view.png" width="85%" alt="ScreenSearch Hero - Continuous capture with terminal and application windows">
@@ -29,20 +42,29 @@
 
 ---
 
-## ✨ Key Features
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        KEY FEATURES                             │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-- 📹 **Continuous Screen Capture** — Configurable intervals (2-5 seconds) with multi-monitor support
-- 🔍 **OCR Text Extraction** — Windows OCR API with bounding box coordinates and confidence scores
-- 🧠 **AI-Powered Intelligence** — Generate insights from your screen history using local LLMs (Ollama, LM Studio) or cloud providers (OpenAI)
-- 🔎 **Full-Text Search** — FTS5-powered search with BM25 ranking across all captured text
-- 🚀 **REST API** — 27 endpoints for search, automation, and tag management on localhost:3131
-- 🖱️ **UI Automation** — Programmatic control of Windows applications via accessibility APIs
-- 🔐 **Privacy Controls** — Exclude sensitive applications, pause on screen lock
-- ⚡ **High Performance** — < 5% CPU idle, < 500MB RAM, < 100ms API response times
+- [*] **Continuous Screen Capture** — Configurable intervals (2-5 seconds) with multi-monitor support
+- [*] **OCR Text Extraction** — Windows OCR API with bounding box coordinates and confidence scores
+- [*] **AI-Powered Intelligence** — Generate insights from your screen history using local LLMs (Ollama, LM Studio) or cloud providers (OpenAI)
+- [*] **Hybrid Search** — Combines FTS5 (Sparse) and Vector Embeddings (Dense) for semantic understanding
+- [*] **REST API** — 27 endpoints for search, automation, and tag management on localhost:3131
+- [*] **UI Automation** — Programmatic control of Windows applications via accessibility APIs
+- [*] **System Tray** — unobtrusive background operation with quick access menu
+- [*] **Privacy Controls** — Exclude sensitive applications, pause on screen lock
+- [*] **High Performance** — Optimized for modern multi-core processors with < 100ms API response times
 
 ---
 
-## 🌐 Project Information
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    PROJECT INFORMATION                          │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 - **Website**: [screensearch.app](https://screensearch.app)
 - **Repository**: [github.com/nicolasestrem/screensearch](https://github.com/nicolasestrem/screensearch)
@@ -52,18 +74,22 @@
 
 ---
 
-## 📸 Feature Highlights
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     FEATURE HIGHLIGHTS                          │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-### 🕐 Timeline View — Browse Your Screen History
+### [>] Timeline View — Browse Your Screen History
 
-Explore everything you've captured in an elegant grid layout. Search, filter, and retrieve the exact moment you need.
+Visualize your day at a glance with the **Activity Graph**, showing exactly when you were most active. Browse your captured history in an elegant grid layout, filter by application, or jump to specific moments.
 
 <div align="center">
-  <img src="screenshots/timeline-grid-view.png" width="80%" alt="Timeline view showing captured frames in grid layout">
-  <p><em>Intuitive timeline interface for browsing and searching captured content</em></p>
+  <img src="screenshots/timeline-grid-view.png" width="80%" alt="Timeline view showing Activity Graph and frame grid">
+  <p><em>Interactive density graph and frame grid for intuitive browsing</em></p>
 </div>
 
-### ⚙️ Settings & Privacy Controls
+### [>] Settings & Privacy Controls
 
 Take full control of your capture experience. Configure capture intervals, select which monitors to capture, exclude sensitive applications, and manage your data retention.
 
@@ -72,7 +98,7 @@ Take full control of your capture experience. Configure capture intervals, selec
   <p><em>Comprehensive settings for customizing capture behavior and privacy</em></p>
 </div>
 
-### 📊 Captured Frames Gallery
+### [>] Captured Frames Gallery
 
 View your complete screen capture history organized by timestamp. Each frame is searchable and tagged.
 
@@ -81,22 +107,22 @@ View your complete screen capture history organized by timestamp. Each frame is 
   <p><em>Browse, search, and organize your captured screen moments</em></p>
 </div>
 
-### 🧠 Intelligence Dashboard — AI That Understands Your Work
+### [>] Intelligence Dashboard — AI That Understands Your Work
 
 Transform raw screen captures into actionable insights. The Intelligence dashboard connects to your choice of AI provider—local models like Ollama and LM Studio for privacy, or cloud services like OpenAI for power.
 
 **What It Does:**
-- 📊 **Daily & Weekly Reports** — Automatic summaries of your work patterns and productivity
-- 💬 **Custom Queries** — Ask specific questions about your activity history
-- 🔌 **Provider Flexibility** — Works with any OpenAI-compatible API endpoint
-- 🔐 **Privacy First** — Local LLMs keep all analysis on your machine
+- [*] **Daily & Weekly Reports** — Automatic summaries of your work patterns and productivity
+- [*] **Custom Queries** — Ask specific questions about your activity history
+- [*] **Provider Flexibility** — Works with any OpenAI-compatible API endpoint
+- [*] **Privacy First** — Local LLMs keep all analysis on your machine
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/nicolasestrem/screensearch/main/screenshots/intelligence-dashboard.png" width="80%" alt="Intelligence Dashboard showing generated reports">
   <p><em>AI-powered analysis of your screen activity—test connections, generate reports, and export insights</em></p>
 </div>
 
-### 💻 Terminal Integration
+### [>] Terminal Integration
 
 Powerful logging and diagnostics. Watch ScreenSearch initialize, start capture loops, and process OCR in real-time.
 
@@ -107,7 +133,11 @@ Powerful logging and diagnostics. Watch ScreenSearch initialize, start capture l
 
 ---
 
-## 🚀 Quick Start
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        QUICK START                              │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ### Prerequisites
 
@@ -130,7 +160,7 @@ cargo build --release
 cargo run --release
 ```
 
-### 🌐 Web Dashboard
+### [>] Web Dashboard
 
 Launch the beautiful web interface to visualize and manage your captures:
 
@@ -142,16 +172,20 @@ npm run dev
 ```
 
 **Dashboard Features**:
-- 📅 Timeline view of captured frames with real-time thumbnails
-- 🔎 Full-text search across all OCR content
-- 🧠 Intelligence tab with AI-powered report generation
-- 🏷️ Frame details with OCR text, tags, and metadata
-- ⚙️ Live settings configuration and privacy controls
-- 🌙 Dark mode for comfortable late-night browsing
+- [*] Timeline view of captured frames with real-time thumbnails
+- [*] Full-text search across all OCR content
+- [*] Intelligence tab with AI-powered report generation
+- [*] Frame details with OCR text, tags, and metadata
+- [*] Live settings configuration and privacy controls
+- [*] Dark mode for comfortable late-night browsing
 
 ---
 
-## 🔒 Security & Trust
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      SECURITY & TRUST                           │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ### Windows SmartScreen Warning
 
@@ -169,25 +203,33 @@ On first launch, Windows may display a SmartScreen warning:
 You can verify the safety of the binary:
 
 - **VirusTotal Scans:**
-  - [EXE Scan Results](https://www.virustotal.com/gui/file/807707d80a0886dd635e8cfbcb96d8670c2531176d248206decd248c00961eb0/detection) - 0/72 detections ✅
-  - [ZIP Scan Results](https://www.virustotal.com/gui/file/6b3c93398cf3c720da3e9c88a58bce93e9a9ee016819a9ab26005ef6bde90003) - 0/68 detections ✅
+  - [EXE Scan Results](https://www.virustotal.com/gui/file/807707d80a0886dd635e8cfbcb96d8670c2531176d248206decd248c00961eb0/detection) - 0/72 detections [OK]
+  - [ZIP Scan Results](https://www.virustotal.com/gui/file/6b3c93398cf3c720da3e9c88a58bce93e9a9ee016819a9ab26005ef6bde90003) - 0/68 detections [OK]
 - **Open Source:** All source code is available in this repository for review
 - **Build From Source:** Follow the [Developer Guide](docs/developer-guide.md) to compile yourself
 
 ---
 
-## 📚 Documentation
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       DOCUMENTATION                             │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 | Document | Purpose |
 |----------|---------|
-| [📖 User Guide](docs/user-guide.md) | Installation, configuration, and everyday usage |
-| [👨‍💻 Developer Guide](docs/developer-guide.md) | Development setup, workflow, and contribution guidelines |
-| [🏗️ Architecture](docs/architecture.md) | System design, data flow, and technical decisions |
-| [📡 API Reference](docs/api-reference.md) | Complete REST API endpoint documentation with examples |
-| [⚡ Commands Summary](docs/commands-summary.md) | Quick reference for CLI commands and workflows |
-| [🧪 Testing](docs/testing.md) | Test protocols, coverage reports, and CI/CD pipelines |
+| [User Guide](docs/user-guide.md) | Installation, configuration, and everyday usage |
+| [Developer Guide](docs/developer-guide.md) | Development setup, workflow, and contribution guidelines |
+| [Architecture](docs/architecture.md) | System design, data flow, and technical decisions |
+| [API Reference](docs/api-reference.md) | Complete REST API endpoint documentation with examples |
+| [Commands Summary](docs/commands-summary.md) | Quick reference for CLI commands and workflows |
+| [Testing](docs/testing.md) | Test protocols, coverage reports, and CI/CD pipelines |
 
-## 🏗️ Project Structure
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     PROJECT STRUCTURE                           │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ```
 screensearch/
@@ -218,31 +260,40 @@ screensearch/
 
 ---
 
-## ⚡ Performance Metrics
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    PERFORMANCE METRICS                          │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ScreenSearch is optimized for efficiency and speed:
 
 | Metric | Target | Actual | Status |
 |--------|--------|--------|--------|
-| **OCR Processing** | < 100 ms | **70-80 ms** | ✅ 20-30% faster |
-| **CPU Usage** (idle) | < 5% | ~2% | ✅ Excellent |
-| **Memory** | < 500 MB | ~240 MB | ✅ 52% under target |
-| **API Response** | < 100 ms | ~50 ms | ✅ 2x faster |
-| **Test Coverage** | 100% | 59/59 passing | ✅ Complete |
+| **OCR Processing** | < 100 ms | **70-80 ms** | [OK] Fast |
+| **API Response** | < 100 ms | ~50 ms | [OK] 2x faster |
+| **Vector Search** | < 200 ms | **150 ms** | [OK] In-Memory Optimized |
+| **Test Coverage** | 100% | 59/59 passing | [OK] Complete |
 
 ### Recent Performance Optimizations
 
-**⚡ Zero-Copy OCR Pipeline** — Direct `SoftwareBitmap` creation eliminates PNG encoding/decoding overhead, saving **60-93ms per frame** (53% faster). Enables 1-second capture intervals.
+**[+] Zero-Copy OCR Pipeline** — Direct `SoftwareBitmap` creation eliminates PNG encoding/decoding overhead, saving **60-93ms per frame** (53% faster). Enables 1-second capture intervals.
 
-**💾 Memory Efficiency** — Arc-based frame differencing eliminates redundant allocations, reducing memory pressure from **39GB/8hr → <1GB/8hr**.
+**[+] Memory Efficiency** — Arc-based frame differencing eliminates redundant allocations, reducing memory pressure from **39GB/8hr → <1GB/8hr**.
 
-**🗜️ Storage Optimization** — 50x reducution in storage usage via smart JPEG compression and resizing. Automatic 24h cleanup loop enforces retention policies.
+**[+] Storage Optimization** — 50x reducution in storage usage via smart JPEG compression and resizing. Automatic 24h cleanup loop enforces retention policies.
 
-**🔒 Search Security** — FTS5 query sanitization prevents injection attacks while correctly handling special characters (`C++`, `$100`, etc.).
+**[+] Search Security** — FTS5 query sanitization prevents injection attacks while correctly handling special characters (`C++`, `$100`, etc.).
+
+**[+] In-Memory Vector Search** — Bypasses SQLite extension limitations by effectively managing embeddings in Rust memory, enabling robust semantic search on Windows.
 
 ---
 
-## 🔌 API Quick Examples
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    API QUICK EXAMPLES                           │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ### Search Your Screen History
 
@@ -297,17 +348,25 @@ See the [API Reference](docs/api-reference.md) for all 27 endpoints.
 
 ---
 
-## 🔒 Privacy & Security
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     PRIVACY & SECURITY                          │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-- ✅ **Local-Only Storage** — All data stays on your machine in a local SQLite database
-- 🛡️ **Exclude Sensitive Apps** — Automatically skip password managers, banking apps, and any app you specify
-- ⏸️ **Pause Anytime** — Pause capture with a single click (pauses on screen lock by default)
-- 🗑️ **Auto-Cleanup** — Configurable data retention (set automatic deletion of old captures)
-- 🔐 **FTS5 Security** — Query sanitization prevents operator injection attacks
+- [*] **Local-Only Storage** — All data stays on your machine in a local SQLite database
+- [*] **Exclude Sensitive Apps** — Automatically skip password managers, banking apps, and any app you specify
+- [*] **Pause Anytime** — Pause capture with a single click (pauses on screen lock by default)
+- [*] **Auto-Cleanup** — Configurable data retention (set automatic deletion of old captures)
+- [*] **FTS5 Security** — Query sanitization prevents operator injection attacks
 
 ---
 
-## 🤝 Contributing
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       CONTRIBUTING                              │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 We welcome contributions! Here's how to get started:
 
@@ -321,7 +380,11 @@ See [DEVELOPMENT.md](docs/developer-guide.md) for detailed setup instructions.
 
 ---
 
-## 📄 License
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                          LICENSE                                │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
@@ -329,8 +392,8 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 <div align="center">
 
-**Made with ❤️ for Windows users who want to remember everything**
+**Made with care for Windows users who want to remember everything**
 
-[⬆ Back to top](#-screensearch)
+[^ Back to top](#screensearch)
 
 </div>

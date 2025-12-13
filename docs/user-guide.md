@@ -28,7 +28,7 @@ Screen Memory is a Windows screen capture and OCR (Optical Character Recognition
 - **Web Interface**: Modern, responsive web UI for searching and browsing your screen history
 - **Privacy First**: All data stays on your machine - no cloud, no tracking
 - **REST API**: Query captured content and control automation via HTTP
-- **Performance Optimized**: Less than 5% CPU usage and under 500MB RAM
+- **Performance Optimized**: Built for modern multi-core systems using AVX2 acceleration
 
 ### Use Cases
 
@@ -54,9 +54,9 @@ Screen Memory runs quietly in the background, capturing your screen every few se
 - Windows 11 (all versions)
 
 **Hardware**:
-- 2 GB RAM minimum (4 GB recommended)
+- 8 GB RAM minimum (16 GB recommended for best performance)
 - 500 MB free disk space (plus storage for captured frames)
-- Dual-core processor or better
+- Quad-core processor or better (AVX2 support recommended)
 
 **Software Dependencies**:
 
@@ -75,7 +75,7 @@ For Frontend (Web Interface):
 **For Standard Use**:
 - 8 GB RAM
 - SSD storage for database
-- Quad-core processor
+- Modern Quad-core processor
 - Single monitor setup
 
 **For Heavy Use** (Multi-monitor, high resolution):
@@ -509,6 +509,15 @@ VITE v5.4.11  ready in 500 ms
 
 Open http://localhost:5173 in your browser.
 
+### System Tray & Background Operation
+Once started, ScreenSearch runs quietly in the background. You can control it via the **System Tray Icon** (Blue/Cyan Activity Pulse) in your Windows taskbar.
+
+**Tray Menu Options**:
+- **Open Interface**: Launches the web dashboard in your default browser.
+- **Quit**: Safely shuts down all services (Capture, OCR, Database, API) and exits the application.
+
+**Note**: Closing the terminal window will also shut down the application if you started it via `cargo run`. For true background operation, you can run the compiled binary directly.
+
 ### Web Interface Overview
 
 #### Header
@@ -588,8 +597,13 @@ Click the "Filter" button to expand filter panel:
 
 ### Timeline View
 
-#### View Modes
+#### Activity Graph
+At the top of the timeline, the **Activity Graph** visualizes your daily screen activity.
+- **Bars**: Represent 10-minute intervals. Taller bars mean more captured frames (higher activity).
+- **Interactive**: Hover over bars to see precise frame counts. Click a bar to check timestamps (future feature: jump to time).
+- **Density**: Helps you quickly spot when you were working intensely vs. taking breaks.
 
+#### View Modes
 **Grid View** (default):
 - Cards in responsive grid layout
 - Best for browsing visually
@@ -737,6 +751,32 @@ Tags help organize and categorize your captures.
 - **Color Coding**: Assign colors by category (e.g., red for urgent)
 - **Consistency**: Use same tag names for similar content
 - **Don't Over-tag**: 3-5 tags per frame is usually sufficient
+
+### AI Reports
+
+Transform your screen history into actionable insights using AI.
+
+#### 1. Configuration
+Navigate to the **Settings Panel > AI** tab:
+-   **Provider**: Choose from OpenAI, Anthropic, Google Gemini, or Ollama (Local).
+-   **API Key**: Enter your key (stored locally).
+-   **Model**: Specify the model identifier (e.g., `gpt-4o`, `claude-3.5-sonnet`, `llama3`).
+
+#### 2. Generating Reports
+1.  Go to the **Intelligence** tab in the main navigation.
+2.  Type a query (e.g., *"Summarize my research on database migration today"*).
+3.  Click **Generate Report**.
+
+#### 3. Understanding Results (RAG)
+ScreenSearch uses **Retrieval Augmented Generation**:
+1.  It searches your screen history for relevant text (using Hybrid Search).
+2.  It sends the relevant context + your query to the AI.
+3.  The AI generates a markdown report.
+
+**Context Info**:
+Check the footer of the report:
+-   `Context: Semantic Search`: High-quality vector matches found.
+-   `Context: Recent Activity`: Fallback used (no specific matches found).
 
 ### Settings Panel
 

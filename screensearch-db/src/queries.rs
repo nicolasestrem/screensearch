@@ -266,6 +266,10 @@ impl DatabaseManager {
         filter: FrameFilter,
         pagination: Pagination,
     ) -> Result<Vec<SearchResult>> {
+        // Escape the query for FTS5 - wrap in double quotes to treat as literal phrase
+        // This prevents numbers and special chars from being misinterpreted
+        let escaped_query = format!("\"{}\"", query.replace("\"", "\"\""));
+        
         let mut sql = String::from(
             r#"
             SELECT
@@ -302,7 +306,7 @@ impl DatabaseManager {
 
         sql.push_str(" ORDER BY ocr_text_fts.rank ASC LIMIT ? OFFSET ?");
 
-        let mut query_builder = sqlx::query(&sql).bind(query);
+        let mut query_builder = sqlx::query(&sql).bind(&escaped_query);
 
         if let Some(start) = filter.start_time {
             query_builder = query_builder.bind(start);
@@ -752,6 +756,135 @@ impl DatabaseManager {
         );
 
         Ok(deleted)
+    }
+
+    // ===== Embedding Operations (RAG) =====
+
+    /// Insert an embedding record (stores metadata and vector blob)
+    pub async fn insert_embedding(&self, embedding: NewEmbedding) -> Result<i64> {
+        // Convert f32 vector to bytes (BLOB)
+        let embedding_blob: Vec<u8> = embedding.embedding
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO embeddings (frame_id, chunk_text, chunk_index, embedding_dim, embedding)
+            VALUES (?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(embedding.frame_id)
+        .bind(&embedding.chunk_text)
+        .bind(embedding.chunk_index)
+        .bind(embedding.embedding.len() as i32)
+        .bind(embedding_blob)
+        .execute(self.pool())
+        .await?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Get embeddings for a frame
+    pub async fn get_embeddings_for_frame(&self, frame_id: i64) -> Result<Vec<EmbeddingRecord>> {
+        let embeddings = sqlx::query_as::<_, EmbeddingRecord>(
+            r#"
+            SELECT id, frame_id, chunk_text, chunk_index, embedding_dim, created_at
+            FROM embeddings
+            WHERE frame_id = ?
+            ORDER BY chunk_index ASC
+            "#,
+        )
+        .bind(frame_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(embeddings)
+    }
+
+    /// Get frames that don't have embeddings yet (for background processing)
+    pub async fn get_frames_without_embeddings(&self, limit: i64) -> Result<Vec<FrameRecord>> {
+        let frames = sqlx::query_as::<_, FrameRecord>(
+            r#"
+            SELECT f.id, f.chunk_id, f.timestamp, f.monitor_index, f.device_name,
+                   f.file_path, f.active_window, f.active_process, f.browser_url,
+                   f.width, f.height, f.offset_index, f.focused, f.created_at
+            FROM frames f
+            LEFT JOIN embeddings e ON f.id = e.frame_id
+            WHERE e.id IS NULL
+            ORDER BY f.id ASC
+            LIMIT ?
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(frames)
+    }
+
+    /// Get embedding status statistics
+    pub async fn get_embedding_status(&self) -> Result<EmbeddingStatus> {
+        let total_frames = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM frames")
+            .fetch_one(self.pool())
+            .await?;
+
+        let frames_with_embeddings = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(DISTINCT frame_id) FROM embeddings"
+        )
+        .fetch_one(self.pool())
+        .await?;
+
+        let enabled = self
+            .get_metadata("embeddings_enabled")
+            .await?
+            .map(|v| v == "true")
+            .unwrap_or(false);
+
+        let model = self
+            .get_metadata("embeddings_model")
+            .await?
+            .unwrap_or_else(|| "all-MiniLM-L6-v2".to_string());
+
+        let last_processed_frame_id = self
+            .get_metadata("embeddings_last_processed_frame_id")
+            .await?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+
+        let coverage_percent = if total_frames > 0 {
+            (frames_with_embeddings as f32 / total_frames as f32) * 100.0
+        } else {
+            0.0
+        };
+
+        Ok(EmbeddingStatus {
+            enabled,
+            model,
+            total_frames,
+            frames_with_embeddings,
+            coverage_percent,
+            last_processed_frame_id,
+        })
+    }
+
+    /// Delete embeddings for a frame
+    pub async fn delete_embeddings_for_frame(&self, frame_id: i64) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM embeddings WHERE frame_id = ?")
+            .bind(frame_id)
+            .execute(self.pool())
+            .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Get total embedding count
+    pub async fn count_embeddings(&self) -> Result<i64> {
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM embeddings")
+            .fetch_one(self.pool())
+            .await?;
+
+        Ok(count)
     }
 }
 
