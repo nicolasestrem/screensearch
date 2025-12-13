@@ -160,13 +160,25 @@ impl EmbeddingEngine {
 
         // 3. Run Inference
         // Lock session for mutable access
-        let session = session_mutex.lock().map_err(|_| EmbeddingError::InferenceError("Failed to acquire session lock".to_string()))?;
+        // We handle potential poisoning by ignoring it and strictly using the session
+        let session = session_mutex.lock().unwrap_or_else(|p| p.into_inner());
         
         let outputs = session
             .run(inputs)
             .map_err(|e| EmbeddingError::InferenceError(format!("Inference failed: {}", e)))?;
 
         // 4. Mean Pooling & Normalization
+        self.mean_pooling(outputs, batch_size, seq_len, &attention_mask_array)
+    }
+
+    /// Perform mean pooling and normalization on model output
+    fn mean_pooling(
+        &self,
+        outputs: ort::SessionOutputs,
+        batch_size: usize,
+        seq_len: usize,
+        mask: &Array2<i64>,
+    ) -> Result<Vec<Vec<f32>>> {
         // Output usually "last_hidden_state" (batch, seq, hidden_size)
         // Or if simple model, maybe just "last_hidden_state"
         let output_tensor = outputs.get("last_hidden_state").ok_or_else(|| {
@@ -188,9 +200,6 @@ impl EmbeddingEngine {
         
         // Manual Mean Pooling
         let mut final_embeddings = Vec::with_capacity(batch_size);
-        
-        // We use the attention mask to average only real tokens
-        let mask = attention_mask_array; // (batch, seq)
         
         // Iterate over batch
         for i in 0..batch_size {

@@ -12,7 +12,7 @@ interface DailyActivityResponse {
         offset: number;
     };
 };
-}
+
 
 /**
  * Hook to fetch daily activity stats for the timeline graph.

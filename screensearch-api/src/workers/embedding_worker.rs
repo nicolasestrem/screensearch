@@ -88,19 +88,55 @@ impl EmbeddingWorker {
             let chunks = self.chunker.chunk_text(&combined_text);
 
             // Generate embeddings for each chunk
+            // Start a transaction for this frame's embeddings
+            // This ensures we don't have partial embeddings if something fails
+            let mut tx = self.db.pool().begin().await.map_err(|e| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to start transaction: {}", e),
+                )) as Box<dyn std::error::Error + Send + Sync>
+            })?;
+
+            // Generate embeddings for each chunk
             for (chunk_index, chunk_text) in chunks.iter().enumerate() {
+                // Generate embedding
                 let embedding = self.engine.embed(chunk_text)?;
 
-                // Insert embedding record
-                let new_embedding = screensearch_db::NewEmbedding {
-                    frame_id: frame.id,
-                    chunk_text: chunk_text.clone(),
-                    chunk_index: chunk_index as i32,
-                    embedding,
-                };
+                // Convert Vec<f32> to Vec<u8> (little-endian bytes) for BLOB storage
+                let embedding_bytes: Vec<u8> = embedding
+                    .iter()
+                    .flat_map(|f| f.to_le_bytes())
+                    .collect();
 
-                self.db.insert_embedding(new_embedding).await?;
+                // Insert into DB using the transaction
+                sqlx::query(
+                    r#"
+                    INSERT INTO embeddings (frame_id, chunk_text, chunk_index, embedding, embedding_dim)
+                    VALUES (?, ?, ?, ?, ?)
+                    "#
+                )
+                .bind(frame.id)
+                .bind(chunk_text)
+                .bind(chunk_index as i32)
+                .bind(embedding_bytes)
+                .bind(384) // Dimension
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| {
+                   Box::new(std::io::Error::new(
+                       std::io::ErrorKind::Other,
+                       format!("Failed to insert embedding: {}", e),
+                   )) as Box<dyn std::error::Error + Send + Sync>
+                })?;
             }
+            
+            // Commit transaction
+            tx.commit().await.map_err(|e| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to commit transaction: {}", e),
+                )) as Box<dyn std::error::Error + Send + Sync>
+            })?;
 
             processed += 1;
 

@@ -7,6 +7,7 @@
 
 use crate::{DatabaseManager, FrameRecord, Result, SemanticResult};
 use std::collections::HashMap;
+use chrono::{DateTime, Utc};
 
 /// Vector index for fast similarity search
 pub struct VectorIndex {
@@ -118,23 +119,30 @@ impl DatabaseManager {
     ///
     /// Fetches all embeddings, computes similarity in Rust, and returns top results.
     /// This avoids dependency on sqlite-vec extension availability.
+    /// Perform semantic search using in-memory vector similarity
+    ///
+    /// Fetches all embeddings within the time range, computes similarity in Rust, and returns top results.
+    /// This avoids dependency on sqlite-vec extension availability.
     pub async fn semantic_search(
         &self,
         query_embedding: Vec<f32>,
         limit: i64,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
     ) -> Result<Vec<SemanticResult>> {
-        // 1. Fetch all embeddings from DB
+        // 1. Fetch embeddings from DB within time range
         // We only fetch ID and Vector to save bandwidth, then fetch details for top K
-        // Column 'embedding' is assumed to be BLOB of f32 le_bytes or JSON.
-        // Based on zerocopy/NewEmbedding, likely BLOB.
-        // We cast BLOB to Vec<f32>.
-        // Note: We access pool via public method to avoid privacy error.
+        // Column 'embedding' is assumed to be BLOB of f32 le_bytes.
         let rows = sqlx::query(
             r#"
-            SELECT frame_id, chunk_text, chunk_index, embedding, embedding_dim 
-            FROM embeddings
+            SELECT e.frame_id, e.chunk_text, e.chunk_index, e.embedding, e.embedding_dim 
+            FROM embeddings e
+            JOIN frames f ON e.frame_id = f.id
+            WHERE f.timestamp >= ? AND f.timestamp <= ?
             "#
         )
+        .bind(start_time)
+        .bind(end_time)
         .fetch_all(self.pool())
         .await
         .map_err(|e| crate::DatabaseError::QueryError(format!("Failed to fetch embeddings: {}", e)))?;
@@ -151,16 +159,25 @@ impl DatabaseManager {
             let chunk_text: String = row.get("chunk_text");
             let chunk_index: i32 = row.get("chunk_index");
             let embedding_blob: Vec<u8> = row.get("embedding");
+            // Although we don't strictly use embedding_dim for parsing, we can check it
+            let dim: i32 = row.get("embedding_dim");
+
+            // Basic validation
+            let expected_bytes = (dim as usize) * 4;
+            if embedding_blob.len() != expected_bytes {
+                // Skip malformed
+                continue;
+            }
 
             // Convert raw bytes to Vec<f32>
             // Assuming little-endian f32
             let vector: Vec<f32> = embedding_blob
                 .chunks_exact(4)
                 .map(|chunk| {
-                    chunk.try_into()
-                        .ok()
-                        .map(f32::from_le_bytes)
-                        .unwrap_or(0.0)
+                    match chunk.try_into() {
+                         Ok(bytes) => f32::from_le_bytes(bytes),
+                         Err(_) => 0.0, // Should be unreachable with chunks_exact(4)
+                    }
                 })
                 .collect();
 
@@ -175,24 +192,30 @@ impl DatabaseManager {
         let top_k = candidates.iter().take(limit as usize).collect::<Vec<_>>();
         
         if top_k.is_empty() {
+            // Early return if no candidates
             return Ok(Vec::new());
         }
 
         // 4. Fetch Frame Metadata for Top K
-        // We need to fetch details for each frame.
-        // To be efficient, valid SQL: WHERE id IN (...)
+        // We use chunking to prevent SQLite variable limit issues if batch is large
         let frame_ids: Vec<i64> = top_k.iter().map(|(id, ..)| *id).collect();
-        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM frames WHERE id IN (");
-        let mut separated = query_builder.separated(", ");
-        for id in frame_ids {
-            separated.push_bind(id);
+        let mut frames: Vec<FrameRecord> = Vec::with_capacity(frame_ids.len());
+        
+        for chunk in frame_ids.chunks(100) {
+            let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM frames WHERE id IN (");
+            let mut separated = query_builder.separated(", ");
+            for id in chunk {
+                separated.push_bind(id);
+            }
+            separated.push_unseparated(")");
+            
+            let chunk_frames: Vec<FrameRecord> = query_builder.build_query_as()
+                .fetch_all(self.pool())
+                .await
+                .map_err(|e| crate::DatabaseError::QueryError(format!("Failed to fetch frame details: {}", e)))?;
+                
+            frames.extend(chunk_frames);
         }
-        separated.push_unseparated(")");
-
-        let frames: Vec<FrameRecord> = query_builder.build_query_as()
-            .fetch_all(self.pool())
-            .await
-            .map_err(|e| crate::DatabaseError::QueryError(format!("Failed to fetch frame details: {}", e)))?;
 
         // 5. Build Result Map
         let frame_map: HashMap<i64, FrameRecord> = frames.into_iter().map(|f| (f.id, f)).collect();
@@ -219,9 +242,11 @@ impl DatabaseManager {
         query_embedding: Vec<f32>,
         alpha: f32,
         limit: i64,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
     ) -> Result<Vec<SemanticResult>> {
         // 1. Get Vector Results (Semantic) via in-memory search
-        let semantic_results = match self.semantic_search(query_embedding, limit).await {
+        let semantic_results = match self.semantic_search(query_embedding, limit, start_time, end_time).await {
             Ok(res) => res,
             Err(e) => {
                 tracing::error!("Semantic search failed: {}", e);

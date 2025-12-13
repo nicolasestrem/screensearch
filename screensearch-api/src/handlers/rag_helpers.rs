@@ -7,6 +7,11 @@ use screensearch_db::{FrameFilter, Pagination};
 use std::sync::Arc;
 use tracing::{info, warn, error};
 
+/// Weight for semantic results in hybrid search (0.0 to 1.0)
+const SEMANTIC_WEIGHT: f32 = 0.3;
+/// Maximum number of results to fetch for RAG context
+const MAX_RAG_RESULTS: i64 = 50;
+
 /// Build context for LLM using RAG-enhanced retrieval
 pub async fn build_rag_context(
     state: &Arc<AppState>,
@@ -49,7 +54,14 @@ async fn build_rag_enhanced_context(
     // Perform hybrid search combining FTS5 and vector similarity
     let search_result = state
         .db
-        .hybrid_search(user_query, query_embedding, 0.3, 50)
+        .hybrid_search(
+            user_query, 
+            query_embedding, 
+            SEMANTIC_WEIGHT, 
+            MAX_RAG_RESULTS,
+            start_time,
+            end_time
+        )
         .await;
 
     let mut relevant_results = match search_result {
@@ -62,20 +74,9 @@ async fn build_rag_enhanced_context(
             vec![]
         }
     };
-
-    // Filter by time window (post-retrieval filtering)
-    // TODO: Move this into the SQL query for better efficiency
-    let initial_count = relevant_results.len();
-    relevant_results.retain(|r| {
-        r.frame.timestamp >= start_time && r.frame.timestamp <= end_time
-    });
     
-    if relevant_results.len() < initial_count {
-        info!("Filtered {} results outside time window. Remaining: {}", 
-            initial_count - relevant_results.len(), 
-            relevant_results.len()
-        );
-    }
+    // Note: Time filtering is now done in the SQL query within hybrid_search/semantic_search
+    // so we don't need to filter here.
     
     if relevant_results.is_empty() {
         warn!("No relevant results found after filtering. Context will be empty.");

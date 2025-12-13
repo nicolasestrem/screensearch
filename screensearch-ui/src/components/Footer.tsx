@@ -32,7 +32,7 @@ export function Footer() {
                 </div>
 
                 <div className="flex items-center text-[10px] text-muted-foreground/60">
-                    <span>ScreenSearch v0.1.0</span>
+                    <span>ScreenSearch v0.2.0</span>
                 </div>
             </div>
         </footer>
