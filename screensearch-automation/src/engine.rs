@@ -28,6 +28,7 @@ impl AutomationEngine {
     /// # Errors
     ///
     /// Returns an error if the UIAutomation COM interface cannot be initialized.
+    #[allow(clippy::arc_with_non_send_sync)]
     pub fn new() -> Result<Self, AutomationError> {
         let automation = UIAutomation::new().map_err(|e| {
             AutomationError::platform(format!("Failed to initialize UIAutomation: {}", e))

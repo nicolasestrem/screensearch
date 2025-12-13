@@ -112,12 +112,12 @@ impl fmt::Display for Selector {
 impl From<&str> for Selector {
     fn from(s: &str) -> Self {
         // Parse string into selector
-        if s.starts_with('#') {
-            Selector::Id(s[1..].to_string())
-        } else if s.starts_with("text:") {
-            Selector::Text(s[5..].to_string())
-        } else if s.starts_with("name:") {
-            Selector::Name(s[5..].to_string())
+        if let Some(stripped) = s.strip_prefix('#') {
+            Selector::Id(stripped.to_string())
+        } else if let Some(stripped) = s.strip_prefix("text:") {
+            Selector::Text(stripped.to_string())
+        } else if let Some(stripped) = s.strip_prefix("name:") {
+            Selector::Name(stripped.to_string())
         } else if s.contains(':') {
             // Parse role:name format
             let parts: Vec<&str> = s.splitn(2, ':').collect();

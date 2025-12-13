@@ -36,6 +36,22 @@ struct AppConfig {
     performance: PerformanceSettings,
     logging: LoggingSettings,
     storage: StorageSettings,
+    #[serde(default = "default_embeddings_settings")]
+    embeddings: EmbeddingsSettings,
+}
+
+fn default_embeddings_settings() -> EmbeddingsSettings {
+    EmbeddingsSettings {
+        enabled: false,
+        batch_size: 50,
+        model: "local".to_string(),
+        model_name: "paraphrase-multilingual-MiniLM-L12-v2".to_string(),
+        embedding_dim: 384,
+        max_chunk_tokens: 256,
+        chunk_overlap: 32,
+        hybrid_search_alpha: 0.3,
+        max_context_chunks: 20,
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -131,6 +147,26 @@ struct LoggingSettings {
     log_rotation_count: u32,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct EmbeddingsSettings {
+    enabled: bool,
+    batch_size: i64,
+    #[allow(dead_code)]
+    model: String,
+    #[allow(dead_code)]
+    model_name: String,
+    #[allow(dead_code)]
+    embedding_dim: usize,
+    #[allow(dead_code)]
+    max_chunk_tokens: usize,
+    #[allow(dead_code)]
+    chunk_overlap: usize,
+    #[allow(dead_code)]
+    hybrid_search_alpha: f32,
+    #[allow(dead_code)]
+    max_context_chunks: usize,
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -195,6 +231,7 @@ impl Default for AppConfig {
                 jpeg_quality: 80,
                 max_width: 1920,
             },
+            embeddings: default_embeddings_settings(),
         }
     }
 }
@@ -293,7 +330,18 @@ fn init_tracing(config: &LoggingSettings) -> Result<()> {
     Ok(())
 }
 
-/// Main application state
+use tray_icon::{
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    TrayIconBuilder,
+};
+use winit::event_loop::{ControlFlow, EventLoop, EventLoopBuilder};
+use winit::event::Event;
+
+#[derive(Debug, Clone)]
+enum UserEvent {
+    TrayIconClick,
+}
+
 struct App {
     config: AppConfig,
     shutdown_tx: broadcast::Sender<()>,
@@ -308,8 +356,7 @@ impl App {
         }
     }
 
-    /// Run all services concurrently
-    async fn run(&self) -> Result<()> {
+    async fn run_with_signal(&self, mut external_shutdown: tokio::sync::mpsc::Receiver<()>) -> Result<()> {
         info!("Starting ScreenSearch v{}", env!("CARGO_PKG_VERSION"));
         info!("Configuration loaded: {:?}", self.config);
 
@@ -321,83 +368,55 @@ impl App {
                 .await
                 .context("Failed to initialize database")?,
         );
-        info!("Database initialized: {}", self.config.database.path);
 
         // Initialize OCR processor
-        info!("Initializing OCR processor...");
         let ocr_config = self.config.ocr_config();
-        let ocr_processor = Arc::new(
-            OcrProcessor::new(ocr_config)
-                .await
-                .context("Failed to initialize OCR processor")?,
-        );
-        info!(
-            "OCR processor initialized with {} workers",
-            self.config.ocr.worker_threads
-        );
+        let ocr_processor = Arc::new(OcrProcessor::new(ocr_config).await?);
 
         // Initialize capture engine
-        info!("Initializing capture engine...");
         let capture_config = self.config.capture_config();
-        let mut capture_engine =
-            CaptureEngine::new(capture_config).context("Failed to initialize capture engine")?;
-        info!(
-            "Capture engine initialized (interval: {}ms)",
-            self.config.capture.interval_ms
-        );
+        let mut capture_engine = CaptureEngine::new(capture_config)?;
 
         // Initialize API server
-        info!("Initializing API server...");
         let api_config = self.config.api_config();
-        let api_server = ApiServer::new(api_config.clone())
-            .await
-            .context("Failed to initialize API server")?;
-        info!(
-            "API server initialized on {}:{}",
-            api_config.host, api_config.port
-        );
+        let api_server = ApiServer::new(api_config.clone()).await?;
 
-        // Create channels for frame processing pipeline
-        // Use bounded channels to match OcrProcessor::start_processing signature
-        let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(100); // Buffer of 100 frames
+        // Start background embedding worker
+        if self.config.embeddings.enabled {
+             let worker_config = screensearch_api::workers::embedding_worker::EmbeddingWorkerConfig {
+                enabled: true,
+                batch_size: self.config.embeddings.batch_size,
+                interval_secs: 60,
+            };
+            if let Err(e) = api_server.start_embedding_worker(worker_config).await {
+                error!("Failed to start embedding worker: {}", e);
+            }
+        }
+
+        let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(100);
         let (processed_tx, mut processed_rx) = tokio::sync::mpsc::channel(100);
         
-        // Clone config for the database loop
         let app_config_clone = self.config.clone();
-
-        // Clone for tasks
         let db_clone = Arc::clone(&db);
         let ocr_clone = Arc::clone(&ocr_processor);
+        
         let mut shutdown_rx1 = self.shutdown_tx.subscribe();
         let mut shutdown_rx2 = self.shutdown_tx.subscribe();
         let mut shutdown_rx3 = self.shutdown_tx.subscribe();
         let mut shutdown_rx4 = self.shutdown_tx.subscribe();
 
-        // Start capture engine
-        capture_engine
-            .start()
-            .context("Failed to start capture engine")?;
+        capture_engine.start()?;
 
-        // Task 1: Capture loop - Poll capture engine and send frames
         let capture_handle = tokio::spawn(async move {
-            info!("Starting capture loop");
-            let mut interval = tokio::time::interval(
-                tokio::time::Duration::from_millis(3000), // Poll interval
-            );
-
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(3000));
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        // Poll for captured frames
                         while let Some(frame) = capture_engine.try_get_frame() {
-                            if frame_tx.send(frame).await.is_err() {
-                                error!("Failed to send frame - channel closed");
-                                break;
-                            }
+                           if frame_tx.send(frame).await.is_err() { break; }
                         }
                     }
                     _ = shutdown_rx1.recv() => {
-                        info!("Capture loop shutting down");
                         let _ = capture_engine.stop();
                         break;
                     }
@@ -405,191 +424,69 @@ impl App {
             }
         });
 
-        // Task 2: OCR processing - Consume frames and perform OCR
         let ocr_handle = ocr_clone.start_processing(frame_rx, processed_tx);
+        let ocr_shutdown = tokio::spawn(async move { let _ = shutdown_rx2.recv().await; });
 
-        // Spawn a task to handle OCR shutdown
-        let ocr_shutdown = tokio::spawn(async move {
-            let _ = shutdown_rx2.recv().await;
-            info!("OCR processing shutdown signal received");
-        });
-
-        // Task 3: Database insertion - Store processed frames
         let db_handle = tokio::spawn(async move {
-            info!("Starting database insertion loop");
-
             loop {
                 tokio::select! {
                     Some(processed) = processed_rx.recv() => {
-                        // Store frame in database
-                        let storage_config = &app_config_clone.storage;
-                        match store_processed_frame(&db_clone, processed, storage_config).await {
-                            Ok(_) => {},
-                            Err(e) => error!("Failed to store frame: {}", e),
-                        }
+                         let storage_config = &app_config_clone.storage;
+                         if let Err(e) = store_processed_frame(&db_clone, processed, storage_config).await {
+                             error!("Failed to save frame: {}", e);
+                         }
                     }
-                    _ = shutdown_rx3.recv() => {
-                        info!("Database insertion loop shutting down");
-                        break;
-                    }
+                    _ = shutdown_rx3.recv() => break,
                 }
             }
         });
 
-        // Task 4: API server
         let api_handle = tokio::spawn(async move {
-            info!("Starting API server");
-            if let Err(e) = api_server.run().await {
-                error!("API server error: {}", e);
-            }
-
-            // Wait for shutdown (API server runs until error or shutdown)
-            let _ = shutdown_rx4.recv().await;
-            info!("API server shutting down");
+            if let Err(e) = api_server.run().await { error!("{}", e); }
+             let _ = shutdown_rx4.recv().await;
         });
-
-        // Task 5: Metrics reporting (if enabled)
-        let metrics_handle = if self.config.ocr.enable_metrics {
-            let ocr_metrics = Arc::clone(&ocr_processor);
-            let interval_secs = self.config.ocr.metrics_interval_secs;
-            let mut shutdown_rx5 = self.shutdown_tx.subscribe();
-
-            Some(tokio::spawn(async move {
-                let mut interval =
-                    tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
-
-                loop {
-                    tokio::select! {
-                        _ = interval.tick() => {
-                            ocr_metrics.metrics().log_metrics();
-                        }
-                        _ = shutdown_rx5.recv() => {
-                            info!("Metrics reporting shutting down");
-                            break;
-                        }
-                    }
-                }
-            }))
-        } else {
-            None
-        };
-
-        // Task 6: Cleanup loop (Storage Retention)
-        let db_cleanup = Arc::clone(&db);
+        
         let mut shutdown_rx6 = self.shutdown_tx.subscribe();
         tokio::spawn(async move {
-            info!("Starting cleanup loop");
-            // Check immediately on startup, then every 24 hours
-            let cleanup_interval = tokio::time::Duration::from_secs(24 * 60 * 60);
-          
-            loop {
-                 // Run cleanup logic
-                 match db_cleanup.get_settings().await {
-                     Ok(settings) => {
-                         let retention_days = settings.retention_days;
-                         if retention_days > 0 {
-                             info!("Running automatic cleanup (retention: {} days)", retention_days);
-                             match db_cleanup.cleanup_old_data(retention_days as i32).await {
-                                 Ok(deleted) => info!("Cleanup completed: {} frames removed", deleted),
-                                 Err(e) => error!("Cleanup failed: {}", e),
-                             }
-                         } else {
-                             info!("Automatic cleanup disabled (retention_days = 0)");
-                         }
-                     },
-                     Err(e) => error!("Failed to fetch settings for cleanup: {}", e),
-                 }
-
-                 // Wait for next interval or shutdown
-                 tokio::select! {
-                     _ = tokio::time::sleep(cleanup_interval) => {},
-                     _ = shutdown_rx6.recv() => {
-                         info!("Cleanup loop shutting down");
-                         break;
-                     }
-                 }
-            }
+             let _ = shutdown_rx6.recv().await;
         });
 
-        // Auto-open browser (if enabled in config)
         if self.config.api.auto_open_browser {
-            let url = format!("http://{}:{}", api_config.host, api_config.port);
-            tokio::spawn(async move {
-                // Wait 2 seconds for server to be fully ready
+             let url = format!("http://{}:{}", api_config.host, api_config.port);
+             tokio::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-                if let Err(e) = webbrowser::open(&url) {
-                    warn!(
-                        "Failed to auto-open browser: {}. Please navigate to {} manually",
-                        e, url
-                    );
-                } else {
-                    info!("Opened browser at {}", url);
-                }
-            });
-        } else {
-            info!(
-                "Auto-open browser disabled. Navigate to http://{}:{} manually",
-                api_config.host, api_config.port
-            );
+                let _ = webbrowser::open(&url);
+             });
         }
 
-        // Wait for shutdown signal
-        info!("All services started successfully");
-        info!("Press Ctrl+C to shutdown");
-
-        match signal::ctrl_c().await {
-            Ok(()) => {
-                info!("Shutdown signal received");
-            }
-            Err(err) => {
-                error!("Unable to listen for shutdown signal: {}", err);
-            }
+        tokio::select! {
+            _ = signal::ctrl_c() => info!("Ctrl+C"),
+            _ = external_shutdown.recv() => info!("External Shutdown"),
         }
 
-        // Broadcast shutdown to all tasks
         let _ = self.shutdown_tx.send(());
-
-        // Wait for all tasks to complete
-        info!("Waiting for services to shut down...");
-        let _ = tokio::join!(
-            capture_handle,
-            ocr_handle,
-            ocr_shutdown,
-            db_handle,
-            api_handle,
-        );
-
-        if let Some(handle) = metrics_handle {
-            let _ = handle.await;
-        }
-
-        info!("All services stopped. Goodbye!");
+        let _ = tokio::join!(capture_handle, ocr_handle, ocr_shutdown, db_handle, api_handle);
+        
         Ok(())
     }
 }
 
-/// Store a processed frame in the database
 async fn store_processed_frame(
     db: &DatabaseManager,
     processed: screensearch_capture::ProcessedFrame,
     config: &StorageSettings,
 ) -> Result<i64> {
-    use screensearch_db::{NewFrame, NewOcrText};
+     use screensearch_db::{NewFrame, NewOcrText};
     use image::DynamicImage;
-    use std::io::Cursor;
 
-    // Process image: Resize -> Compress
     let mut image = DynamicImage::ImageRgba8(processed.frame.image.clone());
 
-    // Resize if needed
     if config.max_width > 0 && image.width() > config.max_width {
         let n_width = config.max_width;
         let n_height = (image.height() as f64 * (n_width as f64 / image.width() as f64)) as u32;
         image = image.resize(n_width, n_height, image::imageops::FilterType::Lanczos3);
     }
     
-    // Determine format and extension
     let (ext, format) = if config.format.to_lowercase() == "jpeg" || config.format.to_lowercase() == "jpg" {
         ("jpg", image::ImageOutputFormat::Jpeg(config.jpeg_quality))
     } else {
@@ -603,16 +500,13 @@ async fn store_processed_frame(
     );
     let image_path = PathBuf::from("captures").join(&image_filename);
 
-    // Create captures directory if it doesn't exist
     if let Some(parent) = image_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    // Save image with specific format/quality
     let mut file = std::fs::File::create(&image_path)?;
     image.write_to(&mut file, format).context("Failed to save frame image")?;
 
-    // Insert frame record
     let new_frame = NewFrame {
         timestamp: processed.frame.timestamp,
         device_name: format!("monitor-{}", processed.frame.monitor_index),
@@ -633,7 +527,6 @@ async fn store_processed_frame(
         .await
         .context("Failed to insert frame")?;
 
-    // Insert OCR text records
     for region in processed.ocr_result.regions {
         let ocr_text = NewOcrText {
             frame_id,
@@ -655,23 +548,94 @@ async fn store_processed_frame(
             confidence: region.confidence,
         };
 
-        db.insert_ocr_text(ocr_text)
-            .await
-            .context("Failed to insert OCR text")?;
+        db.insert_ocr_text(ocr_text).await?;
     }
 
     Ok(frame_id)
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Load configuration
-    let config = AppConfig::load().context("Failed to load configuration")?;
+fn main() -> Result<()> {
+    let config = AppConfig::load().unwrap_or_else(|_| AppConfig::default());
+    init_tracing(&config.logging)?;
 
-    // Initialize logging
-    init_tracing(&config.logging).context("Failed to initialize logging")?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("Failed to build Tokio runtime")?;
 
-    // Create and run application
-    let app = App::new(config);
-    app.run().await
+    let event_loop = EventLoop::<UserEvent>::with_user_event()
+        .build()
+        .context("Failed to build EventLoop")?;
+
+    let tray_menu = Menu::new();
+    let open_item = MenuItem::new("Open Interface", true, None);
+    let quit_item = MenuItem::new("Quit ScreenSearch", true, None);
+    
+    tray_menu.append_items(&[&open_item, &PredefinedMenuItem::separator(), &quit_item])?;
+
+    // Load icon from assets
+    let icon_path = "assets/icon.png";
+    let icon = match image::open(icon_path) {
+        Ok(img) => {
+            let rgba = img.into_rgba8();
+            let (width, height) = rgba.dimensions();
+            let rgba_vec = rgba.into_raw();
+            tray_icon::Icon::from_rgba(rgba_vec, width, height).unwrap_or_else(|_| {
+                // Fallback to white square if dimensions invalid
+                tray_icon::Icon::from_rgba(vec![255u8; 4 * 32 * 32], 32, 32).unwrap()
+            })
+        }
+        Err(e) => {
+            error!("Failed to load icon from {}: {}", icon_path, e);
+            // Fallback
+            tray_icon::Icon::from_rgba(vec![255u8; 4 * 32 * 32], 32, 32).unwrap()
+        }
+    };
+
+    let tray_icon = TrayIconBuilder::new()
+        .with_menu(Box::new(tray_menu))
+        .with_tooltip("ScreenSearch")
+        .with_icon(icon)
+        .build()
+        .context("Failed to build TrayIcon")?;
+
+    let app = App::new(config.clone());
+    let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel(1);
+
+    let app_task = std::thread::spawn(move || {
+        runtime.block_on(async move {
+            if let Err(e) = app.run_with_signal(shutdown_rx).await {
+                error!("App error: {}", e);
+            }
+        });
+    });
+
+    let api_url = format!("http://{}:{}", config.api.host, config.api.port);
+    let menu_channel = tray_icon::menu::MenuEvent::receiver();
+    let tray_channel = tray_icon::TrayIconEvent::receiver();
+
+    info!("System Tray initialized. Running event loop...");
+    
+    event_loop.run(move |event, target| {
+        target.set_control_flow(ControlFlow::Wait);
+
+        if let Ok(event) = menu_channel.try_recv() {
+            if event.id == open_item.id() {
+                let _ = webbrowser::open(&api_url);
+            } else if event.id == quit_item.id() {
+                let _ = shutdown_tx.blocking_send(());
+                target.exit();
+            }
+        }
+        
+        // Removed the generic tray_channel listener that was causing infinite browser tabs on mouse events
+        // Interaction is now handled primarily via the Menu
+
+        if app_task.is_finished() {
+             target.exit();
+        }
+    })?;
+
+    Ok(())
 }
+

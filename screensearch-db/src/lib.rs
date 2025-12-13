@@ -56,11 +56,13 @@ pub mod db;
 pub mod migrations;
 pub mod models;
 pub mod queries;
+pub mod vector_search;
 
 pub use db::DatabaseManager;
 pub use models::{
-    FrameFilter, FrameRecord, FrameTagRecord, FrameWithTags, FtsOcrResult, NewFrame, NewOcrText,
-    NewTag, NewVideoChunk, OcrTextRecord, Pagination, SearchResult, SettingsRecord, TagRecord,
+    EmbeddingRecord, EmbeddingStatus, FrameFilter, FrameRecord, FrameTagRecord, FrameWithTags,
+    FtsOcrResult, HybridResult, NewEmbedding, NewFrame, NewOcrText, NewTag, NewVideoChunk,
+    OcrTextRecord, Pagination, SearchResult, SemanticResult, SettingsRecord, TagRecord,
     UpdateSettings, VideoChunkRecord,
 };
 pub use queries::DatabaseStatistics;

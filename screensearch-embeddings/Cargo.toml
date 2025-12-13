@@ -1,0 +1,48 @@
+[package]
+name = "screensearch-embeddings"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Local ML embedding generation for ScreenSearch RAG"
+
+[dependencies]
+# ONNX Runtime for local model inference
+ort = { version = "=2.0.0-rc.0", default-features = false, features = ["load-dynamic", "ndarray"] }
+
+# Tokenization (HuggingFace tokenizers)
+tokenizers = "0.21"
+
+# Force ort-sys version to match ort
+ort-sys = { version = "=2.0.0-rc.0" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Error handling  
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Serialization for config
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# ndarray for tensor operations
+ndarray = "0.15"
+
+# HTTP client for model download
+reqwest = { version = "0.11", features = ["json"] }
+
+# Platform-specific directories
+dirs = "5.0"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+
+[lib]
+name = "screensearch_embeddings"
+path = "src/lib.rs"

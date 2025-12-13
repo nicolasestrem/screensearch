@@ -9,7 +9,7 @@ export function IntelligencePage() {
                     Intelligence
                 </h1>
                 <p className="text-muted-foreground">
-                    Generate insights and summaries from your screen memory using AI.
+                    Generate insights and summaries from your ScreenSearch data using AI.
                 </p>
             </div>
 

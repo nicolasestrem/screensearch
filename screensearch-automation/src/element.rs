@@ -16,6 +16,10 @@ use uiautomation::{filters::*, inputs::*, patterns, UIAutomation};
 #[derive(Clone)]
 pub(crate) struct ThreadSafeAutomation(pub Arc<UIAutomation>);
 
+// SAFETY: UIAutomation COM objects are generally thread-safe (MTA) or marshaled correctly by Windows.
+// We wrap it in Arc to share across threads. If the underlying COM object is not thread-safe,
+// this could lead to undefined behavior, but for standard UIAutomation usage this is required
+// to share the automation root across worker threads.
 unsafe impl Send for ThreadSafeAutomation {}
 unsafe impl Sync for ThreadSafeAutomation {}
 
@@ -23,6 +27,9 @@ unsafe impl Sync for ThreadSafeAutomation {}
 #[derive(Clone)]
 pub(crate) struct ThreadSafeElement(pub Arc<uiautomation::UIElement>);
 
+// SAFETY: UIElement COM objects are generally thread-safe (MTA) or marshaled correctly by Windows.
+// We wrap it in Arc to share across threads. Accessing methods on these elements from multiple
+// threads is generally safe via COM marshaling.
 unsafe impl Send for ThreadSafeElement {}
 unsafe impl Sync for ThreadSafeElement {}
 
@@ -70,6 +77,7 @@ impl fmt::Debug for UIElement {
 
 impl UIElement {
     /// Create a new UIElement from raw UIAutomation types
+    #[allow(clippy::arc_with_non_send_sync)]
     pub(crate) fn new(element: uiautomation::UIElement, automation: &ThreadSafeAutomation) -> Self {
         Self {
             element: ThreadSafeElement(Arc::new(element)),

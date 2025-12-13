@@ -206,3 +206,58 @@ impl Default for Pagination {
         }
     }
 }
+
+// ============================================================
+// Embedding Models for Semantic Search (RAG)
+// ============================================================
+
+/// Embedding record - stored embedding for a text chunk
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct EmbeddingRecord {
+    pub id: i64,
+    pub frame_id: i64,
+    pub chunk_text: String,
+    pub chunk_index: i32,
+    pub embedding_dim: i32,
+    pub created_at: DateTime<Utc>,
+}
+
+/// New embedding input
+#[derive(Debug, Clone)]
+pub struct NewEmbedding {
+    pub frame_id: i64,
+    pub chunk_text: String,
+    pub chunk_index: i32,
+    pub embedding: Vec<f32>,
+}
+
+/// Semantic search result with similarity score
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticResult {
+    pub frame: FrameRecord,
+    pub chunk_text: String,
+    pub chunk_index: i32,
+    pub similarity_score: f32,
+}
+
+/// Hybrid search result combining FTS5 and vector scores
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HybridResult {
+    pub frame: FrameRecord,
+    pub chunk_text: String,
+    pub fts_score: f32,
+    pub vector_score: f32,
+    pub combined_score: f32,
+}
+
+/// Embedding status for tracking generation progress
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingStatus {
+    pub enabled: bool,
+    pub model: String,
+    pub total_frames: i64,
+    pub frames_with_embeddings: i64,
+    pub coverage_percent: f32,
+    pub last_processed_frame_id: i64,
+}
+

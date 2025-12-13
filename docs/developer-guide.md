@@ -1,7 +1,7 @@
 # Screen Memory Developer Guide
 
-**Version:** 0.1.0
-**Last Updated:** 2025-12-11
+**Version:** 0.2.0
+**Last Updated:** 2025-12-13
 
 ## Table of Contents
 

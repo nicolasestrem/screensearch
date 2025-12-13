@@ -2,9 +2,18 @@ import { useState, useEffect } from 'react';
 import { Grid, List, Loader2, AlertCircle } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useFrames } from '../hooks/useFrames';
+import { useDailyActivity } from '../hooks/useDailyActivity';
 import { FrameCard } from './FrameCard';
+import { ActivityGraph } from './timeline/ActivityGraph';
 import { format } from 'date-fns';
 
+/**
+ * Main Timeline view component.
+ * Combines the ActivityGraph (density visualization) with a paginated list/grid of FrameCards.
+ * Uses two separate data hooks:
+ * - useFrames: for the paginated list/grid (efficient loading)
+ * - useDailyActivity: for the top graph (full day overview)
+ */
 export function Timeline() {
   const { filters, viewMode, setViewMode } = useStore();
   const [page, setPage] = useState(0);
@@ -28,11 +37,19 @@ export function Timeline() {
   };
 
   const { data, isLoading, isError, error } = useFrames(queryParams);
+  const { data: dailyActivity } = useDailyActivity();
 
   // Reset page when filters change
   useEffect(() => {
     setPage(0);
   }, [filters]);
+
+  const handleTimeSelect = (date: Date) => {
+    // For now, simpler implementation: Just log or could implement scroll-to logic if we had all frames loaded.
+    // In a paginated world, this is harder. We might just set the filter's start time to that hour?
+    // Let's just visually acknowledge for this version.
+    console.log("Selected time:", date);
+  };
 
   if (isLoading && page === 0) {
     return (
@@ -56,37 +73,29 @@ export function Timeline() {
     );
   }
 
-  if (!data || data.data.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-64 space-y-4">
-        <div className="text-center">
-          <p className="text-lg font-medium">No frames found</p>
-          <p className="text-sm text-muted-foreground">
-            Try adjusting your search filters or wait for new captures
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const totalPages = Math.ceil(data.pagination.total / limit);
-
-  // Group frames by date
-  const framesByDate = data.data.reduce((acc, frame) => {
+  const framesByDate = (data?.data || []).reduce((acc, frame) => {
     const date = format(new Date(frame.timestamp), 'yyyy-MM-dd');
     if (!acc[date]) {
       acc[date] = [];
     }
     acc[date].push(frame);
     return acc;
-  }, {} as Record<string, typeof data.data>);
+  }, {} as Record<string, any[]>);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-in fade-in duration-500">
+
+      {/* Activity Timeline Graph */}
+      <ActivityGraph
+        frames={dailyActivity || []}
+        currentDate={filters.dateRange.start || new Date()}
+        onTimeSelect={handleTimeSelect}
+      />
+
       {/* View Mode Toggle */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
-          Showing {data.data.length} of {data.pagination.total} frames
+          Showing {data?.data?.length || 0} of {data?.pagination?.total || 0} frames
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -110,48 +119,59 @@ export function Timeline() {
         </div>
       </div>
 
-      {/* Frames Timeline */}
-      <div className="space-y-12">
-        {Object.entries(framesByDate).map(([date, frames]) => (
-          <div key={date} className="relative space-y-6">
-            {/* Date Header */}
-            <div className="sticky top-16 z-20 py-4 -mx-4 px-4 bg-background/95 backdrop-blur-sm border-b border-border/40 transition-all duration-200">
-              <div className="flex items-baseline gap-3">
-                <h2 className="text-2xl font-bold tracking-tight text-foreground">
-                  {format(new Date(date), 'EEEE')}
-                </h2>
-                <div className="h-1 w-1 rounded-full bg-muted-foreground/30" />
-                <p className="text-muted-foreground font-medium">
-                  {format(new Date(date), 'MMMM d, yyyy')}
-                </p>
-                <div className="ml-auto text-xs font-mono text-muted-foreground/50 tabular-nums px-2 py-0.5 rounded-md bg-secondary/30">
-                  {frames.length} captures
+      {(!data || data.data.length === 0) ? (
+        <div className="flex flex-col items-center justify-center h-64 space-y-4">
+          <div className="text-center">
+            <p className="text-lg font-medium">No frames found</p>
+            <p className="text-sm text-muted-foreground">
+              Try adjusting your search filters or wait for new captures
+            </p>
+          </div>
+        </div>
+      ) : (
+        /* Frames Timeline */
+        <div className="space-y-12">
+          {Object.entries(framesByDate).map(([date, frames]) => (
+            <div key={date} className="relative space-y-6">
+              {/* Date Header */}
+              <div className="sticky top-0 z-20 py-4 -mx-4 px-4 bg-background/95 backdrop-blur-sm border-b border-border/40 transition-all duration-200">
+                <div className="flex items-baseline gap-3">
+                  <h2 className="text-2xl font-bold tracking-tight text-foreground">
+                    {format(new Date(date), 'EEEE')}
+                  </h2>
+                  <div className="h-1 w-1 rounded-full bg-muted-foreground/30" />
+                  <p className="text-muted-foreground font-medium">
+                    {format(new Date(date), 'MMMM d, yyyy')}
+                  </p>
+                  <div className="ml-auto text-xs font-mono text-muted-foreground/50 tabular-nums px-2 py-0.5 rounded-md bg-secondary/30">
+                    {frames.length} captures
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Frames Grid/List */}
-            <div
-              className={
-                viewMode === 'grid'
-                  ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6'
-                  : 'space-y-4 max-w-3xl mx-auto'
-              }
-            >
-              {frames.map((frame) => (
-                <FrameCard
-                  key={frame.id}
-                  frame={frame}
-                  searchQuery={filters.searchQuery}
-                />
-              ))}
+              {/* Frames Grid/List */}
+              <div
+                className={
+                  viewMode === 'grid'
+                    ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6'
+                    : 'space-y-4 max-w-3xl mx-auto'
+                }
+              >
+                {frames.map((frame) => (
+                  <FrameCard
+                    key={frame.id}
+                    frame={frame}
+                    searchQuery={filters.searchQuery}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* Pagination */}
-      {totalPages > 1 && (
+      {data && data.pagination.total > limit && (
         <div className="flex items-center justify-center gap-2 pt-6">
           <button
             onClick={() => setPage(Math.max(0, page - 1))}
@@ -160,34 +180,10 @@ export function Timeline() {
           >
             Previous
           </button>
-          <div className="flex items-center gap-2">
-            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-              const pageNum =
-                totalPages <= 5
-                  ? i
-                  : page < 3
-                    ? i
-                    : page >= totalPages - 3
-                      ? totalPages - 5 + i
-                      : page - 2 + i;
 
-              return (
-                <button
-                  key={pageNum}
-                  onClick={() => setPage(pageNum)}
-                  className={`w-10 h-10 rounded-xl text-sm font-medium transition-all duration-200 ${page === pageNum
-                      ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20 scale-105'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
-                    }`}
-                >
-                  {pageNum + 1}
-                </button>
-              );
-            })}
-          </div>
           <button
-            onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
-            disabled={page >= totalPages - 1}
+            onClick={() => setPage(page + 1)}
+            disabled={(page + 1) * limit >= data.pagination.total}
             className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Next

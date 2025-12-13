@@ -15,12 +15,17 @@ export function getOCRText(content: OCRTextContent): string {
     if (!content) return '';
     if (typeof content === 'string') return content;
 
+    // Safety check: if somehow it's a number/boolean
+    if (typeof content !== 'object') return String(content);
+
     // Handle single OCR object
-    if (typeof content === 'object' && !Array.isArray(content)) {
+    if (!Array.isArray(content)) {
       const ocrData = content as OCRTextData;
 
-      if (ocrData.text && typeof ocrData.text === 'string') {
-        return ocrData.text;
+      if (ocrData.text) {
+        if (typeof ocrData.text === 'string') return ocrData.text;
+        // If text is object, stringify it
+        return JSON.stringify(ocrData.text);
       }
 
       // Sometimes it might be in text_json
@@ -30,8 +35,8 @@ export function getOCRText(content: OCRTextContent): string {
           : JSON.stringify(ocrData.text_json);
       }
 
-      // Return empty string instead of [object Object] to avoid ugly UI
-      return '';
+      // Fallback: If object has no text/text_json but is an object, stringify it to avoid React crash
+      return JSON.stringify(ocrData);
     }
 
     // Handle array of OCR objects
@@ -39,8 +44,16 @@ export function getOCRText(content: OCRTextContent): string {
       return content
         .map(item => {
           if (typeof item === 'string') return item;
-          if (item && typeof item === 'object' && item.text) return item.text;
-          return '';
+          if (!item) return '';
+
+          if (typeof item === 'object') {
+            if (item.text) {
+              return typeof item.text === 'string' ? item.text : JSON.stringify(item.text);
+            }
+            // If array item is object without text property, stringify it
+            return JSON.stringify(item);
+          }
+          return String(item);
         })
         .filter(Boolean)
         .join(' ');
@@ -49,7 +62,7 @@ export function getOCRText(content: OCRTextContent): string {
     return String(content);
   } catch (e) {
     console.error('Failed to parse OCR text', e);
-    return '';
+    return ''; // Safe fallback
   }
 }
 

@@ -5,6 +5,7 @@ members = [
     "screensearch-db",
     "screensearch-api",
     "screensearch-automation",
+    "screensearch-embeddings",
 ]
 
 [package]
@@ -48,6 +49,8 @@ chrono = { workspace = true }
 # Browser automation
 webbrowser = "1.0"
 image = { workspace = true }
+tray-icon = "0.21.2"
+winit = "0.30.12"
 
 [workspace.package]
 version = "0.1.0"

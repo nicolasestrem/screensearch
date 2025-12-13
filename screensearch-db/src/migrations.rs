@@ -30,6 +30,8 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
     // Apply migrations in order - ensure order is maintained for dependencies
     apply_migration(pool, "001_initial_schema", MIGRATION_001_INITIAL).await?;
     apply_migration(pool, "002_settings_table", MIGRATION_002_SETTINGS).await?;
+    apply_migration(pool, "003_embeddings_table", MIGRATION_003_EMBEDDINGS).await?;
+    apply_migration(pool, "004_add_embedding_column", MIGRATION_004_ADD_EMBEDDING_COLUMN).await?;
 
     tracing::info!("All migrations completed successfully");
     Ok(())
@@ -226,4 +228,38 @@ CREATE TABLE IF NOT EXISTS settings (
 -- Insert default settings row
 INSERT OR IGNORE INTO settings (id, capture_interval, monitors, excluded_apps, is_paused, retention_days)
 VALUES (1, 5, '[]', '["1Password", "KeePass", "Bitwarden"]', 0, 30);
+"#;
+
+/// Embeddings table migration - stores text chunks with embeddings for semantic search
+/// Note: The vec0 virtual table is created separately via rusqlite with sqlite-vec extension
+const MIGRATION_003_EMBEDDINGS: &str = r#"
+-- Embeddings table: stores text chunks from OCR with vector embeddings
+-- The actual vector data is stored in a vec0 virtual table created via rusqlite
+CREATE TABLE IF NOT EXISTS embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    frame_id INTEGER NOT NULL,
+    chunk_text TEXT NOT NULL,           -- The text that was embedded
+    chunk_index INTEGER NOT NULL,       -- Position in frame's OCR text (0-indexed)
+    embedding_dim INTEGER NOT NULL DEFAULT 384, -- Dimension of the embedding vector
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (frame_id) REFERENCES frames(id) ON DELETE CASCADE
+);
+
+-- Indexes for efficient querying
+CREATE INDEX IF NOT EXISTS idx_embeddings_frame_id ON embeddings(frame_id);
+CREATE INDEX IF NOT EXISTS idx_embeddings_chunk ON embeddings(frame_id, chunk_index);
+CREATE INDEX IF NOT EXISTS idx_embeddings_created_at ON embeddings(created_at DESC);
+
+-- Metadata to track embedding generation status
+INSERT OR IGNORE INTO metadata (key, value) VALUES ('embeddings_enabled', 'false');
+INSERT OR IGNORE INTO metadata (key, value) VALUES ('embeddings_model', 'all-MiniLM-L6-v2');
+INSERT OR IGNORE INTO metadata (key, value) VALUES ('embeddings_last_processed_frame_id', '0');
+"#;
+
+/// Migration 004 - Add embedding blob column for in-memory search
+const MIGRATION_004_ADD_EMBEDDING_COLUMN: &str = r#"
+-- Add embedding column for BLOB storage (replacing previous plan of using virtual table)
+ALTER TABLE embeddings ADD COLUMN embedding BLOB;
+-- Clear existing data to force re-processing with actual vectors
+DELETE FROM embeddings;
 "#;

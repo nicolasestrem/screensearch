@@ -2,13 +2,14 @@ import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
 import { useStore } from './store/useStore';
-import { Header } from './components/Header';
+import { Sidebar } from './components/Sidebar';
 import { SearchBar } from './components/SearchBar';
 import { Timeline } from './components/Timeline';
 import { SettingsPanel } from './components/SettingsPanel';
 import { FrameModal } from './components/FrameModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { IntelligencePage } from './pages/Intelligence';
+import { Footer } from './components/Footer';
 
 // Create a client
 const queryClient = new QueryClient({
@@ -21,8 +22,16 @@ const queryClient = new QueryClient({
   },
 });
 
+/**
+ * Main App Layout.
+ * Handles:
+ * - Dark mode application
+ * - Global keyboard shortcuts (Cmd+K, Cmd+,)
+ * - Sidebar and Main Content structure
+ * - Footer integration
+ */
 function AppContent() {
-  const { isDarkMode } = useStore();
+  const { isDarkMode, activeTab } = useStore();
 
   useEffect(() => {
     // Apply dark mode class to html element
@@ -55,21 +64,29 @@ function AppContent() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background relative overflow-hidden">
-      {/* Background Decor */}
-      <div className="absolute inset-0 -z-10 h-full w-full bg-background [background:radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] dark:[background:radial-gradient(#1f2937_1px,transparent_1px)] opacity-50 pointer-events-none" />
+    <div className="flex h-screen w-screen bg-background text-foreground overflow-hidden">
+      {/* Sidebar Navigation */}
+      <Sidebar />
 
-      <Header />
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+        {/* Background Decor */}
+        {/* Background Decor - Website matched grid */}
+        <div className="absolute inset-0 -z-10 h-full w-full bg-grid [mask-image:linear-gradient(to_bottom,transparent,black_10%,black_90%,transparent)] opacity-60 pointer-events-none" />
 
-      <main className="container mx-auto px-4 py-8">
-        {useStore((state) => state.activeTab) === 'timeline' ? (
-          <div className="max-w-7xl mx-auto space-y-8">
-            <SearchBar />
-            <Timeline />
+        <div className="flex-1 overflow-y-auto flex flex-col">
+          <div className="container mx-auto px-4 py-8 max-w-7xl flex-1">
+            {activeTab === 'timeline' ? (
+              <div className="space-y-8 animate-in fade-in duration-500">
+                <SearchBar />
+                <Timeline />
+              </div>
+            ) : (
+              <IntelligencePage />
+            )}
           </div>
-        ) : (
-          <IntelligencePage />
-        )}
+          <Footer />
+        </div>
       </main>
 
       <SettingsPanel />

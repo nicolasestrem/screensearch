@@ -26,7 +26,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Settings endpoints
         .nest("/settings", settings_routes())
         // AI endpoints
-        .nest("/ai", ai_routes());
+        .nest("/ai", ai_routes())
+        // Embeddings endpoints (RAG)
+        .nest("/embeddings", embeddings_routes());
 
     // Root level routes (no prefix)
     Router::new()
@@ -151,3 +153,12 @@ fn ai_routes() -> Router<Arc<AppState>> {
         .route("/validate", post(handlers::validate_connection))
         .route("/generate", post(handlers::generate_report))
 }
+
+/// Embeddings routes for RAG
+fn embeddings_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/status", get(handlers::get_embedding_status))
+        .route("/generate", post(handlers::generate_embeddings))
+        .route("/enable", post(handlers::toggle_embeddings))
+}
+

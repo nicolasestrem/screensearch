@@ -7,7 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## Previous History (from screen-memory repository)
+## [0.2.0] - 2025-12-13
+
+### Added
+- **Timeline Visualization**: New "Activity Graph" component showing daily screen activity density in 10-minute buckets.
+- **System Tray Integration**: Full system tray support with "Open" and "Quit" menu interactions.
+- **Branding**: Complete "ScreenSearch" rebranding with premium "Tech-Panel" UI aesthetic matching `screensearch.app`.
+- **Footer**: Added professional footer with author credits and repository links.
+- **Icons**: New application icon (Blue/Cyan Activity Pulse) replacing placeholders.
+
+### Changed
+- **UI Overhaul**: Redesigned `App.tsx` layout with background grids, sidebar navigation, and glassmorphism effects.
+- **Event Loop**: Refactored Winit event loop in `main.rs` for stable background operation and clean shutdown.
+- **Performance**: Improved timeline data fetching with `useDailyActivity` hook for full-day statistics.
+
+### Fixed
+- **System Tray Infinite Loop**: Fixed critical bug where the browser would open endlessly on mouse hover events.
+- **Search Reliability**: Hardened OCR text processing to prevent React rendering crashes on complex objects.
+- **Build System**: Fixed Rust compilation errors related to accidental code truncation in `main.rs`.
+
+## [0.1.4] - 2025-12-12
+
+### Added
+- **Retrieval Augmented Generation (RAG)**: Full support for RAG-based AI reports.
+    - **In-Memory Vector Search**: Implemented high-performance in-memory semantic search (BGE-M3/MiniLM-L12 compatible) to bypass `sqlite-vec` limitations on Windows.
+    - **Hybrid Search**: Combines Dense Retrieval (Embeddings) with Sparse Retrieval (FTS5) for robust context lookup.
+    - **Reranker**: Added heuristic reranker boosting newer results and keyword matches.
+- **Context Source Indicator**: Reports now include a footer (e.g., `*Context: Semantic Search (20 results)*`) indicating if the Vector Database or Traditional Fallback was used.
+- **Database Schema**: Added `embedding` BLOB column to `embeddings` table (Migration 004).
+
+### Changed
+- **Dependency Optimization**: Downgraded `ort` (ONNX Runtime) to `2.0.0-rc.0` to match system-provided `1.17.1` DLLs, ensuring stability without external downloads.
+- **API Response**: `AiReportResponse` now includes a `context_source` field.
+
+### Fixed
+- **Embedding Storage**: Fixed critical bug where embeddings were not being persisted (inserting 0 bytes), now correctly serializing `Vec<f32>` to BLOB.
 
 ## [0.1.3] - 2025-12-12
 

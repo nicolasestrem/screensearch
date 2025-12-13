@@ -4,7 +4,7 @@ This document outlines the security architecture, privacy controls, and best pra
 
 ---
 
-## 🔒 Security Overview
+## [*] Security Overview
 
 ScreenSearch is designed with **privacy-first** and **local-only** principles:
 
@@ -17,7 +17,7 @@ ScreenSearch is designed with **privacy-first** and **local-only** principles:
 
 ---
 
-## 🛡️ Privacy Controls
+## [*] Privacy Controls
 
 ### 1. Application Exclusion
 
@@ -82,7 +82,7 @@ curl -X POST http://localhost:3131/api/settings \
 
 ---
 
-## 🔐 Query Sanitization
+## [*] Query Sanitization
 
 ### FTS5 Injection Prevention
 
@@ -174,7 +174,7 @@ port = 3131
 
 ---
 
-## 🗄️ Data Protection
+## [*] Data Protection
 
 ### Database Encryption
 
@@ -243,7 +243,7 @@ port = 3131
 
 ---
 
-## 🌐 Web UI Security
+## [*] Web UI Security
 
 ### CORS Configuration
 
@@ -320,7 +320,7 @@ let cors = CorsLayer::new()
 
 ---
 
-## 🚀 Deployment Security
+## [*] Deployment Security
 
 ### Running as Service
 
@@ -389,7 +389,7 @@ icacls captures\ /inheritance:r /grant:r "%USERNAME%":(OI)(CI)(F)
 
 ---
 
-## 🔍 Security Audit Checklist
+## [*] Security Audit Checklist
 
 ### Application Security
 
@@ -420,7 +420,7 @@ icacls captures\ /inheritance:r /grant:r "%USERNAME%":(OI)(CI)(F)
 
 ---
 
-## 🚨 Incident Response
+## [!] Incident Response
 
 ### Data Breach
 
@@ -464,7 +464,7 @@ handle screensearch.db
 
 ---
 
-## 📚 Security Resources
+## [*] Security Resources
 
 ### Code References
 
@@ -485,7 +485,7 @@ handle screensearch.db
 
 ---
 
-## ⚙️ Configuration Example
+## [*] Configuration Example
 
 **Secure `config.toml`**:
 
@@ -518,7 +518,7 @@ port = 3131
 
 ---
 
-## 🔐 Future Security Enhancements
+## [*] Future Security Enhancements
 
 ### Planned
 
