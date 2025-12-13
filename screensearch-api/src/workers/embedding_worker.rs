@@ -91,8 +91,7 @@ impl EmbeddingWorker {
             // Start a transaction for this frame's embeddings
             // This ensures we don't have partial embeddings if something fails
             let mut tx = self.db.pool().begin().await.map_err(|e| {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Box::new(std::io::Error::other(
                     format!("Failed to start transaction: {}", e),
                 )) as Box<dyn std::error::Error + Send + Sync>
             })?;
@@ -123,8 +122,7 @@ impl EmbeddingWorker {
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| {
-                   Box::new(std::io::Error::new(
-                       std::io::ErrorKind::Other,
+                   Box::new(std::io::Error::other(
                        format!("Failed to insert embedding: {}", e),
                    )) as Box<dyn std::error::Error + Send + Sync>
                 })?;
@@ -132,8 +130,7 @@ impl EmbeddingWorker {
             
             // Commit transaction
             tx.commit().await.map_err(|e| {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Box::new(std::io::Error::other(
                     format!("Failed to commit transaction: {}", e),
                 )) as Box<dyn std::error::Error + Send + Sync>
             })?;
