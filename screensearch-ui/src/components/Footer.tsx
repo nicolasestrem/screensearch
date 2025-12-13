@@ -21,7 +21,7 @@ export function Footer() {
                     </a>
 
                     <a
-                        href="#"
+                        href="https://github.com/nicolasestrem/screensearch"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center gap-2 hover:text-foreground transition-colors"

@@ -130,7 +130,7 @@ mod tests {
     fn test_model_paths() {
         let dir = PathBuf::from("/tmp/models");
         let (model, tokenizer) = get_model_paths(&dir);
-        assert!(model.to_string_lossy().contains("model_quantized.onnx"));
+        assert!(model.to_string_lossy().contains("model.onnx"));
         assert!(tokenizer.to_string_lossy().contains("tokenizer.json"));
     }
 }
