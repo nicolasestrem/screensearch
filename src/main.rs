@@ -9,7 +9,7 @@
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::broadcast;
@@ -136,14 +136,8 @@ struct PerformanceSettings {
 struct LoggingSettings {
     level: String,
     log_to_file: bool,
-    /// File logging destination (feature pending - currently logs to stdout)
-    #[allow(dead_code)]
     log_file: String,
-    /// Maximum log file size for rotation (feature pending)
-    #[allow(dead_code)]
     max_log_size_mb: u64,
-    /// Number of log files to keep (feature pending)
-    #[allow(dead_code)]
     log_rotation_count: u32,
 }
 
@@ -304,47 +298,95 @@ impl AppConfig {
 }
 
 /// Initialize tracing/logging subsystem
-fn init_tracing(config: &LoggingSettings) -> Result<()> {
+fn init_tracing(config: &LoggingSettings) -> Result<Option<tracing_appender::non_blocking::WorkerGuard>> {
+    use tracing_appender::rolling::{RollingFileAppender, Rotation};
+
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.level));
 
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_target(true)
-        .with_thread_ids(true)
-        .with_line_number(true);
-
     if config.log_to_file {
-        // TODO: Add file rotation support using tracing-appender
-        // For now, log to console
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(fmt_layer)
-            .init();
-    } else {
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(fmt_layer)
-            .init();
-    }
+        // Parse log file path
+        let log_path = PathBuf::from(&config.log_file);
+        let log_dir = log_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
 
-    Ok(())
+        let log_filename = log_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("screensearch");
+
+        // Create rolling file appender with daily rotation
+        let file_appender = RollingFileAppender::builder()
+            .rotation(Rotation::DAILY)
+            .filename_prefix(log_filename)
+            .filename_suffix("log")
+            .max_log_files(config.log_rotation_count as usize)
+            .build(log_dir)
+            .context("Failed to create rolling file appender")?;
+
+        let (non_blocking_file, guard) = tracing_appender::non_blocking(file_appender);
+
+        // Log to both stdout and file
+        let stdout_layer = tracing_subscriber::fmt::layer()
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_line_number(true);
+
+        let file_layer = tracing_subscriber::fmt::layer()
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_line_number(true)
+            .with_ansi(false)
+            .with_writer(non_blocking_file);
+
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(stdout_layer)
+            .with(file_layer)
+            .init();
+
+        info!("File logging enabled: {}", config.log_file);
+        info!("Log rotation: {} files, daily rotation", config.log_rotation_count);
+
+        Ok(Some(guard))
+    } else {
+        // Console-only logging
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_line_number(true);
+
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt_layer)
+            .init();
+
+        Ok(None)
+    }
 }
 
 use tray_icon::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     TrayIconBuilder,
 };
-use winit::event_loop::{ControlFlow, EventLoop, EventLoopBuilder};
-use winit::event::Event;
-
-#[derive(Debug, Clone)]
-enum UserEvent {
-    TrayIconClick,
-}
+use winit::event_loop::{ControlFlow, EventLoop};
+use crossbeam::channel::Receiver;
 
 struct App {
     config: AppConfig,
     shutdown_tx: broadcast::Sender<()>,
+}
+
+struct EventLoopState {
+    _tray_icon: tray_icon::TrayIcon,
+    menu_items: (MenuItem, MenuItem),
+    menu_channel: &'static Receiver<tray_icon::menu::MenuEvent>,
+    tray_channel: &'static Receiver<tray_icon::TrayIconEvent>,
+    app_task: std::thread::JoinHandle<()>,
+    shutdown_tx: tokio::sync::mpsc::Sender<()>,
+    api_url: String,
 }
 
 impl App {
@@ -471,6 +513,74 @@ impl App {
     }
 }
 
+impl winit::application::ApplicationHandler for EventLoopState {
+    fn resumed(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        info!("Event loop resumed - tray icon active");
+    }
+
+    fn window_event(
+        &mut self,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        _event: winit::event::WindowEvent,
+    ) {
+        // No windows in tray-only app
+    }
+
+    fn new_events(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        _cause: winit::event::StartCause,
+    ) {
+        event_loop.set_control_flow(ControlFlow::Wait);
+
+        // Process menu events
+        while let Ok(event) = self.menu_channel.try_recv() {
+            if event.id == self.menu_items.0.id() {
+                // Open Interface
+                info!("Opening web interface");
+                let _ = webbrowser::open(&self.api_url);
+            } else if event.id == self.menu_items.1.id() {
+                // Quit
+                info!("Quit requested from tray menu");
+                let _ = self.shutdown_tx.blocking_send(());
+                event_loop.exit();
+            }
+        }
+
+        // Process tray icon events (left-click handling)
+        while let Ok(tray_event) = self.tray_channel.try_recv() {
+            match tray_event {
+                tray_icon::TrayIconEvent::Click {
+                    button: tray_icon::MouseButton::Left,
+                    ..
+                } => {
+                    info!("Tray icon left-clicked");
+                    let _ = webbrowser::open(&self.api_url);
+                }
+                tray_icon::TrayIconEvent::DoubleClick {
+                    button: tray_icon::MouseButton::Left,
+                    ..
+                } => {
+                    info!("Tray icon double-clicked");
+                    let _ = webbrowser::open(&self.api_url);
+                }
+                _ => {}
+            }
+        }
+
+        // Check if app task finished
+        if self.app_task.is_finished() {
+            info!("Application task completed");
+            event_loop.exit();
+        }
+    }
+
+    fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        info!("Event loop exiting");
+    }
+}
+
 async fn store_processed_frame(
     db: &DatabaseManager,
     processed: screensearch_capture::ProcessedFrame,
@@ -556,15 +666,14 @@ async fn store_processed_frame(
 
 fn main() -> Result<()> {
     let config = AppConfig::load().unwrap_or_else(|_| AppConfig::default());
-    init_tracing(&config.logging)?;
+    let _log_guard = init_tracing(&config.logging)?;
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("Failed to build Tokio runtime")?;
 
-    let event_loop = EventLoop::<UserEvent>::with_user_event()
-        .build()
+    let event_loop = EventLoop::new()
         .context("Failed to build EventLoop")?;
 
     let tray_menu = Menu::new();
@@ -602,6 +711,7 @@ fn main() -> Result<()> {
     let app = App::new(config.clone());
     let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel(1);
 
+    // Start app in background thread
     let app_task = std::thread::spawn(move || {
         runtime.block_on(async move {
             if let Err(e) = app.run_with_signal(shutdown_rx).await {
@@ -610,31 +720,26 @@ fn main() -> Result<()> {
         });
     });
 
-    let api_url = format!("http://{}:{}", config.api.host, config.api.port);
+    // Get event channels
     let menu_channel = tray_icon::menu::MenuEvent::receiver();
     let tray_channel = tray_icon::TrayIconEvent::receiver();
+    let api_url = format!("http://{}:{}", config.api.host, config.api.port);
+
+    // Create event loop state
+    let mut event_loop_state = EventLoopState {
+        _tray_icon: tray_icon,
+        menu_items: (open_item, quit_item),
+        menu_channel,
+        tray_channel,
+        app_task,
+        shutdown_tx,
+        api_url,
+    };
 
     info!("System Tray initialized. Running event loop...");
-    
-    event_loop.run(move |event, target| {
-        target.set_control_flow(ControlFlow::Wait);
 
-        if let Ok(event) = menu_channel.try_recv() {
-            if event.id == open_item.id() {
-                let _ = webbrowser::open(&api_url);
-            } else if event.id == quit_item.id() {
-                let _ = shutdown_tx.blocking_send(());
-                target.exit();
-            }
-        }
-        
-        // Removed the generic tray_channel listener that was causing infinite browser tabs on mouse events
-        // Interaction is now handled primarily via the Menu
-
-        if app_task.is_finished() {
-             target.exit();
-        }
-    })?;
+    // Use new ApplicationHandler API
+    event_loop.run_app(&mut event_loop_state)?;
 
     Ok(())
 }

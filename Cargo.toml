@@ -42,6 +42,7 @@ toml = "0.8"
 # Logging
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
 
 # Time
 chrono = { workspace = true }
@@ -51,6 +52,9 @@ webbrowser = "1.0"
 image = { workspace = true }
 tray-icon = "0.21.2"
 winit = "0.30.12"
+
+# Concurrency
+crossbeam = { workspace = true }
 
 [workspace.package]
 version = "0.1.0"
@@ -78,6 +82,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 
 # Database
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
