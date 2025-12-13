@@ -1,0 +1,214 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-release:
+    name: Build Release Artifacts
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: screensearch-ui/package-lock.json
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-index-
+
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-target-
+
+      - name: Cache ONNX model
+        id: cache-onnx
+        uses: actions/cache@v4
+        with:
+          path: installer/models
+          key: onnx-model-${{ hashFiles('.github/workflows/release.yml') }}
+
+      - name: Build React UI
+        run: |
+          cd screensearch-ui
+          npm ci
+          npm run build
+        shell: pwsh
+
+      - name: Build Rust release binary
+        run: cargo build --release --locked
+        shell: pwsh
+
+      - name: Download ONNX model
+        if: steps.cache-onnx.outputs.cache-hit != 'true'
+        run: |
+          New-Item -ItemType Directory -Force -Path installer/models
+
+          Write-Host "Downloading ONNX model..."
+          $modelUrl = "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/main/onnx/model.onnx"
+          $tokenizerUrl = "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/main/tokenizer.json"
+
+          Invoke-WebRequest -Uri $modelUrl -OutFile "installer/models/model.onnx" -MaximumRetryCount 3
+          Invoke-WebRequest -Uri $tokenizerUrl -OutFile "installer/models/tokenizer.json" -MaximumRetryCount 3
+
+          # Verify model size (should be around 449 MB)
+          $modelSize = (Get-Item "installer/models/model.onnx").Length / 1MB
+          if ($modelSize -lt 400) {
+            Write-Error "Model file too small: $modelSize MB (expected >400 MB)"
+            exit 1
+          }
+
+          Write-Host "Model downloaded successfully: $modelSize MB"
+        shell: pwsh
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+        shell: pwsh
+
+      - name: Build Full Installer
+        run: |
+          $env:FULL_INSTALLER = "1"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DFULL_INSTALLER installer\screensearch.iss
+
+          # Rename output to include "Full" in filename
+          $version = "0.2.0"
+          Move-Item "target\release\installers\ScreenSearch-v$version-Setup.exe" `
+                    "target\release\installers\ScreenSearch-v$version-Setup-Full.exe" -Force
+        shell: pwsh
+
+      - name: Build Lightweight Installer
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\screensearch.iss
+
+          # Rename output to include "Lite" in filename
+          $version = "0.2.0"
+          Move-Item "target\release\installers\ScreenSearch-v$version-Setup.exe" `
+                    "target\release\installers\ScreenSearch-v$version-Setup-Lite.exe" -Force
+        shell: pwsh
+
+      - name: Create Portable ZIP
+        run: |
+          $version = "0.2.0"
+          Compress-Archive -Path target/release/screensearch.exe, config.toml, LICENSE, README.md `
+                           -DestinationPath "target/release/installers/ScreenSearch-v$version-Portable.zip"
+        shell: pwsh
+
+      - name: Generate checksums
+        run: |
+          cd target/release/installers
+          $files = Get-ChildItem -Filter "ScreenSearch-v*"
+
+          $checksums = @()
+          foreach ($file in $files) {
+            $hash = (Get-FileHash -Path $file.Name -Algorithm SHA256).Hash.ToLower()
+            $checksums += "$hash  $($file.Name)"
+          }
+
+          $checksums | Out-File -FilePath "checksums.txt" -Encoding UTF8
+
+          Write-Host "Generated checksums:"
+          Get-Content checksums.txt
+        shell: pwsh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: |
+            target/release/installers/ScreenSearch-v*
+            target/release/installers/checksums.txt
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts
+
+      - name: Extract version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/ScreenSearch-v*.exe
+            artifacts/ScreenSearch-v*.zip
+            artifacts/checksums.txt
+          body: |
+            # ScreenSearch v${{ steps.get_version.outputs.VERSION }}
+
+            ## Download Options
+
+            Choose the installer that best fits your needs:
+
+            - **Full Installer** (~460 MB) - Includes ONNX embedding model, no internet required
+            - **Lightweight Installer** (~11 MB) - Downloads model on first run if needed
+            - **Portable ZIP** (~17 MB) - Extract and run, no installation required
+
+            ## System Requirements
+
+            - Windows 10/11 (64-bit)
+            - Windows OCR Language Pack (for OCR functionality)
+
+            ## Verification
+
+            Verify your download with SHA256 checksums (see `checksums.txt`)
+
+            ## What's New
+
+            See full changelog below.
+
+            ---
+
+            **Note:** This release is self-signed. You may see a Windows SmartScreen warning. Click "More info" → "Run anyway" to proceed.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

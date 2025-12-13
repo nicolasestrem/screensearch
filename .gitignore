@@ -43,7 +43,15 @@ Thumbs.db
 *.dll
 *.so
 *.dylib
-*.txt
+
+# Installer resources (large files)
+installer/models/
+installer/resources/*.ico
+installer/resources/*.bmp
+
+# Release artifacts (but keep checksums.txt)
+target/release/installers/*.exe
+target/release/installers/*.zip
 
 #Old docs
 /docs/archived

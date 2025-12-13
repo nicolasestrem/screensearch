@@ -21,6 +21,10 @@ use screensearch_api::{ApiConfig, ApiServer};
 use screensearch_capture::{CaptureConfig, CaptureEngine, OcrProcessor, OcrProcessorConfig};
 use screensearch_db::{DatabaseConfig, DatabaseManager};
 
+// Version and update checking modules
+mod version;
+mod update_checker;
+
 /// Application configuration loaded from config.toml
 #[derive(Debug, Clone, Deserialize)]
 struct AppConfig {
@@ -277,8 +281,28 @@ impl AppConfig {
 
     /// Convert to DatabaseConfig
     fn database_config(&self) -> DatabaseConfig {
+        // Use AppData for database in production, current directory in development
+        let db_path = if cfg!(debug_assertions) {
+            // Development: use relative path
+            self.database.path.clone()
+        } else {
+            // Production: use AppData
+            if let Some(data_dir) = dirs::data_local_dir() {
+                let app_dir = data_dir.join("screensearch");
+                if let Err(e) = std::fs::create_dir_all(&app_dir) {
+                    warn!("Could not create AppData directory: {}", e);
+                    self.database.path.clone()
+                } else {
+                    app_dir.join(&self.database.path).to_string_lossy().to_string()
+                }
+            } else {
+                warn!("Could not determine AppData directory, using relative path");
+                self.database.path.clone()
+            }
+        };
+
         DatabaseConfig {
-            path: self.database.path.clone(),
+            path: db_path,
             max_connections: self.database.max_connections,
             min_connections: self.database.min_connections,
             acquire_timeout_secs: self.database.acquire_timeout_secs,
@@ -287,12 +311,12 @@ impl AppConfig {
         }
     }
 
-    /// Convert to ApiConfig
-    fn api_config(&self) -> ApiConfig {
+    /// Convert to ApiConfig with the correct database path
+    fn api_config(&self, db_path: &str) -> ApiConfig {
         ApiConfig {
             host: self.api.host.clone(),
             port: self.api.port,
-            database_path: self.database.path.clone(),
+            database_path: db_path.to_string(),
         }
     }
 }
@@ -406,7 +430,7 @@ impl App {
         info!("Initializing database...");
         let db_config = self.config.database_config();
         let db = Arc::new(
-            DatabaseManager::with_config(db_config)
+            DatabaseManager::with_config(db_config.clone())
                 .await
                 .context("Failed to initialize database")?,
         );
@@ -419,8 +443,8 @@ impl App {
         let capture_config = self.config.capture_config();
         let mut capture_engine = CaptureEngine::new(capture_config)?;
 
-        // Initialize API server
-        let api_config = self.config.api_config();
+        // Initialize API server with the same database path
+        let api_config = self.config.api_config(&db_config.path);
         let api_server = ApiServer::new(api_config.clone()).await?;
 
         // Start background embedding worker
@@ -500,6 +524,19 @@ impl App {
                 let _ = webbrowser::open(&url);
              });
         }
+
+        // Check for updates in background
+        tokio::spawn(async {
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            if let Some(update) = update_checker::check_updates().await {
+                info!("========================================");
+                info!("UPDATE AVAILABLE!");
+                info!("Current version: {}", version::VERSION);
+                info!("Latest version: {}", update.version);
+                info!("Download: {}", update.download_url);
+                info!("========================================");
+            }
+        });
 
         tokio::select! {
             _ = signal::ctrl_c() => info!("Ctrl+C"),
@@ -608,7 +645,19 @@ async fn store_processed_frame(
         "frame_{}_{}.{}",
         processed.frame.monitor_index, timestamp_str, ext
     );
-    let image_path = PathBuf::from("captures").join(&image_filename);
+
+    // Use AppData for captures in production, current directory in development
+    let captures_dir = if cfg!(debug_assertions) {
+        PathBuf::from("captures")
+    } else {
+        if let Some(data_dir) = dirs::data_local_dir() {
+            data_dir.join("screensearch").join("captures")
+        } else {
+            PathBuf::from("captures")
+        }
+    };
+
+    let image_path = captures_dir.join(&image_filename);
 
     if let Some(parent) = image_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -682,9 +731,24 @@ fn main() -> Result<()> {
     
     tray_menu.append_items(&[&open_item, &PredefinedMenuItem::separator(), &quit_item])?;
 
-    // Load icon from assets
-    let icon_path = "assets/icon.png";
-    let icon = match image::open(icon_path) {
+    // Load icon from assets - try multiple locations for installed vs development
+    let icon_path = if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let installed_icon = exe_dir.join("assets").join("icon.png");
+            if installed_icon.exists() {
+                installed_icon
+            } else {
+                // Development fallback
+                PathBuf::from("assets/icon.png")
+            }
+        } else {
+            PathBuf::from("assets/icon.png")
+        }
+    } else {
+        PathBuf::from("assets/icon.png")
+    };
+
+    let icon = match image::open(&icon_path) {
         Ok(img) => {
             let rgba = img.into_rgba8();
             let (width, height) = rgba.dimensions();
@@ -695,8 +759,8 @@ fn main() -> Result<()> {
             })
         }
         Err(e) => {
-            error!("Failed to load icon from {}: {}", icon_path, e);
-            // Fallback
+            error!("Failed to load icon from {:?}: {}", icon_path, e);
+            // Fallback to white square
             tray_icon::Icon::from_rgba(vec![255u8; 4 * 32 * 32], 32, 32).unwrap()
         }
     };
