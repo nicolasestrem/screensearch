@@ -46,8 +46,7 @@ Thumbs.db
 
 # Installer resources (large files)
 installer/models/
-installer/resources/*.ico
-installer/resources/*.bmp
+# Note: icon.ico, sidebar.bmp, and banner.bmp are included in repo
 
 # Release artifacts (but keep checksums.txt)
 target/release/installers/*.exe

@@ -105,8 +105,8 @@ jobs:
           $env:FULL_INSTALLER = "1"
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DFULL_INSTALLER installer\screensearch.iss
 
-          # Rename output to include "Full" in filename
-          $version = "0.2.0"
+          # Extract version from git tag
+          $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
           Move-Item "target\release\installers\ScreenSearch-v$version-Setup.exe" `
                     "target\release\installers\ScreenSearch-v$version-Setup-Full.exe" -Force
         shell: pwsh
@@ -115,15 +115,16 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\screensearch.iss
 
-          # Rename output to include "Lite" in filename
-          $version = "0.2.0"
+          # Extract version from git tag
+          $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
           Move-Item "target\release\installers\ScreenSearch-v$version-Setup.exe" `
                     "target\release\installers\ScreenSearch-v$version-Setup-Lite.exe" -Force
         shell: pwsh
 
       - name: Create Portable ZIP
         run: |
-          $version = "0.2.0"
+          # Extract version from git tag
+          $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
           Compress-Archive -Path target/release/screensearch.exe, config.toml, LICENSE, README.md `
                            -DestinationPath "target/release/installers/ScreenSearch-v$version-Portable.zip"
         shell: pwsh
