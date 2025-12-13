@@ -6,8 +6,7 @@ target/
 
 
 # Cargo
-Cargo.lock
-**/Cargo.lock
+# Note: Cargo.lock is committed for applications (not libraries)
 
 # IDE
 .vscode/
