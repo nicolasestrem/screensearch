@@ -13,7 +13,7 @@ screensearch/
 ├── src/                           # Main binary entry point
 │   └── main.rs                   # Application orchestration, service initialization
 │
-├── screen-capture/               # Capture & OCR workspace crate
+├── screensearch-capture/         # Capture & OCR workspace crate
 │   ├── src/
 │   │   ├── capture.rs           # Core capture engine, frame differencing
 │   │   ├── ocr.rs               # Windows OCR API wrapper
@@ -26,18 +26,19 @@ screensearch/
 │   │   └── ocr_demo.rs          # OCR testing utility
 │   └── Cargo.toml
 │
-├── screen-db/                    # Database workspace crate
+├── screensearch-db/              # Database workspace crate
 │   ├── src/
 │   │   ├── db.rs                # DatabaseManager, connection pool
 │   │   ├── queries.rs           # SQL queries, FTS5 search
 │   │   ├── models.rs            # Data models (Frame, OcrText, Tags)
 │   │   ├── migrations.rs        # Schema versioning
+│   │   ├── vector_search.rs     # Vector similarity search for RAG
 │   │   └── lib.rs               # Public API exports
 │   ├── tests/
 │   │   └── integration_tests.rs # Database integration tests
 │   └── Cargo.toml
 │
-├── screen-api/                   # REST API workspace crate
+├── screensearch-api/             # REST API workspace crate
 │   ├── src/
 │   │   ├── server.rs            # Axum server initialization
 │   │   ├── routes.rs            # Route definitions (27 endpoints)
@@ -45,7 +46,14 @@ screensearch/
 │   │   │   ├── mod.rs           # Handler module exports
 │   │   │   ├── search.rs        # Search & query handlers
 │   │   │   ├── automation.rs    # UI automation handlers
-│   │   │   └── system.rs        # Health, stats, metrics
+│   │   │   ├── system.rs        # Health, stats, metrics
+│   │   │   ├── ai.rs            # AI intelligence endpoints
+│   │   │   ├── embeddings.rs    # Embedding management handlers
+│   │   │   ├── rag_helpers.rs   # Hybrid search orchestration (207 lines)
+│   │   │   └── reranker.rs      # Reranking algorithm (202 lines)
+│   │   ├── workers/             # Background processing
+│   │   │   ├── mod.rs           # Worker module exports
+│   │   │   └── embedding_worker.rs # Background embedding processing (184 lines)
 │   │   ├── state.rs             # Shared application state
 │   │   ├── models.rs            # API request/response types
 │   │   ├── error.rs             # API error handling
@@ -57,7 +65,7 @@ screensearch/
 │   │   └── client_usage.rs      # Example API client
 │   └── Cargo.toml
 │
-├── screen-automation/            # Windows UI automation workspace crate
+├── screensearch-automation/      # Windows UI automation workspace crate
 │   ├── src/
 │   │   ├── engine.rs            # Automation orchestration
 │   │   ├── element.rs           # UI element detection & interaction
@@ -75,7 +83,15 @@ screensearch/
 │   │   └── notepad_automation.rs # Notepad interaction demo
 │   └── Cargo.toml
 │
-├── screen-ui/                    # React web dashboard (optional)
+├── screensearch-embeddings/      # RAG embeddings workspace crate
+│   ├── src/
+│   │   ├── engine.rs            # ONNX inference engine (284 lines)
+│   │   ├── chunker.rs           # Text preprocessing (143 lines)
+│   │   ├── download.rs          # Model auto-download (136 lines)
+│   │   └── lib.rs               # Public API exports (117 lines)
+│   └── Cargo.toml
+│
+├── screensearch-ui/              # React web dashboard (optional)
 │   ├── src/
 │   │   ├── components/          # React components
 │   │   └── api/                 # Frontend API client
@@ -104,56 +120,70 @@ screensearch/
 
 | What | Where | File:Line |
 |------|-------|-----------|
-| Start/stop capture | `screen-capture/src/capture.rs` | `CaptureEngine::start()`, `::stop()` |
-| Frame differencing logic | `screen-capture/src/frame_diff.rs` | `FrameDiff::is_different()` |
-| Monitor detection | `screen-capture/src/monitor.rs` | `Monitor::list_monitors()` |
-| Active window tracking | `screen-capture/src/window_context.rs` | `WindowContext::get_active_window()` |
+| Start/stop capture | `screensearch-capture/src/capture.rs` | `CaptureEngine::start()`, `::stop()` |
+| Frame differencing logic | `screensearch-capture/src/frame_diff.rs` | `FrameDiff::is_different()` |
+| Monitor detection | `screensearch-capture/src/monitor.rs` | `Monitor::list_monitors()` |
+| Active window tracking | `screensearch-capture/src/window_context.rs` | `WindowContext::get_active_window()` |
 | Capture configuration | `src/main.rs` | Lines 101-109, 296-299 |
 
 ### OCR Processing
 
 | What | Where | File:Line |
 |------|-------|-----------|
-| Windows OCR API wrapper | `screen-capture/src/ocr.rs` | `WindowsOcr::extract_text()` |
-| Multi-threaded OCR pipeline | `screen-capture/src/ocr_processor.rs` | `OcrProcessor::start_processing()` |
-| Zero-copy bitmap creation | `screen-capture/src/ocr.rs` | `create_software_bitmap()` |
-| OCR metrics & monitoring | `screen-capture/src/ocr_processor.rs` | `OcrMetrics` struct |
+| Windows OCR API wrapper | `screensearch-capture/src/ocr.rs` | `WindowsOcr::extract_text()` |
+| Multi-threaded OCR pipeline | `screensearch-capture/src/ocr_processor.rs` | `OcrProcessor::start_processing()` |
+| Zero-copy bitmap creation | `screensearch-capture/src/ocr.rs` | `create_software_bitmap()` |
+| OCR metrics & monitoring | `screensearch-capture/src/ocr_processor.rs` | `OcrMetrics` struct |
 | OCR configuration | `src/main.rs` | Lines 110-120, 285-292 |
 
 ### Database
 
 | What | Where | File:Line |
 |------|-------|-----------|
-| Database connection | `screen-db/src/db.rs` | `DatabaseManager::new()`, `::with_config()` |
-| FTS5 full-text search | `screen-db/src/queries.rs` | `search_text()`, `search_advanced()` |
-| Frame insertion | `screen-db/src/db.rs` | `insert_frame()` |
-| OCR text insertion | `screen-db/src/db.rs` | `insert_ocr_text()` |
-| Schema migrations | `screen-db/src/migrations.rs` | `run_migrations()` |
-| Query sanitization | `screen-db/src/queries.rs` | `sanitize_fts5_query()` |
-| Database models | `screen-db/src/models.rs` | `Frame`, `OcrText`, `Tag` structs |
+| Database connection | `screensearch-db/src/db.rs` | `DatabaseManager::new()`, `::with_config()` |
+| FTS5 full-text search | `screensearch-db/src/queries.rs` | `search_text()`, `search_advanced()` |
+| Vector similarity search | `screensearch-db/src/vector_search.rs` | `search_by_embedding()`, `get_nearest_neighbors()` |
+| Frame insertion | `screensearch-db/src/db.rs` | `insert_frame()` |
+| OCR text insertion | `screensearch-db/src/db.rs` | `insert_ocr_text()` |
+| Schema migrations | `screensearch-db/src/migrations.rs` | `run_migrations()` |
+| Query sanitization | `screensearch-db/src/queries.rs` | `sanitize_fts5_query()` |
+| Database models | `screensearch-db/src/models.rs` | `Frame`, `OcrText`, `Tag` structs |
 
 ### REST API
 
 | What | Where | File:Line |
 |------|-------|-----------|
-| Server initialization | `screen-api/src/server.rs` | `ApiServer::new()`, `::run()` |
-| Route definitions | `screen-api/src/routes.rs` | `create_router()` |
-| Search endpoints | `screen-api/src/handlers/search.rs` | `search_handler()`, `advanced_search_handler()` |
-| Automation endpoints | `screen-api/src/handlers/automation.rs` | `click_handler()`, `type_handler()` |
-| Health & stats | `screen-api/src/handlers/system.rs` | `health_handler()`, `stats_handler()` |
-| API error handling | `screen-api/src/error.rs` | `ApiError` enum |
-| Request/response models | `screen-api/src/models.rs` | API types |
+| Server initialization | `screensearch-api/src/server.rs` | `ApiServer::new()`, `::run()` |
+| Route definitions | `screensearch-api/src/routes.rs` | `create_router()` |
+| Search endpoints | `screensearch-api/src/handlers/search.rs` | `search_handler()`, `advanced_search_handler()` |
+| Automation endpoints | `screensearch-api/src/handlers/automation.rs` | `click_handler()`, `type_handler()` |
+| Health & stats | `screensearch-api/src/handlers/system.rs` | `health_handler()`, `stats_handler()` |
+| AI intelligence | `screensearch-api/src/handlers/ai.rs` | `generate_handler()`, `validate_handler()` |
+| Embedding management | `screensearch-api/src/handlers/embeddings.rs` | `status_handler()`, `generate_handler()` |
+| RAG hybrid search | `screensearch-api/src/handlers/rag_helpers.rs` | `hybrid_search()`, `prepare_context()` |
+| Result reranking | `screensearch-api/src/handlers/reranker.rs` | `rerank_results()` |
+| API error handling | `screensearch-api/src/error.rs` | `ApiError` enum |
+| Request/response models | `screensearch-api/src/models.rs` | API types |
 
 ### UI Automation
 
 | What | Where | File:Line |
 |------|-------|-----------|
-| Automation engine | `screen-automation/src/engine.rs` | `AutomationEngine::new()` |
-| Element finding | `screen-automation/src/element.rs` | `find_elements()`, `find_element()` |
-| Mouse control | `screen-automation/src/input.rs` | `click()`, `move_mouse()` |
-| Keyboard control | `screen-automation/src/input.rs` | `type_text()`, `send_keys()` |
-| Window management | `screen-automation/src/window.rs` | `Window::find()`, `::activate()` |
-| Element selectors | `screen-automation/src/selector.rs` | `Selector` struct |
+| Automation engine | `screensearch-automation/src/engine.rs` | `AutomationEngine::new()` |
+| Element finding | `screensearch-automation/src/element.rs` | `find_elements()`, `find_element()` |
+| Mouse control | `screensearch-automation/src/input.rs` | `click()`, `move_mouse()` |
+| Keyboard control | `screensearch-automation/src/input.rs` | `type_text()`, `send_keys()` |
+| Window management | `screensearch-automation/src/window.rs` | `Window::find()`, `::activate()` |
+| Element selectors | `screensearch-automation/src/selector.rs` | `Selector` struct |
+
+### RAG Embeddings
+
+| What | Where | File:Line |
+|------|-------|-----------|
+| Embedding generation | `screensearch-embeddings/src/engine.rs` | `EmbeddingEngine::embed()`, `::embed_batch()` |
+| Text chunking | `screensearch-embeddings/src/chunker.rs` | `TextChunker::chunk()` |
+| Model auto-download | `screensearch-embeddings/src/download.rs` | `download_model()`, `needs_download()` |
+| Background processing | `screensearch-api/src/workers/embedding_worker.rs` | `start_embedding_worker()` |
 
 ### Main Application
 
@@ -176,6 +206,8 @@ screensearch/
 | **Sidebar Navigation** | `screensearch-ui/src/components/Sidebar.tsx` | Main navigation menu |
 | **Search Functionality** | `screensearch-ui/src/components/SearchBar.tsx` | Global search input |
 | **Frame Display** | `screensearch-ui/src/components/FrameCard.tsx` | Individual capture card |
+| **Embeddings Status** | `screensearch-ui/src/components/EmbeddingsStatus.tsx` | RAG embedding generation status |
+| **Settings Panel** | `screensearch-ui/src/components/SettingsPanel.tsx` | Application configuration |
 | **Footer** | `screensearch-ui/src/components/Footer.tsx` | App footer with credits |
 | **Data Hooks** | `screensearch-ui/src/hooks/` | `useDailyActivity`, `useFrames` |
 
@@ -185,40 +217,48 @@ screensearch/
 
 ### Adding a New Capture Source
 
-1. **Add source to capture engine**: `screen-capture/src/capture.rs`
+1. **Add source to capture engine**: `screensearch-capture/src/capture.rs`
 2. **Update configuration**: `src/main.rs` → `CaptureSettings` struct
 3. **Update documentation**: `docs/user-guide.md`
 
 ### Improving OCR Accuracy
 
-1. **Tune OCR parameters**: `screen-capture/src/ocr.rs`
+1. **Tune OCR parameters**: `screensearch-capture/src/ocr.rs`
 2. **Adjust confidence threshold**: `src/main.rs:112` → `min_confidence`
-3. **Add preprocessing**: `screen-capture/src/ocr.rs` → before OCR call
-4. **Update tests**: `screen-capture/tests/`
+3. **Add preprocessing**: `screensearch-capture/src/ocr.rs` → before OCR call
+4. **Update tests**: `screensearch-capture/tests/`
 
 ### Adding a New API Endpoint
 
-1. **Define route**: `screen-api/src/routes.rs` → `create_router()`
-2. **Create handler**: `screen-api/src/handlers/` → new function
-3. **Add request/response models**: `screen-api/src/models.rs`
+1. **Define route**: `screensearch-api/src/routes.rs` → `create_router()`
+2. **Create handler**: `screensearch-api/src/handlers/` → new function
+3. **Add request/response models**: `screensearch-api/src/models.rs`
 4. **Update API reference**: `docs/api-reference.md`
-5. **Add integration test**: `screen-api/tests/integration_tests.rs`
+5. **Add integration test**: `screensearch-api/tests/integration_tests.rs`
 
 ### Optimizing Database Queries
 
-1. **Review query**: `screen-db/src/queries.rs`
-2. **Check indexes**: `screen-db/src/migrations.rs`
+1. **Review query**: `screensearch-db/src/queries.rs`
+2. **Check indexes**: `screensearch-db/src/migrations.rs`
 3. **Analyze with EXPLAIN**: Add logging to query execution
 4. **Update connection pool**: `src/main.rs:126-133`
-5. **Benchmark**: `screen-db/tests/integration_tests.rs`
+5. **Benchmark**: `screensearch-db/tests/integration_tests.rs`
 
 ### Adding UI Automation Features
 
-1. **Extend automation engine**: `screen-automation/src/engine.rs`
-2. **Add element selectors**: `screen-automation/src/selector.rs`
-3. **Update input controls**: `screen-automation/src/input.rs`
-4. **Create example**: `screen-automation/examples/`
-5. **Add API endpoint**: `screen-api/src/handlers/automation.rs`
+1. **Extend automation engine**: `screensearch-automation/src/engine.rs`
+2. **Add element selectors**: `screensearch-automation/src/selector.rs`
+3. **Update input controls**: `screensearch-automation/src/input.rs`
+4. **Create example**: `screensearch-automation/examples/`
+5. **Add API endpoint**: `screensearch-api/src/handlers/automation.rs`
+
+### Improving RAG Search Quality
+
+1. **Tune embedding model**: `screensearch-embeddings/src/engine.rs`
+2. **Adjust text chunking**: `screensearch-embeddings/src/chunker.rs`
+3. **Modify hybrid search weights**: `screensearch-api/src/handlers/rag_helpers.rs`
+4. **Improve reranking**: `screensearch-api/src/handlers/reranker.rs`
+5. **Monitor embedding worker**: `screensearch-api/src/workers/embedding_worker.rs`
 
 ---
 
@@ -254,58 +294,96 @@ screensearch/
 
 ```
 1. CaptureEngine captures frame
-   📂 screen-capture/src/capture.rs:322-350
+   📂 screensearch-capture/src/capture.rs:322-350
 
 2. Frame sent to OCR processor
    📂 src/main.rs:336 (frame_tx.send())
 
 3. OCR processes frame
-   📂 screen-capture/src/ocr_processor.rs:353
+   📂 screensearch-capture/src/ocr_processor.rs:353
 
 4. ProcessedFrame sent to database
    📂 src/main.rs:367 (processed_rx.recv())
 
 5. Frame stored in database
    📂 src/main.rs:457 (store_processed_frame())
-   📂 screen-db/src/db.rs:insert_frame()
+   📂 screensearch-db/src/db.rs:insert_frame()
 ```
 
 ### Search Query Flow
 
 ```
 1. API receives search request
-   📂 screen-api/src/handlers/search.rs:search_handler()
+   📂 screensearch-api/src/handlers/search.rs:search_handler()
 
 2. Query sanitized for FTS5
-   📂 screen-db/src/queries.rs:sanitize_fts5_query()
+   📂 screensearch-db/src/queries.rs:sanitize_fts5_query()
 
 3. FTS5 search executed
-   📂 screen-db/src/queries.rs:search_text()
+   📂 screensearch-db/src/queries.rs:search_text()
 
 4. Results formatted as JSON
-   📂 screen-api/src/handlers/search.rs
+   📂 screensearch-api/src/handlers/search.rs
 
 5. Response sent to client
-   📂 screen-api/src/server.rs
+   📂 screensearch-api/src/server.rs
+```
+
+### RAG Hybrid Search Flow
+
+```
+1. API receives RAG search request
+   📂 screensearch-api/src/handlers/rag_helpers.rs:hybrid_search()
+
+2. Text embedded using ONNX model
+   📂 screensearch-embeddings/src/engine.rs:embed()
+
+3. Vector similarity search
+   📂 screensearch-db/src/vector_search.rs:search_by_embedding()
+
+4. FTS5 keyword search (parallel)
+   📂 screensearch-db/src/queries.rs:search_text()
+
+5. Results reranked by relevance
+   📂 screensearch-api/src/handlers/reranker.rs:rerank_results()
+
+6. Top results sent to LLM
+   📂 screensearch-api/src/handlers/ai.rs:generate_handler()
 ```
 
 ### Automation Flow
 
 ```
 1. API receives automation request
-   📂 screen-api/src/handlers/automation.rs:click_handler()
+   📂 screensearch-api/src/handlers/automation.rs:click_handler()
 
 2. AutomationEngine invoked
-   📂 screen-automation/src/engine.rs:execute()
+   📂 screensearch-automation/src/engine.rs:execute()
 
 3. Input control executed
-   📂 screen-automation/src/input.rs:click()
+   📂 screensearch-automation/src/input.rs:click()
 
 4. Result returned to API
-   📂 screen-api/src/handlers/automation.rs
+   📂 screensearch-api/src/handlers/automation.rs
 
 5. Response sent to client
-   📂 screen-api/src/server.rs
+   📂 screensearch-api/src/server.rs
+```
+
+### Embedding Generation Flow
+
+```
+1. Background worker checks for frames without embeddings
+   📂 screensearch-api/src/workers/embedding_worker.rs:process_pending()
+
+2. Text chunked for optimal embedding
+   📂 screensearch-embeddings/src/chunker.rs:chunk()
+
+3. ONNX model generates 384-dim embeddings
+   📂 screensearch-embeddings/src/engine.rs:embed_batch()
+
+4. Embeddings stored in database
+   📂 screensearch-db/src/db.rs:update_frame_embedding()
 ```
 
 ---
@@ -316,19 +394,22 @@ screensearch/
 
 | Component | Test Location |
 |-----------|---------------|
-| **Capture Engine** | `screen-capture/src/capture.rs` → inline `#[cfg(test)]` modules |
-| **OCR Processor** | `screen-capture/src/ocr_processor.rs` → inline tests |
-| **Frame Differencing** | `screen-capture/src/frame_diff.rs` → inline tests |
-| **Database Queries** | `screen-db/src/queries.rs` → inline tests |
-| **Query Sanitization** | `screen-db/src/queries.rs` → inline tests |
+| **Capture Engine** | `screensearch-capture/src/capture.rs` → inline `#[cfg(test)]` modules |
+| **OCR Processor** | `screensearch-capture/src/ocr_processor.rs` → inline tests |
+| **Frame Differencing** | `screensearch-capture/src/frame_diff.rs` → inline tests |
+| **Database Queries** | `screensearch-db/src/queries.rs` → inline tests |
+| **Vector Search** | `screensearch-db/src/vector_search.rs` → inline tests |
+| **Query Sanitization** | `screensearch-db/src/queries.rs` → inline tests |
+| **Embedding Engine** | `screensearch-embeddings/src/engine.rs` → inline tests |
+| **Text Chunker** | `screensearch-embeddings/src/chunker.rs` → inline tests |
 
 ### Integration Tests
 
 | Component | Test Location |
 |-----------|---------------|
-| **Database** | `screen-db/tests/integration_tests.rs` |
-| **API Server** | `screen-api/tests/integration_tests.rs` |
-| **Automation** | `screen-automation/tests/integration_tests.rs` |
+| **Database** | `screensearch-db/tests/integration_tests.rs` |
+| **API Server** | `screensearch-api/tests/integration_tests.rs` |
+| **Automation** | `screensearch-automation/tests/integration_tests.rs` |
 
 ### Test Commands
 
@@ -337,10 +418,11 @@ screensearch/
 cargo test --workspace
 
 # Run tests for specific crate
-cargo test -p screen-db
-cargo test -p screen-api
-cargo test -p screen-capture
-cargo test -p screen-automation
+cargo test -p screensearch-db
+cargo test -p screensearch-api
+cargo test -p screensearch-capture
+cargo test -p screensearch-automation
+cargo test -p screensearch-embeddings
 
 # Run with output
 cargo test --workspace -- --nocapture
@@ -367,20 +449,28 @@ use tracing::{debug, info, warn, error, trace};
 // Example locations to add tracing:
 
 // Capture engine
-// 📂 screen-capture/src/capture.rs
+// 📂 screensearch-capture/src/capture.rs
 info!("Captured frame from monitor {}", monitor_index);
 
 // OCR processor
-// 📂 screen-capture/src/ocr_processor.rs
+// 📂 screensearch-capture/src/ocr_processor.rs
 debug!("OCR processing frame {} with {} regions", frame_id, regions.len());
 
 // Database
-// 📂 screen-db/src/db.rs
+// 📂 screensearch-db/src/db.rs
 trace!("Executing query: {}", sql);
 
 // API
-// 📂 screen-api/src/handlers/search.rs
+// 📂 screensearch-api/src/handlers/search.rs
 warn!("Search query returned 0 results for: {}", query);
+
+// Embeddings
+// 📂 screensearch-embeddings/src/engine.rs
+debug!("Generated embedding with dimension: {}", EMBEDDING_DIM);
+
+// Background worker
+// 📂 screensearch-api/src/workers/embedding_worker.rs
+info!("Processing {} pending frames for embeddings", count);
 ```
 
 ---
@@ -391,17 +481,20 @@ warn!("Search query returned 0 results for: {}", query);
 
 | Path | File | Key Metrics |
 |------|------|-------------|
-| **OCR Processing** | `screen-capture/src/ocr.rs` | Target: < 100ms per frame |
-| **Frame Differencing** | `screen-capture/src/frame_diff.rs` | Arc-based, zero-copy |
-| **Database Insertion** | `screen-db/src/db.rs` | Batched inserts |
-| **FTS5 Search** | `screen-db/src/queries.rs` | Indexed search, < 50ms |
-| **API Response** | `screen-api/src/handlers/` | Total: < 100ms |
+| **OCR Processing** | `screensearch-capture/src/ocr.rs` | Target: < 100ms per frame |
+| **Frame Differencing** | `screensearch-capture/src/frame_diff.rs` | Arc-based, zero-copy |
+| **Database Insertion** | `screensearch-db/src/db.rs` | Batched inserts |
+| **FTS5 Search** | `screensearch-db/src/queries.rs` | Indexed search, < 50ms |
+| **Vector Search** | `screensearch-db/src/vector_search.rs` | Cosine similarity, < 100ms |
+| **Embedding Generation** | `screensearch-embeddings/src/engine.rs` | ONNX inference, batch processing |
+| **API Response** | `screensearch-api/src/handlers/` | Total: < 100ms |
 
 ### Performance Monitoring
 
-- **OCR Metrics**: `screen-capture/src/ocr_processor.rs` → `OcrMetrics`
-- **Database Stats**: `screen-db/src/db.rs` → query timing
-- **API Metrics**: `screen-api/src/handlers/system.rs` → `stats_handler()`
+- **OCR Metrics**: `screensearch-capture/src/ocr_processor.rs` → `OcrMetrics`
+- **Database Stats**: `screensearch-db/src/db.rs` → query timing
+- **API Metrics**: `screensearch-api/src/handlers/system.rs` → `stats_handler()`
+- **Embedding Stats**: `screensearch-api/src/handlers/embeddings.rs` → `status_handler()`
 
 ---
 
@@ -424,19 +517,27 @@ warn!("Search query returned 0 results for: {}", query);
 
 | Dependency | Used In | Purpose |
 |------------|---------|---------|
-| **windows** | `screen-capture/src/ocr.rs` | Windows OCR API |
-| **windows-capture** | `screen-capture/src/capture.rs` | Screen capture |
-| **uiautomation** | `screen-automation/src/` | UI automation |
+| **windows** | `screensearch-capture/src/ocr.rs` | Windows OCR API |
+| **windows-capture** | `screensearch-capture/src/capture.rs` | Screen capture |
+| **uiautomation** | `screensearch-automation/src/` | UI automation |
 
 ### Core Libraries
 
 | Dependency | Used In | Purpose |
 |------------|---------|---------|
 | **tokio** | All crates | Async runtime |
-| **sqlx** | `screen-db/` | Database access |
-| **axum** | `screen-api/` | HTTP server |
-| **image** | `screen-capture/` | Image processing |
+| **sqlx** | `screensearch-db/` | Database access |
+| **axum** | `screensearch-api/` | HTTP server |
+| **image** | `screensearch-capture/` | Image processing |
 | **serde/serde_json** | All crates | Serialization |
+
+### Machine Learning
+
+| Dependency | Used In | Purpose |
+|------------|---------|---------|
+| **ort** (ONNX Runtime) | `screensearch-embeddings/src/engine.rs` | ML inference |
+| **tokenizers** | `screensearch-embeddings/src/engine.rs` | Text tokenization |
+| **reqwest** | `screensearch-embeddings/src/download.rs` | Model download |
 
 ---
 

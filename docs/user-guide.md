@@ -595,6 +595,287 @@ Click the "Filter" button to expand filter panel:
 - `Ctrl/Cmd + K`: Focus search bar
 - `Escape`: Clear search or close panels
 
+---
+
+## Embeddings & Semantic Search
+
+### What Are Embeddings?
+
+Embeddings enable **semantic search** - finding results based on meaning rather than just exact word matches. Traditional search (FTS5) finds frames containing your exact keywords. Semantic search finds frames that are conceptually related, even if they use different words.
+
+**Example**:
+- **Traditional search** for "error message": Only finds frames with those exact words
+- **Semantic search** for "error message": Also finds frames with "exception thrown", "failed to load", "crash report", etc.
+
+This is powered by machine learning models that convert text into numerical vectors (embeddings) that capture semantic meaning.
+
+### How It Works
+
+Screen Memory uses the **paraphrase-multilingual-MiniLM-L12-v2** model:
+
+- **384-dimensional embeddings**: Each piece of text becomes a 384-number vector
+- **Multilingual support**: Works with English, Spanish, French, German, and 50+ languages
+- **Local processing**: Runs entirely on your machine using ONNX Runtime
+- **Model size**: ~40MB download (one-time, automatic)
+- **Hybrid search**: Combines semantic search with FTS5 for best results
+
+**Technical Details**:
+- Model: Sentence-Transformers from HuggingFace
+- Inference: CPU-optimized ONNX Runtime
+- Text chunking: Splits long OCR text into 512-character chunks for better accuracy
+- Vector database: SQLite with custom distance functions
+
+### Enabling Embeddings
+
+#### Via Web UI
+
+1. Open Settings panel (gear icon in header)
+2. Navigate to "AI Embeddings (RAG)" section
+3. Toggle "Semantic Search" to ON
+4. Click "Generate Embeddings" to start processing existing frames
+5. Monitor coverage percentage as embeddings are generated
+
+**UI Features**:
+- Real-time coverage percentage (0-100%)
+- Resource usage warning (CPU/RAM impact)
+- Processing status indicator
+- Model information display
+
+#### Via API
+
+**Check Status**:
+```bash
+curl "http://localhost:3131/api/embeddings/status"
+```
+
+Response:
+```json
+{
+  "enabled": true,
+  "model": "paraphrase-multilingual-MiniLM-L12-v2",
+  "total_frames": 1523,
+  "frames_with_embeddings": 890,
+  "coverage_percent": 58.4,
+  "last_processed_frame_id": 1200
+}
+```
+
+**Enable Embeddings**:
+```bash
+curl -X POST "http://localhost:3131/api/embeddings/enable" \
+  -H "Content-Type: application/json" \
+  -d 'true'
+```
+
+**Generate Embeddings (batch)**:
+```bash
+# Process next 100 frames
+curl -X POST "http://localhost:3131/api/embeddings/generate" \
+  -H "Content-Type: application/json" \
+  -d '{"batch_size": 100}'
+```
+
+**Disable Embeddings**:
+```bash
+curl -X POST "http://localhost:3131/api/embeddings/enable" \
+  -H "Content-Type: application/json" \
+  -d 'false'
+```
+
+### Performance Considerations
+
+#### Resource Usage
+
+**During Generation** (initial processing):
+- **CPU**: ~20% on modern quad-core processors
+- **RAM**: ~1GB (model + working memory)
+- **Time**: ~200ms per frame (depends on text length)
+- **Storage**: ~1.5KB per frame for embeddings
+
+**Example**: Processing 1,000 frames takes ~3-5 minutes and uses ~1.5MB of database space.
+
+**At Rest** (after generation):
+- **CPU**: 0% (embeddings stored in database)
+- **RAM**: Minimal (model unloaded after processing)
+- **Search**: +50-100ms overhead for semantic queries
+
+#### Optimization Tips
+
+**For Large Databases** (10,000+ frames):
+- Process in batches of 50-100 frames
+- Run generation during idle time (evenings, weekends)
+- Enable embeddings early - processing backlog takes longer than ongoing generation
+
+**For Limited Resources**:
+- Use smaller batch sizes (25-50 frames)
+- Generate embeddings selectively (only for important frames)
+- Disable when not actively using AI reports
+
+**Monitoring Progress**:
+- Watch coverage percentage in Settings
+- Check `last_processed_frame_id` to track progress
+- Use `/api/embeddings/status` for programmatic monitoring
+
+### When to Use Semantic vs FTS5 Search
+
+#### Use Semantic Search When:
+
+- Searching for concepts or topics (e.g., "debugging issues")
+- Looking for content in different languages
+- Finding similar content with different phrasing
+- Generating AI intelligence reports (requires embeddings)
+- Dealing with OCR errors (semantic search is more forgiving)
+
+#### Use Traditional Search (FTS5) When:
+
+- Looking for exact phrases or code snippets
+- Searching for specific names, URLs, or identifiers
+- Need fastest possible response times
+- Working with very specific keyword filters
+- Embeddings haven't been generated yet
+
+#### Hybrid Search (Best of Both)
+
+The AI Intelligence system automatically uses **hybrid search** when embeddings are enabled:
+
+1. **Semantic search** finds conceptually relevant frames
+2. **FTS5 search** adds frames with exact keyword matches
+3. **Reranking** combines and orders results by relevance
+
+This provides the most comprehensive results while maintaining speed.
+
+### Troubleshooting
+
+#### Model Download Issues
+
+**Symptom**: Error message "Failed to initialize embedding engine"
+
+**Solutions**:
+
+1. **Check Internet Connection**
+   - Model downloads from HuggingFace (~40MB)
+   - First run requires download, then cached locally
+
+2. **Verify Models Directory**
+   ```bash
+   # Check if model exists
+   dir "%USERPROFILE%\.cache\screensearch\models"
+   ```
+   - Should contain `model.onnx` and `tokenizer.json`
+
+3. **Manual Download** (if automatic fails):
+   - Download from: [HuggingFace Model Page](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2)
+   - Extract to: `%USERPROFILE%\.cache\screensearch\models\`
+
+4. **Firewall/Proxy**
+   - Ensure HuggingFace CDN is accessible
+   - Check corporate proxy settings
+
+#### Slow Embedding Generation
+
+**Symptom**: Generation takes >500ms per frame
+
+**Solutions**:
+
+1. **Reduce Batch Size**
+   - Use 25-50 instead of 100-200
+   - Prevents CPU throttling on slower systems
+
+2. **Check OCR Text Length**
+   - Very long OCR text (>2000 chars) takes longer
+   - Normal: 100-500 chars per frame
+
+3. **Close Other Applications**
+   - Embedding generation is CPU-intensive
+   - Free up system resources during processing
+
+4. **Update ONNX Runtime**
+   - Ensure latest version is being used
+   - Check `Cargo.toml` for version info
+
+#### Low Coverage Percentage
+
+**Symptom**: Coverage stuck at low percentage (e.g., 10-20%)
+
+**Solutions**:
+
+1. **Manual Trigger**
+   - Click "Generate Embeddings" in Settings
+   - Or use API: `POST /api/embeddings/generate`
+
+2. **Check Last Processed ID**
+   - Compare to total frame count
+   - Indicates if processing is stalled
+
+3. **Review Logs**
+   ```bash
+   # Check for errors
+   type screen_memories.log | findstr "embedding"
+   ```
+
+4. **Restart Backend**
+   - Sometimes embedding worker needs restart
+   - Stop and restart: `cargo run --release`
+
+#### Embeddings Not Used in Search
+
+**Symptom**: AI reports use "Recent Activity" context instead of semantic search
+
+**Solutions**:
+
+1. **Verify Embeddings Enabled**
+   ```bash
+   curl "http://localhost:3131/api/embeddings/status"
+   # Check: "enabled": true
+   ```
+
+2. **Check Coverage**
+   - Need at least 10-20% coverage for semantic results
+   - Higher coverage = better semantic matches
+
+3. **Query Relevance**
+   - Very specific queries may not match semantically
+   - Try broader, conceptual queries
+
+4. **Wait for Processing**
+   - If just enabled, generation takes time
+   - Check coverage percentage increasing
+
+### Technical Details
+
+#### Database Schema
+
+Embeddings are stored in the `frame_embeddings` table:
+
+```sql
+CREATE TABLE frame_embeddings (
+    id INTEGER PRIMARY KEY,
+    frame_id INTEGER NOT NULL,
+    chunk_text TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    embedding BLOB NOT NULL,  -- 384 floats (1536 bytes)
+    FOREIGN KEY (frame_id) REFERENCES frames(id)
+);
+```
+
+#### Vector Search Algorithm
+
+1. **Query Embedding**: User query converted to 384-dim vector
+2. **Cosine Similarity**: Compares query vector to all stored embeddings
+3. **Top-K Results**: Returns most similar chunks (typically top 5-10)
+4. **Frame Aggregation**: Groups chunks by frame, aggregates scores
+5. **Hybrid Fusion**: Merges with FTS5 results using Reciprocal Rank Fusion (RRF)
+
+#### Model Information
+
+- **Architecture**: Transformer-based sentence encoder
+- **Training**: Paraphrase mining on multilingual datasets
+- **Context Window**: 256 tokens (~512 characters)
+- **Inference**: ONNX Runtime (CPU-optimized)
+- **License**: Apache 2.0 (free for commercial use)
+
+---
+
 ### Timeline View
 
 #### Activity Graph
@@ -1432,7 +1713,7 @@ A: Frame differencing may be disabled or threshold too low. Enable and adjust:
 ### Future Features
 
 **Q: Will there be semantic search?**
-A: Vector embeddings for semantic search are on the roadmap.
+A: Yes! Semantic search is available using vector embeddings. See the Embeddings & Semantic Search section for details.
 
 **Q: Can you add cloud sync?**
 A: Planned as optional feature while maintaining local-first approach.
