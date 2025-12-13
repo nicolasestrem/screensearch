@@ -12,6 +12,7 @@ use ort::{
 use std::sync::Mutex; // Added Mutex
 use tokenizers::Tokenizer;
 use tracing::{info, warn};
+use std::path::PathBuf;
 
 /// Main embedding engine for generating text embeddings
 ///
@@ -23,8 +24,8 @@ pub struct EmbeddingEngine {
     tokenizer: Option<Tokenizer>,
 }
 
-unsafe impl Send for EmbeddingEngine {}
-unsafe impl Sync for EmbeddingEngine {}
+// Note: We use Mutex<Session> which should be Send, and Tokenizer is Send/Sync.
+// We rely on automatic trait derivation rather than unsafe manual implementation.
 
 impl EmbeddingEngine {
     /// Create a new embedding engine
@@ -53,7 +54,15 @@ impl EmbeddingEngine {
             }
         }
 
-        let (model_path, tokenizer_path) = crate::download::get_model_paths(&models_dir);
+        let (default_model, default_tokenizer) = crate::download::get_model_paths(&models_dir);
+        
+        let model_path = config.model_path.as_ref()
+            .map(PathBuf::from)
+            .unwrap_or(default_model);
+
+        let tokenizer_path = config.tokenizer_path.as_ref()
+            .map(PathBuf::from)
+            .unwrap_or(default_tokenizer);
 
         if !model_path.exists() || !tokenizer_path.exists() {
             warn!("Model files missing. Running in fallback mode.");
@@ -108,7 +117,10 @@ impl EmbeddingEngine {
 
         let (session_mutex, tokenizer) = match (self.session.as_ref(), self.tokenizer.as_ref()) {
             (Some(s), Some(t)) => (s, t),
-            _ => return Ok(texts.iter().map(|t| self.fallback_embed(t)).collect()),
+            _ => {
+                warn!("Embedding engine not fully initialized. Using fallback hash embeddings.");
+                return Ok(texts.iter().map(|t| self.fallback_embed(t)).collect());
+            }
         };
 
         // 1. Tokenize
@@ -261,7 +273,7 @@ mod tests {
         // This test runs without model download, so should default to fallback
         // We force a non-existent path to ensure
         let mut config = EmbeddingConfig::default();
-        config.model_path = Some(PathBuf::from("non_existent_folder"));
+        config.model_path = Some("non_existent_folder".to_string());
         let engine = EmbeddingEngine::with_config(config).await.unwrap();
         assert!(!engine.is_initialized());
         

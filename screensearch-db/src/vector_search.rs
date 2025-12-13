@@ -139,6 +139,10 @@ impl DatabaseManager {
         .await
         .map_err(|e| crate::DatabaseError::QueryError(format!("Failed to fetch embeddings: {}", e)))?;
 
+        if rows.len() > 10000 {
+            tracing::warn!("Loading {} embeddings into memory for vector search. This may impact performance.", rows.len());
+        }
+
         let mut candidates: Vec<(i64, String, i32, f32)> = Vec::with_capacity(rows.len());
 
         for row in rows {
@@ -152,7 +156,12 @@ impl DatabaseManager {
             // Assuming little-endian f32
             let vector: Vec<f32> = embedding_blob
                 .chunks_exact(4)
-                .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+                .map(|chunk| {
+                    chunk.try_into()
+                        .ok()
+                        .map(f32::from_le_bytes)
+                        .unwrap_or(0.0)
+                })
                 .collect();
 
             let similarity = cosine_similarity(&query_embedding, &vector);
@@ -173,19 +182,14 @@ impl DatabaseManager {
         // We need to fetch details for each frame.
         // To be efficient, valid SQL: WHERE id IN (...)
         let frame_ids: Vec<i64> = top_k.iter().map(|(id, ..)| *id).collect();
-        let placeholders: String = frame_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        
-        let frame_query = format!(
-            "SELECT * FROM frames WHERE id IN ({})",
-            placeholders
-        );
-
-        let mut query_builder = sqlx::query_as::<_, FrameRecord>(&frame_query);
+        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM frames WHERE id IN (");
+        let mut separated = query_builder.separated(", ");
         for id in frame_ids {
-            query_builder = query_builder.bind(id);
+            separated.push_bind(id);
         }
+        separated.push_unseparated(")");
 
-        let frames: Vec<FrameRecord> = query_builder
+        let frames: Vec<FrameRecord> = query_builder.build_query_as()
             .fetch_all(self.pool())
             .await
             .map_err(|e| crate::DatabaseError::QueryError(format!("Failed to fetch frame details: {}", e)))?;

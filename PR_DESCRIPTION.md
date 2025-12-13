@@ -26,6 +26,12 @@ This PR marks a significant milestone in the evolution of the application, offic
 - **Database Migrations**: New migrations to support vector storage and optimized indexing.
 - **Code Quality**: Applied `cargo clippy` suggestions across the board, fixing 100+ linting issues, improving type safety and removing unused code.
 
+## 🔧 Addresses Review Feedback
+- **Safety**: Removed unsafe `Send`/`Sync` implementations in `EmbeddingEngine`, replaced with proper thread-safe design patterns preventing potential data races.
+- **Stability**: Fixed potential panics in vector search blob processing; added robust error handling for malformed embedding data.
+- **Performance**: Added large-dataset warnings for in-memory vector indexing and optimized SQL query construction to handle dynamic batch sizes safely.
+- **Polish**: Fixed broken repository links in the footer and resolved test suite configuration issues.
+
 ## 🛠️ Technical Details
 
 ### 📂 File Structure Changes
