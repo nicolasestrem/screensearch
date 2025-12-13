@@ -1,6 +1,8 @@
 # ScreenSearch API Reference
 
-Complete API reference for the ScreenSearch REST API server. This API provides search capabilities for captured screen content, computer automation controls, and tag management.
+Complete API reference for the ScreenSearch REST API server. This API provides search capabilities for captured screen content, computer automation controls, tag management, and AI-powered intelligence reports with vector embeddings.
+
+**Total Endpoints**: 26
 
 ## Overview
 
@@ -36,6 +38,17 @@ All successful responses return JSON with appropriate HTTP status codes. Error r
 | `400 Bad Request` | Invalid request parameters or malformed JSON |
 | `404 Not Found` | Resource not found |
 | `500 Internal Server Error` | Server error or automation failure |
+
+### Endpoint Categories
+
+| Category | Endpoints | Description |
+|----------|-----------|-------------|
+| **Search & Retrieval** | 5 endpoints | Full-text search, keyword search, frame retrieval |
+| **Embeddings (RAG)** | 3 endpoints | Vector embeddings for semantic search |
+| **Automation** | 9 endpoints | Computer control via Windows UIAutomation |
+| **Tag Management** | 6 endpoints | Organize frames with tags |
+| **AI Intelligence** | 1 endpoint | Generate reports with LLM providers |
+| **System** | 2 endpoints | Health checks and settings |
 
 ---
 
@@ -200,6 +213,133 @@ curl "http://localhost:3131/frames?monitor_index=1&limit=10"
 
 ---
 
+### GET /api/frames/:id
+
+Get detailed information about a single frame by ID, including OCR text and associated tags.
+
+#### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | integer | Frame ID to retrieve |
+
+#### Response
+
+```json
+{
+  "id": 123,
+  "timestamp": "2025-12-10T14:30:00Z",
+  "file_path": "C:\\captures\\frame_123.jpg",
+  "app_name": "Chrome",
+  "window_name": "Google Search - Chrome",
+  "ocr_text": "search results for machine learning tutorial documentation example code",
+  "tags": [
+    {
+      "id": 1,
+      "name": "research",
+      "color": "#4CAF50",
+      "created_at": "2025-12-01T10:00:00Z"
+    },
+    {
+      "id": 2,
+      "name": "important",
+      "color": "#FF5722",
+      "created_at": "2025-12-02T11:00:00Z"
+    }
+  ],
+  "thumbnail": null
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | integer | Frame ID |
+| `timestamp` | string | Frame capture timestamp (ISO 8601) |
+| `file_path` | string | Path to stored image file |
+| `app_name` | string | Name of active application |
+| `window_name` | string | Window title at capture time |
+| `ocr_text` | string | Combined OCR text from all regions |
+| `tags` | array | Array of tag objects associated with frame |
+| `thumbnail` | string/null | Optional base64-encoded thumbnail |
+
+#### Example
+
+```bash
+# Get frame by ID
+curl "http://localhost:3131/api/frames/123"
+```
+
+#### Error Responses
+
+**404 Not Found** - If frame doesn't exist:
+```json
+{
+  "error": "Frame 999 not found",
+  "status": 404
+}
+```
+
+#### Notes
+
+- Returns full OCR text as a single combined string (space-separated)
+- Tags are included inline for convenient access
+- Use `/api/frames/:id/image` to retrieve the actual image data
+
+---
+
+### GET /api/frames/:id/image
+
+Get the raw image data for a frame. Returns binary image data (JPEG or PNG).
+
+#### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | integer | Frame ID to retrieve image for |
+
+#### Response
+
+Binary image data with appropriate content type header:
+- `image/jpeg` for JPEG files
+- `image/png` for PNG files
+
+#### Example
+
+```bash
+# Download frame image
+curl "http://localhost:3131/api/frames/123/image" --output frame_123.jpg
+
+# Display in browser
+# Open: http://localhost:3131/api/frames/123/image
+```
+
+#### Error Responses
+
+**404 Not Found** - If frame or image file doesn't exist:
+```json
+{
+  "error": "Frame 999 not found",
+  "status": 404
+}
+```
+
+```json
+{
+  "error": "Image file not found: C:\\captures\\missing.jpg",
+  "status": 404
+}
+```
+
+#### Notes
+
+- Returns raw binary image data, not JSON
+- Image format depends on storage settings (JPEG by default since v0.2.0)
+- Content-Type header is set automatically based on file extension
+- This endpoint is used by the web UI to display frame previews
+- Large images may take time to transfer; consider thumbnail generation for previews
+
+---
+
 ### GET /health
 
 Health check endpoint providing system status and database statistics.
@@ -230,6 +370,155 @@ Health check endpoint providing system status and database statistics.
 ```bash
 curl "http://localhost:3131/health"
 ```
+
+---
+
+### GET /api/embeddings/status
+
+Get the current status of the embedding system, including coverage statistics and processing state.
+
+#### Response
+
+```json
+{
+  "enabled": true,
+  "model": "all-MiniLM-L6-v2",
+  "total_frames": 1523,
+  "frames_with_embeddings": 890,
+  "coverage_percent": 58.4,
+  "last_processed_frame_id": 1200
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | boolean | Whether embedding generation is enabled |
+| `model` | string | Name of the embedding model being used |
+| `total_frames` | integer | Total number of frames in database |
+| `frames_with_embeddings` | integer | Number of frames with embeddings generated |
+| `coverage_percent` | float | Percentage of frames with embeddings (0-100) |
+| `last_processed_frame_id` | integer | ID of the last frame processed for embeddings |
+
+#### Example
+
+```bash
+curl "http://localhost:3131/api/embeddings/status"
+```
+
+#### Notes
+
+- This endpoint provides real-time status for RAG (Retrieval-Augmented Generation) features
+- Coverage percentage helps track embedding generation progress
+- Used by the UI to display embedding system health
+
+---
+
+### POST /api/embeddings/generate
+
+Trigger background embedding generation for frames that don't have embeddings yet.
+
+#### Request Body
+
+```json
+{
+  "batch_size": 100
+}
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `batch_size` | integer | No | 50 | Number of frames to process in this batch |
+
+#### Response
+
+```json
+{
+  "success": true,
+  "message": "Processed 100 frames with embeddings",
+  "frames_processed": 100
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `success` | boolean | Whether the operation succeeded |
+| `message` | string | Human-readable status message |
+| `frames_processed` | integer | Actual number of frames processed |
+
+#### Example
+
+```bash
+# Generate embeddings for next 50 frames (default)
+curl -X POST "http://localhost:3131/api/embeddings/generate" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Generate embeddings for next 200 frames
+curl -X POST "http://localhost:3131/api/embeddings/generate" \
+  -H "Content-Type: application/json" \
+  -d '{"batch_size": 200}'
+```
+
+#### Notes
+
+- Only processes frames that don't already have embeddings
+- Processing is done synchronously in the request (may take several seconds for large batches)
+- Recommended batch size: 50-100 frames for responsive UI
+- Embeddings enable semantic search in AI intelligence reports
+
+---
+
+### POST /api/embeddings/enable
+
+Enable or disable the embedding generation system.
+
+#### Request Body
+
+```json
+true
+```
+
+The request body is a simple boolean value (not wrapped in an object).
+
+| Value | Description |
+|-------|-------------|
+| `true` | Enable embedding generation |
+| `false` | Disable embedding generation |
+
+#### Response
+
+Returns the updated embedding status (same format as `/api/embeddings/status`):
+
+```json
+{
+  "enabled": true,
+  "model": "all-MiniLM-L6-v2",
+  "total_frames": 1523,
+  "frames_with_embeddings": 890,
+  "coverage_percent": 58.4,
+  "last_processed_frame_id": 1200
+}
+```
+
+#### Example
+
+```bash
+# Enable embeddings
+curl -X POST "http://localhost:3131/api/embeddings/enable" \
+  -H "Content-Type: application/json" \
+  -d 'true'
+
+# Disable embeddings
+curl -X POST "http://localhost:3131/api/embeddings/enable" \
+  -H "Content-Type: application/json" \
+  -d 'false'
+```
+
+#### Notes
+
+- Disabling embeddings stops new embeddings from being generated
+- Existing embeddings are preserved in the database
+- This setting persists across application restarts
 
 ---
 

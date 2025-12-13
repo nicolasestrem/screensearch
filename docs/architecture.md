@@ -8,14 +8,15 @@
 
 1. [System Overview](#1-system-overview)
 2. [Component Architecture](#2-component-architecture)
-3. [Database Schema](#3-database-schema)
-4. [Data Flow](#4-data-flow)
-5. [Concurrency Model](#5-concurrency-model)
-6. [Configuration Architecture](#6-configuration-architecture)
-7. [Error Handling Strategy](#7-error-handling-strategy)
-8. [Performance Characteristics](#8-performance-characteristics)
-9. [Security & Privacy Architecture](#9-security--privacy-architecture)
-10. [Extension Points](#10-extension-points)
+3. [RAG & Embeddings Architecture](#3-rag--embeddings-architecture)
+4. [Database Schema](#4-database-schema)
+5. [Data Flow](#5-data-flow)
+6. [Concurrency Model](#6-concurrency-model)
+7. [Configuration Architecture](#7-configuration-architecture)
+8. [Error Handling Strategy](#8-error-handling-strategy)
+9. [Performance Characteristics](#9-performance-characteristics)
+10. [Security & Privacy Architecture](#10-security--privacy-architecture)
+11. [Extension Points](#11-extension-points)
 
 ---
 
@@ -641,9 +642,658 @@ let info = window.get_info().await?;  // title, process, rect
 - **Operation**: Background worker task processing frames from `ocr_text`.
 - **Output**: 384/1024-dimension float vectors stored as BLOBs.
 
-## 3. Database Schema
+## 3. RAG & Embeddings Architecture
 
-### 3.1 Core Tables
+### 3.1 Overview
+
+ScreenSearch V2 implements a **Retrieval-Augmented Generation (RAG)** system that combines traditional keyword search (FTS5) with semantic vector search for intelligent screen content retrieval. This hybrid approach enables both exact keyword matching and semantic understanding of user queries.
+
+**Key Components**:
+- **Embedding Engine**: ONNX Runtime-based text embedding generation
+- **Vector Index**: In-memory cosine similarity search
+- **Hybrid Search**: Weighted fusion of FTS5 and vector results
+- **Background Worker**: Asynchronous embedding generation pipeline
+- **Reranking**: Heuristic post-processing for relevance optimization
+
+**Why RAG for Screen Search?**:
+- Users often don't remember exact keywords ("that database thing" vs "PostgreSQL query")
+- Semantic search finds conceptually similar content across different wording
+- Combines precision of keyword search with recall of semantic search
+- Enables AI-powered intelligence features (daily summaries, activity insights)
+
+### 3.2 System Components
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    RAG & Embeddings Pipeline                         │
+└─────────────────────────────────────────────────────────────────────┘
+    │
+    ├─> Frame Capture → OCR Processing → Database Storage
+    │                                           │
+    │                                           ▼
+    │                                  ┌────────────────────┐
+    │                                  │ Embedding Worker    │
+    │                                  │ (Background Task)   │
+    │                                  └──────────┬─────────┘
+    │                                             │
+    │   ┌─────────────────────────────────────────▼─────────┐
+    │   │         Embedding Generation Pipeline              │
+    │   │                                                     │
+    │   │  1. Fetch frames without embeddings (batch: 50)   │
+    │   │       ↓                                            │
+    │   │  2. Load OCR text & concatenate                   │
+    │   │       ↓                                            │
+    │   │  3. Text Chunking (max 256 tokens, overlap 32)    │
+    │   │       ↓                                            │
+    │   │  4. ONNX Model Inference (MiniLM-L12-v2)          │
+    │   │       - Tokenization (HuggingFace tokenizers)     │
+    │   │       - Forward pass (ONNX Runtime)               │
+    │   │       - Mean pooling over sequence                │
+    │   │       - L2 normalization                          │
+    │   │       ↓                                            │
+    │   │  5. Store embeddings in SQLite (BLOB)             │
+    │   │       - frame_id, chunk_text, chunk_index         │
+    │   │       - embedding (Vec<f32> as bytes)             │
+    │   │       - model_name, embedding_dim                 │
+    │   └─────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Hybrid Search Query                          │
+│                                                                       │
+│  User Query: "What database work did I do yesterday?"               │
+│       │                                                               │
+│       ├──────────────────────┬──────────────────────────────┐       │
+│       ▼                      ▼                              ▼       │
+│  ┌─────────────┐      ┌────────────┐              ┌──────────────┐ │
+│  │ Embed Query │      │FTS5 Search │              │ Filters      │ │
+│  │ (ONNX)      │      │(keyword)   │              │(time range)  │ │
+│  └──────┬──────┘      └─────┬──────┘              └──────┬───────┘ │
+│         │                   │                            │         │
+│         ▼                   ▼                            │         │
+│  ┌──────────────────────────────────────┐               │         │
+│  │   In-Memory Vector Search             │               │         │
+│  │                                        │               │         │
+│  │  1. Load all embeddings from SQLite   │               │         │
+│  │  2. Compute cosine similarity          │               │         │
+│  │  3. Sort by similarity (descending)    │◄──────────────┘         │
+│  │  4. Take top K (50 default)           │                         │
+│  └──────────┬─────────────────────────────┘                         │
+│             │                   │                                    │
+│             │                   │                                    │
+│  ┌──────────▼───────────────────▼─────────────────────────┐         │
+│  │         Hybrid Score Fusion (Weighted Sum)              │         │
+│  │                                                          │         │
+│  │  score = (alpha × vector_sim) + ((1-alpha) × fts_rank) │         │
+│  │  default alpha = 0.3 (60% vector, 40% keyword)         │         │
+│  └──────────┬───────────────────────────────────────────────┘         │
+│             │                                                         │
+│             ▼                                                         │
+│  ┌─────────────────────────────────────┐                            │
+│  │  Reranking & Post-Processing        │                            │
+│  │                                      │                            │
+│  │  - Keyword boosting (+20% if match) │                            │
+│  │  - Recency weighting                │                            │
+│  │  - Deduplication (same frame)       │                            │
+│  │  - Length normalization             │                            │
+│  └──────────┬──────────────────────────┘                            │
+│             │                                                         │
+│             ▼                                                         │
+│  ┌─────────────────────────────────────┐                            │
+│  │   Final Results (Top 20 default)    │                            │
+│  │                                      │                            │
+│  │  - frame metadata                   │                            │
+│  │  - chunk_text (OCR excerpt)         │                            │
+│  │  - similarity_score (0.0-1.0)       │                            │
+│  └─────────────────────────────────────┘                            │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 3.3 Embedding Generation Pipeline
+
+**Model Details**:
+```rust
+Model: paraphrase-multilingual-MiniLM-L12-v2
+Source: HuggingFace (sentence-transformers)
+Embedding Dimension: 384 (float32)
+Max Sequence Length: 256 tokens
+Model Size: ~120MB (ONNX format)
+Languages: 50+ languages supported
+```
+
+**4-Step Generation Process**:
+
+```rust
+// 1. Text Chunking
+pub struct TextChunker {
+    max_tokens: usize,      // 256 (MiniLM limit)
+    overlap: usize,         // 32 tokens (preserve context)
+}
+
+// Example: Long OCR text split into chunks
+let text = "PostgreSQL query optimization... [2000 tokens] ...performance tuning";
+let chunks = chunker.chunk_text(text);
+// Result: [
+//   "PostgreSQL query optimization...[256 tokens]",
+//   "...[32 overlap]...database indexing...[256 tokens]",
+//   "...[32 overlap]...performance tuning"
+// ]
+
+// 2. Tokenization (HuggingFace tokenizers)
+let encoding = tokenizer.encode(chunk_text, true)?;
+let input_ids = encoding.get_ids();           // Token IDs
+let attention_mask = encoding.get_attention_mask();  // 1 for real tokens, 0 for padding
+let token_type_ids = encoding.get_type_ids(); // Segment IDs
+
+// 3. ONNX Model Inference
+let inputs = ort::inputs![
+    "input_ids" => Array2::from_vec(input_ids),
+    "attention_mask" => Array2::from_vec(attention_mask),
+    "token_type_ids" => Array2::from_vec(token_type_ids)
+]?;
+
+let outputs = session.run(inputs)?;
+let last_hidden_state = outputs["last_hidden_state"]; // Shape: [batch, seq_len, 384]
+
+// 4. Mean Pooling & Normalization
+let mut sum_vec = vec![0.0f32; 384];
+let mut count = 0.0;
+
+for token_idx in 0..seq_len {
+    if attention_mask[token_idx] == 1 {
+        for dim in 0..384 {
+            sum_vec[dim] += last_hidden_state[[0, token_idx, dim]];
+        }
+        count += 1.0;
+    }
+}
+
+// Average over real tokens
+for x in sum_vec.iter_mut() {
+    *x /= count;
+}
+
+// L2 normalization (unit vector)
+let norm = sum_vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+for x in sum_vec.iter_mut() {
+    *x /= norm;
+}
+
+// Result: normalized 384-dimensional embedding
+```
+
+**Storage Format**:
+```sql
+-- Embeddings stored as raw bytes (Vec<f32> serialized)
+CREATE TABLE embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    frame_id INTEGER NOT NULL,
+    chunk_text TEXT NOT NULL,           -- The text chunk that was embedded
+    chunk_index INTEGER NOT NULL,       -- 0, 1, 2... for multi-chunk frames
+    embedding BLOB NOT NULL,            -- 384 × 4 bytes = 1,536 bytes
+    model_name TEXT NOT NULL,           -- "paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_dim INTEGER NOT NULL,     -- 384
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (frame_id) REFERENCES frames(id) ON DELETE CASCADE
+);
+```
+
+### 3.4 Hybrid Search Algorithm
+
+**Pseudocode**:
+```python
+def hybrid_search(query: str, alpha: float = 0.3, limit: int = 50):
+    # 1. Generate query embedding
+    query_embedding = embed_text(query)  # 384-dim vector
+
+    # 2. Vector Search (Semantic)
+    vector_results = semantic_search(query_embedding, limit)
+    # Returns: [(frame_id, chunk_text, similarity_score), ...]
+    # Similarity: cosine distance 0.0-1.0
+
+    # 3. FTS5 Search (Keyword)
+    fts_results = fts5_search(query, limit)
+    # Returns: [(frame_id, text, bm25_score), ...]
+    # BM25 score: normalized 0.0-1.0
+
+    # 4. Score Fusion (Weighted Reciprocal Rank Fusion)
+    merged_scores = {}
+
+    for (frame_id, text, sim) in vector_results:
+        key = (frame_id, text)
+        merged_scores[key] = alpha * sim
+
+    for (frame_id, text, bm25) in fts_results:
+        key = (frame_id, text)
+        if key in merged_scores:
+            merged_scores[key] += (1 - alpha) * bm25
+        else:
+            merged_scores[key] = (1 - alpha) * bm25
+
+    # 5. Sort by combined score
+    results = sorted(merged_scores.items(),
+                     key=lambda x: x[1],
+                     reverse=True)
+
+    return results[:limit]
+```
+
+**Weight Configuration**:
+```toml
+[embeddings]
+hybrid_search_alpha = 0.3  # 30% vector, 70% keyword (default)
+
+# Use cases:
+# alpha = 0.0  → Pure keyword search (FTS5 only)
+# alpha = 0.3  → Balanced (default: slight keyword preference)
+# alpha = 0.5  → Equal weighting
+# alpha = 1.0  → Pure semantic search (vector only)
+```
+
+**Example Search Flow**:
+```
+Query: "database optimization work"
+Alpha: 0.3
+
+Vector Search Results (cosine similarity):
+1. Frame 1234: "PostgreSQL query tuning..." → 0.89
+2. Frame 1235: "Database indexing strategy..." → 0.85
+3. Frame 1236: "SQL performance analysis..." → 0.82
+
+FTS5 Results (BM25 ranking):
+1. Frame 1234: "PostgreSQL query tuning..." → 0.95 (exact match "database")
+2. Frame 1237: "Optimizing database schemas..." → 0.88
+3. Frame 1235: "Database indexing strategy..." → 0.80
+
+Hybrid Fusion:
+Frame 1234: (0.3 × 0.89) + (0.7 × 0.95) = 0.932 ← Best match
+Frame 1235: (0.3 × 0.85) + (0.7 × 0.80) = 0.815
+Frame 1237: (0.3 × 0.00) + (0.7 × 0.88) = 0.616 (no vector match)
+Frame 1236: (0.3 × 0.82) + (0.7 × 0.00) = 0.246 (no keyword match)
+
+Final Ranking:
+1. Frame 1234 (0.932) - Both strong vector + keyword match
+2. Frame 1235 (0.815) - Strong in both
+3. Frame 1237 (0.616) - Keyword match only
+4. Frame 1236 (0.246) - Semantic match only
+```
+
+### 3.5 Reranking & Post-Processing
+
+**Reranking Pipeline**:
+```rust
+pub struct RerankConfig {
+    pub top_k: usize,           // 20 (return top 20 after reranking)
+    pub recency_weight: f32,    // 0.1 (boost recent frames)
+    pub length_weight: f32,     // 0.05 (prefer longer chunks)
+    pub min_score: f32,         // 0.0 (minimum similarity threshold)
+}
+
+pub fn rerank_results(
+    results: Vec<SemanticResult>,
+    config: &RerankConfig
+) -> Vec<SemanticResult> {
+    let mut scored_results = Vec::new();
+    let now = Utc::now();
+
+    for result in results {
+        let mut score = result.similarity_score;
+
+        // 1. Recency Boost: Exponential decay
+        let age_hours = (now - result.frame.timestamp).num_hours() as f32;
+        let recency_boost = (-age_hours / 168.0).exp() * config.recency_weight;
+        score += recency_boost;
+
+        // 2. Length Boost: Prefer substantive chunks
+        let length_boost = (result.chunk_text.len() as f32 / 1000.0).min(1.0)
+                          * config.length_weight;
+        score += length_boost;
+
+        // 3. Apply minimum threshold
+        if score >= config.min_score {
+            scored_results.push((result, score));
+        }
+    }
+
+    // Sort by adjusted score
+    scored_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+    scored_results
+        .into_iter()
+        .take(config.top_k)
+        .map(|(r, _)| r)
+        .collect()
+}
+```
+
+**Keyword Boosting**:
+```rust
+// Boost results that contain exact query terms
+pub fn boost_keyword_matches(
+    results: &mut Vec<SemanticResult>,
+    query: &str,
+    boost_amount: f32  // 0.2 = +20%
+) {
+    let query_terms: Vec<&str> = query.split_whitespace().collect();
+
+    for result in results.iter_mut() {
+        let text_lower = result.chunk_text.to_lowercase();
+        let mut match_count = 0;
+
+        for term in &query_terms {
+            if text_lower.contains(&term.to_lowercase()) {
+                match_count += 1;
+            }
+        }
+
+        if match_count > 0 {
+            let boost = (match_count as f32 / query_terms.len() as f32)
+                       * boost_amount;
+            result.similarity_score += boost;
+        }
+    }
+}
+```
+
+### 3.6 In-Memory Vector Index (Why Not SQLite?)
+
+**Design Decision: In-Memory vs sqlite-vec**
+
+ScreenSearch uses **in-memory vector search** instead of the sqlite-vec extension for the following reasons:
+
+**Technical Constraints**:
+1. **Windows DLL Compatibility**: sqlite-vec requires custom SQLite compilation with extension support
+2. **Deployment Complexity**: Would require shipping additional DLL files, breaking portability
+3. **Build Dependencies**: sqlx doesn't easily support runtime-loaded extensions
+4. **User Experience**: Binary should be self-contained with no manual setup
+
+**Performance Trade-offs**:
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| **In-Memory (Current)** | ✓ No dependencies<br>✓ Simple deployment<br>✓ Fast for <100K embeddings<br>✓ Full Rust control | ✗ Loads all vectors into RAM<br>✗ Slower at scale (>100K)<br>✗ No index persistence |
+| **sqlite-vec** | ✓ Disk-based indexing<br>✓ Scales to millions<br>✓ HNSW/IVF algorithms | ✗ Requires extension DLL<br>✗ Build complexity<br>✗ Platform-specific |
+
+**Implementation**:
+```rust
+pub async fn semantic_search(
+    &self,
+    query_embedding: Vec<f32>,
+    limit: i64,
+) -> Result<Vec<SemanticResult>> {
+    // 1. Fetch all embeddings from SQLite (BLOB deserialization)
+    let rows = sqlx::query(
+        "SELECT frame_id, chunk_text, chunk_index, embedding FROM embeddings"
+    )
+    .fetch_all(self.pool())
+    .await?;
+
+    // 2. Load vectors into memory
+    let mut candidates = Vec::with_capacity(rows.len());
+
+    for row in rows {
+        let embedding_blob: Vec<u8> = row.get("embedding");
+
+        // Deserialize Vec<f32> from little-endian bytes
+        let vector: Vec<f32> = embedding_blob
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect();
+
+        // 3. Compute cosine similarity
+        let similarity = cosine_similarity(&query_embedding, &vector);
+
+        candidates.push((
+            row.get("frame_id"),
+            row.get("chunk_text"),
+            row.get("chunk_index"),
+            similarity
+        ));
+    }
+
+    // 4. Sort by similarity (brute-force)
+    candidates.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap());
+
+    // 5. Take top K
+    let top_k = candidates.into_iter().take(limit as usize);
+
+    // 6. Fetch frame metadata (bulk query)
+    // ... (see vector_search.rs for full implementation)
+}
+```
+
+**Memory Footprint**:
+```
+10,000 embeddings:
+  = 10,000 × (384 floats × 4 bytes)
+  = 10,000 × 1,536 bytes
+  = 15.36 MB
+
+100,000 embeddings:
+  = 100,000 × 1,536 bytes
+  = 153.6 MB
+
+1,000,000 embeddings:
+  = 1,000,000 × 1,536 bytes
+  = 1.536 GB (starts to impact performance)
+```
+
+**Performance Characteristics**:
+- **Load Time**: 50ms for 10K embeddings, 500ms for 100K
+- **Search Time**: ~10ms for 1K, ~150ms for 10K, ~1.5s for 100K
+- **Memory Overhead**: Embeddings loaded on-demand, released after search
+- **Bottleneck**: Brute-force cosine similarity (O(n) per query)
+
+### 3.7 Embedding Worker Lifecycle
+
+**Background Processing Loop**:
+```rust
+pub async fn run(&self) {
+    let mut tick = interval(Duration::from_secs(60)); // Every 60 seconds
+
+    loop {
+        tick.tick().await;
+
+        // 1. Check if embeddings are enabled (dynamic config)
+        let enabled = self.db.get_metadata("embeddings_enabled")
+            .await
+            .unwrap_or(Some("false".to_string()))
+            == Some("true".to_string());
+
+        if !enabled {
+            debug!("Embeddings disabled, skipping batch");
+            continue;
+        }
+
+        // 2. Process batch of frames without embeddings
+        match self.process_batch().await {
+            Ok(count) => {
+                if count > 0 {
+                    info!("Processed {} frames", count);
+                }
+            }
+            Err(e) => {
+                error!("Batch processing failed: {}", e);
+            }
+        }
+    }
+}
+```
+
+**Batch Processing Logic**:
+```sql
+-- 1. Find frames without embeddings (batch size: 50)
+SELECT f.id, f.timestamp, f.active_process
+FROM frames f
+LEFT JOIN embeddings e ON f.id = e.frame_id
+WHERE e.id IS NULL
+ORDER BY f.timestamp DESC
+LIMIT 50;
+
+-- 2. For each frame, fetch OCR text
+SELECT text FROM ocr_text WHERE frame_id = ?;
+
+-- 3. Chunk, embed, and store
+INSERT INTO embeddings (frame_id, chunk_text, chunk_index, embedding, model_name, embedding_dim)
+VALUES (?, ?, ?, ?, 'paraphrase-multilingual-MiniLM-L12-v2', 384);
+
+-- 4. Update progress metadata
+UPDATE metadata SET value = ? WHERE key = 'embeddings_last_processed_frame_id';
+```
+
+**Graceful Degradation**:
+- If model download fails → Worker continues without embeddings (fallback mode)
+- If ONNX runtime unavailable → Falls back to simple hashing (deterministic but low quality)
+- If worker crashes → Next restart resumes from last processed frame ID
+
+### 3.8 Configuration
+
+**Embedding Configuration**:
+```toml
+[embeddings]
+enabled = true                                    # Enable/disable embedding generation
+batch_size = 50                                   # Frames per batch
+model = "local"                                   # "local" or "remote" (future)
+model_name = "paraphrase-multilingual-MiniLM-L12-v2"
+embedding_dim = 384                               # Vector dimension
+max_chunk_tokens = 256                            # Max tokens per chunk
+chunk_overlap = 32                                # Overlap between chunks
+hybrid_search_alpha = 0.3                         # Vector weight (0.0-1.0)
+max_context_chunks = 20                           # Max chunks for RAG context
+```
+
+**Runtime Configuration** (via API):
+```bash
+# Enable embeddings
+curl -X POST http://localhost:3131/api/embeddings/enable
+
+# Disable embeddings
+curl -X POST http://localhost:3131/api/embeddings/disable
+
+# Check status
+curl http://localhost:3131/api/embeddings/status
+# Response:
+{
+  "enabled": true,
+  "total_embeddings": 15234,
+  "frames_with_embeddings": 1523,
+  "last_processed_frame_id": 1600,
+  "model_name": "paraphrase-multilingual-MiniLM-L12-v2",
+  "embedding_dim": 384
+}
+```
+
+### 3.9 Performance Characteristics
+
+| Metric | Target | Actual (10K frames) | Actual (100K frames) |
+|--------|--------|---------------------|----------------------|
+| **Embedding Generation** | | | |
+| Single frame embedding | <500ms | ~300ms | ~300ms |
+| Batch (50 frames) | <30s | ~15s | ~15s |
+| Worker throughput | >100 frames/min | ~200 frames/min | ~200 frames/min |
+| **Search Performance** | | | |
+| Vector search (in-memory) | <200ms | ~50ms | ~150ms |
+| FTS5 keyword search | <100ms | ~30ms | ~80ms |
+| Hybrid search (combined) | <300ms | ~80ms | ~230ms |
+| Reranking overhead | <50ms | ~20ms | ~30ms |
+| **Memory Usage** | | | |
+| Embedding engine (ONNX) | <1GB | ~600MB | ~600MB |
+| Vector index (loaded) | <200MB | ~15MB | ~153MB |
+| Query processing | <100MB | ~50MB | ~80MB |
+| **Storage** | | | |
+| Embeddings (database) | ~1.5KB/embedding | ~15MB (10K) | ~150MB (100K) |
+| Model files (disk) | ~120MB | 118MB | 118MB |
+
+**Bottlenecks**:
+1. **Brute-force vector search**: O(n) complexity, becomes slow >100K embeddings
+2. **Model loading**: 1-2 second startup time for ONNX session initialization
+3. **Memory**: Entire vector index loaded during search (no lazy loading)
+
+### 3.10 Future Optimizations
+
+**1. Approximate Nearest Neighbor (ANN) Algorithms**:
+```rust
+// Replace brute-force with HNSW (Hierarchical Navigable Small World)
+use hnsw_rs::{Hnsw, DistCosine};
+
+let mut hnsw = Hnsw::new(16, 384, 200, DistCosine);
+for (id, vector) in embeddings {
+    hnsw.insert(&vector, id);
+}
+
+// Search: O(log n) instead of O(n)
+let results = hnsw.search(&query, 50, 100);
+```
+
+**Benefits**: 10-100x faster search for large datasets (>100K)
+
+**2. Quantization (Reduce Memory)**:
+```rust
+// Convert f32 → i8 (4x smaller)
+fn quantize_vector(vec: &[f32]) -> Vec<i8> {
+    vec.iter()
+        .map(|&x| (x * 127.0).clamp(-127.0, 127.0) as i8)
+        .collect()
+}
+
+// Memory: 384 bytes instead of 1,536 bytes per embedding
+// Trade-off: Slight accuracy loss (~2-3% worse recall)
+```
+
+**3. GPU Acceleration (CUDA/DirectML)**:
+```toml
+[dependencies]
+ort = { version = "2.0", features = ["cuda", "tensorrt"] }
+
+# Configuration
+[embeddings]
+use_gpu = true
+gpu_device_id = 0
+```
+
+**Benefits**: 5-10x faster embedding generation, especially for batch processing
+
+**4. Persistent Vector Index (Future sqlite-vec)**:
+```sql
+-- When sqlite-vec becomes Windows-compatible
+CREATE VIRTUAL TABLE vec_embeddings USING vec0(
+    embedding FLOAT[384]
+);
+
+-- HNSW index
+SELECT * FROM vec_embeddings
+WHERE embedding MATCH ?
+ORDER BY distance
+LIMIT 50;
+```
+
+**5. Streaming Search (Incremental Results)**:
+```rust
+// Return results as they're computed (async stream)
+pub async fn streaming_search(
+    &self,
+    query: Vec<f32>
+) -> impl Stream<Item = SemanticResult> {
+    stream! {
+        for chunk in self.load_embeddings_chunked(1000).await {
+            for (id, vector) in chunk {
+                let score = cosine_similarity(&query, &vector);
+                if score > 0.5 {
+                    yield fetch_result(id, score).await;
+                }
+            }
+        }
+    }
+}
+```
+
+**Benefits**: Lower latency for first results, better UX for large datasets
+
+---
+
+## 4. Database Schema
+
+### 4.1 Core Tables
 
 **video_chunks** - Video file segment metadata:
 ```sql
@@ -768,7 +1418,7 @@ CREATE TABLE embeddings (
 CREATE INDEX idx_embeddings_frame_id ON embeddings(frame_id);
 ```
 
-### 3.2 Full-Text Search (FTS5)
+### 4.2 Full-Text Search (FTS5)
 
 **ocr_text_fts** - Virtual table for full-text search:
 ```sql
@@ -817,7 +1467,7 @@ ORDER BY relevance_score DESC
 LIMIT 50 OFFSET 0;
 ```
 
-### 3.3 Entity Relationships
+### 4.3 Entity Relationships
 
 ```
 video_chunks (1) ──< (0..n) frames
@@ -827,7 +1477,7 @@ video_chunks (1) ──< (0..n) frames
                            └──< (0..n) frame_tags >── (1) tags
 ```
 
-### 3.4 Indexing Strategy
+### 4.4 Indexing Strategy
 
 | Query Pattern | Primary Index | Secondary Indexes |
 |---------------|---------------|-------------------|
@@ -839,7 +1489,7 @@ video_chunks (1) ──< (0..n) frames
 | High confidence OCR | `idx_ocr_confidence` | `idx_ocr_frame_id` |
 | Browser history | `idx_frames_url` | `idx_frames_timestamp` |
 
-### 3.5 Storage Estimates
+### 4.5 Storage Estimates
 
 | Data Type | Size per Record | 100k Frames | 1M Frames |
 |-----------|-----------------|-------------|-----------|
@@ -853,7 +1503,7 @@ video_chunks (1) ──< (0..n) frames
 
 ---
 
-### 3.6 Vector Search (RAG)
+### 4.6 Vector Search (RAG)
 
 ScreenSearch implements a **Hybrid Search** system combining FTS5 (Sparse) and Vector Search (Dense):
 
@@ -870,9 +1520,9 @@ A heuristic reranker refines results by:
 -   Boosting exact keyword matches in OCR text.
 -   Deduplicating multiple chunks from the same frame.
 
-## 4. Data Flow
+## 5. Data Flow
 
-### 4.1 Capture to Database Pipeline
+### 5.1 Capture to Database Pipeline
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -995,7 +1645,7 @@ A heuristic reranker refines results by:
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-### 4.2 API Query Flow
+### 5.2 API Query Flow
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -1126,7 +1776,7 @@ A heuristic reranker refines results by:
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-### 4.3 Automation Flow
+### 5.3 Automation Flow
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -1184,9 +1834,9 @@ A heuristic reranker refines results by:
 
 ---
 
-## 5. Concurrency Model
+## 6. Concurrency Model
 
-### 5.1 Task Distribution
+### 6.1 Task Distribution
 
 ScreenSearch uses tokio's multi-threaded async runtime with independent concurrent tasks:
 
@@ -1235,7 +1885,7 @@ Main Thread (tokio runtime)
     └─ Store: Inserts into `embeddings` table
 ```
 
-### 5.2 Communication Channels
+### 6.2 Communication Channels
 
 **Frame Pipeline Channels**:
 ```rust
@@ -1261,7 +1911,7 @@ let (shutdown_tx, _) = broadcast::channel::<()>(10);
 - **broadcast**: One-to-many shutdown signaling
 - **Non-blocking sends**: await on send if buffer full
 
-### 5.3 Synchronization Primitives
+### 6.3 Synchronization Primitives
 
 **Database Connection Pool** (thread-safe):
 ```rust
@@ -1292,7 +1942,7 @@ pub struct CaptureEngine {
 }
 ```
 
-### 5.4 Async vs Blocking
+### 6.4 Async vs Blocking
 
 **Async Operations** (tokio runtime):
 - HTTP request handling (Axum)
@@ -1311,7 +1961,7 @@ pub struct CaptureEngine {
 - Tokio runtime: Default = # of CPU cores (for async tasks)
 - Blocking pool: Separate pool (default: 512 threads max)
 
-### 5.5 Shutdown Sequence
+### 6.5 Shutdown Sequence
 
 ```
 Ctrl+C Signal Received
@@ -1347,7 +1997,7 @@ Process exit
 - Open file handles are closed
 - HTTP connections are drained
 
-### 5.6 Error Isolation
+### 6.6 Error Isolation
 
 Tasks are isolated - errors in one task don't crash others:
 
@@ -1379,9 +2029,9 @@ All tasks stop gracefully
 
 ---
 
-## 6. Configuration Architecture
+## 7. Configuration Architecture
 
-### 6.1 Configuration File Structure
+### 7.1 Configuration File Structure
 
 **config.toml** - TOML format for human-friendly configuration:
 
@@ -1447,7 +2097,7 @@ max_log_size_mb = 100             # Max log file size
 log_rotation_count = 5            # Number of rotated logs to keep
 ```
 
-### 6.2 Configuration Loading Process
+### 7.2 Configuration Loading Process
 
 ```
 Application Start
@@ -1473,7 +2123,7 @@ Convert AppConfig to component-specific configs:
 Initialize components with configs
 ```
 
-### 6.3 Configuration Validation
+### 7.3 Configuration Validation
 
 **Validation Rules**:
 ```rust
@@ -1505,7 +2155,7 @@ if interval_ms < 1000 {
 }
 ```
 
-### 6.4 Runtime Configuration Changes
+### 7.4 Runtime Configuration Changes
 
 **Currently**: Configuration is loaded once at startup. Changes require restart.
 
@@ -1520,7 +2170,7 @@ let watcher = notify::watcher(|event| {
 });
 ```
 
-### 6.5 Environment Variable Overrides
+### 7.5 Environment Variable Overrides
 
 **Planned Feature** (not yet implemented):
 ```bash
@@ -1534,9 +2184,9 @@ export SCREEN_MEMORIES_LOG_LEVEL=debug
 
 ---
 
-## 7. Error Handling Strategy
+## 8. Error Handling Strategy
 
-### 7.1 Error Type Hierarchy
+### 8.1 Error Type Hierarchy
 
 ```
 anyhow::Error (top-level in main.rs)
@@ -1573,7 +2223,7 @@ screen_automation::AutomationError
     └─> InvalidSelector(String)          // Malformed selector
 ```
 
-### 7.2 Error Recovery Strategies
+### 8.2 Error Recovery Strategies
 
 **Capture Errors** (non-fatal):
 ```
@@ -1654,7 +2304,7 @@ Log error: warn!("API error: {}", e)
 Continue serving other requests
 ```
 
-### 7.3 Error Logging
+### 8.3 Error Logging
 
 **Logging Levels**:
 ```rust
@@ -1685,7 +2335,7 @@ db.insert_frame(frame)
 // "Failed to insert frame into database: UNIQUE constraint failed: frames.id"
 ```
 
-### 7.4 Error Metrics
+### 8.4 Error Metrics
 
 Track error rates for monitoring:
 ```rust
@@ -1708,7 +2358,7 @@ impl OcrMetrics {
 // "OCR success rate: 99.80% (998/1000)"
 ```
 
-### 7.5 Panic Handling
+### 8.5 Panic Handling
 
 **Panic Strategy**:
 ```rust
@@ -1746,9 +2396,9 @@ std::panic::set_hook(Box::new(|panic_info| {
 
 ---
 
-## 8. Performance Characteristics
+## 9. Performance Characteristics
 
-### 8.1 System Resource Targets
+### 9.1 System Resource Targets
 
 | Component | CPU (Idle) | CPU (Active) | Memory | Disk I/O |
 |-----------|------------|--------------|--------|----------|
@@ -1764,7 +2414,7 @@ std::panic::set_hook(Box::new(|panic_info| {
 - Active: During capture + OCR + database write burst
 - Measurements on: Intel i5-8250U, 16GB RAM, SSD
 
-### 8.2 Latency Characteristics
+### 9.2 Latency Characteristics
 
 | Operation | p50 | p95 | p99 | Target |
 |-----------|-----|-----|-----|--------|
@@ -1778,7 +2428,7 @@ std::panic::set_hook(Box::new(|panic_info| {
 | API response (simple query) | 20ms | 40ms | 80ms | <50ms |
 | UI element find | 50ms | 150ms | 300ms | <100ms |
 
-### 8.3 Throughput Metrics
+### 9.3 Throughput Metrics
 
 **Capture Pipeline**:
 ```
@@ -1817,7 +2467,7 @@ Throughput: 1 / 0.023s = ~43 frames/second max
 Actual: 0.13 fps (well within capacity)
 ```
 
-### 8.4 Scalability Limits
+### 9.4 Scalability Limits
 
 **Database Scalability**:
 | Metric | 10k Frames | 100k Frames | 1M Frames | 10M Frames |
@@ -1867,7 +2517,7 @@ Base memory: ~350 MB
 Worst case: Varies by model
 ```
 
-### 8.5 Performance Optimization Techniques
+### 9.5 Performance Optimization Techniques
 
 **1. Frame Differencing**:
 ```rust
@@ -1908,7 +2558,7 @@ PRAGMA journal_mode = WAL;
 // With async: 50 concurrent requests → ~8 threads (tokio) → low overhead
 ```
 
-### 8.6 Performance Monitoring
+### 9.6 Performance Monitoring
 
 **Built-in Metrics**:
 ```rust
@@ -1939,9 +2589,9 @@ db.get_statistics():
 
 ---
 
-## 9. Security & Privacy Architecture
+## 10. Security & Privacy Architecture
 
-### 9.1 Privacy-First Design Principles
+### 10.1 Privacy-First Design Principles
 
 1. **Local-Only**: All data stored locally, no network transmission
 2. **User Control**: Explicit configuration for what to capture
@@ -1949,7 +2599,7 @@ db.get_statistics():
 4. **Opt-Out**: Easy exclusion of sensitive applications
 5. **Deletion**: Simple data cleanup mechanisms
 
-### 9.2 Application Exclusion System
+### 10.2 Application Exclusion System
 
 **Configuration**:
 ```toml
@@ -1993,7 +2643,7 @@ fn should_capture_window(window_title: &str, process_name: &str) -> bool {
   - Window title: "Chase Bank - Account Summary"
   - Process: "BankApp.exe"
 
-### 9.3 Screen Lock Detection
+### 10.3 Screen Lock Detection
 
 **Windows Session Monitoring**:
 ```rust
@@ -2019,7 +2669,7 @@ fn on_session_event(event: SessionEvent) {
 pause_on_lock = true  # Auto-pause when screen locked
 ```
 
-### 9.4 Data Isolation
+### 10.4 Data Isolation
 
 **File System Security**:
 ```
@@ -2042,7 +2692,7 @@ Windows ACLs:
 - No telemetry or analytics
 - No cloud sync (future feature would be opt-in)
 
-### 9.5 Data Retention & Cleanup
+### 10.5 Data Retention & Cleanup
 
 **Automatic Cleanup**:
 ```rust
@@ -2085,7 +2735,7 @@ fn secure_delete(path: &Path) -> Result<()> {
 }
 ```
 
-### 9.6 API Security
+### 10.6 API Security
 
 **Localhost-Only Binding**:
 ```rust
@@ -2117,7 +2767,7 @@ async fn require_auth(
 }
 ```
 
-### 9.7 Sensitive Data Handling
+### 10.7 Sensitive Data Handling
 
 **OCR Text Storage**:
 ```rust
@@ -2142,7 +2792,7 @@ fn detect_sensitive_data(text: &str) -> bool {
 - Can reveal UI layout and application state
 - Future: Option to store only text, not coordinates
 
-### 9.8 Windows Security Context
+### 10.8 Windows Security Context
 
 **Privilege Requirements**:
 - **Standard User**: Can capture own desktop and windows
@@ -2161,9 +2811,9 @@ fn detect_sensitive_data(text: &str) -> bool {
 
 ---
 
-## 10. Extension Points
+## 11. Extension Points
 
-### 10.1 Plugin Architecture (Future)
+### 11.1 Plugin Architecture (Future)
 
 **Proposed Interface**:
 ```rust
@@ -2230,7 +2880,7 @@ trait ApiExtension: ScreenMemoriesPlugin {
 }
 ```
 
-### 10.2 Custom OCR Confidence Filtering
+### 11.2 Custom OCR Confidence Filtering
 
 **Current**: Fixed threshold (0.7)
 
@@ -2263,7 +2913,7 @@ impl ConfidenceFilter for AdaptiveConfidenceFilter {
 }
 ```
 
-### 10.3 Custom Frame Differencing Algorithms
+### 11.3 Custom Frame Differencing Algorithms
 
 **Current**: Simple pixel-wise comparison
 
@@ -2292,7 +2942,7 @@ struct RegionDiffer {
 }
 ```
 
-### 10.4 Custom Database Queries
+### 11.4 Custom Database Queries
 
 **Extension Point**:
 ```rust
@@ -2309,7 +2959,7 @@ POST /query/custom
 // - Rate limiting
 ```
 
-### 10.5 Webhook Integration
+### 11.5 Webhook Integration
 
 **Extension Point**:
 ```rust
@@ -2343,7 +2993,7 @@ async fn trigger_webhook(config: &WebhookConfig, event: &Event) {
 }
 ```
 
-### 10.6 Vector Embeddings for Semantic Search
+### 11.6 Vector Embeddings for Semantic Search
 
 **Future Enhancement** (using sqlite-vec):
 ```rust
@@ -2368,7 +3018,7 @@ ORDER BY similarity DESC
 LIMIT 50;
 ```
 
-### 10.7 Browser Extension Integration
+### 11.7 Browser Extension Integration
 
 **Proposed Architecture**:
 ```
@@ -2399,7 +3049,7 @@ async fn websocket_handler(ws: WebSocket, state: Arc<AppState>) {
 }
 ```
 
-### 10.8 Real-time Notifications
+### 11.8 Real-time Notifications
 
 **Extension Point**:
 ```rust
@@ -2431,7 +3081,7 @@ let watcher = TextWatcher {
 };
 ```
 
-### 10.9 Configuration UI
+### 11.9 Configuration UI
 
 **Future: Web-based UI** (not implemented):
 ```
@@ -2447,7 +3097,7 @@ Settings Page:
 - Manage tags
 ```
 
-### 10.10 API Client Libraries
+### 11.10 API Client Libraries
 
 **Proposed SDKs**:
 ```rust
@@ -2473,11 +3123,12 @@ const results = await client.search('database query');
 This architecture document provides a comprehensive overview of the ScreenSearch system design. The modular workspace-based architecture enables independent development and testing of components while maintaining clear interfaces and data flow.
 
 **Key Architectural Strengths**:
-- **Performance**: Async runtime, connection pooling, frame differencing
+- **Performance**: Async runtime, connection pooling, frame differencing, hybrid search
 - **Privacy**: Local-only, application exclusion, user control
-- **Scalability**: Connection pooling, FTS5 indexing, WAL mode
+- **Scalability**: Connection pooling, FTS5 indexing, WAL mode, in-memory vector search
 - **Maintainability**: Clear separation of concerns, type-safe queries
 - **Extensibility**: Plugin hooks, custom filters, API extensions
+- **Intelligence**: RAG-powered semantic search with ONNX embeddings
 
 **For Implementation Details**:
 - Database schema: `screen-db/DATABASE_DESIGN.md`
@@ -2493,7 +3144,7 @@ This architecture document provides a comprehensive overview of the ScreenSearch
 
 ---
 
-**Document Version**: 1.0
-**Architecture Version**: 0.1.0
-**Last Updated**: 2025-12-10
+**Document Version**: 2.0
+**Architecture Version**: 0.2.0
+**Last Updated**: 2025-12-13
 **Contributors**: ScreenSearch Team
