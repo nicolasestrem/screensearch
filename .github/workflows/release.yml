@@ -175,11 +175,37 @@ jobs:
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      - name: Extract Changelog
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+
+          # Extract version section from CHANGELOG.md
+          CHANGELOG_SECTION=$(awk -v ver="$VERSION" '
+            /^## \['$VERSION'\]/ { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md)
+
+          if [ -z "$CHANGELOG_SECTION" ]; then
+            CHANGELOG_SECTION="No changelog entries for this version."
+          fi
+
+          # Update terminology
+          CHANGELOG_SECTION=$(echo "$CHANGELOG_SECTION" | sed 's/ONNX embedding model/AI RAG Search Model/g; s/ONNX model/AI RAG Search Model/g')
+
+          # Escape for GitHub Actions
+          CHANGELOG_SECTION="${CHANGELOG_SECTION//'%'/'%25'}"
+          CHANGELOG_SECTION="${CHANGELOG_SECTION//$'\n'/'%0A'}"
+          CHANGELOG_SECTION="${CHANGELOG_SECTION//$'\r'/'%0D'}"
+
+          echo "content=$CHANGELOG_SECTION" >> $GITHUB_OUTPUT
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           draft: true
-          generate_release_notes: true
+          generate_release_notes: false
           files: |
             artifacts/ScreenSearch-v*.exe
             artifacts/ScreenSearch-v*.zip
@@ -187,29 +213,79 @@ jobs:
           body: |
             # ScreenSearch v${{ steps.get_version.outputs.VERSION }}
 
+            Your screen history, searchable and automated - Windows OCR + REST API + AI + RAG
+
             ## Download Options
 
-            Choose the installer that best fits your needs:
+            **Full Installer** (~460 MB)
+            - Includes AI RAG Search Model for semantic search
+            - No internet required for AI features
+            - Recommended for offline systems
 
-            - **Full Installer** (~460 MB) - Includes ONNX embedding model, no internet required
-            - **Lightweight Installer** (~11 MB) - Downloads model on first run if needed
-            - **Portable ZIP** (~17 MB) - Extract and run, no installation required
+            **Lightweight Installer** (~11 MB)
+            - Downloads model on first run (requires internet)
+            - Smaller initial download
 
-            ## System Requirements
-
-            - Windows 10/11 (64-bit)
-            - Windows OCR Language Pack (for OCR functionality)
-
-            ## Verification
-
-            Verify your download with SHA256 checksums (see `checksums.txt`)
-
-            ## What's New
-
-            See full changelog below.
+            **Portable ZIP** (~17 MB)
+            - Extract and run, no installation
+            - Downloads model when AI features are used
 
             ---
 
-            **Note:** This release is self-signed. You may see a Windows SmartScreen warning. Click "More info" → "Run anyway" to proceed.
+            ## What's New
+
+            ${{ steps.changelog.outputs.content }}
+
+            ---
+
+            ## Installation
+
+            ### Quick Start
+
+            1. Download the Full Installer above
+            2. Run the installer executable
+            3. **Windows SmartScreen Warning**: Click "More info" → "Run anyway"
+               - This is expected for self-signed applications
+            4. Launch ScreenSearch from Start Menu
+            5. Access web interface at `http://localhost:3131`
+
+            ### System Requirements
+
+            - Windows 10/11 (64-bit)
+            - Windows OCR Language Pack (for OCR functionality)
+            - ~500MB disk space (for Full Installer)
+
+            ---
+
+            ## Verification
+
+            Verify download integrity with SHA256 checksums:
+
+            ```powershell
+            Get-FileHash ScreenSearch-v${{ steps.get_version.outputs.VERSION }}-Setup-Full.exe -Algorithm SHA256
+            ```
+
+            Compare output with `checksums.txt` in release assets.
+
+            ---
+
+            ## Important Notes
+
+            **Windows SmartScreen Warning**
+
+            This release is self-signed and will trigger SmartScreen warnings. This is expected behavior for applications without an EV certificate.
+
+            To install:
+            1. Click "More info" when SmartScreen appears
+            2. Click "Run anyway"
+            3. Proceed with installation
+
+            Verify authenticity by checking SHA256 checksums or building from source.
+
+            ---
+
+            **Documentation**: [Project Docs](https://github.com/nicolasestrem/screensearch/tree/main/docs) | [API Reference](https://github.com/nicolasestrem/screensearch/blob/main/docs/api-reference.md)
+            **Website**: [screensearch.app](https://screensearch.app)
+            **License**: MIT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
