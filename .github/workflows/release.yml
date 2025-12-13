@@ -126,7 +126,8 @@ jobs:
           # Extract version from git tag
           $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
           Compress-Archive -Path target/release/screensearch.exe, config.toml, LICENSE, README.md `
-                           -DestinationPath "target/release/installers/ScreenSearch-v$version-Portable.zip"
+                           -DestinationPath "target/release/installers/ScreenSearch-v$version-Portable.zip" `
+                           -Force
         shell: pwsh
 
       - name: Generate checksums
