@@ -116,6 +116,24 @@ export function SearchBar() {
         )}
       </div>
 
+      {/* Search Mode Toggle */}
+      <div className="flex justify-center">
+        <div className="bg-secondary/50 p-1 rounded-lg flex items-center gap-1 border border-border/50">
+          {(['fts', 'semantic'] as const).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => setFilters({ searchMode: mode })}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${filters.searchMode === mode
+                  ? 'bg-background text-foreground shadow-sm ring-1 ring-border'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-background/50'
+                }`}
+            >
+              {mode === 'fts' ? 'Exact Match' : 'Smart Search'}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Filter Stats & Toggle */}
       <div className="flex items-center justify-between px-2">
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
@@ -140,8 +158,8 @@ export function SearchBar() {
           <button
             onClick={() => setShowFilters(!showFilters)}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-200 border ${showFilters
-                ? 'bg-secondary text-secondary-foreground border-border'
-                : 'bg-background hover:bg-secondary/50 text-muted-foreground hover:text-foreground border-transparent'
+              ? 'bg-secondary text-secondary-foreground border-border'
+              : 'bg-background hover:bg-secondary/50 text-muted-foreground hover:text-foreground border-transparent'
               }`}
           >
             <Calendar className={`h-4 w-4 ${showFilters ? 'text-primary' : ''}`} />
@@ -241,8 +259,8 @@ export function SearchBar() {
                       });
                     }}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 border ${isSelected
-                        ? 'bg-primary/10 text-primary border-primary/20 scale-105 shadow-sm'
-                        : 'bg-secondary/50 text-muted-foreground border-transparent hover:bg-secondary hover:text-foreground'
+                      ? 'bg-primary/10 text-primary border-primary/20 scale-105 shadow-sm'
+                      : 'bg-secondary/50 text-muted-foreground border-transparent hover:bg-secondary hover:text-foreground'
                       }`}
                     style={
                       isSelected && tag.color

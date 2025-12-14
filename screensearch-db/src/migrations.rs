@@ -32,6 +32,8 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
     apply_migration(pool, "002_settings_table", MIGRATION_002_SETTINGS).await?;
     apply_migration(pool, "003_embeddings_table", MIGRATION_003_EMBEDDINGS).await?;
     apply_migration(pool, "004_add_embedding_column", MIGRATION_004_ADD_EMBEDDING_COLUMN).await?;
+    apply_migration(pool, "005_vision_analysis", MIGRATION_005_VISION).await?;
+    apply_migration(pool, "006_api_key", MIGRATION_006_API_KEY).await?;
 
     tracing::info!("All migrations completed successfully");
     Ok(())
@@ -262,4 +264,70 @@ const MIGRATION_004_ADD_EMBEDDING_COLUMN: &str = r#"
 ALTER TABLE embeddings ADD COLUMN embedding BLOB;
 -- Clear existing data to force re-processing with actual vectors
 DELETE FROM embeddings;
+"#;
+
+/// Migration 005 - Vision Analysis Support
+const MIGRATION_005_VISION: &str = r#"
+-- Add columns to frames table
+ALTER TABLE frames ADD COLUMN analysis_status TEXT DEFAULT 'pending';
+ALTER TABLE frames ADD COLUMN description TEXT;
+ALTER TABLE frames ADD COLUMN visible_text_json TEXT;
+ALTER TABLE frames ADD COLUMN activity_type TEXT;
+ALTER TABLE frames ADD COLUMN app_hint TEXT;
+ALTER TABLE frames ADD COLUMN confidence REAL;
+ALTER TABLE frames ADD COLUMN analysis_time_ms INTEGER;
+ALTER TABLE frames ADD COLUMN analysis_error TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_frames_analysis_status ON frames(analysis_status) WHERE analysis_status != 'completed';
+
+-- Analysis Queue for prioritized processing
+CREATE TABLE IF NOT EXISTS analysis_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    frame_id INTEGER NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+    priority INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    locked_until DATETIME,
+    attempts INTEGER DEFAULT 0,
+    last_error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_analysis_queue_priority ON analysis_queue(priority DESC, created_at ASC);
+
+-- FTS5 for descriptions
+CREATE VIRTUAL TABLE IF NOT EXISTS frames_fts USING fts5(
+    description,
+    active_window,
+    content='frames',
+    content_rowid='id'
+);
+
+-- Triggers to keep frames_fts updated
+CREATE TRIGGER IF NOT EXISTS frames_ai_insert AFTER INSERT ON frames BEGIN
+  INSERT INTO frames_fts(rowid, description, active_window) 
+  VALUES(new.id, new.description, new.active_window);
+END;
+
+CREATE TRIGGER IF NOT EXISTS frames_ai_delete AFTER DELETE ON frames BEGIN
+  INSERT INTO frames_fts(frames_fts, rowid, description, active_window) 
+  VALUES('delete', old.id, old.description, old.active_window);
+END;
+
+CREATE TRIGGER IF NOT EXISTS frames_ai_update AFTER UPDATE ON frames BEGIN
+  INSERT INTO frames_fts(frames_fts, rowid, description, active_window) 
+  VALUES('delete', old.id, old.description, old.active_window);
+  
+  INSERT INTO frames_fts(rowid, description, active_window) 
+  VALUES(new.id, new.description, new.active_window);
+END;
+
+-- Add vision settings columns
+ALTER TABLE settings ADD COLUMN vision_enabled INTEGER DEFAULT 1;
+ALTER TABLE settings ADD COLUMN vision_provider TEXT DEFAULT 'ollama';
+ALTER TABLE settings ADD COLUMN vision_model TEXT DEFAULT 'moondream';
+ALTER TABLE settings ADD COLUMN vision_endpoint TEXT DEFAULT 'http://localhost:11434';
+"#;
+
+/// Migration 006 - Add API Key for external providers
+const MIGRATION_006_API_KEY: &str = r#"
+ALTER TABLE settings ADD COLUMN vision_api_key TEXT;
 "#;

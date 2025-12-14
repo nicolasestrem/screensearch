@@ -444,6 +444,37 @@ max_cpu_percent = 5
 max_memory_mb = 500
 ```
 
+### AI Settings
+**(New in v0.2.1)**
+
+**Section**: `[ai]`
+
+Configure your connection to AI providers for Intelligence features.
+
+```toml
+# Vision/LLM Provider configuration
+# Supported: "ollama", "openai" (compatible generic)
+vision_provider = "ollama"
+
+# Model name to use
+# Examples: "llama3", "ministral-3:3b"
+vision_model = "ministral-3:3b"
+
+# API Endpoint URL
+# For Ollama: "http://localhost:11434"
+# For LM Studio: "http://localhost:1234/v1"
+vision_endpoint = "http://localhost:11434"
+
+# API Key (optional)
+# Required for authenticated providers
+vision_api_key = "sk-..."
+```
+
+**Configuration Tips**:
+- **Test Connection**: Use the "Test" button in the Data & AI Settings tab to verify your setup.
+- **Local Privacy**: Use Ollama or LM Studio to keep all data local.
+- **Authentication**: API keys are stored securely in your local database.
+
 ### Logging Settings
 
 **Section**: `[logging]`

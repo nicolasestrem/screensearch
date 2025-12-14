@@ -47,7 +47,7 @@ All successful responses return JSON with appropriate HTTP status codes. Error r
 | **Embeddings (RAG)** | 3 endpoints | Vector embeddings for semantic search |
 | **Automation** | 9 endpoints | Computer control via Windows UIAutomation |
 | **Tag Management** | 6 endpoints | Organize frames with tags |
-| **AI Intelligence** | 1 endpoint | Generate reports with LLM providers |
+| **AI Intelligence** | 3 endpoints | Generate reports, test connections, and validate providers |
 | **System** | 2 endpoints | Health checks and settings |
 
 ---
@@ -1439,3 +1439,71 @@ cargo test -p screen-api
 ---
 
 **ScreenSearch API** - Locally stored, searchable screen capture with powerful automation.
+
+---
+
+## AI Intelligence Endpoints
+
+### POST /api/test-vision
+
+Test the configuration of an AI provider (Vision or LLM) by sending a simple prompt.
+
+#### Request Body
+
+```json
+{
+  "provider": "ollama",
+  "model": "llama3",
+  "endpoint": "http://localhost:11434",
+  "api_key": ""
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `provider` | string | Yes | Provider type: "ollama" or "openai" |
+| `model` | string | Yes | Model name |
+| `endpoint` | string | Yes | Base URL of the API |
+| `api_key` | string | No | Authentication token (if required) |
+
+#### Response
+
+```json
+{
+  "success": true,
+  "message": "Connection successful",
+  "response": "OK"
+}
+```
+
+---
+
+### POST /api/generate
+
+Generate a structured answer or report based on a user query, using RAG (Retrieval-Augmented Generation) if available.
+
+#### Request Body
+
+```json
+{
+  "query": "What did I work on yesterday?"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | Yes | User question or prompt |
+
+#### Response
+
+```json
+{
+  "answer": "Yesterday, you spent most of your time on...",
+  "sources": [123, 124, 125]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `answer` | string | Generated markdown text response |
+| `sources` | array | List of Frame IDs used as context |

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.1] - 2025-12-14
+
+### Added
+- **Generic AI Provider Support**: Full compatibility with OpenAI-compatible APIs (e.g., LM Studio, vLLM, Ollama generic) via user settings.
+- **AI Connectivity Test**: "Test Connection" button in settings to verify AI provider configuration immediately.
+- **RAG Generation Endpoint**: New `/api/generate` endpoint for creating structured answers from search results.
+- **Vision Client**: Dedicated `screensearch-vision` crate for managing AI interactions (Models, Prompts, Client).
+
+### Changed
+- **Settings UI**:
+    - Added explicit "Save Configuration" button (removed auto-save on blur).
+    - Added "Provider Protocol" selector (Ollama / OpenAI-compatible).
+    - Added "Vision Model" configuration.
+- **Cleaned UI**: Removed unused "Activity Graph" styling elements for a cleaner dashboard look.
+- **Database Schema**: Added `vision_api_key` to settings for authenticated providers.
+
+### Fixed
+- **Settings Persistence**: Resolved issue where Vision AI settings (Provider, Model, Endpoint) were reset on save.
+- **Ollama Defaulting**: Fixed backend hardcoding that forced Ollama usage even when other providers were selected.
+
 ## [0.2.0] - 2025-12-13
 
 ### Added

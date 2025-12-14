@@ -36,6 +36,9 @@ export interface Frame {
   ocr_text: OCRTextContent;
   tags: Tag[];
   thumbnail?: string;
+  description?: string;
+  confidence?: number;
+  analysis_status?: string;
 }
 
 export interface FrameResponse {
@@ -47,6 +50,9 @@ export interface FrameResponse {
   ocr_text: string;
   tags: Tag[];
   thumbnail?: string;
+  description?: string;
+  confidence?: number;
+  analysis_status?: string;
 }
 
 // Tag Types
@@ -154,6 +160,11 @@ export interface Settings {
   is_paused: number; // 0 or 1
   retention_days: number;
   updated_at: string;
+  vision_enabled: number;
+  vision_provider: string;
+  vision_model: string;
+  vision_endpoint: string;
+  vision_api_key?: string;
 }
 
 export interface UpdateSettingsRequest {
@@ -162,6 +173,11 @@ export interface UpdateSettingsRequest {
   excluded_apps: string; // JSON array
   is_paused: number; // 0 or 1
   retention_days: number;
+  vision_enabled?: number;
+  vision_provider?: string;
+  vision_model?: string;
+  vision_endpoint?: string;
+  vision_api_key?: string;
 }
 
 // Legacy type for backwards compatibility
@@ -180,6 +196,7 @@ export interface HealthStatus {
   version: string;
   uptime: number;
   frame_count: number;
+  newest_frame?: string;
   last_capture?: string;
 }
 
@@ -192,4 +209,10 @@ export interface FilterState {
   applications: string[];
   tags: number[];
   searchQuery: string;
+  searchMode: 'fts' | 'semantic' | 'hybrid';
+}
+
+export interface GenerateResponse {
+  answer: string;
+  sources: number[];
 }

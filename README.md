@@ -50,7 +50,7 @@
 
 - [*] **Continuous Screen Capture** — Configurable intervals (2-5 seconds) with multi-monitor support
 - [*] **OCR Text Extraction** — Windows OCR API with bounding box coordinates and confidence scores
-- [*] **AI-Powered Intelligence** — Generate insights from your screen history using local LLMs (Ollama, LM Studio) or cloud providers (OpenAI)
+- [*] **AI-Powered Intelligence** — Generate insights using local LLMs (Ollama, LM Studio) or any OpenAI-compatible provider (cloud or local)
 - [*] **Hybrid Search** — Combines FTS5 (Sparse) and Vector Embeddings (Dense) for semantic understanding
 - [*] **REST API** — 27 endpoints for search, automation, and tag management on localhost:3131
 - [*] **UI Automation** — Programmatic control of Windows applications via accessibility APIs
@@ -238,6 +238,9 @@ screensearch/
 │   ├── src/capture.rs         # Frame capture with ffmpeg-sidecar
 │   ├── src/ocr.rs             # Windows OCR API integration
 │   └── src/frame_diff.rs       # Zero-copy frame differencing
+├── screen-vision/              # AI & Vision Client (Generic Provider Support)
+│   ├── src/client.rs          # OpenAI/Ollama compatible client
+│   └── src/models.rs          # LLM interaction models
 ├── screen-db/                  # SQLite database with FTS5 search
 │   ├── src/queries.rs         # SQL queries and migrations
 │   └── src/migrations/        # Schema versioning

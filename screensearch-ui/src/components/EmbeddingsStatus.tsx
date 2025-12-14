@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Brain, RefreshCw, Check, X, AlertTriangle } from 'lucide-react';
+import { toast } from 'react-hot-toast';
 
 interface EmbeddingStatus {
     enabled: boolean;
@@ -62,9 +63,13 @@ export function EmbeddingsStatus() {
             if (response.ok) {
                 // Refresh status after generation
                 await fetchStatus();
+                toast.success("Embedding generation triggered");
+            } else {
+                toast.error("Failed to start generation");
             }
         } catch (error) {
             console.error('Failed to trigger generation:', error);
+            toast.error("Failed to trigger generation");
         } finally {
             setGenerating(false);
         }
