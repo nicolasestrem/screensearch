@@ -60,3 +60,11 @@ docs/troubleshooting-2025-12-11.md
 /screen-ui/captures
 /screensearch-ui/captures
 /screensearch-sample
+
+# Windows reserved filenames (cannot be committed)
+nul
+con
+prn
+aux
+com[1-9]
+lpt[1-9]
