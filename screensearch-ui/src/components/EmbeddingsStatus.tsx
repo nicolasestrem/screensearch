@@ -9,16 +9,18 @@ interface EmbeddingStatus {
     frames_with_embeddings: number;
     coverage_percent: number;
     last_processed_frame_id: number;
+    generating: boolean;
 }
 
 export function EmbeddingsStatus() {
     const [status, setStatus] = useState<EmbeddingStatus | null>(null);
     const [loading, setLoading] = useState(false);
-    const [generating, setGenerating] = useState(false);
+    const [starting, setStarting] = useState(false);
 
     const fetchStatus = async () => {
         try {
-            setLoading(true);
+            // Don't set loading on poll updates to avoid flickering
+            if (!status) setLoading(true);
             const response = await fetch('/api/embeddings/status');
             if (response.ok) {
                 const data = await response.json();
@@ -27,12 +29,16 @@ export function EmbeddingsStatus() {
         } catch (error) {
             console.error('Failed to fetch embedding status:', error);
         } finally {
-            setLoading(false);
+            if (!status) setLoading(false);
         }
     };
 
     useEffect(() => {
         fetchStatus();
+        
+        // Poll status every 2 seconds to update progress
+        const interval = setInterval(fetchStatus, 2000);
+        return () => clearInterval(interval);
     }, []);
 
     const toggleEnabled = async () => {
@@ -54,16 +60,15 @@ export function EmbeddingsStatus() {
 
     const triggerGeneration = async () => {
         try {
-            setGenerating(true);
+            setStarting(true);
             const response = await fetch('/api/embeddings/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ batch_size: 100 }),
             });
             if (response.ok) {
-                // Refresh status after generation
                 await fetchStatus();
-                toast.success("Embedding generation triggered");
+                toast.success("Background embedding generation started");
             } else {
                 toast.error("Failed to start generation");
             }
@@ -71,7 +76,7 @@ export function EmbeddingsStatus() {
             console.error('Failed to trigger generation:', error);
             toast.error("Failed to trigger generation");
         } finally {
-            setGenerating(false);
+            setStarting(false);
         }
     };
 
@@ -93,6 +98,8 @@ export function EmbeddingsStatus() {
         : status.coverage_percent > 50
             ? 'text-yellow-500'
             : 'text-muted-foreground';
+
+    const isProcessing = starting || status.generating;
 
     return (
         <div className="space-y-4">
@@ -160,11 +167,11 @@ export function EmbeddingsStatus() {
                 {/* Generate Button */}
                 <button
                     onClick={triggerGeneration}
-                    disabled={generating || !status.enabled}
+                    disabled={isProcessing || !status.enabled}
                     className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                    <RefreshCw className={`h-4 w-4 ${generating ? 'animate-spin' : ''}`} />
-                    {generating ? 'Processing...' : 'Generate Embeddings'}
+                    <RefreshCw className={`h-4 w-4 ${isProcessing ? 'animate-spin' : ''}`} />
+                    {isProcessing ? 'Processing (Background)...' : 'Generate Embeddings'}
                 </button>
 
                 {/* Status Indicator */}

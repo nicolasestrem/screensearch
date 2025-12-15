@@ -20,6 +20,9 @@ pub struct AppState {
 
     /// Shared capture interval in milliseconds (atomic for thread safety)
     pub capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
+
+    /// Flag indicating if background embedding generation is running
+    pub is_generating_embeddings: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AppState {
@@ -34,6 +37,7 @@ impl AppState {
             automation: Arc::new(automation),
             embedding_engine: Arc::new(RwLock::new(None)),
             capture_interval_ms,
+            is_generating_embeddings: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
