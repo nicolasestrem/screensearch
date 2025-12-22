@@ -23,7 +23,9 @@
 
 ### [>] [**Download Latest Release (v0.2.0)**](https://github.com/nicolasestrem/screensearch/releases/latest)
 
-**Windows 10/11** • **11MB** • **No installation required** • **Just extract and run**
+**Windows 10/11** • **Professional Installer** • **Portable Option Available**
+
+**📥 [Click here to download](https://github.com/nicolasestrem/screensearch/releases/latest)** • Then scroll to "Assets" section and download the Full Installer
 
 </div>
 
@@ -135,7 +137,32 @@ Powerful logging and diagnostics. Watch ScreenSearch initialize, start capture l
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        QUICK START                              │
+│                     DOWNLOAD & INSTALL                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### For End Users (Recommended)
+
+**Step 1: Download**
+1. Go to the [Latest Release](https://github.com/nicolasestrem/screensearch/releases/latest)
+2. Scroll down to the **Assets** section (below the release notes)
+3. Click on `ScreenSearch-v0.2.0-Setup-Full.exe` to download
+
+**Step 2: Install**
+1. Run the downloaded `.exe` file
+2. **Important**: When Windows SmartScreen appears, click **"More info"** → **"Run anyway"**
+   - This is normal for self-signed applications
+3. Follow the installation wizard
+4. Launch ScreenSearch from the Start Menu
+5. Access the web interface at `http://localhost:3131`
+
+That's it! ScreenSearch will start capturing your screen automatically.
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                 BUILD FROM SOURCE (DEVELOPERS)                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
