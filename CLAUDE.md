@@ -121,6 +121,58 @@ cargo clippy --workspace --fix
 - `ScreenSearch-v{version}-Setup-Lite.exe` - Downloads model on first run if embeddings enabled
 - `ScreenSearch-v{version}-Portable.zip` - Standalone executable + config
 
+### Cross-Compilation (Linux to Windows)
+
+**Linux only** - requires cargo-xwin, npm, clang, lld:
+
+ScreenSearch can be cross-compiled from Linux to Windows using `cargo-xwin`. This enables building Windows executables without needing a Windows machine, useful for CI/CD and Linux-based development workflows.
+
+**Prerequisites**:
+```bash
+# Install system dependencies (Ubuntu/Debian)
+sudo apt-get install -y clang lld llvm
+
+# Install cross-compilation tools
+cargo install cargo-xwin
+rustup target add x86_64-pc-windows-msvc
+
+# Verify installation
+cargo xwin --version
+```
+
+**Build Commands**:
+```bash
+# Build UI first (runs on Linux, platform-agnostic)
+cd screensearch-ui && npm install && npm run build && cd ..
+
+# Cross-compile to Windows (x86_64-pc-windows-msvc)
+cargo xwin build --release --target x86_64-pc-windows-msvc
+
+# Output binary location
+# target/x86_64-pc-windows-msvc/release/screensearch.exe
+
+# For faster iteration, skip UI build
+SKIP_UI_BUILD=1 cargo xwin build --release --target x86_64-pc-windows-msvc
+
+# Check compilation without full build (fast validation)
+cargo xwin check --target x86_64-pc-windows-msvc --workspace
+```
+
+**Build artifacts**:
+- `screensearch.exe` - Windows executable (portable, requires Windows to run)
+
+**Testing**:
+- Compilation can be verified on Linux
+- Runtime testing requires actual Windows machine
+- Transfer `.exe` to Windows for full validation
+- CI/CD workflow includes optional Windows smoke test
+
+**Important Notes**:
+- The resulting binary is identical to native Windows builds (same MSVC ABI)
+- All Windows APIs remain functional (OCR, screen capture, UI automation)
+- Cross-compilation does not enable running on Linux - the binary still requires Windows
+- See `docs/cross-compilation.md` for troubleshooting and detailed guide
+
 ## Workspace Architecture
 
 This is a **Cargo workspace** with a specific dependency flow. Understanding this structure is critical:
@@ -568,6 +620,25 @@ Maintain these performance characteristics:
 - Use clippy before committing: `cargo clippy --workspace -- -D warnings`
 
 ## Recent Optimizations (v0.1.0 → v0.2.0)
+
+### Cross-Compilation Support (v0.2.0)
+- **Linux to Windows builds**: cargo-xwin enables building Windows binaries from Linux
+- **CI/CD automation**: GitHub Actions workflow for automated cross-compilation
+- **Clang 19 requirement**: MSVC STL headers require Clang 19.0.0+ (Clang 18 incompatible)
+- **Zero code changes**: All Windows APIs remain functional, binary identical to native builds
+- **Build time**: ~3-4 minutes for full release build with UI embedding
+
+**Implementation files**:
+- Configuration: `.cargo/config.toml` - LLD linker, static CRT, MSVC ABI
+- Build script: `build.rs` - Cross-platform npm detection via `CARGO_CFG_TARGET_OS`
+- CI/CD: `.github/workflows/cross-compile-linux.yml` - Automated builds with caching
+- Documentation: `docs/cross-compilation.md` - Comprehensive troubleshooting guide
+
+**Lessons learned**:
+- cargo-xwin downloads Windows SDK automatically (~500MB, cached in `~/.cache/cargo-xwin`)
+- `cfg!(target_os)` detects host OS, use `CARGO_CFG_TARGET_OS` env var for target OS
+- UI build (npm) runs on host platform (Linux), not target platform (Windows)
+- windows-rs `windows-targets` crate ensures proper linking without toolchain-provided import libs
 
 ### Storage Optimization
 - **50x storage reduction**: JPEG compression + resizing (1920px max width)

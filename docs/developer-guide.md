@@ -1,7 +1,7 @@
 # ScreenSearch Developer Guide
 
 **Version:** 0.2.0
-**Last Updated:** 2025-12-13
+**Last Updated:** 2025-12-26
 
 ## Table of Contents
 
@@ -67,6 +67,52 @@ ScreenSearch uses the Windows OCR API which requires language packs.
 3. Add language: **English (United States)**
 4. Click **Options** next to English
 5. Download the language pack
+
+### Cross-Compilation from Linux
+
+**New in v0.2.0**: ScreenSearch can be cross-compiled from Linux to Windows using `cargo-xwin`, enabling CI/CD automation and Linux-based development workflows.
+
+#### Prerequisites (Linux)
+
+```bash
+# Install system dependencies (Ubuntu/Debian)
+sudo apt-get install -y clang-19 lld llvm-19
+
+# For Arch-based systems
+sudo pacman -S clang lld llvm
+
+# Install cargo-xwin
+cargo install cargo-xwin
+
+# Add Windows target
+rustup target add x86_64-pc-windows-msvc
+```
+
+**Important**: Clang 19.0.0 or newer is required for MSVC STL compatibility. If you have Clang 18, you must upgrade:
+
+```bash
+sudo apt-get install -y clang-19
+sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
+sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
+```
+
+#### Build Commands
+
+```bash
+# Build UI first (runs on Linux, platform-agnostic)
+cd screensearch-ui && npm install && npm run build && cd ..
+
+# Cross-compile to Windows
+cargo xwin build --release --target x86_64-pc-windows-msvc
+
+# Output: target/x86_64-pc-windows-msvc/release/screensearch.exe
+```
+
+#### Testing
+
+- **On Linux**: Compilation can be verified, but runtime testing is not possible
+- **On Windows**: Transfer the `.exe` to a Windows machine for full validation
+- See [docs/cross-compilation.md](cross-compilation.md) for comprehensive troubleshooting
 
 ### IDE Configuration
 
