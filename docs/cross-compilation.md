@@ -21,8 +21,13 @@ Install the following tools before cross-compiling:
 
 ```bash
 # 1. Install system dependencies (Ubuntu/Debian)
+# IMPORTANT: Install Clang 19 or newer (Clang 18 will NOT work)
 sudo apt-get update
-sudo apt-get install -y clang lld llvm
+sudo apt-get install -y clang-19 lld-19 llvm-19
+
+# Set Clang 19 as default (if Clang 18 is already installed)
+sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
+sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
 
 # For Arch-based systems
 sudo pacman -S clang lld llvm
@@ -137,13 +142,39 @@ error: linker `lld` not found
 **Solution**:
 ```bash
 # Ubuntu/Debian
-sudo apt-get install lld
+sudo apt-get install lld-19
 
 # Arch
 sudo pacman -S lld
 
 # Verify installation
 which lld
+```
+
+### Issue: MSVC STL version error (Clang 18)
+
+**Symptom**:
+```
+error: static assertion failed: error STL1000: Unexpected compiler version, expected Clang 19.0.0 or newer.
+```
+
+**Root Cause**: The Microsoft STL headers downloaded by cargo-xwin require Clang 19.0.0 or newer. Clang 18 is **not compatible**.
+
+**Solution**:
+```bash
+# Install Clang 19
+sudo apt-get install -y clang-19 llvm-19
+
+# Set as default
+sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
+sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
+
+# Verify version
+clang --version  # Should show 19.x.x
+
+# Clean and rebuild
+cargo clean
+cargo xwin build --release --target x86_64-pc-windows-msvc
 ```
 
 ### Issue: UI not embedded in binary

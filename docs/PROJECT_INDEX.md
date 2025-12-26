@@ -22,11 +22,13 @@
 - **Continuous Screen Capture**: Configurable intervals (2-5 seconds) with multi-monitor support
 - **OCR Text Extraction**: Windows OCR API with bounding box coordinates and confidence scores
 - **Full-Text Search**: FTS5-powered search with BM25 ranking across all captured text
+- **Semantic Search**: Vector embeddings with hybrid FTS5+vector search (v0.2.0)
 - **REST API**: 27 endpoints for search, automation, and tag management on localhost:3131
 - **Timeline Visualization**: Activity density graph showing daily screen usage patterns
 - **System Tray Integration**: Background operation with quick access menu (Open/Quit)
 - **UI Automation**: Programmatic control of Windows applications via accessibility APIs
 - **Privacy Controls**: Exclude sensitive applications, pause on screen lock
+- **Cross-Compilation**: Build Windows binaries from Linux using cargo-xwin (v0.2.0)
 
 ### Technology Stack
 

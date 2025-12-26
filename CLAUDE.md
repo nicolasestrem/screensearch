@@ -621,6 +621,25 @@ Maintain these performance characteristics:
 
 ## Recent Optimizations (v0.1.0 → v0.2.0)
 
+### Cross-Compilation Support (v0.2.0)
+- **Linux to Windows builds**: cargo-xwin enables building Windows binaries from Linux
+- **CI/CD automation**: GitHub Actions workflow for automated cross-compilation
+- **Clang 19 requirement**: MSVC STL headers require Clang 19.0.0+ (Clang 18 incompatible)
+- **Zero code changes**: All Windows APIs remain functional, binary identical to native builds
+- **Build time**: ~3-4 minutes for full release build with UI embedding
+
+**Implementation files**:
+- Configuration: `.cargo/config.toml` - LLD linker, static CRT, MSVC ABI
+- Build script: `build.rs` - Cross-platform npm detection via `CARGO_CFG_TARGET_OS`
+- CI/CD: `.github/workflows/cross-compile-linux.yml` - Automated builds with caching
+- Documentation: `docs/cross-compilation.md` - Comprehensive troubleshooting guide
+
+**Lessons learned**:
+- cargo-xwin downloads Windows SDK automatically (~500MB, cached in `~/.cache/cargo-xwin`)
+- `cfg!(target_os)` detects host OS, use `CARGO_CFG_TARGET_OS` env var for target OS
+- UI build (npm) runs on host platform (Linux), not target platform (Windows)
+- windows-rs `windows-targets` crate ensures proper linking without toolchain-provided import libs
+
 ### Storage Optimization
 - **50x storage reduction**: JPEG compression + resizing (1920px max width)
 - **Automatic cleanup**: 24-hour loop enforces retention policies
