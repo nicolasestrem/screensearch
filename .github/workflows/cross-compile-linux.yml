@@ -2,7 +2,7 @@ name: Cross-Compile (Linux to Windows)
 
 on:
   push:
-    branches: [main, develop, feature/cross-compile-linux-to-windows]
+    branches: [main, develop]
   pull_request:
     branches: [main]
 
@@ -27,7 +27,12 @@ jobs:
       - name: Install cross-compilation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lld llvm
+          sudo apt-get install -y clang-19 lld-19 llvm-19
+          # Set Clang 19 as default (required for MSVC STL compatibility)
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
+          # Verify Clang version
+          clang --version
 
       - name: Install cargo-xwin
         run: cargo install cargo-xwin
@@ -63,6 +68,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-xwin-sdk-
 
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-xwin-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-xwin-cargo-build-
+
       - name: Build React UI
         run: |
           cd screensearch-ui
@@ -73,12 +86,33 @@ jobs:
         run: |
           cargo xwin build --release --target x86_64-pc-windows-msvc --locked
 
-      - name: Verify binary exists
+      - name: Verify binary exists and validate size
         run: |
           ls -lh target/x86_64-pc-windows-msvc/release/screensearch.exe
           file target/x86_64-pc-windows-msvc/release/screensearch.exe
-          # Display file size in human-readable format
-          du -h target/x86_64-pc-windows-msvc/release/screensearch.exe
+
+          # Verify binary is a valid Windows PE executable
+          if ! file target/x86_64-pc-windows-msvc/release/screensearch.exe | grep -q "PE32+ executable"; then
+            echo "Error: Binary is not a valid Windows PE executable"
+            exit 1
+          fi
+
+          # Validate binary size (should be 15-20MB with embedded UI)
+          SIZE_BYTES=$(stat -c%s target/x86_64-pc-windows-msvc/release/screensearch.exe)
+          SIZE_MB=$((SIZE_BYTES / 1024 / 1024))
+          echo "Binary size: ${SIZE_MB}MB"
+
+          if [ $SIZE_MB -lt 10 ]; then
+            echo "Warning: Binary size (${SIZE_MB}MB) is smaller than expected (15-20MB)"
+            echo "UI assets may not be embedded. Checking..."
+            exit 1
+          elif [ $SIZE_MB -gt 30 ]; then
+            echo "Warning: Binary size (${SIZE_MB}MB) is larger than expected (15-20MB)"
+            echo "This may indicate build issues or extra dependencies."
+            exit 1
+          else
+            echo "Binary size OK: ${SIZE_MB}MB (expected range: 15-20MB)"
+          fi
 
       - name: Upload Windows binary artifact
         uses: actions/upload-artifact@v4
@@ -89,11 +123,12 @@ jobs:
 
   # Optional: Test the cross-compiled binary on actual Windows
   # This requires a Windows runner and validates that the binary works correctly
+  # Only runs on pushes to main/develop to reduce CI costs
   test-windows:
     name: Test Cross-Compiled Binary on Windows
     needs: cross-compile
     runs-on: windows-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
 
     steps:
       - name: Download cross-compiled binary

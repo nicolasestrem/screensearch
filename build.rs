@@ -28,12 +28,10 @@ fn main() {
         // Check if npm is available
         // IMPORTANT: Use host OS commands (where npm actually runs), not target OS
         // When cross-compiling from Linux to Windows, npm runs on Linux, not Windows
-        let npm_check = if is_cross_compiling || cfg!(target_os = "linux") {
-            Command::new("which").arg("npm").output()
-        } else if cfg!(target_os = "windows") {
+        let npm_check = if cfg!(target_os = "windows") && !is_cross_compiling {
             Command::new("where").arg("npm").output()
         } else {
-            // Fallback for other Unix-like systems
+            // Linux, cross-compiling, or other Unix-like systems
             Command::new("which").arg("npm").output()
         };
 
@@ -43,12 +41,10 @@ fn main() {
             // Run npm install using current_dir() instead of shell cd
             // On Windows, npm is actually npm.cmd
             // When cross-compiling, use the host OS npm command
-            let npm_cmd = if is_cross_compiling || cfg!(target_os = "linux") {
-                "npm"  // Linux/Unix systems use plain "npm"
-            } else if cfg!(target_os = "windows") {
+            let npm_cmd = if cfg!(target_os = "windows") && !is_cross_compiling {
                 "npm.cmd"  // Native Windows builds use "npm.cmd"
             } else {
-                "npm"  // Fallback for other Unix-like systems
+                "npm"  // Linux, cross-compiling, or other Unix-like systems
             };
 
             let install_status = Command::new(npm_cmd)
