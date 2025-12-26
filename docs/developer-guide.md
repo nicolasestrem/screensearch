@@ -1,4 +1,4 @@
-# Screen Memory Developer Guide
+# ScreenSearch Developer Guide
 
 **Version:** 0.2.0
 **Last Updated:** 2025-12-13
@@ -23,7 +23,7 @@
 
 #### 1. Rust Toolchain
 
-Screen Memory requires Rust 1.70 or later with the 2021 edition.
+ScreenSearch requires Rust 1.70 or later with the 2021 edition.
 
 ```powershell
 # Install rustup (Windows)
@@ -60,7 +60,7 @@ cl.exe
 
 #### 3. Windows OCR Language Pack
 
-Screen Memory uses the Windows OCR API which requires language packs.
+ScreenSearch uses the Windows OCR API which requires language packs.
 
 1. Open Windows Settings
 2. Navigate to **Time & Language > Language**
@@ -99,7 +99,7 @@ Launch configuration (`.vscode/launch.json`):
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Debug Screen Memory",
+      "name": "Debug ScreenSearch",
       "cargo": {
         "args": ["build", "--bin=screen-memories", "--package=screen-memories"]
       },
@@ -143,7 +143,7 @@ For first-time setup, the database will be created automatically at `screen_memo
 
 ## Project Structure
 
-Screen Memory uses a Cargo workspace architecture with five crates plus a frontend application.
+ScreenSearch uses a Cargo workspace architecture with five crates plus a frontend application.
 
 ```
 screen-memories/
@@ -1327,7 +1327,7 @@ cargo bench -p screen-capture
 
 ### Debug Logging
 
-Screen Memory uses the `tracing` crate for structured logging.
+ScreenSearch uses the `tracing` crate for structured logging.
 
 **Log levels:**
 - `trace` - Very verbose, low-level details
@@ -1488,7 +1488,7 @@ tasklist | findstr screen-memories
 
 ### Version Bump
 
-Screen Memory uses semantic versioning: `MAJOR.MINOR.PATCH`
+ScreenSearch uses semantic versioning: `MAJOR.MINOR.PATCH`
 
 **Step 1: Update version numbers**
 
@@ -1581,7 +1581,7 @@ Serve with static file server or bundle with Rust binary using `tower-http` stat
 1. Go to GitHub repository > Releases
 2. Click "Create new release"
 3. Select tag `v0.2.0`
-4. Title: "Screen Memory v0.2.0"
+4. Title: "ScreenSearch v0.2.0"
 5. Description: Copy from CHANGELOG
 6. Upload `screen-memories-v0.2.0-windows-x64.zip`
 7. Publish release
@@ -1800,7 +1800,7 @@ All pull requests must include:
 
 ### Project History
 
-Screen Memory began as a Windows-focused rewrite of the screenpipe project, simplifying the architecture while maintaining core screen capture and OCR functionality.
+ScreenSearch began as a Windows-focused rewrite of the screenpipe project, simplifying the architecture while maintaining core screen capture and OCR functionality.
 
 **Design decisions:**
 - Rust-only backend (no Node.js)
@@ -1862,6 +1862,6 @@ This prevents version conflicts across crates.
 
 ---
 
-**File:** `\path\to\app\Screen Memory\docs\developer-guide.md`
+**File:** `\path\to\app\ScreenSearch\docs\developer-guide.md`
 **Lines:** ~500
 **Last Updated:** 2025-12-10
