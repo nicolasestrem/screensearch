@@ -8,8 +8,8 @@ import { Timeline } from './components/Timeline';
 import { SettingsPanel } from './components/SettingsPanel';
 import { FrameModal } from './components/FrameModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { IntelligencePage } from './pages/Intelligence';
 import { Footer } from './components/Footer';
+import { AiAssistantPanel } from './components/AiAssistantPanel';
 
 // Create a client
 const queryClient = new QueryClient({
@@ -31,7 +31,7 @@ const queryClient = new QueryClient({
  * - Footer integration
  */
 function AppContent() {
-  const { isDarkMode, activeTab } = useStore();
+  const { isDarkMode } = useStore();
 
   useEffect(() => {
     // Apply dark mode class to html element
@@ -76,21 +76,19 @@ function AppContent() {
 
         <div className="flex-1 overflow-y-auto flex flex-col">
           <div className="container mx-auto px-4 py-8 max-w-7xl flex-1">
-            {activeTab === 'timeline' ? (
-              <div className="space-y-8 animate-in fade-in duration-500">
-                <SearchBar />
-                <Timeline />
-              </div>
-            ) : (
-              <IntelligencePage />
-            )}
+            <div className="space-y-8 animate-in fade-in duration-500">
+              <SearchBar />
+              <Timeline />
+            </div>
           </div>
           <Footer />
         </div>
       </main>
 
       <SettingsPanel />
+      <SettingsPanel />
       <FrameModal />
+      <AiAssistantPanel />
 
       <Toaster
         position="bottom-right"

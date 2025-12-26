@@ -127,14 +127,14 @@ export function FrameCard({ frame, searchQuery = '' }: FrameCardProps) {
           {frame.tags.map((tag) => (
             <div
               key={tag.id}
-              className="group/tag flex items-center gap-1 px-2 py-0.5 bg-secondary/50 hover:bg-secondary text-secondary-foreground rounded-md text-[10px] font-medium transition-colors border border-transparent hover:border-border"
-              style={tag.color ? { backgroundColor: `${tag.color}20`, color: tag.color, borderColor: `${tag.color}40` } : undefined}
+              className="group/tag flex items-center gap-1.5 px-2.5 py-0.5 bg-secondary/50 hover:bg-secondary text-secondary-foreground rounded-full text-[11px] font-medium transition-all duration-200 border border-transparent hover:border-border shadow-sm hover:shadow-md"
+              style={tag.color ? { backgroundColor: `${tag.color}15`, color: tag.color, borderColor: `${tag.color}30` } : undefined}
             >
-              <TagIcon className="h-2.5 w-2.5" />
-              <span>{tag.name}</span>
+              <TagIcon className="h-3 w-3 opacity-70" />
+              <span className="relative top-[0.5px]">{tag.name}</span>
               <button
                 onClick={(e) => { e.stopPropagation(); handleRemoveTag(tag.id); }}
-                className="opacity-0 group-hover/tag:opacity-100 p-0.5 hover:bg-black/5 rounded-full transition-all"
+                className="opacity-0 group-hover/tag:opacity-100 ml-0.5 p-0.5 hover:bg-black/10 dark:hover:bg-white/10 rounded-full transition-all"
               >
                 <X className="h-2.5 w-2.5" />
               </button>

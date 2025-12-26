@@ -35,6 +35,10 @@ interface AppStore {
   // Settings Panel
   isSettingsPanelOpen: boolean;
   toggleSettingsPanel: () => void;
+
+  // AI Panel
+  isAiPanelOpen: boolean;
+  toggleAiPanel: () => void;
 }
 
 const defaultFilters: FilterState = {
@@ -89,6 +93,11 @@ export const useStore = create<AppStore>()(
       isSettingsPanelOpen: false,
       toggleSettingsPanel: () =>
         set((state) => ({ isSettingsPanelOpen: !state.isSettingsPanelOpen })),
+
+      // AI Panel
+      isAiPanelOpen: false,
+      toggleAiPanel: () =>
+        set((state) => ({ isAiPanelOpen: !state.isAiPanelOpen })),
     }),
     {
       name: 'screen-memories-store',

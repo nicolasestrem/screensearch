@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.1] - 2025-12-26
+
+### Added
+- **Neural Command Center**: Complete UI overhaul to align with "Tech-Panel" aesthetic.
+- **Neural Search Bar**: Visual indicators ("Brain" icon, pulsing badge) when Neural Search is active.
+- **Tag Control Tower**: dedicated sidebar section for managing and filtering tags instantly.
+- **Life Stream Timeline**: New "Density Heatmap" visualization for daily activity, replacing simple bar charts with a gradient-based intensity graph.
+- **AI Slide-over Panel**: New glass-morphism panel for AI reports, replacing the separate Intelligence page for better context preservation.
+
+### Changed
+- **Frame Cards**: Updated tag styling to "Chip" design with vibrant colors and pill shapes.
+- **Navigation**: Moved "Intelligence" access to a toggle button that opens the slide-over panel.
+
+### Fixed
+- **Timeline**: Improved density visualization clarity with 10-minute buckets.
+
 ## [0.2.0] - 2025-12-13
 
 ### Added

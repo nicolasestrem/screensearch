@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, X, Calendar, Tag as TagIcon, Monitor } from 'lucide-react';
+import { Search, X, Calendar, Tag as TagIcon, Monitor, Brain } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useSearchKeywords } from '../hooks/useSearch';
 import { useTags } from '../hooks/useTags';
@@ -68,6 +68,7 @@ export function SearchBar() {
 
           <div className="relative bg-card rounded-2xl shadow-sm border border-border/50 group-hover:border-primary/30 group-focus-within:border-primary/50 group-focus-within:shadow-xl group-focus-within:shadow-primary/5 transition-all duration-300">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
+            
             <input
               type="text"
               value={localQuery}
@@ -77,8 +78,15 @@ export function SearchBar() {
               }}
               onFocus={() => setShowAutocomplete(true)}
               placeholder="Search screen captures..."
-              className="w-full pl-12 pr-12 py-4 bg-transparent border-none rounded-2xl text-lg placeholder:text-muted-foreground/50 focus:outline-none focus:ring-0"
+              className="w-full pl-12 pr-32 py-4 bg-transparent border-none rounded-2xl text-lg placeholder:text-muted-foreground/50 focus:outline-none focus:ring-0"
             />
+
+            {/* Neural Search Badge */}
+            <div className="absolute right-12 top-1/2 -translate-y-1/2 hidden group-focus-within:flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 animate-fade-in pointer-events-none">
+              <Brain className="h-3.5 w-3.5 text-primary animate-pulse" />
+              <span className="text-xs font-medium text-primary/90">Neural Search</span>
+            </div>
+
             {localQuery && (
               <button
                 onClick={() => {
@@ -107,7 +115,7 @@ export function SearchBar() {
                   }}
                   className="w-full px-4 py-3 text-left hover:bg-primary/5 hover:text-primary rounded-lg transition-all flex items-center gap-3 group/item"
                 >
-                  <Search className="h-4 w-4 text-muted-foreground group-hover/item:text-primary/70" />
+                  <Brain className="h-4 w-4 text-muted-foreground/50 group-hover/item:text-primary/70 transition-colors" />
                   <span className="font-medium">{suggestion}</span>
                 </button>
               ))}
