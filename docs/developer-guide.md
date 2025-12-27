@@ -1,7 +1,7 @@
-# Screen Memory Developer Guide
+# ScreenSearch Developer Guide
 
 **Version:** 0.2.0
-**Last Updated:** 2025-12-13
+**Last Updated:** 2025-12-26
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@
 
 #### 1. Rust Toolchain
 
-Screen Memory requires Rust 1.70 or later with the 2021 edition.
+ScreenSearch requires Rust 1.70 or later with the 2021 edition.
 
 ```powershell
 # Install rustup (Windows)
@@ -60,13 +60,59 @@ cl.exe
 
 #### 3. Windows OCR Language Pack
 
-Screen Memory uses the Windows OCR API which requires language packs.
+ScreenSearch uses the Windows OCR API which requires language packs.
 
 1. Open Windows Settings
 2. Navigate to **Time & Language > Language**
 3. Add language: **English (United States)**
 4. Click **Options** next to English
 5. Download the language pack
+
+### Cross-Compilation from Linux
+
+**New in v0.2.0**: ScreenSearch can be cross-compiled from Linux to Windows using `cargo-xwin`, enabling CI/CD automation and Linux-based development workflows.
+
+#### Prerequisites (Linux)
+
+```bash
+# Install system dependencies (Ubuntu/Debian)
+sudo apt-get install -y clang-19 lld llvm-19
+
+# For Arch-based systems
+sudo pacman -S clang lld llvm
+
+# Install cargo-xwin
+cargo install cargo-xwin
+
+# Add Windows target
+rustup target add x86_64-pc-windows-msvc
+```
+
+**Important**: Clang 19.0.0 or newer is required for MSVC STL compatibility. If you have Clang 18, you must upgrade:
+
+```bash
+sudo apt-get install -y clang-19
+sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
+sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
+```
+
+#### Build Commands
+
+```bash
+# Build UI first (runs on Linux, platform-agnostic)
+cd screensearch-ui && npm install && npm run build && cd ..
+
+# Cross-compile to Windows
+cargo xwin build --release --target x86_64-pc-windows-msvc
+
+# Output: target/x86_64-pc-windows-msvc/release/screensearch.exe
+```
+
+#### Testing
+
+- **On Linux**: Compilation can be verified, but runtime testing is not possible
+- **On Windows**: Transfer the `.exe` to a Windows machine for full validation
+- See [docs/cross-compilation.md](cross-compilation.md) for comprehensive troubleshooting
 
 ### IDE Configuration
 
@@ -99,7 +145,7 @@ Launch configuration (`.vscode/launch.json`):
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Debug Screen Memory",
+      "name": "Debug ScreenSearch",
       "cargo": {
         "args": ["build", "--bin=screen-memories", "--package=screen-memories"]
       },
@@ -143,7 +189,7 @@ For first-time setup, the database will be created automatically at `screen_memo
 
 ## Project Structure
 
-Screen Memory uses a Cargo workspace architecture with five crates plus a frontend application.
+ScreenSearch uses a Cargo workspace architecture with five crates plus a frontend application.
 
 ```
 screen-memories/
@@ -1327,7 +1373,7 @@ cargo bench -p screen-capture
 
 ### Debug Logging
 
-Screen Memory uses the `tracing` crate for structured logging.
+ScreenSearch uses the `tracing` crate for structured logging.
 
 **Log levels:**
 - `trace` - Very verbose, low-level details
@@ -1488,7 +1534,7 @@ tasklist | findstr screen-memories
 
 ### Version Bump
 
-Screen Memory uses semantic versioning: `MAJOR.MINOR.PATCH`
+ScreenSearch uses semantic versioning: `MAJOR.MINOR.PATCH`
 
 **Step 1: Update version numbers**
 
@@ -1581,7 +1627,7 @@ Serve with static file server or bundle with Rust binary using `tower-http` stat
 1. Go to GitHub repository > Releases
 2. Click "Create new release"
 3. Select tag `v0.2.0`
-4. Title: "Screen Memory v0.2.0"
+4. Title: "ScreenSearch v0.2.0"
 5. Description: Copy from CHANGELOG
 6. Upload `screen-memories-v0.2.0-windows-x64.zip`
 7. Publish release
@@ -1800,7 +1846,7 @@ All pull requests must include:
 
 ### Project History
 
-Screen Memory began as a Windows-focused rewrite of the screenpipe project, simplifying the architecture while maintaining core screen capture and OCR functionality.
+ScreenSearch began as a Windows-focused rewrite of the screenpipe project, simplifying the architecture while maintaining core screen capture and OCR functionality.
 
 **Design decisions:**
 - Rust-only backend (no Node.js)
@@ -1862,6 +1908,6 @@ This prevents version conflicts across crates.
 
 ---
 
-**File:** `\path\to\app\Screen Memory\docs\developer-guide.md`
+**File:** `\path\to\app\ScreenSearch\docs\developer-guide.md`
 **Lines:** ~500
 **Last Updated:** 2025-12-10

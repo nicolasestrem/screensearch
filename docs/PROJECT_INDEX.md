@@ -22,11 +22,13 @@
 - **Continuous Screen Capture**: Configurable intervals (2-5 seconds) with multi-monitor support
 - **OCR Text Extraction**: Windows OCR API with bounding box coordinates and confidence scores
 - **Full-Text Search**: FTS5-powered search with BM25 ranking across all captured text
+- **Semantic Search**: Vector embeddings with hybrid FTS5+vector search (v0.2.0)
 - **REST API**: 27 endpoints for search, automation, and tag management on localhost:3131
 - **Timeline Visualization**: Activity density graph showing daily screen usage patterns
 - **System Tray Integration**: Background operation with quick access menu (Open/Quit)
 - **UI Automation**: Programmatic control of Windows applications via accessibility APIs
 - **Privacy Controls**: Exclude sensitive applications, pause on screen lock
+- **Cross-Compilation**: Build Windows binaries from Linux using cargo-xwin (v0.2.0)
 
 ### Technology Stack
 
@@ -85,7 +87,7 @@ Screen Capture → Frame Differencing → OCR Processing → Database Storage �
 
 ### Workspace Members
 
-The project uses a Cargo workspace with 4 member crates:
+The project uses a Cargo workspace with 5 member crates:
 
 #### 1. **screen-capture** - Screen Capture & OCR Engine
 - **Path**: `screen-capture/`
@@ -138,7 +140,15 @@ The project uses a Cargo workspace with 4 member crates:
   - `src/window.rs` - Window management
   - `src/selector.rs` - Element selector patterns
 
-#### 5. **Main Binary** - Application Entry Point
+#### 5. **screensearch-embeddings** - Vector Embeddings Engine
+- **Path**: `screensearch-embeddings/`
+- **Purpose**: Local ML embedding generation using ONNX Runtime for semantic search
+- **Key Files**:
+  - `src/engine.rs` - ONNX embedding engine with batch processing
+  - `src/chunker.rs` - Text chunking with configurable overlap
+  - `src/download.rs` - Automatic model download from HuggingFace
+
+#### 6. **Main Binary** - Application Entry Point
 - **Path**: `src/main.rs`
 - **Purpose**: Integrates all workspace crates into a single executable
 - **Responsibilities**:
@@ -518,8 +528,8 @@ See [docs/performance-optimizations.md](./performance-optimizations.md) for deta
 ### Codebase Metrics
 
 - **Total Source Files**: 37 Rust files
-- **Workspace Crates**: 4 members + main binary
-- **API Endpoints**: 27 REST endpoints
+- **Workspace Crates**: 5 members + main binary
+- **API Endpoints**: 29 REST endpoints
 - **Test Coverage**: 59/59 tests passing (100%)
 - **Lines of Code**: ~5,000+ lines (excluding dependencies)
 

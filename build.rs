@@ -20,10 +20,18 @@ fn main() {
     if profile == "release" {
         println!("cargo:warning=Building web UI...");
 
+        // Detect cross-compilation: when building on Linux for Windows target
+        // CARGO_CFG_TARGET_OS contains the target OS, not the host OS
+        let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+        let is_cross_compiling = target_os == "windows" && cfg!(target_os = "linux");
+
         // Check if npm is available
-        let npm_check = if cfg!(target_os = "windows") {
+        // IMPORTANT: Use host OS commands (where npm actually runs), not target OS
+        // When cross-compiling from Linux to Windows, npm runs on Linux, not Windows
+        let npm_check = if cfg!(target_os = "windows") && !is_cross_compiling {
             Command::new("where").arg("npm").output()
         } else {
+            // Linux, cross-compiling, or other Unix-like systems
             Command::new("which").arg("npm").output()
         };
 
@@ -32,10 +40,11 @@ fn main() {
 
             // Run npm install using current_dir() instead of shell cd
             // On Windows, npm is actually npm.cmd
-            let npm_cmd = if cfg!(target_os = "windows") {
-                "npm.cmd"
+            // When cross-compiling, use the host OS npm command
+            let npm_cmd = if cfg!(target_os = "windows") && !is_cross_compiling {
+                "npm.cmd"  // Native Windows builds use "npm.cmd"
             } else {
-                "npm"
+                "npm"  // Linux, cross-compiling, or other Unix-like systems
             };
 
             let install_status = Command::new(npm_cmd)
