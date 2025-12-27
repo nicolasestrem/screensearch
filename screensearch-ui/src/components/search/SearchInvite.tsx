@@ -115,20 +115,22 @@ export function SearchInvite({ isOpen, onClose }: SearchInviteProps) {
             onClick={onClose}
           />
 
-          {/* Modal */}
+          {/* Modal - Floating "Bubble" Concept */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: -20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: -20 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed inset-x-4 top-[12%] max-w-2xl mx-auto z-50"
+            initial={{ opacity: 0, scale: 0.95, y: -20, filter: 'blur(10px)' }}
+            animate={{ opacity: 1, scale: 1, y: 0, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, scale: 0.95, y: -20, filter: 'blur(10px)' }}
+            transition={{ type: 'spring', damping: 25, stiffness: 300, mass: 0.8 }}
+            className="fixed inset-x-4 top-[15%] max-w-2xl mx-auto z-50 transform-gpu"
           >
-            <div className="glass-panel-cyan rounded-2xl overflow-hidden border-gradient-cyan glow-cyan-lg">
+            <div className="glass-panel-cyan rounded-2xl overflow-hidden border-gradient-cyan glow-cyan-lg backdrop-blur-2xl">
               {/* Search Input Area */}
-              <div className="relative">
-                <Search className="absolute left-5 top-1/2 -translate-y-1/2 h-5 w-5 text-primary" />
-                <input
+              <div className="relative group">
+                <Search className="absolute left-6 top-1/2 -translate-y-1/2 h-5 w-5 text-primary group-focus-within:text-cyan-400 group-focus-within:drop-shadow-[0_0_5px_rgba(0,212,255,0.8)] transition-all duration-300" />
+                <motion.input
                   ref={inputRef}
+                  whileFocus={{ scale: 1.01 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 20 }}
                   type="text"
                   value={localQuery}
                   onChange={(e) => handleInputChange(e.target.value)}
@@ -137,8 +139,8 @@ export function SearchInvite({ isOpen, onClose }: SearchInviteProps) {
                       handleSearch(localQuery);
                     }
                   }}
-                  placeholder="What did I work on yesterday?"
-                  className="w-full pl-14 pr-24 py-5 bg-transparent text-lg placeholder:text-muted-foreground/50 focus:outline-none"
+                  placeholder="Ask your screen memory..."
+                  className="w-full pl-16 pr-24 py-6 bg-transparent text-xl font-medium placeholder:text-muted-foreground/40 focus:outline-none text-foreground caret-cyan-400 selection:bg-cyan-500/30"
                 />
 
                 {/* Right side controls */}

@@ -68,11 +68,21 @@ ScreenSearch uses the Windows OCR API which requires language packs.
 4. Click **Options** next to English
 5. Download the language pack
 
+### Linux Development Support
+
+**New in v0.3.0**: You can now run the full backend **natively on Linux** for development. Windows-specific features (OCR, Automation) are automatically stubbed out.
+
+```bash
+# Run backend on Linux
+cargo run
+# API starts on localhost:3131 (stubbed mode)
+```
+
+This allows you to develop the UI, API logic, and database layer entirely on Linux without needing a Windows VM or cross-compilation for every change.
+
 ### Cross-Compilation from Linux
 
-**New in v0.2.0**: ScreenSearch can be cross-compiled from Linux to Windows using `cargo-xwin`, enabling CI/CD automation and Linux-based development workflows.
-
-#### Prerequisites (Linux)
+To build the final Windows executable from Linux:
 
 ```bash
 # Install system dependencies (Ubuntu/Debian)
@@ -294,7 +304,9 @@ screen-memories/
 │   └── screenpipe-vision/   # Reference only
 │
 ├── docs/
+├── docs/
 │   ├── developer-guide.md   # This file
+│   ├── frontend-design-system.md # Sci-Fi UI Design System
 │   ├── api-reference.md
 │   └── architecture.md
 │

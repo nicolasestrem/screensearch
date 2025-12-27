@@ -24,6 +24,7 @@ Screen Memory is a Windows screen capture and OCR (Optical Character Recognition
 - **Automatic Screen Capture**: Captures your screen at configurable intervals (default: every 3 seconds)
 - **Intelligent OCR**: Extracts text from screenshots using Windows OCR API for fast and accurate results
 - **Smart Frame Differencing**: Automatically skips unchanged screens to save resources
+- **Glassmorphism Interface**: Premium "Sci-Fi Concept" UI with atmospheric depth and neon accents
 - **Searchable Database**: All captures stored locally in SQLite with full-text search capabilities
 - **Web Interface**: Modern, responsive web UI for searching and browsing your screen history
 - **Privacy First**: All data stays on your machine - no cloud, no tracking
@@ -41,7 +42,9 @@ Screen Memory is a Windows screen capture and OCR (Optical Character Recognition
 
 ### How It Works
 
-Screen Memory runs quietly in the background, capturing your screen every few seconds. Each capture is processed through OCR to extract any visible text, then stored in a local SQLite database along with metadata like timestamp, active application, and window title. The web interface provides powerful search and timeline views to help you find exactly what you're looking for.
+Screen Memory runs quietly in the background, capturing your screen every few seconds. Each capture is processed through OCR to extract any visible text, then stored in a local SQLite database along with metadata like timestamp, active application, and window title.
+
+The interface features a **"Search Bubble"** (accessible via `Cmd+K` or `Ctrl+K`) that floats above the content, allowing you to instantly query your history with natural language.
 
 ---
 
@@ -578,9 +581,9 @@ Three primary views:
 
 #### Basic Search
 
-1. Click the search bar at the top
+1. Click the search bar at the top or press **`Ctrl+K` / `Cmd+K`** to open the **Search Bubble**
 2. Type your query (e.g., "meeting notes")
-3. Results appear automatically after 300ms debounce
+3. Results appear automatically below the floating bubble
 4. Click any result to view full details
 
 #### Search Features

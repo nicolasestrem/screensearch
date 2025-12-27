@@ -137,6 +137,8 @@ export default {
       },
       backdropBlur: {
         xs: '2px',
+        xl: '24px',
+        '2xl': '40px',
       },
     },
   },

@@ -90,7 +90,7 @@ export const useStore = create<AppStore>()(
       aiConfig: {
         providerUrl: 'http://localhost:11434/v1',
         apiKey: '',
-        model: 'deepseek-v3.2:cloud',
+        model: 'ministral-3:3b',
       },
       setAiConfig: (config) =>
         set((state) => ({

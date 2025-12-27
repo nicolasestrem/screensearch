@@ -21,13 +21,9 @@ export function Logo({ collapsed = false }: LogoProps) {
                     collapsed ? "w-0 opacity-0" : "w-auto opacity-100"
                 )}
             >
-                <div className="flex items-baseline gap-1.5 whitespace-nowrap">
-                    <span className="text-lg font-semibold text-primary">SCREEN</span>
-                    <span className="text-lg font-light text-foreground">SEARCH</span>
+                <div className="flex items-center gap-1.5 whitespace-nowrap">
+                    <span className="text-lg font-bold font-display tracking-tight text-foreground">ScreenSearch</span>
                 </div>
-                <p className="text-[10px] uppercase tracking-wider font-medium text-muted-foreground group-hover:text-primary/70 transition-colors whitespace-nowrap">
-                    Intel Dashboard
-                </p>
             </div>
         </div>
     );

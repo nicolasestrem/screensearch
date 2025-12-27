@@ -75,8 +75,11 @@ function AppContent() {
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
         {/* Background Decor */}
-        {/* Background Decor - Website matched grid */}
-        <div className="absolute inset-0 -z-10 h-full w-full bg-grid [mask-image:linear-gradient(to_bottom,transparent,black_10%,black_90%,transparent)] opacity-60 pointer-events-none" />
+        <div className="absolute inset-0 -z-10 h-full w-full bg-grid [mask-image:linear-gradient(to_bottom,transparent,black_10%,black_90%,transparent)] opacity-40 pointer-events-none" />
+        
+        {/* Ambient Light Blobs */}
+        <div className="bg-blob top-[-20%] left-[-10%]" />
+        <div className="bg-blob bg-blob-secondary bottom-[-20%] right-[-10%]" />
 
         <div className="flex-1 overflow-y-auto flex flex-col">
           <div className="container mx-auto px-4 py-8 max-w-7xl flex-1">

@@ -44,16 +44,21 @@ export function Sidebar() {
                 disabled={isDisabled}
                 title={isSidebarCollapsed ? item.label : undefined}
                 className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-300 relative overflow-hidden group",
                     isSidebarCollapsed && "justify-center",
                     isActive && !isDisabled
-                        ? "bg-primary text-primary-foreground shadow-md glow-cyan-subtle"
+                        ? "active-border bg-primary/10 text-primary"
                         : isDisabled
                             ? "text-muted-foreground/50 cursor-not-allowed"
-                            : "text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+                            : "text-muted-foreground hover:bg-surface-2 hover:text-foreground hover:glow-cyan-subtle"
                 )}
             >
-                <Icon className={cn("h-4 w-4 flex-shrink-0", isActive && "drop-shadow-[0_0_4px_rgba(0,212,255,0.5)]")} />
+                {/* Active Indicator Glimmer */}
+                {isActive && !isDisabled && (
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/10 to-transparent translate-x-[-100%] animate-[shimmer_2s_infinite]" />
+                )}
+                
+                <Icon className={cn("h-4 w-4 flex-shrink-0 transition-colors duration-300", isActive && "text-primary drop-shadow-[0_0_8px_rgba(0,242,255,0.6)]")} />
 
                 <AnimatePresence mode="wait">
                     {!isSidebarCollapsed && (
@@ -64,7 +69,7 @@ export function Sidebar() {
                             transition={{ duration: 0.2 }}
                             className="flex items-center justify-between flex-1 overflow-hidden"
                         >
-                            <span className="whitespace-nowrap">{item.label}</span>
+                            <span className={cn("whitespace-nowrap transition-all duration-300", isActive && "neon-text")}>{item.label}</span>
                             {item.comingSoon && (
                                 <span className="badge-coming-soon text-[10px] px-1.5 ml-2">Soon</span>
                             )}

@@ -18,6 +18,11 @@ This document tracks all stub implementations, placeholder functionality, and fe
 - **Description**: Advanced analytics with productivity metrics, trends, and insights
 - **Sidebar entry**: `screensearch-ui/src/components/Sidebar.tsx:24`
 
+### Mock Visualizations (Frontend Only)
+- **Productivity Pulse**: `screensearch-ui/src/components/dashboard/ProductivityPulse.tsx` uses simulated wave data when backend is unavailable.
+- **Memory Status**: `screensearch-ui/src/components/dashboard/MemoryStatusGauge.tsx` uses hardcoded mock values (87% indexed) for visual verification.
+- **Reason**: To allow UI design verification before full backend data pipeline is active.
+
 ### Daily Digest Fallback
 - **Location**: `screensearch-ui/src/components/dashboard/DailyDigestCard.tsx:93`
 - **Status**: STUB comment - falls back to null when AI not configured
@@ -50,6 +55,11 @@ This document tracks all stub implementations, placeholder functionality, and fe
 - **Location**: Referenced in `docs/developer-guide.md:1882`
 - **Status**: Not implemented
 - **Description**: Extensibility system for custom capture processors or integrations
+
+### Windows Automation (Linux Stub)
+- **Location**: `screensearch-automation/src/stub.rs`
+- **Status**: Stub implementation for non-Windows platforms
+- **Description**: `AutomationEngine` and related types return errors or empty results on Linux to allow cross-compilation. `uiautomation` and `windows` crates are excluded from the build.
 
 ---
 

@@ -25,6 +25,8 @@
 
 **Windows 10/11** • **11MB** • **No installation required** • **Just extract and run**
 
+> **Note for Linux Users:** This project now supports Linux for **UI development and backend logic**, with Windows-specific features (OCR, Automation) stubbed out. See [Developer Guide](docs/developer-guide.md) for details.
+
 </div>
 
 ---
@@ -48,6 +50,7 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+- [*] **Sci-Fi Concept UI** — Premium "Glass & Neon" aesthetic with atmospheric depth and fluid animations
 - [*] **AI-First Dashboard** — "Intel Dash" with Daily Digest, Memory Status gauge, and Productivity Pulse charts
 - [*] **Continuous Screen Capture** — Configurable intervals (2-5 seconds) with multi-monitor support
 - [*] **OCR Text Extraction** — Windows OCR API with bounding box coordinates and confidence scores
@@ -204,6 +207,7 @@ npm run dev
 ```
 
 **Dashboard Features**:
+- [*] **Sci-Fi Visuals**: Atmospheric radial gradients, neon accents, and glassmorphism interface
 - [*] Timeline view of captured frames with real-time thumbnails
 - [*] Full-text search across all OCR content
 - [*] Intelligence tab with AI-powered report generation

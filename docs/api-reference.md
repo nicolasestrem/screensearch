@@ -526,6 +526,8 @@ curl -X POST "http://localhost:3131/api/embeddings/enable" \
 
 All automation endpoints use POST requests and accept JSON request bodies. These endpoints interact with the Windows UIAutomation API to control the desktop.
 
+> **Note**: These endpoints are **Windows-only**. On Linux/macOS, they will return a `501 Not Implemented` or `500 Internal Server Error` (Stubbed) response.
+
 ### POST /automation/find-elements
 
 Locate UI elements on screen using selector syntax.

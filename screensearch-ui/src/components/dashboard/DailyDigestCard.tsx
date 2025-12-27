@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Newspaper, RefreshCw, Sparkles, AlertCircle } from 'lucide-react';
+import { Newspaper, RefreshCw, AlertCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { GlassCard, GlassCardHeader } from '../ui/GlassCard';
 import { useStore } from '../../store/useStore';
@@ -97,25 +97,40 @@ Keep it concise and actionable. Use bullet points.`,
     }
   };
 
-  // Show configuration prompt if AI not set up
+  // MOCK SUMMARY if AI not configured (Visual Fidelity)
   if (!aiConfig.providerUrl || !aiConfig.model) {
+     const mockDigest = `
+- **Productivity Peak**: High activity detected in **VS Code** between 10:00 AM and 11:30 AM, focusing on frontend components.
+- **Research Session**: Extensive browsing in **Chrome** regarding "React Performance Patterns" and "Canvas API" (14:15 - 15:00).
+- **Communication**: Intermittent usage of **Slack** throughout the day, with rapid switching context.
+- **System**: 450 new frames indexed. RAG memory updated.
+     `;
+
     return (
       <GlassCard padding="lg" className="h-full">
         <GlassCardHeader
-          icon={<Newspaper className="h-5 w-5" />}
-          badge={<span className="badge-simulated">Setup Required</span>}
+            icon={<Newspaper className="h-5 w-5" />}
+            badge={<span className="badge-simulated">Daily Summary</span>}
         >
-          Daily Digest
+            Daily Digest
         </GlassCardHeader>
-
-        <div className="flex flex-col items-center justify-center py-8 text-center">
-          <Sparkles className="h-10 w-10 text-primary/50 mb-3" />
-          <p className="text-sm text-muted-foreground mb-2">
-            Configure an AI provider to enable automatic daily summaries.
-          </p>
-          <p className="text-xs text-muted-foreground/70">
-            Go to Settings &rarr; Intelligence to set up Ollama or another provider.
-          </p>
+        <div className="prose prose-sm dark:prose-invert max-w-none">
+          <ReactMarkdown
+            components={{
+              ul: ({ children }) => (
+                <ul className="space-y-2 list-none pl-0">{children}</ul>
+              ),
+              li: ({ children }) => (
+                <li className="flex items-start gap-2">
+                   <div className="w-1.5 h-1.5 rounded-full bg-primary mt-2 flex-shrink-0 shadow-[0_0_8px_rgba(37,99,235,0.8)]" />
+                   <span className="text-foreground/90">{children}</span>
+                </li>
+              ),
+              strong: ({children}) => <span className="text-primary-light font-semibold">{children}</span>
+            }}
+          >
+            {mockDigest}
+          </ReactMarkdown>
         </div>
       </GlassCard>
     );

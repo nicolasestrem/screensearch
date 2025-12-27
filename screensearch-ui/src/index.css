@@ -60,6 +60,17 @@
     --primary-dark: 190 80% 45%;         /* Darker cyan */
     --primary-foreground: 220 25% 6%;    /* Dark text on cyan */
 
+    /* Dark Theme Colors - Slightly Brightened */
+    --background: 222 47% 8%;            /* Was 222 47% 4% (too dark) - now #0b111c */
+    --background-elevated: 222 47% 12%;  /* Slightly lighter */
+    --foreground: 210 40% 98%;
+
+    --card: 222 47% 10%;                 /* Slightly lighter card */
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 10%;
+    --popover-foreground: 210 40% 98%;
+
     /* Accent variants for flexibility */
     --accent-primary: 190 95% 50%;       /* Main cyan */
     --accent-glow: 190 100% 60%;         /* Glow cyan */
@@ -88,10 +99,10 @@
     --ring: 190 95% 50%;
 
     /* Glassmorphism (dark mode - prominent with cyan) */
-    --glass-bg: rgba(17, 24, 39, 0.7);
-    --glass-border: rgba(0, 170, 204, 0.15);
-    --glass-blur: 16px;
-    --glass-glow: rgba(0, 212, 255, 0.25);
+    --glass-bg: rgba(13, 17, 23, 0.4); /* Reduced opacity from 0.6 */
+    --glass-border: rgba(255, 255, 255, 0.08); /* Lighter border for contrast */
+    --glass-blur: 24px; /* Increased blur */
+    --glass-glow: rgba(0, 212, 255, 0.1); /* Subtle ambient glow */
   }
 }
 
@@ -102,6 +113,9 @@
 
   body {
     @apply bg-background text-foreground;
+    /* Sci-Fi Atmospheric Depth */
+    background-image: radial-gradient(circle at 50% 0%, #1a2333 0%, #020617 100%);
+    background-attachment: fixed;
   }
 }
 
@@ -171,34 +185,77 @@ mark {
 
 /* Glass Panel - Base translucent container */
 .glass-panel {
-  background: var(--glass-bg);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--glass-border);
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(10px) saturate(160%);
+  -webkit-backdrop-filter: blur(10px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid rgba(255, 255, 255, 0.1); /* Subtle shine */
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.05); /* Inner glow */
+  border-radius: 12px;
 }
 
 /* Glass Card - Elevated glass container with glow */
 .glass-card {
-  background: var(--glass-bg);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid rgba(255, 255, 255, 0.15); /* Subtle shine */
   border-radius: var(--radius);
   box-shadow:
-    0 4px 30px rgba(0, 0, 0, 0.1),
-    0 0 40px -10px var(--glass-glow);
+    0 4px 30px rgba(0, 0, 0, 0.2),
+    inset 0 0 20px rgba(255, 255, 255, 0.02);
 }
 
 /* Glass Card with hover glow effect */
 .glass-card-hover {
-  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .glass-card-hover:hover {
-  border-color: var(--glass-glow);
+  border-color: rgba(0, 242, 255, 0.3);
   box-shadow:
-    0 8px 40px rgba(0, 0, 0, 0.15),
-    0 0 60px -10px var(--glass-glow);
+    0 8px 40px rgba(0, 0, 0, 0.3),
+    0 0 20px -5px rgba(0, 242, 255, 0.2),
+    inset 0 0 10px rgba(0, 242, 255, 0.05);
+  transform: translateY(-1px);
+}
+
+/* ===== SCI-FI ATMOSPHERE & ACCENTS ===== */
+
+/* Ambient Light Blobs */
+.bg-blob {
+  position: fixed;
+  width: 60vw;
+  height: 60vw;
+  filter: blur(140px);
+  opacity: 0.04;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(0, 242, 255, 0.8) 0%, transparent 70%);
+  animation: blob-float 20s infinite alternate ease-in-out;
+}
+
+.bg-blob-secondary {
+  background: radial-gradient(circle, rgba(37, 99, 235, 0.8) 0%, transparent 70%);
+  animation-delay: -5s;
+  animation-duration: 25s;
+}
+
+@keyframes blob-float {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(10%, 10%) scale(1.1); }
+}
+
+/* Neon Text */
+.neon-text {
+  color: #00f2ff;
+  text-shadow: 0 0 10px rgba(0, 242, 255, 0.5);
+}
+
+/* Active Beam Border */
+.active-border {
+  border: 1px solid #00f2ff;
+  box-shadow: 0 0 15px rgba(0, 242, 255, 0.2), inset 0 0 5px rgba(0, 242, 255, 0.1);
 }
 
 /* Glow Effects */
@@ -338,18 +395,18 @@ mark {
   background-color: hsl(var(--surface-3));
 }
 
-/* Glass panel with cyan border */
+/* Glass panel with cyan border (variant) */
 .glass-panel-cyan {
-  background: var(--glass-bg);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--glass-border);
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1), 0 0 40px -10px var(--glass-glow);
+  background: rgba(0, 25, 40, 0.3);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  border: 1px solid rgba(0, 242, 255, 0.2);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2), 0 0 40px -10px rgba(0, 242, 255, 0.15);
 }
 
 /* Search modal overlay */
 .search-modal-overlay {
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }

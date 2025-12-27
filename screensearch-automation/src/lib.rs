@@ -30,26 +30,35 @@
 //! # }
 //! ```
 
-mod element;
-mod engine;
 mod errors;
-mod input;
 mod selector;
+
+#[cfg(windows)]
+mod element;
+#[cfg(windows)]
+mod engine;
+#[cfg(windows)]
+mod input;
+#[cfg(windows)]
 mod window;
 
-pub use element::{ClickResult, UIElement, UIElementAttributes};
-pub use engine::AutomationEngine;
+#[cfg(not(windows))]
+mod stub;
+
 pub use errors::AutomationError;
-pub use input::{InputSimulator, KeyCode, KeyModifier, MouseButton, ScrollDirection};
 pub use selector::{Selector, SelectorBuilder};
+
+#[cfg(windows)]
+pub use element::{ClickResult, UIElement, UIElementAttributes};
+#[cfg(windows)]
+pub use engine::AutomationEngine;
+#[cfg(windows)]
+pub use input::{InputSimulator, KeyCode, KeyModifier, MouseButton, ScrollDirection};
+#[cfg(windows)]
 pub use window::{WindowInfo, WindowManager};
+
+#[cfg(not(windows))]
+pub use stub::*;
 
 /// Result type for automation operations
 pub type Result<T> = std::result::Result<T, AutomationError>;
-
-// Type aliases for API compatibility with screen-api
-/// Alias for MouseButton to match screen-api expectations
-pub type ClickButton = MouseButton;
-
-/// Alias for Selector to match screen-api expectations
-pub type ElementSelector = Selector;
