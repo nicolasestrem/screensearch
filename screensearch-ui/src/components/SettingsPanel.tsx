@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { toast } from 'react-hot-toast';
 import {
   X,
   Settings as SettingsIcon,
@@ -31,6 +32,11 @@ export function SettingsPanel() {
   const [excludedApps, setExcludedApps] = useState<string[]>(['1Password', 'KeePass']);
   const [isPaused, setIsPaused] = useState(false);
   const [retentionDays, setRetentionDays] = useState(30);
+  const [visionEnabled, setVisionEnabled] = useState(false);
+  const [visionProvider, setVisionProvider] = useState('ollama');
+  const [visionModel, setVisionModel] = useState('ministral-3:3b');
+  const [visionEndpoint, setVisionEndpoint] = useState('http://localhost:11434');
+  const [visionApiKey, setVisionApiKey] = useState('');
   const [newExcludedApp, setNewExcludedApp] = useState('');
 
   // Load settings from API when available
@@ -41,6 +47,11 @@ export function SettingsPanel() {
       setExcludedApps(JSON.parse(apiSettings.excluded_apps || '[]'));
       setIsPaused(apiSettings.is_paused === 1);
       setRetentionDays(Number(apiSettings.retention_days));
+      setVisionEnabled(apiSettings.vision_enabled === 1);
+      setVisionProvider(apiSettings.vision_provider || 'ollama');
+      setVisionModel(apiSettings.vision_model || 'ministral-3:3b');
+      setVisionEndpoint(apiSettings.vision_endpoint || 'http://localhost:11434');
+      setVisionApiKey(apiSettings.vision_api_key || '');
     }
   }, [apiSettings]);
 
@@ -54,6 +65,11 @@ export function SettingsPanel() {
       excluded_apps: JSON.stringify(excludedApps),
       is_paused: isPaused ? 1 : 0,
       retention_days: retentionDays,
+      vision_enabled: visionEnabled ? 1 : 0,
+      vision_provider: visionProvider,
+      vision_model: visionModel,
+      vision_endpoint: visionEndpoint,
+      vision_api_key: visionApiKey,
     });
   };
 
@@ -69,6 +85,11 @@ export function SettingsPanel() {
         excluded_apps: JSON.stringify(newExcludedApps),
         is_paused: isPaused ? 1 : 0,
         retention_days: retentionDays,
+        vision_enabled: visionEnabled ? 1 : 0,
+        vision_provider: visionProvider,
+        vision_model: visionModel,
+        vision_endpoint: visionEndpoint,
+        vision_api_key: visionApiKey,
       });
     }
   };
@@ -82,6 +103,11 @@ export function SettingsPanel() {
       excluded_apps: JSON.stringify(newExcludedApps),
       is_paused: isPaused ? 1 : 0,
       retention_days: retentionDays,
+      vision_enabled: visionEnabled ? 1 : 0,
+      vision_provider: visionProvider,
+      vision_model: visionModel,
+      vision_endpoint: visionEndpoint,
+      vision_api_key: visionApiKey,
     });
   };
 
@@ -193,7 +219,11 @@ export function SettingsPanel() {
                       const newPaused = !isPaused;
                       setIsPaused(newPaused);
                       updateSettings.mutate({
-                        capture_interval: captureInterval, monitors: JSON.stringify(monitors), excluded_apps: JSON.stringify(excludedApps), is_paused: newPaused ? 1 : 0, retention_days: retentionDays
+                        capture_interval: captureInterval, monitors: JSON.stringify(monitors), excluded_apps: JSON.stringify(excludedApps), is_paused: newPaused ? 1 : 0, retention_days: retentionDays, vision_enabled: visionEnabled ? 1 : 0,
+                        vision_provider: visionProvider,
+                        vision_model: visionModel,
+                        vision_endpoint: visionEndpoint,
+                        vision_api_key: visionApiKey,
                       });
                     }}
                     className={cn(
@@ -236,7 +266,11 @@ export function SettingsPanel() {
                         const newMonitors = [parseInt(e.target.value)];
                         setMonitors(newMonitors);
                         updateSettings.mutate({
-                          capture_interval: captureInterval, monitors: JSON.stringify(newMonitors), excluded_apps: JSON.stringify(excludedApps), is_paused: isPaused ? 1 : 0, retention_days: retentionDays
+                          capture_interval: captureInterval, monitors: JSON.stringify(newMonitors), excluded_apps: JSON.stringify(excludedApps), is_paused: isPaused ? 1 : 0, retention_days: retentionDays, vision_enabled: visionEnabled ? 1 : 0,
+                          vision_provider: visionProvider,
+                          vision_model: visionModel,
+                          vision_endpoint: visionEndpoint,
+                          vision_api_key: visionApiKey,
                         });
                       }}
                       className="w-full bg-background border border-input rounded-lg px-3 py-2"
@@ -321,6 +355,153 @@ export function SettingsPanel() {
 
                 <section className="space-y-4">
                   <h3 className="text-lg font-semibold border-b border-border pb-2">AI & Intelligence</h3>
+
+                  {/* Vision Toggle */}
+                  <div className="flex items-center justify-between p-4 bg-card rounded-xl border border-border">
+                    <div>
+                      <p className="font-medium">Vision Engine</p>
+                      <p className="text-sm text-muted-foreground">Enable AI analysis and RAG features</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const newEnabled = !visionEnabled;
+                        setVisionEnabled(newEnabled);
+                        updateSettings.mutate({
+                          capture_interval: captureInterval,
+                          monitors: JSON.stringify(monitors),
+                          excluded_apps: JSON.stringify(excludedApps),
+                          is_paused: isPaused ? 1 : 0,
+                          retention_days: retentionDays,
+                          vision_enabled: newEnabled ? 1 : 0,
+                          vision_provider: visionProvider,
+                          vision_model: visionModel,
+                          vision_endpoint: visionEndpoint,
+                        });
+                      }}
+                      className={cn(
+                        "relative w-14 h-7 rounded-full transition-colors",
+                        visionEnabled ? 'bg-primary' : 'bg-secondary'
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full transition-transform",
+                          visionEnabled ? 'translate-x-7' : 'translate-x-0'
+                        )}
+                      />
+                    </button>
+                  </div>
+
+                  {/* AI Configuration */}
+                  {visionEnabled && (
+                    <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                      <div className="p-4 bg-card rounded-xl border border-border space-y-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <SettingsIcon className="w-4 h-4 text-primary" />
+                          <h4 className="font-semibold">AI Provider Settings</h4>
+                        </div>
+                        <div className="h-px bg-border my-2" />
+
+                        <div>
+                          <label className="block text-sm font-medium mb-2">Provider Protocol</label>
+                          <select
+                            value={visionProvider}
+                            onChange={(e) => setVisionProvider(e.target.value)}
+                            className="w-full bg-background border border-input rounded-lg px-3 py-2 font-mono text-sm"
+                          >
+                            <option value="ollama">Ollama (Local)</option>
+                            <option value="openai">OpenAI Compatible (ChatGPT, vLLM, LM Studio)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium mb-2">Provider Base URL</label>
+                          <input
+                            type="text"
+                            value={visionEndpoint}
+                            onChange={(e) => setVisionEndpoint(e.target.value)}
+                            placeholder={visionProvider === 'ollama' ? "http://localhost:11434" : "https://api.openai.com/v1"}
+                            className="w-full bg-background border border-input rounded-lg px-3 py-2 font-mono text-sm"
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {visionProvider === 'ollama'
+                              ? "Base URL for Ollama. API path `/api/generate` will be appended."
+                              : "Base API URL. Path `/chat/completions` will be appended."}
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium mb-2">API Key (Optional)</label>
+                          <input
+                            type="password"
+                            value={visionApiKey}
+                            onChange={(e) => setVisionApiKey(e.target.value)}
+                            placeholder="sk-..."
+                            className="w-full bg-background border border-input rounded-lg px-3 py-2 font-mono text-sm"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium mb-2">Model Name</label>
+                          <input
+                            type="text"
+                            value={visionModel}
+                            onChange={(e) => setVisionModel(e.target.value)}
+                            placeholder="e.g., llama3, gpt-4o"
+                            className="w-full bg-background border border-input rounded-lg px-3 py-2"
+                          />
+                        </div>
+
+                        <div className="flex gap-2 pt-2">
+                          <button
+                            type="button"
+                            onClick={saveSettings}
+                            className="flex-1 px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg text-sm font-medium"
+                          >
+                            Save Configuration
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const toastId = toast.loading('Testing connection...');
+                              try {
+                                // Dynamic import or use existing import if available. 
+                                // Assuming apiClient is imported or accessible. 
+                                // Use direct fetch if apiClient is not easily available in scope, but apiClient is better.
+                                // I'll assume apiClient is imported in the file headers.
+                                const { apiClient } = await import('../api/client');
+                                const result = await apiClient.testVisionConfig({
+                                  provider: visionProvider,
+                                  model: visionModel,
+                                  endpoint: visionEndpoint,
+                                  api_key: visionApiKey || undefined
+                                });
+
+                                if (result.success) {
+                                  toast.success('Connection successful!', { id: toastId });
+                                } else {
+                                  toast.error(`Connection failed: ${result.message}`, { id: toastId });
+                                }
+                              } catch (err: any) {
+                                toast.error(`Connection error: ${err.message}`, { id: toastId });
+                              }
+                            }}
+                            className="px-4 py-2 bg-secondary hover:bg-secondary/80 rounded-lg text-sm font-medium"
+                          >
+                            Test
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="p-4 bg-secondary/20 rounded-xl border border-border/50 text-sm text-muted-foreground">
+                        <p>
+                          <span className="font-semibold text-foreground">Privacy Note:</span> When generating reports, context from your screen (text, app names)
+                          will be sent to the configured provider. Local providers (like Ollama) keep data device-side.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   <EmbeddingsStatus />
                 </section>
               </div>

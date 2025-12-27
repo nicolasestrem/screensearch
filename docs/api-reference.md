@@ -2,7 +2,7 @@
 
 Complete API reference for the ScreenSearch REST API server. This API provides search capabilities for captured screen content, computer automation controls, tag management, and AI-powered intelligence reports with vector embeddings.
 
-**Total Endpoints**: 29
+**Total Endpoints**: 26
 
 ## Overview
 
@@ -43,14 +43,12 @@ All successful responses return JSON with appropriate HTTP status codes. Error r
 
 | Category | Endpoints | Description |
 |----------|-----------|-------------|
-| **Search & Retrieval** | 2 endpoints | Full-text search, keyword search |
-| **Frames** | 6 endpoints | Frame retrieval and management |
+| **Search & Retrieval** | 5 endpoints | Full-text search, keyword search, frame retrieval |
 | **Embeddings (RAG)** | 3 endpoints | Vector embeddings for semantic search |
 | **Automation** | 9 endpoints | Computer control via Windows UIAutomation |
-| **Tag Management** | 4 endpoints | Organize frames with tags |
-| **Settings** | 2 endpoints | Application configuration |
-| **AI Intelligence** | 2 endpoints | Generate reports and validate AI providers |
-| **System** | 1 endpoint | Health checks |
+| **Tag Management** | 6 endpoints | Organize frames with tags |
+| **AI Intelligence** | 3 endpoints | Generate reports, test connections, and validate providers |
+| **System** | 2 endpoints | Health checks and settings |
 
 ---
 
@@ -69,54 +67,6 @@ Full-text search across all captured OCR content using SQLite FTS5 with BM25 ran
 | `end_time` | string | No | - | Filter results before this time (ISO 8601 format) |
 | `app` | string | No | - | Filter by application name |
 | `limit` | integer | No | 100 | Maximum number of results to return |
-
-#### Hybrid Search Parameters (v0.2.0+)
-
-When embeddings are enabled, search automatically uses hybrid search combining FTS5 keyword matching with semantic vector similarity.
-
-**Additional Parameters**:
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `use_embeddings` | boolean | `true` | Enable semantic search via vector embeddings |
-| `hybrid_weight` | float | `0.5` | Balance between FTS5 and semantic (0.0-1.0) |
-
-**How Hybrid Search Works**:
-
-1. **FTS5 Search**: Fast keyword matching with BM25 ranking
-2. **Vector Search**: Semantic similarity using 384-dimensional embeddings
-3. **Result Fusion**: Combines both using Reciprocal Rank Fusion (RRF)
-
-**Hybrid Weight Explained**:
-- `0.0`: Pure FTS5 keyword search (fastest, exact matches)
-- `0.5`: Balanced hybrid (default, best for general use)
-- `1.0`: Pure semantic search (slowest, best for concept matching)
-
-**Examples**:
-
-```bash
-# Balanced hybrid search (default)
-curl "http://localhost:3131/api/search?q=debugging errors"
-
-# Semantic-heavy search (80% embeddings, 20% keywords)
-curl "http://localhost:3131/api/search?q=troubleshooting&hybrid_weight=0.8"
-
-# Keyword-only search (disable embeddings)
-curl "http://localhost:3131/api/search?q=exact%20phrase&use_embeddings=false"
-
-# Pure semantic search
-curl "http://localhost:3131/api/search?q=concepts&hybrid_weight=1.0"
-```
-
-**Requirements**:
-- Embeddings must be enabled in configuration
-- Frames must have embeddings generated (check `/api/embeddings/status`)
-- First-time setup downloads ~40MB ONNX model from HuggingFace
-
-**Performance**:
-- Keyword-only: ~50ms
-- Hybrid search: ~150ms (additional 100ms for vector similarity)
-- Pure semantic: ~200ms
 
 #### Response
 
@@ -399,7 +349,7 @@ Health check endpoint providing system status and database statistics.
 ```json
 {
   "status": "ok",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "uptime_seconds": 3600,
   "frame_count": 1523,
   "ocr_count": 15234,
@@ -1408,18 +1358,7 @@ All captured screen content is stored locally. The API does not:
 
 ## Version History
 
-### v0.2.0 (Current)
-
-Major enhancements and new features:
-- **AI Intelligence System**: RAG-powered report generation with provider validation
-- **Vector Embeddings**: Semantic search using ONNX Runtime (384-dim vectors)
-- **Hybrid Search**: Combines FTS5 keyword search with vector similarity
-- **Settings API**: Dynamic configuration management (2 new endpoints)
-- **AI Validation**: Test provider connections before generating reports
-- **Storage Optimization**: JPEG compression with configurable quality
-- **Total Endpoints**: 29 (expanded from 25)
-
-### v0.1.0
+### v0.1.0 (Current)
 
 Initial release with core functionality:
 - Full-text search with FTS5
@@ -1427,105 +1366,10 @@ Initial release with core functionality:
 - Computer automation via Windows UIAutomation
 - Tag management system
 - Health monitoring
-- 25 base endpoints
 
 ---
 
 ## AI Reporting Endpoints
-
-### POST /api/ai/validate
-
-Validate connection to AI provider before generating reports. Tests API key, model availability, and endpoint connectivity.
-
-**Supported Providers**: OpenAI, Anthropic, Google, Ollama, LM Studio, and any OpenAI-compatible API
-
-#### Request Body
-
-```json
-{
-  "provider": "openai",
-  "api_key": "sk-...",
-  "model": "gpt-4o",
-  "base_url": "https://api.openai.com/v1"
-}
-```
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `provider` | string | Yes | - | Provider name: "openai", "anthropic", "google", "ollama" |
-| `api_key` | string | Conditional | - | API key (required for cloud providers, optional for local) |
-| `model` | string | Yes | - | Model identifier to validate |
-| `base_url` | string | No | Provider default | Custom API base URL for local or custom providers |
-
-#### Response
-
-**Success (200 OK)**:
-```json
-{
-  "success": true,
-  "message": "Connection successful",
-  "model": "gpt-4o",
-  "provider": "openai"
-}
-```
-
-**Failure (400 Bad Request)**:
-```json
-{
-  "success": false,
-  "error": "Invalid API key or model not found",
-  "provider": "openai"
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | boolean | Whether validation succeeded |
-| `message` | string | Success message (if successful) |
-| `error` | string | Error message (if failed) |
-| `model` | string | Model identifier tested |
-| `provider` | string | Provider name |
-
-#### Examples
-
-```bash
-# Validate OpenAI connection
-curl -X POST "http://localhost:3131/api/ai/validate" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "openai",
-    "api_key": "sk-proj-...",
-    "model": "gpt-4o"
-  }'
-
-# Validate Ollama (local, no API key needed)
-curl -X POST "http://localhost:3131/api/ai/validate" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "ollama",
-    "model": "llama3",
-    "base_url": "http://localhost:11434/v1"
-  }'
-
-# Validate Anthropic
-curl -X POST "http://localhost:3131/api/ai/validate" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "anthropic",
-    "api_key": "sk-ant-...",
-    "model": "claude-3-5-sonnet-20241022"
-  }'
-```
-
-#### Notes
-
-- **Timeout**: 10 seconds for provider response
-- **Purpose**: Test connection before configuring AI provider in settings
-- **Local Providers**: Ollama and LM Studio don't require API keys
-- **Custom Endpoints**: Use `base_url` for self-hosted or custom OpenAI-compatible APIs
-- **No Data Sent**: This endpoint only validates connectivity, no screen data is transmitted
-
----
 
 ### POST /ai/generate
 
@@ -1595,3 +1439,71 @@ cargo test -p screen-api
 ---
 
 **ScreenSearch API** - Locally stored, searchable screen capture with powerful automation.
+
+---
+
+## AI Intelligence Endpoints
+
+### POST /api/test-vision
+
+Test the configuration of an AI provider (Vision or LLM) by sending a simple prompt.
+
+#### Request Body
+
+```json
+{
+  "provider": "ollama",
+  "model": "llama3",
+  "endpoint": "http://localhost:11434",
+  "api_key": ""
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `provider` | string | Yes | Provider type: "ollama" or "openai" |
+| `model` | string | Yes | Model name |
+| `endpoint` | string | Yes | Base URL of the API |
+| `api_key` | string | No | Authentication token (if required) |
+
+#### Response
+
+```json
+{
+  "success": true,
+  "message": "Connection successful",
+  "response": "OK"
+}
+```
+
+---
+
+### POST /api/generate
+
+Generate a structured answer or report based on a user query, using RAG (Retrieval-Augmented Generation) if available.
+
+#### Request Body
+
+```json
+{
+  "query": "What did I work on yesterday?"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | Yes | User question or prompt |
+
+#### Response
+
+```json
+{
+  "answer": "Yesterday, you spent most of your time on...",
+  "sources": [123, 124, 125]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `answer` | string | Generated markdown text response |
+| `sources` | array | List of Frame IDs used as context |

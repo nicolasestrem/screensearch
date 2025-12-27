@@ -3602,12 +3602,14 @@ dependencies = [
  "anyhow",
  "axum",
  "chrono",
+ "image",
  "regex",
  "reqwest",
  "rust-embed",
  "screensearch-automation",
  "screensearch-db",
  "screensearch-embeddings",
+ "screensearch-vision",
  "serde",
  "serde_json",
  "sqlx",
@@ -3683,6 +3685,21 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokenizers",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "screensearch-vision"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.21.7",
+ "image",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

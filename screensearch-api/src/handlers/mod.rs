@@ -13,6 +13,8 @@ pub mod embeddings;
 pub use embeddings::*;
 pub mod rag_helpers;
 pub mod reranker;
+pub mod generate;
+pub use generate::*;
 
 
 

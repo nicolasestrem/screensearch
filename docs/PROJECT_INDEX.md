@@ -100,7 +100,15 @@ The project uses a Cargo workspace with 5 member crates:
   - `src/monitor.rs` - Multi-monitor detection and selection
   - `src/window_context.rs` - Active window tracking
 
-#### 2. **screen-db** - Database Layer
+#### 2. **screen-vision** - AI & Vision Client
+- **Path**: `screen-vision/`
+- **Purpose**: Generic AI provider client (Ollama, OpenAI) and Model traits
+- **Key Files**:
+  - `src/client.rs` - Unified client for text generation and vision analysis
+  - `src/models.rs` - Pydantic-like structs for LLM interaction
+  - `src/lib.rs` - Trait definitions for VisionModel
+
+#### 3. **screen-db** - Database Layer
 - **Path**: `screen-db/`
 - **Purpose**: SQLite database with FTS5 full-text search
 - **Key Files**:

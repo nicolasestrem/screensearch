@@ -45,6 +45,7 @@ const defaultFilters: FilterState = {
   applications: [],
   tags: [],
   searchQuery: '',
+  searchMode: 'fts',
 };
 
 export const useStore = create<AppStore>()(

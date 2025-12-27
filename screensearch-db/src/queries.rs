@@ -87,7 +87,9 @@ impl DatabaseManager {
             r#"
             SELECT id, chunk_id, timestamp, monitor_index, device_name, file_path,
                    active_window, active_process, browser_url, width, height,
-                   offset_index, focused, created_at
+                   offset_index, focused, created_at,
+                   analysis_status, description, visible_text_json, activity_type,
+                   app_hint, confidence, analysis_time_ms, analysis_error
             FROM frames
             WHERE id = ?
             "#,
@@ -111,7 +113,9 @@ impl DatabaseManager {
             r#"
             SELECT id, chunk_id, timestamp, monitor_index, device_name, file_path,
                    active_window, active_process, browser_url, width, height,
-                   offset_index, focused, created_at
+                   offset_index, focused, created_at,
+                   analysis_status, description, visible_text_json, activity_type,
+                   app_hint, confidence, analysis_time_ms, analysis_error
             FROM frames
             WHERE timestamp >= ? AND timestamp <= ?
             "#,
@@ -273,10 +277,12 @@ impl DatabaseManager {
         let mut sql = String::from(
             r#"
             SELECT
-                f.id, f.chunk_id, f.timestamp, f.monitor_index, f.device_name,
+                f.id as frame_primary_id, f.chunk_id, f.timestamp, f.monitor_index, f.device_name,
                 f.file_path, f.active_window, f.active_process, f.browser_url,
                 f.width, f.height, f.offset_index, f.focused, f.created_at,
-                o.id, o.frame_id, o.text, o.text_json, o.x, o.y, o.width, o.height,
+                f.analysis_status, f.description, f.visible_text_json, f.activity_type,
+                f.app_hint, f.confidence, f.analysis_time_ms, f.analysis_error,
+                o.id as ocr_primary_id, o.frame_id, o.text, o.text_json, o.x, o.y, o.width, o.height,
                 o.confidence, o.created_at,
                 ocr_text_fts.rank
             FROM ocr_text_fts
@@ -332,7 +338,7 @@ impl DatabaseManager {
 
         for row in rows {
             let frame = FrameRecord {
-                id: row.get("id"),
+                id: row.get("frame_primary_id"),
                 chunk_id: row.get("chunk_id"),
                 timestamp: row.get("timestamp"),
                 monitor_index: row.get("monitor_index"),
@@ -346,10 +352,18 @@ impl DatabaseManager {
                 offset_index: row.get("offset_index"),
                 focused: row.get("focused"),
                 created_at: row.get::<DateTime<Utc>, _>("created_at"),
+                analysis_status: row.try_get("analysis_status").ok(),
+                description: row.try_get("description").ok(),
+                visible_text_json: row.try_get("visible_text_json").ok(),
+                activity_type: row.try_get("activity_type").ok(),
+                app_hint: row.try_get("app_hint").ok(),
+                confidence: row.try_get("confidence").ok(),
+                analysis_time_ms: row.try_get("analysis_time_ms").ok(),
+                analysis_error: row.try_get("analysis_error").ok(),
             };
 
             let ocr = OcrTextRecord {
-                id: row.get::<i64, _>("id"),
+                id: row.get::<i64, _>("ocr_primary_id"),
                 frame_id: row.get("frame_id"),
                 text: row.get("text"),
                 text_json: row.get("text_json"),
@@ -597,7 +611,9 @@ impl DatabaseManager {
             r#"
             SELECT f.id, f.chunk_id, f.timestamp, f.monitor_index, f.device_name,
                    f.file_path, f.active_window, f.active_process, f.browser_url,
-                   f.width, f.height, f.offset_index, f.focused, f.created_at
+                   f.width, f.height, f.offset_index, f.focused, f.created_at,
+                   f.analysis_status, f.description, f.visible_text_json, f.activity_type,
+                   f.app_hint, f.confidence, f.analysis_time_ms, f.analysis_error
             FROM frames f
             JOIN frame_tags ft ON f.id = ft.frame_id
             WHERE ft.tag_id = ?
@@ -650,7 +666,8 @@ impl DatabaseManager {
         let settings = sqlx::query_as::<_, SettingsRecord>(
             r#"
             SELECT id, capture_interval, monitors, excluded_apps, is_paused,
-                   retention_days, updated_at
+                   retention_days, updated_at,
+                   vision_enabled, vision_provider, vision_model, vision_endpoint, vision_api_key
             FROM settings
             WHERE id = 1
             "#,
@@ -671,6 +688,11 @@ impl DatabaseManager {
                 excluded_apps = ?,
                 is_paused = ?,
                 retention_days = ?,
+                vision_enabled = ?,
+                vision_provider = ?,
+                vision_model = ?,
+                vision_endpoint = ?,
+                vision_api_key = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = 1
             "#,
@@ -680,6 +702,11 @@ impl DatabaseManager {
         .bind(settings.excluded_apps)
         .bind(settings.is_paused)
         .bind(settings.retention_days)
+        .bind(settings.vision_enabled)
+        .bind(settings.vision_provider)
+        .bind(settings.vision_model)
+        .bind(settings.vision_endpoint)
+        .bind(settings.vision_api_key)
         .execute(self.pool())
         .await?;
 
@@ -775,7 +802,7 @@ impl DatabaseManager {
             "#,
         )
         .bind(embedding.frame_id)
-        .bind(&embedding.chunk_text)
+        .bind(embedding.chunk_text)
         .bind(embedding.chunk_index)
         .bind(embedding.embedding.len() as i32)
         .bind(embedding_blob)
@@ -785,11 +812,12 @@ impl DatabaseManager {
         Ok(result.last_insert_rowid())
     }
 
-    /// Get embeddings for a frame
+    /// Get all embeddings for a frame
     pub async fn get_embeddings_for_frame(&self, frame_id: i64) -> Result<Vec<EmbeddingRecord>> {
-        let embeddings = sqlx::query_as::<_, EmbeddingRecord>(
+        // Fetch rows with blob
+        let rows = sqlx::query(
             r#"
-            SELECT id, frame_id, chunk_text, chunk_index, embedding_dim, created_at
+            SELECT id, frame_id, chunk_text, chunk_index, embedding_dim, created_at, embedding
             FROM embeddings
             WHERE frame_id = ?
             ORDER BY chunk_index ASC
@@ -799,7 +827,275 @@ impl DatabaseManager {
         .fetch_all(self.pool())
         .await?;
 
-        Ok(embeddings)
+        // Convert rows to EmbeddingRecord manually to handle blob conversion
+        let mut results = Vec::new();
+        for row in rows {
+             let embedding_blob: Vec<u8> = row.get("embedding");
+             let dim: i32 = row.get("embedding_dim");
+             
+             // Convert blob bytes back to Vec<f32>
+             // Assumes little-endian (Intel/standard)
+             let embedding: Vec<f32> = embedding_blob
+                 .chunks_exact(4)
+                 .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+                 .collect();
+             
+             if embedding.len() != dim as usize {
+                 tracing::warn!("Embedding dimension mismatch for id {}: expected {}, got {}", 
+                    row.get::<i64, _>("id"), dim, embedding.len());
+             }
+
+             results.push(EmbeddingRecord {
+                 id: row.get("id"),
+                 frame_id: row.get("frame_id"),
+                 chunk_text: row.get("chunk_text"),
+                 chunk_index: row.get("chunk_index"),
+                 embedding_dim: dim,
+                 created_at: row.get("created_at"),
+                 embedding, // The decoded vector
+             });
+        }
+
+        Ok(results)
+    }
+
+    /// Search for semantically similar text chunks using vector embeddings
+    /// 
+    /// Performs an in-memory scan/brute-force search over all stored embeddings.
+    /// Used for "Light Mode" query intelligence.
+    pub async fn search_embeddings(
+        &self,
+        query_vector: Vec<f32>,
+        limit: usize,
+        min_score: f32,
+    ) -> Result<Vec<SemanticResult>> {
+        // Fetch all embeddings
+        // Optimization: In future, fetch only potentially relevant ones or use true vector DB
+        let rows = sqlx::query(
+            r#"
+            SELECT e.frame_id, e.chunk_text, e.chunk_index, e.embedding, e.embedding_dim,
+                   f.timestamp, f.monitor_index, f.device_name, f.file_path, 
+                   f.active_window, f.active_process, f.browser_url, f.width, f.height,
+                   f.offset_index, f.focused, f.created_at,
+                   f.analysis_status, f.description, f.visible_text_json, f.activity_type,
+                   f.app_hint, f.confidence, f.analysis_time_ms, f.analysis_error
+            FROM embeddings e
+            JOIN frames f ON e.frame_id = f.id
+            "#
+        )
+        .fetch_all(self.pool())
+        .await?;
+
+        let mut candidates: Vec<SemanticResult> = Vec::new();
+
+        for row in rows {
+            let embedding_blob: Vec<u8> = row.get("embedding");
+            let embedding_dim: i32 = row.get("embedding_dim");
+            
+            // Reconstruct Vec<f32> from blob
+            // Safety: We assume blob was written as little-endian f32s
+            if embedding_blob.len() != (embedding_dim as usize) * 4 {
+                // Skip invalid embeddings
+                continue; 
+            }
+            
+            let vec: Vec<f32> = embedding_blob
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+                .collect();
+
+            // Compute cosine similarity
+            let similarity = cosine_similarity(&query_vector, &vec);
+
+            if similarity >= min_score {
+                 let frame = FrameRecord {
+                    id: row.get("frame_id"),
+                    chunk_id: None,
+                    timestamp: row.get("timestamp"),
+                    monitor_index: row.get("monitor_index"),
+                    device_name: row.get("device_name"),
+                    file_path: row.get("file_path"),
+                    active_window: row.get("active_window"),
+                    active_process: row.get("active_process"),
+                    browser_url: row.get("browser_url"),
+                    width: row.get("width"),
+                    height: row.get("height"),
+                    offset_index: row.get("offset_index"),
+                    focused: row.get("focused"),
+                    created_at: row.get::<DateTime<Utc>, _>("created_at"),
+                    analysis_status: row.try_get("analysis_status").ok(),
+                    description: row.try_get("description").ok(),
+                    visible_text_json: row.try_get("visible_text_json").ok(),
+                    activity_type: row.try_get("activity_type").ok(),
+                    app_hint: row.try_get("app_hint").ok(),
+                    confidence: row.try_get("confidence").ok(),
+                    analysis_time_ms: row.try_get("analysis_time_ms").ok(),
+                    analysis_error: row.try_get("analysis_error").ok(),
+                };
+
+                candidates.push(SemanticResult {
+                    frame,
+                    chunk_text: row.get("chunk_text"),
+                    chunk_index: row.get("chunk_index"),
+                    similarity_score: similarity,
+                });
+            }
+        }
+
+        // Sort by similarity descending
+        candidates.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Take top K
+        Ok(candidates.into_iter().take(limit).collect())
+    }
+
+    /// Get frames that haven't been processed for embeddings yet
+    /// Returns frames that have OCR text but no entries in embeddings table
+
+
+// Helper function
+
+
+    // ===== Vision Analysis Queue Operations =====
+
+    /// Enqueue a frame for analysis
+    pub async fn enqueue_frame_for_analysis(&self, frame_id: i64, priority: i32) -> Result<i64> {
+        // Check if already in queue
+        let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM analysis_queue WHERE frame_id = ?")
+            .bind(frame_id)
+            .fetch_one(self.pool())
+            .await?;
+        
+        if exists > 0 {
+             return Ok(0); // Already queued
+        }
+
+        let result = sqlx::query(
+            "INSERT INTO analysis_queue (frame_id, priority) VALUES (?, ?)"
+        )
+        .bind(frame_id)
+        .bind(priority)
+        .execute(self.pool())
+        .await?;
+
+        // Also update status
+        sqlx::query("UPDATE frames SET analysis_status = 'pending' WHERE id = ?")
+            .bind(frame_id)
+            .execute(self.pool())
+            .await?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Get pending analysis tasks (locks them implicitly by return, caller must process)
+    /// Ideally we should use a transaction to lock rows, but SQLite is single-writer.
+    /// We can use 'locked_until' to implement a soft lock.
+    pub async fn claim_analysis_task(&self, worker_id: &str) -> Result<Option<AnalysisQueueItem>> {
+        // Find highest priority pending task not locked
+        // We use a transaction to ensure atomicity
+        let mut tx = self.pool().begin().await?;
+
+        let task = sqlx::query_as::<_, AnalysisQueueItem>(
+            r#"
+            SELECT id, frame_id, priority, created_at, locked_until, attempts, last_error
+            FROM analysis_queue
+            WHERE locked_until IS NULL OR locked_until < CURRENT_TIMESTAMP
+            ORDER BY priority DESC, created_at ASC
+            LIMIT 1
+            "#
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some(task) = task {
+            // Lock it for 5 minutes
+            sqlx::query(
+                "UPDATE analysis_queue SET locked_until = datetime('now', '+5 minutes'), attempts = attempts + 1 WHERE id = ?"
+            )
+            .bind(task.id)
+            .execute(&mut *tx)
+            .await?;
+            
+            // Update frame status
+            sqlx::query("UPDATE frames SET analysis_status = 'processing' WHERE id = ?")
+                .bind(task.frame_id)
+                .execute(&mut *tx)
+                .await?;
+
+            tx.commit().await?;
+            Ok(Some(task))
+        } else {
+            tx.commit().await?;
+            Ok(None)
+        }
+    }
+
+    /// Mark analysis as complete and remove from queue
+    pub async fn complete_analysis_task(
+        &self, 
+        queue_id: i64, 
+        frame_id: i64,
+        analysis: crate::models::FrameAnalysisUpdate
+    ) -> Result<()> {
+        let mut tx = self.pool().begin().await?;
+
+        // Update frame with analysis results
+        sqlx::query(
+            r#"
+            UPDATE frames SET
+                analysis_status = 'completed',
+                description = ?,
+                visible_text_json = ?,
+                activity_type = ?,
+                app_hint = ?,
+                confidence = ?,
+                analysis_time_ms = ?,
+                analysis_error = NULL
+            WHERE id = ?
+            "#
+        )
+        .bind(analysis.description)
+        .bind(analysis.visible_text_json)
+        .bind(analysis.activity_type)
+        .bind(analysis.app_hint)
+        .bind(analysis.confidence)
+        .bind(analysis.analysis_time_ms)
+        .bind(frame_id)
+        .execute(&mut *tx)
+        .await?;
+
+        // Remove from queue
+        sqlx::query("DELETE FROM analysis_queue WHERE id = ?")
+            .bind(queue_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Mark analysis as failed
+    pub async fn fail_analysis_task(&self, queue_id: i64, frame_id: i64, error: String) -> Result<()> {
+        let mut tx = self.pool().begin().await?;
+
+        // Update frame status
+        sqlx::query("UPDATE frames SET analysis_status = 'failed', analysis_error = ? WHERE id = ?")
+            .bind(&error)
+            .bind(frame_id)
+            .execute(&mut *tx)
+            .await?;
+
+        // Update queue item - unlock and record error, or delete if max attempts?
+        // Let's just release lock and let retry handle it, unless max attempts reached
+        // Doing simpler logic: release lock immediately so it can be retried later or inspect manually
+        sqlx::query("UPDATE analysis_queue SET locked_until = NULL, last_error = ? WHERE id = ?")
+            .bind(&error)
+            .bind(queue_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Get frames that don't have embeddings yet (for background processing)
@@ -808,7 +1104,9 @@ impl DatabaseManager {
             r#"
             SELECT f.id, f.chunk_id, f.timestamp, f.monitor_index, f.device_name,
                    f.file_path, f.active_window, f.active_process, f.browser_url,
-                   f.width, f.height, f.offset_index, f.focused, f.created_at
+                   f.width, f.height, f.offset_index, f.focused, f.created_at,
+                   f.analysis_status, f.description, f.visible_text_json, f.activity_type,
+                   f.app_hint, f.confidence, f.analysis_time_ms, f.analysis_error
             FROM frames f
             LEFT JOIN embeddings e ON f.id = e.frame_id
             WHERE e.id IS NULL
@@ -844,7 +1142,7 @@ impl DatabaseManager {
         let model = self
             .get_metadata("embeddings_model")
             .await?
-            .unwrap_or_else(|| "all-MiniLM-L6-v2".to_string());
+            .unwrap_or_else(|| "paraphrase-multilingual-MiniLM-L12-v2".to_string());
 
         let last_processed_frame_id = self
             .get_metadata("embeddings_last_processed_frame_id")
@@ -896,4 +1194,14 @@ pub struct DatabaseStatistics {
     pub tag_count: i64,
     pub oldest_frame: Option<DateTime<Utc>>,
     pub newest_frame: Option<DateTime<Utc>>,
+}
+
+// Helper function
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() { return 0.0; }
+    let dot_product: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 { return 0.0; }
+    dot_product / (norm_a * norm_b)
 }

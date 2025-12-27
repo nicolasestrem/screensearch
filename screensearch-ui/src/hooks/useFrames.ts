@@ -10,6 +10,7 @@ interface UseFramesParams {
   app_name?: string;
   tag_ids?: string;
   q?: string;
+  mode?: 'fts' | 'semantic' | 'hybrid';
 }
 
 export function useFrames(

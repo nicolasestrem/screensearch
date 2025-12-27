@@ -6,7 +6,8 @@ export function useHealth(): UseQueryResult<HealthStatus, Error> {
   return useQuery({
     queryKey: ['health'],
     queryFn: () => apiClient.getHealth(),
-    refetchInterval: 10000, // Refetch every 10 seconds
+    refetchInterval: 2000,
+    staleTime: 0,
     retry: 3,
     retryDelay: 1000,
   });

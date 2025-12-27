@@ -107,8 +107,24 @@ export function FrameCard({ frame, searchQuery = '' }: FrameCardProps) {
           </div>
         </div>
 
-        {/* OCR Text Preview */}
-        {frame.ocr_text && (
+        {/* OCR Text or Description */}
+        {frame.description ? (
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-primary/80 uppercase tracking-widest px-1.5 py-0.5 rounded-sm bg-primary/10">
+                AI Summary
+              </span>
+              {frame.confidence !== undefined && (
+                <span className="text-[10px] text-muted-foreground/60">
+                  {Math.round(frame.confidence * 100)}% confidence
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed pl-1 italic">
+              "{frame.description}"
+            </p>
+          </div>
+        ) : frame.ocr_text ? (
           <div className="text-xs text-muted-foreground line-clamp-2 leading-relaxed pl-8 group-hover/card:text-foreground/80 transition-colors">
             {highlightedParts.map((part, index) =>
               part.isHighlight ? (
@@ -120,7 +136,7 @@ export function FrameCard({ frame, searchQuery = '' }: FrameCardProps) {
               )
             )}
           </div>
-        )}
+        ) : null}
 
         {/* Tags */}
         <div className="pt-2 pl-8 flex flex-wrap items-center gap-1.5 min-h-[1.5rem]">

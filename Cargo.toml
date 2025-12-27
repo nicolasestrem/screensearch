@@ -5,7 +5,7 @@ members = [
     "screensearch-db",
     "screensearch-api",
     "screensearch-automation",
-    "screensearch-embeddings",
+    "screensearch-embeddings", "screensearch-vision",
 ]
 
 [package]
