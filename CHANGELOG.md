@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2025-12-27
+
+### Added
+- **AI-First Dashboard**: New "Intel Dash" homepage with glassmorphism design aesthetic
+  - **Daily Digest**: Auto-generated AI summaries of daily activity on page load
+    - Session storage caching to avoid redundant API calls
+    - Markdown rendering with custom bullet styling
+    - Refresh button for on-demand regeneration
+  - **Memory Status Gauge**: Circular radial gauge showing RAG indexing progress
+    - Real-time embedding coverage percentage
+    - Visual indicator for semantic search readiness
+  - **Productivity Pulse**: Custom SVG line/area chart displaying hourly activity
+    - Smooth cubic bezier curves
+    - Interactive tooltip on hover
+    - Gradient fill with glow effects
+  - **Coming Soon Placeholders**: Knowledge Graph and Analytics previews
+
+- **Smart Answer Card**: Enhanced AI-powered search results
+  - Generates context-aware answers from screen history
+  - Related Activity section showing app breakdown
+  - Collapsible activity list with app icons
+
+- **Glassmorphism Design System**: Premium UI components matching screensearch.app
+  - `GlassCard` component with backdrop blur and translucent backgrounds
+  - `CircularGauge` component with animated SVG progress
+  - `ComingSoonCard` placeholder component with pulsing border
+  - CSS custom properties for consistent theming (`--glass-bg`, `--glass-border`, `--glass-glow`)
+  - Utility classes: `.glass-panel`, `.glass-card`, `.glow-blue`, `.gradient-text`
+  - Animations: `fade-in-up`, `pulse-glow`, `border-glow`
+
+- **Activity List Component**: App-specific breakdown of screen captures
+  - Icon mapping for common applications (VS Code, Chrome, Slack, etc.)
+  - Relative timestamps using date-fns
+  - Frame count per application
+
+### Changed
+- **Primary Color**: Switched from violet to blue (#2563eb) to match screensearch.app branding
+- **Default Page**: Dashboard is now the default landing page (previously Timeline)
+- **Navigation**: Redesigned sidebar with AI Features section and Coming Soon badges
+- **State Management**: Updated Zustand store with new `activeTab` options: `dashboard`, `timeline`, `reports`
+- **Tailwind Config**: Extended theme with glass colors, primary light/dark variants, and new keyframe animations
+
+### Technical Details
+- Production bundle: 471.08 kB JS, 62.57 kB CSS
+- Custom SVG charts avoid external charting library dependencies
+- HSL color system enables consistent dark/light theme support
+- Session storage caching reduces API calls for Daily Digest
+- All new components use TypeScript with proper type safety
+
 ## [0.2.1] - 2025-12-14
 
 ### Added

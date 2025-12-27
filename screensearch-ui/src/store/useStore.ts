@@ -35,6 +35,17 @@ interface AppStore {
   // Settings Panel
   isSettingsPanelOpen: boolean;
   toggleSettingsPanel: () => void;
+
+  // Search Modal
+  isSearchModalOpen: boolean;
+  openSearchModal: () => void;
+  closeSearchModal: () => void;
+  toggleSearchModal: () => void;
+
+  // Sidebar
+  isSidebarCollapsed: boolean;
+  toggleSidebar: () => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
 }
 
 const defaultFilters: FilterState = {
@@ -90,6 +101,19 @@ export const useStore = create<AppStore>()(
       isSettingsPanelOpen: false,
       toggleSettingsPanel: () =>
         set((state) => ({ isSettingsPanelOpen: !state.isSettingsPanelOpen })),
+
+      // Search Modal
+      isSearchModalOpen: false,
+      openSearchModal: () => set({ isSearchModalOpen: true }),
+      closeSearchModal: () => set({ isSearchModalOpen: false }),
+      toggleSearchModal: () =>
+        set((state) => ({ isSearchModalOpen: !state.isSearchModalOpen })),
+
+      // Sidebar
+      isSidebarCollapsed: false,
+      toggleSidebar: () =>
+        set((state) => ({ isSidebarCollapsed: !state.isSidebarCollapsed })),
+      setSidebarCollapsed: (collapsed) => set({ isSidebarCollapsed: collapsed }),
     }),
     {
       name: 'screen-memories-store',
@@ -97,6 +121,7 @@ export const useStore = create<AppStore>()(
         isDarkMode: state.isDarkMode,
         viewMode: state.viewMode,
         aiConfig: state.aiConfig,
+        isSidebarCollapsed: state.isSidebarCollapsed,
       }),
     }
   )

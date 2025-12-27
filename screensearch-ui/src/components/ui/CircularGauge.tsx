@@ -32,11 +32,11 @@ export function CircularGauge({
   // Center point
   const center = size / 2;
 
-  // Color based on value
+  // Color based on value - using cyan accent system
   const getStrokeColor = () => {
-    if (clampedValue >= 80) return 'stroke-green-500';
-    if (clampedValue >= 50) return 'stroke-primary';
-    if (clampedValue >= 25) return 'stroke-yellow-500';
+    if (clampedValue >= 80) return 'stroke-[#00ff88]'; // Cyan-green
+    if (clampedValue >= 50) return 'stroke-primary';    // Cyan
+    if (clampedValue >= 25) return 'stroke-[#00b4d8]'; // Light cyan
     return 'stroke-muted-foreground';
   };
 
@@ -58,18 +58,34 @@ export function CircularGauge({
           className="text-muted/30"
         />
 
+        {/* Gradient definitions for cyan glow */}
+        <defs>
+          <linearGradient id="gauge-cyan-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#00d4ff" />
+            <stop offset="100%" stopColor="#00ff88" />
+          </linearGradient>
+          <filter id="gauge-glow">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
         {/* Glow effect (behind progress) */}
         <circle
           cx={center}
           cy={center}
           r={radius}
           fill="none"
-          stroke="currentColor"
+          stroke="url(#gauge-cyan-gradient)"
           strokeWidth={strokeWidth + 8}
           strokeDasharray={circumference}
           strokeDashoffset={strokeDashoffset}
           strokeLinecap="round"
-          className="text-primary/20 blur-sm"
+          opacity={0.2}
+          className="blur-sm"
           style={{
             transition: animated ? 'stroke-dashoffset 1s ease-out' : 'none',
           }}
@@ -81,13 +97,15 @@ export function CircularGauge({
           cy={center}
           r={radius}
           fill="none"
+          stroke="url(#gauge-cyan-gradient)"
           strokeWidth={strokeWidth}
           strokeDasharray={circumference}
           strokeDashoffset={strokeDashoffset}
           strokeLinecap="round"
+          filter="url(#gauge-glow)"
           className={cn(
             getStrokeColor(),
-            'drop-shadow-[0_0_8px_rgba(37,99,235,0.5)]'
+            'drop-shadow-[0_0_8px_rgba(0,212,255,0.5)]'
           )}
           style={{
             transition: animated ? 'stroke-dashoffset 1s ease-out' : 'none',

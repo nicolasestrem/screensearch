@@ -43,42 +43,55 @@
   }
 
   .dark {
-    /* Premium Dark Mode - Deep Slate Blue */
-    --background: 222 47% 5%;            /* Darker than slate 950 */
+    /* Deep Space Background (from concept art) */
+    --background: 220 25% 6%;            /* #0d1117 - deep space */
+    --background-elevated: 220 20% 10%;  /* #151b23 - elevated surfaces */
     --foreground: 210 40% 98%;
 
-    --card: 222 47% 7%;                  /* Slightly lighter for cards */
+    --card: 220 20% 10%;                 /* Slightly lighter for cards */
     --card-foreground: 210 40% 98%;
 
-    --popover: 222 47% 7%;
+    --popover: 220 20% 10%;
     --popover-foreground: 210 40% 98%;
 
-    /* Primary Blue - brighter for dark mode contrast */
-    --primary: 217 91% 60%;              /* Blue 600 - #2563eb */
-    --primary-light: 213 94% 68%;        /* Blue 400 - #60a5fa */
-    --primary-dark: 221 83% 53%;         /* Blue 500 - #3b82f6 */
-    --primary-foreground: 210 40% 98%;
+    /* Cyan Accent System (from concept art) */
+    --primary: 190 95% 50%;              /* #00d4ff - main cyan */
+    --primary-light: 190 100% 60%;       /* #33e0ff - glow effect */
+    --primary-dark: 190 80% 45%;         /* Darker cyan */
+    --primary-foreground: 220 25% 6%;    /* Dark text on cyan */
 
-    --secondary: 222 47% 11%;            /* Slate 900 */
+    /* Accent variants for flexibility */
+    --accent-primary: 190 95% 50%;       /* Main cyan */
+    --accent-glow: 190 100% 60%;         /* Glow cyan */
+    --accent-muted: 190 50% 30%;         /* Subtle cyan #265a66 */
+    --accent-green: 160 80% 50%;         /* Green accent for success states */
+
+    --secondary: 220 20% 14%;            /* Surface 2 - elevated cards */
     --secondary-foreground: 210 40% 98%;
 
-    --muted: 222 47% 11%;
+    --muted: 220 20% 14%;
     --muted-foreground: 215 20% 65%;
 
-    --accent: 222 47% 11%;
+    --accent: 220 20% 14%;
     --accent-foreground: 210 40% 98%;
 
     --destructive: 0 63% 31%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 217 33% 17%;               /* Subtle blue-tinted border */
-    --input: 217 33% 17%;
-    --ring: 217 91% 60%;
+    /* Surface Hierarchy */
+    --surface-1: 220 20% 10%;            /* Cards */
+    --surface-2: 220 20% 14%;            /* Elevated cards */
+    --surface-3: 220 20% 18%;            /* Hover states */
 
-    /* Glassmorphism (dark mode - prominent) */
-    --glass-bg: rgba(15, 23, 42, 0.7);
-    --glass-border: rgba(37, 99, 235, 0.15);
-    --glass-glow: rgba(37, 99, 235, 0.25);
+    --border: 190 50% 25%;               /* Cyan-tinted border */
+    --input: 220 20% 14%;
+    --ring: 190 95% 50%;
+
+    /* Glassmorphism (dark mode - prominent with cyan) */
+    --glass-bg: rgba(17, 24, 39, 0.7);
+    --glass-border: rgba(0, 170, 204, 0.15);
+    --glass-blur: 16px;
+    --glass-glow: rgba(0, 212, 255, 0.25);
   }
 }
 
@@ -272,4 +285,89 @@ mark {
   background: rgba(234, 179, 8, 0.15);
   border: 1px solid rgba(234, 179, 8, 0.3);
   color: rgb(234, 179, 8);
+}
+
+/* ===== CYAN GLOW ANIMATIONS ===== */
+
+/* Glow pulse for cyan accent */
+@keyframes glow-pulse-cyan {
+  0%, 100% { box-shadow: 0 0 15px 0 rgba(0, 212, 255, 0.3); }
+  50% { box-shadow: 0 0 30px 5px rgba(0, 212, 255, 0.5); }
+}
+
+.animate-glow-pulse-cyan {
+  animation: glow-pulse-cyan 2s ease-in-out infinite;
+}
+
+/* Cyan glow utilities */
+.glow-cyan {
+  box-shadow: 0 0 30px -5px rgba(0, 212, 255, 0.4);
+}
+
+.glow-cyan-subtle {
+  box-shadow: 0 0 20px -5px rgba(0, 212, 255, 0.2);
+}
+
+.glow-cyan-lg {
+  box-shadow: 0 0 40px -5px rgba(0, 212, 255, 0.5), 0 0 80px -20px rgba(0, 212, 255, 0.3);
+}
+
+/* Text glow cyan */
+.text-glow-cyan {
+  text-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+}
+
+/* Gradient text - cyan to green */
+.gradient-text-cyan {
+  background: linear-gradient(135deg, #00d4ff, #00ff88);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Surface utilities for new hierarchy */
+.bg-surface-1 {
+  background-color: hsl(var(--surface-1));
+}
+
+.bg-surface-2 {
+  background-color: hsl(var(--surface-2));
+}
+
+.bg-surface-3 {
+  background-color: hsl(var(--surface-3));
+}
+
+/* Glass panel with cyan border */
+.glass-panel-cyan {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1), 0 0 40px -10px var(--glass-glow);
+}
+
+/* Search modal overlay */
+.search-modal-overlay {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Cyan accent border gradient */
+.border-gradient-cyan {
+  position: relative;
+}
+
+.border-gradient-cyan::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(180deg, rgba(0, 212, 255, 0.3), transparent);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
 }

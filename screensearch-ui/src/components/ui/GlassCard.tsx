@@ -1,11 +1,13 @@
 import { ReactNode } from 'react';
 import { cn } from '../../lib/utils';
 
+type GlowColor = 'cyan' | 'green' | 'purple' | 'none';
+
 interface GlassCardProps {
   children: ReactNode;
   className?: string;
   hover?: boolean;
-  glow?: boolean;
+  glow?: boolean | GlowColor;
   padding?: 'none' | 'sm' | 'md' | 'lg';
 }
 
@@ -16,6 +18,13 @@ const paddingClasses = {
   lg: 'p-6',
 };
 
+const glowClasses: Record<GlowColor, string> = {
+  cyan: 'glow-cyan-subtle border-gradient-cyan',
+  green: 'shadow-[0_0_20px_-5px_rgba(0,255,136,0.2)]',
+  purple: 'shadow-[0_0_20px_-5px_rgba(168,85,247,0.2)]',
+  none: '',
+};
+
 export function GlassCard({
   children,
   className,
@@ -23,13 +32,20 @@ export function GlassCard({
   glow = false,
   padding = 'md',
 }: GlassCardProps) {
+  // Handle glow prop - can be boolean or color string
+  const glowClass = typeof glow === 'string'
+    ? glowClasses[glow]
+    : glow
+      ? 'animate-border-glow'
+      : '';
+
   return (
     <div
       className={cn(
         'glass-card',
         paddingClasses[padding],
         hover && 'glass-card-hover cursor-pointer',
-        glow && 'animate-border-glow',
+        glowClass,
         className
       )}
     >

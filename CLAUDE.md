@@ -619,7 +619,38 @@ Maintain these performance characteristics:
 - Format code before committing: `cargo fmt --all`
 - Use clippy before committing: `cargo clippy --workspace -- -D warnings`
 
-## Recent Optimizations (v0.1.0 → v0.2.0)
+## Recent Optimizations (v0.1.0 → v0.3.0)
+
+### AI-First UI Redesign (v0.3.0)
+- **Dashboard ("Intel Dash")**: New default landing page with AI-powered widgets
+- **Glassmorphism Design System**: Premium UI with backdrop blur, translucent backgrounds, glow effects
+- **Daily Digest**: Auto-generated AI summaries with session storage caching
+- **Memory Status Gauge**: Circular radial gauge showing RAG indexing progress
+- **Productivity Pulse**: Custom SVG line/area chart with cubic bezier curves
+- **Smart Answer Card**: AI-powered search results with activity context
+- **Primary color change**: Blue (#2563eb) matching screensearch.app branding
+
+**Implementation files**:
+- Design system: `screensearch-ui/src/index.css` (CSS custom properties, utilities)
+- Tailwind config: `screensearch-ui/tailwind.config.js` (extended theme)
+- Dashboard page: `screensearch-ui/src/pages/Dashboard.tsx`
+- Core components:
+  - `screensearch-ui/src/components/ui/GlassCard.tsx` - Glassmorphism container
+  - `screensearch-ui/src/components/ui/CircularGauge.tsx` - SVG radial progress
+  - `screensearch-ui/src/components/ui/ComingSoonCard.tsx` - Placeholder component
+- Dashboard widgets:
+  - `screensearch-ui/src/components/dashboard/DailyDigestCard.tsx` - AI summaries
+  - `screensearch-ui/src/components/dashboard/MemoryStatusGauge.tsx` - RAG status
+  - `screensearch-ui/src/components/dashboard/ProductivityPulse.tsx` - Activity chart
+- Search components:
+  - `screensearch-ui/src/components/search/SmartAnswerCard.tsx` - AI answers
+  - `screensearch-ui/src/components/search/ActivityList.tsx` - App breakdown
+
+**Technical details**:
+- Production bundle: 471.08 kB JS, 62.57 kB CSS
+- Custom SVG charts avoid external charting library dependencies
+- HSL color system enables consistent dark/light theme support
+- Session storage caching reduces API calls for Daily Digest
 
 ### Cross-Compilation Support (v0.2.0)
 - **Linux to Windows builds**: cargo-xwin enables building Windows binaries from Linux

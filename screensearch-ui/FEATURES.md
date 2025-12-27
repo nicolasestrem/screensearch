@@ -1,5 +1,133 @@
 # ScreenSearch UI - Features Documentation
 
+*Last updated: v0.3.0 - AI-First UI Redesign*
+
+---
+
+## AI-First UI Features (v0.3.0)
+
+### Search Modal (Cmd+K)
+**Location**: `src/components/search/SearchInvite.tsx`
+
+**Features**:
+- Global keyboard shortcut (Cmd/Ctrl+K) to open
+- Full-screen glassmorphism modal
+- Mode toggle between Search and Browse
+- Smart Answer integration with AI responses
+- Activity sources with app breakdowns
+- Animated transitions with Framer Motion
+- Backdrop blur overlay
+
+**User Interactions**:
+- Press Cmd/Ctrl+K to open modal
+- Type query for instant AI-powered answers
+- Toggle between Search and Browse modes
+- Press Escape to close
+- Click backdrop to close
+
+### Smart Answer Component
+**Location**: `src/components/search/SmartAnswer.tsx`
+
+**Features**:
+- AI-generated answers displayed with Markdown
+- Activity source timeline with app icons
+- App-specific icons (Chrome, VSCode, Slack, etc.)
+- Time and app context for each source
+- Sparkle icon for AI indicator
+- Cyan accent glow effects
+
+### Collapsible Sidebar
+**Location**: `src/components/Sidebar.tsx`
+
+**Features**:
+- Full expand/collapse with smooth animation
+- Icon-only mode when collapsed (72px width)
+- Full mode with labels (256px width)
+- Search shortcut button with Cmd+K badge
+- Framer Motion animated width transitions
+- Toggle button with ChevronLeft/Right icons
+- Glassmorphism panel styling
+
+**User Interactions**:
+- Click toggle button to expand/collapse
+- Click search button to open Cmd+K modal
+- Navigate using icon buttons when collapsed
+
+### ScreenSearch Intel Dashboard
+**Location**: `src/pages/Dashboard.tsx`
+
+**Features**:
+- "ScreenSearch Intel" branded home page
+- Daily Digest card with AI summaries
+- Memory Status gauge showing RAG indexing
+- Productivity Pulse chart with activity trends
+- Coming Soon placeholders for Knowledge Graph and Analytics
+
+### Daily Digest Card
+**Location**: `src/components/dashboard/DailyDigestCard.tsx`
+
+**Features**:
+- AI-powered daily activity summaries
+- Session storage caching to reduce API calls
+- "Setup Required" badge when AI not configured
+- Glassmorphism card styling
+- CalendarDays icon indicator
+
+### Memory Status Gauge
+**Location**: `src/components/dashboard/MemoryStatusGauge.tsx`
+
+**Features**:
+- Circular SVG gauge with cyan gradient
+- Shows RAG indexing percentage
+- Animated arc with glow filter
+- Database icon and "Ready" status indicator
+
+### Productivity Pulse Chart
+**Location**: `src/components/dashboard/ProductivityPulse.tsx`
+
+**Features**:
+- Custom SVG line/area chart
+- Cyan to green gradient fill
+- Cubic bezier curve interpolation
+- Hover tooltips with exact values
+- Responsive width with viewBox
+- Caption with last update time
+
+### Glassmorphism Design System
+**Location**: `src/index.css`, `tailwind.config.js`
+
+**Design Tokens**:
+- `--background`: Deep space (#0d1117)
+- `--primary`: Cyan (#00d4ff)
+- `--primary-light`: Glow cyan (#33e0ff)
+- `--accent-muted`: Subtle cyan (#265a66)
+- `--glass-bg`: Translucent dark
+- `--glass-border`: Cyan-tinted border
+- `--glass-glow`: Cyan glow effect
+
+**Utility Classes**:
+- `.glass-panel` - Base translucent container
+- `.glass-card` - Elevated with glow shadow
+- `.glass-panel-cyan` - Cyan border variant
+- `.glow-cyan` - Standard cyan glow
+- `.glow-cyan-lg` - Large cyan glow
+- `.text-glow-cyan` - Text with glow shadow
+- `.gradient-text-cyan` - Cyan-to-green gradient text
+
+### Animation System
+**Location**: `src/lib/animations.ts`
+
+**Framer Motion Variants**:
+- `modalVariants` - Modal appear/exit animation
+- `backdropVariants` - Overlay fade in/out
+- `slideInRight` - Panel slide animation
+- `fadeInUp` - Content reveal animation
+- `staggerContainer` - Staggered children
+- `scaleIn` - Scale up animation
+- `pulseGlow` - Continuous glow effect
+
+---
+
 ## Core Components
 
 ### 1. SearchBar Component
@@ -259,9 +387,10 @@
 
 ## Keyboard Shortcuts
 
-- `Ctrl/Cmd + K` - Focus search input
+- `Ctrl/Cmd + K` - Open Search Modal (Cmd+K) (v0.3.0)
 - `Ctrl/Cmd + ,` - Open settings panel
 - `Escape` - Close modal or panel
+- `Ctrl/Cmd + B` - Toggle sidebar collapse (v0.3.0)
 
 ## Responsive Design
 

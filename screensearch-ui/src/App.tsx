@@ -6,6 +6,7 @@ import { Sidebar } from './components/Sidebar';
 import { SearchBar } from './components/SearchBar';
 import { Timeline } from './components/Timeline';
 import { SmartAnswerCard } from './components/search/SmartAnswerCard';
+import { SearchInvite } from './components/search/SearchInvite';
 
 import { SettingsPanel } from './components/SettingsPanel';
 import { FrameModal } from './components/FrameModal';
@@ -29,12 +30,13 @@ const queryClient = new QueryClient({
  * Main App Layout.
  * Handles:
  * - Dark mode application
- * - Global keyboard shortcuts (Cmd+K, Cmd+,)
+ * - Global keyboard shortcuts (Cmd+K for search modal, Cmd+, for settings)
  * - Sidebar and Main Content structure
+ * - SearchInvite modal integration
  * - Footer integration
  */
 function AppContent() {
-  const { isDarkMode, activeTab } = useStore();
+  const { isDarkMode, activeTab, isSearchModalOpen, openSearchModal, closeSearchModal } = useStore();
 
   useEffect(() => {
     // Apply dark mode class to html element
@@ -48,11 +50,10 @@ function AppContent() {
   useEffect(() => {
     // Keyboard shortcuts
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Cmd/Ctrl + K for search focus
+      // Cmd/Ctrl + K for search modal
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
-        const searchInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-        searchInput?.focus();
+        openSearchModal();
       }
 
       // Cmd/Ctrl + , for settings
@@ -64,7 +65,7 @@ function AppContent() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [openSearchModal]);
 
   return (
     <div className="flex h-screen w-screen bg-background text-foreground overflow-hidden">
@@ -95,6 +96,7 @@ function AppContent() {
 
       <SettingsPanel />
       <FrameModal />
+      <SearchInvite isOpen={isSearchModalOpen} onClose={closeSearchModal} />
 
       <Toaster
         position="bottom-right"

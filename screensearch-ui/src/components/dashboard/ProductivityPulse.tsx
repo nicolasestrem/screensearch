@@ -141,17 +141,24 @@ export function ProductivityPulse() {
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
         >
-          {/* Gradient definition */}
+          {/* Gradient definition - Cyan accent system */}
           <defs>
             <linearGradient id="areaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#2563eb" stopOpacity="0.3" />
-              <stop offset="100%" stopColor="#2563eb" stopOpacity="0.05" />
+              <stop offset="0%" stopColor="#00d4ff" stopOpacity="0.3" />
+              <stop offset="100%" stopColor="#00d4ff" stopOpacity="0.02" />
             </linearGradient>
             <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#60a5fa" />
-              <stop offset="50%" stopColor="#2563eb" />
-              <stop offset="100%" stopColor="#3b82f6" />
+              <stop offset="0%" stopColor="#33e0ff" />
+              <stop offset="50%" stopColor="#00d4ff" />
+              <stop offset="100%" stopColor="#00ff88" />
             </linearGradient>
+            <filter id="lineGlow">
+              <feGaussianBlur stdDeviation="2" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
           </defs>
 
           {/* Grid lines */}
@@ -214,7 +221,8 @@ export function ProductivityPulse() {
             stroke="url(#lineGradient)"
             strokeWidth="2.5"
             strokeLinecap="round"
-            className="drop-shadow-[0_0_8px_rgba(37,99,235,0.5)]"
+            filter="url(#lineGlow)"
+            className="drop-shadow-[0_0_8px_rgba(0,212,255,0.5)]"
           />
 
           {/* Tooltip indicator */}
@@ -226,7 +234,7 @@ export function ProductivityPulse() {
                 y1={padding.top}
                 x2={tooltip.x}
                 y2={height - padding.bottom}
-                stroke="#2563eb"
+                stroke="#00d4ff"
                 strokeOpacity="0.3"
                 strokeDasharray="4 4"
               />
@@ -235,8 +243,8 @@ export function ProductivityPulse() {
                 cx={tooltip.x}
                 cy={tooltip.y}
                 r="6"
-                fill="#2563eb"
-                className="drop-shadow-[0_0_8px_rgba(37,99,235,0.8)]"
+                fill="#00d4ff"
+                className="drop-shadow-[0_0_8px_rgba(0,212,255,0.8)]"
               />
               <circle cx={tooltip.x} cy={tooltip.y} r="3" fill="white" />
             </>
