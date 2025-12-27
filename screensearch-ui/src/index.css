@@ -4,69 +4,81 @@
 
 @layer base {
   :root {
-    /* Premium Light Mode (Clean, White, Slate) */
+    /* Premium Light Mode - Blue System (matching screensearch.app) */
     --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    --foreground: 222 47% 11%;           /* Slate 900 - #0f172a */
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 222 47% 11%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
+    --popover-foreground: 222 47% 11%;
 
-    /* Vibrant Primary (Electric Violet/Indigo) */
-    --primary: 262 83% 58%;
+    /* Primary Blue Palette */
+    --primary: 217 91% 60%;              /* Blue 600 - #2563eb */
+    --primary-light: 213 94% 68%;        /* Blue 400 - #60a5fa */
+    --primary-dark: 221 83% 53%;         /* Blue 500 - #3b82f6 */
     --primary-foreground: 210 40% 98%;
 
-    --secondary: 240 5% 96%;
-    --secondary-foreground: 240 6% 10%;
+    --secondary: 214 32% 91%;            /* Slate 200 */
+    --secondary-foreground: 222 47% 11%;
 
-    --muted: 240 5% 96%;
-    --muted-foreground: 240 4% 46%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;     /* Slate 500 */
 
-    --accent: 240 5% 96%;
-    --accent-foreground: 240 6% 10%;
+    --accent: 214 32% 91%;
+    --accent-foreground: 222 47% 11%;
 
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 240 6% 90%;
-    --input: 240 6% 90%;
-    --ring: 262 83% 58%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 217 91% 60%;
 
     --radius: 0.75rem;
+
+    /* Glassmorphism (light mode - subtle) */
+    --glass-bg: rgba(255, 255, 255, 0.7);
+    --glass-border: rgba(37, 99, 235, 0.1);
+    --glass-glow: rgba(37, 99, 235, 0.15);
   }
 
   .dark {
-    /* Premium Dark Mode (Deep Zinc, almost black) */
-    --background: 240 10% 4%;
-    --foreground: 0 0% 98%;
+    /* Premium Dark Mode - Deep Slate Blue */
+    --background: 222 47% 5%;            /* Darker than slate 950 */
+    --foreground: 210 40% 98%;
 
-    --card: 240 10% 4%;
-    /* Unified background for cleaner look */
-    --card-foreground: 0 0% 98%;
+    --card: 222 47% 7%;                  /* Slightly lighter for cards */
+    --card-foreground: 210 40% 98%;
 
-    --popover: 240 10% 4%;
-    --popover-foreground: 0 0% 98%;
+    --popover: 222 47% 7%;
+    --popover-foreground: 210 40% 98%;
 
-    /* Slightly brighter primary for dark mode contrast */
-    --primary: 263 70% 50%;
+    /* Primary Blue - brighter for dark mode contrast */
+    --primary: 217 91% 60%;              /* Blue 600 - #2563eb */
+    --primary-light: 213 94% 68%;        /* Blue 400 - #60a5fa */
+    --primary-dark: 221 83% 53%;         /* Blue 500 - #3b82f6 */
     --primary-foreground: 210 40% 98%;
 
-    --secondary: 240 4% 11%;
-    --secondary-foreground: 0 0% 98%;
+    --secondary: 222 47% 11%;            /* Slate 900 */
+    --secondary-foreground: 210 40% 98%;
 
-    --muted: 240 4% 11%;
-    --muted-foreground: 240 5% 65%;
+    --muted: 222 47% 11%;
+    --muted-foreground: 215 20% 65%;
 
-    --accent: 240 4% 11%;
-    --accent-foreground: 0 0% 98%;
+    --accent: 222 47% 11%;
+    --accent-foreground: 210 40% 98%;
 
     --destructive: 0 63% 31%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive-foreground: 210 40% 98%;
 
-    --border: 240 4% 16%;
-    /* Subtle borders */
-    --input: 240 4% 16%;
-    --ring: 263 70% 50%;
+    --border: 217 33% 17%;               /* Subtle blue-tinted border */
+    --input: 217 33% 17%;
+    --ring: 217 91% 60%;
+
+    /* Glassmorphism (dark mode - prominent) */
+    --glass-bg: rgba(15, 23, 42, 0.7);
+    --glass-border: rgba(37, 99, 235, 0.15);
+    --glass-glow: rgba(37, 99, 235, 0.25);
   }
 }
 
@@ -140,4 +152,124 @@ mark {
   100% {
     transform: translateX(100%);
   }
+}
+
+/* ===== GLASSMORPHISM DESIGN SYSTEM ===== */
+
+/* Glass Panel - Base translucent container */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+}
+
+/* Glass Card - Elevated glass container with glow */
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  box-shadow:
+    0 4px 30px rgba(0, 0, 0, 0.1),
+    0 0 40px -10px var(--glass-glow);
+}
+
+/* Glass Card with hover glow effect */
+.glass-card-hover {
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+.glass-card-hover:hover {
+  border-color: var(--glass-glow);
+  box-shadow:
+    0 8px 40px rgba(0, 0, 0, 0.15),
+    0 0 60px -10px var(--glass-glow);
+}
+
+/* Glow Effects */
+.glow-blue {
+  box-shadow: 0 0 30px -5px rgba(37, 99, 235, 0.4);
+}
+
+.glow-blue-subtle {
+  box-shadow: 0 0 20px -5px rgba(37, 99, 235, 0.2);
+}
+
+.glow-primary {
+  box-shadow: 0 0 30px -5px hsl(var(--primary) / 0.4);
+}
+
+/* Text glow for headings */
+.text-glow {
+  text-shadow: 0 0 20px hsl(var(--primary) / 0.5);
+}
+
+/* Border glow animation */
+@keyframes border-glow {
+  0%, 100% {
+    border-color: var(--glass-border);
+  }
+  50% {
+    border-color: var(--glass-glow);
+  }
+}
+
+.animate-border-glow {
+  animation: border-glow 3s ease-in-out infinite;
+}
+
+/* Pulse glow for status indicators */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 10px 0 hsl(var(--primary) / 0.3);
+  }
+  50% {
+    box-shadow: 0 0 20px 5px hsl(var(--primary) / 0.5);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Fade in up animation */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.4s ease-out;
+}
+
+/* Gradient text utility */
+.gradient-text {
+  background: linear-gradient(135deg, hsl(var(--primary-light)), hsl(var(--primary)));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Coming Soon badge styling */
+.badge-coming-soon {
+  @apply px-2 py-0.5 text-xs font-medium rounded-full;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(59, 130, 246, 0.1));
+  border: 1px solid rgba(37, 99, 235, 0.3);
+  color: hsl(var(--primary-light));
+}
+
+/* Simulated/stub badge */
+.badge-simulated {
+  @apply px-2 py-0.5 text-xs font-medium rounded-full;
+  background: rgba(234, 179, 8, 0.15);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  color: rgb(234, 179, 8);
 }

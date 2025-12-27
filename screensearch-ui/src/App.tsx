@@ -5,11 +5,12 @@ import { useStore } from './store/useStore';
 import { Sidebar } from './components/Sidebar';
 import { SearchBar } from './components/SearchBar';
 import { Timeline } from './components/Timeline';
-import { AnswerCard } from './components/AnswerCard';
+import { SmartAnswerCard } from './components/search/SmartAnswerCard';
 
 import { SettingsPanel } from './components/SettingsPanel';
 import { FrameModal } from './components/FrameModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { DashboardPage } from './pages/Dashboard';
 import { IntelligencePage } from './pages/Intelligence';
 import { Footer } from './components/Footer';
 
@@ -78,16 +79,15 @@ function AppContent() {
 
         <div className="flex-1 overflow-y-auto flex flex-col">
           <div className="container mx-auto px-4 py-8 max-w-7xl flex-1">
-            {activeTab === 'timeline' ? (
-              <div className="space-y-8 animate-in fade-in duration-500">
-
+            {activeTab === 'dashboard' && <DashboardPage />}
+            {activeTab === 'timeline' && (
+              <div className="space-y-8 animate-fade-in-up">
                 <SearchBar />
-                <AnswerCard />
+                <SmartAnswerCard />
                 <Timeline />
               </div>
-            ) : (
-              <IntelligencePage />
             )}
+            {activeTab === 'reports' && <IntelligencePage />}
           </div>
           <Footer />
         </div>

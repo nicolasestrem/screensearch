@@ -64,9 +64,10 @@ export function SearchBar() {
       {/* Main Search Bar */}
       <div className="relative group z-30" ref={autocompleteRef}>
         <div className="relative transition-all duration-300 transform group-hover:-translate-y-0.5 group-focus-within:-translate-y-1">
-          <div className="absolute inset-0 bg-gradient-to-r from-primary/20 via-primary/10 to-transparent rounded-2xl blur-xl opacity-0 group-focus-within:opacity-100 transition-opacity duration-500" />
+          {/* Glow effect */}
+          <div className="absolute inset-0 bg-gradient-to-r from-primary/30 via-primary-light/20 to-primary/10 rounded-2xl blur-xl opacity-0 group-focus-within:opacity-100 transition-opacity duration-500" />
 
-          <div className="relative bg-card rounded-2xl shadow-sm border border-border/50 group-hover:border-primary/30 group-focus-within:border-primary/50 group-focus-within:shadow-xl group-focus-within:shadow-primary/5 transition-all duration-300">
+          <div className="relative glass-card rounded-2xl group-hover:border-primary/30 group-focus-within:border-primary/50 group-focus-within:shadow-xl transition-all duration-300">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
             <input
               type="text"
@@ -76,7 +77,7 @@ export function SearchBar() {
                 setShowAutocomplete(true);
               }}
               onFocus={() => setShowAutocomplete(true)}
-              placeholder="Search screen captures..."
+              placeholder="What did I work on yesterday?"
               className="w-full pl-12 pr-12 py-4 bg-transparent border-none rounded-2xl text-lg placeholder:text-muted-foreground/50 focus:outline-none focus:ring-0"
             />
             {localQuery && (
@@ -95,7 +96,7 @@ export function SearchBar() {
 
         {/* Autocomplete Dropdown */}
         {showAutocomplete && suggestions.length > 0 && (
-          <div className="absolute top-full left-0 right-0 mt-3 bg-card/95 backdrop-blur-xl border border-border/50 rounded-xl shadow-2xl shadow-black/10 z-50 max-h-80 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="absolute top-full left-0 right-0 mt-3 glass-card z-50 max-h-80 overflow-y-auto animate-fade-in-up">
             <div className="p-2 space-y-1">
               {suggestions.map((suggestion, index) => (
                 <button
@@ -170,7 +171,7 @@ export function SearchBar() {
 
       {/* Filter Panel */}
       {showFilters && (
-        <div className="bg-card/50 backdrop-blur-sm border border-border/50 rounded-2xl p-6 space-y-6 animate-in slide-in-from-top-4 duration-300 shadow-xl shadow-black/5">
+        <div className="glass-card p-6 space-y-6 animate-fade-in-up">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             {/* Left Column */}
             <div className="space-y-4">

@@ -21,8 +21,8 @@ interface AppStore {
   setSelectedFrameId: (id: number | null) => void;
 
   // Navigation
-  activeTab: 'timeline' | 'intelligence';
-  setActiveTab: (tab: 'timeline' | 'intelligence') => void;
+  activeTab: 'dashboard' | 'timeline' | 'reports';
+  setActiveTab: (tab: 'dashboard' | 'timeline' | 'reports') => void;
 
   // AI Config
   aiConfig: {
@@ -72,7 +72,7 @@ export const useStore = create<AppStore>()(
       setSelectedFrameId: (id) => set({ selectedFrameId: id }),
 
       // Navigation
-      activeTab: 'timeline',
+      activeTab: 'dashboard',
       setActiveTab: (tab) => set({ activeTab: tab }),
 
       // AI Config
