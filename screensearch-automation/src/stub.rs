@@ -1,7 +1,15 @@
+//! Stub implementations for non-Windows platforms.
+//!
+//! This module provides stub implementations of the automation API to enable
+//! cross-compilation from Linux to Windows using cargo-xwin. All methods return
+//! platform errors at runtime. Only the Windows implementation is functional.
+
+#![allow(dead_code)]
+
 use crate::errors::AutomationError;
 use crate::selector::Selector;
-use std::time::Duration;
 use std::fmt;
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct ThreadSafeAutomation;
