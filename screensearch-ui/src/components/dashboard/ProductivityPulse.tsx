@@ -135,9 +135,6 @@ export function ProductivityPulse() {
     setTooltip(null);
   };
 
-  // Removed loading stub to show graph immediately with mock data
-  // if (isLoading) { ... }
-
   return (
     <GlassCard padding="lg">
       <GlassCardHeader icon={<Activity className="h-5 w-5" />}>

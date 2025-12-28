@@ -4,7 +4,7 @@
 //! full-text search, tag management, and filtering.
 
 use chrono::{Duration, Utc};
-use screen_db::{DatabaseManager, FrameFilter, NewFrame, NewOcrText, NewTag, Pagination};
+use screensearch_db::{DatabaseManager, FrameFilter, NewFrame, NewOcrText, NewTag, Pagination};
 use tempfile::NamedTempFile;
 
 /// Create a temporary database for testing

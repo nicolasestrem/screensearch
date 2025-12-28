@@ -11,7 +11,9 @@ use tracing::{debug, error, info};
 pub struct UpdateInfo {
     pub version: String,
     pub download_url: String,
+    #[allow(dead_code)]
     pub release_notes: String,
+    #[allow(dead_code)]
     pub published_at: String,
 }
 

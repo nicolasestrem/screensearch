@@ -8,6 +8,7 @@ use std::cmp::Ordering;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// GitHub repository for update checking
+#[allow(dead_code)]
 pub const GITHUB_REPO: &str = "nicolasestrem/screensearch";
 
 /// GitHub API URL for latest release

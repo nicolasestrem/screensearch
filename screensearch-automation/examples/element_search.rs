@@ -2,7 +2,7 @@
 //!
 //! Demonstrates different selector types and element search strategies
 
-use screen_automation::*;
+use screensearch_automation::*;
 
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
