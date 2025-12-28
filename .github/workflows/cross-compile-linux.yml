@@ -46,8 +46,9 @@ jobs:
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
 
-          # Add llvm-mingw bin to PATH if present
+          # Add llvm-mingw bin to PATH for current and future steps
           if [ -d "$HOME/llvm-mingw/bin" ]; then
+            export PATH="$HOME/llvm-mingw/bin:$PATH"
             echo "$HOME/llvm-mingw/bin" >> $GITHUB_PATH
           fi
 
@@ -58,6 +59,8 @@ jobs:
             echo "llvm-lib found: $(which llvm-lib)"
           else
             echo "Error: llvm-lib still not found; cc-rs will fail. Ensure llvm-mingw is installed and in PATH."
+            echo "Contents of $HOME/llvm-mingw/bin:"
+            ls -la "$HOME/llvm-mingw/bin" 2>/dev/null || echo "Directory not found"
             exit 1
           fi
 
