@@ -1,13 +1,39 @@
 import { useState } from 'react';
-import { Settings, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { Settings, CheckCircle2, AlertCircle, Loader2, Cpu } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { aiApi } from '../api/ai';
 import { toast } from 'react-hot-toast';
+
+// Provider options
+const PROVIDER_OPTIONS = [
+    { value: 'local', label: 'Local (Ministral-3B)', description: 'Built-in GPU-accelerated model - No API needed' },
+    { value: 'http://localhost:11434/v1', label: 'Ollama', description: 'Local Ollama server on port 11434' },
+    { value: 'custom', label: 'Custom API', description: 'OpenAI-compatible endpoint' },
+] as const;
 
 export function AiSettings() {
     const { aiConfig, setAiConfig } = useStore();
     const [isTesting, setIsTesting] = useState(false);
     const [connectionStatus, setConnectionStatus] = useState<'none' | 'success' | 'error'>('none');
+    const [customUrl, setCustomUrl] = useState(
+        aiConfig.providerUrl !== 'local' &&
+        aiConfig.providerUrl !== 'http://localhost:11434/v1'
+            ? aiConfig.providerUrl
+            : ''
+    );
+
+    const isLocal = aiConfig.providerUrl === 'local';
+    const isCustom = aiConfig.providerUrl !== 'local' &&
+                     aiConfig.providerUrl !== 'http://localhost:11434/v1';
+
+    const handleProviderChange = (value: string) => {
+        if (value === 'custom') {
+            setAiConfig({ providerUrl: customUrl || 'http://localhost:1234/v1' });
+        } else {
+            setAiConfig({ providerUrl: value });
+        }
+        setConnectionStatus('none');
+    };
 
     const handleTestConnection = async () => {
         setIsTesting(true);
@@ -42,41 +68,88 @@ export function AiSettings() {
             </div>
 
             <div className="space-y-4">
+                {/* Provider Selection */}
                 <div className="space-y-2">
-                    <label className="text-sm font-medium">Provider URL</label>
-                    <input
-                        type="text"
-                        value={aiConfig.providerUrl}
-                        onChange={(e) => setAiConfig({ providerUrl: e.target.value })}
-                        placeholder="e.g., http://localhost:11434/v1"
+                    <label className="text-sm font-medium">AI Provider</label>
+                    <select
+                        value={isCustom ? 'custom' : aiConfig.providerUrl}
+                        onChange={(e) => handleProviderChange(e.target.value)}
                         className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
+                    >
+                        {PROVIDER_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                                {option.label}
+                            </option>
+                        ))}
+                    </select>
                     <p className="text-xs text-muted-foreground">
-                        For Ollama or LM Studio, ensure path ends with <code>/v1</code> (e.g. <code>http://localhost:1234/v1</code>).
+                        {PROVIDER_OPTIONS.find(o =>
+                            isCustom ? o.value === 'custom' : o.value === aiConfig.providerUrl
+                        )?.description}
                     </p>
                 </div>
 
-                <div className="space-y-2">
-                    <label className="text-sm font-medium">API Key (Optional)</label>
-                    <input
-                        type="password"
-                        value={aiConfig.apiKey}
-                        onChange={(e) => setAiConfig({ apiKey: e.target.value })}
-                        placeholder="sk-..."
-                        className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                </div>
+                {/* Local Provider Info */}
+                {isLocal && (
+                    <div className="flex items-center gap-3 p-4 bg-primary/10 border border-primary/20 rounded-lg">
+                        <Cpu className="w-8 h-8 text-primary flex-shrink-0" />
+                        <div>
+                            <p className="font-medium text-sm">Ministral-3B (Embedded)</p>
+                            <p className="text-xs text-muted-foreground">
+                                GPU-accelerated via Vulkan. Works on NVIDIA, AMD, and Intel GPUs.
+                                Model runs entirely on your machine - no API key required.
+                            </p>
+                        </div>
+                    </div>
+                )}
 
-                <div className="space-y-2">
-                    <label className="text-sm font-medium">Model Name</label>
-                    <input
-                        type="text"
-                        value={aiConfig.model}
-                        onChange={(e) => setAiConfig({ model: e.target.value })}
-                        placeholder="e.g., llama3, gpt-4"
-                        className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                </div>
+                {/* Custom URL Input - only shown for custom provider */}
+                {isCustom && (
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium">Custom Provider URL</label>
+                        <input
+                            type="text"
+                            value={aiConfig.providerUrl}
+                            onChange={(e) => {
+                                setCustomUrl(e.target.value);
+                                setAiConfig({ providerUrl: e.target.value });
+                            }}
+                            placeholder="e.g., http://localhost:1234/v1"
+                            className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                            For LM Studio or other OpenAI-compatible servers. Ensure path ends with <code>/v1</code>.
+                        </p>
+                    </div>
+                )}
+
+                {/* API Key - hidden for local provider */}
+                {!isLocal && (
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium">API Key (Optional)</label>
+                        <input
+                            type="password"
+                            value={aiConfig.apiKey}
+                            onChange={(e) => setAiConfig({ apiKey: e.target.value })}
+                            placeholder="sk-..."
+                            className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                    </div>
+                )}
+
+                {/* Model Name - hidden for local provider */}
+                {!isLocal && (
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium">Model Name</label>
+                        <input
+                            type="text"
+                            value={aiConfig.model}
+                            onChange={(e) => setAiConfig({ model: e.target.value })}
+                            placeholder="e.g., llama3, gpt-4"
+                            className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                    </div>
+                )}
 
                 <div className="pt-2 flex items-center gap-4">
                     <button
@@ -85,20 +158,20 @@ export function AiSettings() {
                         className="flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/80 disabled:opacity-50 transition-colors"
                     >
                         {isTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                        Test Connection
+                        {isLocal ? 'Check Local Model' : 'Test Connection'}
                     </button>
 
                     {connectionStatus === 'success' && (
                         <div className="flex items-center gap-2 text-green-500 text-sm">
                             <CheckCircle2 className="w-4 h-4" />
-                            Connected
+                            {isLocal ? 'Model Ready' : 'Connected'}
                         </div>
                     )}
 
                     {connectionStatus === 'error' && (
                         <div className="flex items-center gap-2 text-destructive text-sm">
                             <AlertCircle className="w-4 h-4" />
-                            Connection Failed
+                            {isLocal ? 'Model Not Ready' : 'Connection Failed'}
                         </div>
                     )}
                 </div>

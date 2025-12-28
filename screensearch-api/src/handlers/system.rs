@@ -530,6 +530,40 @@ pub async fn test_vision_config(
 ) -> Result<Json<serde_json::Value>> {
     debug!("Test vision config: provider={}, model={}", req.provider, req.model);
 
+    // Handle local provider specially - check llama-server health
+    if req.provider == "local" {
+        // Check if model is downloaded
+        let models_dir = screensearch_llm::get_models_dir();
+        if !screensearch_llm::model_exists(&models_dir) {
+            return Ok(Json(serde_json::json!({
+                "success": false,
+                "message": "Local model not downloaded. Please download the Ministral-3B model first."
+            })));
+        }
+
+        // Check if llama-server is running by hitting health endpoint
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+
+        match client.get("http://127.0.0.1:31130/health").send().await {
+            Ok(res) if res.status().is_success() => {
+                return Ok(Json(serde_json::json!({
+                    "success": true,
+                    "message": "Local Ministral-3B model ready. llama-server is running."
+                })));
+            }
+            _ => {
+                return Ok(Json(serde_json::json!({
+                    "success": false,
+                    "message": "Model downloaded but llama-server not running. Click 'Start Server' first."
+                })));
+            }
+        }
+    }
+
+    // For ollama/openai providers, use OllamaClient
     let client = OllamaClient::new(
         req.endpoint,
         req.model,

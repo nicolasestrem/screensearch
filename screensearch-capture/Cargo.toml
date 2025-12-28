@@ -8,7 +8,6 @@ repository.workspace = true
 
 [dependencies]
 # Windows screen capture
-windows-capture = { workspace = true }
 screenshots = { workspace = true }
 windows = { workspace = true, features = [
     "Media_Ocr",

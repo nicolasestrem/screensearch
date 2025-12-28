@@ -1,16 +1,20 @@
 //! AI Integration Handlers
 //!
-//! Handles communication with LLM providers (OpenAI, Ollama) and report generation.
+//! Handles communication with LLM providers (OpenAI, Ollama, Local) and report generation.
 
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 use axum::extract::{Json, State};
 use chrono::{DateTime, Duration, Utc};
 use reqwest::RequestBuilder;
+use screensearch_llm::{model_exists, get_models_dir, MODEL_FILENAME, MODEL_SIZE_BYTES};
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
+
+/// Local LLM server endpoint (llama.cpp server on port 31130)
+const LOCAL_LLM_ENDPOINT: &str = "http://127.0.0.1:31130/v1";
 
 // ============================================================
 // Helper Functions
@@ -130,6 +134,41 @@ pub async fn validate_connection(
     Json(payload): Json<AiConnectionRequest>,
 ) -> Result<Json<AiConnectionResponse>> {
     debug!("Validating AI connection to {}", payload.provider_url);
+
+    // Handle local provider specially
+    if payload.provider_url == "local" {
+        let models_dir = get_models_dir();
+        if model_exists(&models_dir) {
+            // Check if llama-server is running
+            let client = reqwest::Client::new();
+            match client.get(format!("{}/models", LOCAL_LLM_ENDPOINT)).send().await {
+                Ok(res) if res.status().is_success() => {
+                    return Ok(Json(AiConnectionResponse {
+                        success: true,
+                        message: "Local Ministral-3B model is ready. llama-server is running.".to_string(),
+                    }));
+                }
+                _ => {
+                    return Ok(Json(AiConnectionResponse {
+                        success: false,
+                        message: format!(
+                            "Model downloaded but llama-server not running. Start it with: llama-server -m {}",
+                            models_dir.join(MODEL_FILENAME).display()
+                        ),
+                    }));
+                }
+            }
+        } else {
+            let size_gb = MODEL_SIZE_BYTES as f64 / 1_000_000_000.0;
+            return Ok(Json(AiConnectionResponse {
+                success: false,
+                message: format!(
+                    "Local model not downloaded. Model size: {:.2} GB. Download required.",
+                    size_gb
+                ),
+            }));
+        }
+    }
 
     // Validate URL format and security
     if let Err(err_msg) = validate_provider_url(&payload.provider_url) {
@@ -268,23 +307,39 @@ OUTPUT FORMAT (Markdown):
 
     // 3. Call AI Provider
 
-    // Validate URL format and security
-    if let Err(err_msg) = validate_provider_url(&payload.provider_url) {
-        return Err(AppError::InvalidRequest(format!(
-            "Invalid provider URL: {}",
-            err_msg
-        )));
+    // Determine effective URL - use local endpoint if provider is "local"
+    let (effective_url, effective_model) = if payload.provider_url == "local" {
+        // Check if model is available
+        let models_dir = get_models_dir();
+        if !model_exists(&models_dir) {
+            return Err(AppError::InvalidRequest(
+                "Local model not downloaded. Please download the model first.".to_string()
+            ));
+        }
+        (LOCAL_LLM_ENDPOINT.to_string(), "ministral-3b".to_string())
+    } else {
+        (payload.provider_url.clone(), payload.model.clone())
+    };
+
+    // Validate URL format and security (skip for local which we already handle)
+    if payload.provider_url != "local" {
+        if let Err(err_msg) = validate_provider_url(&effective_url) {
+            return Err(AppError::InvalidRequest(format!(
+                "Invalid provider URL: {}",
+                err_msg
+            )));
+        }
     }
 
     let client = reqwest::Client::new();
     // Ensure we handle URL construction carefully. Most providers need /chat/completions
     let url = format!(
         "{}/chat/completions",
-        payload.provider_url.trim_end_matches('/')
+        effective_url.trim_end_matches('/')
     );
 
     let request_body = OpenAIChatRequest {
-        model: payload.model.clone(),
+        model: effective_model.clone(),
         messages: vec![
             OpenAIMessage {
                 role: "system".to_string(),
@@ -364,8 +419,302 @@ OUTPUT FORMAT (Markdown):
 
     Ok(Json(AiReportResponse {
         report: final_report,
-        model_used: payload.model,
+        model_used: effective_model,
         tokens_used: response_body.usage.map(|u| u.total_tokens),
         context_source,
+    }))
+}
+
+// ============================================================
+// Local Model Management Handlers
+// ============================================================
+
+#[derive(Debug, Serialize)]
+pub struct ModelStatusResponse {
+    pub downloaded: bool,
+    pub downloading: bool,
+    pub model_name: String,
+    pub model_size_bytes: u64,
+    pub model_path: Option<String>,
+}
+
+/// GET /ai/model/status
+/// Returns the status of the local Ministral-3B model
+pub async fn get_model_status(
+    State(_state): State<Arc<AppState>>,
+) -> Result<Json<ModelStatusResponse>> {
+    let models_dir = get_models_dir();
+    let downloaded = model_exists(&models_dir);
+    let model_path = if downloaded {
+        Some(models_dir.join(MODEL_FILENAME).to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    Ok(Json(ModelStatusResponse {
+        downloaded,
+        downloading: false, // TODO: Track download state in AppState
+        model_name: "Ministral-3B-Instruct-2512-Q4_K_M".to_string(),
+        model_size_bytes: MODEL_SIZE_BYTES,
+        model_path,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModelDownloadResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+/// POST /ai/model/download
+/// Triggers download of the local Ministral-3B model
+pub async fn start_model_download(
+    State(_state): State<Arc<AppState>>,
+) -> Result<Json<ModelDownloadResponse>> {
+    let models_dir = get_models_dir();
+
+    // Check if already downloaded
+    if model_exists(&models_dir) {
+        return Ok(Json(ModelDownloadResponse {
+            success: true,
+            message: "Model already downloaded".to_string(),
+        }));
+    }
+
+    // Start download in background
+    tokio::spawn(async move {
+        info!("Starting model download in background...");
+        match screensearch_llm::download_model(&models_dir).await {
+            Ok(_) => info!("Model download completed successfully"),
+            Err(e) => error!("Model download failed: {}", e),
+        }
+    });
+
+    Ok(Json(ModelDownloadResponse {
+        success: true,
+        message: format!(
+            "Download started. Model size: {:.2} GB",
+            MODEL_SIZE_BYTES as f64 / 1_000_000_000.0
+        ),
+    }))
+}
+
+// ============================================================
+// llama-server Management Handlers
+// ============================================================
+
+#[derive(Debug, Serialize)]
+pub struct ServerStatusResponse {
+    pub status: String,
+    pub port: u16,
+    pub idle_seconds: u64,
+    pub model_loaded: bool,
+    pub server_binary_available: bool,
+}
+
+/// GET /ai/server/status
+/// Returns the status of the local llama-server process
+pub async fn get_server_status(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ServerStatusResponse>> {
+    use screensearch_llm::{llama_server_exists, get_bin_dir, ServerStatus};
+
+    let bin_dir = get_bin_dir();
+    let server_binary_available = llama_server_exists(&bin_dir);
+
+    // Check if server is initialized
+    let guard = state.llama_server.read().await;
+    if let Some(server) = guard.as_ref() {
+        let status = server.status().await;
+        let port = server.active_port().await;
+        let idle_duration = server.idle_duration().await;
+
+        Ok(Json(ServerStatusResponse {
+            status: status.as_str().to_string(),
+            port,
+            idle_seconds: idle_duration.as_secs(),
+            model_loaded: status == ServerStatus::Running,
+            server_binary_available,
+        }))
+    } else {
+        Ok(Json(ServerStatusResponse {
+            status: "stopped".to_string(),
+            port: screensearch_llm::DEFAULT_LLAMA_PORT,
+            idle_seconds: 0,
+            model_loaded: false,
+            server_binary_available,
+        }))
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServerControlResponse {
+    pub success: bool,
+    pub message: String,
+    pub status: String,
+}
+
+/// POST /ai/server/start
+/// Start the llama-server process
+pub async fn start_server(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ServerControlResponse>> {
+    // Check prerequisites
+    let models_dir = get_models_dir();
+    if !model_exists(&models_dir) {
+        return Ok(Json(ServerControlResponse {
+            success: false,
+            message: "Model not downloaded. Please download the model first.".to_string(),
+            status: "error".to_string(),
+        }));
+    }
+
+    let bin_dir = screensearch_llm::get_bin_dir();
+    if !screensearch_llm::llama_server_exists(&bin_dir) {
+        return Ok(Json(ServerControlResponse {
+            success: false,
+            message: "llama-server not found. Downloading...".to_string(),
+            status: "error".to_string(),
+        }));
+    }
+
+    // Get or create server
+    match state.get_llama_server().await {
+        Ok(server) => {
+            // Try to start it
+            match server.ensure_started().await {
+                Ok(()) => {
+                    let status = server.status().await;
+                    Ok(Json(ServerControlResponse {
+                        success: true,
+                        message: format!("Server running on port {}", server.active_port().await),
+                        status: status.as_str().to_string(),
+                    }))
+                }
+                Err(e) => {
+                    Ok(Json(ServerControlResponse {
+                        success: false,
+                        message: format!("Failed to start server: {}", e),
+                        status: "error".to_string(),
+                    }))
+                }
+            }
+        }
+        Err(e) => {
+            Ok(Json(ServerControlResponse {
+                success: false,
+                message: format!("Failed to initialize server: {}", e),
+                status: "error".to_string(),
+            }))
+        }
+    }
+}
+
+/// POST /ai/server/stop
+/// Stop the llama-server process
+pub async fn stop_server(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ServerControlResponse>> {
+    let guard = state.llama_server.read().await;
+    if let Some(server) = guard.as_ref() {
+        if let Err(e) = server.stop().await {
+            return Ok(Json(ServerControlResponse {
+                success: false,
+                message: format!("Failed to stop server: {}", e),
+                status: "error".to_string(),
+            }));
+        }
+        Ok(Json(ServerControlResponse {
+            success: true,
+            message: "Server stopped".to_string(),
+            status: "stopped".to_string(),
+        }))
+    } else {
+        Ok(Json(ServerControlResponse {
+            success: true,
+            message: "Server was not running".to_string(),
+            status: "stopped".to_string(),
+        }))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateTtlRequest {
+    pub ttl_seconds: u64,
+}
+
+/// POST /ai/server/ttl
+/// Update the server idle timeout
+pub async fn update_server_ttl(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<UpdateTtlRequest>,
+) -> Result<Json<ServerControlResponse>> {
+    use std::time::Duration;
+
+    // Validate TTL (minimum 1 minute, maximum 1 hour)
+    if payload.ttl_seconds < 60 {
+        return Ok(Json(ServerControlResponse {
+            success: false,
+            message: "TTL must be at least 60 seconds".to_string(),
+            status: "error".to_string(),
+        }));
+    }
+    if payload.ttl_seconds > 3600 {
+        return Ok(Json(ServerControlResponse {
+            success: false,
+            message: "TTL cannot exceed 3600 seconds (1 hour)".to_string(),
+            status: "error".to_string(),
+        }));
+    }
+
+    let guard = state.llama_server.read().await;
+    if let Some(server) = guard.as_ref() {
+        server.set_idle_ttl(Duration::from_secs(payload.ttl_seconds)).await;
+        Ok(Json(ServerControlResponse {
+            success: true,
+            message: format!("TTL updated to {} seconds", payload.ttl_seconds),
+            status: server.status().await.as_str().to_string(),
+        }))
+    } else {
+        Ok(Json(ServerControlResponse {
+            success: false,
+            message: "Server not initialized".to_string(),
+            status: "stopped".to_string(),
+        }))
+    }
+}
+
+/// POST /ai/server/download
+/// Download the llama-server binary
+pub async fn download_llama_server(
+    State(_state): State<Arc<AppState>>,
+) -> Result<Json<ModelDownloadResponse>> {
+    use screensearch_llm::{llama_server_exists, get_bin_dir, LLAMA_SERVER_SIZE_BYTES};
+
+    let bin_dir = get_bin_dir();
+
+    // Check if already downloaded
+    if llama_server_exists(&bin_dir) {
+        return Ok(Json(ModelDownloadResponse {
+            success: true,
+            message: "llama-server already downloaded".to_string(),
+        }));
+    }
+
+    // Start download in background
+    tokio::spawn(async move {
+        info!("Starting llama-server download in background...");
+        match screensearch_llm::download_llama_server().await {
+            Ok(path) => info!("llama-server downloaded to {:?}", path),
+            Err(e) => error!("llama-server download failed: {}", e),
+        }
+    });
+
+    Ok(Json(ModelDownloadResponse {
+        success: true,
+        message: format!(
+            "Download started. Binary size: ~{:.1} MB",
+            LLAMA_SERVER_SIZE_BYTES as f64 / 1_000_000.0
+        ),
     }))
 }

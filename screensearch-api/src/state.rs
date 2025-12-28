@@ -3,6 +3,7 @@
 use screensearch_automation::AutomationEngine;
 use screensearch_db::DatabaseManager;
 use screensearch_embeddings::EmbeddingEngine;
+use screensearch_llm::LlamaServer;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -20,12 +21,15 @@ pub struct AppState {
 
     /// Shared capture interval in milliseconds (atomic for thread safety)
     pub capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
+
+    /// Local LLM server (auto-managed llama-server process)
+    pub llama_server: Arc<RwLock<Option<Arc<LlamaServer>>>>,
 }
 
 impl AppState {
     /// Create new application state
     pub fn new(
-        db: DatabaseManager, 
+        db: DatabaseManager,
         automation: AutomationEngine,
         capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
     ) -> Self {
@@ -34,6 +38,7 @@ impl AppState {
             automation: Arc::new(automation),
             embedding_engine: Arc::new(RwLock::new(None)),
             capture_interval_ms,
+            llama_server: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -59,6 +64,45 @@ impl AppState {
 
         Ok(engine_arc)
     }
+
+    /// Get or initialize the LlamaServer
+    pub async fn get_llama_server(&self) -> Result<Arc<LlamaServer>, String> {
+        use screensearch_llm::{LlamaServerConfig, get_model_path, get_models_dir};
+
+        // Check if already initialized
+        {
+            let guard = self.llama_server.read().await;
+            if let Some(server) = guard.as_ref() {
+                return Ok(Arc::clone(server));
+            }
+        }
+
+        // Initialize the server
+        let models_dir = get_models_dir();
+        let model_path = get_model_path(&models_dir);
+
+        let config = LlamaServerConfig {
+            model_path,
+            ..Default::default()
+        };
+
+        let server = LlamaServer::new(config);
+        let server_arc = Arc::new(server);
+
+        // Store it
+        {
+            let mut guard = self.llama_server.write().await;
+            *guard = Some(Arc::clone(&server_arc));
+        }
+
+        Ok(server_arc)
+    }
+
+    /// Shutdown the LlamaServer if running
+    pub async fn shutdown_llama_server(&self) {
+        let guard = self.llama_server.read().await;
+        if let Some(server) = guard.as_ref() {
+            server.shutdown().await;
+        }
+    }
 }
-
-

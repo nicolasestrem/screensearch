@@ -569,9 +569,18 @@ impl App {
             _ = external_shutdown.recv() => info!("External Shutdown"),
         }
 
+        info!("Initiating graceful shutdown...");
+
+        // Shutdown LlamaServer if running (via API server state)
+        // Note: The server shutdown is handled through AppState.shutdown_llama_server()
+        // which is called by the API handlers or when the state is dropped.
+        // We just need to ensure the shutdown broadcast is sent.
+
         let _ = self.shutdown_tx.send(());
         let _ = tokio::join!(capture_handle, ocr_handle, ocr_shutdown, db_handle, api_handle);
-        
+
+        info!("All services stopped. Shutdown complete.");
+
         Ok(())
     }
 }

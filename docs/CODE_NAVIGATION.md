@@ -91,6 +91,17 @@ screensearch/
 │   │   └── lib.rs               # Public API exports (117 lines)
 │   └── Cargo.toml
 │
+├── screensearch-llm/             # Embedded LLM workspace crate (v0.3.0)
+│   ├── src/
+│   │   ├── lib.rs               # Public API exports
+│   │   ├── config.rs            # LlmConfig, server settings
+│   │   ├── download.rs          # Model + binary auto-download
+│   │   ├── server.rs            # LlamaServer process management
+│   │   ├── engine.rs            # LlmEngine inference client
+│   │   ├── profiles.rs          # Inference profiles (VisionAnalysis, etc.)
+│   │   └── error.rs             # LlmError types
+│   └── Cargo.toml
+│
 ├── screensearch-ui/              # React web dashboard (optional)
 │   ├── src/
 │   │   ├── components/          # React components
@@ -184,6 +195,24 @@ screensearch/
 | Text chunking | `screensearch-embeddings/src/chunker.rs` | `TextChunker::chunk()` |
 | Model auto-download | `screensearch-embeddings/src/download.rs` | `download_model()`, `needs_download()` |
 | Background processing | `screensearch-api/src/workers/embedding_worker.rs` | `start_embedding_worker()` |
+
+### Embedded LLM (v0.3.0)
+
+| What | Where | File:Line |
+|------|-------|-----------|
+| LLM configuration | `screensearch-llm/src/config.rs` | `LlmConfig` struct |
+| Model download | `screensearch-llm/src/download.rs` | `download_model()`, `download_llama_server()` |
+| Server management | `screensearch-llm/src/server.rs` | `LlamaServer::start()`, `::stop()`, `::ensure_running()` |
+| Inference engine | `screensearch-llm/src/engine.rs` | `LlmEngine::generate()`, `::generate_with_image()` |
+| Inference profiles | `screensearch-llm/src/profiles.rs` | `InferenceProfile::VisionAnalysis`, `::RagAnswer` |
+| AI API handlers | `screensearch-api/src/handlers/ai.rs` | `generate_handler()`, `model_status()`, `model_download()` |
+| Local provider detection | `screensearch-api/src/handlers/ai.rs:310-322` | `provider_url == "local"` branch |
+
+**Key Constants:**
+- Default port: `31130` (fallbacks: `31131`, `31132`)
+- Model: `Ministral-3B-Instruct-2512-Q4_K_M.gguf` (~2.15 GB)
+- Binary: `llama-b7562-bin-win-vulkan-x64.zip`
+- Idle TTL: 300 seconds (configurable)
 
 ### Main Application
 
@@ -553,5 +582,5 @@ info!("Processing {} pending frames for embeddings", count);
 
 ---
 
-**Last Updated**: 2025-12-13
-**Version**: 0.2.0
+**Last Updated**: 2025-12-28
+**Version**: 0.3.0

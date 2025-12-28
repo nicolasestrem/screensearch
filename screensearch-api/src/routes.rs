@@ -157,6 +157,15 @@ fn ai_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/validate", post(handlers::validate_connection))
         .route("/generate", post(handlers::generate_report))
+        // Local model management
+        .route("/model/status", get(handlers::get_model_status))
+        .route("/model/download", post(handlers::start_model_download))
+        // llama-server management
+        .route("/server/status", get(handlers::get_server_status))
+        .route("/server/start", post(handlers::start_server))
+        .route("/server/stop", post(handlers::stop_server))
+        .route("/server/ttl", post(handlers::update_server_ttl))
+        .route("/server/download", post(handlers::download_llama_server))
 }
 
 /// Embeddings routes for RAG
