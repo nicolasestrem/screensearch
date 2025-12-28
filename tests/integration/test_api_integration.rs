@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use axum::http::StatusCode;
-use screen_db::{DatabaseConfig, DatabaseManager, NewFrame, NewOcrText};
+use screensearch_db::{DatabaseConfig, DatabaseManager, NewFrame, NewOcrText, NewTag, FrameFilter, Pagination};
 use std::sync::Arc;
 
 /// Helper function to create test database with sample data
@@ -35,9 +35,12 @@ async fn setup_test_db() -> Result<Arc<DatabaseManager>> {
     let ocr = NewOcrText {
         frame_id,
         text: "Sample text for testing".to_string(),
-        text_json: serde_json::json!({"confidence": 0.9}).to_string(),
-        ocr_engine: "test".to_string(),
-        focused: true,
+        text_json: Some(serde_json::json!({"confidence": 0.9}).to_string()),
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        confidence: 0.9,
     };
 
     db.insert_ocr_text(ocr).await?;
@@ -72,8 +75,8 @@ async fn test_search_endpoint() -> Result<()> {
     // Test direct database search (simulating what the API would do)
     let results = db.search_ocr_text(
         "Sample",
-        screen_db::FrameFilter::default(),
-        screen_db::Pagination::default()
+        FrameFilter::default(),
+        Pagination::default()
     ).await?;
 
     assert!(results.len() > 0);
@@ -90,8 +93,8 @@ async fn test_frames_endpoint() -> Result<()> {
 
     // Test direct database query (simulating what the API would do)
     let frames = db.get_frames(
-        screen_db::FrameFilter::default(),
-        screen_db::Pagination::default()
+        FrameFilter::default(),
+        Pagination::default()
     ).await?;
 
     assert_eq!(frames.len(), 1);
@@ -107,8 +110,10 @@ async fn test_tags_operations() -> Result<()> {
     let db = setup_test_db().await?;
 
     // Create a tag
-    let new_tag = screen_db::NewTag {
-        name: "test-tag".to_string(),
+    let new_tag = NewTag {
+        tag_name: "test-tag".to_string(),
+        description: None,
+        color: None,
     };
 
     let tag_id = db.create_tag(new_tag).await?;
@@ -121,8 +126,8 @@ async fn test_tags_operations() -> Result<()> {
 
     // Get frames
     let frames = db.get_frames(
-        screen_db::FrameFilter::default(),
-        screen_db::Pagination::default()
+        FrameFilter::default(),
+        Pagination::default()
     ).await?;
     let frame_id = frames[0].id;
 
@@ -130,14 +135,14 @@ async fn test_tags_operations() -> Result<()> {
     db.add_tag_to_frame(frame_id, tag_id).await?;
 
     // Get frame tags
-    let frame_tags = db.get_frame_tags(frame_id).await?;
+    let frame_tags = db.get_tags_for_frame(frame_id).await?;
     assert!(frame_tags.len() > 0);
 
     // Remove tag from frame
     db.remove_tag_from_frame(frame_id, tag_id).await?;
 
     // Verify removal
-    let frame_tags = db.get_frame_tags(frame_id).await?;
+    let frame_tags = db.get_tags_for_frame(frame_id).await?;
     assert_eq!(frame_tags.len(), 0);
 
     // Delete tag
@@ -155,8 +160,8 @@ async fn test_database_statistics() -> Result<()> {
     // Get statistics
     let stats = db.get_statistics().await?;
 
-    assert!(stats.total_frames > 0);
-    assert!(stats.total_ocr_text > 0);
+    assert!(stats.frame_count > 0);
+    assert!(stats.ocr_count > 0);
 
     Ok(())
 }

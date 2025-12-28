@@ -46,6 +46,9 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
 
+# Database
+sqlx = { workspace = true }
+
 # Time
 chrono = { workspace = true }
 
@@ -65,7 +68,7 @@ reqwest = { version = "0.11", features = ["json"] }
 dirs = "5.0"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["Nicolas Estrem"]
 license = "MIT"

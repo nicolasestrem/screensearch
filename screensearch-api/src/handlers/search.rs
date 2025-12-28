@@ -526,6 +526,7 @@ mod tests {
             end_time: None,
             app: None,
             limit: None,
+            mode: None,
         };
         assert!(query.q.is_empty());
     }

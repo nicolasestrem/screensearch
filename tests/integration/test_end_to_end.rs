@@ -3,9 +3,9 @@
 //! Tests the complete pipeline: capture → OCR → database → API
 
 use anyhow::Result;
-use screen_api::ApiConfig;
-use screen_capture::{CaptureConfig, CaptureEngine, OcrProcessor, OcrProcessorConfig};
-use screen_db::{DatabaseConfig, DatabaseManager, FrameFilter, Pagination};
+use screensearch_api::ApiConfig;
+use screensearch_capture::{CaptureConfig, CaptureEngine, OcrProcessor, OcrProcessorBuilder};
+use screensearch_db::{DatabaseConfig, DatabaseManager, FrameFilter, Pagination, NewFrame, NewOcrText};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -30,13 +30,12 @@ async fn test_full_pipeline() -> Result<()> {
     capture_engine.start()?;
 
     // Initialize OCR processor
-    let ocr_config = OcrProcessorConfig {
-        min_confidence: 0.5,
-        worker_threads: 1,
-        store_empty_frames: true,
-        ..Default::default()
-    };
-    let ocr_processor = Arc::new(OcrProcessor::new(ocr_config).await?);
+    let ocr_processor = Arc::new(OcrProcessorBuilder::new()
+        .min_confidence(0.5)
+        .worker_threads(1)
+        .store_empty_frames(true)
+        .build()
+        .await?);
 
     // Create processing pipeline
     let (frame_tx, frame_rx) = mpsc::unbounded_channel();
@@ -63,7 +62,7 @@ async fn test_full_pipeline() -> Result<()> {
     let mut frame_count = 0;
     while let Some(processed) = processed_rx.recv().await {
         // Store in database
-        let new_frame = screen_db::NewFrame {
+        let new_frame = NewFrame {
             timestamp: processed.frame.timestamp,
             device_name: format!("monitor-{}", processed.frame.monitor_index),
             file_path: format!("test_frame_{}.png", frame_count),
@@ -106,7 +105,7 @@ async fn test_database_query_pipeline() -> Result<()> {
     let db = DatabaseManager::with_config(db_config).await?;
 
     // Insert test frame
-    let new_frame = screen_db::NewFrame {
+    let new_frame = NewFrame {
         timestamp: chrono::Utc::now(),
         device_name: "test-monitor".to_string(),
         file_path: "test.png".to_string(),
@@ -125,12 +124,15 @@ async fn test_database_query_pipeline() -> Result<()> {
     assert!(frame_id > 0);
 
     // Insert OCR text
-    let ocr_text = screen_db::NewOcrText {
+    let ocr_text = NewOcrText {
         frame_id,
         text: "Hello World Test".to_string(),
-        text_json: serde_json::json!({"confidence": 0.95}).to_string(),
-        ocr_engine: "test".to_string(),
-        focused: true,
+        text_json: Some(serde_json::json!({"confidence": 0.95}).to_string()),
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        confidence: 0.95,
     };
 
     let ocr_id = db.insert_ocr_text(ocr_text).await?;

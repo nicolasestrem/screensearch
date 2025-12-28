@@ -1,6 +1,6 @@
 //! Integration tests for UI automation
 
-use screen_automation::*;
+use screensearch_automation::*;
 use std::time::Duration;
 
 #[tokio::test]

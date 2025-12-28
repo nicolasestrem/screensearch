@@ -9,10 +9,7 @@
 //! Run with: cargo run --example ocr_demo
 
 use image::{Rgba, RgbaImage};
-use imageproc::drawing::{draw_hollow_rect_mut, draw_text_mut};
-use imageproc::rect::Rect;
-use rusttype::{Font, Scale};
-use screen_capture::{OcrEngine, OcrProcessor, OcrProcessorBuilder};
+use screensearch_capture::{OcrEngine, OcrProcessorBuilder};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -95,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
 fn create_test_image() -> RgbaImage {
     let width = 800;
     let height = 600;
-    let mut image = RgbaImage::from_pixel(width, height, Rgba([255, 255, 255, 255]));
+    let image = RgbaImage::from_pixel(width, height, Rgba([255, 255, 255, 255]));
 
     // Note: In a real implementation, you would load a font
     // For this demo, we'll create a simple text pattern

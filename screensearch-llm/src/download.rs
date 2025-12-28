@@ -32,9 +32,11 @@ pub const LLAMA_SERVER_FILENAME: &str = "llama-server";
 pub const LLAMA_SERVER_SIZE_BYTES: u64 = 22_500_000;
 
 /// llama.cpp releases base URL (moved from ggerganov to ggml-org)
+#[allow(dead_code)]
 const LLAMA_CPP_RELEASES_URL: &str = "https://github.com/ggml-org/llama.cpp/releases";
 
 /// Current llama.cpp version for downloads
+#[allow(dead_code)]
 const LLAMA_VERSION: &str = "b7562";
 
 /// Get the latest llama-server download URL for the current platform
@@ -358,6 +360,7 @@ pub async fn download_model_with_progress(
 }
 
 /// Delete the downloaded model
+#[allow(dead_code)]
 pub async fn delete_model(models_dir: &Path) -> Result<()> {
     let model_path = get_model_path(models_dir);
     if model_path.exists() {
@@ -601,6 +604,7 @@ fn extract_llama_server(zip_path: &Path, bin_dir: &Path) -> Result<PathBuf> {
 }
 
 /// Delete the downloaded llama-server
+#[allow(dead_code)]
 pub async fn delete_llama_server() -> Result<()> {
     let server_path = get_llama_server_path();
     if server_path.exists() {

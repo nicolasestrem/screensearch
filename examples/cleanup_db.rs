@@ -1,5 +1,4 @@
 use sqlx::sqlite::SqlitePoolOptions;
-use std::env;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

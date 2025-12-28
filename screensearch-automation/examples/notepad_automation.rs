@@ -6,7 +6,7 @@
 //! - Typing text
 //! - Using keyboard shortcuts
 
-use screen_automation::*;
+use screensearch_automation::*;
 use std::time::Duration;
 
 #[tokio::main]
@@ -19,14 +19,14 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Open Notepad
     println!("1. Opening Notepad...");
-    let notepad = engine.open_application("notepad").await?;
-    println!("   Notepad opened: {:?}", notepad.name());
+    engine.open_application("notepad").await?;
+    println!("   Notepad command sent");
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Find the edit control
     println!("\n2. Finding text editor...");
     let editor = engine
-        .find_element_with_timeout(&Selector::role("edit"), Duration::from_secs(5))
+        .find_element_with_timeout(&Selector::role("edit").build(), Duration::from_secs(5))
         .await?;
     println!("   Found editor: {:?}", editor.role());
 

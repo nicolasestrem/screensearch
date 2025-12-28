@@ -56,10 +56,6 @@ export function MemoryStatusGauge() {
       last_processed_frame_id: 12450
   };
 
-  /* 
-  if (!status) { ... placeholder removed ... }
-  */
-
   return (
     <GlassCard padding="lg">
       <GlassCardHeader icon={<Brain className="h-5 w-5" />}>

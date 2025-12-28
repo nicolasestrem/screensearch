@@ -2,7 +2,7 @@
 //!
 //! Demonstrates low-level input simulation
 
-use screen_automation::*;
+use screensearch_automation::*;
 use std::time::Duration;
 
 #[tokio::main]

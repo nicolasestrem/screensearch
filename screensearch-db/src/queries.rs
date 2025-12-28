@@ -990,7 +990,7 @@ impl DatabaseManager {
     /// Get pending analysis tasks (locks them implicitly by return, caller must process)
     /// Ideally we should use a transaction to lock rows, but SQLite is single-writer.
     /// We can use 'locked_until' to implement a soft lock.
-    pub async fn claim_analysis_task(&self, worker_id: &str) -> Result<Option<AnalysisQueueItem>> {
+    pub async fn claim_analysis_task(&self, _worker_id: &str) -> Result<Option<AnalysisQueueItem>> {
         // Find highest priority pending task not locked
         // We use a transaction to ensure atomicity
         let mut tx = self.pool().begin().await?;

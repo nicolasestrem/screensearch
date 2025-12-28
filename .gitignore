@@ -54,7 +54,6 @@ target/release/installers/*.zip
 
 #Old docs
 /docs/archived
-CLAUDE.md
 /FOUND
 /.claude
 docs/troubleshooting-2025-12-11.md

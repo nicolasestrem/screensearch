@@ -1,6 +1,6 @@
 //! Integration tests for the REST API
 
-use screen_api::{ApiConfig, ApiServer};
+use screensearch_api::{ApiConfig, ApiServer};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -14,7 +14,8 @@ async fn test_server_initialization() {
     };
 
     // Server should initialize without errors
-    let result = ApiServer::new(config).await;
+    let interval = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(5000));
+    let result = ApiServer::new(config, interval).await;
     assert!(result.is_ok(), "Server initialization should succeed");
 }
 

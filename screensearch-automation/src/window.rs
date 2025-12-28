@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn test_window_manager_creation() {
         let manager = WindowManager::new();
-        assert!(std::mem::size_of_val(&manager) >= 0);
+        assert!(std::mem::size_of_val(&manager) > 0);
     }
 
     #[test]

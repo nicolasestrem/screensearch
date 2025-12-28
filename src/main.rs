@@ -142,6 +142,7 @@ struct LoggingSettings {
     level: String,
     log_to_file: bool,
     log_file: String,
+    #[allow(dead_code)]
     max_log_size_mb: u64,
     log_rotation_count: u32,
 }
