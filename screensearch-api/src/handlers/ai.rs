@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
-/// Local LLM server endpoint (llama.cpp server)
-const LOCAL_LLM_ENDPOINT: &str = "http://127.0.0.1:8080/v1";
+/// Local LLM server endpoint (llama.cpp server on port 31130)
+const LOCAL_LLM_ENDPOINT: &str = "http://127.0.0.1:31130/v1";
 
 // ============================================================
 // Helper Functions
@@ -495,6 +495,226 @@ pub async fn start_model_download(
         message: format!(
             "Download started. Model size: {:.2} GB",
             MODEL_SIZE_BYTES as f64 / 1_000_000_000.0
+        ),
+    }))
+}
+
+// ============================================================
+// llama-server Management Handlers
+// ============================================================
+
+#[derive(Debug, Serialize)]
+pub struct ServerStatusResponse {
+    pub status: String,
+    pub port: u16,
+    pub idle_seconds: u64,
+    pub model_loaded: bool,
+    pub server_binary_available: bool,
+}
+
+/// GET /ai/server/status
+/// Returns the status of the local llama-server process
+pub async fn get_server_status(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ServerStatusResponse>> {
+    use screensearch_llm::{llama_server_exists, get_bin_dir, ServerStatus};
+
+    let bin_dir = get_bin_dir();
+    let server_binary_available = llama_server_exists(&bin_dir);
+
+    // Check if server is initialized
+    let guard = state.llama_server.read().await;
+    if let Some(server) = guard.as_ref() {
+        let status = server.status().await;
+        let port = server.active_port().await;
+        let idle_duration = server.idle_duration().await;
+
+        Ok(Json(ServerStatusResponse {
+            status: status.as_str().to_string(),
+            port,
+            idle_seconds: idle_duration.as_secs(),
+            model_loaded: status == ServerStatus::Running,
+            server_binary_available,
+        }))
+    } else {
+        Ok(Json(ServerStatusResponse {
+            status: "stopped".to_string(),
+            port: screensearch_llm::DEFAULT_LLAMA_PORT,
+            idle_seconds: 0,
+            model_loaded: false,
+            server_binary_available,
+        }))
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServerControlResponse {
+    pub success: bool,
+    pub message: String,
+    pub status: String,
+}
+
+/// POST /ai/server/start
+/// Start the llama-server process
+pub async fn start_server(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ServerControlResponse>> {
+    // Check prerequisites
+    let models_dir = get_models_dir();
+    if !model_exists(&models_dir) {
+        return Ok(Json(ServerControlResponse {
+            success: false,
+            message: "Model not downloaded. Please download the model first.".to_string(),
+            status: "error".to_string(),
+        }));
+    }
+
+    let bin_dir = screensearch_llm::get_bin_dir();
+    if !screensearch_llm::llama_server_exists(&bin_dir) {
+        return Ok(Json(ServerControlResponse {
+            success: false,
+            message: "llama-server not found. Downloading...".to_string(),
+            status: "error".to_string(),
+        }));
+    }
+
+    // Get or create server
+    match state.get_llama_server().await {
+        Ok(server) => {
+            // Try to start it
+            match server.ensure_started().await {
+                Ok(()) => {
+                    let status = server.status().await;
+                    Ok(Json(ServerControlResponse {
+                        success: true,
+                        message: format!("Server running on port {}", server.active_port().await),
+                        status: status.as_str().to_string(),
+                    }))
+                }
+                Err(e) => {
+                    Ok(Json(ServerControlResponse {
+                        success: false,
+                        message: format!("Failed to start server: {}", e),
+                        status: "error".to_string(),
+                    }))
+                }
+            }
+        }
+        Err(e) => {
+            Ok(Json(ServerControlResponse {
+                success: false,
+                message: format!("Failed to initialize server: {}", e),
+                status: "error".to_string(),
+            }))
+        }
+    }
+}
+
+/// POST /ai/server/stop
+/// Stop the llama-server process
+pub async fn stop_server(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ServerControlResponse>> {
+    let guard = state.llama_server.read().await;
+    if let Some(server) = guard.as_ref() {
+        if let Err(e) = server.stop().await {
+            return Ok(Json(ServerControlResponse {
+                success: false,
+                message: format!("Failed to stop server: {}", e),
+                status: "error".to_string(),
+            }));
+        }
+        Ok(Json(ServerControlResponse {
+            success: true,
+            message: "Server stopped".to_string(),
+            status: "stopped".to_string(),
+        }))
+    } else {
+        Ok(Json(ServerControlResponse {
+            success: true,
+            message: "Server was not running".to_string(),
+            status: "stopped".to_string(),
+        }))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateTtlRequest {
+    pub ttl_seconds: u64,
+}
+
+/// POST /ai/server/ttl
+/// Update the server idle timeout
+pub async fn update_server_ttl(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<UpdateTtlRequest>,
+) -> Result<Json<ServerControlResponse>> {
+    use std::time::Duration;
+
+    // Validate TTL (minimum 1 minute, maximum 1 hour)
+    if payload.ttl_seconds < 60 {
+        return Ok(Json(ServerControlResponse {
+            success: false,
+            message: "TTL must be at least 60 seconds".to_string(),
+            status: "error".to_string(),
+        }));
+    }
+    if payload.ttl_seconds > 3600 {
+        return Ok(Json(ServerControlResponse {
+            success: false,
+            message: "TTL cannot exceed 3600 seconds (1 hour)".to_string(),
+            status: "error".to_string(),
+        }));
+    }
+
+    let guard = state.llama_server.read().await;
+    if let Some(server) = guard.as_ref() {
+        server.set_idle_ttl(Duration::from_secs(payload.ttl_seconds)).await;
+        Ok(Json(ServerControlResponse {
+            success: true,
+            message: format!("TTL updated to {} seconds", payload.ttl_seconds),
+            status: server.status().await.as_str().to_string(),
+        }))
+    } else {
+        Ok(Json(ServerControlResponse {
+            success: false,
+            message: "Server not initialized".to_string(),
+            status: "stopped".to_string(),
+        }))
+    }
+}
+
+/// POST /ai/server/download
+/// Download the llama-server binary
+pub async fn download_llama_server(
+    State(_state): State<Arc<AppState>>,
+) -> Result<Json<ModelDownloadResponse>> {
+    use screensearch_llm::{llama_server_exists, get_bin_dir, LLAMA_SERVER_SIZE_BYTES};
+
+    let bin_dir = get_bin_dir();
+
+    // Check if already downloaded
+    if llama_server_exists(&bin_dir) {
+        return Ok(Json(ModelDownloadResponse {
+            success: true,
+            message: "llama-server already downloaded".to_string(),
+        }));
+    }
+
+    // Start download in background
+    tokio::spawn(async move {
+        info!("Starting llama-server download in background...");
+        match screensearch_llm::download_llama_server().await {
+            Ok(path) => info!("llama-server downloaded to {:?}", path),
+            Err(e) => error!("llama-server download failed: {}", e),
+        }
+    });
+
+    Ok(Json(ModelDownloadResponse {
+        success: true,
+        message: format!(
+            "Download started. Binary size: ~{:.1} MB",
+            LLAMA_SERVER_SIZE_BYTES as f64 / 1_000_000.0
         ),
     }))
 }

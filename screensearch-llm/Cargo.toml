@@ -39,6 +39,16 @@ dirs = "5.0"
 image = { workspace = true }
 base64 = "0.21"
 
+# ZIP extraction for llama-server download
+zip = "0.6"
+
+# URL parsing for validation
+url = "2.5"
+
+# Unix signal handling (Linux/macOS only)
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.28", features = ["signal"] }
+
 [lib]
 name = "screensearch_llm"
 path = "src/lib.rs"

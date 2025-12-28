@@ -34,6 +34,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
     apply_migration(pool, "004_add_embedding_column", MIGRATION_004_ADD_EMBEDDING_COLUMN).await?;
     apply_migration(pool, "005_vision_analysis", MIGRATION_005_VISION).await?;
     apply_migration(pool, "006_api_key", MIGRATION_006_API_KEY).await?;
+    apply_migration(pool, "007_reset_vision_defaults", MIGRATION_007_RESET_VISION_DEFAULTS).await?;
 
     tracing::info!("All migrations completed successfully");
     Ok(())
@@ -321,13 +322,30 @@ CREATE TRIGGER IF NOT EXISTS frames_ai_update AFTER UPDATE ON frames BEGIN
 END;
 
 -- Add vision settings columns
-ALTER TABLE settings ADD COLUMN vision_enabled INTEGER DEFAULT 1;
-ALTER TABLE settings ADD COLUMN vision_provider TEXT DEFAULT 'ollama';
-ALTER TABLE settings ADD COLUMN vision_model TEXT DEFAULT 'moondream';
-ALTER TABLE settings ADD COLUMN vision_endpoint TEXT DEFAULT 'http://localhost:11434';
+-- Default to local provider (Ministral-3B) with vision disabled
+-- Users must opt-in to enable AI features
+ALTER TABLE settings ADD COLUMN vision_enabled INTEGER DEFAULT 0;
+ALTER TABLE settings ADD COLUMN vision_provider TEXT DEFAULT 'local';
+ALTER TABLE settings ADD COLUMN vision_model TEXT DEFAULT 'ministral-3:3b';
+ALTER TABLE settings ADD COLUMN vision_endpoint TEXT DEFAULT 'http://127.0.0.1:31130';
 "#;
 
 /// Migration 006 - Add API Key for external providers
 const MIGRATION_006_API_KEY: &str = r#"
 ALTER TABLE settings ADD COLUMN vision_api_key TEXT;
+"#;
+
+/// Migration 007 - Reset vision defaults to local provider
+/// This ensures existing databases don't auto-connect to external APIs
+/// Users who previously configured external providers will need to re-enable
+const MIGRATION_007_RESET_VISION_DEFAULTS: &str = r#"
+-- Reset vision settings to use local provider by default
+-- This migration ensures existing databases don't auto-connect to external APIs
+-- User can still manually enable and configure external providers in settings
+UPDATE settings SET
+    vision_enabled = 0,
+    vision_provider = 'local',
+    vision_model = 'ministral-3:3b',
+    vision_endpoint = 'http://127.0.0.1:31130'
+WHERE id = 1;
 "#;

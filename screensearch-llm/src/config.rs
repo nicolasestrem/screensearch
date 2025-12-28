@@ -1,6 +1,7 @@
 //! Configuration for the LLM engine
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// Default temperature for generation (0.0 = deterministic, 1.0 = creative)
 pub const DEFAULT_TEMPERATURE: f32 = 0.7;
@@ -13,6 +14,12 @@ pub const DEFAULT_CONTEXT_LENGTH: usize = 8192;
 
 /// Default number of threads (0 = auto-detect)
 pub const DEFAULT_THREADS: usize = 0;
+
+/// Default idle timeout in seconds (5 minutes)
+pub const DEFAULT_IDLE_TTL_SECS: u64 = 300;
+
+/// Default llama-server port
+pub const DEFAULT_LLAMA_PORT: u16 = 31130;
 
 /// Configuration for the LLM engine
 #[derive(Debug, Clone)]
@@ -44,6 +51,13 @@ pub struct LlmConfig {
 
     /// Repetition penalty (1.0 = no penalty)
     pub repetition_penalty: f32,
+
+    /// Idle timeout before shutting down the server
+    /// Server shuts down after this duration without requests
+    pub idle_ttl: Duration,
+
+    /// Port for the llama-server to listen on
+    pub server_port: u16,
 }
 
 impl Default for LlmConfig {
@@ -58,6 +72,8 @@ impl Default for LlmConfig {
             top_p: 0.95,
             top_k: 40,
             repetition_penalty: 1.1,
+            idle_ttl: Duration::from_secs(DEFAULT_IDLE_TTL_SECS),
+            server_port: DEFAULT_LLAMA_PORT,
         }
     }
 }
@@ -95,6 +111,42 @@ impl LlmConfig {
     /// Enable/disable GPU
     pub fn with_gpu(mut self, use_gpu: bool) -> Self {
         self.use_gpu = use_gpu;
+        self
+    }
+
+    /// Set idle TTL
+    pub fn with_idle_ttl(mut self, ttl: Duration) -> Self {
+        self.idle_ttl = ttl;
+        self
+    }
+
+    /// Set idle TTL from seconds
+    pub fn with_idle_ttl_secs(mut self, secs: u64) -> Self {
+        self.idle_ttl = Duration::from_secs(secs);
+        self
+    }
+
+    /// Set server port
+    pub fn with_server_port(mut self, port: u16) -> Self {
+        self.server_port = port;
+        self
+    }
+
+    /// Set top-k
+    pub fn with_top_k(mut self, top_k: usize) -> Self {
+        self.top_k = top_k;
+        self
+    }
+
+    /// Set top-p
+    pub fn with_top_p(mut self, top_p: f32) -> Self {
+        self.top_p = top_p.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set repetition penalty
+    pub fn with_repetition_penalty(mut self, penalty: f32) -> Self {
+        self.repetition_penalty = penalty.max(1.0);
         self
     }
 }

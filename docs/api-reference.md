@@ -2,7 +2,7 @@
 
 Complete API reference for the ScreenSearch REST API server. This API provides search capabilities for captured screen content, computer automation controls, tag management, and AI-powered intelligence reports with vector embeddings.
 
-**Total Endpoints**: 26
+**Total Endpoints**: 32
 
 ## Overview
 
@@ -47,7 +47,7 @@ All successful responses return JSON with appropriate HTTP status codes. Error r
 | **Embeddings (RAG)** | 3 endpoints | Vector embeddings for semantic search |
 | **Automation** | 9 endpoints | Computer control via Windows UIAutomation |
 | **Tag Management** | 6 endpoints | Organize frames with tags |
-| **AI Intelligence** | 3 endpoints | Generate reports, test connections, and validate providers |
+| **AI Intelligence** | 9 endpoints | Generate reports, local LLM management, model downloads |
 | **System** | 2 endpoints | Health checks and settings |
 
 ---
@@ -1360,7 +1360,25 @@ All captured screen content is stored locally. The API does not:
 
 ## Version History
 
-### v0.1.0 (Current)
+### v0.3.0 (Current)
+
+Embedded LLM and AI-First UI:
+- **Embedded Ministral-3B**: Local LLM via llama.cpp server
+- **Vulkan GPU acceleration**: Cross-platform GPU support (NVIDIA, AMD, Intel)
+- **Local provider option**: `provider_url: "local"` for zero-config AI
+- **Model management endpoints**: Download, status, server control
+- **AI-First Dashboard**: Intel Dash with glassmorphism design
+- See `docs/embedded-llm.md` for complete LLM documentation
+
+### v0.2.0
+
+Hybrid search and semantic understanding:
+- Vector embeddings for semantic search
+- Hybrid FTS5 + vector ranking
+- AI intelligence reports with RAG context
+- External LLM provider support (Ollama, OpenAI-compatible)
+
+### v0.1.0
 
 Initial release with core functionality:
 - Full-text search with FTS5
@@ -1480,21 +1498,27 @@ Test the configuration of an AI provider (Vision or LLM) by sending a simple pro
 
 ---
 
-### POST /api/generate
+### POST /api/ai/generate
 
-Generate a structured answer or report based on a user query, using RAG (Retrieval-Augmented Generation) if available.
+Generate an intelligence report using RAG context from captured screens. Supports both local embedded LLM and external providers.
 
 #### Request Body
 
 ```json
 {
-  "query": "What did I work on yesterday?"
+  "query": "What did I work on yesterday?",
+  "provider_url": "local",
+  "model": "ministral-3b",
+  "api_key": ""
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `query` | string | Yes | User question or prompt |
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `query` | string | Yes | - | User question or prompt |
+| `provider_url` | string | No | From settings | `"local"` for embedded LLM, or OpenAI-compatible URL |
+| `model` | string | No | From settings | Model name (ignored for local) |
+| `api_key` | string | No | - | API key for external providers |
 
 #### Response
 
@@ -1509,3 +1533,161 @@ Generate a structured answer or report based on a user query, using RAG (Retriev
 |-------|------|-------------|
 | `answer` | string | Generated markdown text response |
 | `sources` | array | List of Frame IDs used as context |
+
+#### Notes
+
+- When `provider_url` is `"local"`, uses the embedded Ministral-3B model
+- Local provider auto-starts llama-server if not running
+- Model must be downloaded before first use (see `/api/ai/model/download`)
+
+---
+
+### POST /api/ai/validate
+
+Test AI provider connection and configuration.
+
+#### Request Body
+
+```json
+{
+  "provider_url": "local",
+  "model": "ministral-3b",
+  "api_key": ""
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `provider_url` | string | Yes | `"local"` or OpenAI-compatible endpoint URL |
+| `model` | string | Yes | Model name to test |
+| `api_key` | string | No | API key for external providers |
+
+#### Response
+
+```json
+{
+  "success": true,
+  "message": "Local Ministral-3B model ready"
+}
+```
+
+---
+
+### GET /api/ai/model/status
+
+Get the status of the embedded local LLM model.
+
+#### Response
+
+```json
+{
+  "downloaded": true,
+  "downloading": false,
+  "model_name": "Ministral-3B-Instruct-2512-Q4_K_M",
+  "model_size_bytes": 2150000000,
+  "model_path": "C:\\Users\\...\\ScreenSearch\\models\\Ministral-3B-Instruct-2512-Q4_K_M.gguf"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `downloaded` | boolean | Whether the model file exists |
+| `downloading` | boolean | Whether download is in progress |
+| `model_name` | string | Full model filename |
+| `model_size_bytes` | integer | Expected model size (~2.15 GB) |
+| `model_path` | string/null | Path to model file if downloaded |
+
+---
+
+### POST /api/ai/model/download
+
+Trigger download of the embedded LLM model and llama-server binary.
+
+#### Request Body
+
+No request body required.
+
+#### Response
+
+```json
+{
+  "success": true,
+  "message": "Download started. Model size: 2.15 GB"
+}
+```
+
+#### Notes
+
+- Downloads from HuggingFace (model) and GitHub (llama.cpp binary)
+- Model: `Ministral-3B-Instruct-2512-Q4_K_M.gguf` (~2.15 GB)
+- Binary: `llama-b7562-bin-win-vulkan-x64.zip` (Vulkan GPU support)
+- Files stored in `%APPDATA%\ScreenSearch\models\`
+
+---
+
+### POST /api/ai/server/start
+
+Manually start the llama-server process for local inference.
+
+#### Request Body
+
+No request body required.
+
+#### Response
+
+```json
+{
+  "success": true,
+  "message": "Server started on port 31130",
+  "port": 31130
+}
+```
+
+#### Notes
+
+- Server auto-starts on first `/api/ai/generate` request with `provider_url: "local"`
+- Tries ports 31130, 31131, 31132 if primary port is busy
+- Server auto-shuts down after 5 minutes of inactivity (configurable)
+
+---
+
+### POST /api/ai/server/stop
+
+Stop the running llama-server process.
+
+#### Request Body
+
+No request body required.
+
+#### Response
+
+```json
+{
+  "success": true,
+  "message": "Server stopped"
+}
+```
+
+---
+
+### GET /api/ai/server/status
+
+Check if llama-server is running.
+
+#### Response
+
+```json
+{
+  "running": true,
+  "port": 31130,
+  "pid": 12345,
+  "uptime_seconds": 300
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `running` | boolean | Whether server process is alive |
+| `port` | integer/null | Port server is listening on |
+| `pid` | integer/null | Process ID of llama-server |
+| `uptime_seconds` | integer/null | How long server has been running |

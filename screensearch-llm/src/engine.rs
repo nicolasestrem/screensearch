@@ -14,9 +14,10 @@
 //! 3. Uses the well-tested llama.cpp implementation
 //! 4. Can be bundled with the installer
 
-use crate::config::LlmConfig;
+use crate::config::{LlmConfig, DEFAULT_LLAMA_PORT};
 use crate::download::{get_model_path, get_models_dir, model_exists};
 use crate::error::{LlmError, Result};
+use crate::profiles::{InferenceParameters, InferenceProfile};
 use crate::TextGenerator;
 use async_trait::async_trait;
 use image::DynamicImage;
@@ -26,10 +27,10 @@ use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
-/// Default local server endpoint (llama.cpp server)
-const DEFAULT_LOCAL_ENDPOINT: &str = "http://127.0.0.1:8080";
+/// Default local server endpoint (llama.cpp server on port 31130)
+const DEFAULT_LOCAL_ENDPOINT: &str = "http://127.0.0.1:31130";
 
 /// The main LLM engine for local inference
 ///
@@ -52,6 +53,10 @@ struct ChatCompletionRequest {
     max_tokens: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_k: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repeat_penalty: Option<f32>,
 }
 
 /// Chat message format
@@ -139,7 +144,15 @@ impl LlmEngine {
             .map_err(|e| LlmError::ModelInitError(format!("Failed to create HTTP client: {}", e)))?;
 
         // Use configured endpoint or default to local llama.cpp server
-        let endpoint = std::env::var("LLM_ENDPOINT").unwrap_or_else(|_| DEFAULT_LOCAL_ENDPOINT.to_string());
+        // Priority: env var > config port > default
+        let endpoint = std::env::var("LLM_ENDPOINT").unwrap_or_else(|_| {
+            let port = config.server_port;
+            if port == DEFAULT_LLAMA_PORT {
+                DEFAULT_LOCAL_ENDPOINT.to_string()
+            } else {
+                format!("http://127.0.0.1:{}", port)
+            }
+        });
 
         info!("LLM engine configured:");
         info!("  Model path: {:?}", model_path);
@@ -158,12 +171,35 @@ impl LlmEngine {
 
     /// Send a chat completion request to the local server
     async fn chat_completion(&self, messages: Vec<ChatMessage>) -> Result<String> {
+        self.chat_completion_with_params(messages, None).await
+    }
+
+    /// Send a chat completion request with custom parameters
+    async fn chat_completion_with_params(
+        &self,
+        messages: Vec<ChatMessage>,
+        params: Option<&InferenceParameters>,
+    ) -> Result<String> {
+        let (temp, max_tok, top_p, top_k, repeat_pen) = if let Some(p) = params {
+            (p.temperature, p.max_tokens, p.top_p, p.top_k, p.repeat_penalty)
+        } else {
+            (
+                self.config.temperature,
+                self.config.max_tokens,
+                self.config.top_p,
+                self.config.top_k,
+                self.config.repetition_penalty,
+            )
+        };
+
         let request = ChatCompletionRequest {
             model: "ministral-3b".to_string(), // Model is loaded by server
             messages,
-            temperature: self.config.temperature,
-            max_tokens: self.config.max_tokens,
-            top_p: Some(self.config.top_p),
+            temperature: temp,
+            max_tokens: max_tok,
+            top_p: Some(top_p),
+            top_k: Some(top_k),
+            repeat_penalty: Some(repeat_pen),
         };
 
         debug!("Sending chat completion request to {}", self.endpoint);
@@ -238,6 +274,79 @@ impl LlmEngine {
         let encoded = base64::engine::general_purpose::STANDARD.encode(buffer.into_inner());
         Ok(format!("data:image/jpeg;base64,{}", encoded))
     }
+
+    /// Generate text using a specific inference profile
+    ///
+    /// # Arguments
+    /// * `prompt` - The user prompt
+    /// * `profile` - The inference profile to use
+    ///
+    /// # Returns
+    /// Generated text response
+    pub async fn generate_with_profile(
+        &self,
+        prompt: &str,
+        profile: InferenceProfile,
+    ) -> Result<String> {
+        let params = profile.parameters();
+        let system = profile.system_prompt();
+
+        let mut messages = Vec::new();
+
+        if !system.is_empty() {
+            messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: MessageContent::Text(system.to_string()),
+            });
+        }
+
+        messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: MessageContent::Text(prompt.to_string()),
+        });
+
+        self.chat_completion_with_params(messages, Some(&params)).await
+    }
+
+    /// Generate text with an image using a specific inference profile
+    pub async fn generate_with_image_and_profile(
+        &self,
+        prompt: &str,
+        image: &DynamicImage,
+        profile: InferenceProfile,
+    ) -> Result<String> {
+        let params = profile.parameters();
+        let system = profile.system_prompt();
+        let image_url = Self::encode_image(image)?;
+
+        let mut messages = Vec::new();
+
+        if !system.is_empty() {
+            messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: MessageContent::Text(system.to_string()),
+            });
+        }
+
+        messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: MessageContent::Multimodal(vec![
+                ContentPart::Text {
+                    text: prompt.to_string(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrl { url: image_url },
+                },
+            ]),
+        });
+
+        self.chat_completion_with_params(messages, Some(&params)).await
+    }
+
+    /// Update the endpoint URL (useful when server port changes)
+    pub fn set_endpoint(&mut self, endpoint: String) {
+        self.endpoint = endpoint;
+    }
 }
 
 #[async_trait]
@@ -308,7 +417,7 @@ mod tests {
 
     #[test]
     fn test_default_endpoint() {
-        assert_eq!(DEFAULT_LOCAL_ENDPOINT, "http://127.0.0.1:8080");
+        assert_eq!(DEFAULT_LOCAL_ENDPOINT, "http://127.0.0.1:31130");
     }
 
     #[test]

@@ -1,40 +1,57 @@
 //! Local LLM Integration for ScreenSearch
 //!
-//! This crate provides local LLM inference using Ministral-3B.
-//! It supports text generation and vision analysis for the ScreenSearch application.
+//! This crate provides local LLM inference using Ministral-3B with auto-managed
+//! llama-server process. It supports text generation and vision analysis.
 //!
 //! # Architecture
 //!
 //! The engine communicates with a locally running llama.cpp server via HTTP API.
-//! This approach avoids Rust dependency conflicts while providing:
+//! The server process is managed automatically with:
 //!
-//! - Local inference without external API calls
-//! - Auto-download model from configured server
-//! - Vision capabilities (image + text prompts)
-//! - Configurable temperature, max tokens, and threading
+//! - Lazy startup on first AI request
+//! - Automatic shutdown after idle timeout (TTL)
+//! - Health monitoring and auto-restart on crash
+//! - Port fallback if default port is busy
 //!
 //! # Example
 //!
 //! ```rust,ignore
-//! use screensearch_llm::{LlmEngine, LlmConfig};
+//! use screensearch_llm::{LlmEngine, LlmConfig, LlamaServer, InferenceProfile};
 //!
+//! // Auto-managed server
+//! let server = LlamaServer::new(config);
+//! server.ensure_started().await?;
+//!
+//! // Generate with profile
 //! let engine = LlmEngine::new().await?;
-//! let response = engine.generate("Hello, world!", None).await?;
+//! let response = engine.generate_with_profile("Summarize this", InferenceProfile::RagAnswer).await?;
 //! ```
 
 mod config;
 mod download;
 mod engine;
 mod error;
+mod profiles;
+mod server;
 
 // Public API exports
-pub use config::{LlmConfig, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE};
+pub use config::{
+    LlmConfig, DEFAULT_IDLE_TTL_SECS, DEFAULT_LLAMA_PORT, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE,
+};
 pub use download::{
+    // Model download
     download_model, download_model_with_progress, get_model_path, get_models_dir, model_exists,
     needs_download, DownloadProgress, MODEL_FILENAME, MODEL_SIZE_BYTES, MODEL_URL,
+    // llama-server download
+    download_llama_server, download_llama_server_with_progress, get_bin_dir, get_llama_server_path,
+    llama_server_exists, needs_llama_server_download, LLAMA_SERVER_FILENAME, LLAMA_SERVER_SIZE_BYTES,
 };
 pub use engine::LlmEngine;
 pub use error::{LlmError, Result};
+pub use profiles::{validate_parameters, InferenceParameters, InferenceProfile};
+pub use server::{
+    spawn_server_monitor, LlamaServer, LlamaServerConfig, ServerStatus, DEFAULT_LLAMA_PORT as SERVER_PORT,
+};
 
 use async_trait::async_trait;
 use image::DynamicImage;

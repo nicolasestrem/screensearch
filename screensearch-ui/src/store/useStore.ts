@@ -86,11 +86,11 @@ export const useStore = create<AppStore>()(
       activeTab: 'dashboard',
       setActiveTab: (tab) => set({ activeTab: tab }),
 
-      // AI Config
+      // AI Config - Default to local embedded Ministral-3B
       aiConfig: {
-        providerUrl: 'http://localhost:11434/v1',
+        providerUrl: 'local',
         apiKey: '',
-        model: 'ministral-3:3b',
+        model: 'ministral-3b',
       },
       setAiConfig: (config) =>
         set((state) => ({

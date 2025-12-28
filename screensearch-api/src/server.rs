@@ -123,9 +123,14 @@ impl ApiServer {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to bind to {}: {}", addr, e))?;
 
-        axum::serve(listener, app)
-            .await
-            .map_err(|e| anyhow::anyhow!("Server error: {}", e))?;
+        // Run the server
+        let result = axum::serve(listener, app).await;
+
+        // Cleanup: Shutdown LlamaServer if running
+        tracing::info!("API server shutting down, cleaning up resources...");
+        self.state.shutdown_llama_server().await;
+
+        result.map_err(|e| anyhow::anyhow!("Server error: {}", e))?;
 
         Ok(())
     }

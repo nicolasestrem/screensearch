@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { toast } from 'react-hot-toast';
 import {
   X,
@@ -31,6 +31,23 @@ interface ModelStatus {
   model_name: string;
   model_size_bytes: number;
   model_path: string | null;
+}
+
+// Server status types
+interface ServerStatus {
+  status: 'stopped' | 'starting' | 'running' | 'error';
+  port: number;
+  idle_seconds: number;
+  model_loaded: boolean;
+  server_binary_available: boolean;
+}
+
+// Format idle time for display
+function formatIdleTime(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return secs > 0 ? `${minutes}m ${secs}s` : `${minutes}m`;
 }
 
 export function SettingsPanel() {
@@ -68,6 +85,114 @@ export function SettingsPanel() {
     },
   });
 
+  // Server status query
+  const { data: serverStatus, refetch: refetchServerStatus } = useQuery<ServerStatus>({
+    queryKey: ['server-status'],
+    queryFn: async () => {
+      const res = await fetch('http://localhost:3131/api/ai/server/status');
+      if (!res.ok) throw new Error('Failed to fetch server status');
+      return res.json();
+    },
+    enabled: isSettingsPanelOpen,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      // Poll more frequently when starting, less when stable
+      if (status === 'starting') return 1000;
+      if (status === 'running') return 5000;
+      return false;
+    },
+  });
+
+  // Server control mutations
+  const startServer = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('http://localhost:3131/api/ai/server/start', { method: 'POST' });
+      if (!res.ok) throw new Error('Failed to start server');
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success('Server starting...');
+      refetchServerStatus();
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to start: ${err.message}`);
+    },
+  });
+
+  const stopServer = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('http://localhost:3131/api/ai/server/stop', { method: 'POST' });
+      if (!res.ok) throw new Error('Failed to stop server');
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success('Server stopped');
+      refetchServerStatus();
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to stop: ${err.message}`);
+    },
+  });
+
+  const updateTtl = useMutation({
+    mutationFn: async (ttlSeconds: number) => {
+      const res = await fetch('http://localhost:3131/api/ai/server/ttl', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ttl_seconds: ttlSeconds }),
+      });
+      if (!res.ok) throw new Error('Failed to update TTL');
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success('Idle timeout updated');
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to update TTL: ${err.message}`);
+    },
+  });
+
+  const downloadLlamaServer = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('http://localhost:3131/api/ai/server/download', { method: 'POST' });
+      if (!res.ok) throw new Error('Failed to start download');
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success('llama-server download started!');
+      setDownloadingServer(true);
+      refetchServerStatus();
+
+      // Poll every 2 seconds for up to 120 seconds to detect download completion
+      if (downloadPollInterval.current) {
+        clearInterval(downloadPollInterval.current);
+      }
+      downloadPollInterval.current = setInterval(() => {
+        refetchServerStatus();
+      }, 2000);
+
+      // Stop polling after 120 seconds (downloads should complete by then)
+      setTimeout(() => {
+        if (downloadPollInterval.current) {
+          clearInterval(downloadPollInterval.current);
+          downloadPollInterval.current = null;
+        }
+        setDownloadingServer(false);
+      }, 120000);
+    },
+    onError: (err: Error) => {
+      toast.error(`Download failed: ${err.message}`);
+      setDownloadingServer(false);
+    },
+  });
+
+  // Local state for TTL slider
+  const [ttlMinutes, setTtlMinutes] = useState(5);
+
+  // Track server download in progress for polling
+  const [downloadingServer, setDownloadingServer] = useState(false);
+  const downloadPollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // Local state for editing
   const [captureInterval, setCaptureInterval] = useState(5);
   const [monitors, setMonitors] = useState<number[]>([0]);
@@ -96,6 +221,27 @@ export function SettingsPanel() {
       setVisionApiKey(apiSettings.vision_api_key || '');
     }
   }, [apiSettings]);
+
+  // Stop download polling when binary becomes available
+  useEffect(() => {
+    if (serverStatus?.server_binary_available && downloadingServer) {
+      if (downloadPollInterval.current) {
+        clearInterval(downloadPollInterval.current);
+        downloadPollInterval.current = null;
+      }
+      setDownloadingServer(false);
+      toast.success('llama-server ready!');
+    }
+  }, [serverStatus?.server_binary_available, downloadingServer]);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (downloadPollInterval.current) {
+        clearInterval(downloadPollInterval.current);
+      }
+    };
+  }, []);
 
   if (!isSettingsPanelOpen) return null;
 
@@ -459,40 +605,153 @@ export function SettingsPanel() {
 
                         {/* Local Model Status - shown when local provider selected */}
                         {visionProvider === 'local' && (
-                          <div className="p-4 bg-secondary/30 rounded-xl border border-border/50 space-y-3">
-                            <div className="flex items-center gap-2">
-                              <Cpu className="h-4 w-4 text-primary" />
-                              <span className="font-medium">Ministral-3B Model</span>
+                          <div className="p-4 bg-secondary/30 rounded-xl border border-border/50 space-y-4">
+                            {/* Model Status Section */}
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-2">
+                                <Cpu className="h-4 w-4 text-primary" />
+                                <span className="font-medium">Ministral-3B Model</span>
+                              </div>
+
+                              {modelStatus?.downloaded ? (
+                                <div className="flex items-center gap-2 text-sm text-green-500">
+                                  <CheckCircle className="h-4 w-4" />
+                                  <span>Model ready ({(modelStatus.model_size_bytes / 1_000_000_000).toFixed(2)} GB)</span>
+                                </div>
+                              ) : modelStatus?.downloading ? (
+                                <div className="flex items-center gap-2 text-sm text-primary">
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  <span>Downloading... ({(modelStatus.model_size_bytes / 1_000_000_000).toFixed(2)} GB)</span>
+                                </div>
+                              ) : (
+                                <div className="space-y-2">
+                                  <p className="text-sm text-muted-foreground">
+                                    Model not downloaded. Size: {modelStatus ? (modelStatus.model_size_bytes / 1_000_000_000).toFixed(2) : '2.15'} GB
+                                  </p>
+                                  <button
+                                    onClick={() => downloadModel.mutate()}
+                                    disabled={downloadModel.isPending}
+                                    className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg text-sm font-medium disabled:opacity-50"
+                                  >
+                                    <Download className="h-4 w-4" />
+                                    Download Model
+                                  </button>
+                                </div>
+                              )}
                             </div>
 
-                            {modelStatus?.downloaded ? (
-                              <div className="flex items-center gap-2 text-sm text-green-500">
-                                <CheckCircle className="h-4 w-4" />
-                                <span>Model ready ({(modelStatus.model_size_bytes / 1_000_000_000).toFixed(2)} GB)</span>
-                              </div>
-                            ) : modelStatus?.downloading ? (
-                              <div className="flex items-center gap-2 text-sm text-primary">
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                <span>Downloading... ({(modelStatus.model_size_bytes / 1_000_000_000).toFixed(2)} GB)</span>
-                              </div>
-                            ) : (
-                              <div className="space-y-2">
-                                <p className="text-sm text-muted-foreground">
-                                  Model not downloaded. Size: {modelStatus ? (modelStatus.model_size_bytes / 1_000_000_000).toFixed(2) : '2.15'} GB
-                                </p>
-                                <button
-                                  onClick={() => downloadModel.mutate()}
-                                  disabled={downloadModel.isPending}
-                                  className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg text-sm font-medium disabled:opacity-50"
-                                >
-                                  <Download className="h-4 w-4" />
-                                  Download Model
-                                </button>
-                              </div>
-                            )}
+                            {/* Divider */}
+                            <div className="h-px bg-border/50" />
 
-                            <p className="text-xs text-muted-foreground">
-                              Runs entirely on your device. Requires llama-server to be running.
+                            {/* Server Status Section */}
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <HardDrive className="h-4 w-4 text-primary" />
+                                  <span className="font-medium">llama-server</span>
+                                </div>
+                                {serverStatus && (
+                                  <div className={cn(
+                                    "flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium",
+                                    serverStatus.status === 'running' && "bg-green-500/20 text-green-500",
+                                    serverStatus.status === 'starting' && "bg-yellow-500/20 text-yellow-500",
+                                    serverStatus.status === 'stopped' && "bg-secondary text-muted-foreground",
+                                    serverStatus.status === 'error' && "bg-destructive/20 text-destructive",
+                                  )}>
+                                    {serverStatus.status === 'running' && <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />}
+                                    {serverStatus.status === 'starting' && <Loader2 className="h-3 w-3 animate-spin" />}
+                                    {serverStatus.status === 'stopped' && <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground" />}
+                                    {serverStatus.status === 'error' && <span className="w-1.5 h-1.5 rounded-full bg-destructive" />}
+                                    <span className="capitalize">{serverStatus.status}</span>
+                                    {serverStatus.status === 'running' && serverStatus.port && (
+                                      <span className="text-muted-foreground">:{serverStatus.port}</span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Server Binary Check */}
+                              {serverStatus && !serverStatus.server_binary_available && (
+                                <div className="space-y-2">
+                                  <p className="text-sm text-muted-foreground">
+                                    llama-server binary not found. Download required for local AI.
+                                  </p>
+                                  <button
+                                    onClick={() => downloadLlamaServer.mutate()}
+                                    disabled={downloadLlamaServer.isPending || downloadingServer}
+                                    className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg text-sm font-medium disabled:opacity-50"
+                                  >
+                                    {downloadingServer ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Download className="h-4 w-4" />
+                                    )}
+                                    {downloadingServer ? 'Downloading...' : downloadLlamaServer.isPending ? 'Starting...' : 'Download llama-server'}
+                                  </button>
+                                </div>
+                              )}
+
+                              {/* Server Controls - only show when binary is available */}
+                              {serverStatus?.server_binary_available && (
+                                <>
+                                  {/* Running Status Info */}
+                                  {serverStatus.status === 'running' && (
+                                    <div className="text-xs text-muted-foreground space-y-1">
+                                      <p>Idle: {formatIdleTime(serverStatus.idle_seconds)}</p>
+                                      {serverStatus.model_loaded && <p className="text-green-500">Model loaded in VRAM</p>}
+                                    </div>
+                                  )}
+
+                                  {/* Start/Stop Buttons */}
+                                  <div className="flex gap-2">
+                                    {serverStatus.status === 'stopped' && (
+                                      <button
+                                        onClick={() => startServer.mutate()}
+                                        disabled={startServer.isPending || !modelStatus?.downloaded}
+                                        className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-500 hover:bg-green-500/30 rounded-lg text-sm font-medium disabled:opacity-50"
+                                      >
+                                        <Play className="h-3.5 w-3.5" />
+                                        Start Server
+                                      </button>
+                                    )}
+                                    {(serverStatus.status === 'running' || serverStatus.status === 'starting') && (
+                                      <button
+                                        onClick={() => stopServer.mutate()}
+                                        disabled={stopServer.isPending}
+                                        className="flex items-center gap-2 px-3 py-1.5 bg-destructive/20 text-destructive hover:bg-destructive/30 rounded-lg text-sm font-medium disabled:opacity-50"
+                                      >
+                                        <Pause className="h-3.5 w-3.5" />
+                                        Stop Server
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  {/* TTL Slider */}
+                                  <div className="space-y-2 pt-2">
+                                    <div className="flex items-center justify-between text-sm">
+                                      <span className="text-muted-foreground">Idle Timeout</span>
+                                      <span className="font-mono">{ttlMinutes} min</span>
+                                    </div>
+                                    <input
+                                      type="range"
+                                      min="1"
+                                      max="30"
+                                      value={ttlMinutes}
+                                      onChange={(e) => setTtlMinutes(parseInt(e.target.value))}
+                                      onMouseUp={() => updateTtl.mutate(ttlMinutes * 60)}
+                                      onTouchEnd={() => updateTtl.mutate(ttlMinutes * 60)}
+                                      className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                      Server automatically shuts down after this period of inactivity to save resources.
+                                    </p>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+
+                            <p className="text-xs text-muted-foreground pt-1">
+                              Runs entirely on your device. Server starts automatically on first AI request.
                             </p>
                           </div>
                         )}
@@ -553,15 +812,15 @@ export function SettingsPanel() {
                             onClick={async () => {
                               const toastId = toast.loading('Testing connection...');
                               try {
-                                // Dynamic import or use existing import if available. 
-                                // Assuming apiClient is imported or accessible. 
-                                // Use direct fetch if apiClient is not easily available in scope, but apiClient is better.
-                                // I'll assume apiClient is imported in the file headers.
                                 const { apiClient } = await import('../api/client');
                                 const result = await apiClient.testVisionConfig({
                                   provider: visionProvider,
                                   model: visionModel,
-                                  endpoint: visionEndpoint,
+                                  // Use correct endpoint based on provider
+                                  // Local provider uses llama-server on port 31130
+                                  endpoint: visionProvider === 'local'
+                                    ? 'http://127.0.0.1:31130'
+                                    : visionEndpoint,
                                   api_key: visionApiKey || undefined
                                 });
 
