@@ -5,9 +5,13 @@ import { useStore } from './store/useStore';
 import { Sidebar } from './components/Sidebar';
 import { SearchBar } from './components/SearchBar';
 import { Timeline } from './components/Timeline';
+import { SmartAnswerCard } from './components/search/SmartAnswerCard';
+import { SearchInvite } from './components/search/SearchInvite';
+
 import { SettingsPanel } from './components/SettingsPanel';
 import { FrameModal } from './components/FrameModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { DashboardPage } from './pages/Dashboard';
 import { IntelligencePage } from './pages/Intelligence';
 import { Footer } from './components/Footer';
 
@@ -26,12 +30,13 @@ const queryClient = new QueryClient({
  * Main App Layout.
  * Handles:
  * - Dark mode application
- * - Global keyboard shortcuts (Cmd+K, Cmd+,)
+ * - Global keyboard shortcuts (Cmd+K for search modal, Cmd+, for settings)
  * - Sidebar and Main Content structure
+ * - SearchInvite modal integration
  * - Footer integration
  */
 function AppContent() {
-  const { isDarkMode, activeTab } = useStore();
+  const { isDarkMode, activeTab, isSearchModalOpen, openSearchModal, closeSearchModal } = useStore();
 
   useEffect(() => {
     // Apply dark mode class to html element
@@ -45,11 +50,10 @@ function AppContent() {
   useEffect(() => {
     // Keyboard shortcuts
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Cmd/Ctrl + K for search focus
+      // Cmd/Ctrl + K for search modal
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
-        const searchInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-        searchInput?.focus();
+        openSearchModal();
       }
 
       // Cmd/Ctrl + , for settings
@@ -61,7 +65,7 @@ function AppContent() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [openSearchModal]);
 
   return (
     <div className="flex h-screen w-screen bg-background text-foreground overflow-hidden">
@@ -71,19 +75,23 @@ function AppContent() {
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
         {/* Background Decor */}
-        {/* Background Decor - Website matched grid */}
-        <div className="absolute inset-0 -z-10 h-full w-full bg-grid [mask-image:linear-gradient(to_bottom,transparent,black_10%,black_90%,transparent)] opacity-60 pointer-events-none" />
+        <div className="absolute inset-0 -z-10 h-full w-full bg-grid [mask-image:linear-gradient(to_bottom,transparent,black_10%,black_90%,transparent)] opacity-40 pointer-events-none" />
+        
+        {/* Ambient Light Blobs */}
+        <div className="bg-blob top-[-20%] left-[-10%]" />
+        <div className="bg-blob bg-blob-secondary bottom-[-20%] right-[-10%]" />
 
         <div className="flex-1 overflow-y-auto flex flex-col">
           <div className="container mx-auto px-4 py-8 max-w-7xl flex-1">
-            {activeTab === 'timeline' ? (
-              <div className="space-y-8 animate-in fade-in duration-500">
+            {activeTab === 'dashboard' && <DashboardPage />}
+            {activeTab === 'timeline' && (
+              <div className="space-y-8 animate-fade-in-up">
                 <SearchBar />
+                <SmartAnswerCard />
                 <Timeline />
               </div>
-            ) : (
-              <IntelligencePage />
             )}
+            {activeTab === 'reports' && <IntelligencePage />}
           </div>
           <Footer />
         </div>
@@ -91,6 +99,7 @@ function AppContent() {
 
       <SettingsPanel />
       <FrameModal />
+      <SearchInvite isOpen={isSearchModalOpen} onClose={closeSearchModal} />
 
       <Toaster
         position="bottom-right"

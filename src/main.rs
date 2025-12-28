@@ -10,6 +10,7 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::broadcast;
@@ -443,9 +444,12 @@ impl App {
         let capture_config = self.config.capture_config();
         let mut capture_engine = CaptureEngine::new(capture_config)?;
 
+        // Shared capture interval
+        let capture_interval_ms = Arc::new(AtomicU64::new(self.config.capture.interval_ms));
+
         // Initialize API server with the same database path
         let api_config = self.config.api_config(&db_config.path);
-        let api_server = ApiServer::new(api_config.clone()).await?;
+        let api_server = ApiServer::new(api_config.clone(), Arc::clone(&capture_interval_ms)).await?;
 
         // Start background embedding worker
         if self.config.embeddings.enabled {
@@ -458,6 +462,9 @@ impl App {
                 error!("Failed to start embedding worker: {}", e);
             }
         }
+
+        // Start vision analysis worker
+        screensearch_api::workers::vision_worker::spawn_vision_worker(Arc::clone(&db));
 
         let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(100);
         let (processed_tx, mut processed_rx) = tokio::sync::mpsc::channel(100);
@@ -473,11 +480,30 @@ impl App {
 
         capture_engine.start()?;
 
+        let capture_interval_clone = Arc::clone(&capture_interval_ms);
         let capture_handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(3000));
+            let mut current_interval_ms = capture_interval_clone.load(Ordering::Relaxed);
+            // Ensure minimum interval of 500ms
+            if current_interval_ms < 500 { current_interval_ms = 500; }
+            
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(current_interval_ms));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
+                        // Check for interval update
+                        let new_interval_ms = capture_interval_clone.load(Ordering::Relaxed);
+                        // Ensure minimum interval of 500ms
+                        let new_interval_ms = if new_interval_ms < 500 { 500 } else { new_interval_ms };
+
+                        if new_interval_ms != current_interval_ms {
+                             current_interval_ms = new_interval_ms;
+                             interval = tokio::time::interval(tokio::time::Duration::from_millis(current_interval_ms));
+                             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                             // First tick of new interval fires immediately, which is fine
+                        }
+
                         while let Some(frame) = capture_engine.try_get_frame() {
                            if frame_tx.send(frame).await.is_err() { break; }
                         }

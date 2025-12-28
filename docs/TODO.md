@@ -6,3 +6,5 @@ Minified React error #31; visit https://reactjs.org/docs/error-decoder.html?inva
 
 Add systray icon
 Get an Icon
+
+Decide of the fate of Windows UIAutomation quickly.

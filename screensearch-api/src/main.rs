@@ -22,8 +22,11 @@ async fn main() -> anyhow::Result<()> {
     // Create server configuration
     let config = ApiConfig::default();
 
+    // Create dummy share state for standalone API server
+    let capture_interval = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(3000));
+
     // Initialize and run server
-    let server = ApiServer::new(config).await?;
+    let server = ApiServer::new(config, capture_interval).await?;
 
     tracing::info!("Server initialized, listening on port 3131");
     tracing::info!("Press Ctrl+C to shut down");

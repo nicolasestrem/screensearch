@@ -53,21 +53,80 @@ pub async fn search(
         offset: 0,
     };
 
-    // Execute search
-    match state
-        .db
-        .search_ocr_text(&params.q, filter, pagination)
-        .await
-    {
-        Ok(results) => {
-            debug!("Found {} search results", results.len());
-            Ok(Json(results))
+    // Execute search based on mode
+    let results = if params.mode.as_deref() == Some("semantic") {
+        debug!("Performing semantic search for: {}", params.q);
+        
+        // Get embedding engine
+        let engine = state.get_embedding_engine().await.map_err(|e| {
+            error!("Failed to initialize embedding engine: {}", e);
+            AppError::Internal(e)
+        })?;
+
+        // Generate query embedding
+        let embedding = engine.embed(&params.q).map_err(|e| {
+             error!("Failed to generate query embedding: {}", e);
+             AppError::Internal(e.to_string())
+        })?;
+
+        // Search embeddings
+        let semantic_results = state.db
+            .search_embeddings(embedding, pagination.limit as usize, 0.3) // 0.3 threshold
+            .await
+            .map_err(AppError::Database)?;
+
+        // Convert to SearchResult format
+        let mut search_results = Vec::new();
+        
+        // Bulk load tags
+        let frame_ids: Vec<i64> = semantic_results.iter().map(|r| r.frame.id).collect();
+        let tags_map = state.db.get_tags_for_frames(&frame_ids).await.unwrap_or_default();
+
+        for sem in semantic_results {
+            // Convert tags to strings (SearchResult expects Vec<String> tags?)
+            // Wait, SearchResult struct definition in db/models.rs?
+            // Snippet 337: pub tags: Vec<String>.
+            let tags = tags_map.get(&sem.frame.id)
+                .map(|t_list| t_list.iter().map(|t| t.tag_name.clone()).collect())
+                .unwrap_or_default();
+
+            // Create placeholder OCR match from chunk
+            let ocr = screensearch_db::OcrTextRecord {
+                id: 0, // specific ID not relevant
+                frame_id: sem.frame.id,
+                text: sem.chunk_text, // The chunk that matched
+                text_json: None,
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                confidence: sem.similarity_score,
+                created_at: sem.frame.created_at, // Approximate
+            };
+
+            search_results.push(SearchResult {
+                frame: sem.frame,
+                ocr_matches: vec![ocr],
+                relevance_score: sem.similarity_score,
+                tags,
+            });
         }
-        Err(e) => {
-            error!("Search failed: {}", e);
-            Err(AppError::Database(e))
-        }
-    }
+        
+        search_results
+    } else {
+        // Default FTS search
+        state
+            .db
+            .search_ocr_text(&params.q, filter, pagination)
+            .await
+            .map_err(|e| {
+                error!("Search failed: {}", e);
+                AppError::Database(e)
+            })?
+    };
+
+    debug!("Found {} search results", results.len());
+    Ok(Json(results))
 }
 
 /// GET /search/keywords - Keyword-based search with ranking
@@ -80,7 +139,7 @@ pub async fn search(
 pub async fn search_keywords(
     State(state): State<Arc<AppState>>,
     Query(params): Query<KeywordSearchQuery>,
-) -> Result<Json<Vec<screensearch_db::OcrTextRecord>>> {
+) -> Result<Json<Vec<String>>> {
     debug!("Keyword search request: keywords={}", params.keywords);
 
     if params.keywords.is_empty() {
@@ -111,7 +170,18 @@ pub async fn search_keywords(
     match state.db.search_ocr_keywords(keywords, pagination).await {
         Ok(results) => {
             debug!("Found {} keyword matches", results.len());
-            Ok(Json(results))
+            // Extract unique text matching the query
+            // Assuming the DB query returns records that contained the keyword.
+            // We want to return distinct text strings for autocomplete.
+            use std::collections::HashSet;
+            let suggestions: Vec<String> = results
+                .into_iter()
+                .map(|r| r.text)
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            
+            Ok(Json(suggestions))
         }
         Err(e) => {
             error!("Keyword search failed: {}", e);
@@ -221,6 +291,9 @@ pub async fn get_frames(
                     ocr_text,
                     tags,
                     thumbnail: None,
+                    description: frame.description,
+                    confidence: frame.confidence,
+                    analysis_status: frame.analysis_status,
                 });
             }
 
@@ -297,6 +370,9 @@ pub async fn get_frames(
                     ocr_text,
                     tags,
                     thumbnail: None,
+                    description: frame.description,
+                    confidence: frame.confidence,
+                    analysis_status: frame.analysis_status,
                 });
             }
 
@@ -367,6 +443,9 @@ pub async fn get_single_frame(
                 ocr_text,
                 tags,
                 thumbnail: None,
+                description: frame.description,
+                confidence: frame.confidence,
+                analysis_status: frame.analysis_status,
             }))
         }
         Ok(None) => {

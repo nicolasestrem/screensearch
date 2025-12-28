@@ -21,9 +21,11 @@
 
 <br/>
 
-### [>] [**Download Latest Release (v0.2.0)**](https://github.com/nicolasestrem/screensearch/releases/latest)
+### [>] [**Download Latest Release (v0.3.0)**](https://github.com/nicolasestrem/screensearch/releases/latest)
 
 **Windows 10/11** • **11MB** • **No installation required** • **Just extract and run**
+
+> **Note for Linux Users:** This project now supports Linux for **UI development and backend logic**, with Windows-specific features (OCR, Automation) stubbed out. See [Developer Guide](docs/developer-guide.md) for details.
 
 </div>
 
@@ -48,10 +50,13 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+- [*] **Sci-Fi Concept UI** — Premium "Glass & Neon" aesthetic with atmospheric depth and fluid animations
+- [*] **AI-First Dashboard** — "Intel Dash" with Daily Digest, Memory Status gauge, and Productivity Pulse charts
 - [*] **Continuous Screen Capture** — Configurable intervals (2-5 seconds) with multi-monitor support
 - [*] **OCR Text Extraction** — Windows OCR API with bounding box coordinates and confidence scores
 - [*] **AI-Powered Intelligence** — Generate insights from your screen history using local LLMs (Ollama, LM Studio) or cloud providers (OpenAI)
 - [*] **Hybrid Search** — Combines FTS5 (Sparse) and Vector Embeddings (Dense) for semantic understanding
+- [*] **Smart Search** — Conversational AI answers with context from your screen history
 - [*] **REST API** — 27 endpoints for search, automation, and tag management on localhost:3131
 - [*] **UI Automation** — Programmatic control of Windows applications via accessibility APIs
 - [*] **System Tray** — unobtrusive background operation with quick access menu
@@ -79,6 +84,16 @@
 │                     FEATURE HIGHLIGHTS                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### [>] AI-First Dashboard — Your Intelligent Command Center
+
+The new **"Intel Dash"** puts AI-powered insights front and center with a beautiful glassmorphism design. See your day at a glance with auto-generated summaries, RAG indexing progress, and hourly activity charts.
+
+**Dashboard Features:**
+- [*] **Daily Digest** — Auto-generated AI summaries of your screen activity
+- [*] **Memory Status** — Circular gauge showing semantic search readiness
+- [*] **Productivity Pulse** — Interactive hourly activity chart with smooth curves
+- [*] **Smart Answers** — Get AI-powered context from your screen history
 
 ### [>] Timeline View — Browse Your Screen History
 
@@ -192,6 +207,7 @@ npm run dev
 ```
 
 **Dashboard Features**:
+- [*] **Sci-Fi Visuals**: Atmospheric radial gradients, neon accents, and glassmorphism interface
 - [*] Timeline view of captured frames with real-time thumbnails
 - [*] Full-text search across all OCR content
 - [*] Intelligence tab with AI-powered report generation

@@ -28,6 +28,10 @@ pub struct SearchQuery {
     /// Maximum results to return (default: 100)
     #[serde(default)]
     pub limit: Option<i64>,
+
+    /// Search mode: "fts" (default), "semantic", or "hybrid"
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 /// Keyword search parameters
@@ -94,6 +98,12 @@ pub struct FrameResponse {
     pub tags: Vec<TagResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thumbnail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub analysis_status: Option<String>,
 }
 
 /// Tag response

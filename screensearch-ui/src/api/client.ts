@@ -84,6 +84,7 @@ class APIClient {
     app_name?: string;
     tag_ids?: string;
     q?: string;
+    mode?: 'fts' | 'semantic' | 'hybrid';
   }): Promise<PaginatedResponse<Frame>> {
     const { data } = await this.client.get<PaginatedResponse<Frame>>('/frames', {
       params,
@@ -183,8 +184,20 @@ class APIClient {
     return data;
   }
 
+
   async updateSettings(settings: UpdateSettingsRequest): Promise<Settings> {
     const { data } = await this.client.post<Settings>('/settings', settings);
+    return data;
+  }
+
+  // AI Endpoints
+  async generateAnswer(query: string): Promise<{ answer: string; sources: number[] }> {
+    const { data } = await this.client.post<{ answer: string; sources: number[] }>('/generate', { query });
+    return data;
+  }
+
+  async testVisionConfig(config: { provider: string; model: string; endpoint: string; api_key?: string }): Promise<any> {
+    const { data } = await this.client.post('/test-vision', config);
     return data;
   }
 }

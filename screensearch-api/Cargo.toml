@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 # Database
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros", "chrono"] }
+image = { workspace = true }
 
 # HTTP server framework
 axum = { workspace = true, features = ["macros"] }
@@ -40,6 +41,7 @@ tracing-subscriber = { workspace = true }
 screensearch-db = { path = "../screensearch-db" }
 screensearch-automation = { path = "../screensearch-automation" }
 screensearch-embeddings = { path = "../screensearch-embeddings" }
+screensearch-vision = { path = "../screensearch-vision" }
 
 # HTTP Client
 reqwest = { version = "0.11", features = ["json"] }

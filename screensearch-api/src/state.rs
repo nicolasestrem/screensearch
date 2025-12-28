@@ -17,15 +17,23 @@ pub struct AppState {
 
     /// Embedding engine for semantic search (lazy initialized)
     pub embedding_engine: Arc<RwLock<Option<Arc<EmbeddingEngine>>>>,
+
+    /// Shared capture interval in milliseconds (atomic for thread safety)
+    pub capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl AppState {
     /// Create new application state
-    pub fn new(db: DatabaseManager, automation: AutomationEngine) -> Self {
+    pub fn new(
+        db: DatabaseManager, 
+        automation: AutomationEngine,
+        capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
+    ) -> Self {
         Self {
             db: Arc::new(db),
             automation: Arc::new(automation),
             embedding_engine: Arc::new(RwLock::new(None)),
+            capture_interval_ms,
         }
     }
 

@@ -41,7 +41,7 @@ export function ActivityGraph({ frames, currentDate, onTimeSelect, className }: 
     const maxCount = Math.max(...buckets, 1);
 
     return (
-        <div className={cn("w-full h-32 bg-card/50 backdrop-blur-sm rounded-xl border border-border/50 p-4 relative select-none", className)}>
+        <div className={cn("w-full h-32 p-4 relative select-none", className)}>
             <div className="absolute top-2 left-4 text-xs font-semibold text-muted-foreground">
                 Activity - {format(currentDate, 'MMMM d')}
             </div>

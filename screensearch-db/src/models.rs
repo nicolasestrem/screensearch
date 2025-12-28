@@ -38,6 +38,16 @@ pub struct FrameRecord {
     pub offset_index: i32,
     pub focused: Option<bool>,
     pub created_at: DateTime<Utc>,
+    
+    // Vision Analysis Fields (Migration 005)
+    pub analysis_status: Option<String>,
+    pub description: Option<String>,
+    pub visible_text_json: Option<String>,
+    pub activity_type: Option<String>,
+    pub app_hint: Option<String>,
+    pub confidence: Option<f32>,
+    pub analysis_time_ms: Option<i64>,
+    pub analysis_error: Option<String>,
 }
 
 /// OCR text record with precise bounding box coordinates
@@ -84,6 +94,18 @@ pub struct SettingsRecord {
     pub is_paused: i64,        // SQLite boolean (0/1)
     pub retention_days: i64,
     pub updated_at: DateTime<Utc>,
+    
+    // Vision Settings
+    #[serde(default)]
+    pub vision_enabled: i64,   // 0/1
+    #[serde(default)]
+    pub vision_provider: String,
+    #[serde(default)]
+    pub vision_model: String,
+    #[serde(default)]
+    pub vision_endpoint: String,
+    #[serde(default)]
+    pub vision_api_key: Option<String>,
 }
 
 /// Search result combining frame and OCR data with relevance score
@@ -172,6 +194,16 @@ pub struct UpdateSettings {
     pub excluded_apps: String, // JSON array
     pub is_paused: i64,        // SQLite boolean (0/1)
     pub retention_days: i64,
+    #[serde(default)]
+    pub vision_enabled: i64,
+    #[serde(default)]
+    pub vision_provider: String,
+    #[serde(default)]
+    pub vision_model: String,
+    #[serde(default)]
+    pub vision_endpoint: String,
+    #[serde(default)]
+    pub vision_api_key: Option<String>,
 }
 
 /// Frame filter parameters for queries
@@ -220,6 +252,8 @@ pub struct EmbeddingRecord {
     pub chunk_index: i32,
     pub embedding_dim: i32,
     pub created_at: DateTime<Utc>,
+    #[sqlx(default)]
+    pub embedding: Vec<f32>, // Manually populated from blob
 }
 
 /// New embedding input
@@ -259,5 +293,37 @@ pub struct EmbeddingStatus {
     pub frames_with_embeddings: i64,
     pub coverage_percent: f32,
     pub last_processed_frame_id: i64,
+}
+
+/// Helper struct for updating frame analysis results
+#[derive(Debug, Clone)]
+pub struct FrameAnalysisUpdate {
+    pub description: Option<String>,
+    pub visible_text_json: Option<String>,
+    pub activity_type: Option<String>,
+    pub app_hint: Option<String>,
+    pub confidence: Option<f32>,
+    pub analysis_time_ms: Option<i64>,
+}
+
+/// Analysis queue item for vision processing
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct AnalysisQueueItem {
+    pub id: i64,
+    pub frame_id: i64,
+    pub priority: i32,
+    pub created_at: DateTime<Utc>,
+    pub locked_until: Option<DateTime<Utc>>,
+    pub attempts: i32,
+    pub last_error: Option<String>,
+}
+
+/// Request bundle for testing vision connection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestVisionRequest {
+    pub provider: String,
+    pub model: String,
+    pub endpoint: String,
+    pub api_key: Option<String>,
 }
 

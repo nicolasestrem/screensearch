@@ -7,6 +7,8 @@ use axum::extract::{Path, Query, State};
 use axum::Json;
 use regex::Regex;
 use screensearch_db::{NewTag, Pagination, SettingsRecord, UpdateSettings};
+use screensearch_db::models::TestVisionRequest;
+use screensearch_vision::client::OllamaClient;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use tracing::{debug, error};
@@ -506,11 +508,49 @@ pub async fn update_settings(
     match state.db.update_settings(settings).await {
         Ok(updated_settings) => {
             debug!("Settings updated successfully");
+            // Update shared state for capture loop
+            state.capture_interval_ms.store(
+                updated_settings.capture_interval as u64 * 1000, 
+                std::sync::atomic::Ordering::Relaxed
+            );
             Ok(Json(updated_settings))
         }
         Err(e) => {
             error!("Failed to update settings: {}", e);
             Err(AppError::Database(e))
+        }
+    }
+}
+
+
+
+/// POST /api/test-vision - Test vision configuration
+pub async fn test_vision_config(
+    Json(req): Json<TestVisionRequest>,
+) -> Result<Json<serde_json::Value>> {
+    debug!("Test vision config: provider={}, model={}", req.provider, req.model);
+
+    let client = OllamaClient::new(
+        req.endpoint,
+        req.model,
+        req.api_key,
+        req.provider,
+    );
+
+    match client.generate_text("Test connection. Reply with 'OK'.", None).await {
+        Ok(response) => {
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "message": "Connection successful",
+                "response": response
+            })))
+        },
+        Err(e) => {
+            error!("Vision test failed: {}", e);
+             Ok(Json(serde_json::json!({
+                "success": false,
+                "message": format!("Connection failed: {}", e)
+            })))
         }
     }
 }

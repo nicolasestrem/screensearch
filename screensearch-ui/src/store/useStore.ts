@@ -21,8 +21,8 @@ interface AppStore {
   setSelectedFrameId: (id: number | null) => void;
 
   // Navigation
-  activeTab: 'timeline' | 'intelligence';
-  setActiveTab: (tab: 'timeline' | 'intelligence') => void;
+  activeTab: 'dashboard' | 'timeline' | 'reports';
+  setActiveTab: (tab: 'dashboard' | 'timeline' | 'reports') => void;
 
   // AI Config
   aiConfig: {
@@ -35,6 +35,17 @@ interface AppStore {
   // Settings Panel
   isSettingsPanelOpen: boolean;
   toggleSettingsPanel: () => void;
+
+  // Search Modal
+  isSearchModalOpen: boolean;
+  openSearchModal: () => void;
+  closeSearchModal: () => void;
+  toggleSearchModal: () => void;
+
+  // Sidebar
+  isSidebarCollapsed: boolean;
+  toggleSidebar: () => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
 }
 
 const defaultFilters: FilterState = {
@@ -45,6 +56,7 @@ const defaultFilters: FilterState = {
   applications: [],
   tags: [],
   searchQuery: '',
+  searchMode: 'fts',
 };
 
 export const useStore = create<AppStore>()(
@@ -71,14 +83,14 @@ export const useStore = create<AppStore>()(
       setSelectedFrameId: (id) => set({ selectedFrameId: id }),
 
       // Navigation
-      activeTab: 'timeline',
+      activeTab: 'dashboard',
       setActiveTab: (tab) => set({ activeTab: tab }),
 
       // AI Config
       aiConfig: {
         providerUrl: 'http://localhost:11434/v1',
         apiKey: '',
-        model: 'deepseek-v3.2:cloud',
+        model: 'ministral-3:3b',
       },
       setAiConfig: (config) =>
         set((state) => ({
@@ -89,6 +101,19 @@ export const useStore = create<AppStore>()(
       isSettingsPanelOpen: false,
       toggleSettingsPanel: () =>
         set((state) => ({ isSettingsPanelOpen: !state.isSettingsPanelOpen })),
+
+      // Search Modal
+      isSearchModalOpen: false,
+      openSearchModal: () => set({ isSearchModalOpen: true }),
+      closeSearchModal: () => set({ isSearchModalOpen: false }),
+      toggleSearchModal: () =>
+        set((state) => ({ isSearchModalOpen: !state.isSearchModalOpen })),
+
+      // Sidebar
+      isSidebarCollapsed: false,
+      toggleSidebar: () =>
+        set((state) => ({ isSidebarCollapsed: !state.isSidebarCollapsed })),
+      setSidebarCollapsed: (collapsed) => set({ isSidebarCollapsed: collapsed }),
     }),
     {
       name: 'screen-memories-store',
@@ -96,6 +121,7 @@ export const useStore = create<AppStore>()(
         isDarkMode: state.isDarkMode,
         viewMode: state.viewMode,
         aiConfig: state.aiConfig,
+        isSidebarCollapsed: state.isSidebarCollapsed,
       }),
     }
   )

@@ -3570,7 +3570,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "screensearch"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3597,17 +3597,19 @@ dependencies = [
 
 [[package]]
 name = "screensearch-api"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
  "chrono",
+ "image",
  "regex",
  "reqwest",
  "rust-embed",
  "screensearch-automation",
  "screensearch-db",
  "screensearch-embeddings",
+ "screensearch-vision",
  "serde",
  "serde_json",
  "sqlx",
@@ -3622,7 +3624,7 @@ dependencies = [
 
 [[package]]
 name = "screensearch-automation"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3636,7 +3638,7 @@ dependencies = [
 
 [[package]]
 name = "screensearch-capture"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3655,7 +3657,7 @@ dependencies = [
 
 [[package]]
 name = "screensearch-db"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3671,7 +3673,7 @@ dependencies = [
 
 [[package]]
 name = "screensearch-embeddings"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -3683,6 +3685,21 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokenizers",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "screensearch-vision"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.21.7",
+ "image",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

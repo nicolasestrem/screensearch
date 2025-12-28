@@ -1,4 +1,4 @@
-# ScreenSearch User Guide
+# Screen Memory User Guide
 
 ## Table of Contents
 
@@ -15,15 +15,16 @@
 
 ## Introduction
 
-### What is ScreenSearch?
+### What is Screen Memory?
 
-ScreenSearch is a Windows screen capture and OCR (Optical Character Recognition) tool that continuously monitors and captures your screen content, extracts text, and stores everything in a searchable local database. Think of it as a personal search engine for everything you've seen on your computer screen.
+Screen Memory is a Windows screen capture and OCR (Optical Character Recognition) tool that continuously monitors and captures your screen content, extracts text, and stores everything in a searchable local database. Think of it as a personal search engine for everything you've seen on your computer screen.
 
 ### Key Features
 
 - **Automatic Screen Capture**: Captures your screen at configurable intervals (default: every 3 seconds)
 - **Intelligent OCR**: Extracts text from screenshots using Windows OCR API for fast and accurate results
 - **Smart Frame Differencing**: Automatically skips unchanged screens to save resources
+- **Glassmorphism Interface**: Premium "Sci-Fi Concept" UI with atmospheric depth and neon accents
 - **Searchable Database**: All captures stored locally in SQLite with full-text search capabilities
 - **Web Interface**: Modern, responsive web UI for searching and browsing your screen history
 - **Privacy First**: All data stays on your machine - no cloud, no tracking
@@ -41,7 +42,9 @@ ScreenSearch is a Windows screen capture and OCR (Optical Character Recognition)
 
 ### How It Works
 
-ScreenSearch runs quietly in the background, capturing your screen every few seconds. Each capture is processed through OCR to extract any visible text, then stored in a local SQLite database along with metadata like timestamp, active application, and window title. The web interface provides powerful search and timeline views to help you find exactly what you're looking for.
+Screen Memory runs quietly in the background, capturing your screen every few seconds. Each capture is processed through OCR to extract any visible text, then stored in a local SQLite database along with metadata like timestamp, active application, and window title.
+
+The interface features a **"Search Bubble"** (accessible via `Cmd+K` or `Ctrl+K`) that floats above the content, allowing you to instantly query your history with natural language.
 
 ---
 
@@ -178,7 +181,7 @@ You should see output indicating:
 #### Step 1: Navigate to UI Directory
 
 ```bash
-cd "\path\to\app\ScreenSearch\screen-ui"
+cd "\path\to\app\Screen Memory\screen-ui"
 ```
 
 #### Step 2: Install Dependencies
@@ -444,6 +447,37 @@ max_cpu_percent = 5
 max_memory_mb = 500
 ```
 
+### AI Settings
+**(New in v0.2.1)**
+
+**Section**: `[ai]`
+
+Configure your connection to AI providers for Intelligence features.
+
+```toml
+# Vision/LLM Provider configuration
+# Supported: "ollama", "openai" (compatible generic)
+vision_provider = "ollama"
+
+# Model name to use
+# Examples: "llama3", "ministral-3:3b"
+vision_model = "ministral-3:3b"
+
+# API Endpoint URL
+# For Ollama: "http://localhost:11434"
+# For LM Studio: "http://localhost:1234/v1"
+vision_endpoint = "http://localhost:11434"
+
+# API Key (optional)
+# Required for authenticated providers
+vision_api_key = "sk-..."
+```
+
+**Configuration Tips**:
+- **Test Connection**: Use the "Test" button in the Data & AI Settings tab to verify your setup.
+- **Local Privacy**: Use Ollama or LM Studio to keep all data local.
+- **Authentication**: API keys are stored securely in your local database.
+
 ### Logging Settings
 
 **Section**: `[logging]`
@@ -467,101 +501,6 @@ log_rotation_count = 5
 
 **Debugging**: Set `level = "debug"` for troubleshooting, but remember to change back to "info" for normal use.
 
-### Embeddings Settings
-**(New in v0.2.0)**
-
-Control semantic search capabilities powered by local ONNX machine learning models.
-
-**Section**: `[embeddings]`
-
-```toml
-[embeddings]
-# Enable vector embeddings for semantic search
-enabled = false
-
-# Embedding model (auto-downloaded from HuggingFace on first use)
-model_name = "paraphrase-multilingual-MiniLM-L12-v2"
-
-# Batch size for embedding generation
-# Higher = faster processing, more memory usage
-batch_size = 50
-
-# Maximum tokens per text chunk
-max_chunk_tokens = 256
-
-# Token overlap between chunks for context preservation
-chunk_overlap = 32
-
-# Hybrid search weight (0.0 = pure FTS5, 1.0 = pure semantic)
-hybrid_search_alpha = 0.5
-```
-
-#### Model Information
-
-- **Default Model**: paraphrase-multilingual-MiniLM-L12-v2
-- **Model Size**: ~40MB (downloaded once, cached in `%APPDATA%\ScreenSearch\models\`)
-- **Dimensions**: 384-dimensional vectors
-- **Languages**: 50+ languages supported (multilingual)
-- **Performance**: ~200ms per frame on modern CPUs
-
-#### Common Configurations
-
-**Enable Semantic Search** (recommended):
-```toml
-[embeddings]
-enabled = true
-batch_size = 50
-hybrid_search_alpha = 0.5  # Balanced hybrid search
-```
-
-**Keyword Search Only** (faster, less storage):
-```toml
-[embeddings]
-enabled = false
-```
-
-**Semantic-Heavy Search** (better for concept matching):
-```toml
-[embeddings]
-enabled = true
-hybrid_search_alpha = 0.8  # 80% semantic, 20% keyword
-```
-
-#### Resource Impact
-
-| Aspect | Impact |
-|--------|--------|
-| **CPU** | +20% during background generation, 0% idle |
-| **Memory** | +500MB during generation, +100MB at rest |
-| **Storage** | ~1.5KB per frame (embeddings stored in SQLite) |
-| **Search Speed** | +100ms for hybrid search queries |
-
-#### First-Time Setup
-
-1. Set `enabled = true` in config.toml
-2. Restart ScreenSearch
-3. Model automatically downloads from HuggingFace (~40MB)
-4. Background worker generates embeddings for existing frames
-5. Monitor progress at `/api/embeddings/status`
-
-#### Troubleshooting
-
-**Model download fails**:
-- Check internet connection
-- HuggingFace may be temporarily unavailable
-- Manual download: Place model.onnx in `%APPDATA%\ScreenSearch\models\`
-
-**High CPU usage**:
-- Reduce `batch_size` (try 25 or 10)
-- Embeddings generate in background, won't affect capture
-
-**Slow search**:
-- Use `use_embeddings=false` for keyword-only search
-- Lower `hybrid_search_alpha` for more FTS5 weight
-- Embeddings add ~100ms to search time
-
-See **Embeddings & Semantic Search** section for detailed usage guide.
-
 ---
 
 ## Using the Application
@@ -577,7 +516,7 @@ cargo run --release
 
 **Expected Output**:
 ```
-[INFO] ScreenSearch v0.2.0
+[INFO] Screen Memory v1.0.0
 [INFO] Initializing database: screen_memories.db
 [INFO] Database ready with 0 frames
 [INFO] Starting screen capture (interval: 3000ms)
@@ -618,7 +557,7 @@ Once started, ScreenSearch runs quietly in the background. You can control it vi
 #### Header
 
 **Left Side**:
-- **Logo**: ScreenSearch branding
+- **Logo**: Screen Memory branding
 - **Health Indicator**: Color-coded status
   - Green pulse: Connected and healthy
   - Yellow: Degraded performance
@@ -642,9 +581,9 @@ Three primary views:
 
 #### Basic Search
 
-1. Click the search bar at the top
+1. Click the search bar at the top or press **`Ctrl+K` / `Cmd+K`** to open the **Search Bubble**
 2. Type your query (e.g., "meeting notes")
-3. Results appear automatically after 300ms debounce
+3. Results appear automatically below the floating bubble
 4. Click any result to view full details
 
 #### Search Features
@@ -706,7 +645,7 @@ This is powered by machine learning models that convert text into numerical vect
 
 ### How It Works
 
-ScreenSearch uses the **paraphrase-multilingual-MiniLM-L12-v2** model:
+Screen Memory uses the **paraphrase-multilingual-MiniLM-L12-v2** model:
 
 - **384-dimensional embeddings**: Each piece of text becomes a 384-number vector
 - **Multilingual support**: Works with English, Spanish, French, German, and 50+ languages
@@ -1240,7 +1179,7 @@ Integrated TagManager component:
 
 ## Privacy Controls
 
-ScreenSearch is designed with privacy as a priority. All data stays local, but you still need to configure exclusions for sensitive applications.
+Screen Memory is designed with privacy as a priority. All data stays local, but you still need to configure exclusions for sensitive applications.
 
 ### Application Exclusion
 
@@ -1693,7 +1632,7 @@ If issues persist:
 
 ### General Questions
 
-**Q: Is ScreenSearch free?**
+**Q: Is Screen Memory free?**
 A: Yes, it's open-source software. Check the LICENSE file for details.
 
 **Q: Does it work on Mac or Linux?**
@@ -1880,10 +1819,10 @@ VACUUM;
 
 ### Version Information
 
-This guide is for ScreenSearch version 0.2.0.
+This guide is for Screen Memory version 1.0.0.
 
 **Last Updated**: December 10, 2025
 
 ---
 
-**ScreenSearch** - Your digital memory, locally stored and searchable.
+**Screen Memory** - Your digital memory, locally stored and searchable.

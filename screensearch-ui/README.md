@@ -1,9 +1,10 @@
 # ScreenSearch - Frontend UI
 
-Modern React-based web interface for ScreenSearch, a Windows screen capture and OCR tool.
+Modern React-based web interface for ScreenSearch, a Windows screen capture and OCR tool. Features an AI-First UI redesign with glassmorphism design system, search modal (Cmd+K), and cyan accent theme.
 
 ## Features
 
+### Core Features
 - **Real-time Search**: Search through captured screen content with auto-complete
 - **Timeline View**: Visual timeline of all captured screens with thumbnails
 - **Tag Management**: Organize captures with custom tags
@@ -12,6 +13,15 @@ Modern React-based web interface for ScreenSearch, a Windows screen capture and 
 - **Responsive Design**: Desktop-optimized interface with fluid layouts
 - **Performance Optimized**: < 100ms interaction response time
 
+### AI-First UI Redesign (v0.3.0)
+- **Search Modal (Cmd+K)**: Full-screen search with glassmorphism, Smart Answers, and activity sources
+- **Collapsible Sidebar**: Icon-only mode with smooth framer-motion animations
+- **ScreenSearch Intel Dashboard**: AI-powered productivity insights with Daily Digest and Memory Status
+- **Cyan Accent Design System**: Deep space background with cyan glow effects
+- **Glassmorphism Cards**: Translucent cards with backdrop blur and glow variants
+- **Productivity Pulse Chart**: Custom SVG line chart with cyan gradient
+- **Circular Gauge**: SVG radial progress for Memory Status with glow effects
+
 ## Tech Stack
 
 - **React 18** - UI framework
@@ -19,9 +29,11 @@ Modern React-based web interface for ScreenSearch, a Windows screen capture and 
 - **Vite** - Build tool and dev server
 - **TanStack Query** - Data fetching and caching
 - **Zustand** - Global state management
-- **Tailwind CSS** - Styling
+- **Tailwind CSS** - Styling with custom glassmorphism utilities
+- **Framer Motion** - Animation library (v0.3.0+)
 - **Lucide React** - Icons
 - **React Hot Toast** - Notifications
+- **React Markdown** - Markdown rendering for AI responses
 - **date-fns** - Date formatting
 - **Axios** - HTTP client
 

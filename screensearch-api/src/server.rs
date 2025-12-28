@@ -42,7 +42,10 @@ impl ApiServer {
     /// Create a new API server
     ///
     /// Initializes database connection and automation engine.
-    pub async fn new(config: ApiConfig) -> anyhow::Result<Self> {
+    pub async fn new(
+        config: ApiConfig,
+        capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
+    ) -> anyhow::Result<Self> {
         tracing::info!("Initializing API server at {}:{}", config.host, config.port);
 
         // Initialize database manager
@@ -59,7 +62,7 @@ impl ApiServer {
         tracing::info!("Automation engine initialized");
 
         // Create application state
-        let state = Arc::new(AppState::new(db, automation));
+        let state = Arc::new(AppState::new(db, automation, capture_interval_ms));
 
         Ok(Self { config, state })
     }

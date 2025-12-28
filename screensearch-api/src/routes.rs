@@ -28,12 +28,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // AI endpoints
         .nest("/ai", ai_routes())
         // Embeddings endpoints (RAG)
-        .nest("/embeddings", embeddings_routes());
+        .nest("/embeddings", embeddings_routes())
+        // RAG Answer generation
+        .route("/generate", post(handlers::generate_answer));
 
     // Root level routes (no prefix)
     Router::new()
         // Nest API routes under /api
-        .nest("/api", api_routes.route("/health", get(handlers::health)))
+        .nest("/api", api_routes
+            .route("/health", get(handlers::system::health))
+            .route("/test-vision", post(handlers::system::test_vision_config))
+        )
         // Serve embedded static files for all other routes (SPA fallback)
         .fallback(serve_embedded)
         .with_state(state)

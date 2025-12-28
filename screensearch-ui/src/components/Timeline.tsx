@@ -33,6 +33,7 @@ export function Timeline() {
     }),
     ...(filters.searchQuery && {
       q: filters.searchQuery,
+      mode: filters.searchMode,
     }),
   };
 
