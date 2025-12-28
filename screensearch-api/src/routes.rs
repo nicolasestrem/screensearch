@@ -157,6 +157,9 @@ fn ai_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/validate", post(handlers::validate_connection))
         .route("/generate", post(handlers::generate_report))
+        // Local model management
+        .route("/model/status", get(handlers::get_model_status))
+        .route("/model/download", post(handlers::start_model_download))
 }
 
 /// Embeddings routes for RAG

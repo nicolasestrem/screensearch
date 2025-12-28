@@ -1,0 +1,52 @@
+[package]
+name = "screensearch-llm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Local LLM inference for ScreenSearch using Ministral-3B"
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# HTTP client for model download and inference
+reqwest = { version = "0.11", features = ["json", "stream"] }
+futures-util = "0.3"
+
+# Progress indication for downloads
+indicatif = "0.17"
+
+# Async trait support
+async-trait = "0.1"
+
+# Platform paths for model storage
+dirs = "5.0"
+
+# Image processing (for vision capabilities)
+image = { workspace = true }
+base64 = "0.21"
+
+[lib]
+name = "screensearch_llm"
+path = "src/lib.rs"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tempfile = "3"
+
+# NOTE: Direct LLM inference via mistral.rs has dependency conflicts with windows crates.
+# Current implementation uses HTTP API to llama.cpp server or Ollama as a fallback.
+# Native inference can be added later when dependency issues are resolved.

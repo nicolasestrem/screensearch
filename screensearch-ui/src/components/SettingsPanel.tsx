@@ -9,15 +9,29 @@ import {
   Database,
   Pause,
   Play,
-  HardDrive
+  HardDrive,
+  Download,
+  CheckCircle,
+  Loader2,
+  Cpu
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { TagManager } from './TagManager';
 import { EmbeddingsStatus } from './EmbeddingsStatus';
 import { useSettings, useUpdateSettings } from '../hooks/useSettings';
 import { cn } from '../lib/utils';
+import { useQuery, useMutation } from '@tanstack/react-query';
 
 type SettingsTab = 'general' | 'capture' | 'privacy' | 'data';
+
+// Model status types
+interface ModelStatus {
+  downloaded: boolean;
+  downloading: boolean;
+  model_name: string;
+  model_size_bytes: number;
+  model_path: string | null;
+}
 
 export function SettingsPanel() {
   const { isSettingsPanelOpen, toggleSettingsPanel, isDarkMode, toggleDarkMode } = useStore();
@@ -25,6 +39,34 @@ export function SettingsPanel() {
   const updateSettings = useUpdateSettings();
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+
+  // Local LLM model status query
+  const { data: modelStatus, refetch: refetchModelStatus } = useQuery<ModelStatus>({
+    queryKey: ['model-status'],
+    queryFn: async () => {
+      const res = await fetch('http://localhost:3131/api/ai/model/status');
+      if (!res.ok) throw new Error('Failed to fetch model status');
+      return res.json();
+    },
+    enabled: isSettingsPanelOpen,
+    refetchInterval: (query) => query.state.data?.downloading ? 2000 : false, // Poll while downloading
+  });
+
+  // Model download mutation
+  const downloadModel = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('http://localhost:3131/api/ai/model/download', { method: 'POST' });
+      if (!res.ok) throw new Error('Failed to start download');
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success('Model download started!');
+      refetchModelStatus();
+    },
+    onError: (err: Error) => {
+      toast.error(`Download failed: ${err.message}`);
+    },
+  });
 
   // Local state for editing
   const [captureInterval, setCaptureInterval] = useState(5);
@@ -409,48 +451,94 @@ export function SettingsPanel() {
                             onChange={(e) => setVisionProvider(e.target.value)}
                             className="w-full bg-background border border-input rounded-lg px-3 py-2 font-mono text-sm"
                           >
-                            <option value="ollama">Ollama (Local)</option>
+                            <option value="local">Local (Ministral-3B) - No API needed</option>
+                            <option value="ollama">Ollama (Local Server)</option>
                             <option value="openai">OpenAI Compatible (ChatGPT, vLLM, LM Studio)</option>
                           </select>
                         </div>
 
-                        <div>
-                          <label className="block text-sm font-medium mb-2">Provider Base URL</label>
-                          <input
-                            type="text"
-                            value={visionEndpoint}
-                            onChange={(e) => setVisionEndpoint(e.target.value)}
-                            placeholder={visionProvider === 'ollama' ? "http://localhost:11434" : "https://api.openai.com/v1"}
-                            className="w-full bg-background border border-input rounded-lg px-3 py-2 font-mono text-sm"
-                          />
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {visionProvider === 'ollama'
-                              ? "Base URL for Ollama. API path `/api/generate` will be appended."
-                              : "Base API URL. Path `/chat/completions` will be appended."}
-                          </p>
-                        </div>
+                        {/* Local Model Status - shown when local provider selected */}
+                        {visionProvider === 'local' && (
+                          <div className="p-4 bg-secondary/30 rounded-xl border border-border/50 space-y-3">
+                            <div className="flex items-center gap-2">
+                              <Cpu className="h-4 w-4 text-primary" />
+                              <span className="font-medium">Ministral-3B Model</span>
+                            </div>
 
-                        <div>
-                          <label className="block text-sm font-medium mb-2">API Key (Optional)</label>
-                          <input
-                            type="password"
-                            value={visionApiKey}
-                            onChange={(e) => setVisionApiKey(e.target.value)}
-                            placeholder="sk-..."
-                            className="w-full bg-background border border-input rounded-lg px-3 py-2 font-mono text-sm"
-                          />
-                        </div>
+                            {modelStatus?.downloaded ? (
+                              <div className="flex items-center gap-2 text-sm text-green-500">
+                                <CheckCircle className="h-4 w-4" />
+                                <span>Model ready ({(modelStatus.model_size_bytes / 1_000_000_000).toFixed(2)} GB)</span>
+                              </div>
+                            ) : modelStatus?.downloading ? (
+                              <div className="flex items-center gap-2 text-sm text-primary">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                <span>Downloading... ({(modelStatus.model_size_bytes / 1_000_000_000).toFixed(2)} GB)</span>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <p className="text-sm text-muted-foreground">
+                                  Model not downloaded. Size: {modelStatus ? (modelStatus.model_size_bytes / 1_000_000_000).toFixed(2) : '2.15'} GB
+                                </p>
+                                <button
+                                  onClick={() => downloadModel.mutate()}
+                                  disabled={downloadModel.isPending}
+                                  className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg text-sm font-medium disabled:opacity-50"
+                                >
+                                  <Download className="h-4 w-4" />
+                                  Download Model
+                                </button>
+                              </div>
+                            )}
 
-                        <div>
-                          <label className="block text-sm font-medium mb-2">Model Name</label>
-                          <input
-                            type="text"
-                            value={visionModel}
-                            onChange={(e) => setVisionModel(e.target.value)}
-                            placeholder="e.g., llama3, gpt-4o"
-                            className="w-full bg-background border border-input rounded-lg px-3 py-2"
-                          />
-                        </div>
+                            <p className="text-xs text-muted-foreground">
+                              Runs entirely on your device. Requires llama-server to be running.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Only show URL/API Key/Model fields for non-local providers */}
+                        {visionProvider !== 'local' && (
+                          <>
+                            <div>
+                              <label className="block text-sm font-medium mb-2">Provider Base URL</label>
+                              <input
+                                type="text"
+                                value={visionEndpoint}
+                                onChange={(e) => setVisionEndpoint(e.target.value)}
+                                placeholder={visionProvider === 'ollama' ? "http://localhost:11434" : "https://api.openai.com/v1"}
+                                className="w-full bg-background border border-input rounded-lg px-3 py-2 font-mono text-sm"
+                              />
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {visionProvider === 'ollama'
+                                  ? "Base URL for Ollama. API path `/api/generate` will be appended."
+                                  : "Base API URL. Path `/chat/completions` will be appended."}
+                              </p>
+                            </div>
+
+                            <div>
+                              <label className="block text-sm font-medium mb-2">API Key (Optional)</label>
+                              <input
+                                type="password"
+                                value={visionApiKey}
+                                onChange={(e) => setVisionApiKey(e.target.value)}
+                                placeholder="sk-..."
+                                className="w-full bg-background border border-input rounded-lg px-3 py-2 font-mono text-sm"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-sm font-medium mb-2">Model Name</label>
+                              <input
+                                type="text"
+                                value={visionModel}
+                                onChange={(e) => setVisionModel(e.target.value)}
+                                placeholder="e.g., llama3, gpt-4o"
+                                className="w-full bg-background border border-input rounded-lg px-3 py-2"
+                              />
+                            </div>
+                          </>
+                        )}
 
                         <div className="flex gap-2 pt-2">
                           <button

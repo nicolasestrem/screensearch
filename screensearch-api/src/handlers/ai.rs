@@ -1,16 +1,20 @@
 //! AI Integration Handlers
 //!
-//! Handles communication with LLM providers (OpenAI, Ollama) and report generation.
+//! Handles communication with LLM providers (OpenAI, Ollama, Local) and report generation.
 
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 use axum::extract::{Json, State};
 use chrono::{DateTime, Duration, Utc};
 use reqwest::RequestBuilder;
+use screensearch_llm::{model_exists, get_models_dir, MODEL_FILENAME, MODEL_SIZE_BYTES};
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
+
+/// Local LLM server endpoint (llama.cpp server)
+const LOCAL_LLM_ENDPOINT: &str = "http://127.0.0.1:8080/v1";
 
 // ============================================================
 // Helper Functions
@@ -130,6 +134,41 @@ pub async fn validate_connection(
     Json(payload): Json<AiConnectionRequest>,
 ) -> Result<Json<AiConnectionResponse>> {
     debug!("Validating AI connection to {}", payload.provider_url);
+
+    // Handle local provider specially
+    if payload.provider_url == "local" {
+        let models_dir = get_models_dir();
+        if model_exists(&models_dir) {
+            // Check if llama-server is running
+            let client = reqwest::Client::new();
+            match client.get(format!("{}/models", LOCAL_LLM_ENDPOINT)).send().await {
+                Ok(res) if res.status().is_success() => {
+                    return Ok(Json(AiConnectionResponse {
+                        success: true,
+                        message: "Local Ministral-3B model is ready. llama-server is running.".to_string(),
+                    }));
+                }
+                _ => {
+                    return Ok(Json(AiConnectionResponse {
+                        success: false,
+                        message: format!(
+                            "Model downloaded but llama-server not running. Start it with: llama-server -m {}",
+                            models_dir.join(MODEL_FILENAME).display()
+                        ),
+                    }));
+                }
+            }
+        } else {
+            let size_gb = MODEL_SIZE_BYTES as f64 / 1_000_000_000.0;
+            return Ok(Json(AiConnectionResponse {
+                success: false,
+                message: format!(
+                    "Local model not downloaded. Model size: {:.2} GB. Download required.",
+                    size_gb
+                ),
+            }));
+        }
+    }
 
     // Validate URL format and security
     if let Err(err_msg) = validate_provider_url(&payload.provider_url) {
@@ -268,23 +307,39 @@ OUTPUT FORMAT (Markdown):
 
     // 3. Call AI Provider
 
-    // Validate URL format and security
-    if let Err(err_msg) = validate_provider_url(&payload.provider_url) {
-        return Err(AppError::InvalidRequest(format!(
-            "Invalid provider URL: {}",
-            err_msg
-        )));
+    // Determine effective URL - use local endpoint if provider is "local"
+    let (effective_url, effective_model) = if payload.provider_url == "local" {
+        // Check if model is available
+        let models_dir = get_models_dir();
+        if !model_exists(&models_dir) {
+            return Err(AppError::InvalidRequest(
+                "Local model not downloaded. Please download the model first.".to_string()
+            ));
+        }
+        (LOCAL_LLM_ENDPOINT.to_string(), "ministral-3b".to_string())
+    } else {
+        (payload.provider_url.clone(), payload.model.clone())
+    };
+
+    // Validate URL format and security (skip for local which we already handle)
+    if payload.provider_url != "local" {
+        if let Err(err_msg) = validate_provider_url(&effective_url) {
+            return Err(AppError::InvalidRequest(format!(
+                "Invalid provider URL: {}",
+                err_msg
+            )));
+        }
     }
 
     let client = reqwest::Client::new();
     // Ensure we handle URL construction carefully. Most providers need /chat/completions
     let url = format!(
         "{}/chat/completions",
-        payload.provider_url.trim_end_matches('/')
+        effective_url.trim_end_matches('/')
     );
 
     let request_body = OpenAIChatRequest {
-        model: payload.model.clone(),
+        model: effective_model.clone(),
         messages: vec![
             OpenAIMessage {
                 role: "system".to_string(),
@@ -364,8 +419,82 @@ OUTPUT FORMAT (Markdown):
 
     Ok(Json(AiReportResponse {
         report: final_report,
-        model_used: payload.model,
+        model_used: effective_model,
         tokens_used: response_body.usage.map(|u| u.total_tokens),
         context_source,
+    }))
+}
+
+// ============================================================
+// Local Model Management Handlers
+// ============================================================
+
+#[derive(Debug, Serialize)]
+pub struct ModelStatusResponse {
+    pub downloaded: bool,
+    pub downloading: bool,
+    pub model_name: String,
+    pub model_size_bytes: u64,
+    pub model_path: Option<String>,
+}
+
+/// GET /ai/model/status
+/// Returns the status of the local Ministral-3B model
+pub async fn get_model_status(
+    State(_state): State<Arc<AppState>>,
+) -> Result<Json<ModelStatusResponse>> {
+    let models_dir = get_models_dir();
+    let downloaded = model_exists(&models_dir);
+    let model_path = if downloaded {
+        Some(models_dir.join(MODEL_FILENAME).to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    Ok(Json(ModelStatusResponse {
+        downloaded,
+        downloading: false, // TODO: Track download state in AppState
+        model_name: "Ministral-3B-Instruct-2512-Q4_K_M".to_string(),
+        model_size_bytes: MODEL_SIZE_BYTES,
+        model_path,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModelDownloadResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+/// POST /ai/model/download
+/// Triggers download of the local Ministral-3B model
+pub async fn start_model_download(
+    State(_state): State<Arc<AppState>>,
+) -> Result<Json<ModelDownloadResponse>> {
+    let models_dir = get_models_dir();
+
+    // Check if already downloaded
+    if model_exists(&models_dir) {
+        return Ok(Json(ModelDownloadResponse {
+            success: true,
+            message: "Model already downloaded".to_string(),
+        }));
+    }
+
+    // Start download in background
+    tokio::spawn(async move {
+        info!("Starting model download in background...");
+        match screensearch_llm::download_model(&models_dir).await {
+            Ok(_) => info!("Model download completed successfully"),
+            Err(e) => error!("Model download failed: {}", e),
+        }
+    });
+
+    Ok(Json(ModelDownloadResponse {
+        success: true,
+        message: format!(
+            "Download started. Model size: {:.2} GB",
+            MODEL_SIZE_BYTES as f64 / 1_000_000_000.0
+        ),
     }))
 }

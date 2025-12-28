@@ -5,7 +5,9 @@ members = [
     "screensearch-db",
     "screensearch-api",
     "screensearch-automation",
-    "screensearch-embeddings", "screensearch-vision",
+    "screensearch-embeddings",
+    "screensearch-vision",
+    "screensearch-llm",
 ]
 
 [package]
@@ -37,7 +39,7 @@ anyhow = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-toml = "0.8"
+toml = "0.8.22"
 
 # Logging
 tracing = { workspace = true }
@@ -100,7 +102,6 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 # Windows-specific
 windows = "0.52"
 uiautomation = "0.16.1"
-windows-capture = "2.0.0-alpha.7"
 
 # Image processing
 image = "0.24"
