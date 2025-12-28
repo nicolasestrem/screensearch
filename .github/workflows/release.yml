@@ -182,8 +182,8 @@ jobs:
           VERSION="${GITHUB_REF#refs/tags/v}"
 
           # Extract version section from CHANGELOG.md
-          CHANGELOG_SECTION=$(awk -v ver="$VERSION" '
-            /^## \['$VERSION'\]/ { found=1; next }
+          CHANGELOG_SECTION=$(awk '
+            /^## \['"$VERSION"'\]/ { found=1; next }
             found && /^## \[/ { exit }
             found { print }
           ' CHANGELOG.md)
@@ -195,12 +195,10 @@ jobs:
           # Update terminology
           CHANGELOG_SECTION=$(echo "$CHANGELOG_SECTION" | sed 's/ONNX embedding model/AI RAG Search Model/g; s/ONNX model/AI RAG Search Model/g')
 
-          # Escape for GitHub Actions
-          CHANGELOG_SECTION="${CHANGELOG_SECTION//'%'/'%25'}"
-          CHANGELOG_SECTION="${CHANGELOG_SECTION//$'\n'/'%0A'}"
-          CHANGELOG_SECTION="${CHANGELOG_SECTION//$'\r'/'%0D'}"
-
-          echo "content=$CHANGELOG_SECTION" >> $GITHUB_OUTPUT
+          # Use heredoc for multiline output (GitHub Actions requirement)
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG_SECTION" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
