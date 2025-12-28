@@ -1,3 +1,9 @@
+name: Install LLVM tools for Windows cross-compilation
+  run: |
+    sudo apt-get update
+    sudo apt-get install -y llvm-mingw
+    echo "$HOME/llvm-mingw/bin" >> $GITHUB_PATH
+    
 name: Cross-Compile (Linux to Windows)
 
 on:
