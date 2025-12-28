@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.0] - 2025-12-28
+
+### Added
+- **Embedded Ministral-3B LLM**: Local AI inference with no external API required
+  - New `screensearch-llm` crate for managing llama.cpp server lifecycle
+  - Auto-downloads llama-server binary and Ministral-3B-Instruct GGUF model on first use
+  - GPU acceleration via Vulkan (works on NVIDIA, AMD, Intel) with CPU fallback
+  - Model files stored in `%APPDATA%\ScreenSearch\models\`
+  - Server runs on `http://127.0.0.1:31130` with OpenAI-compatible API
+
+- **Local Provider UI Integration**:
+  - "Local (Ministral-3B)" as default AI provider option in Settings
+  - Model download progress indicator with real-time status
+  - llama-server start/stop controls with health monitoring
+  - Provider dropdown replacing free-form URL input
+  - Automatic hiding of API key/model fields when local provider selected
+
+- **Vision System Enhancements**:
+  - Local provider handling in vision config test endpoint
+  - Health check for llama-server at `http://127.0.0.1:31130/health`
+  - Proper error messages for model download and server states
+
+### Changed
+- **Default AI Provider**: Changed from Ollama to local embedded LLM
+- **Default Vision Settings**: Fresh installs now default to:
+  - `vision_enabled = 0` (opt-in, not auto-start)
+  - `vision_provider = 'local'`
+  - `vision_endpoint = 'http://127.0.0.1:31130'`
+- **llama-server Binary**: Switched from CPU-only to Vulkan GPU build for cross-platform acceleration
+- **Database Migration**: Added migration to reset existing databases to local provider defaults
+
+### Fixed
+- **GitHub Actions Workflow**: Fixed cross-compile workflow failure caused by incorrect llvm-mingw download URL
+  - Updated version format from `2024-11-01` to `20251216`
+  - Fixed archive name from Windows binary (`x86_64-windows-gnu`) to Linux binary (`ucrt-ubuntu-22.04-x86_64`)
+  - Removed non-existent packages (`llvm-tools-19`, `llvm-mingw`) from apt-get
+
+### Technical Details
+- llama-server manages Ministral-3B-Instruct-Q4_K_M.gguf (1.9GB model)
+- GPU offloading with `-ngl 99` flag for maximum acceleration
+- Vulkan binary auto-falls back to CPU if no GPU available
+- DLL extraction from ZIP archives for Windows compatibility
+- Server lifecycle managed via child process with graceful shutdown
+
+---
+
 ## [0.3.0] - 2025-12-27
 
 ### Added

@@ -28,14 +28,14 @@ jobs:
         run: |
           sudo apt-get update
 
-          # Install LLVM/Clang tooling (may provide llvm-tools and friends)
-          sudo apt-get install -y clang-19 lld-19 llvm-19 llvm-tools-19 llvm-mingw || true
+          # Install LLVM/Clang tooling
+          sudo apt-get install -y clang-19 lld-19 llvm-19 || true
 
           # Fallback: download a prebuilt llvm-mingw if llvm-lib is still missing
           if ! command -v llvm-lib >/dev/null 2>&1; then
             echo "llvm-lib not found via apt — downloading llvm-mingw prebuilt release..."
-            LMV_VER=2024-11-01
-            ARCHIVE="llvm-mingw-${LMV_VER}-x86_64-windows-gnu.tar.xz"
+            LMV_VER=20251216
+            ARCHIVE="llvm-mingw-${LMV_VER}-ucrt-ubuntu-22.04-x86_64.tar.xz"
             URL="https://github.com/mstorsjo/llvm-mingw/releases/download/${LMV_VER}/${ARCHIVE}"
             mkdir -p "$HOME/llvm-mingw"
             curl -fsSL "$URL" -o "/tmp/${ARCHIVE}" || { echo "Failed to download llvm-mingw from $URL"; exit 1; }
