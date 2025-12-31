@@ -15,6 +15,7 @@ export function EmbeddingsStatus() {
     const [status, setStatus] = useState<EmbeddingStatus | null>(null);
     const [loading, setLoading] = useState(false);
     const [generating, setGenerating] = useState(false);
+    const [selectedPercentage, setSelectedPercentage] = useState<25 | 50 | 100>(50);
 
     const fetchStatus = async () => {
         try {
@@ -52,18 +53,24 @@ export function EmbeddingsStatus() {
         }
     };
 
-    const triggerGeneration = async () => {
+    const triggerGeneration = async (percentage: number) => {
+        if (!status) return;
+
         try {
             setGenerating(true);
+            // Calculate batch size based on percentage of frames without embeddings
+            const framesWithoutEmbeddings = status.total_frames - status.frames_with_embeddings;
+            const batchSize = Math.max(1, Math.ceil((framesWithoutEmbeddings * percentage) / 100));
+
             const response = await fetch('/api/embeddings/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ batch_size: 100 }),
+                body: JSON.stringify({ batch_size: batchSize }),
             });
             if (response.ok) {
                 // Refresh status after generation
                 await fetchStatus();
-                toast.success("Embedding generation triggered");
+                toast.success(`Embedding generation triggered (${batchSize} frames)`);
             } else {
                 toast.error("Failed to start generation");
             }
@@ -157,15 +164,56 @@ export function EmbeddingsStatus() {
                     </p>
                 </div>
 
-                {/* Generate Button */}
-                <button
-                    onClick={triggerGeneration}
-                    disabled={generating || !status.enabled}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    <RefreshCw className={`h-4 w-4 ${generating ? 'animate-spin' : ''}`} />
-                    {generating ? 'Processing...' : 'Generate Embeddings'}
-                </button>
+                {/* Generate Embeddings Section */}
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground font-medium">Process frames:</span>
+                        <span className="text-xs text-muted-foreground">
+                            {status.total_frames - status.frames_with_embeddings > 0
+                                ? `${(status.total_frames - status.frames_with_embeddings).toLocaleString()} remaining`
+                                : 'All frames indexed'}
+                        </span>
+                    </div>
+
+                    {/* Percentage Selector Buttons */}
+                    <div className="grid grid-cols-3 gap-2">
+                        {([25, 50, 100] as const).map((percentage) => {
+                            const framesWithoutEmbeddings = status.total_frames - status.frames_with_embeddings;
+                            const framesToProcess = Math.max(1, Math.ceil((framesWithoutEmbeddings * percentage) / 100));
+                            const isSelected = selectedPercentage === percentage;
+
+                            return (
+                                <button
+                                    key={percentage}
+                                    onClick={() => {
+                                        setSelectedPercentage(percentage);
+                                        triggerGeneration(percentage);
+                                    }}
+                                    disabled={generating || !status.enabled || framesWithoutEmbeddings === 0}
+                                    className={`flex flex-col items-center justify-center gap-1 px-3 py-2.5 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        isSelected && !generating
+                                            ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                                            : 'bg-card border-border hover:bg-accent hover:border-primary/50'
+                                    }`}
+                                >
+                                    <span className="text-lg font-bold">{percentage}%</span>
+                                    {!generating && framesWithoutEmbeddings > 0 && (
+                                        <span className="text-[10px] opacity-80 font-mono">
+                                            {framesToProcess.toLocaleString()} frames
+                                        </span>
+                                    )}
+                                    {generating && isSelected && (
+                                        <RefreshCw className="h-3 w-3 animate-spin" />
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    <p className="text-xs text-muted-foreground text-center">
+                        Click a percentage to process that portion of unindexed frames
+                    </p>
+                </div>
 
                 {/* Status Indicator */}
                 <div className="flex items-center gap-2 text-sm">
