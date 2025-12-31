@@ -38,8 +38,17 @@
 ```
 
 <div align="center">
-  <img src="screenshots/hero-capture-view.png" width="85%" alt="ScreenSearch Hero - Continuous capture with terminal and application windows">
-  <p><em>Capture everything happening on your screen with intelligent frame differencing</em></p>
+  <h3>Light Theme — Premium Glassmorphism Design</h3>
+  <img src="screenshots/dashboard-light.png" width="85%" alt="ScreenSearch Dashboard Light Theme - AI-powered Intel Dash with Daily Digest, Memory Status gauge, and Productivity Pulse chart">
+  <p><em>Modern glass-and-neon aesthetic with atmospheric radial gradients and fluid animations</em></p>
+</div>
+
+<br/>
+
+<div align="center">
+  <h3>Dark Theme — Comfortable Night Mode</h3>
+  <img src="screenshots/dashboard-dark.png" width="85%" alt="ScreenSearch Dashboard Dark Theme - AI-First interface with glassmorphism cards and neon accents">
+  <p><em>Beautiful dark mode for late-night productivity tracking and focus sessions</em></p>
 </div>
 
 ---
@@ -95,32 +104,30 @@ The new **"Intel Dash"** puts AI-powered insights front and center with a beauti
 - [*] **Productivity Pulse** — Interactive hourly activity chart with smooth curves
 - [*] **Smart Answers** — Get AI-powered context from your screen history
 
-### [>] Timeline View — Browse Your Screen History
-
-Visualize your day at a glance with the **Activity Graph**, showing exactly when you were most active. Browse your captured history in an elegant grid layout, filter by application, or jump to specific moments.
-
 <div align="center">
-  <img src="screenshots/timeline-grid-view.png" width="80%" alt="Timeline view showing Activity Graph and frame grid">
-  <p><em>Interactive density graph and frame grid for intuitive browsing</em></p>
+  <img src="screenshots/dashboard-dark.png" width="80%" alt="Dashboard with Daily Digest, Memory Status gauge, and Productivity Pulse">
+  <p><em>Your day at a glance: Auto-generated AI summaries, RAG indexing progress, and hourly activity charts</em></p>
 </div>
 
-### [>] Settings & Privacy Controls
+### [>] Smart Search — AI That Understands Context
 
-Take full control of your capture experience. Configure capture intervals, select which monitors to capture, exclude sensitive applications, and manage your data retention.
-
-<div align="center">
-  <img src="screenshots/settings-panel.png" width="75%" alt="Settings panel with capture configuration and privacy controls">
-  <p><em>Comprehensive settings for customizing capture behavior and privacy</em></p>
-</div>
-
-### [>] Captured Frames Gallery
-
-View your complete screen capture history organized by timestamp. Each frame is searchable and tagged.
+Ask natural language questions and get AI-powered answers grounded in your actual screen activity.
 
 <div align="center">
-  <img src="screenshots/frames-gallery.png" width="80%" alt="Gallery view of captured frames organized chronologically">
-  <p><em>Browse, search, and organize your captured screen moments</em></p>
+  <img src="screenshots/search-smart-answer.png" width="75%" alt="Smart Answer Card with AI-generated response and activity breakdown">
+  <p><em>Conversational AI answers with application breakdown and confidence scoring</em></p>
 </div>
+
+<div align="center">
+  <img src="screenshots/search-antigravity-example.png" width="80%" alt="Search example showing semantic understanding of 'Antigravity' query">
+  <p><em>Semantic search understands context—searching for 'Antigravity' finds related workflow automation projects</em></p>
+</div>
+
+**Search Features:**
+- [*] Natural language queries (e.g., "What was I working on at 3pm yesterday?")
+- [*] Hybrid search combining FTS5 keyword matching + vector semantic similarity
+- [*] Activity breakdown by application with visual distribution
+- [*] Smart Answer Card with AI-generated summaries
 
 ### [>] Intelligence Dashboard — AI That Understands Your Work
 
@@ -133,18 +140,69 @@ Transform raw screen captures into actionable insights. The Intelligence dashboa
 - [*] **Privacy First** — Local LLMs keep all analysis on your machine
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/nicolasestrem/screensearch/main/screenshots/intelligence-dashboard.png" width="80%" alt="Intelligence Dashboard showing generated reports">
-  <p><em>AI-powered analysis of your screen activity—test connections, generate reports, and export insights</em></p>
+  <img src="screenshots/intelligence-generator.png" width="75%" alt="Intelligence Report Generator - Configure AI provider, select time range, generate reports">
+  <p><em>Connect to any OpenAI-compatible API, validate connection, and customize report prompts</em></p>
 </div>
+
+<div align="center">
+  <img src="screenshots/intelligence-report-full.png" width="80%" alt="AI-generated intelligence report showing productivity metrics and focus areas">
+  <p><em>Comprehensive AI analysis with daily summaries, productivity patterns, and actionable recommendations</em></p>
+</div>
+
+### [>] Settings & Privacy — Complete Control
+
+Fine-tune every aspect of ScreenSearch with comprehensive, intuitive settings panels.
+
+#### General Settings
+<div align="center">
+  <img src="screenshots/settings-general.png" width="65%" alt="General settings - Theme selection and application preferences">
+  <p><em>Choose your theme, configure startup behavior, and manage general preferences</em></p>
+</div>
+
+#### Capture Configuration
+<div align="center">
+  <img src="screenshots/settings-capture.png" width="65%" alt="Capture settings - Intervals, monitor selection, frame differencing">
+  <p><em>Set capture intervals (2-5 seconds), enable intelligent frame differencing, optimize storage with JPEG compression</em></p>
+</div>
+
+#### Privacy Controls
+<div align="center">
+  <img src="screenshots/settings-privacy.png" width="65%" alt="Privacy settings - App exclusions, auto-pause on lock">
+  <p><em>Exclude sensitive apps (1Password, KeePass, banking), auto-pause on screen lock, configure data retention</em></p>
+</div>
+
+#### AI Provider Configuration
+<div align="center">
+  <img src="screenshots/settings-ai-provider.png" width="65%" alt="AI provider settings - Ollama configuration with validation">
+  <p><em>Connect to local LLMs (Ollama, LM Studio) or cloud providers (OpenAI) with real-time API validation</em></p>
+</div>
+
+#### Embeddings & Semantic Search
+<div align="center">
+  <img src="screenshots/settings-embeddings.png" width="65%" alt="Embeddings settings - Enable semantic search, batch processing">
+  <p><em>Enable AI-powered semantic search with local ONNX models, configure batch sizes, tune hybrid search weighting</em></p>
+</div>
+
+#### Data Management
+<div align="center">
+  <img src="screenshots/settings-data-ai.png" width="65%" alt="Data management - Database size, auto-cleanup, storage monitoring">
+  <p><em>Monitor database size, configure automatic cleanup (retention days), manage storage usage</em></p>
+</div>
+
+### [>] See It In Action — Dashboard Demo
+
+Watch the new Intel Dash come to life with smooth animations, real-time updates, and beautiful glassmorphism effects.
+
+<div align="center">
+  <img src="screenshots/demo-dashboard.gif" width="85%" alt="Animated demo of ScreenSearch dashboard with Daily Digest and charts">
+  <p><em>Live dashboard with AI summaries, Memory Status gauge, and Productivity Pulse animations</em></p>
+</div>
+
+> **Note**: GIF optimized for GitHub (10fps, 1280px). [Download full HD video](screenshots/demo-dashboard.mp4) for best quality.
 
 ### [>] Terminal Integration
 
-Powerful logging and diagnostics. Watch ScreenSearch initialize, start capture loops, and process OCR in real-time.
-
-<div align="center">
-  <img src="screenshots/terminal-startup.png" width="80%" alt="Terminal showing detailed startup logs and OCR metrics">
-  <p><em>Real-time logging with performance metrics and system health checks</em></p>
-</div>
+Powerful logging and diagnostics. Watch ScreenSearch initialize, start capture loops, and process OCR in real-time with detailed performance metrics and system health checks.
 
 ---
 
