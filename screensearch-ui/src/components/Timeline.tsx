@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Grid, List, Loader2, AlertCircle } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useFrames } from '../hooks/useFrames';
@@ -74,14 +74,18 @@ export function Timeline() {
     );
   }
 
-  const framesByDate = (data?.data || []).reduce((acc, frame) => {
-    const date = format(new Date(frame.timestamp), 'yyyy-MM-dd');
-    if (!acc[date]) {
-      acc[date] = [];
-    }
-    acc[date].push(frame);
-    return acc;
-  }, {} as Record<string, any[]>);
+  // Memoize framesByDate computation to avoid O(n) reduce on every render
+  // Only recompute when the actual frames data changes
+  const framesByDate = useMemo(() => {
+    return (data?.data || []).reduce((acc, frame) => {
+      const date = format(new Date(frame.timestamp), 'yyyy-MM-dd');
+      if (!acc[date]) {
+        acc[date] = [];
+      }
+      acc[date].push(frame);
+      return acc;
+    }, {} as Record<string, any[]>);
+  }, [data?.data]);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">

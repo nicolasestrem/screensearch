@@ -17,6 +17,30 @@ import type {
   UpdateSettingsRequest,
 } from '../types';
 
+// Track blob URLs to prevent memory leaks
+// When a blob URL is overwritten (same frame ID requested twice), we revoke the old one
+const blobUrlCache = new Map<number, string>();
+
+/**
+ * Revokes a blob URL by frame ID to free memory
+ * Should be called when component unmounts or when URL is no longer needed
+ */
+export function revokeBlobUrl(frameId: number): void {
+  const url = blobUrlCache.get(frameId);
+  if (url) {
+    URL.revokeObjectURL(url);
+    blobUrlCache.delete(frameId);
+  }
+}
+
+/**
+ * Revokes all cached blob URLs - useful for cleanup on app unmount
+ */
+export function revokeAllBlobUrls(): void {
+  blobUrlCache.forEach((url) => URL.revokeObjectURL(url));
+  blobUrlCache.clear();
+}
+
 class APIClient {
   private client: AxiosInstance;
 
@@ -29,25 +53,31 @@ class APIClient {
       },
     });
 
-    // Request interceptor for logging
+    // Request interceptor for logging (only in development)
     this.client.interceptors.request.use(
       (config) => {
-        console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
+        if (import.meta.env.DEV) {
+          console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
+        }
         return config;
       },
       (error) => {
-        console.error('[API] Request error:', error);
+        if (import.meta.env.DEV) {
+          console.error('[API] Request error:', error);
+        }
         return Promise.reject(error);
       }
     );
 
-    // Response interceptor for error handling
+    // Response interceptor for error handling (only log in development)
     this.client.interceptors.response.use(
       (response) => response,
       (error: AxiosError) => {
-        console.error('[API] Response error:', error.message);
-        if (error.response) {
-          console.error('[API] Error response:', error.response.data);
+        if (import.meta.env.DEV) {
+          console.error('[API] Response error:', error.message);
+          if (error.response) {
+            console.error('[API] Error response:', error.response.data);
+          }
         }
         return Promise.reject(error);
       }
@@ -98,10 +128,22 @@ class APIClient {
   }
 
   async getFrameImage(id: number): Promise<string> {
+    // Check if we already have a cached blob URL for this frame
+    const existingUrl = blobUrlCache.get(id);
+    if (existingUrl) {
+      // Revoke the old URL to prevent memory leaks when re-fetching
+      URL.revokeObjectURL(existingUrl);
+      blobUrlCache.delete(id);
+    }
+
     const { data } = await this.client.get<string>(`/frames/${id}/image`, {
       responseType: 'blob' as any,
     });
-    return URL.createObjectURL(new Blob([data]));
+    const blobUrl = URL.createObjectURL(new Blob([data]));
+
+    // Cache the new blob URL for later cleanup
+    blobUrlCache.set(id, blobUrl);
+    return blobUrl;
   }
 
   // Tag Endpoints

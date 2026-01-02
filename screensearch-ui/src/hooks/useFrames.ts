@@ -1,5 +1,6 @@
 import { useQuery, UseQueryResult } from '@tanstack/react-query';
-import { apiClient } from '../api/client';
+import { useEffect } from 'react';
+import { apiClient, revokeBlobUrl } from '../api/client';
 import type { PaginatedResponse, Frame } from '../types';
 
 interface UseFramesParams {
@@ -42,11 +43,23 @@ export function useFrameImage(
   id: number,
   enabled = true
 ): UseQueryResult<string, Error> {
-  return useQuery({
+  const query = useQuery({
     queryKey: ['frame-image', id],
     queryFn: () => apiClient.getFrameImage(id),
     enabled,
     staleTime: 300000, // 5 minutes
     gcTime: 600000, // 10 minutes
   });
+
+  // Cleanup blob URL when component unmounts or id changes
+  useEffect(() => {
+    return () => {
+      // Only revoke if the query was successful (we have a blob URL)
+      if (query.data) {
+        revokeBlobUrl(id);
+      }
+    };
+  }, [id, query.data]);
+
+  return query;
 }

@@ -35,7 +35,12 @@ tracing = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
 tempfile = "3.8"
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 
 [lib]
 name = "screensearch_db"
 path = "src/lib.rs"
+
+[[bench]]
+name = "db_benchmarks"
+harness = false

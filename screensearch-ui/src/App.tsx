@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, lazy, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
 import { useStore } from './store/useStore';
@@ -11,9 +11,27 @@ import { SearchInvite } from './components/search/SearchInvite';
 import { SettingsPanel } from './components/SettingsPanel';
 import { FrameModal } from './components/FrameModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { DashboardPage } from './pages/Dashboard';
-import { IntelligencePage } from './pages/Intelligence';
 import { Footer } from './components/Footer';
+import { Loader2 } from 'lucide-react';
+
+// Lazy load heavy pages for better initial bundle size
+// Dashboard is the default page, so we keep it eagerly loaded
+import { DashboardPage } from './pages/Dashboard';
+
+// Intelligence page is heavy (report generation, markdown rendering)
+// Only load when user navigates to reports tab
+const IntelligencePage = lazy(() =>
+  import('./pages/Intelligence').then(module => ({ default: module.IntelligencePage }))
+);
+
+// Loading fallback component for lazy-loaded pages
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center h-64">
+      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+    </div>
+  );
+}
 
 // Create a client
 const queryClient = new QueryClient({
@@ -91,7 +109,11 @@ function AppContent() {
                 <Timeline />
               </div>
             )}
-            {activeTab === 'reports' && <IntelligencePage />}
+            {activeTab === 'reports' && (
+              <Suspense fallback={<PageLoader />}>
+                <IntelligencePage />
+              </Suspense>
+            )}
           </div>
           <Footer />
         </div>
