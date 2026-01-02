@@ -5,6 +5,10 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ScreenSearch</title>
+    <!-- Performance: Preconnect to API server for faster requests -->
+    <link rel="preconnect" href="http://localhost:3131" />
+    <!-- Performance: Preload critical CSS -->
+    <link rel="preload" as="style" href="/src/index.css" />
   </head>
   <body>
     <div id="root"></div>

@@ -860,31 +860,74 @@ impl DatabaseManager {
     }
 
     /// Search for semantically similar text chunks using vector embeddings
-    /// 
-    /// Performs an in-memory scan/brute-force search over all stored embeddings.
+    ///
+    /// Performs an in-memory scan/brute-force search over stored embeddings.
     /// Used for "Light Mode" query intelligence.
+    ///
+    /// # Arguments
+    /// * `query_vector` - The embedding vector to search for
+    /// * `limit` - Maximum number of results to return
+    /// * `min_score` - Minimum cosine similarity score (0.0 to 1.0)
+    /// * `start_time` - Optional start time filter (inclusive)
+    /// * `end_time` - Optional end time filter (inclusive)
     pub async fn search_embeddings(
         &self,
         query_vector: Vec<f32>,
         limit: usize,
         min_score: f32,
     ) -> Result<Vec<SemanticResult>> {
-        // Fetch all embeddings
-        // Optimization: In future, fetch only potentially relevant ones or use true vector DB
-        let rows = sqlx::query(
-            r#"
+        self.search_embeddings_with_time_range(query_vector, limit, min_score, None, None).await
+    }
+
+    /// Search for semantically similar text chunks with optional time range filter
+    ///
+    /// Performs an in-memory scan/brute-force search over stored embeddings.
+    /// When time range is provided, only embeddings from frames within that range are searched.
+    pub async fn search_embeddings_with_time_range(
+        &self,
+        query_vector: Vec<f32>,
+        limit: usize,
+        min_score: f32,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
+    ) -> Result<Vec<SemanticResult>> {
+        // Build query with optional time filtering to reduce memory usage
+        let base_query = r#"
             SELECT e.frame_id, e.chunk_text, e.chunk_index, e.embedding, e.embedding_dim,
-                   f.timestamp, f.monitor_index, f.device_name, f.file_path, 
+                   f.timestamp, f.monitor_index, f.device_name, f.file_path,
                    f.active_window, f.active_process, f.browser_url, f.width, f.height,
                    f.offset_index, f.focused, f.created_at,
                    f.analysis_status, f.description, f.visible_text_json, f.activity_type,
                    f.app_hint, f.confidence, f.analysis_time_ms, f.analysis_error
             FROM embeddings e
             JOIN frames f ON e.frame_id = f.id
-            "#
-        )
-        .fetch_all(self.pool())
-        .await?;
+        "#;
+
+        // Build WHERE clause dynamically
+        let mut conditions = Vec::new();
+        if start_time.is_some() {
+            conditions.push("f.timestamp >= ?");
+        }
+        if end_time.is_some() {
+            conditions.push("f.timestamp <= ?");
+        }
+
+        let query = if conditions.is_empty() {
+            base_query.to_string()
+        } else {
+            format!("{} WHERE {}", base_query, conditions.join(" AND "))
+        };
+
+        // Bind parameters in order
+        let mut query_builder = sqlx::query(&query);
+        if let Some(start) = &start_time {
+            query_builder = query_builder.bind(start);
+        }
+        if let Some(end) = &end_time {
+            query_builder = query_builder.bind(end);
+        }
+
+        let rows = query_builder.fetch_all(self.pool()).await?;
 
         let mut candidates: Vec<SemanticResult> = Vec::new();
 

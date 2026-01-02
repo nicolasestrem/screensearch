@@ -35,6 +35,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
     apply_migration(pool, "005_vision_analysis", MIGRATION_005_VISION).await?;
     apply_migration(pool, "006_api_key", MIGRATION_006_API_KEY).await?;
     apply_migration(pool, "007_reset_vision_defaults", MIGRATION_007_RESET_VISION_DEFAULTS).await?;
+    apply_migration(pool, "008_performance_indexes", MIGRATION_008_PERFORMANCE_INDEXES).await?;
 
     tracing::info!("All migrations completed successfully");
     Ok(())
@@ -348,4 +349,27 @@ UPDATE settings SET
     vision_model = 'ministral-3:3b',
     vision_endpoint = 'http://127.0.0.1:31130'
 WHERE id = 1;
+"#;
+
+/// Migration 008 - Performance Indexes
+/// Adds missing indexes identified through query analysis for improved performance
+const MIGRATION_008_PERFORMANCE_INDEXES: &str = r#"
+-- Composite index for multi-monitor queries with time range
+-- Optimizes queries filtering by device, monitor, and timestamp together
+CREATE INDEX IF NOT EXISTS idx_frames_device_monitor_time
+    ON frames(device_name, monitor_index, timestamp DESC);
+
+-- Index on metadata key for fast settings lookups
+-- The metadata table is used for embeddings status and other configs
+CREATE INDEX IF NOT EXISTS idx_metadata_key ON metadata(key);
+
+-- Composite index for analysis queue worker queries
+-- Workers query: WHERE locked_until IS NULL OR locked_until < NOW ORDER BY priority DESC
+CREATE INDEX IF NOT EXISTS idx_analysis_queue_locked_priority
+    ON analysis_queue(locked_until, priority DESC);
+
+-- Index for embeddings with timestamp from joined frames table
+-- Used by semantic search when filtering by time range
+CREATE INDEX IF NOT EXISTS idx_embeddings_frame_created
+    ON embeddings(frame_id, created_at DESC);
 "#;

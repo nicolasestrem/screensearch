@@ -121,7 +121,9 @@ impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
             path: "screensearch.db".to_string(),
-            max_connections: 50,
+            // SQLite has single-writer limitation, so 50 connections was excessive
+            // 10 connections is optimal: 1 writer + 9 readers for concurrent access
+            max_connections: 10,
             min_connections: 3,
             acquire_timeout_secs: 10,
             enable_wal: true,
@@ -148,7 +150,7 @@ mod tests {
     fn test_default_config() {
         let config = DatabaseConfig::default();
         assert_eq!(config.path, "screensearch.db");
-        assert_eq!(config.max_connections, 50);
+        assert_eq!(config.max_connections, 10);
         assert!(config.enable_wal);
     }
 
@@ -156,6 +158,6 @@ mod tests {
     fn test_custom_config() {
         let config = DatabaseConfig::new("custom.db");
         assert_eq!(config.path, "custom.db");
-        assert_eq!(config.max_connections, 50);
+        assert_eq!(config.max_connections, 10);
     }
 }

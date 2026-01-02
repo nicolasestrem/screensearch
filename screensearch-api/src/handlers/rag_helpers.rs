@@ -106,28 +106,24 @@ async fn build_rag_enhanced_context(
         end_time.format("%Y-%m-%d %H:%M")
     ));
 
-    let mut ocr_chunks = Vec::new();
-
-    for result in reranked_results.iter() {
+    // Build context directly, limiting to 20 items early to avoid unnecessary allocations
+    context.push_str("Relevant Screen Content (OCR):\n");
+    for result in reranked_results.iter().take(20) {
         let app = result
             .frame
             .active_process
-            .clone()
-            .unwrap_or_else(|| "Unknown".to_string());
-        let window = result.frame.active_window.clone().unwrap_or_default();
+            .as_deref()
+            .unwrap_or("Unknown");
+        let window = result.frame.active_window.as_deref().unwrap_or("");
+        let text: String = result.chunk_text.chars().take(200).collect();
 
-        ocr_chunks.push(format!(
-            "[{}] {} - {}: {}",
+        context.push_str(&format!(
+            "- [{}] {} - {}: {}\n",
             result.frame.timestamp.format("%H:%M"),
             app,
             window,
-            result.chunk_text.chars().take(200).collect::<String>()
+            text
         ));
-    }
-
-    context.push_str("Relevant Screen Content (OCR):\n");
-    for chunk in ocr_chunks.iter().take(20) {
-        context.push_str(&format!("- {}\n", chunk));
     }
 
     Ok((context, "Semantic Search".to_string()))

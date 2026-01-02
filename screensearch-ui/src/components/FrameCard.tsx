@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, memo, useCallback } from 'react';
 import { Monitor, Tag as TagIcon, X, Plus } from 'lucide-react';
 import { Frame } from '../types';
 import { formatRelativeTime, truncateText, highlightText } from '../lib/utils';
@@ -12,7 +12,12 @@ interface FrameCardProps {
   searchQuery?: string;
 }
 
-export function FrameCard({ frame, searchQuery = '' }: FrameCardProps) {
+/**
+ * FrameCard component - displays a single frame/screenshot with metadata and tags
+ * Memoized to prevent unnecessary re-renders when parent components update
+ * Only re-renders when frame data or searchQuery changes
+ */
+function FrameCardComponent({ frame, searchQuery = '' }: FrameCardProps) {
   const [showTagMenu, setShowTagMenu] = useState(false);
   const [imageError, setImageError] = useState(false);
   const tagMenuRef = useRef<HTMLDivElement>(null);
@@ -36,14 +41,15 @@ export function FrameCard({ frame, searchQuery = '' }: FrameCardProps) {
     return searchQuery ? highlightText(truncated, searchQuery) : [{ text: truncated, isHighlight: false }];
   }, [cleanText, searchQuery]);
 
-  const handleAddTag = (tagId: number) => {
+  // Memoize handlers to prevent unnecessary child re-renders
+  const handleAddTag = useCallback((tagId: number) => {
     addTag.mutate({ frameId: frame.id, tagId });
     setShowTagMenu(false);
-  };
+  }, [addTag, frame.id]);
 
-  const handleRemoveTag = (tagId: number) => {
+  const handleRemoveTag = useCallback((tagId: number) => {
     removeTag.mutate({ frameId: frame.id, tagId });
-  };
+  }, [removeTag, frame.id]);
 
   // Close tag menu on outside click
   useEffect(() => {
@@ -204,3 +210,15 @@ export function FrameCard({ frame, searchQuery = '' }: FrameCardProps) {
     </div>
   );
 }
+
+// Memoize FrameCard to prevent re-renders when parent updates but frame data hasn't changed
+// This is critical for performance when rendering many cards in a grid
+export const FrameCard = memo(FrameCardComponent, (prevProps, nextProps) => {
+  // Custom comparison: only re-render if frame ID, timestamp, tags, or search query changes
+  return (
+    prevProps.frame.id === nextProps.frame.id &&
+    prevProps.frame.timestamp === nextProps.frame.timestamp &&
+    prevProps.frame.tags.length === nextProps.frame.tags.length &&
+    prevProps.searchQuery === nextProps.searchQuery
+  );
+});

@@ -21,7 +21,7 @@
 
 <br/>
 
-### [>] [**Download Latest Release (v0.3.0)**](https://github.com/nicolasestrem/screensearch/releases/latest)
+### [>] [**Download Latest Release (v0.4.1)**](https://github.com/nicolasestrem/screensearch/releases/latest)
 
 **Windows 10/11** • **11MB** • **No installation required** • **Just extract and run**
 

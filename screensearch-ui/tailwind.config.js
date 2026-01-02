@@ -77,6 +77,7 @@ export default {
         '3xl': '1.5rem',
       },
       keyframes: {
+        // Core UI animations - actively used
         "fade-in": {
           "0%": { opacity: "0" },
           "100%": { opacity: "1" },
@@ -97,6 +98,7 @@ export default {
           "0%": { opacity: "0", transform: "scale(0.95)" },
           "100%": { opacity: "1", transform: "scale(1)" },
         },
+        // Glow effects - used in glass components
         "pulse-glow": {
           "0%, 100%": { boxShadow: "0 0 10px 0 rgba(0, 212, 255, 0.3)" },
           "50%": { boxShadow: "0 0 20px 5px rgba(0, 212, 255, 0.5)" },
@@ -109,10 +111,7 @@ export default {
           "0%, 100%": { borderColor: "hsl(var(--glass-border))" },
           "50%": { borderColor: "var(--glass-glow)" },
         },
-        "spin-slow": {
-          "0%": { transform: "rotate(0deg)" },
-          "100%": { transform: "rotate(360deg)" },
-        },
+        // Modal animations
         "modal-appear": {
           "0%": { opacity: "0", transform: "scale(0.95) translateY(-20px)" },
           "100%": { opacity: "1", transform: "scale(1) translateY(0)" },
@@ -131,7 +130,6 @@ export default {
         "pulse-glow": "pulse-glow 2s ease-in-out infinite",
         "glow-pulse": "glow-pulse 2s ease-in-out infinite",
         "border-glow": "border-glow 3s ease-in-out infinite",
-        "spin-slow": "spin-slow 3s linear infinite",
         "modal-appear": "modal-appear 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
         "backdrop-appear": "backdrop-appear 0.2s ease-out",
       },
