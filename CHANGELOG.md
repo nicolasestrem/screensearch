@@ -78,6 +78,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Prevents collecting all chunks then discarding most
   - Minor allocation reduction
 
+- **React Error #310**: Fixed "Rendered fewer hooks than expected" in Timeline component
+  - Root cause: `useMemo` called AFTER early returns for loading/error states
+  - Solution: Moved `useMemo` before conditional rendering, use JSX ternary instead of early returns
+  - All hooks now called unconditionally on every render per React Rules of Hooks
+  - Prevents reconciliation errors during state transitions (loading → data)
+
 ### Technical Details
 - Frontend bundle: 670KB total (properly chunked)
 - All 14 database tests passing

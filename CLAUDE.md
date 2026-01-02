@@ -619,7 +619,44 @@ Maintain these performance characteristics:
 - Format code before committing: `cargo fmt --all`
 - Use clippy before committing: `cargo clippy --workspace -- -D warnings`
 
-## Recent Optimizations (v0.1.0 → v0.3.0)
+## Recent Optimizations (v0.1.0 → v0.4.1)
+
+### Performance & Stability (v0.4.1)
+- **React Error #310 Fix**: Resolved "Rendered fewer hooks than expected" in Timeline component
+  - Root cause: `useMemo` called after early returns violated React Rules of Hooks
+  - Solution: Move all hooks before conditional rendering, use JSX ternary operators
+  - File: `screensearch-ui/src/components/Timeline.tsx`
+- **Virtual Scrolling**: react-window `FixedSizeGrid` for efficient large frame collection rendering
+- **Database Indexes**: Migration 008 adds optimized composite indexes
+- **Criterion Benchmarks**: New benchmark suite for database operations
+- **Connection Pool Tuning**: Reduced from 50 to 10 connections (optimal for SQLite)
+
+**React Rules of Hooks - Best Practices** (lessons learned from Error #310):
+```tsx
+// ❌ WRONG: Hook after early return
+function Component() {
+  const { data, isLoading } = useQuery();
+
+  if (isLoading) return <Loading />;  // Early return BEFORE useMemo
+
+  const computed = useMemo(() => /* ... */, [data]);  // BREAKS Rules of Hooks
+  return <Content data={computed} />;
+}
+
+// ✅ CORRECT: All hooks unconditionally, JSX conditionals
+function Component() {
+  const { data, isLoading } = useQuery();
+
+  // useMemo called unconditionally (before any returns)
+  const computed = useMemo(() => data ? /* compute */ : [], [data]);
+
+  return (
+    <div>
+      {isLoading ? <Loading /> : <Content data={computed} />}
+    </div>
+  );
+}
+```
 
 ### AI-First UI Redesign (v0.3.0)
 - **Dashboard ("Intel Dash")**: New default landing page with AI-powered widgets
