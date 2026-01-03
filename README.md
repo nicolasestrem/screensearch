@@ -11,6 +11,8 @@
                                                                    
 ```
 
+#### Ever wish you could Ctrl+F your entire digital life?
+
 ### Your screen history, searchable and automated
 
 *Continuously capture your Windows screen, extract text with OCR, and query it all through a powerful REST API*
@@ -491,3 +493,4 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 [^ Back to top](#screensearch)
 
 </div>
+
