@@ -12,6 +12,7 @@ export function ReportGenerator() {
     const [customPrompt, setCustomPrompt] = useState('');
     const [report, setReport] = useState<string | null>(null);
     const [isCopied, setIsCopied] = useState(false);
+    const [generatedReportType, setGeneratedReportType] = useState<'daily' | 'weekly' | 'custom'>('daily');
 
     const handleGenerate = async () => {
         setIsGenerating(true);
@@ -40,6 +41,7 @@ export function ReportGenerator() {
             });
 
             setReport(result.report);
+            setGeneratedReportType(reportType);
             toast.success('Report generated successfully');
         } catch (error) {
             toast.error(error instanceof Error ? error.message : 'Failed to generate report');
@@ -62,11 +64,18 @@ export function ReportGenerator() {
 
     const handleSave = () => {
         if (!report) return;
+
+        // Format: intelligence-report-{type}-{YYYY-MM-DD}-{HH-MM}.md
+        const now = new Date();
+        const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+        const timeStr = now.toISOString().split('T')[1].substring(0, 5).replace(':', '-'); // HH-MM
+        const filename = `intelligence-report-${generatedReportType}-${dateStr}-${timeStr}.md`;
+
         const blob = new Blob([report], { type: 'text/markdown' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `intelligence-report-${new Date().toISOString().split('T')[0]}.md`;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
