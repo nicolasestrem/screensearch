@@ -415,7 +415,17 @@ OUTPUT FORMAT (Markdown):
         .map(|c| c.message.content.clone())
         .unwrap_or_else(|| "No report generated.".to_string());
 
-    let final_report = format!("{}\n\n---\n*Context: {}*", report_content, context_source);
+    // Add metadata header with generation date and model
+    let generation_timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+    let metadata_header = format!(
+        "---\n**Generated:** {}\n**Model:** {}\n**Time Period:** {} to {}\n---\n\n",
+        generation_timestamp,
+        effective_model,
+        start_time.format("%Y-%m-%d %H:%M"),
+        end_time.format("%Y-%m-%d %H:%M")
+    );
+
+    let final_report = format!("{}{}\n\n---\n*Context: {}*", metadata_header, report_content, context_source);
 
     Ok(Json(AiReportResponse {
         report: final_report,
