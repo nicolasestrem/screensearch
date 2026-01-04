@@ -29,6 +29,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .nest("/ai", ai_routes())
         // Embeddings endpoints (RAG)
         .nest("/embeddings", embeddings_routes())
+        // Download progress endpoints
+        .nest("/downloads", downloads_routes())
         // RAG Answer generation
         .route("/generate", post(handlers::generate_answer));
 
@@ -174,5 +176,11 @@ fn embeddings_routes() -> Router<Arc<AppState>> {
         .route("/status", get(handlers::get_embedding_status))
         .route("/generate", post(handlers::generate_embeddings))
         .route("/enable", post(handlers::toggle_embeddings))
+}
+
+/// Download progress routes
+fn downloads_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/status", get(handlers::get_all_downloads_status))
 }
 

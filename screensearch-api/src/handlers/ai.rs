@@ -469,7 +469,7 @@ pub struct ModelDownloadResponse {
 /// POST /ai/model/download
 /// Triggers download of the local Ministral-3B model
 pub async fn start_model_download(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<ModelDownloadResponse>> {
     let models_dir = get_models_dir();
 
@@ -481,10 +481,25 @@ pub async fn start_model_download(
         }));
     }
 
+    // Create progress channel
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(100);
+
+    // Clone state for background task
+    let state_clone = state.clone();
+
+    // Spawn receiver task to update progress in state
+    tokio::spawn(async move {
+        while let Some(progress) = progress_rx.recv().await {
+            state_clone.update_download_progress("llm_model".to_string(), progress.into()).await;
+        }
+        // Clear progress when complete
+        state_clone.clear_download_progress("llm_model").await;
+    });
+
     // Start download in background
     tokio::spawn(async move {
         info!("Starting model download in background...");
-        match screensearch_llm::download_model(&models_dir).await {
+        match screensearch_llm::download_model_with_progress(&models_dir, Some(progress_tx)).await {
             Ok(_) => info!("Model download completed successfully"),
             Err(e) => error!("Model download failed: {}", e),
         }
@@ -687,7 +702,7 @@ pub async fn update_server_ttl(
 /// POST /ai/server/download
 /// Download the llama-server binary
 pub async fn download_llama_server(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<ModelDownloadResponse>> {
     use screensearch_llm::{llama_server_exists, get_bin_dir, LLAMA_SERVER_SIZE_BYTES};
 
@@ -701,10 +716,25 @@ pub async fn download_llama_server(
         }));
     }
 
+    // Create progress channel
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(100);
+
+    // Clone state for background task
+    let state_clone = state.clone();
+
+    // Spawn receiver task to update progress in state
+    tokio::spawn(async move {
+        while let Some(progress) = progress_rx.recv().await {
+            state_clone.update_download_progress("llama_server".to_string(), progress.into()).await;
+        }
+        // Clear progress when complete
+        state_clone.clear_download_progress("llama_server").await;
+    });
+
     // Start download in background
     tokio::spawn(async move {
         info!("Starting llama-server download in background...");
-        match screensearch_llm::download_llama_server().await {
+        match screensearch_llm::download_llama_server_with_progress(Some(progress_tx)).await {
             Ok(path) => info!("llama-server downloaded to {:?}", path),
             Err(e) => error!("llama-server download failed: {}", e),
         }

@@ -15,6 +15,8 @@ pub mod rag_helpers;
 pub mod reranker;
 pub mod generate;
 pub use generate::*;
+pub mod downloads;
+pub use downloads::*;
 
 
 
