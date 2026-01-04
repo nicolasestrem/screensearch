@@ -487,21 +487,40 @@ pub async fn start_model_download(
     // Clone state for background task
     let state_clone = state.clone();
 
+    // Clone state for error handling
+    let state_for_error = state.clone();
+
     // Spawn receiver task to update progress in state
     tokio::spawn(async move {
         while let Some(progress) = progress_rx.recv().await {
             state_clone.update_download_progress("llm_model".to_string(), progress.into()).await;
         }
-        // Clear progress when complete
-        state_clone.clear_download_progress("llm_model").await;
     });
 
     // Start download in background
     tokio::spawn(async move {
         info!("Starting model download in background...");
         match screensearch_llm::download_model_with_progress(&models_dir, Some(progress_tx)).await {
-            Ok(_) => info!("Model download completed successfully"),
-            Err(e) => error!("Model download failed: {}", e),
+            Ok(_) => {
+                info!("Model download completed successfully");
+                // Clear progress when complete
+                state_for_error.clear_download_progress("llm_model").await;
+            }
+            Err(e) => {
+                error!("Model download failed: {}", e);
+                // Update progress with error
+                use crate::state::DownloadProgress;
+                state_for_error.update_download_progress(
+                    "llm_model".to_string(),
+                    DownloadProgress {
+                        bytes_downloaded: 0,
+                        total_bytes: 0,
+                        speed_bps: 0,
+                        eta_seconds: 0,
+                        error: Some(format!("Download failed: {}", e)),
+                    }
+                ).await;
+            }
         }
     });
 
@@ -722,21 +741,40 @@ pub async fn download_llama_server(
     // Clone state for background task
     let state_clone = state.clone();
 
+    // Clone state for error handling
+    let state_for_error = state.clone();
+
     // Spawn receiver task to update progress in state
     tokio::spawn(async move {
         while let Some(progress) = progress_rx.recv().await {
             state_clone.update_download_progress("llama_server".to_string(), progress.into()).await;
         }
-        // Clear progress when complete
-        state_clone.clear_download_progress("llama_server").await;
     });
 
     // Start download in background
     tokio::spawn(async move {
         info!("Starting llama-server download in background...");
         match screensearch_llm::download_llama_server_with_progress(Some(progress_tx)).await {
-            Ok(path) => info!("llama-server downloaded to {:?}", path),
-            Err(e) => error!("llama-server download failed: {}", e),
+            Ok(path) => {
+                info!("llama-server downloaded to {:?}", path);
+                // Clear progress when complete
+                state_for_error.clear_download_progress("llama_server").await;
+            }
+            Err(e) => {
+                error!("llama-server download failed: {}", e);
+                // Update progress with error
+                use crate::state::DownloadProgress;
+                state_for_error.update_download_progress(
+                    "llama_server".to_string(),
+                    DownloadProgress {
+                        bytes_downloaded: 0,
+                        total_bytes: 0,
+                        speed_bps: 0,
+                        eta_seconds: 0,
+                        error: Some(format!("Download failed: {}", e)),
+                    }
+                ).await;
+            }
         }
     });
 

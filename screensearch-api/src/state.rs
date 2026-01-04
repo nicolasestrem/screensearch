@@ -19,6 +19,8 @@ pub struct DownloadProgress {
     pub speed_bps: u64,
     /// Estimated time remaining in seconds
     pub eta_seconds: u64,
+    /// Error message if download failed
+    pub error: Option<String>,
 }
 
 impl DownloadProgress {
@@ -40,6 +42,7 @@ impl From<screensearch_llm::DownloadProgress> for DownloadProgress {
             total_bytes: p.total_bytes,
             speed_bps: p.speed_bps,
             eta_seconds: p.eta_seconds,
+            error: None,
         }
     }
 }
@@ -52,6 +55,7 @@ impl From<screensearch_embeddings::DownloadProgress> for DownloadProgress {
             total_bytes: p.total_bytes,
             speed_bps: p.speed_bps,
             eta_seconds: p.eta_seconds,
+            error: None,
         }
     }
 }
@@ -75,7 +79,8 @@ pub struct AppState {
     pub llama_server: Arc<RwLock<Option<Arc<LlamaServer>>>>,
 
     /// Download progress tracking
-    /// Keys: "llm_model", "llama_server", "embeddings_model", "embeddings_tokenizer"
+    /// Keys: "llm_model", "llama_server"
+    /// Note: Embeddings downloads happen automatically on first use without explicit progress tracking
     pub download_progress: Arc<RwLock<HashMap<String, DownloadProgress>>>,
 }
 

@@ -8,6 +8,7 @@ interface DownloadProgressInfo {
     speed_bps: number;
     eta_seconds: number;
     percentage: number;
+    error?: string;
 }
 
 interface AllDownloadsResponse {
@@ -43,6 +44,24 @@ export function DownloadProgress() {
     const [downloads, setDownloads] = useState<DownloadProgressInfo[]>([]);
 
     useEffect(() => {
+        // Only poll if there are active downloads
+        if (downloads.length === 0) {
+            // Do initial fetch to check for downloads
+            const fetchProgress = async () => {
+                try {
+                    const response = await fetch('/api/downloads/status');
+                    if (response.ok) {
+                        const data: AllDownloadsResponse = await response.json();
+                        setDownloads(data.downloads);
+                    }
+                } catch (error) {
+                    console.error('Failed to fetch download progress:', error);
+                }
+            };
+            fetchProgress();
+            return;
+        }
+
         const fetchProgress = async () => {
             try {
                 const response = await fetch('/api/downloads/status');
@@ -57,10 +76,9 @@ export function DownloadProgress() {
 
         // Poll every second while there are active downloads
         const interval = setInterval(fetchProgress, 1000);
-        fetchProgress(); // Initial fetch
 
         return () => clearInterval(interval);
-    }, []);
+    }, [downloads.length]);
 
     if (downloads.length === 0) {
         return null;
@@ -71,33 +89,48 @@ export function DownloadProgress() {
             {downloads.map((download) => (
                 <div
                     key={download.name}
-                    className="bg-card border border-border rounded-lg p-4 shadow-lg min-w-[320px] max-w-[400px]"
+                    className={`bg-card border rounded-lg p-4 shadow-lg min-w-[320px] max-w-[400px] ${
+                        download.error ? 'border-destructive' : 'border-border'
+                    }`}
                 >
                     <div className="flex items-center gap-2 mb-2">
-                        <Download className="h-4 w-4 text-primary animate-pulse" />
+                        {download.error ? (
+                            <span className="h-4 w-4 text-destructive">✕</span>
+                        ) : (
+                            <Download className="h-4 w-4 text-primary animate-pulse" />
+                        )}
                         <span className="font-medium text-sm">{download.name}</span>
                     </div>
 
-                    {/* Progress bar */}
-                    <div className="w-full bg-secondary rounded-full h-2 overflow-hidden mb-2">
-                        <div
-                            className="h-full bg-primary transition-all duration-300"
-                            style={{ width: `${Math.min(download.percentage, 100)}%` }}
-                        />
-                    </div>
+                    {download.error ? (
+                        /* Error message */
+                        <div className="text-xs text-destructive mt-2">
+                            {download.error}
+                        </div>
+                    ) : (
+                        <>
+                            {/* Progress bar */}
+                            <div className="w-full bg-secondary rounded-full h-2 overflow-hidden mb-2">
+                                <div
+                                    className="h-full bg-primary transition-all duration-300"
+                                    style={{ width: `${Math.min(download.percentage, 100)}%` }}
+                                />
+                            </div>
 
-                    {/* Stats */}
-                    <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>
-                            {formatBytes(download.bytes_downloaded)} / {formatBytes(download.total_bytes)}
-                        </span>
-                        <span>{download.percentage.toFixed(1)}%</span>
-                    </div>
+                            {/* Stats */}
+                            <div className="flex justify-between text-xs text-muted-foreground">
+                                <span>
+                                    {formatBytes(download.bytes_downloaded)} / {formatBytes(download.total_bytes)}
+                                </span>
+                                <span>{download.percentage.toFixed(1)}%</span>
+                            </div>
 
-                    <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                        <span>{formatSpeed(download.speed_bps)}</span>
-                        <span>ETA: {formatTime(download.eta_seconds)}</span>
-                    </div>
+                            <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                                <span>{formatSpeed(download.speed_bps)}</span>
+                                <span>ETA: {formatTime(download.eta_seconds)}</span>
+                            </div>
+                        </>
+                    )}
                 </div>
             ))}
         </div>
