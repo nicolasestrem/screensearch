@@ -44,26 +44,35 @@ export function DownloadProgress() {
     const [downloads, setDownloads] = useState<DownloadProgressInfo[]>([]);
 
     useEffect(() => {
-        const fetchProgress = async () => {
-            try {
-                const response = await fetch('/api/downloads/status');
-                if (response.ok) {
-                    const data: AllDownloadsResponse = await response.json();
-                    setDownloads(data.downloads);
+        let cancelled = false;
+
+        const pollProgress = async () => {
+            while (!cancelled) {
+                try {
+                    const response = await fetch('/api/downloads/status');
+                    if (response.ok) {
+                        const data: AllDownloadsResponse = await response.json();
+                        setDownloads(data.downloads);
+
+                        // Stop polling if no downloads are active
+                        if (data.downloads.length === 0) {
+                            break;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Failed to fetch download progress:', error);
                 }
-            } catch (error) {
-                console.error('Failed to fetch download progress:', error);
+
+                // Wait 1 second before next poll
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         };
 
-        // Initial fetch
-        fetchProgress();
+        pollProgress();
 
-        // Set up polling interval that runs continuously
-        // The component will auto-hide when downloads.length === 0 via render logic
-        const interval = setInterval(fetchProgress, 1000);
-
-        return () => clearInterval(interval);
+        return () => {
+            cancelled = true;
+        };
     }, []); // Empty dependency array - only run once on mount
 
     if (downloads.length === 0) {

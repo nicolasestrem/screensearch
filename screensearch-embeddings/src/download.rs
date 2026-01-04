@@ -165,44 +165,59 @@ async fn download_file_with_progress(
     let mut stream = response.bytes_stream();
     let start_time = std::time::Instant::now();
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| {
-            EmbeddingError::ModelInitError(format!("Failed to read chunk: {}", e))
-        })?;
+    // Download with automatic cleanup on failure
+    let download_result = async {
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| {
+                EmbeddingError::ModelInitError(format!("Failed to read chunk: {}", e))
+            })?;
 
-        file.write_all(&chunk).await.map_err(EmbeddingError::IoError)?;
-        downloaded += chunk.len() as u64;
+            file.write_all(&chunk).await.map_err(EmbeddingError::IoError)?;
+            downloaded += chunk.len() as u64;
 
-        // Send progress update if channel provided
-        if let Some(ref tx) = progress_tx {
-            let elapsed = start_time.elapsed().as_secs_f64();
-            let speed = if elapsed > 0.0 {
-                (downloaded as f64 / elapsed) as u64
-            } else {
-                0
-            };
-            let remaining = total_size.saturating_sub(downloaded);
-            let eta = if speed > 0 { remaining / speed } else { 0 };
+            // Send progress update if channel provided
+            if let Some(ref tx) = progress_tx {
+                let elapsed = start_time.elapsed().as_secs_f64();
+                let speed = if elapsed > 0.0 {
+                    (downloaded as f64 / elapsed) as u64
+                } else {
+                    0
+                };
+                let remaining = total_size.saturating_sub(downloaded);
+                // Cap ETA to 24 hours to prevent overflow with very slow speeds
+                let eta = if speed > 0 {
+                    std::cmp::min(remaining / speed, 86400)
+                } else {
+                    0
+                };
 
-            let progress = DownloadProgress {
-                bytes_downloaded: downloaded,
-                total_bytes: total_size,
-                speed_bps: speed,
-                eta_seconds: eta,
-            };
+                let progress = DownloadProgress {
+                    bytes_downloaded: downloaded,
+                    total_bytes: total_size,
+                    speed_bps: speed,
+                    eta_seconds: eta,
+                };
 
-            // Non-blocking send (drop if receiver is slow)
-            let _ = tx.try_send(progress);
+                // Non-blocking send (drop if receiver is slow)
+                let _ = tx.try_send(progress);
+            }
         }
+
+        file.flush().await.map_err(EmbeddingError::IoError)?;
+        drop(file);
+
+        // Rename temp file to final name (atomic on most filesystems)
+        tokio::fs::rename(&temp_path, path).await.map_err(EmbeddingError::IoError)?;
+
+        Ok(())
+    }.await;
+
+    // Clean up temp file on failure
+    if download_result.is_err() {
+        let _ = tokio::fs::remove_file(&temp_path).await;
     }
 
-    file.flush().await.map_err(EmbeddingError::IoError)?;
-    drop(file);
-
-    // Rename temp file to final name (atomic on most filesystems)
-    tokio::fs::rename(&temp_path, path).await.map_err(EmbeddingError::IoError)?;
-
-    Ok(())
+    download_result
 }
 
 /// Check if model download is needed
