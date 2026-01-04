@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Download, Check } from 'lucide-react';
+import { Download } from 'lucide-react';
 
 interface DownloadProgressInfo {
     name: string;
@@ -44,24 +44,6 @@ export function DownloadProgress() {
     const [downloads, setDownloads] = useState<DownloadProgressInfo[]>([]);
 
     useEffect(() => {
-        // Only poll if there are active downloads
-        if (downloads.length === 0) {
-            // Do initial fetch to check for downloads
-            const fetchProgress = async () => {
-                try {
-                    const response = await fetch('/api/downloads/status');
-                    if (response.ok) {
-                        const data: AllDownloadsResponse = await response.json();
-                        setDownloads(data.downloads);
-                    }
-                } catch (error) {
-                    console.error('Failed to fetch download progress:', error);
-                }
-            };
-            fetchProgress();
-            return;
-        }
-
         const fetchProgress = async () => {
             try {
                 const response = await fetch('/api/downloads/status');
@@ -74,11 +56,15 @@ export function DownloadProgress() {
             }
         };
 
-        // Poll every second while there are active downloads
+        // Initial fetch
+        fetchProgress();
+
+        // Set up polling interval that runs continuously
+        // The component will auto-hide when downloads.length === 0 via render logic
         const interval = setInterval(fetchProgress, 1000);
 
         return () => clearInterval(interval);
-    }, [downloads.length]);
+    }, []); // Empty dependency array - only run once on mount
 
     if (downloads.length === 0) {
         return null;

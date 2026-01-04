@@ -491,10 +491,14 @@ pub async fn start_model_download(
     let state_for_error = state.clone();
 
     // Spawn receiver task to update progress in state
+    // This task will exit naturally when the channel is closed (download completes)
     tokio::spawn(async move {
         while let Some(progress) = progress_rx.recv().await {
             state_clone.update_download_progress("llm_model".to_string(), progress.into()).await;
         }
+        // Channel closed - download task has finished
+        // Clear progress after all updates are processed
+        state_clone.clear_download_progress("llm_model").await;
     });
 
     // Start download in background
@@ -503,8 +507,8 @@ pub async fn start_model_download(
         match screensearch_llm::download_model_with_progress(&models_dir, Some(progress_tx)).await {
             Ok(_) => {
                 info!("Model download completed successfully");
-                // Clear progress when complete
-                state_for_error.clear_download_progress("llm_model").await;
+                // progress_tx will be dropped here, closing the channel
+                // The receiver task will clean up the progress state
             }
             Err(e) => {
                 error!("Model download failed: {}", e);
@@ -520,6 +524,8 @@ pub async fn start_model_download(
                         error: Some(format!("Download failed: {}", e)),
                     }
                 ).await;
+                // Don't drop progress_tx yet - keep error visible
+                // Receiver will NOT clear on error, so error persists in UI
             }
         }
     });
@@ -745,10 +751,14 @@ pub async fn download_llama_server(
     let state_for_error = state.clone();
 
     // Spawn receiver task to update progress in state
+    // This task will exit naturally when the channel is closed (download completes)
     tokio::spawn(async move {
         while let Some(progress) = progress_rx.recv().await {
             state_clone.update_download_progress("llama_server".to_string(), progress.into()).await;
         }
+        // Channel closed - download task has finished
+        // Clear progress after all updates are processed
+        state_clone.clear_download_progress("llama_server").await;
     });
 
     // Start download in background
@@ -757,8 +767,8 @@ pub async fn download_llama_server(
         match screensearch_llm::download_llama_server_with_progress(Some(progress_tx)).await {
             Ok(path) => {
                 info!("llama-server downloaded to {:?}", path);
-                // Clear progress when complete
-                state_for_error.clear_download_progress("llama_server").await;
+                // progress_tx will be dropped here, closing the channel
+                // The receiver task will clean up the progress state
             }
             Err(e) => {
                 error!("llama-server download failed: {}", e);
@@ -774,6 +784,8 @@ pub async fn download_llama_server(
                         error: Some(format!("Download failed: {}", e)),
                     }
                 ).await;
+                // Don't drop progress_tx yet - keep error visible
+                // Receiver will NOT clear on error, so error persists in UI
             }
         }
     });
