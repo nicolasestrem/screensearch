@@ -497,13 +497,14 @@ pub async fn start_model_download(
             state_clone.update_download_progress("llm_model".to_string(), progress.into()).await;
         }
 
-        // Wait for completion signal from download task
-        match completion_rx.await {
-            Ok(Ok(())) => {
+        // Wait for completion signal from download task (with 2-hour timeout to prevent task leak)
+        use tokio::time::{timeout, Duration};
+        match timeout(Duration::from_secs(7200), completion_rx).await {
+            Ok(Ok(Ok(()))) => {
                 // Success - clear progress
                 state_clone.clear_download_progress("llm_model").await;
             }
-            Ok(Err(error_msg)) => {
+            Ok(Ok(Err(error_msg))) => {
                 // Error - update with error state
                 use crate::state::DownloadProgress;
                 state_clone.update_download_progress(
@@ -517,9 +518,24 @@ pub async fn start_model_download(
                     }
                 ).await;
             }
-            Err(_) => {
+            Ok(Err(_)) => {
                 // Channel closed without signal - treat as error
-                warn!("Download completion channel closed unexpectedly");
+                warn!("Download completion channel closed unexpectedly for llm_model");
+            }
+            Err(_) => {
+                // Timeout - download task likely panicked or hung
+                error!("Download receiver task timed out after 2 hours for llm_model");
+                use crate::state::DownloadProgress;
+                state_clone.update_download_progress(
+                    "llm_model".to_string(),
+                    DownloadProgress {
+                        bytes_downloaded: 0,
+                        total_bytes: 0,
+                        speed_bps: 0,
+                        eta_seconds: 0,
+                        error: Some("Download timed out after 2 hours".to_string()),
+                    }
+                ).await;
             }
         }
     });
@@ -773,13 +789,14 @@ pub async fn download_llama_server(
             state_clone.update_download_progress("llama_server".to_string(), progress.into()).await;
         }
 
-        // Wait for completion signal from download task
-        match completion_rx.await {
-            Ok(Ok(())) => {
+        // Wait for completion signal from download task (with 2-hour timeout to prevent task leak)
+        use tokio::time::{timeout, Duration};
+        match timeout(Duration::from_secs(7200), completion_rx).await {
+            Ok(Ok(Ok(()))) => {
                 // Success - clear progress
                 state_clone.clear_download_progress("llama_server").await;
             }
-            Ok(Err(error_msg)) => {
+            Ok(Ok(Err(error_msg))) => {
                 // Error - update with error state
                 use crate::state::DownloadProgress;
                 state_clone.update_download_progress(
@@ -793,9 +810,24 @@ pub async fn download_llama_server(
                     }
                 ).await;
             }
-            Err(_) => {
+            Ok(Err(_)) => {
                 // Channel closed without signal - treat as error
-                warn!("Download completion channel closed unexpectedly");
+                warn!("Download completion channel closed unexpectedly for llama_server");
+            }
+            Err(_) => {
+                // Timeout - download task likely panicked or hung
+                error!("Download receiver task timed out after 2 hours for llama_server");
+                use crate::state::DownloadProgress;
+                state_clone.update_download_progress(
+                    "llama_server".to_string(),
+                    DownloadProgress {
+                        bytes_downloaded: 0,
+                        total_bytes: 0,
+                        speed_bps: 0,
+                        eta_seconds: 0,
+                        error: Some("Download timed out after 2 hours".to_string()),
+                    }
+                ).await;
             }
         }
     });
