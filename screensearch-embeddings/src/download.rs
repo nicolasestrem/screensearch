@@ -6,7 +6,7 @@ use crate::{EmbeddingError, Result};
 use futures_util::StreamExt;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
-use tracing::info;
+use tracing::{debug, info, warn};
 
 /// Model file names
 const MODEL_FILE: &str = "model.onnx";
@@ -214,7 +214,11 @@ async fn download_file_with_progress(
 
     // Clean up temp file on failure
     if download_result.is_err() {
-        let _ = tokio::fs::remove_file(&temp_path).await;
+        if let Err(e) = tokio::fs::remove_file(&temp_path).await {
+            warn!("Failed to clean up temp file {:?}: {}", temp_path, e);
+        } else {
+            debug!("Cleaned up temp file {:?} after download failure", temp_path);
+        }
     }
 
     download_result

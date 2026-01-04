@@ -484,53 +484,64 @@ pub async fn start_model_download(
     // Create progress channel
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(100);
 
-    // Create oneshot channel to signal completion status
-    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel();
+    // Create oneshot channel to signal completion status (Ok = success, Err = error message)
+    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
 
     // Clone state for background task
     let state_clone = state.clone();
 
     // Spawn receiver task to update progress in state
     tokio::spawn(async move {
+        // Process all progress updates
         while let Some(progress) = progress_rx.recv().await {
             state_clone.update_download_progress("llm_model".to_string(), progress.into()).await;
         }
 
         // Wait for completion signal from download task
-        // Only clear progress on success, keep error state visible on failure
-        if let Ok(success) = completion_rx.await {
-            if success {
+        match completion_rx.await {
+            Ok(Ok(())) => {
+                // Success - clear progress
                 state_clone.clear_download_progress("llm_model").await;
             }
-            // On error, don't clear - error message persists in UI
-        }
-    });
-
-    // Start download in background
-    tokio::spawn(async move {
-        info!("Starting model download in background...");
-        match screensearch_llm::download_model_with_progress(&models_dir, Some(progress_tx)).await {
-            Ok(_) => {
-                info!("Model download completed successfully");
-                // Signal success to receiver task
-                let _ = completion_tx.send(true);
-            }
-            Err(e) => {
-                error!("Model download failed: {}", e);
-                // Update progress with error
+            Ok(Err(error_msg)) => {
+                // Error - update with error state
                 use crate::state::DownloadProgress;
-                state.update_download_progress(
+                state_clone.update_download_progress(
                     "llm_model".to_string(),
                     DownloadProgress {
                         bytes_downloaded: 0,
                         total_bytes: 0,
                         speed_bps: 0,
                         eta_seconds: 0,
-                        error: Some(format!("Download failed: {}", e)),
+                        error: Some(error_msg),
                     }
                 ).await;
-                // Signal error to receiver task (don't clear)
-                let _ = completion_tx.send(false);
+            }
+            Err(_) => {
+                // Channel closed without signal - treat as error
+                warn!("Download completion channel closed unexpectedly");
+            }
+        }
+    });
+
+    // Start download in background
+    tokio::spawn(async move {
+        info!("Starting model download in background...");
+        let result = screensearch_llm::download_model_with_progress(&models_dir, Some(progress_tx)).await;
+
+        // Close progress channel to signal end of progress updates
+        drop(progress_tx);
+
+        match result {
+            Ok(_) => {
+                info!("Model download completed successfully");
+                // Signal success to receiver task
+                let _ = completion_tx.send(Ok(()));
+            }
+            Err(e) => {
+                error!("Model download failed: {}", e);
+                // Send error message to receiver task
+                let _ = completion_tx.send(Err(format!("Download failed: {}", e)));
             }
         }
     });
@@ -749,53 +760,64 @@ pub async fn download_llama_server(
     // Create progress channel
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(100);
 
-    // Create oneshot channel to signal completion status
-    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel();
+    // Create oneshot channel to signal completion status (Ok = success, Err = error message)
+    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
 
     // Clone state for background task
     let state_clone = state.clone();
 
     // Spawn receiver task to update progress in state
     tokio::spawn(async move {
+        // Process all progress updates
         while let Some(progress) = progress_rx.recv().await {
             state_clone.update_download_progress("llama_server".to_string(), progress.into()).await;
         }
 
         // Wait for completion signal from download task
-        // Only clear progress on success, keep error state visible on failure
-        if let Ok(success) = completion_rx.await {
-            if success {
+        match completion_rx.await {
+            Ok(Ok(())) => {
+                // Success - clear progress
                 state_clone.clear_download_progress("llama_server").await;
             }
-            // On error, don't clear - error message persists in UI
-        }
-    });
-
-    // Start download in background
-    tokio::spawn(async move {
-        info!("Starting llama-server download in background...");
-        match screensearch_llm::download_llama_server_with_progress(Some(progress_tx)).await {
-            Ok(path) => {
-                info!("llama-server downloaded to {:?}", path);
-                // Signal success to receiver task
-                let _ = completion_tx.send(true);
-            }
-            Err(e) => {
-                error!("llama-server download failed: {}", e);
-                // Update progress with error
+            Ok(Err(error_msg)) => {
+                // Error - update with error state
                 use crate::state::DownloadProgress;
-                state.update_download_progress(
+                state_clone.update_download_progress(
                     "llama_server".to_string(),
                     DownloadProgress {
                         bytes_downloaded: 0,
                         total_bytes: 0,
                         speed_bps: 0,
                         eta_seconds: 0,
-                        error: Some(format!("Download failed: {}", e)),
+                        error: Some(error_msg),
                     }
                 ).await;
-                // Signal error to receiver task (don't clear)
-                let _ = completion_tx.send(false);
+            }
+            Err(_) => {
+                // Channel closed without signal - treat as error
+                warn!("Download completion channel closed unexpectedly");
+            }
+        }
+    });
+
+    // Start download in background
+    tokio::spawn(async move {
+        info!("Starting llama-server download in background...");
+        let result = screensearch_llm::download_llama_server_with_progress(Some(progress_tx)).await;
+
+        // Close progress channel to signal end of progress updates
+        drop(progress_tx);
+
+        match result {
+            Ok(path) => {
+                info!("llama-server downloaded to {:?}", path);
+                // Signal success to receiver task
+                let _ = completion_tx.send(Ok(()));
+            }
+            Err(e) => {
+                error!("llama-server download failed: {}", e);
+                // Send error message to receiver task
+                let _ = completion_tx.send(Err(format!("Download failed: {}", e)));
             }
         }
     });

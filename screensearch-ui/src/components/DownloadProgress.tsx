@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Download } from 'lucide-react';
+import { Download, RotateCw, X } from 'lucide-react';
 
 interface DownloadProgressInfo {
     name: string;
@@ -42,6 +42,7 @@ function formatTime(seconds: number): string {
 
 export function DownloadProgress() {
     const [downloads, setDownloads] = useState<DownloadProgressInfo[]>([]);
+    const [dismissedDownloads, setDismissedDownloads] = useState<Set<string>>(new Set());
 
     useEffect(() => {
         let cancelled = false;
@@ -75,33 +76,85 @@ export function DownloadProgress() {
         };
     }, []); // Empty dependency array - only run once on mount
 
-    if (downloads.length === 0) {
+    const handleRetry = async (downloadName: string) => {
+        // Remove from dismissed list
+        setDismissedDownloads(prev => {
+            const next = new Set(prev);
+            next.delete(downloadName);
+            return next;
+        });
+
+        // Trigger download based on name
+        try {
+            let endpoint = '';
+            if (downloadName === 'llm_model' || downloadName === 'LLM Model') {
+                endpoint = '/api/ai/download-model';
+            } else if (downloadName === 'llama_server' || downloadName === 'llama-server') {
+                endpoint = '/api/ai/download-llama-server';
+            }
+
+            if (endpoint) {
+                await fetch(endpoint, { method: 'POST' });
+            }
+        } catch (error) {
+            console.error('Failed to retry download:', error);
+        }
+    };
+
+    const handleDismiss = (downloadName: string) => {
+        setDismissedDownloads(prev => new Set(prev).add(downloadName));
+    };
+
+    // Filter out dismissed downloads
+    const visibleDownloads = downloads.filter(d => !dismissedDownloads.has(d.name));
+
+    if (visibleDownloads.length === 0) {
         return null;
     }
 
     return (
         <div className="fixed bottom-4 right-4 z-50 space-y-2">
-            {downloads.map((download) => (
+            {visibleDownloads.map((download) => (
                 <div
                     key={download.name}
                     className={`bg-card border rounded-lg p-4 shadow-lg min-w-[320px] max-w-[400px] ${
                         download.error ? 'border-destructive' : 'border-border'
                     }`}
                 >
-                    <div className="flex items-center gap-2 mb-2">
-                        {download.error ? (
-                            <span className="h-4 w-4 text-destructive">✕</span>
-                        ) : (
-                            <Download className="h-4 w-4 text-primary animate-pulse" />
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                            {download.error ? (
+                                <span className="h-4 w-4 text-destructive">✕</span>
+                            ) : (
+                                <Download className="h-4 w-4 text-primary animate-pulse" />
+                            )}
+                            <span className="font-medium text-sm">{download.name}</span>
+                        </div>
+                        {download.error && (
+                            <button
+                                onClick={() => handleDismiss(download.name)}
+                                className="text-muted-foreground hover:text-foreground"
+                                aria-label="Dismiss"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
                         )}
-                        <span className="font-medium text-sm">{download.name}</span>
                     </div>
 
                     {download.error ? (
-                        /* Error message */
-                        <div className="text-xs text-destructive mt-2">
-                            {download.error}
-                        </div>
+                        /* Error message and retry button */
+                        <>
+                            <div className="text-xs text-destructive mt-2 mb-3">
+                                {download.error}
+                            </div>
+                            <button
+                                onClick={() => handleRetry(download.name)}
+                                className="flex items-center gap-2 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors w-full justify-center"
+                            >
+                                <RotateCw className="h-3 w-3" />
+                                Retry Download
+                            </button>
+                        </>
                     ) : (
                         <>
                             {/* Progress bar */}
