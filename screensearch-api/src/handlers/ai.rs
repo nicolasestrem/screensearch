@@ -469,7 +469,7 @@ pub struct ModelDownloadResponse {
 /// POST /ai/model/download
 /// Triggers download of the local Ministral-3B model
 pub async fn start_model_download(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<ModelDownloadResponse>> {
     let models_dir = get_models_dir();
 
@@ -481,12 +481,84 @@ pub async fn start_model_download(
         }));
     }
 
+    // Create progress channel
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(100);
+
+    // Create oneshot channel to signal completion status (Ok = success, Err = error message)
+    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+
+    // Clone state for background task
+    let state_clone = state.clone();
+
+    // Spawn receiver task to update progress in state
+    tokio::spawn(async move {
+        // Process all progress updates
+        while let Some(progress) = progress_rx.recv().await {
+            state_clone.update_download_progress("llm_model".to_string(), progress.into()).await;
+        }
+
+        // Wait for completion signal from download task (with 2-hour timeout to prevent task leak)
+        use tokio::time::{timeout, Duration};
+        match timeout(Duration::from_secs(7200), completion_rx).await {
+            Ok(Ok(Ok(()))) => {
+                // Success - clear progress
+                state_clone.clear_download_progress("llm_model").await;
+            }
+            Ok(Ok(Err(error_msg))) => {
+                // Error - update with error state
+                use crate::state::DownloadProgress;
+                state_clone.update_download_progress(
+                    "llm_model".to_string(),
+                    DownloadProgress {
+                        bytes_downloaded: 0,
+                        total_bytes: 0,
+                        speed_bps: 0,
+                        eta_seconds: 0,
+                        error: Some(error_msg),
+                    }
+                ).await;
+            }
+            Ok(Err(_)) => {
+                // Channel closed without signal - treat as error
+                warn!("Download completion channel closed unexpectedly for llm_model");
+            }
+            Err(_) => {
+                // Timeout - download task likely panicked or hung
+                error!("Download receiver task timed out after 2 hours for llm_model");
+                use crate::state::DownloadProgress;
+                state_clone.update_download_progress(
+                    "llm_model".to_string(),
+                    DownloadProgress {
+                        bytes_downloaded: 0,
+                        total_bytes: 0,
+                        speed_bps: 0,
+                        eta_seconds: 0,
+                        error: Some("Download timed out after 2 hours".to_string()),
+                    }
+                ).await;
+            }
+        }
+    });
+
     // Start download in background
     tokio::spawn(async move {
         info!("Starting model download in background...");
-        match screensearch_llm::download_model(&models_dir).await {
-            Ok(_) => info!("Model download completed successfully"),
-            Err(e) => error!("Model download failed: {}", e),
+        let result = screensearch_llm::download_model_with_progress(&models_dir, Some(progress_tx)).await;
+
+        // Close progress channel to signal end of progress updates
+        drop(progress_tx);
+
+        match result {
+            Ok(_) => {
+                info!("Model download completed successfully");
+                // Signal success to receiver task
+                let _ = completion_tx.send(Ok(()));
+            }
+            Err(e) => {
+                error!("Model download failed: {}", e);
+                // Send error message to receiver task
+                let _ = completion_tx.send(Err(format!("Download failed: {}", e)));
+            }
         }
     });
 
@@ -687,7 +759,7 @@ pub async fn update_server_ttl(
 /// POST /ai/server/download
 /// Download the llama-server binary
 pub async fn download_llama_server(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<ModelDownloadResponse>> {
     use screensearch_llm::{llama_server_exists, get_bin_dir, LLAMA_SERVER_SIZE_BYTES};
 
@@ -701,12 +773,84 @@ pub async fn download_llama_server(
         }));
     }
 
+    // Create progress channel
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(100);
+
+    // Create oneshot channel to signal completion status (Ok = success, Err = error message)
+    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+
+    // Clone state for background task
+    let state_clone = state.clone();
+
+    // Spawn receiver task to update progress in state
+    tokio::spawn(async move {
+        // Process all progress updates
+        while let Some(progress) = progress_rx.recv().await {
+            state_clone.update_download_progress("llama_server".to_string(), progress.into()).await;
+        }
+
+        // Wait for completion signal from download task (with 2-hour timeout to prevent task leak)
+        use tokio::time::{timeout, Duration};
+        match timeout(Duration::from_secs(7200), completion_rx).await {
+            Ok(Ok(Ok(()))) => {
+                // Success - clear progress
+                state_clone.clear_download_progress("llama_server").await;
+            }
+            Ok(Ok(Err(error_msg))) => {
+                // Error - update with error state
+                use crate::state::DownloadProgress;
+                state_clone.update_download_progress(
+                    "llama_server".to_string(),
+                    DownloadProgress {
+                        bytes_downloaded: 0,
+                        total_bytes: 0,
+                        speed_bps: 0,
+                        eta_seconds: 0,
+                        error: Some(error_msg),
+                    }
+                ).await;
+            }
+            Ok(Err(_)) => {
+                // Channel closed without signal - treat as error
+                warn!("Download completion channel closed unexpectedly for llama_server");
+            }
+            Err(_) => {
+                // Timeout - download task likely panicked or hung
+                error!("Download receiver task timed out after 2 hours for llama_server");
+                use crate::state::DownloadProgress;
+                state_clone.update_download_progress(
+                    "llama_server".to_string(),
+                    DownloadProgress {
+                        bytes_downloaded: 0,
+                        total_bytes: 0,
+                        speed_bps: 0,
+                        eta_seconds: 0,
+                        error: Some("Download timed out after 2 hours".to_string()),
+                    }
+                ).await;
+            }
+        }
+    });
+
     // Start download in background
     tokio::spawn(async move {
         info!("Starting llama-server download in background...");
-        match screensearch_llm::download_llama_server().await {
-            Ok(path) => info!("llama-server downloaded to {:?}", path),
-            Err(e) => error!("llama-server download failed: {}", e),
+        let result = screensearch_llm::download_llama_server_with_progress(Some(progress_tx)).await;
+
+        // Close progress channel to signal end of progress updates
+        drop(progress_tx);
+
+        match result {
+            Ok(path) => {
+                info!("llama-server downloaded to {:?}", path);
+                // Signal success to receiver task
+                let _ = completion_tx.send(Ok(()));
+            }
+            Err(e) => {
+                error!("llama-server download failed: {}", e);
+                // Send error message to receiver task
+                let _ = completion_tx.send(Err(format!("Download failed: {}", e)));
+            }
         }
     });
 

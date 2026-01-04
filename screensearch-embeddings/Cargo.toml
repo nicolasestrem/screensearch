@@ -35,7 +35,10 @@ serde_json = { workspace = true }
 ndarray = "0.15"
 
 # HTTP client for model download
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "stream"] }
+
+# Async utilities for streaming downloads
+futures-util = "0.3"
 
 # Platform-specific directories
 dirs = "5.0"

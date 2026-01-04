@@ -4,8 +4,61 @@ use screensearch_automation::AutomationEngine;
 use screensearch_db::DatabaseManager;
 use screensearch_embeddings::EmbeddingEngine;
 use screensearch_llm::LlamaServer;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// Unified download progress structure
+#[derive(Debug, Clone)]
+pub struct DownloadProgress {
+    /// Bytes downloaded so far
+    pub bytes_downloaded: u64,
+    /// Total bytes to download
+    pub total_bytes: u64,
+    /// Download speed in bytes per second
+    pub speed_bps: u64,
+    /// Estimated time remaining in seconds
+    pub eta_seconds: u64,
+    /// Error message if download failed
+    pub error: Option<String>,
+}
+
+impl DownloadProgress {
+    /// Get progress as a percentage (0.0 - 100.0)
+    pub fn percentage(&self) -> f64 {
+        if self.total_bytes == 0 {
+            0.0
+        } else {
+            (self.bytes_downloaded as f64 / self.total_bytes as f64) * 100.0
+        }
+    }
+}
+
+// Conversion from screensearch_llm::DownloadProgress
+impl From<screensearch_llm::DownloadProgress> for DownloadProgress {
+    fn from(p: screensearch_llm::DownloadProgress) -> Self {
+        Self {
+            bytes_downloaded: p.bytes_downloaded,
+            total_bytes: p.total_bytes,
+            speed_bps: p.speed_bps,
+            eta_seconds: p.eta_seconds,
+            error: None,
+        }
+    }
+}
+
+// Conversion from screensearch_embeddings::DownloadProgress
+impl From<screensearch_embeddings::DownloadProgress> for DownloadProgress {
+    fn from(p: screensearch_embeddings::DownloadProgress) -> Self {
+        Self {
+            bytes_downloaded: p.bytes_downloaded,
+            total_bytes: p.total_bytes,
+            speed_bps: p.speed_bps,
+            eta_seconds: p.eta_seconds,
+            error: None,
+        }
+    }
+}
 
 /// Shared application state
 #[derive(Clone)]
@@ -24,6 +77,11 @@ pub struct AppState {
 
     /// Local LLM server (auto-managed llama-server process)
     pub llama_server: Arc<RwLock<Option<Arc<LlamaServer>>>>,
+
+    /// Download progress tracking
+    /// Keys: "llm_model", "llama_server"
+    /// Note: Embeddings downloads happen automatically on first use without explicit progress tracking
+    pub download_progress: Arc<RwLock<HashMap<String, DownloadProgress>>>,
 }
 
 impl AppState {
@@ -39,6 +97,7 @@ impl AppState {
             embedding_engine: Arc::new(RwLock::new(None)),
             capture_interval_ms,
             llama_server: Arc::new(RwLock::new(None)),
+            download_progress: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -104,5 +163,23 @@ impl AppState {
         if let Some(server) = guard.as_ref() {
             server.shutdown().await;
         }
+    }
+
+    /// Update download progress for a specific download
+    pub async fn update_download_progress(&self, key: String, progress: DownloadProgress) {
+        let mut guard = self.download_progress.write().await;
+        guard.insert(key, progress);
+    }
+
+    /// Remove download progress when complete
+    pub async fn clear_download_progress(&self, key: &str) {
+        let mut guard = self.download_progress.write().await;
+        guard.remove(key);
+    }
+
+    /// Get all current download progress statuses
+    pub async fn get_all_download_progress(&self) -> HashMap<String, DownloadProgress> {
+        let guard = self.download_progress.read().await;
+        guard.clone()
     }
 }

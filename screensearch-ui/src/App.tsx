@@ -12,6 +12,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { FrameModal } from './components/FrameModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Footer } from './components/Footer';
+import { DownloadProgress } from './components/DownloadProgress';
 import { Loader2 } from 'lucide-react';
 
 // Lazy load heavy pages for better initial bundle size
@@ -122,6 +123,7 @@ function AppContent() {
       <SettingsPanel />
       <FrameModal />
       <SearchInvite isOpen={isSearchModalOpen} onClose={closeSearchModal} />
+      <DownloadProgress />
 
       <Toaster
         position="bottom-right"

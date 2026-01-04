@@ -35,7 +35,7 @@ mod download;
 
 pub use engine::EmbeddingEngine;
 pub use chunker::TextChunker;
-pub use download::{download_model, get_models_dir, model_exists, needs_download};
+pub use download::{download_model, download_model_with_progress, get_models_dir, model_exists, needs_download, DownloadProgress};
 
 /// Embedding dimension for the multilingual MiniLM model
 pub const EMBEDDING_DIM: usize = 384;

@@ -2,7 +2,7 @@
 
 Complete API reference for the ScreenSearch REST API server. This API provides search capabilities for captured screen content, computer automation controls, tag management, and AI-powered intelligence reports with vector embeddings.
 
-**Total Endpoints**: 32
+**Total Endpoints**: 33
 
 ## Overview
 
@@ -47,7 +47,7 @@ All successful responses return JSON with appropriate HTTP status codes. Error r
 | **Embeddings (RAG)** | 3 endpoints | Vector embeddings for semantic search |
 | **Automation** | 9 endpoints | Computer control via Windows UIAutomation |
 | **Tag Management** | 6 endpoints | Organize frames with tags |
-| **AI Intelligence** | 9 endpoints | Generate reports, local LLM management, model downloads |
+| **AI Intelligence** | 10 endpoints | Generate reports, local LLM management, model downloads, download progress tracking |
 | **System** | 2 endpoints | Health checks and settings |
 
 ---
@@ -1622,6 +1622,58 @@ No request body required.
 - Model: `Ministral-3B-Instruct-2512-Q4_K_M.gguf` (~2.15 GB)
 - Binary: `llama-b7562-bin-win-vulkan-x64.zip` (Vulkan GPU support)
 - Files stored in `%APPDATA%\ScreenSearch\models\`
+- Use `/api/downloads/status` to track download progress in real-time
+
+---
+
+### GET /api/downloads/status
+
+Get real-time progress for all active downloads (model, llama-server, embeddings).
+
+#### Response
+
+```json
+{
+  "downloads": [
+    {
+      "name": "llm_model",
+      "bytes_downloaded": 1073741824,
+      "total_bytes": 2150000000,
+      "speed_bps": 5242880,
+      "eta_seconds": 205,
+      "percentage": 49.9,
+      "error": null
+    },
+    {
+      "name": "llama_server",
+      "bytes_downloaded": 8388608,
+      "total_bytes": 16777216,
+      "speed_bps": 1048576,
+      "eta_seconds": 8,
+      "percentage": 50.0,
+      "error": null
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `downloads` | array | List of active downloads |
+| `name` | string | Download identifier: `llm_model`, `llama_server`, `embeddings_model`, or `embeddings_tokenizer` |
+| `bytes_downloaded` | integer | Bytes downloaded so far |
+| `total_bytes` | integer | Total expected download size |
+| `speed_bps` | integer | Current download speed (bytes per second) |
+| `eta_seconds` | integer | Estimated time to completion (capped at 24 hours) |
+| `percentage` | float | Download completion percentage (0-100) |
+| `error` | string/null | Error message if download failed, null otherwise |
+
+#### Notes
+
+- Returns empty array if no downloads are active
+- Automatically updates every second while downloads are in progress
+- Error states persist in the UI until download is retried or completed
+- Frontend should poll this endpoint to display progress bars
 
 ---
 
