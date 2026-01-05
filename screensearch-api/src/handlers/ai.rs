@@ -7,7 +7,7 @@ use crate::state::AppState;
 use axum::extract::{Json, State};
 use chrono::{DateTime, Duration, Utc};
 use reqwest::RequestBuilder;
-use screensearch_llm::{model_exists, get_models_dir, MODEL_FILENAME, MODEL_SIZE_BYTES};
+use screensearch_llm::{model_exists, get_models_dir, MODEL_FILENAME, MODEL_SIZE_BYTES, DownloadProgress as LlmDownloadProgress};
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -492,10 +492,10 @@ pub async fn start_model_download(
     }
 
     // Create progress channel
-    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(100);
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<LlmDownloadProgress>(100);
 
     // Create oneshot channel to signal completion status (Ok = success, Err = error message)
-    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel::<std::result::Result<(), String>>();
 
     // Clone state for background task
     let state_clone = state.clone();
@@ -556,7 +556,7 @@ pub async fn start_model_download(
         let result = screensearch_llm::download_model_with_progress(&models_dir, Some(progress_tx)).await;
 
         // Close progress channel to signal end of progress updates
-        drop(progress_tx);
+
 
         match result {
             Ok(_) => {
@@ -784,10 +784,10 @@ pub async fn download_llama_server(
     }
 
     // Create progress channel
-    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(100);
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<LlmDownloadProgress>(100);
 
     // Create oneshot channel to signal completion status (Ok = success, Err = error message)
-    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel::<std::result::Result<(), String>>();
 
     // Clone state for background task
     let state_clone = state.clone();
@@ -848,7 +848,7 @@ pub async fn download_llama_server(
         let result = screensearch_llm::download_llama_server_with_progress(Some(progress_tx)).await;
 
         // Close progress channel to signal end of progress updates
-        drop(progress_tx);
+
 
         match result {
             Ok(path) => {
