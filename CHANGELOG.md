@@ -17,11 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Uses dynamic port from running server (handles fallback ports 31131, 31132 if default 31130 is busy)
   - Resolves "connection refused" errors on fresh install when user hadn't manually started server from Settings
 
+- **Health Check Robustness**: Improved llama-server startup reliability
+  - Increased health check timeout from 60s to 120s (model loading can take 60-90s on slower systems)
+  - Added INFO-level logging to track model loading progress during startup
+  - Proper handling of HTTP 503 status (model still loading) vs connection errors
+  - Clear error logging when server process exits unexpectedly or health check times out
+
 - **TypeScript Build Error**: Fixed TS2532 "Object is possibly 'undefined'" in ReportGenerator.tsx
   - Added nullish coalescing operator for ISO date string parsing
 
 ### Technical Details
 - Modified `screensearch-api/src/handlers/ai.rs`: Added auto-start logic to `generate_report()` function
+- Modified `screensearch-llm/src/server.rs`: Enhanced `wait_for_health()` with better timeout and logging
 - Modified `screensearch-ui/src/components/ReportGenerator.tsx`: Fixed TypeScript strict null check
 - Error messages now direct users to Settings → AI for missing dependencies
 - Aligns with documented behavior in `docs/embedded-llm.md`: "Lazy Loading: Server starts only when first AI request is made"

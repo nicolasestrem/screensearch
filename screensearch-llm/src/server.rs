@@ -30,11 +30,11 @@ pub const DEFAULT_IDLE_TTL_SECS: u64 = 300; // 5 minutes
 /// Maximum restart attempts before giving up
 const MAX_RESTART_ATTEMPTS: u32 = 3;
 
-/// Health check timeout
-const HEALTH_CHECK_TIMEOUT_SECS: u64 = 60;
+/// Health check timeout (model loading can take 60-90s on slower systems)
+const HEALTH_CHECK_TIMEOUT_SECS: u64 = 120;
 
 /// Health check poll interval
-const HEALTH_CHECK_POLL_MS: u64 = 500;
+const HEALTH_CHECK_POLL_MS: u64 = 1000;
 
 /// Server status
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -403,19 +403,31 @@ impl LlamaServer {
         let timeout = Duration::from_secs(HEALTH_CHECK_TIMEOUT_SECS);
         let health_url = format!("http://127.0.0.1:{}/health", port);
 
-        debug!("Waiting for health check at {}", health_url);
+        info!("Waiting for llama-server health check at {} (timeout: {}s)", health_url, HEALTH_CHECK_TIMEOUT_SECS);
+        
+        let mut attempt = 0;
 
         while start.elapsed() < timeout {
+            attempt += 1;
             match self.client.get(&health_url).send().await {
-                Ok(response) if response.status().is_success() => {
-                    debug!("Health check passed after {:?}", start.elapsed());
-                    return Ok(());
-                }
                 Ok(response) => {
-                    debug!("Health check returned {}, retrying...", response.status());
+                    let status = response.status();
+                    if status.is_success() {
+                        info!("llama-server health check passed after {:?} ({} attempts)", start.elapsed(), attempt);
+                        return Ok(());
+                    } else if status.as_u16() == 503 {
+                        // 503 = model still loading, this is expected
+                        if attempt % 10 == 1 {
+                            info!("llama-server loading model... (attempt {}, elapsed: {:?})", attempt, start.elapsed());
+                        }
+                    } else {
+                        warn!("Health check returned unexpected status {}, retrying...", status);
+                    }
                 }
                 Err(e) => {
-                    debug!("Health check error: {}, retrying...", e);
+                    if attempt % 10 == 1 {
+                        debug!("Health check connection error (attempt {}): {}", attempt, e);
+                    }
                 }
             }
 
@@ -424,6 +436,7 @@ impl LlamaServer {
             if let Some(ref mut child) = *child_guard {
                 match child.try_wait() {
                     Ok(Some(status)) => {
+                        error!("llama-server process exited unexpectedly with status: {}", status);
                         return Err(LlmError::ModelInitError(format!(
                             "Server process exited with status: {}",
                             status
@@ -445,6 +458,7 @@ impl LlamaServer {
             tokio::time::sleep(Duration::from_millis(HEALTH_CHECK_POLL_MS)).await;
         }
 
+        error!("llama-server health check timed out after {}s ({} attempts)", HEALTH_CHECK_TIMEOUT_SECS, attempt);
         Err(LlmError::Timeout(HEALTH_CHECK_TIMEOUT_SECS))
     }
 
