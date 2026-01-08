@@ -9,7 +9,7 @@ pub struct LocalClient {
 
 impl LocalClient {
     pub fn new() -> Result<Self> {
-        // TODO: Load model weights (Moondream2 / TinyLlama)
+        // TODO: Load Ministral-3B model weights
         Ok(Self {})
     }
 }
