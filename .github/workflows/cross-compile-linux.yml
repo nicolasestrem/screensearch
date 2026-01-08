@@ -65,7 +65,9 @@ jobs:
           fi
 
       - name: Install cargo-xwin
-        run: cargo install cargo-xwin
+        run: |
+          # Install from git to avoid yanked dependency issues
+          cargo install --git https://github.com/rust-cross/cargo-xwin.git cargo-xwin
 
       - name: Setup Node.js for UI build
         uses: actions/setup-node@v4
