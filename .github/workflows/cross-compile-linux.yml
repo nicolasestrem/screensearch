@@ -66,8 +66,13 @@ jobs:
 
       - name: Install cargo-xwin
         run: |
-          # Install from git to avoid yanked dependency issues
-          cargo install --git https://github.com/rust-cross/cargo-xwin.git cargo-xwin
+          # Pin to specific commit for reproducibility (avoids yanked xwin dependency)
+          # Commit 074ac4d: "Update ureq to remove rustls-pemfile dependency" (2026-01-08)
+          # TODO: Monitor https://crates.io/crates/cargo-xwin for non-yanked releases
+          #       and switch back to: cargo install cargo-xwin --version X.Y.Z
+          cargo install --git https://github.com/rust-cross/cargo-xwin.git \
+            --rev 074ac4d7a5b05943e5f50b21447eaed5ba3d84d9 \
+            cargo-xwin
 
       - name: Setup Node.js for UI build
         uses: actions/setup-node@v4

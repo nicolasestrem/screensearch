@@ -10,7 +10,7 @@ This document tracks all stub implementations, placeholder functionality, and fe
 | File | Line | Type | Severity | Description | Recommended Action | GitHub Issue |
 |------|------|------|----------|-------------|--------------------|--------------|
 | `screensearch-vision/src/local_model.rs` | 12 | TODO | Critical | Load Ministral-3B model weights | Implement model loading logic | |
-| `screensearch-vision/src/local_model.rs` | 20 | TODO | Critical | Implement actual inference using candle-transformers | Complete inference implementation | |
+| `screensearch-vision/src/local_model.rs` | 20-22 (VisionModel::analyze) | TODO | Critical | Implement actual inference using candle-transformers | Complete inference implementation | |
 | `screensearch-api/src/workers/vision_worker.rs` | 55 | TODO | High | Local model support | Implement local model fallback logic | |
 
 ### Embedded LLM System
