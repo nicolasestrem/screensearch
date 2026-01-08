@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.2] - 2026-01-08
+
+### Fixed
+- **Local LLM Auto-Start**: Fixed issue where llama-server would not auto-start when generating AI reports with the local provider
+  - `generate_report()` now calls `ensure_started()` on the llama-server before making HTTP requests
+  - Added prerequisite checks for model and server binary availability with clear error messages
+  - Server now properly auto-starts on first AI request as designed (Lazy Loading)
+  - Uses dynamic port from running server (handles fallback ports 31131, 31132 if default 31130 is busy)
+  - Resolves "connection refused" errors on fresh install when user hadn't manually started server from Settings
+
+- **TypeScript Build Error**: Fixed TS2532 "Object is possibly 'undefined'" in ReportGenerator.tsx
+  - Added nullish coalescing operator for ISO date string parsing
+
+### Technical Details
+- Modified `screensearch-api/src/handlers/ai.rs`: Added auto-start logic to `generate_report()` function
+- Modified `screensearch-ui/src/components/ReportGenerator.tsx`: Fixed TypeScript strict null check
+- Error messages now direct users to Settings → AI for missing dependencies
+- Aligns with documented behavior in `docs/embedded-llm.md`: "Lazy Loading: Server starts only when first AI request is made"
+
+---
+
 ## [0.4.1] - 2026-01-02
+
 
 ### Added
 - **Virtual Scrolling**: Implemented react-window `FixedSizeGrid` for efficient rendering of large frame collections
