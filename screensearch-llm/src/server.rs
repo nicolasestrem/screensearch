@@ -218,13 +218,58 @@ impl LlamaServer {
         let port = self.find_available_port().await?;
         *self.active_port.write().await = port;
 
-        info!(
-            "Starting llama-server on port {} with model {:?}",
-            port, config.model_path
-        );
+        // Try GPU mode first (if enabled), fall back to CPU if it fails
+        if config.use_gpu {
+            info!(
+                "Starting llama-server on port {} with GPU acceleration (Vulkan)",
+                port
+            );
+            
+            match self.start_with_mode(&llama_server_path, &config, port, true).await {
+                Ok(()) => {
+                    info!("llama-server started successfully with GPU on port {}", port);
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!(
+                        "GPU mode failed ({}), falling back to CPU-only mode. \
+                        This is common in VirtualBox or systems without Vulkan support.",
+                        e
+                    );
+                    // GPU failed, try CPU mode
+                }
+            }
+        }
 
+        // Start in CPU-only mode
+        info!(
+            "Starting llama-server on port {} in CPU-only mode",
+            port
+        );
+        
+        match self.start_with_mode(&llama_server_path, &config, port, false).await {
+            Ok(()) => {
+                info!("llama-server started successfully with CPU on port {}", port);
+                Ok(())
+            }
+            Err(e) => {
+                error!("llama-server failed to start in CPU mode: {}", e);
+                *self.status.write().await = ServerStatus::Error(e.to_string());
+                Err(e)
+            }
+        }
+    }
+
+    /// Start the server with a specific mode (GPU or CPU)
+    async fn start_with_mode(
+        &self,
+        llama_server_path: &std::path::Path,
+        config: &LlamaServerConfig,
+        port: u16,
+        use_gpu: bool,
+    ) -> Result<()> {
         // Build command
-        let mut cmd = Command::new(&llama_server_path);
+        let mut cmd = Command::new(llama_server_path);
         cmd.arg("-m")
             .arg(&config.model_path)
             .arg("--port")
@@ -235,7 +280,7 @@ impl LlamaServer {
             .arg(config.context_length.to_string());
 
         // Add GPU flag if enabled
-        if config.use_gpu {
+        if use_gpu {
             cmd.arg("-ngl").arg("99"); // Offload all layers to GPU
         }
 
@@ -256,19 +301,20 @@ impl LlamaServer {
 
         *self.child.lock().await = Some(child);
 
+        // Use shorter timeout for GPU mode to allow faster fallback (45s vs 120s)
+        let timeout_secs = if use_gpu { 45 } else { HEALTH_CHECK_TIMEOUT_SECS };
+
         // Wait for server to be ready
-        match self.wait_for_health(port).await {
+        match self.wait_for_health_with_timeout(port, timeout_secs).await {
             Ok(()) => {
                 *self.status.write().await = ServerStatus::Running;
                 *self.restart_count.write().await = 0;
                 self.touch().await;
-                info!("llama-server started successfully on port {}", port);
                 Ok(())
             }
             Err(e) => {
                 // Kill the process if health check failed
                 self.force_stop().await;
-                *self.status.write().await = ServerStatus::Error(e.to_string());
                 Err(e)
             }
         }
@@ -397,13 +443,14 @@ impl LlamaServer {
         Err(LlmError::Timeout(HEALTH_CHECK_TIMEOUT_SECS))
     }
 
-    /// Wait for server health endpoint to respond
-    async fn wait_for_health(&self, port: u16) -> Result<()> {
+
+    /// Wait for server health endpoint to respond with a custom timeout
+    async fn wait_for_health_with_timeout(&self, port: u16, timeout_secs: u64) -> Result<()> {
         let start = Instant::now();
-        let timeout = Duration::from_secs(HEALTH_CHECK_TIMEOUT_SECS);
+        let timeout = Duration::from_secs(timeout_secs);
         let health_url = format!("http://127.0.0.1:{}/health", port);
 
-        info!("Waiting for llama-server health check at {} (timeout: {}s)", health_url, HEALTH_CHECK_TIMEOUT_SECS);
+        info!("Waiting for llama-server health check at {} (timeout: {}s)", health_url, timeout_secs);
         
         let mut attempt = 0;
 
@@ -435,11 +482,11 @@ impl LlamaServer {
             let mut child_guard = self.child.lock().await;
             if let Some(ref mut child) = *child_guard {
                 match child.try_wait() {
-                    Ok(Some(status)) => {
-                        error!("llama-server process exited unexpectedly with status: {}", status);
+                    Ok(Some(exit_status)) => {
+                        error!("llama-server process exited unexpectedly with status: {}", exit_status);
                         return Err(LlmError::ModelInitError(format!(
                             "Server process exited with status: {}",
-                            status
+                            exit_status
                         )));
                     }
                     Ok(None) => {
@@ -458,11 +505,9 @@ impl LlamaServer {
             tokio::time::sleep(Duration::from_millis(HEALTH_CHECK_POLL_MS)).await;
         }
 
-        error!("llama-server health check timed out after {}s ({} attempts)", HEALTH_CHECK_TIMEOUT_SECS, attempt);
-        Err(LlmError::Timeout(HEALTH_CHECK_TIMEOUT_SECS))
+        error!("llama-server health check timed out after {}s ({} attempts)", timeout_secs, attempt);
+        Err(LlmError::Timeout(timeout_secs))
     }
-
-    /// Find an available port from the fallback list
     async fn find_available_port(&self) -> Result<u16> {
         let config = self.config.read().await;
         let preferred_port = config.port;
