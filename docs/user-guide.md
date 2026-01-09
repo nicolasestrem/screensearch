@@ -489,8 +489,8 @@ level = "info"
 # Write logs to file
 log_to_file = true
 
-# Log file path
-log_file = "screen_memories.log"
+# Log file name (basename only - path is determined automatically)
+log_file = "screensearch.log"
 
 # Maximum log file size before rotation (MB)
 max_log_size_mb = 100
@@ -498,6 +498,11 @@ max_log_size_mb = 100
 # Number of rotated log files to keep
 log_rotation_count = 5
 ```
+
+**Log File Location**:
+- **Development**: Logs are written to the current directory (relative path)
+- **Production (Windows)**: Logs are written to `%LOCALAPPDATA%\ScreenSearch\logs\`
+  - Example: `C:\Users\YourName\AppData\Local\ScreenSearch\logs\screensearch.2026-01-09.log`
 
 **Debugging**: Set `level = "debug"` for troubleshooting, but remember to change back to "info" for normal use.
 
@@ -1297,17 +1302,22 @@ Use the Settings panel to manually control capture:
 
 ### Data Location
 
-All data stored in:
-- **Database**: `screen_memories.db` (project root)
-- **Logs**: `screen_memories.log` (project root)
-- **Frontend Cache**: Browser localStorage
+**Development (running from source):**
+- **Database**: `./screensearch.db` (project root)
+- **Captures**: `./captures/`
+- **Logs**: `./screensearch.*.log`
+
+**Production (installed on Windows):**
+- **Database**: `%LOCALAPPDATA%\ScreenSearch\screensearch.db`
+- **Captures**: `%LOCALAPPDATA%\ScreenSearch\captures\`
+- **Logs**: `%LOCALAPPDATA%\ScreenSearch\logs\`
+- Example: `C:\Users\YourName\AppData\Local\ScreenSearch\`
 
 **Deletion**:
 To completely remove all data:
 1. Stop the application
-2. Delete `screen_memories.db`
-3. Delete `screen_memories.log`
-4. Clear browser data for localhost:3100
+2. Delete `%LOCALAPPDATA%\ScreenSearch\` folder (or `./screensearch.db` in development)
+3. Clear browser data for localhost:3131
 
 ---
 

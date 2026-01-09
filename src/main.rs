@@ -331,25 +331,49 @@ fn init_tracing(config: &LoggingSettings) -> Result<Option<tracing_appender::non
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.level));
 
     if config.log_to_file {
-        // Parse log file path
-        let log_path = PathBuf::from(&config.log_file);
-        let log_dir = log_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf();
-
-        let log_filename = log_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("screensearch");
+        // Use AppData for logs in production, current directory in development
+        let (log_dir, log_filename) = if cfg!(debug_assertions) {
+            // Development: use relative path from config
+            let log_path = PathBuf::from(&config.log_file);
+            let dir = log_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf();
+            let filename = log_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("screensearch")
+                .to_string();
+            (dir, filename)
+        } else {
+            // Production: use LocalAppData
+            let dir = if let Some(data_dir) = dirs::data_local_dir() {
+                let log_dir = data_dir.join("ScreenSearch").join("logs");
+                if let Err(e) = std::fs::create_dir_all(&log_dir) {
+                    warn!("Could not create log directory: {}", e);
+                    PathBuf::from(".")
+                } else {
+                    log_dir
+                }
+            } else {
+                warn!("Could not determine LocalAppData directory, using current directory");
+                PathBuf::from(".")
+            };
+            let filename = PathBuf::from(&config.log_file)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("screensearch")
+                .to_string();
+            (dir, filename)
+        };
 
         // Create rolling file appender with daily rotation
         let file_appender = RollingFileAppender::builder()
             .rotation(Rotation::DAILY)
-            .filename_prefix(log_filename)
+            .filename_prefix(&log_filename)
             .filename_suffix("log")
             .max_log_files(config.log_rotation_count as usize)
-            .build(log_dir)
+            .build(&log_dir)
             .context("Failed to create rolling file appender")?;
 
         let (non_blocking_file, guard) = tracing_appender::non_blocking(file_appender);
@@ -373,7 +397,7 @@ fn init_tracing(config: &LoggingSettings) -> Result<Option<tracing_appender::non
             .with(file_layer)
             .init();
 
-        info!("File logging enabled: {}", config.log_file);
+        info!("File logging enabled: {:?}", log_dir.join(format!("{}.log", log_filename)));
         info!("Log rotation: {} files, daily rotation", config.log_rotation_count);
 
         Ok(Some(guard))
