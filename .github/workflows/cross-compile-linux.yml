@@ -64,30 +64,35 @@ jobs:
             exit 1
           fi
 
-      - name: Install cargo-xwin (patch yanked xwin)
+      - name: Install cargo-xwin
         run: |
-          # Clone the pinned revision so we reproduce the build
-          git clone https://github.com/rust-cross/cargo-xwin.git /tmp/cargo-xwin
-          cd /tmp/cargo-xwin
-          git fetch --all --tags
-          git checkout 074ac4d7a5b05943e5f50b21447eaed5ba3d84d9
-
-          # Replace yanked xwin dependency with a known non-yanked version.
-          # The dependency is in inline table format: xwin = { version = "0.6.6", ... }
-          # Available versions: 0.7.0 (latest stable), 0.6.6-rc.2, 0.6.6-rc.1
-          echo "Patching Cargo.toml to use non-yanked xwin version (0.7.0)..."
-          sed -i 's/xwin = { version = "0\.6\.6"/xwin = { version = "0.7.0"/' Cargo.toml
-          sed -i 's/xwin = { version = "0\.6\.7"/xwin = { version = "0.7.0"/' Cargo.toml
+          # First, try installing from crates.io 
+          # Note: This may fail if xwin versions are yanked
+          if cargo install cargo-xwin 2>&1; then
+            echo "cargo-xwin installed successfully from crates.io"
+          else
+            echo "cargo-xwin installation from crates.io failed, trying alternative approach..."
+            
+            # Clone cargo-xwin and pin indicatif version to match xwin 0.7.0
+            git clone https://github.com/rust-cross/cargo-xwin.git /tmp/cargo-xwin
+            cd /tmp/cargo-xwin
+            git checkout 074ac4d7a5b05943e5f50b21447eaed5ba3d84d9
+            
+            # Patch to use xwin 0.7.0 and compatible indicatif
+            echo "Patching Cargo.toml for xwin 0.7.0 compatibility..."
+            sed -i 's/xwin = { version = "0\.6\.6"/xwin = { version = "0.7.0"/' Cargo.toml
+            sed -i 's/indicatif = "0\.17\.11"/indicatif = "0.18.3"/' Cargo.toml
+            
+            # Show patched lines
+            echo "Patched dependencies:"
+            grep -E "xwin|indicatif" Cargo.toml
+            
+            rm -f Cargo.lock
+            cargo install --path . --force
+          fi
           
-          # Verify the patch worked
-          echo "Patched Cargo.toml xwin line:"
-          grep xwin Cargo.toml
-
-          # Remove lockfile if present so cargo will re-resolve dependencies
-          rm -f Cargo.lock
-
-          # Install from the local path
-          cargo install --path . --force
+          # Verify installation
+          cargo xwin --version
 
       - name: Setup Node.js for UI build
         uses: actions/setup-node@v4
