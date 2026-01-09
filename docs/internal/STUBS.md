@@ -4,6 +4,28 @@ This document tracks all stub implementations, placeholder functionality, and fe
 
 ---
 
+## Core System Technical Debt
+
+### Local Vision Model Implementation
+| File | Line | Type | Severity | Description | Recommended Action | GitHub Issue |
+|------|------|------|----------|-------------|--------------------|--------------|
+| `screensearch-vision/src/local_model.rs` | 12 | TODO | Critical | Load Ministral-3B model weights | Implement model loading logic | |
+| `screensearch-vision/src/local_model.rs` | 20-22 (VisionModel::analyze) | TODO | Critical | Implement actual inference using candle-transformers | Complete inference implementation | |
+| `screensearch-api/src/workers/vision_worker.rs` | 55 | TODO | High | Local model support | Implement local model fallback logic | |
+
+### Embedded LLM System
+| File | Line | Type | Severity | Description | Recommended Action | GitHub Issue |
+|------|------|------|----------|-------------|--------------------|--------------|
+| `screensearch-api/src/handlers/ai.rs` | 466 | TODO | High | Track download state in AppState | Implement download progress tracking | |
+| `screensearch-llm/src/server.rs` | - | Not Implemented | Medium | Track llama-server process uptime | Add uptime monitoring | |
+
+### Core System Monitoring
+| File | Line | Type | Severity | Description | Recommended Action | GitHub Issue |
+|------|------|------|----------|-------------|--------------------|--------------|
+| `screensearch-api/src/handlers/system.rs` | 52 | TODO | Medium | Track server uptime | Implement uptime counter | |
+
+---
+
 ## UI Features (Coming Soon)
 
 ### Knowledge Graph
@@ -143,15 +165,15 @@ When implementing a stub or incomplete feature:
 
 | Status | Meaning |
 |--------|---------|
+| **Critical** | Blocks core functionality |
+| **High** | Affects major features/user experience |
+| **Medium** | Important but not blocking |
+| **Low** | Nice-to-have improvement |
 | **Placeholder** | UI element exists but feature not functional |
 | **Stub** | Code structure exists but returns mock/error |
 | **TODO** | Inline comment marking incomplete code |
 | **Not implemented** | Documented feature that doesn't exist yet |
 | **Coming Soon** | Publicly announced as upcoming feature |
-
----
-
-*Last updated: 2025-12-28 (v0.3.0 - Embedded LLM Integration)*
 
 ---
 
@@ -201,3 +223,7 @@ The AI-First UI redesign uses the following visual system for incomplete feature
 3. **"Setup Required" prompt** - Used when feature requires configuration
 
 All stubs are clearly marked visually so users understand the feature state.
+
+---
+
+*Last updated: 2026-01-08 (Technical Debt Audit v1)*
