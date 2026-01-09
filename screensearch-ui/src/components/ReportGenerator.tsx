@@ -68,7 +68,7 @@ export function ReportGenerator() {
         // Format: intelligence-report-{type}-{YYYY-MM-DD}-{HH-MM}.md
         const now = new Date();
         const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
-        const timeStr = now.toISOString().split('T')[1].substring(0, 5).replace(':', '-'); // HH-MM
+        const timeStr = (now.toISOString().split('T')[1] ?? '00:00').substring(0, 5).replace(':', '-'); // HH-MM
         const filename = `intelligence-report-${generatedReportType}-${dateStr}-${timeStr}.md`;
 
         const blob = new Blob([report], { type: 'text/markdown' });

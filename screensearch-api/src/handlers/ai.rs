@@ -242,6 +242,14 @@ pub async fn validate_connection(
 
 /// POST /ai/generate
 /// Generates an intelligence report based on screen activity
+///
+/// For local provider (`provider_url == "local"`), this function:
+/// 1. Checks if the Ministral-3B model is downloaded
+/// 2. Checks if the llama-server binary is available  
+/// 3. Auto-starts the llama-server if not already running (Lazy Loading)
+/// 4. Uses the server's dynamic port (handles fallback ports 31131, 31132)
+///
+/// This ensures users don't need to manually start the server from Settings.
 pub async fn generate_report(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<AiReportRequest>,
@@ -316,10 +324,35 @@ OUTPUT FORMAT (Markdown):
                 "Local model not downloaded. Please download the model first.".to_string()
             ));
         }
-        (LOCAL_LLM_ENDPOINT.to_string(), "ministral-3b".to_string())
+
+        // Check if llama-server binary is available
+        let bin_dir = screensearch_llm::get_bin_dir();
+        if !screensearch_llm::llama_server_exists(&bin_dir) {
+            return Err(AppError::InvalidRequest(
+                "llama-server not downloaded. Please download it from Settings → AI → Download Server.".to_string()
+            ));
+        }
+
+        // Get or create llama-server and ensure it's running (auto-start on demand)
+        let server = state.get_llama_server().await.map_err(|e| {
+            AppError::Internal(format!("Failed to initialize llama-server: {}", e))
+        })?;
+
+        // Auto-start the server if not running
+        if let Err(e) = server.ensure_started().await {
+            return Err(AppError::Internal(format!(
+                "Failed to start local LLM server: {}. Check logs for details.",
+                e
+            )));
+        }
+
+        // Get the endpoint from the running server (handles port fallback)
+        let endpoint = format!("{}/v1", server.endpoint().await);
+        (endpoint, "ministral-3b".to_string())
     } else {
         (payload.provider_url.clone(), payload.model.clone())
     };
+
 
     // Validate URL format and security (skip for local which we already handle)
     if payload.provider_url != "local" {

@@ -30,11 +30,14 @@ pub const DEFAULT_IDLE_TTL_SECS: u64 = 300; // 5 minutes
 /// Maximum restart attempts before giving up
 const MAX_RESTART_ATTEMPTS: u32 = 3;
 
-/// Health check timeout
-const HEALTH_CHECK_TIMEOUT_SECS: u64 = 60;
+/// Health check timeout for CPU mode (model loading can take 60-90s on slower systems)
+const HEALTH_CHECK_TIMEOUT_SECS: u64 = 120;
+
+/// Health check timeout for GPU mode (shorter to allow faster fallback)
+const GPU_HEALTH_CHECK_TIMEOUT_SECS: u64 = 45;
 
 /// Health check poll interval
-const HEALTH_CHECK_POLL_MS: u64 = 500;
+const HEALTH_CHECK_POLL_MS: u64 = 1000;
 
 /// Server status
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +80,9 @@ pub struct LlamaServerConfig {
     pub context_length: usize,
     /// Enable GPU acceleration
     pub use_gpu: bool,
+    /// Number of layers to offload to GPU (0 = none, 99 = all)
+    /// Systems with limited VRAM may need lower values
+    pub gpu_layers: u32,
 }
 
 impl Default for LlamaServerConfig {
@@ -89,6 +95,7 @@ impl Default for LlamaServerConfig {
             threads: 0,
             context_length: 8192,
             use_gpu: true,
+            gpu_layers: 99, // Offload all layers by default
         }
     }
 }
@@ -109,6 +116,8 @@ pub struct LlamaServer {
     restart_count: RwLock<u32>,
     /// Flag to signal shutdown
     shutting_down: AtomicBool,
+    /// Lock to serialize start attempts (prevents race condition)
+    starting_lock: tokio::sync::Mutex<()>,
     /// HTTP client for health checks
     client: reqwest::Client,
 }
@@ -125,6 +134,7 @@ impl LlamaServer {
             last_request: RwLock::new(Instant::now()),
             restart_count: RwLock::new(0),
             shutting_down: AtomicBool::new(false),
+            starting_lock: tokio::sync::Mutex::new(()),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()
@@ -168,16 +178,20 @@ impl LlamaServer {
         self.config.write().await.idle_ttl = ttl;
     }
 
-    /// Start the server if not already running
+    /// Start the server if not already running.
+    /// Uses a lock to serialize concurrent start attempts.
     pub async fn ensure_started(&self) -> Result<()> {
-        // Check if already running
+        // Acquire starting lock to prevent race conditions between concurrent requests
+        let _lock = self.starting_lock.lock().await;
+        
+        // Check if already running (after acquiring lock)
         let status = self.status().await;
         if status == ServerStatus::Running {
             self.touch().await;
             return Ok(());
         }
 
-        // Check if starting
+        // Check if starting (shouldn't happen with lock, but defensive)
         if status == ServerStatus::Starting {
             // Wait for startup to complete
             return self.wait_for_ready().await;
@@ -218,13 +232,58 @@ impl LlamaServer {
         let port = self.find_available_port().await?;
         *self.active_port.write().await = port;
 
-        info!(
-            "Starting llama-server on port {} with model {:?}",
-            port, config.model_path
-        );
+        // Try GPU mode first (if enabled), fall back to CPU if it fails
+        if config.use_gpu {
+            info!(
+                "Starting llama-server on port {} with GPU acceleration (Vulkan)",
+                port
+            );
+            
+            match self.start_with_mode(&llama_server_path, &config, port, true).await {
+                Ok(()) => {
+                    info!("llama-server started successfully with GPU on port {}", port);
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!(
+                        "GPU mode failed ({}), falling back to CPU-only mode. \
+                        This is common in VirtualBox or systems without Vulkan support.",
+                        e
+                    );
+                    // GPU failed, try CPU mode
+                }
+            }
+        }
 
+        // Start in CPU-only mode
+        info!(
+            "Starting llama-server on port {} in CPU-only mode",
+            port
+        );
+        
+        match self.start_with_mode(&llama_server_path, &config, port, false).await {
+            Ok(()) => {
+                info!("llama-server started successfully with CPU on port {}", port);
+                Ok(())
+            }
+            Err(e) => {
+                error!("llama-server failed to start in CPU mode: {}", e);
+                *self.status.write().await = ServerStatus::Error(e.to_string());
+                Err(e)
+            }
+        }
+    }
+
+    /// Start the server with a specific mode (GPU or CPU)
+    async fn start_with_mode(
+        &self,
+        llama_server_path: &std::path::Path,
+        config: &LlamaServerConfig,
+        port: u16,
+        use_gpu: bool,
+    ) -> Result<()> {
         // Build command
-        let mut cmd = Command::new(&llama_server_path);
+        let mut cmd = Command::new(llama_server_path);
         cmd.arg("-m")
             .arg(&config.model_path)
             .arg("--port")
@@ -234,9 +293,9 @@ impl LlamaServer {
             .arg("-c")
             .arg(config.context_length.to_string());
 
-        // Add GPU flag if enabled
-        if config.use_gpu {
-            cmd.arg("-ngl").arg("99"); // Offload all layers to GPU
+        // Add GPU flag if enabled (use configured number of layers)
+        if use_gpu {
+            cmd.arg("-ngl").arg(config.gpu_layers.to_string());
         }
 
         // Add threads if specified
@@ -256,19 +315,20 @@ impl LlamaServer {
 
         *self.child.lock().await = Some(child);
 
+        // Use shorter timeout for GPU mode to allow faster fallback
+        let timeout_secs = if use_gpu { GPU_HEALTH_CHECK_TIMEOUT_SECS } else { HEALTH_CHECK_TIMEOUT_SECS };
+
         // Wait for server to be ready
-        match self.wait_for_health(port).await {
+        match self.wait_for_health_with_timeout(port, timeout_secs).await {
             Ok(()) => {
                 *self.status.write().await = ServerStatus::Running;
                 *self.restart_count.write().await = 0;
                 self.touch().await;
-                info!("llama-server started successfully on port {}", port);
                 Ok(())
             }
             Err(e) => {
                 // Kill the process if health check failed
                 self.force_stop().await;
-                *self.status.write().await = ServerStatus::Error(e.to_string());
                 Err(e)
             }
         }
@@ -397,25 +457,48 @@ impl LlamaServer {
         Err(LlmError::Timeout(HEALTH_CHECK_TIMEOUT_SECS))
     }
 
-    /// Wait for server health endpoint to respond
-    async fn wait_for_health(&self, port: u16) -> Result<()> {
+
+    /// Wait for server health endpoint to respond using a specific timeout.
+    ///
+    /// # Arguments
+    ///
+    /// * `port` - The port to check health on
+    /// * `timeout_secs` - Maximum time to wait in seconds before returning error
+    ///
+    /// # Errors
+    ///
+    /// Returns `LlmError::Timeout` if server doesn't respond within `timeout_secs`.
+    /// Returns `LlmError::ModelInitError` if the server process exits unexpectedly.
+    async fn wait_for_health_with_timeout(&self, port: u16, timeout_secs: u64) -> Result<()> {
         let start = Instant::now();
-        let timeout = Duration::from_secs(HEALTH_CHECK_TIMEOUT_SECS);
+        let timeout = Duration::from_secs(timeout_secs);
         let health_url = format!("http://127.0.0.1:{}/health", port);
 
-        debug!("Waiting for health check at {}", health_url);
+        info!("Waiting for llama-server health check at {} (timeout: {}s)", health_url, timeout_secs);
+        
+        let mut attempt = 0;
 
         while start.elapsed() < timeout {
+            attempt += 1;
             match self.client.get(&health_url).send().await {
-                Ok(response) if response.status().is_success() => {
-                    debug!("Health check passed after {:?}", start.elapsed());
-                    return Ok(());
-                }
                 Ok(response) => {
-                    debug!("Health check returned {}, retrying...", response.status());
+                    let status = response.status();
+                    if status.is_success() {
+                        info!("llama-server health check passed after {:?} ({} attempts)", start.elapsed(), attempt);
+                        return Ok(());
+                    } else if status.as_u16() == 503 {
+                        // 503 = model still loading, this is expected
+                        if attempt % 10 == 1 {
+                            info!("llama-server loading model... (attempt {}, elapsed: {:?})", attempt, start.elapsed());
+                        }
+                    } else {
+                        warn!("Health check returned unexpected status {}, retrying...", status);
+                    }
                 }
                 Err(e) => {
-                    debug!("Health check error: {}, retrying...", e);
+                    if attempt % 10 == 1 {
+                        debug!("Health check connection error (attempt {}): {}", attempt, e);
+                    }
                 }
             }
 
@@ -423,10 +506,11 @@ impl LlamaServer {
             let mut child_guard = self.child.lock().await;
             if let Some(ref mut child) = *child_guard {
                 match child.try_wait() {
-                    Ok(Some(status)) => {
+                    Ok(Some(exit_status)) => {
+                        error!("llama-server process exited unexpectedly with status: {}", exit_status);
                         return Err(LlmError::ModelInitError(format!(
                             "Server process exited with status: {}",
-                            status
+                            exit_status
                         )));
                     }
                     Ok(None) => {
@@ -445,10 +529,9 @@ impl LlamaServer {
             tokio::time::sleep(Duration::from_millis(HEALTH_CHECK_POLL_MS)).await;
         }
 
-        Err(LlmError::Timeout(HEALTH_CHECK_TIMEOUT_SECS))
+        error!("llama-server health check timed out after {}s ({} attempts)", timeout_secs, attempt);
+        Err(LlmError::Timeout(timeout_secs))
     }
-
-    /// Find an available port from the fallback list
     async fn find_available_port(&self) -> Result<u16> {
         let config = self.config.read().await;
         let preferred_port = config.port;
@@ -577,5 +660,40 @@ mod tests {
 
         let idle2 = server.idle_duration().await;
         assert!(idle2 > idle1);
+    }
+    #[tokio::test]
+    async fn test_ensure_started_idempotency() {
+        let config = LlamaServerConfig::default();
+        let server = LlamaServer::new(config);
+        
+        // Manually set status to running
+        *server.status.write().await = ServerStatus::Running;
+        
+        // ensure_started should return Ok immediately without trying to start
+        let result = server.ensure_started().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_health_timeout() {
+        let config = LlamaServerConfig::default();
+        let server = LlamaServer::new(config);
+        
+        // Use a random port that nothing is listening on
+        let port = 54321;
+        
+        // Should timeout quickly (1 second)
+        // Note: We use a short timeout for the test
+        let start = Instant::now();
+        let result = server.wait_for_health_with_timeout(port, 1).await;
+        let duration = start.elapsed();
+        
+        match result {
+            Err(LlmError::Timeout(secs)) => assert_eq!(secs, 1),
+            _ => panic!("Expected timeout error, got {:?}", result),
+        }
+        
+        // Verify it took at least 1 second
+        assert!(duration >= Duration::from_secs(1));
     }
 }

@@ -7,13 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.4.1] - 2026-01-02
+## [0.4.2] - 2026-01-08
 
 ### Fixed
+- **Local LLM Auto-Start**: Fixed issue where llama-server would not auto-start when generating AI reports with the local provider
+  - `generate_report()` now calls `ensure_started()` on the llama-server before making HTTP requests
+  - Added prerequisite checks for model and server binary availability with clear error messages
+  - Server now properly auto-starts on first AI request as designed (Lazy Loading)
+  - Uses dynamic port from running server (handles fallback ports 31131, 31132 if default 31130 is busy)
+  - Resolves "connection refused" errors on fresh install when user hadn't manually started server from Settings
+
+- **GPU/Vulkan Fallback (VirtualBox Compatibility)**: Automatic fallback from GPU to CPU mode
+  - First attempts GPU mode (Vulkan) with 45s timeout
+  - If GPU fails (common in VirtualBox or systems without Vulkan), automatically retries in CPU-only mode
+  - CPU mode uses 120s timeout to allow for slower model loading
+  - Clear logging of which mode is being used
+
+- **Health Check Robustness**: Improved llama-server startup reliability
+  - Added INFO-level logging to track model loading progress during startup
+  - Proper handling of HTTP 503 status (model still loading) vs connection errors
+  - Clear error logging when server process exits unexpectedly or health check times out
+
+- **TypeScript Build Error**: Fixed TS2532 "Object is possibly 'undefined'" in ReportGenerator.tsx
+  - Added nullish coalescing operator for ISO date string parsing
+
 - **CI Cross-Compilation**: Fixed `cargo-xwin` installation failure due to yanked `xwin` dependencies
   - Patched `cargo-xwin` v0.20.2 to use non-yanked `xwin = "0.6.8"` instead of yanked `^0.6.6`/`^0.6.7`
   - Clone from git, patch Cargo.toml, and install from local path to avoid dependency resolution failures
   - Maintains reproducible builds using pinned commit 074ac4d (2026-01-08)
+
+### Technical Details
+- Modified `screensearch-api/src/handlers/ai.rs`: Added auto-start logic to `generate_report()` function
+- Modified `screensearch-llm/src/server.rs`: Refactored `start()` with GPU fallback and `wait_for_health_with_timeout()`
+- Modified `screensearch-ui/src/components/ReportGenerator.tsx`: Fixed TypeScript strict null check
+- Error messages now direct users to Settings → AI for missing dependencies
+- Aligns with documented behavior in `docs/embedded-llm.md`: "Lazy Loading: Server starts only when first AI request is made"
+
+---
+
+## [0.4.1] - 2026-01-02
 
 ### Added
 - **Virtual Scrolling**: Implemented react-window `FixedSizeGrid` for efficient rendering of large frame collections
@@ -424,3 +456,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - UI automation via Windows accessibility APIs
   - React-based web interface
   - Privacy controls and application exclusions
+
+[0.4.2]: https://github.com/nicolasestrem/screensearch/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/nicolasestrem/screensearch/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/nicolasestrem/screensearch/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/nicolasestrem/screensearch/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/nicolasestrem/screensearch/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/nicolasestrem/screensearch/releases/tag/v0.1.0

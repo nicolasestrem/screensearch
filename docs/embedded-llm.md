@@ -1,7 +1,7 @@
 # Embedded LLM System (screensearch-llm)
 
-**Version**: 0.3.0
-**Last Updated**: 2025-12-28
+**Version**: 0.4.2
+**Last Updated**: 2026-01-08
 **Status**: Production Ready
 
 This document provides comprehensive documentation for the embedded LLM system in ScreenSearch, including the Ministral-3B model, llama-server management, and integration with the AI intelligence features.
@@ -451,6 +451,18 @@ Tests connection to AI provider (local or remote).
 
 Generates intelligence report using RAG context.
 
+**Auto-Start Behavior**: When `provider_url` is `"local"`, the endpoint automatically:
+1. Checks if the Ministral-3B model is downloaded
+2. Checks if the llama-server binary is available
+3. **Starts the llama-server process if not already running** (Lazy Loading)
+4. Uses the server's dynamic port (handles fallback to 31131, 31132 if 31130 is busy)
+
+This means users don't need to manually start the server from Settings before generating reports.
+
+**Prerequisites** (checked in order, returning clear error messages if not met):
+- Model file downloaded: `Settings → AI → Download Model`
+- Server binary downloaded: `Settings → AI → Download Server`
+
 ```json
 // Request
 {
@@ -470,6 +482,7 @@ Generates intelligence report using RAG context.
   "context_source": "Semantic Search"
 }
 ```
+
 
 ### 7.3 Model Status
 
@@ -729,4 +742,4 @@ The embedded LLM system provides a fully local, privacy-preserving AI experience
 
 ---
 
-*Last updated: 2025-12-28 (v0.3.0)*
+*Last updated: 2026-01-08 (v0.4.2)*
