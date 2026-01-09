@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TypeScript Build Error**: Fixed TS2532 "Object is possibly 'undefined'" in ReportGenerator.tsx
   - Added nullish coalescing operator for ISO date string parsing
 
+- **CI Cross-Compilation**: Fixed `cargo-xwin` installation failure due to yanked `xwin` 0.6.6/0.6.7 dependencies
+  - Patched workflow to verify specific `cargo-xwin` commit and manually update `xwin` dependency to 0.7.0 during install
+
 ### Technical Details
 - Modified `screensearch-api/src/handlers/ai.rs`: Added auto-start logic to `generate_report()` function
 - Modified `screensearch-llm/src/server.rs`: Refactored `start()` with GPU fallback and `wait_for_health_with_timeout()`
@@ -452,3 +455,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - UI automation via Windows accessibility APIs
   - React-based web interface
   - Privacy controls and application exclusions
+
+[0.4.2]: https://github.com/nicolasestrem/screensearch/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/nicolasestrem/screensearch/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/nicolasestrem/screensearch/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/nicolasestrem/screensearch/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/nicolasestrem/screensearch/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/nicolasestrem/screensearch/releases/tag/v0.1.0

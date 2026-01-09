@@ -66,13 +66,28 @@ jobs:
 
       - name: Install cargo-xwin
         run: |
-          # Pin to specific commit for reproducibility (avoids yanked xwin dependency)
-          # Commit 074ac4d: "Update ureq to remove rustls-pemfile dependency" (2026-01-08)
-          # TODO: Monitor https://crates.io/crates/cargo-xwin for non-yanked releases
+          # Clone cargo-xwin at specific commit and patch yanked xwin dependency
+          # Issue: xwin 0.6.6 and 0.6.7 are yanked, need to use 0.7.0
+          # TODO: Monitor https://crates.io/crates/cargo-xwin for release with xwin 0.7.0+
           #       and switch back to: cargo install cargo-xwin --version X.Y.Z
-          cargo install --git https://github.com/rust-cross/cargo-xwin.git \
-            --rev 074ac4d7a5b05943e5f50b21447eaed5ba3d84d9 \
-            cargo-xwin
+          
+          XWIN_COMMIT="074ac4d7a5b05943e5f50b21447eaed5ba3d84d9"
+          CLONE_DIR="/tmp/cargo-xwin-patched"
+          
+          # Clone the repository at the specific commit
+          git clone --depth 1 https://github.com/rust-cross/cargo-xwin.git "$CLONE_DIR"
+          cd "$CLONE_DIR"
+          git fetch --depth 1 origin "$XWIN_COMMIT"
+          git checkout "$XWIN_COMMIT"
+          
+          # Patch Cargo.toml: replace yanked xwin 0.6.6 with working 0.7.0
+          sed -i 's/xwin = { version = "0.6.6"/xwin = { version = "0.7.0"/' Cargo.toml
+          
+          echo "=== Patched Cargo.toml xwin dependency ==="
+          grep "xwin" Cargo.toml
+          
+          # Install from patched local directory
+          cargo install --path .
 
       - name: Setup Node.js for UI build
         uses: actions/setup-node@v4
