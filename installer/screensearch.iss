@@ -2,7 +2,7 @@
 ; Created with Inno Setup 6.x
 
 #define MyAppName "ScreenSearch"
-#define MyAppVersion "0.4.1"
+#define MyAppVersion "0.4.3"
 #define MyAppPublisher "Nicolas Estrem"
 #define MyAppURL "https://github.com/nicolasestrem/screensearch"
 #define MyAppExeName "screensearch.exe"
