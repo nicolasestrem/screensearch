@@ -468,6 +468,32 @@ cargo xwin build --target aarch64-pc-windows-msvc
 
 ## Troubleshooting Checklist
 
+### Common Issues
+
+#### 1. "Failed to verify package" (xwin / indicatif conflict)
+
+**Symptom:**
+```text
+Compiling indicatif v0.17.x
+error[E0061]: this function takes 0 arguments but 1 argument was supplied
+   --> .cargo/registry/src/index.crates.io.../xwin-0.7.0/src/progress.rs:16:35
+```
+
+**Cause:**
+`cargo-xwin` depends on `xwin`. `xwin` 0.5.0+ and 0.6.0+ were yanked or had breaking changes, and `indicatif` 0.17.x has an API conflict with older `xwin` usages.
+
+**Solution:**
+We patch `Cargo.toml` in the CI/CD pipeline (`.github/workflows/cross-compile-linux.yml`) to force compatible versions:
+
+```bash
+# Force usage of specific versions if building cargo-xwin from source
+cargo install --git https://github.com/rust-cross/cargo-xwin --rev <COMMIT_HASH>
+```
+
+Or ensure you are using the latest `cargo-xwin` which resolves these dependencies correctly.
+
+#### 2. General Checklist
+
 Before reporting issues, verify:
 
 - [ ] `cargo-xwin` is installed: `cargo xwin --version`

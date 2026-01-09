@@ -11,9 +11,9 @@
 4. [Working with Each Crate](#working-with-each-crate)
 5. [Adding New Features](#adding-new-features)
 6. [Testing Strategy](#testing-strategy)
-7. [Debugging & Profiling](#debugging--profiling)
-8. [Release Process](#release-process)
-9. [Contributing Guidelines](#contributing-guidelines)
+9. [Data Storage Guidelines](#data-storage-guidelines)
+10. [Release Process](#release-process)
+11. [Contributing Guidelines](#contributing-guidelines)
 
 ---
 
@@ -460,6 +460,44 @@ jobs:
       - run: cargo clippy -- -D warnings
       - run: cargo fmt --check
 ```
+
+---
+
+## Data Storage Guidelines
+
+To ensure compatibility with Windows security models and provide a seamless user experience, follow these guidelines for file I/O:
+
+### Production vs Development Paths
+
+Use the `dirs` crate to resolve paths dynamically based on the build profile.
+
+| content | Development (`cargo run`) | Production (Installed) |
+| :--- | :--- | :--- |
+| **Logs** | Relative: `./screensearch.log` | `%LOCALAPPDATA%\ScreenSearch\logs\` |
+| **Database** | Relative: `./screensearch.db` | `%LOCALAPPDATA%\ScreenSearch\` |
+| **Captures** | Relative: `./captures/` | `%LOCALAPPDATA%\ScreenSearch\captures\` |
+| **Models** | Relative: `./models/` | `%LOCALAPPDATA%\ScreenSearch\models\` |
+
+**Implementation Pattern:**
+
+```rust
+pub fn get_data_dir() -> PathBuf {
+    if cfg!(debug_assertions) {
+        // Development: Current directory
+        std::env::current_dir().unwrap()
+    } else {
+        // Production: %LOCALAPPDATA%
+        dirs::data_local_dir()
+            .expect("Failed to get local data dir")
+            .join("ScreenSearch")
+    }
+}
+```
+
+**Critical Rules:**
+1.  **Never write to `C:\Program Files\`**: This requires Admin privileges and will fail for standard users.
+2.  **Use `dirs::data_local_dir()`**: Maps to `Roaming` on Linux/macOS and `Local` AppData on Windows.
+3.  **Create directories lazily**: Use `std::fs::create_dir_all()` before writing.
 
 ---
 
@@ -1544,105 +1582,41 @@ tasklist | findstr screen-memories
 
 ## Release Process
 
-### Version Bump
+ScreenSearch uses semantic versioning (`MAJOR.MINOR.PATCH`) and automates releases via GitHub Actions.
 
-ScreenSearch uses semantic versioning: `MAJOR.MINOR.PATCH`
+### Release Checklist
 
-**Step 1: Update version numbers**
+**Before triggering a release, YOU MUST complete these steps to avoid build failures:**
 
-Update `version` in `Cargo.toml`:
-```toml
-[workspace.package]
-version = "0.2.0"
-```
+1.  **Bump Versions**: Ensure the version number is consistent across all files.
+    *   `Cargo.toml` (package.version): `version = "0.X.Y"`
+    *   `Cargo.toml` (workspace.package.version): `version = "0.X.Y"`
+    *   `installer/screensearch.iss`: `#define MyAppVersion "0.X.Y"`
+    
+    > [!IMPORTANT]
+    > If `screensearch.iss` version does not match the git tag, the installer filename will mismatch, causing the release workflow to fail.
 
-**Step 2: Update CHANGELOG**
+2.  **Update Lockfile**: Run `cargo check` to update `Cargo.lock` with the new version.
+    *   *Failure to do this will cause the CI to fail with `--locked` errors.*
 
-Create/update `CHANGELOG.md`:
-```markdown
-# Changelog
+3.  **Update Changelog**: Add the new version and release notes to `CHANGELOG.md`.
 
-## [0.2.0] - 2025-12-15
+4.  **Tag Release**: Push a git tag (e.g., `v0.4.3`) to trigger the CI release workflow.
+    *   `git tag v0.4.3`
+    *   `git push origin v0.4.3`
 
-### Added
-- Thumbnail generation for captured frames
-- OCR confidence filtering in search API
-- Double-click automation command
+### Automated Release Workflow
 
-### Fixed
-- Database locking issue on concurrent writes
-- Memory leak in frame buffer
+Authentication to GitHub is handled automatically by the `release.yml` workflow.
+The pipeline performs the following steps:
 
-### Changed
-- Improved frame differencing performance by 30%
-```
-
-**Step 3: Commit and tag**
-
-```bash
-git add .
-git commit -m "Bump version to 0.2.0"
-git tag -a v0.2.0 -m "Version 0.2.0 - Thumbnail support and performance improvements"
-git push origin main --tags
-```
-
-### Build Release Binary
-
-```bash
-# Build with release optimizations
-cargo build --release
-
-# Binary location
-# target\release\screen-memories.exe
-
-# Test release build
-.\target\release\screen-memories.exe --help
-```
-
-**Release build optimizations (configured in `Cargo.toml`):**
-- `opt-level = 3` - Maximum optimization
-- `lto = true` - Link-time optimization
-- `codegen-units = 1` - Single codegen unit for better optimization
-- `strip = true` - Strip debug symbols (smaller binary)
-
-### Create Distribution Package
-
-```powershell
-# Create distribution directory
-mkdir screen-memories-v0.2.0
-
-# Copy files
-copy target\release\screen-memories.exe screen-memories-v0.2.0\
-copy config.toml screen-memories-v0.2.0\
-copy README.md screen-memories-v0.2.0\
-copy LICENSE screen-memories-v0.2.0\
-
-# Create zip archive
-Compress-Archive -Path screen-memories-v0.2.0 -DestinationPath screen-memories-v0.2.0-windows-x64.zip
-```
-
-### Frontend Release
-
-```bash
-cd screen-ui
-
-# Build production frontend
-npm run build
-
-# Output in dist/ directory
-```
-
-Serve with static file server or bundle with Rust binary using `tower-http` static file serving.
-
-### GitHub Release
-
-1. Go to GitHub repository > Releases
-2. Click "Create new release"
-3. Select tag `v0.2.0`
-4. Title: "ScreenSearch v0.2.0"
-5. Description: Copy from CHANGELOG
-6. Upload `screen-memories-v0.2.0-windows-x64.zip`
-7. Publish release
+1.  **Trigger**: Pushing a tag matching `v*` (e.g., `v0.4.3`).
+2.  **Build UI**: Compiles the React frontend.
+3.  **Build Rust Binary**: Compiles the Rust backend in `release` mode.
+4.  **Create Installers**: Uses Inno Setup to generate:
+    *   `ScreenSearch-v0.4.3-Setup.exe` (Full installer with embedded AI models)
+    *   `ScreenSearch-v0.4.3-Lite-Setup.exe` (Lightweight installer)
+5.  **Publish Release**: Creates a GitHub Release and uploads the artifacts.
 
 ---
 

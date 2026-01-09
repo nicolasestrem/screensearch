@@ -4,6 +4,11 @@ This directory contains resources needed for the Inno Setup installer.
 
 ## Required Files
 
+### Important Note on Versioning
+
+> [!WARNING]
+> The version number in `screensearch.iss` (`#define MyAppVersion`) MUST match the version in `Cargo.toml` and the git tag used for release. Mismatches will cause the installer output filename to differ from what the GitHub Actions workflow expects, leading to release failures.
+
 ### 1. icon.ico
 **Purpose:** Windows icon for the installer and installed application
 
