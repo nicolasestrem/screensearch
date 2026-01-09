@@ -73,13 +73,14 @@ jobs:
           git checkout 074ac4d7a5b05943e5f50b21447eaed5ba3d84d9
 
           # Replace yanked xwin dependency with a known non-yanked version.
-          # Adjust the replacement if upstream chooses a different version number.
-          if grep -q '^xwin = ' Cargo.toml; then
-            echo "Patching Cargo.toml to use non-yanked xwin version..."
-            # try replacing ^0.6.6 or ^0.6.7 with 0.6.8 (or another non-yanked version)
-            sed -i 's/^xwin = "\^0\.6\.6"/xwin = "0.6.8"/' Cargo.toml || true
-            sed -i 's/^xwin = "\^0\.6\.7"/xwin = "0.6.8"/' Cargo.toml || true
-          fi
+          # The dependency is in inline table format: xwin = { version = "0.6.6", ... }
+          echo "Patching Cargo.toml to use non-yanked xwin version..."
+          sed -i 's/xwin = { version = "0\.6\.6"/xwin = { version = "0.6.8"/' Cargo.toml
+          sed -i 's/xwin = { version = "0\.6\.7"/xwin = { version = "0.6.8"/' Cargo.toml
+          
+          # Verify the patch worked
+          echo "Patched Cargo.toml xwin line:"
+          grep xwin Cargo.toml
 
           # Remove lockfile if present so cargo will re-resolve dependencies
           rm -f Cargo.lock
