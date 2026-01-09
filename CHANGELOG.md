@@ -31,8 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TypeScript Build Error**: Fixed TS2532 "Object is possibly 'undefined'" in ReportGenerator.tsx
   - Added nullish coalescing operator for ISO date string parsing
 
-- **CI Cross-Compilation**: Fixed `cargo-xwin` installation failure due to yanked `xwin` 0.6.6/0.6.7 dependencies
-  - Patched workflow to verify specific `cargo-xwin` commit and manually update `xwin` dependency to 0.7.0 during install
+- **CI Cross-Compilation**: Fixed `cargo-xwin` installation failure due to yanked `xwin` dependencies
+  - Switched to installing `cargo-xwin` directly from official git repository to avoid broken 0.7.0/yanked 0.6.x releases
 
 ### Technical Details
 - Modified `screensearch-api/src/handlers/ai.rs`: Added auto-start logic to `generate_report()` function
