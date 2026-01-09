@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.3] - 2026-01-09
+
+### Fixed
+- **Log File Permissions on Windows**: Fixed startup failure when running without admin privileges
+  - Logs now written to `%LOCALAPPDATA%\ScreenSearch\logs\` in production builds
+  - Previously failed with "Access is denied (os error 5)" when installed to `C:\Program Files\`
+  - Development builds continue using relative path from `config.toml`
+  - Follows same pattern as database and captures which already use LocalAppData
+
+---
+
 ## [0.4.2] - 2026-01-08
 
 ### Fixed
