@@ -32,7 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added nullish coalescing operator for ISO date string parsing
 
 - **CI Cross-Compilation**: Fixed `cargo-xwin` installation failure due to yanked `xwin` dependencies
-  - Switched to installing `cargo-xwin` directly from official git repository to avoid broken 0.7.0/yanked 0.6.x releases
+  - Patched `cargo-xwin` v0.20.2 to use non-yanked `xwin = "0.6.8"` instead of yanked `^0.6.6`/`^0.6.7`
+  - Clone from git, patch Cargo.toml, and install from local path to avoid dependency resolution failures
+  - Maintains reproducible builds using pinned commit 074ac4d (2026-01-08)
 
 ### Technical Details
 - Modified `screensearch-api/src/handlers/ai.rs`: Added auto-start logic to `generate_report()` function
@@ -44,7 +46,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ---
 
 ## [0.4.1] - 2026-01-02
-
 
 ### Added
 - **Virtual Scrolling**: Implemented react-window `FixedSizeGrid` for efficient rendering of large frame collections
