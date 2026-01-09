@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.1] - 2026-01-02
 
+### Fixed
+- **CI Cross-Compilation**: Fixed `cargo-xwin` installation failure due to yanked `xwin` dependencies
+  - Patched `cargo-xwin` v0.20.2 to use non-yanked `xwin = "0.6.8"` instead of yanked `^0.6.6`/`^0.6.7`
+  - Clone from git, patch Cargo.toml, and install from local path to avoid dependency resolution failures
+  - Maintains reproducible builds using pinned commit 074ac4d (2026-01-08)
+
 ### Added
 - **Virtual Scrolling**: Implemented react-window `FixedSizeGrid` for efficient rendering of large frame collections
   - New `VirtualFrameGrid` component with memoized cell renderer
