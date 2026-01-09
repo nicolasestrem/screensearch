@@ -64,15 +64,28 @@ jobs:
             exit 1
           fi
 
-      - name: Install cargo-xwin
+      - name: Install cargo-xwin (patch yanked xwin)
         run: |
-          # Pin to specific commit for reproducibility (avoids yanked xwin dependency)
-          # Commit 074ac4d: "Update ureq to remove rustls-pemfile dependency" (2026-01-08)
-          # TODO: Monitor https://crates.io/crates/cargo-xwin for non-yanked releases
-          #       and switch back to: cargo install cargo-xwin --version X.Y.Z
-          cargo install --git https://github.com/rust-cross/cargo-xwin.git \
-            --rev 074ac4d7a5b05943e5f50b21447eaed5ba3d84d9 \
-            cargo-xwin
+          # Clone the pinned revision so we reproduce the build
+          git clone https://github.com/rust-cross/cargo-xwin.git /tmp/cargo-xwin
+          cd /tmp/cargo-xwin
+          git fetch --all --tags
+          git checkout 074ac4d7a5b05943e5f50b21447eaed5ba3d84d9
+
+          # Replace yanked xwin dependency with a known non-yanked version.
+          # Adjust the replacement if upstream chooses a different version number.
+          if grep -q '^xwin = ' Cargo.toml; then
+            echo "Patching Cargo.toml to use non-yanked xwin version..."
+            # try replacing ^0.6.6 or ^0.6.7 with 0.6.8 (or another non-yanked version)
+            sed -i 's/^xwin = "\^0\.6\.6"/xwin = "0.6.8"/' Cargo.toml || true
+            sed -i 's/^xwin = "\^0\.6\.7"/xwin = "0.6.8"/' Cargo.toml || true
+          fi
+
+          # Remove lockfile if present so cargo will re-resolve dependencies
+          rm -f Cargo.lock
+
+          # Install from the local path
+          cargo install --path . --force
 
       - name: Setup Node.js for UI build
         uses: actions/setup-node@v4
