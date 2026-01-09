@@ -74,9 +74,10 @@ jobs:
 
           # Replace yanked xwin dependency with a known non-yanked version.
           # The dependency is in inline table format: xwin = { version = "0.6.6", ... }
-          echo "Patching Cargo.toml to use non-yanked xwin version..."
-          sed -i 's/xwin = { version = "0\.6\.6"/xwin = { version = "0.6.8"/' Cargo.toml
-          sed -i 's/xwin = { version = "0\.6\.7"/xwin = { version = "0.6.8"/' Cargo.toml
+          # Available versions: 0.7.0 (latest stable), 0.6.6-rc.2, 0.6.6-rc.1
+          echo "Patching Cargo.toml to use non-yanked xwin version (0.7.0)..."
+          sed -i 's/xwin = { version = "0\.6\.6"/xwin = { version = "0.7.0"/' Cargo.toml
+          sed -i 's/xwin = { version = "0\.6\.7"/xwin = { version = "0.7.0"/' Cargo.toml
           
           # Verify the patch worked
           echo "Patched Cargo.toml xwin line:"
