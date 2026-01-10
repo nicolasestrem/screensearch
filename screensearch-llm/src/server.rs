@@ -309,6 +309,21 @@ impl LlamaServer {
 
         // Spawn the process
         let child = cmd.spawn().map_err(|e| {
+            // Check for missing DLL errors on Windows
+            #[cfg(windows)]
+            {
+                // Windows error codes for missing DLL:
+                // 0xc0000135 = STATUS_DLL_NOT_FOUND
+                // 0x7e = ERROR_MOD_NOT_FOUND (126)
+                let raw_error = e.raw_os_error();
+                if raw_error == Some(126) {
+                    return LlmError::MissingDependency(
+                        "VCRUNTIME140.dll or MSVCP140.dll not found. \
+                         The Visual C++ 2015-2022 Redistributable is required for AI features".to_string()
+                    );
+                }
+            }
+            
             let err = format!("Failed to spawn llama-server: {}", e);
             LlmError::ModelInitError(err)
         })?;
@@ -327,6 +342,26 @@ impl LlamaServer {
                 Ok(())
             }
             Err(e) => {
+                // Check if process exited immediately (could be DLL error)
+                #[cfg(windows)]
+                {
+                    let mut child_guard = self.child.lock().await;
+                    if let Some(ref mut child) = *child_guard {
+                        if let Ok(Some(exit_status)) = child.try_wait() {
+                            // Windows exit code 0xc0000135 = -1073741515 = STATUS_DLL_NOT_FOUND
+                            if let Some(code) = exit_status.code() {
+                                if code == -1073741515 || code == 0xc0000135u32 as i32 {
+                                    child_guard.take();
+                                    *self.status.write().await = ServerStatus::Error("Missing Visual C++ Runtime".to_string());
+                                    return Err(LlmError::MissingDependency(
+                                        "VCRUNTIME140.dll not found. Install Visual C++ 2015-2022 Redistributable".to_string()
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 // Kill the process if health check failed
                 self.force_stop().await;
                 Err(e)

@@ -665,9 +665,39 @@ If no Vulkan-compatible GPU is found, llama-server automatically falls back to C
 | Server won't start | Binary not downloaded | Click "Download Server" in settings |
 | Port in use | Another process on 31130 | Server will auto-fallback to 31131 |
 | Slow inference | CPU fallback | Verify GPU drivers are installed |
-| DLL errors (Windows) | Missing dependencies | Re-download llama-server binary |
+| VCRUNTIME140.dll error | Missing Visual C++ Runtime | See section 10.2 below |
 
-### 10.2 Log Messages
+### 10.2 Visual C++ Runtime Error (Windows)
+
+If you see errors like:
+- `VCRUNTIME140.dll not found`
+- `MSVCP140.dll not found`
+- `MSVCP140_CODECVT_IDS.dll not found`
+
+This means the **Microsoft Visual C++ 2015-2022 Redistributable** is not installed on your system. This runtime is required because llama-server.exe is compiled with Visual C++.
+
+**Solution:**
+
+**Option A - Installer Users (Recommended)**
+
+If you installed ScreenSearch using the installer (v0.4.4+), the Visual C++ Runtime is automatically installed. If you still see this error:
+
+1. Uninstall ScreenSearch
+2. Reinstall using the latest installer
+3. Wait for "Installing Visual C++ Runtime..." step to complete
+
+**Option B - Portable/ZIP Users**
+
+Download and install the VC++ Runtime manually:
+
+1. Download: **[vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe)**
+2. Run the installer
+3. Restart ScreenSearch
+4. Try starting the AI server again
+
+> **Note**: The main ScreenSearch application does not require this runtime. Only the embedded llama-server component (used for AI features) has this dependency.
+
+### 10.3 Log Messages
 
 **Successful startup:**
 ```
@@ -688,7 +718,7 @@ INFO  Server idle for 300s, initiating shutdown
 INFO  llama-server stopped
 ```
 
-### 10.3 Verification Steps
+### 10.4 Verification Steps
 
 1. **Check model status**: `GET /api/ai/model/status`
 2. **Check server status**: `GET /api/ai/server/status`

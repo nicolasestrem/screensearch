@@ -1,9 +1,46 @@
 # Changelog
 
-All notable changes to ScreenSearch will be documented in this file.
+All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [0.4.32] - 2026-01-10
+
+### Fixed
+- **Installer Launch Failure (Error 740)** - Resolved "CreateProcess failed; code 740. The requested operation requires elevation" error that prevented app from launching after installation
+  - Changed installation directory from `C:\Program Files\` to `%LOCALAPPDATA%\ScreenSearch\`
+  - Removed admin privilege requirement - installer now runs without UAC prompt
+  - Added `shellexec` flag to post-install launch for proper process handling
+  - VC++ Redistributable installation now uses `/passive` mode with UAC prompt only when needed
+
+### Technical
+- Modified `installer/screensearch.iss`:
+  - `DefaultDirName` changed from `{autopf}` to `{localappdata}`
+  - `PrivilegesRequired` changed from `admin` to `lowest`
+  - Post-install launch uses `shellexec` flag
+  - VC++ install uses `shellexec` for UAC elevation
+
+---
+
+## [0.4.31] - 2026-01-10
+
+### Fixed
+- **Installer now bundles Visual C++ 2015-2022 Redistributable** - Fixes "VCRUNTIME140.dll not found" error on fresh Windows 11 installations when using the embedded LLM (llama-server.exe)
+  - Installer automatically installs VC++ Runtime if not present (adds ~25MB to installer size)
+  - Detection logic skips installation if VC++ Runtime already installed
+- **Runtime DLL error detection** - Added user-friendly error messages for portable users when VC++ Runtime is missing
+  - Detects Windows error codes 126 and 0xc0000135 (DLL_NOT_FOUND)
+  - Provides direct download link: https://aka.ms/vs/17/release/vc_redist.x64.exe
+  - Only affects llama-server.exe component; main app has no dependencies
+
+### Technical
+- Modified `installer/screensearch.iss` with `VCRedistNeedsInstall` registry check
+- Updated `.github/workflows/release.yml` to download vc_redist.x64.exe during CI build
+- Added `LlmError::MissingDependency` variant in `screensearch-llm/src/error.rs`
+- Enhanced `screensearch-llm/src/server.rs` spawn logic with Windows-specific DLL detection
 
 ---
 

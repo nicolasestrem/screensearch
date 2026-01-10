@@ -181,7 +181,7 @@ pause_on_lock = true            # Auto-pause when screen locks
 
 ## Project Information
 
-**Version:** 0.2.0
+**Version:** 0.4.32
 **Platform:** Windows 10/11 only (uses Windows-specific APIs)
 **License:** MIT
 **Repository:** [github.com/nicolasestrem/screensearch](https://github.com/nicolasestrem/screensearch)
@@ -246,13 +246,13 @@ This documentation hub is actively maintained. If you find errors or outdated in
 3. **Discuss:** Start a discussion for major documentation changes
 
 **Recent Updates:**
+- 2026-01-10: v0.4.32 - Installer migrated to LocalAppData (no admin required)
 - 2025-12-13: Added comprehensive documentation index
 - 2025-12-13: Updated for v0.2.0 with hybrid search and embeddings
 - 2025-12-10: Added AI intelligence documentation
-- 2025-12-08: Added storage optimization documentation
 
 ---
 
-**Last Updated:** 2025-12-13
-**Documentation Version:** 2.0
-**Covers:** ScreenSearch v0.2.0
+**Last Updated:** 2026-01-10
+**Documentation Version:** 2.1
+**Covers:** ScreenSearch v0.4.32

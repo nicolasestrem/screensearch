@@ -1308,10 +1308,13 @@ Use the Settings panel to manually control capture:
 - **Logs**: `./screensearch.*.log`
 
 **Production (installed on Windows):**
+- **Application**: `%LOCALAPPDATA%\ScreenSearch\screensearch.exe` (installer default)
 - **Database**: `%LOCALAPPDATA%\ScreenSearch\screensearch.db`
 - **Captures**: `%LOCALAPPDATA%\ScreenSearch\captures\`
 - **Logs**: `%LOCALAPPDATA%\ScreenSearch\logs\`
 - Example: `C:\Users\YourName\AppData\Local\ScreenSearch\`
+
+> **Note**: As of v0.4.32, the installer defaults to LocalAppData instead of Program Files. This eliminates admin/UAC requirements during installation.
 
 **Deletion**:
 To completely remove all data:
