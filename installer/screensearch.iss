@@ -2,7 +2,7 @@
 ; Created with Inno Setup 6.x
 
 #define MyAppName "ScreenSearch"
-#define MyAppVersion "0.4.31"
+#define MyAppVersion "0.4.32"
 #define MyAppPublisher "Nicolas Estrem"
 #define MyAppURL "https://github.com/nicolasestrem/screensearch"
 #define MyAppExeName "screensearch.exe"
@@ -20,7 +20,9 @@ AppUpdatesURL={#MyAppURL}/releases
 VersionInfoVersion={#MyAppVersion}
 
 ; Installation directories
-DefaultDirName={autopf}\{#MyAppName}
+; Install to LocalAppData (user-writable, no admin required)
+; This prevents UAC issues and aligns with app data storage pattern
+DefaultDirName={localappdata}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 
@@ -46,7 +48,8 @@ WizardSmallImageFile=resources\banner.bmp
 
 ; System requirements
 MinVersion=10.0.17763
-PrivilegesRequired=admin
+; Use lowest privileges - installation to LocalAppData does not require admin
+PrivilegesRequired=lowest
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 
@@ -133,11 +136,12 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: """{app}\{#MyAppExeName}"""; Flags: uninsdeletevalue; Components: startup
 
 [Run]
-; Install VC++ Runtime silently before application launch (if needed)
-Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Visual C++ Runtime (required for AI features)..."; Flags: waituntilterminated; Check: VCRedistNeedsInstall
+; Install VC++ Runtime - uses shellexec to request UAC when needed (installer runs without admin)
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /passive /norestart"; StatusMsg: "Installing Visual C++ Runtime (required for AI features)..."; Flags: waituntilterminated shellexec; Check: VCRedistNeedsInstall
 
 ; Option to launch after installation
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+; Use shellexec to properly handle process launching (prevents error 740)
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent shellexec
 
 [UninstallDelete]
 ; Clean up AppData on uninstall

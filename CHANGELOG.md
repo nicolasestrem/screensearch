@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.32] - 2026-01-10
+
+### Fixed
+- **Installer Launch Failure (Error 740)** - Resolved "CreateProcess failed; code 740. The requested operation requires elevation" error that prevented app from launching after installation
+  - Changed installation directory from `C:\Program Files\` to `%LOCALAPPDATA%\ScreenSearch\`
+  - Removed admin privilege requirement - installer now runs without UAC prompt
+  - Added `shellexec` flag to post-install launch for proper process handling
+  - VC++ Redistributable installation now uses `/passive` mode with UAC prompt only when needed
+
+### Technical
+- Modified `installer/screensearch.iss`:
+  - `DefaultDirName` changed from `{autopf}` to `{localappdata}`
+  - `PrivilegesRequired` changed from `admin` to `lowest`
+  - Post-install launch uses `shellexec` flag
+  - VC++ install uses `shellexec` for UAC elevation
+
+---
+
 ## [0.4.31] - 2026-01-10
 
 ### Fixed
