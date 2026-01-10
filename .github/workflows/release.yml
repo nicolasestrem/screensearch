@@ -96,6 +96,21 @@ jobs:
           Write-Host "Model downloaded successfully: $modelSize MB"
         shell: pwsh
 
+      - name: Download VC++ Redistributable
+        run: |
+          Write-Host "Downloading Visual C++ 2015-2022 Redistributable..."
+          $vcRedistUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+          Invoke-WebRequest -Uri $vcRedistUrl -OutFile "installer/resources/vc_redist.x64.exe" -MaximumRetryCount 3
+          
+          # Verify download (should be ~24-25MB)
+          $size = (Get-Item "installer/resources/vc_redist.x64.exe").Length / 1MB
+          Write-Host "VC++ Redistributable downloaded: $([math]::Round($size, 1)) MB"
+          if ($size -lt 20) {
+            Write-Error "VC++ Redistributable too small: $size MB (expected >20 MB)"
+            exit 1
+          }
+        shell: pwsh
+
       - name: Install Inno Setup
         run: choco install innosetup -y
         shell: pwsh

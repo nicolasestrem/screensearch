@@ -37,6 +37,10 @@ pub enum LlmError {
     #[error("Inference timeout after {0} seconds")]
     Timeout(u64),
 
+    /// Missing Windows Visual C++ Runtime dependency
+    #[error("Missing Visual C++ Runtime: {0}. Download from: https://aka.ms/vs/17/release/vc_redist.x64.exe")]
+    MissingDependency(String),
+
     /// IO error
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),

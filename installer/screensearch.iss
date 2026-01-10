@@ -2,7 +2,7 @@
 ; Created with Inno Setup 6.x
 
 #define MyAppName "ScreenSearch"
-#define MyAppVersion "0.4.3"
+#define MyAppVersion "0.4.31"
 #define MyAppPublisher "Nicolas Estrem"
 #define MyAppURL "https://github.com/nicolasestrem/screensearch"
 #define MyAppExeName "screensearch.exe"
@@ -90,6 +90,10 @@ Name: "startup"; Description: "Launch on Windows startup"; Types: lite
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
+; Visual C++ 2015-2022 Redistributable (required for llama-server.exe)
+; Only installed if not already present on system
+Source: "resources\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: VCRedistNeedsInstall
+
 ; Main executable
 Source: "..\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion; Components: core
 
@@ -129,6 +133,9 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: """{app}\{#MyAppExeName}"""; Flags: uninsdeletevalue; Components: startup
 
 [Run]
+; Install VC++ Runtime silently before application launch (if needed)
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Visual C++ Runtime (required for AI features)..."; Flags: waituntilterminated; Check: VCRedistNeedsInstall
+
 ; Option to launch after installation
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
@@ -141,6 +148,23 @@ Type: filesandordirs; Name: "{app}\captures"
 Type: filesandordirs; Name: "{app}\models"
 
 [Code]
+// Check if VC++ 2015-2022 Redistributable (14.x) is already installed
+function VCRedistNeedsInstall: Boolean;
+var
+  Version: String;
+begin
+  if RegQueryStringValue(HKEY_LOCAL_MACHINE,
+    'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64',
+    'Version', Version) then
+  begin
+    // VC++ Runtime already installed, skip installation
+    Result := False;
+  end
+  else
+    // Not found, needs installation
+    Result := True;
+end;
+
 function InitializeSetup(): Boolean;
 var
   OldVersion: String;

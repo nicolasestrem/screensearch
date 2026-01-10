@@ -65,6 +65,33 @@ magick convert ../assets/icon.png -define icon:auto-resize=256,128,96,64,48,32,1
 **Content:** MIT License in Rich Text Format
 (See license.rtf in this directory)
 
+### 6. vc_redist.x64.exe (Auto-downloaded by CI)
+**Purpose:** Visual C++ 2015-2022 Redistributable for llama-server.exe
+
+**Specifications:**
+- Format: Windows Installer (.exe)
+- Size: ~25 MB
+- Source: Microsoft (https://aka.ms/vs/17/release/vc_redist.x64.exe)
+- **Not stored in git** - Downloaded during CI build
+
+**Why it's needed:**
+- `llama-server.exe` (used for embedded LLM) requires Visual C++ Runtime
+- Fresh Windows 11 installations missing these DLLs: VCRUNTIME140.dll, MSVCP140.dll
+- Installer auto-installs if not already present
+
+**How it works:**
+1. GitHub Actions downloads `vc_redist.x64.exe` before building installer
+2. Inno Setup bundles it in the installer (adds ~25MB)
+3. During installation, `VCRedistNeedsInstall()` checks registry
+4. If VC++ Runtime missing, installer runs `vc_redist.x64.exe /install /quiet /norestart`
+5. If already installed, step is skipped (no overhead)
+
+**Manual download for local testing:**
+```powershell
+Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" `
+    -OutFile "installer/resources/vc_redist.x64.exe"
+```
+
 ## Creating These Resources
 
 ### Quick Start with PowerShell
@@ -104,6 +131,7 @@ magick convert -size 164x314 xc:#764ba2 sidebar.bmp
 | sidebar.bmp | 164×314 | BMP 24-bit | Installer left sidebar |
 | readme.txt | N/A | Plain text | Pre-install info |
 | license.rtf | N/A | RTF | License agreement |
+| vc_redist.x64.exe | N/A (~25MB) | EXE | Visual C++ Runtime (CI-downloaded) |
 
 ## Fallback Behavior
 
