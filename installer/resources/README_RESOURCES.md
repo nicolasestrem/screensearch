@@ -83,8 +83,8 @@ magick convert ../assets/icon.png -define icon:auto-resize=256,128,96,64,48,32,1
 1. GitHub Actions downloads `vc_redist.x64.exe` before building installer
 2. Inno Setup bundles it in the installer (adds ~25MB)
 3. During installation, `VCRedistNeedsInstall()` checks registry
-4. If VC++ Runtime missing, installer runs `vc_redist.x64.exe /install /quiet /norestart`
-5. If already installed, step is skipped (no overhead)
+4. If VC++ Runtime missing, installer uses `shellexec` to trigger UAC and runs `vc_redist.x64.exe /install /passive /norestart`
+5. If already installed, step is skipped (no UAC prompt)
 
 **Manual download for local testing:**
 ```powershell
