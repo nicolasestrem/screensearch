@@ -55,7 +55,7 @@ chrono = { workspace = true }
 # Browser automation
 webbrowser = "1.0"
 image = { workspace = true }
-tray-icon = "0.21.2"
+tray-icon = "0.21.3"
 winit = "0.30.12"
 
 # Concurrency
