@@ -1,0 +1,21 @@
+[package]
+name = "screensearch-vision"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+image = { workspace = true } # For image processing
+reqwest = { version = "0.11", features = ["json"] } # For API calls to Ollama/LM Studio
+base64 = "0.21"
+async-trait = "0.1"
+
+# Candle for local inference (Temporarily disabled due to rand 0.9 conflict)
+# candle-core = "0.6.0"
+# candle-nn = "0.6.0"
+# candle-transformers = "0.6.0"
+# tokenizers = "0.19.1"

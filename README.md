@@ -1,0 +1,496 @@
+<div align="center">
+
+```
+   _____                           _____                     _     
+  / ____|                         / ____|                   | |    
+ | (___   ___ _ __ ___  ___ _ __ | (___   ___  __ _ _ __ ___| |__  
+  \___ \ / __| '__/ _ \/ _ \ '_ \ \___ \ / _ \/ _` | '__/ __| '_ \ 
+  ____) | (__| | |  __/  __/ | | |____) |  __/ (_| | | | (__| | | |
+ |_____/ \___|_|  \___|\___|_| |_|_____/ \___|\__,_|_|  \___|_| |_|
+                                                                   
+                                                                   
+```
+
+#### Ever wish you could Ctrl+F your entire digital life?
+
+### Your screen history, searchable and automated
+
+*Continuously capture your Windows screen, extract text with OCR, and query it all through a powerful REST API*
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+[![Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4.svg)](https://www.microsoft.com)
+
+<br/>
+
+### [>] [**Download Latest Release (v0.4.1)**](https://github.com/nicolasestrem/screensearch/releases/latest)
+
+**Windows 10/11** • **11MB** • **No installation required** • **Just extract and run**
+
+> **Note for Linux Users:** This project now supports Linux for **UI development and backend logic**, with Windows-specific features (OCR, Automation) stubbed out. See [Developer Guide](docs/developer-guide.md) for details.
+
+</div>
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      SEE IT IN ACTION                           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+<div align="center">
+  <h3>Light Theme — Premium Glassmorphism Design</h3>
+  <img src="screenshots/dashboard-light.png" width="85%" alt="ScreenSearch Dashboard Light Theme - AI-powered Intel Dash with Daily Digest, Memory Status gauge, and Productivity Pulse chart">
+  <p><em>Modern glass-and-neon aesthetic with atmospheric radial gradients and fluid animations</em></p>
+</div>
+
+<br/>
+
+<div align="center">
+  <h3>Dark Theme — Comfortable Night Mode</h3>
+  <img src="screenshots/dashboard-dark.png" width="85%" alt="ScreenSearch Dashboard Dark Theme - AI-First interface with glassmorphism cards and neon accents">
+  <p><em>Beautiful dark mode for late-night productivity tracking and focus sessions</em></p>
+</div>
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        KEY FEATURES                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- [*] **Sci-Fi Concept UI** — Premium "Glass & Neon" aesthetic with atmospheric depth and fluid animations
+- [*] **AI-First Dashboard** — "Intel Dash" with Daily Digest, Memory Status gauge, and Productivity Pulse charts
+- [*] **Continuous Screen Capture** — Configurable intervals (2-5 seconds) with multi-monitor support
+- [*] **OCR Text Extraction** — Windows OCR API with bounding box coordinates and confidence scores
+- [*] **AI-Powered Intelligence** — Generate insights from your screen history using local LLMs (Ollama, LM Studio) or cloud providers (OpenAI)
+- [*] **Hybrid Search** — Combines FTS5 (Sparse) and Vector Embeddings (Dense) for semantic understanding
+- [*] **Smart Search** — Conversational AI answers with context from your screen history
+- [*] **REST API** — 27 endpoints for search, automation, and tag management on localhost:3131
+- [*] **UI Automation** — Programmatic control of Windows applications via accessibility APIs
+- [*] **System Tray** — unobtrusive background operation with quick access menu
+- [*] **Privacy Controls** — Exclude sensitive applications, pause on screen lock
+- [*] **High Performance** — Optimized for modern multi-core processors with < 100ms API response times
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    PROJECT INFORMATION                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **Website**: [screensearch.app](https://screensearch.app)
+- **Repository**: [github.com/nicolasestrem/screensearch](https://github.com/nicolasestrem/screensearch)
+- **Author**: Nicolas Estrem
+- **License**: MIT
+- **Platform**: Windows 10/11 only
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     FEATURE HIGHLIGHTS                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### [>] AI-First Dashboard — Your Intelligent Command Center
+
+The new **"Intel Dash"** puts AI-powered insights front and center with a beautiful glassmorphism design. See your day at a glance with auto-generated summaries, RAG indexing progress, and hourly activity charts.
+
+**Dashboard Features:**
+- [*] **Daily Digest** — Auto-generated AI summaries of your screen activity
+- [*] **Memory Status** — Circular gauge showing semantic search readiness
+- [*] **Productivity Pulse** — Interactive hourly activity chart with smooth curves
+- [*] **Smart Answers** — Get AI-powered context from your screen history
+
+<div align="center">
+  <img src="screenshots/dashboard-dark.png" width="80%" alt="Dashboard with Daily Digest, Memory Status gauge, and Productivity Pulse">
+  <p><em>Your day at a glance: Auto-generated AI summaries, RAG indexing progress, and hourly activity charts</em></p>
+</div>
+
+### [>] Smart Search — AI That Understands Context
+
+Ask natural language questions and get AI-powered answers grounded in your actual screen activity.
+
+<div align="center">
+  <img src="screenshots/search-smart-answer.png" width="75%" alt="Smart Answer Card with AI-generated response and activity breakdown">
+  <p><em>Conversational AI answers with application breakdown and confidence scoring</em></p>
+</div>
+
+<div align="center">
+  <img src="screenshots/search-antigravity-example.png" width="80%" alt="Search example showing semantic understanding of 'Antigravity' query">
+  <p><em>Semantic search understands context—searching for 'Antigravity' finds related workflow automation projects</em></p>
+</div>
+
+**Search Features:**
+- [*] Natural language queries (e.g., "What was I working on at 3pm yesterday?")
+- [*] Hybrid search combining FTS5 keyword matching + vector semantic similarity
+- [*] Activity breakdown by application with visual distribution
+- [*] Smart Answer Card with AI-generated summaries
+
+### [>] Intelligence Dashboard — AI That Understands Your Work
+
+Transform raw screen captures into actionable insights. The Intelligence dashboard connects to your choice of AI provider—local models like Ollama and LM Studio for privacy, or cloud services like OpenAI for power.
+
+**What It Does:**
+- [*] **Daily & Weekly Reports** — Automatic summaries of your work patterns and productivity
+- [*] **Custom Queries** — Ask specific questions about your activity history
+- [*] **Provider Flexibility** — Works with any OpenAI-compatible API endpoint
+- [*] **Privacy First** — Local LLMs keep all analysis on your machine
+
+<div align="center">
+  <img src="screenshots/intelligence-generator.png" width="75%" alt="Intelligence Report Generator - Configure AI provider, select time range, generate reports">
+  <p><em>Connect to any OpenAI-compatible API, validate connection, and customize report prompts</em></p>
+</div>
+
+<div align="center">
+  <img src="screenshots/intelligence-report-full.png" width="80%" alt="AI-generated intelligence report showing productivity metrics and focus areas">
+  <p><em>Comprehensive AI analysis with daily summaries, productivity patterns, and actionable recommendations</em></p>
+</div>
+
+### [>] Settings & Privacy — Complete Control
+
+Fine-tune every aspect of ScreenSearch with comprehensive, intuitive settings panels.
+
+#### General Settings
+<div align="center">
+  <img src="screenshots/settings-general.png" width="65%" alt="General settings - Theme selection and application preferences">
+  <p><em>Choose your theme, configure startup behavior, and manage general preferences</em></p>
+</div>
+
+#### Capture Configuration
+<div align="center">
+  <img src="screenshots/settings-capture.png" width="65%" alt="Capture settings - Intervals, monitor selection, frame differencing">
+  <p><em>Set capture intervals (2-5 seconds), enable intelligent frame differencing, optimize storage with JPEG compression</em></p>
+</div>
+
+#### Privacy Controls
+<div align="center">
+  <img src="screenshots/settings-privacy.png" width="65%" alt="Privacy settings - App exclusions, auto-pause on lock">
+  <p><em>Exclude sensitive apps (1Password, KeePass, banking), auto-pause on screen lock, configure data retention</em></p>
+</div>
+
+#### AI Provider Configuration
+<div align="center">
+  <img src="screenshots/settings-ai-provider.png" width="65%" alt="AI provider settings - Ollama configuration with validation">
+  <p><em>Connect to local LLMs (Ollama, LM Studio) or cloud providers (OpenAI) with real-time API validation</em></p>
+</div>
+
+#### Embeddings & Semantic Search
+<div align="center">
+  <img src="screenshots/settings-embeddings.png" width="65%" alt="Embeddings settings - Enable semantic search, batch processing">
+  <p><em>Enable AI-powered semantic search with local ONNX models, configure batch sizes, tune hybrid search weighting</em></p>
+</div>
+
+#### Data Management
+<div align="center">
+  <img src="screenshots/settings-data-ai.png" width="65%" alt="Data management - Database size, auto-cleanup, storage monitoring">
+  <p><em>Monitor database size, configure automatic cleanup (retention days), manage storage usage</em></p>
+</div>
+
+### [>] See It In Action — Dashboard Demo
+
+Watch the new Intel Dash come to life with smooth animations, real-time updates, and beautiful glassmorphism effects.
+
+<div align="center">
+  <img src="screenshots/demo-dashboard.gif" width="85%" alt="Animated demo of ScreenSearch dashboard with Daily Digest and charts">
+  <p><em>Live dashboard with AI summaries, Memory Status gauge, and Productivity Pulse animations</em></p>
+</div>
+
+> **Note**: GIF optimized for GitHub (10fps, 1280px). [Download full HD video](screenshots/demo-dashboard.mp4) for best quality.
+
+### [>] Terminal Integration
+
+Powerful logging and diagnostics. Watch ScreenSearch initialize, start capture loops, and process OCR in real-time with detailed performance metrics and system health checks.
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        QUICK START                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Prerequisites
+
+- **Windows 10/11** — Ensure Windows OCR Language Pack is installed (Settings → Language → English)
+- **Rust 1.70+** — Install from [rustup.rs](https://rustup.rs/)
+- **Visual Studio Build Tools** — Required for native compilation ([download](https://visualstudio.microsoft.com/downloads/))
+- **Node.js 18+** — For the web UI (optional, only if using the dashboard)
+
+### Installation & Setup
+
+#### Native Windows Build
+
+```bash
+# Clone the repository
+git clone https://github.com/nicolasestrem/screensearch.git
+cd screensearch
+
+# Build the project
+cargo build --release
+
+# Run ScreenSearch (starts API on localhost:3131)
+cargo run --release
+```
+
+#### Cross-Compilation from Linux
+
+You can build Windows binaries from Linux using `cargo-xwin`:
+
+```bash
+# Install cross-compilation tools (one-time setup)
+cargo install cargo-xwin
+rustup target add x86_64-pc-windows-msvc
+sudo apt-get install -y clang lld llvm  # Ubuntu/Debian
+
+# Build Windows executable from Linux
+cargo xwin build --release --target x86_64-pc-windows-msvc
+
+# Binary will be at: target/x86_64-pc-windows-msvc/release/screensearch.exe
+```
+
+**Note**: Cross-compiled binaries require Windows to run. This is for building on Linux, not running on Linux. See [docs/cross-compilation.md](docs/cross-compilation.md) for detailed instructions.
+
+### [>] Web Dashboard
+
+Launch the beautiful web interface to visualize and manage your captures:
+
+```bash
+cd screen-ui
+npm install
+npm run dev
+# Open http://localhost:5173 in your browser
+```
+
+**Dashboard Features**:
+- [*] **Sci-Fi Visuals**: Atmospheric radial gradients, neon accents, and glassmorphism interface
+- [*] Timeline view of captured frames with real-time thumbnails
+- [*] Full-text search across all OCR content
+- [*] Intelligence tab with AI-powered report generation
+- [*] Frame details with OCR text, tags, and metadata
+- [*] Live settings configuration and privacy controls
+- [*] Dark mode for comfortable late-night browsing
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      SECURITY & TRUST                           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Windows SmartScreen Warning
+
+On first launch, Windows may display a SmartScreen warning:
+> "Windows protected your PC - Unknown publisher"
+
+**This is expected behavior** because the executable is not code-signed with a certificate (which requires an expensive annual subscription).
+
+**To run the application:**
+1. Click **"More info"**
+2. Click **"Run anyway"**
+
+### Binary Verification
+
+You can verify the safety of the binary:
+
+- **VirusTotal Scans:**
+  - [EXE Scan Results](https://www.virustotal.com/gui/file/807707d80a0886dd635e8cfbcb96d8670c2531176d248206decd248c00961eb0/detection) - 0/72 detections [OK]
+  - [ZIP Scan Results](https://www.virustotal.com/gui/file/6b3c93398cf3c720da3e9c88a58bce93e9a9ee016819a9ab26005ef6bde90003) - 0/68 detections [OK]
+- **Open Source:** All source code is available in this repository for review
+- **Build From Source:** Follow the [Developer Guide](docs/developer-guide.md) to compile yourself
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       DOCUMENTATION                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+| Document | Purpose |
+|----------|---------|
+| [User Guide](docs/user-guide.md) | Installation, configuration, and everyday usage |
+| [Developer Guide](docs/developer-guide.md) | Development setup, workflow, and contribution guidelines |
+| [Architecture](docs/architecture.md) | System design, data flow, and technical decisions |
+| [API Reference](docs/api-reference.md) | Complete REST API endpoint documentation with examples |
+| [Commands Summary](docs/commands-summary.md) | Quick reference for CLI commands and workflows |
+| [Testing](docs/testing.md) | Test protocols, coverage reports, and CI/CD pipelines |
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     PROJECT STRUCTURE                           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+```
+screensearch/
+├── src/main.rs                 # Application entry point and orchestration
+├── screen-capture/             # Screen capture engine and OCR pipeline
+│   ├── src/capture.rs         # Frame capture with ffmpeg-sidecar
+│   ├── src/ocr.rs             # Windows OCR API integration
+│   └── src/frame_diff.rs       # Zero-copy frame differencing
+├── screen-db/                  # SQLite database with FTS5 search
+│   ├── src/queries.rs         # SQL queries and migrations
+│   └── src/migrations/        # Schema versioning
+├── screen-api/                 # REST API server (Axum framework)
+│   ├── src/routes.rs          # API endpoint definitions
+│   ├── src/handlers/          # Request handlers
+│   │   ├── ai.rs              # AI intelligence endpoints
+│   │   └── ...                # Other handlers
+├── screen-automation/          # Windows UI automation engine
+│   ├── src/engine.rs          # Automation orchestration
+│   └── src/element.rs         # Element detection and interaction
+├── screen-ui/                  # Modern React web dashboard
+│   ├── src/components/        # UI components (Timeline, Search, Settings)
+│   ├── src/pages/             # Main pages (Intelligence, Timeline)
+│   └── src/api/               # Frontend API client (including AI endpoints)
+├── screenshots/                # README screenshots
+├── docs/                       # Complete documentation
+└── config.toml                 # Configuration and build settings
+```
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    PERFORMANCE METRICS                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+ScreenSearch is optimized for efficiency and speed:
+
+| Metric | Target | Actual | Status |
+|--------|--------|--------|--------|
+| **OCR Processing** | < 100 ms | **70-80 ms** | [OK] Fast |
+| **API Response** | < 100 ms | ~50 ms | [OK] 2x faster |
+| **Vector Search** | < 200 ms | **150 ms** | [OK] In-Memory Optimized |
+| **Test Coverage** | 100% | 59/59 passing | [OK] Complete |
+
+### Recent Performance Optimizations
+
+**[+] Zero-Copy OCR Pipeline** — Direct `SoftwareBitmap` creation eliminates PNG encoding/decoding overhead, saving **60-93ms per frame** (53% faster). Enables 1-second capture intervals.
+
+**[+] Memory Efficiency** — Arc-based frame differencing eliminates redundant allocations, reducing memory pressure from **39GB/8hr → <1GB/8hr**.
+
+**[+] Storage Optimization** — 50x reducution in storage usage via smart JPEG compression and resizing. Automatic 24h cleanup loop enforces retention policies.
+
+**[+] Search Security** — FTS5 query sanitization prevents injection attacks while correctly handling special characters (`C++`, `$100`, etc.).
+
+**[+] In-Memory Vector Search** — Bypasses SQLite extension limitations by effectively managing embeddings in Rust memory, enabling robust semantic search on Windows.
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    API QUICK EXAMPLES                           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Search Your Screen History
+
+```bash
+# Search for any text captured on your screen
+curl "http://localhost:3131/search?q=meeting&limit=10"
+
+# Search with filters (timestamp, application name, etc.)
+curl "http://localhost:3131/search?q=meeting&app=Chrome&start=2025-12-10"
+```
+
+### Generate AI Intelligence Reports
+
+```bash
+# Test your AI provider connection
+curl -X POST http://localhost:3131/ai/validate \
+  -H "Content-Type: application/json" \
+  -d '{"provider_url":"http://localhost:11434/v1","model":"llama3"}'
+
+# Generate a daily activity summary
+curl -X POST http://localhost:3131/ai/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider_url": "http://localhost:11434/v1",
+    "model": "llama3",
+    "start_time": "2025-12-10T00:00:00Z",
+    "end_time": "2025-12-11T00:00:00Z",
+    "prompt": "Summarize my work activity"
+  }'
+```
+
+### Automate Desktop Interactions
+
+```bash
+# Click at specific coordinates
+curl -X POST http://localhost:3131/automation/click \
+  -H "Content-Type: application/json" \
+  -d '{"x":100,"y":200,"button":"left"}'
+
+# Type text programmatically
+curl -X POST http://localhost:3131/automation/type \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Hello, World!"}'
+
+# Find UI elements by accessibility patterns
+curl -X POST http://localhost:3131/automation/find-elements \
+  -H "Content-Type: application/json" \
+  -d '{"role":"Button","name":"Submit"}'
+```
+
+See the [API Reference](docs/api-reference.md) for all 27 endpoints.
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     PRIVACY & SECURITY                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- [*] **Local-Only Storage** — All data stays on your machine in a local SQLite database
+- [*] **Exclude Sensitive Apps** — Automatically skip password managers, banking apps, and any app you specify
+- [*] **Pause Anytime** — Pause capture with a single click (pauses on screen lock by default)
+- [*] **Auto-Cleanup** — Configurable data retention (set automatic deletion of old captures)
+- [*] **FTS5 Security** — Query sanitization prevents operator injection attacks
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       CONTRIBUTING                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+We welcome contributions! Here's how to get started:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes and add tests
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+See [DEVELOPMENT.md](docs/developer-guide.md) for detailed setup instructions.
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                          LICENSE                                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+
+---
+
+<div align="center">
+
+**Made with care for Windows users who want to remember everything**
+
+[^ Back to top](#screensearch)
+
+</div>
+

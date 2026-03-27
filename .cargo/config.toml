@@ -1,0 +1,23 @@
+# Cross-compilation configuration for building Windows binaries from Linux
+# This file enables cargo-xwin to cross-compile to x86_64-pc-windows-msvc target
+
+[target.x86_64-pc-windows-msvc]
+# Use LLD (LLVM linker) for cross-platform linking
+linker = "lld"
+
+# Rustflags for MSVC ABI compatibility and static linking
+rustflags = [
+    "-C", "link-arg=-fuse-ld=lld",           # Use LLD linker
+    "-C", "target-feature=+crt-static",       # Statically link MSVC runtime to reduce DLL dependencies
+]
+
+# Build settings
+[build]
+# Uncomment to make Windows the default target when building on Linux
+# This allows using `cargo xwin build` without --target flag
+# target = "x86_64-pc-windows-msvc"
+
+# Environment variables
+[env]
+# Note: ONNX Runtime uses load-dynamic feature (already configured in screensearch-embeddings/Cargo.toml)
+# No additional environment configuration needed for cross-compilation

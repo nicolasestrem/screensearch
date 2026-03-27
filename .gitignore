@@ -1,0 +1,72 @@
+# Rust
+target/
+**/*.rs.bk
+*.pdb
+*.onnx
+
+
+# Cargo
+# Note: Cargo.lock is committed for applications (not libraries)
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+CLAUDE.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.local
+
+# Screenshots and captured data
+/captures/
+/data/
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Installer resources (large files)
+installer/models/
+# Note: icon.ico, sidebar.bmp, and banner.bmp are included in repo
+
+# Release artifacts (but keep checksums.txt)
+target/release/installers/*.exe
+target/release/installers/*.zip
+
+#Old docs
+/docs/archived
+/FOUND
+/.claude
+docs/troubleshooting-2025-12-11.md
+/screen-ui/captures
+/screensearch-ui/captures
+/screensearch-sample
+
+# Windows reserved filenames (cannot be committed)
+nul
+con
+prn
+aux
+com[1-9]
+lpt[1-9]
+.dev_logs/
+.xwin-cache/

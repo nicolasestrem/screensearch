@@ -1,0 +1,305 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-release:
+    name: Build Release Artifacts
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: screensearch-ui/package-lock.json
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-index-
+
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-target-
+
+      - name: Cache ONNX model
+        id: cache-onnx
+        uses: actions/cache@v4
+        with:
+          path: installer/models
+          key: onnx-model-${{ hashFiles('.github/workflows/release.yml') }}
+
+      - name: Build React UI
+        run: |
+          cd screensearch-ui
+          npm ci
+          npm run build
+        shell: pwsh
+
+      - name: Build Rust release binary
+        run: cargo build --release --locked
+        shell: pwsh
+
+      - name: Download ONNX model
+        if: steps.cache-onnx.outputs.cache-hit != 'true'
+        run: |
+          New-Item -ItemType Directory -Force -Path installer/models
+
+          Write-Host "Downloading ONNX model..."
+          $modelUrl = "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/main/onnx/model.onnx"
+          $tokenizerUrl = "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/main/tokenizer.json"
+
+          Invoke-WebRequest -Uri $modelUrl -OutFile "installer/models/model.onnx" -MaximumRetryCount 3
+          Invoke-WebRequest -Uri $tokenizerUrl -OutFile "installer/models/tokenizer.json" -MaximumRetryCount 3
+
+          # Verify model size (should be around 449 MB)
+          $modelSize = (Get-Item "installer/models/model.onnx").Length / 1MB
+          if ($modelSize -lt 400) {
+            Write-Error "Model file too small: $modelSize MB (expected >400 MB)"
+            exit 1
+          }
+
+          Write-Host "Model downloaded successfully: $modelSize MB"
+        shell: pwsh
+
+      - name: Download VC++ Redistributable
+        run: |
+          Write-Host "Downloading Visual C++ 2015-2022 Redistributable..."
+          $vcRedistUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+          Invoke-WebRequest -Uri $vcRedistUrl -OutFile "installer/resources/vc_redist.x64.exe" -MaximumRetryCount 3
+          
+          # Verify download (should be ~24-25MB)
+          $size = (Get-Item "installer/resources/vc_redist.x64.exe").Length / 1MB
+          Write-Host "VC++ Redistributable downloaded: $([math]::Round($size, 1)) MB"
+          if ($size -lt 20) {
+            Write-Error "VC++ Redistributable too small: $size MB (expected >20 MB)"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+        shell: pwsh
+
+      - name: Build Full Installer
+        run: |
+          $env:FULL_INSTALLER = "1"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DFULL_INSTALLER installer\screensearch.iss
+
+          # Extract version from git tag
+          $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
+          Move-Item "target\release\installers\ScreenSearch-v$version-Setup.exe" `
+                    "target\release\installers\ScreenSearch-v$version-Setup-Full.exe" -Force
+        shell: pwsh
+
+      - name: Build Lightweight Installer
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\screensearch.iss
+
+          # Extract version from git tag
+          $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
+          Move-Item "target\release\installers\ScreenSearch-v$version-Setup.exe" `
+                    "target\release\installers\ScreenSearch-v$version-Setup-Lite.exe" -Force
+        shell: pwsh
+
+      - name: Create Portable ZIP
+        run: |
+          # Extract version from git tag
+          $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
+          Compress-Archive -Path target/release/screensearch.exe, config.toml, LICENSE, README.md `
+                           -DestinationPath "target/release/installers/ScreenSearch-v$version-Portable.zip" `
+                           -Force
+        shell: pwsh
+
+      - name: Generate checksums
+        run: |
+          cd target/release/installers
+          $files = Get-ChildItem -Filter "ScreenSearch-v*"
+
+          $checksums = @()
+          foreach ($file in $files) {
+            $hash = (Get-FileHash -Path $file.Name -Algorithm SHA256).Hash.ToLower()
+            $checksums += "$hash  $($file.Name)"
+          }
+
+          $checksums | Out-File -FilePath "checksums.txt" -Encoding UTF8
+
+          Write-Host "Generated checksums:"
+          Get-Content checksums.txt
+        shell: pwsh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: |
+            target/release/installers/ScreenSearch-v*
+            target/release/installers/checksums.txt
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts
+
+      - name: Extract version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Extract Changelog
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+
+          # Extract version section from CHANGELOG.md
+          CHANGELOG_SECTION=$(awk '
+            /^## \['"$VERSION"'\]/ { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md)
+
+          if [ -z "$CHANGELOG_SECTION" ]; then
+            CHANGELOG_SECTION="No changelog entries for this version."
+          fi
+
+          # Update terminology
+          CHANGELOG_SECTION=$(echo "$CHANGELOG_SECTION" | sed 's/ONNX embedding model/AI RAG Search Model/g; s/ONNX model/AI RAG Search Model/g')
+
+          # Use heredoc for multiline output (GitHub Actions requirement)
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG_SECTION" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          generate_release_notes: false
+          files: |
+            artifacts/ScreenSearch-v*.exe
+            artifacts/ScreenSearch-v*.zip
+            artifacts/checksums.txt
+          body: |
+            # ScreenSearch v${{ steps.get_version.outputs.VERSION }}
+
+            Your screen history, searchable and automated - Windows OCR + REST API + AI + RAG
+
+            ## Download Options
+
+            **Full Installer** (~460 MB)
+            - Includes AI RAG Search Model for semantic search
+            - No internet required for AI features
+            - Recommended for offline systems
+
+            **Lightweight Installer** (~11 MB)
+            - Downloads model on first run (requires internet)
+            - Smaller initial download
+
+            **Portable ZIP** (~17 MB)
+            - Extract and run, no installation
+            - Downloads model when AI features are used
+
+            ---
+
+            ## What's New
+
+            ${{ steps.changelog.outputs.content }}
+
+            ---
+
+            ## Installation
+
+            ### Quick Start
+
+            1. Download the Full Installer above
+            2. Run the installer executable
+            3. **Windows SmartScreen Warning**: Click "More info" → "Run anyway"
+               - This is expected for self-signed applications
+            4. Launch ScreenSearch from Start Menu
+            5. Access web interface at `http://localhost:3131`
+
+            ### System Requirements
+
+            - Windows 10/11 (64-bit)
+            - Windows OCR Language Pack (for OCR functionality)
+            - ~500MB disk space (for Full Installer)
+
+            ---
+
+            ## Verification
+
+            Verify download integrity with SHA256 checksums:
+
+            ```powershell
+            Get-FileHash ScreenSearch-v${{ steps.get_version.outputs.VERSION }}-Setup-Full.exe -Algorithm SHA256
+            ```
+
+            Compare output with `checksums.txt` in release assets.
+
+            ---
+
+            ## Important Notes
+
+            **Windows SmartScreen Warning**
+
+            This release is self-signed and will trigger SmartScreen warnings. This is expected behavior for applications without an EV certificate.
+
+            To install:
+            1. Click "More info" when SmartScreen appears
+            2. Click "Run anyway"
+            3. Proceed with installation
+
+            Verify authenticity by checking SHA256 checksums or building from source.
+
+            ---
+
+            **Documentation**: [Project Docs](https://github.com/nicolasestrem/screensearch/tree/main/docs) | [API Reference](https://github.com/nicolasestrem/screensearch/blob/main/docs/api-reference.md)
+            **Website**: [screensearch.app](https://screensearch.app)
+            **License**: MIT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

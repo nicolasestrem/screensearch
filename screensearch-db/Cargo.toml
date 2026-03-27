@@ -1,0 +1,46 @@
+[package]
+name = "screensearch-db"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Database
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros", "chrono"] }
+
+# Vector embeddings for semantic search
+# Note: Using sqlite-vec as a loadable extension, not via rusqlite binding
+# The vec0 table operations are performed via raw SQL queries
+zerocopy = "0.8"  # Efficient f32 vector serialization
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+tempfile = "3.8"
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+
+[lib]
+name = "screensearch_db"
+path = "src/lib.rs"
+
+[[bench]]
+name = "db_benchmarks"
+harness = false
