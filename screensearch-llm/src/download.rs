@@ -9,7 +9,7 @@ use tracing::{debug, info, warn};
 
 /// URL to download the Ministral-3B GGUF model from
 pub const MODEL_URL: &str =
-    "https://leophir.com/models/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf";
+    "https://huggingface.co/leophir/Ministral-3-3B-Instruct-2512-Q4_K_M/resolve/main/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf";
 
 /// Model filename
 pub const MODEL_FILENAME: &str = "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf";

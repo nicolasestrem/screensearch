@@ -170,7 +170,7 @@ let config = LlmConfig::new()
 | **Format** | GGUF |
 | **Size** | ~2.15 GB |
 | **Context Length** | Up to 256k tokens |
-| **Download URL** | `https://leophir.com/models/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf` |
+| **Download URL** | `https://huggingface.co/leophir/Ministral-3-3B-Instruct-2512-Q4_K_M/resolve/main/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf` |
 
 ### 4.2 Model Path Resolution
 
