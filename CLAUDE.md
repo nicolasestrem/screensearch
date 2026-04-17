@@ -1,3 +1,6 @@
+Never mark a task complete without pasting the verbatim output of the verification command (tests, build, lint, or run). No summary, no paraphrase — the raw output.
+Never stub, mock, hardcode expected values, or insert placeholder code (TODO, pass, ...) to make something appear to work. If blocked, stop and ask.
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
