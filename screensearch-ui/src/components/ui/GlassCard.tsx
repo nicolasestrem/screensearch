@@ -18,34 +18,19 @@ const paddingClasses = {
   lg: 'p-6',
 };
 
-const glowClasses: Record<GlowColor, string> = {
-  cyan: 'glow-cyan-subtle border-gradient-cyan',
-  green: 'shadow-[0_0_20px_-5px_rgba(0,255,136,0.2)]',
-  purple: 'shadow-[0_0_20px_-5px_rgba(168,85,247,0.2)]',
-  none: '',
-};
-
 export function GlassCard({
   children,
   className,
   hover = false,
-  glow = false,
   padding = 'md',
 }: GlassCardProps) {
-  // Handle glow prop - can be boolean or color string
-  const glowClass = typeof glow === 'string'
-    ? glowClasses[glow]
-    : glow
-      ? 'animate-border-glow'
-      : '';
 
   return (
     <div
       className={cn(
-        'glass-card',
+        'bg-paper border border-rule',
         paddingClasses[padding],
-        hover && 'glass-card-hover cursor-pointer',
-        glowClass,
+        hover && 'hover:bg-paper-2 hover:border-ink transition-colors cursor-pointer',
         className
       )}
     >
@@ -68,12 +53,12 @@ export function GlassCardHeader({
   badge,
 }: GlassCardHeaderProps) {
   return (
-    <div className={cn('flex items-center justify-between mb-4', className)}>
+    <div className={cn('flex items-center justify-between mb-4 pb-4 border-b border-rule', className)}>
       <div className="flex items-center gap-2">
         {icon && (
-          <span className="text-primary">{icon}</span>
+          <span className="text-ink">{icon}</span>
         )}
-        <h3 className="font-semibold text-foreground">{children}</h3>
+        <h3 className="font-serif text-[18px] text-ink">{children}</h3>
       </div>
       {badge}
     </div>
@@ -90,7 +75,7 @@ export function GlassCardContent({
   className,
 }: GlassCardContentProps) {
   return (
-    <div className={cn('text-muted-foreground', className)}>
+    <div className={cn('text-ink-2', className)}>
       {children}
     </div>
   );

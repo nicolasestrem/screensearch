@@ -100,18 +100,18 @@ export function Timeline() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setViewMode('grid')}
-                className={`p-2 rounded-lg transition-colors ${viewMode === 'grid'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+                className={`p-2 transition-colors border border-rule ${viewMode === 'grid'
+                  ? 'bg-ink text-paper'
+                  : 'bg-paper text-ink hover:bg-paper-2'
                   }`}
               >
                 <Grid className="h-4 w-4" />
               </button>
               <button
                 onClick={() => setViewMode('list')}
-                className={`p-2 rounded-lg transition-colors ${viewMode === 'list'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+                className={`p-2 transition-colors border border-rule ${viewMode === 'list'
+                  ? 'bg-ink text-paper'
+                  : 'bg-paper text-ink hover:bg-paper-2'
                   }`}
               >
                 <List className="h-4 w-4" />
@@ -134,16 +134,16 @@ export function Timeline() {
               {Object.entries(framesByDate).map(([date, frames]) => (
                 <div key={date} className="relative space-y-6">
                   {/* Date Header */}
-                  <div className="sticky top-0 z-20 py-4 -mx-4 px-4 bg-background/95 backdrop-blur-sm border-b border-border/40 transition-all duration-200">
+                  <div className="sticky top-0 z-20 py-4 -mx-4 px-4 bg-paper border-b border-rule">
                     <div className="flex items-baseline gap-3">
-                      <h2 className="text-2xl font-bold tracking-tight text-foreground">
+                      <h2 className="text-[26px] font-serif text-ink">
                         {format(new Date(date), 'EEEE')}
                       </h2>
-                      <div className="h-1 w-1 rounded-full bg-muted-foreground/30" />
-                      <p className="text-muted-foreground font-medium">
+                      <div className="h-1 w-1 rounded-full bg-muted/30" />
+                      <p className="text-muted font-serif italic">
                         {format(new Date(date), 'MMMM d, yyyy')}
                       </p>
-                      <div className="ml-auto text-xs font-mono text-muted-foreground/50 tabular-nums px-2 py-0.5 rounded-md bg-secondary/30">
+                      <div className="ml-auto text-xs font-mono text-muted tabular-nums px-2 py-0.5 border border-rule bg-paper-2">
                         {frames.length} captures
                       </div>
                     </div>
@@ -176,7 +176,7 @@ export function Timeline() {
               <button
                 onClick={() => setPage(Math.max(0, page - 1))}
                 disabled={page === 0}
-                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="px-4 py-2 text-sm font-medium text-ink hover:text-ink disabled:opacity-50 disabled:cursor-not-allowed border border-rule bg-paper hover:bg-paper-2 transition-colors"
               >
                 Previous
               </button>

@@ -9,10 +9,10 @@ export function DashboardPage() {
     <div className="max-w-7xl mx-auto space-y-6 animate-fade-in-up">
       {/* Page Header */}
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight gradient-text-cyan">
+        <h1 className="font-serif text-[34px] lg:text-[42px] leading-[1.08] tracking-[-0.01em] text-ink">
           ScreenSearch Intel
         </h1>
-        <p className="text-muted-foreground">
+        <p className="text-ink-2 text-[16px] leading-[1.6]">
           Your AI-powered productivity insights at a glance.
         </p>
       </div>

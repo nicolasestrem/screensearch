@@ -1,6 +1,6 @@
 # ScreenSearch UI - Features Documentation
 
-*Last updated: v0.3.0 - AI-First UI Redesign*
+*Last updated: v0.4.0 - Brutalist/Minimalist Paper UI Redesign*
 
 ---
 
@@ -11,7 +11,7 @@
 
 **Features**:
 - Global keyboard shortcut (Cmd/Ctrl+K) to open
-- Full-screen glassmorphism modal
+- Flat paper modal layout
 - Mode toggle between Search and Browse
 - Smart Answer integration with AI responses
 - Activity sources with app breakdowns
@@ -34,7 +34,7 @@
 - App-specific icons (Chrome, VSCode, Slack, etc.)
 - Time and app context for each source
 - Sparkle icon for AI indicator
-- Cyan accent glow effects
+- Minimalist highlight border effects
 
 ### Collapsible Sidebar
 **Location**: `src/components/Sidebar.tsx`
@@ -46,7 +46,7 @@
 - Search shortcut button with Cmd+K badge
 - Framer Motion animated width transitions
 - Toggle button with ChevronLeft/Right icons
-- Glassmorphism panel styling
+- Minimalist paper layout
 
 **User Interactions**:
 - Click toggle button to expand/collapse
@@ -70,7 +70,7 @@
 - AI-powered daily activity summaries
 - Session storage caching to reduce API calls
 - "Setup Required" badge when AI not configured
-- Glassmorphism card styling
+- Minimalist paper layout
 - CalendarDays icon indicator
 
 ### Memory Status Gauge
@@ -93,26 +93,20 @@
 - Responsive width with viewBox
 - Caption with last update time
 
-### Glassmorphism Design System
+### Brutalist & Minimalist Paper Design System
 **Location**: `src/index.css`, `tailwind.config.js`
 
 **Design Tokens**:
-- `--background`: Deep space (#0d1117)
-- `--primary`: Cyan (#00d4ff)
-- `--primary-light`: Glow cyan (#33e0ff)
-- `--accent-muted`: Subtle cyan (#265a66)
-- `--glass-bg`: Translucent dark
-- `--glass-border`: Cyan-tinted border
-- `--glass-glow`: Cyan glow effect
+- `bg-paper`: Primary paper background (warm cream in light mode, deep slate in dark mode)
+- `bg-paper-2`: Secondary background layer for elevated widgets/inputs
+- `text-ink`: Primary ink text color (ink black in light mode, warm light grey in dark mode)
+- `border-rule`: Structured fine border rule lines separating panels
+- `border-accent`: Distinctive highlight border for active elements
 
-**Utility Classes**:
-- `.glass-panel` - Base translucent container
-- `.glass-card` - Elevated with glow shadow
-- `.glass-panel-cyan` - Cyan border variant
-- `.glow-cyan` - Standard cyan glow
-- `.glow-cyan-lg` - Large cyan glow
-- `.text-glow-cyan` - Text with glow shadow
-- `.gradient-text-cyan` - Cyan-to-green gradient text
+**Typography**:
+- Serif (**Newsreader**): Newspaper-style editorial headings and search inputs
+- Sans (**Geist**): Primary UI typography
+- Mono (**Geist Mono**): Monospaced font for data points, tags, and timestamps
 
 ### Animation System
 **Location**: `src/lib/animations.ts`

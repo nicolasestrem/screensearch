@@ -40,17 +40,17 @@
 ```
 
 <div align="center">
-  <h3>Light Theme — Premium Glassmorphism Design</h3>
+  <h3>Light Theme — Premium Brutalist / Minimalist Paper Design</h3>
   <img src="screenshots/dashboard-light.png" width="85%" alt="ScreenSearch Dashboard Light Theme - AI-powered Intel Dash with Daily Digest, Memory Status gauge, and Productivity Pulse chart">
-  <p><em>Modern glass-and-neon aesthetic with atmospheric radial gradients and fluid animations</em></p>
+  <p><em>Modern warm-paper aesthetic with sharp edges, solid rule lines, and elegant editorial typography</em></p>
 </div>
 
 <br/>
 
 <div align="center">
-  <h3>Dark Theme — Comfortable Night Mode</h3>
-  <img src="screenshots/dashboard-dark.png" width="85%" alt="ScreenSearch Dashboard Dark Theme - AI-First interface with glassmorphism cards and neon accents">
-  <p><em>Beautiful dark mode for late-night productivity tracking and focus sessions</em></p>
+  <h3>Dark Theme — Comfortable Dark Paper Theme</h3>
+  <img src="screenshots/dashboard-dark.png" width="85%" alt="ScreenSearch Dashboard Dark Theme - AI-First interface with flat dark paper card layouts and sharp styling">
+  <p><em>Beautiful dark paper variant for comfortable late-night focus sessions</em></p>
 </div>
 
 ---
@@ -61,7 +61,7 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-- [*] **Sci-Fi Concept UI** — Premium "Glass & Neon" aesthetic with atmospheric depth and fluid animations
+- [*] **Editorial Brutalist UI** — Premium Minimalist "Paper & Ink" design system with light and dark mode, sharp edges, and elegant typography
 - [*] **AI-First Dashboard** — "Intel Dash" with Daily Digest, Memory Status gauge, and Productivity Pulse charts
 - [*] **Continuous Screen Capture** — Configurable intervals (2-5 seconds) with multi-monitor support
 - [*] **OCR Text Extraction** — Windows OCR API with bounding box coordinates and confidence scores
@@ -98,7 +98,7 @@
 
 ### [>] AI-First Dashboard — Your Intelligent Command Center
 
-The new **"Intel Dash"** puts AI-powered insights front and center with a beautiful glassmorphism design. See your day at a glance with auto-generated summaries, RAG indexing progress, and hourly activity charts.
+The new **"Intel Dash"** puts AI-powered insights front and center with a premium editorial paper layout. See your day at a glance with auto-generated summaries, RAG indexing progress, and hourly activity charts.
 
 **Dashboard Features:**
 - [*] **Daily Digest** — Auto-generated AI summaries of your screen activity
@@ -193,7 +193,7 @@ Fine-tune every aspect of ScreenSearch with comprehensive, intuitive settings pa
 
 ### [>] See It In Action — Dashboard Demo
 
-Watch the new Intel Dash come to life with smooth animations, real-time updates, and beautiful glassmorphism effects.
+Watch the new Intel Dash come to life with smooth animations, real-time updates, and a clean minimalist print interface.
 
 <div align="center">
   <img src="screenshots/demo-dashboard.gif" width="85%" alt="Animated demo of ScreenSearch dashboard with Daily Digest and charts">
@@ -267,7 +267,7 @@ npm run dev
 ```
 
 **Dashboard Features**:
-- [*] **Sci-Fi Visuals**: Atmospheric radial gradients, neon accents, and glassmorphism interface
+- [*] **Minimalist Editorial Visuals**: Warm paper and deep ink layouts with crisp rule borders, sharp corners, and editorial typography
 - [*] Timeline view of captured frames with real-time thumbnails
 - [*] Full-text search across all OCR content
 - [*] Intelligence tab with AI-powered report generation

@@ -61,10 +61,10 @@ export function AiSettings() {
     };
 
     return (
-        <div className="bg-card border border-border rounded-lg p-6 space-y-6">
-            <div className="flex items-center gap-2 pb-4 border-b border-border">
-                <Settings className="w-5 h-5 text-primary" />
-                <h2 className="text-lg font-semibold">AI Provider Settings</h2>
+        <div className="bg-paper border border-rule rounded-none p-6 space-y-6">
+            <div className="flex items-center gap-2 pb-4 border-b border-rule">
+                <Settings className="w-5 h-5 text-ink" />
+                <h2 className="text-[18px] font-serif text-ink">AI Provider Settings</h2>
             </div>
 
             <div className="space-y-4">
@@ -74,7 +74,7 @@ export function AiSettings() {
                     <select
                         value={isCustom ? 'custom' : aiConfig.providerUrl}
                         onChange={(e) => handleProviderChange(e.target.value)}
-                        className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                        className="w-full px-3 py-2 bg-paper-2 border border-rule rounded-none focus:outline-none focus:border-ink font-mono text-sm"
                     >
                         {PROVIDER_OPTIONS.map((option) => (
                             <option key={option.value} value={option.value}>
@@ -91,11 +91,11 @@ export function AiSettings() {
 
                 {/* Local Provider Info */}
                 {isLocal && (
-                    <div className="flex items-center gap-3 p-4 bg-primary/10 border border-primary/20 rounded-lg">
-                        <Cpu className="w-8 h-8 text-primary flex-shrink-0" />
+                    <div className="flex items-center gap-3 p-4 bg-paper-2 border border-rule rounded-none">
+                        <Cpu className="w-8 h-8 text-ink flex-shrink-0" />
                         <div>
-                            <p className="font-medium text-sm">Ministral-3B (Embedded)</p>
-                            <p className="text-xs text-muted-foreground">
+                            <p className="font-serif text-[15px]">Ministral-3B (Embedded)</p>
+                            <p className="text-xs font-serif italic text-muted">
                                 GPU-accelerated via Vulkan. Works on NVIDIA, AMD, and Intel GPUs.
                                 Model runs entirely on your machine - no API key required.
                             </p>
@@ -115,7 +115,7 @@ export function AiSettings() {
                                 setAiConfig({ providerUrl: e.target.value });
                             }}
                             placeholder="e.g., http://localhost:1234/v1"
-                            className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                            className="w-full px-3 py-2 bg-paper-2 border border-rule rounded-none focus:outline-none focus:border-ink font-mono text-sm"
                         />
                         <p className="text-xs text-muted-foreground">
                             For LM Studio or other OpenAI-compatible servers. Ensure path ends with <code>/v1</code>.
@@ -132,7 +132,7 @@ export function AiSettings() {
                             value={aiConfig.apiKey}
                             onChange={(e) => setAiConfig({ apiKey: e.target.value })}
                             placeholder="sk-..."
-                            className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                            className="w-full px-3 py-2 bg-paper-2 border border-rule rounded-none focus:outline-none focus:border-ink font-mono text-sm"
                         />
                     </div>
                 )}
@@ -146,7 +146,7 @@ export function AiSettings() {
                             value={aiConfig.model}
                             onChange={(e) => setAiConfig({ model: e.target.value })}
                             placeholder="e.g., llama3, gpt-4"
-                            className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                            className="w-full px-3 py-2 bg-paper-2 border border-rule rounded-none focus:outline-none focus:border-ink font-mono text-sm"
                         />
                     </div>
                 )}
@@ -155,7 +155,7 @@ export function AiSettings() {
                     <button
                         onClick={handleTestConnection}
                         disabled={isTesting}
-                        className="flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/80 disabled:opacity-50 transition-colors"
+                        className="flex items-center gap-2 px-4 py-2 bg-paper hover:bg-paper-2 text-ink border border-rule rounded-none disabled:opacity-50 transition-colors"
                     >
                         {isTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                         {isLocal ? 'Check Local Model' : 'Test Connection'}

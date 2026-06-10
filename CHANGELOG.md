@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.0] - 2026-06-10
+
+### Changed
+- **Brutalist / Minimalist Paper UI Redesign**: Overhauled the entire React frontend to match the print-media brutalist design of `screensearch-website`.
+  - Replaced glassmorphism visual layout, translucent backdrops, radial gradients, glowing accents, and rounded corners with a flat, sharp, 90-degree corner design.
+  - Implemented dynamic light and dark theme modes using custom HSL theme tokens (`bg-paper`, `text-ink`, `border-rule`).
+  - Adopted newspaper-style typography: **Newsreader** (Serif) for headers and inputs, **Geist** (Sans) for UI copy, and **Geist Mono** (Monospace) for data metrics.
+  - Redesigned `Sidebar.tsx`, `Timeline.tsx`, `FrameCard.tsx`, `SearchBar.tsx`, `Dashboard.tsx`, `Intelligence.tsx`, `AiSettings.tsx`, `SettingsPanel.tsx`, and `GlassCard.tsx` base components to utilize flat paper backgrounds, solid rule borders, and physical hover transforms instead of glows.
+
+### Added
+- **Dynamic Dark Mode**: Built support directly into the HSL variables in `index.css` via the `.dark` class, toggled by the existing state mechanism in `useStore.ts` and `App.tsx`.
+
+---
+
 ## [0.4.32] - 2026-01-10
 
 ### Fixed
@@ -505,6 +519,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - React-based web interface
   - Privacy controls and application exclusions
 
+[0.5.0]: https://github.com/nicolasestrem/screensearch/compare/v0.4.32...v0.5.0
 [0.4.2]: https://github.com/nicolasestrem/screensearch/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/nicolasestrem/screensearch/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/nicolasestrem/screensearch/compare/v0.3.0...v0.4.0
