@@ -1,4 +1,4 @@
-Welcome to ScreenSearch v0.2.0!
+Welcome to ScreenSearch v0.4.35!
 
 ScreenSearch is an intelligent screen capture and OCR application for Windows that automatically captures your screen, extracts text, and enables powerful semantic search across your screen history.
 
@@ -10,9 +10,9 @@ SYSTEM REQUIREMENTS
 
 WHAT YOU'RE INSTALLING
 This installer will:
-- Install ScreenSearch application to Program Files
+- Install ScreenSearch application to your local AppData folder (no admin required)
 - Create Start Menu shortcuts
-- (Full installer only) Install ONNX embedding model for semantic search
+- (Full installer only) Install AI RAG Search Model for semantic search
 - Configure the application to run on startup (optional)
 
 GETTING STARTED
@@ -25,7 +25,7 @@ After installation:
 FIRST RUN
 On first run, ScreenSearch will:
 - Initialize the SQLite database
-- (Lite installer) Download the ONNX model if embeddings are enabled (449 MB)
+- (Lite installer) Download the AI RAG Search Model if embeddings are enabled (449 MB)
 - Start capturing screenshots based on your configuration
 - Begin OCR processing of captured frames
 
@@ -39,8 +39,8 @@ Edit config.toml in the installation directory to customize:
 
 PRIVACY & DATA
 - All data is stored locally on your machine
-- Screenshots saved to: [InstallDir]\captures\
-- Database location: [InstallDir]\screensearch.db
+- Screenshots saved to: [AppData]\screensearch\captures\
+- Database location: [AppData]\screensearch\screensearch.db
 - No telemetry or external connections (except optional model download)
 
 SUPPORT

@@ -118,20 +118,21 @@ jobs:
       - name: Build Full Installer
         run: |
           $env:FULL_INSTALLER = "1"
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DFULL_INSTALLER installer\screensearch.iss
-
+          
           # Extract version from git tag
           $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DFULL_INSTALLER "/DMyAppVersion=$version" installer\screensearch.iss
+
           Move-Item "target\release\installers\ScreenSearch-v$version-Setup.exe" `
                     "target\release\installers\ScreenSearch-v$version-Setup-Full.exe" -Force
         shell: pwsh
 
       - name: Build Lightweight Installer
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\screensearch.iss
-
           # Extract version from git tag
           $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" installer\screensearch.iss
+
           Move-Item "target\release\installers\ScreenSearch-v$version-Setup.exe" `
                     "target\release\installers\ScreenSearch-v$version-Setup-Lite.exe" -Force
         shell: pwsh

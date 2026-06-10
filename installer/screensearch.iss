@@ -2,7 +2,9 @@
 ; Created with Inno Setup 6.x
 
 #define MyAppName "ScreenSearch"
-#define MyAppVersion "0.4.32"
+#ifndef MyAppVersion
+#define MyAppVersion "0.4.35"
+#endif
 #define MyAppPublisher "Nicolas Estrem"
 #define MyAppURL "https://github.com/nicolasestrem/screensearch"
 #define MyAppExeName "screensearch.exe"
@@ -59,9 +61,7 @@ UninstallFilesDir={app}\uninstall
 
 ; License
 LicenseFile=..\LICENSE
-#ifdef FULL_INSTALLER
-InfoBeforeFile=resources\readme.txt
-#endif
+InfoAfterFile=resources\readme.txt
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
