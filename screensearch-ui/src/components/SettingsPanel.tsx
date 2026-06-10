@@ -309,18 +309,18 @@ export function SettingsPanel() {
   return (
     <>
       <div
-        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 animate-fade-in"
+        className="fixed inset-0 bg-ink/30 z-40 animate-fade-in"
         onClick={toggleSettingsPanel}
       />
 
-      <div className="fixed right-0 top-0 bottom-0 w-full max-w-2xl bg-background border-l border-border z-50 flex flex-col animate-slide-in shadow-2xl">
+      <div className="fixed right-0 top-0 bottom-0 w-full max-w-2xl bg-paper border-l border-rule z-50 flex flex-col animate-slide-in shadow-hard">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-border">
           <div className="flex items-center gap-3">
-            <SettingsIcon className="h-6 w-6 text-primary" />
+            <SettingsIcon className="h-6 w-6 text-ink" />
             <div>
-              <h2 className="text-2xl font-bold">Settings</h2>
-              <p className="text-sm text-muted-foreground">Manage your ScreenSearch preferences</p>
+              <h2 className="text-[26px] font-serif text-ink">Settings</h2>
+              <p className="text-sm font-serif italic text-muted">Manage your ScreenSearch preferences</p>
             </div>
           </div>
           <button
@@ -332,7 +332,7 @@ export function SettingsPanel() {
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex px-6 border-b border-border overflow-x-auto">
+        <div className="flex px-6 border-b border-rule overflow-x-auto bg-paper-2">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
@@ -340,10 +340,10 @@ export function SettingsPanel() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  "flex items-center gap-2 px-6 py-4 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
+                  "flex items-center gap-2 px-6 py-4 text-sm font-mono uppercase tracking-wider border-r border-rule transition-colors whitespace-nowrap",
                   activeTab === tab.id
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+                    ? "bg-paper text-ink"
+                    : "text-muted hover:text-ink hover:bg-paper"
                 )}
               >
                 <Icon className="h-4 w-4" />
@@ -361,23 +361,23 @@ export function SettingsPanel() {
             {activeTab === 'general' && (
               <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
                 <section className="space-y-4">
-                  <h3 className="text-lg font-semibold border-b border-border pb-2">Appearance</h3>
-                  <div className="flex items-center justify-between p-4 bg-card rounded-xl border border-border">
+                  <h3 className="text-lg font-serif border-b border-rule pb-2 text-ink">Appearance</h3>
+                  <div className="flex items-center justify-between p-4 bg-paper border border-rule">
                     <div>
-                      <p className="font-medium">Dark Mode</p>
-                      <p className="text-sm text-muted-foreground">Toggle application theme</p>
+                      <p className="font-mono text-sm uppercase tracking-wider text-ink">Dark Mode</p>
+                      <p className="text-sm font-serif italic text-muted">Toggle application theme</p>
                     </div>
                     <button
                       onClick={toggleDarkMode}
                       className={cn(
-                        "relative w-14 h-7 rounded-full transition-colors",
-                        isDarkMode ? 'bg-primary' : 'bg-secondary'
+                        "relative w-14 h-7 rounded-none transition-colors border border-rule",
+                        isDarkMode ? 'bg-ink' : 'bg-paper-2'
                       )}
                     >
                       <div
                         className={cn(
-                          "absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full transition-transform",
-                          isDarkMode ? 'translate-x-7' : 'translate-x-0'
+                          "absolute top-0.5 left-0.5 w-6 h-6 transition-transform border border-rule",
+                          isDarkMode ? 'translate-x-7 bg-paper border-ink' : 'translate-x-0 bg-paper'
                         )}
                       />
                     </button>
@@ -385,7 +385,7 @@ export function SettingsPanel() {
                 </section>
 
                 <section className="space-y-4">
-                  <h3 className="text-lg font-semibold border-b border-border pb-2">Application</h3>
+                  <h3 className="text-lg font-serif border-b border-rule pb-2 text-ink">Application</h3>
                   <TagManager />
                 </section>
               </div>

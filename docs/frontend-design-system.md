@@ -1,94 +1,80 @@
-# Frontend Design System: Sci-Fi Concept
+# Frontend Design System: Brutalist / Minimalist Paper
 
-**Version:** 1.0 (Visual Overhaul)
-**Theme:** "Dark Future" / "Cyberpunk Lite"
+**Version:** 2.0 (Brutalist Overhaul)
+**Theme:** "Brutalist / Minimalist Paper" (Light & Dark Variants)
 
 ## Core Philosophy
-The UI follows a **Sci-Fi / Cinematic** aesthetic characterized by:
-- **Atmospheric Depth:** Deep radial gradients and ambient "light blobs" (`.bg-blob`) to create 3D space.
-- **Glassmorphism:** Highly saturated, blurred surfaces that feel like physical glass (`backdrop-filter`).
-- **Neon Accents:** High-intensity cyan (`#00f2ff`) for active states, mimicking light emission.
-- **Precision:** Monospace typography (`font-mono`) for technical data to evoke a "system hud" feel.
+The UI follows a **Brutalist / Minimalist Paper** design system inspired by physical print media, editorial design, and clean interfaces, matching the design of `screensearch-website`:
+- **Paper & Ink Palette:** Flat warm cream/paper backgrounds and deep charcoal ink text in light mode, with a dedicated dark paper variant in dark mode.
+- **Zero Border-Radius:** Hard, sharp 90-degree edges on all elements (no rounded corners).
+- **Rule Borders:** Fine, solid 1px borders (`border-rule`) separating panels, cards, inputs, and components.
+- **Typographic Hierarchy:** Newspaper-style editorial headings using **Newsreader** (Serif) paired with clean geometric UI text using **Geist** (Sans-serif) and technical labels/ids in **Geist Mono** (Monospace).
+- **Interactive Shift:** Elements react to interactions with physical offsets (e.g. `hover:-translate-y-0.5 active:translate-y-0`) rather than soft diffuse shadows or light glows.
 
 ---
 
 ## Global Atmosphere
-Root styles defined in `index.css`.
+Root styles defined in `index.css` and registered in `tailwind.config.js`.
 
-### Background
-Replaces flat colors with a deep void gradient:
-```css
-background: radial-gradient(circle at 50% 0%, #1a2333 0%, #020617 100%);
-```
+### Color Tokens (HSL)
+We use tailwind color tokens mapping to raw HSL values defined dynamically under light and dark themes:
+- `bg-paper`: Primary paper background.
+- `bg-paper-2`: Secondary background layer for elevated widgets/inputs.
+- `text-ink`: Primary text color representing deep ink print.
+- `text-ink-muted`: Secondary text color for secondary content or helper descriptions.
+- `border-rule`: High-contrast fine border lines defining component boundaries.
+- `border-accent`: Distinctive highlight border for active/focused elements.
 
-### Ambient Lighting
-Injects colorful blurs behind content:
-- **Primary Blob:** Top-left cyan/blue.
-- **Secondary Blob:** Bottom-right violet/purple.
-- **Grid Pattern:** Subtle vector grid overlay for technical texture.
+#### Light Mode Colors
+- `--color-paper`: `40 23% 97%` (warm soft cream/paper)
+- `--color-paper-2`: `40 18% 94%` (slightly darker warm paper for components)
+- `--color-ink`: `240 6% 10%` (deep ink black)
+- `--color-ink-muted`: `240 4% 45%` (muted grey ink)
+- `--color-rule`: `240 6% 15%` (crisp, fine border rules)
+- `--color-accent`: `210 100% 50%` (ink blue accent highlight)
+
+#### Dark Mode (.dark) Colors
+- `--color-paper`: `240 6% 9%` (rich dark background)
+- `--color-paper-2`: `240 6% 13%` (elevated dark paper component layer)
+- `--color-ink`: `40 20% 95%` (warm light ink text)
+- `--color-ink-muted`: `40 10% 65%` (muted warm text)
+- `--color-rule`: `40 20% 25%` (subtle border rules)
+- `--color-accent`: `210 100% 65%` (bright blue highlight)
 
 ---
 
-## Utility Classes
-
-### 1. Glass Surfaces
-Use for containers, cards, and panels.
-
-| Class | Description |
-|-------|-------------|
-| `.glass-panel` | Base surface. High blur (20px), low opacity white tint (2%). |
-| `.glass-card` | Interactive surface. Adds hover glow and lift. |
-| `.glass-panel-cyan` | **High Attention**. Used for the Search Bubble. Cyan-tinted glass. |
+## Utility Classes & Containers
+The old glassmorphism panels have been completely replaced with paper-based components:
+- `bg-paper` / `bg-paper-2` for flat panels.
+- `border-rule` / `border-accent` for crisp borders.
+- `rounded-none` to guarantee sharp edges.
 
 **Example:**
 ```tsx
-<div className="glass-panel p-6 rounded-2xl">
+<div className="bg-paper border border-rule p-6 rounded-none">
   Content
 </div>
 ```
 
-### 2. High-Intensity Accents
-Use sparingly for "active" or "powered" items.
+---
 
-| Class | Description |
-|-------|-------------|
-| `.neon-text` | Cyan text with outer glow. `text-cyan-400 drop-shadow`. |
-| `.active-border` | "Beam" border effect. 1px cyan border + inset/outset shadows. |
-| `.glow-cyan-lg` | Large outer atmosphere glow. |
-
-**Example:**
-```tsx
-<button className={isActive ? "active-border neon-text" : "text-muted"}>
-  Dashboard
-</button>
-```
-
-### 3. Typography
-- **Primary Font:** Sans-serif (Inter) for UI labels and readability.
-- **Technical Font:** Monospaced (JetBrains Mono/Fira Code) for data points, IDs, and timestamps.
-
-**Usage:** Add `font-mono` to technical data.
-```tsx
-<span className="text-xs text-muted-foreground font-mono">
-  {latency_ms}ms
-</span>
-```
+## Typography
+- **Headings & Accents:** Serif (**Newsreader**) for a premium, newspaper editorial feel.
+- **Primary UI Text:** Sans-serif (**Geist**) for readability.
+- **Technical & Stats:** Monospaced (**Geist Mono**) for timestamp data, logs, and parameters.
 
 ---
 
 ## Components
 
-### Search Bubble (`SearchInvite.tsx`)
-A floating, detached modal that mimics a "thought bubble" or HUD element.
-- **Animation:** Spring physics (mass: 0.8, stiffness: 300).
-- **Style:** `glass-panel-cyan` with aggressive backdrop blur.
-- **Focus:** Input field scales slightly (`scale: 1.01`) on focus.
+### 1. Sidebar (`Sidebar.tsx`)
+- Sharp layout with zero border-radius.
+- Highlight border left edge indicates the active navigation state.
+- Sections headers styled using uppercase `font-mono` tracking wide.
 
-### Navigation Sidebar (`Sidebar.tsx`)
-- **Active State:** Uses `.active-border` and a CSS-based "glimmer" animation (`animate-[shimmer_2s_infinite]`).
-- **Icons:** Glow when active (`drop-shadow`).
+### 2. Search Modal (`SearchInvite.tsx`)
+- Detached search panel adopting the flat paper layout.
+- Search inputs use an italicized serif font for a premium look.
 
-### Dashboard Cards (`ProductivityPulse`, `MemoryStatus`)
-- **Header:** Icon + Title.
-- **Content:** Monospace data displays.
-- **Charts:** Uses SVG gradients matching the cyan theme (`#00f2ff` to `#00ff88`).
+### 3. GlassCard (`GlassCard.tsx`)
+- Fully redesigned to serve as the unified component container. It drops glassmorphism shadows and backdrop filters, replacing them with flat `bg-paper` background overlays, `rounded-none` corners, and solid `border-rule` boundaries.

@@ -2,7 +2,7 @@
 
 Base Directory: `screensearch-ui/`
 
-*Last updated: v0.3.0 - AI-First UI Redesign*
+*Last updated: v0.4.0 - Brutalist/Minimalist Paper UI Redesign*
 
 ## Configuration Files (8)
 
@@ -10,7 +10,7 @@ Base Directory: `screensearch-ui/`
 2. `tsconfig.json`
 3. `tsconfig.node.json`
 4. `vite.config.ts`
-5. `tailwind.config.js` - Extended theme with glassmorphism, cyan accents
+5. `tailwind.config.js` - Brutalist design system with custom typography (Newsreader, Geist) and color tokens
 6. `postcss.config.js`
 7. `.eslintrc.cjs`
 8. `.gitignore`
@@ -60,21 +60,21 @@ Base Directory: `screensearch-ui/`
 31. `src/components/Sidebar.tsx` - Collapsible with framer-motion (v0.3.0)
 32. `src/components/Logo.tsx` - Updated with collapsed mode support (v0.3.0)
 
-## Search Components (v0.3.0)
+## Search Components
 
-33. `src/components/search/SearchInvite.tsx` - Cmd+K modal with glassmorphism
+33. `src/components/search/SearchInvite.tsx` - Cmd+K modal with minimalist paper styling
 34. `src/components/search/SmartAnswer.tsx` - AI answer with activity sources
 
-## Dashboard Components (v0.3.0)
+## Dashboard Components
 
 35. `src/components/dashboard/DailyDigestCard.tsx` - AI daily summaries
 36. `src/components/dashboard/MemoryStatusGauge.tsx` - RAG indexing status
-37. `src/components/dashboard/ProductivityPulse.tsx` - Cyan gradient chart
+37. `src/components/dashboard/ProductivityPulse.tsx` - Minimalist activity chart
 
-## UI Components (v0.3.0)
+## UI Components
 
-38. `src/components/ui/GlassCard.tsx` - Glassmorphism container with glow variants
-39. `src/components/ui/CircularGauge.tsx` - SVG radial progress with cyan gradient
+38. `src/components/ui/GlassCard.tsx` - Flat paper card with zero border-radius
+39. `src/components/ui/CircularGauge.tsx` - SVG radial progress chart
 40. `src/components/ui/ComingSoonCard.tsx` - Placeholder for upcoming features
 
 ## Pages
@@ -83,7 +83,7 @@ Base Directory: `screensearch-ui/`
 
 ## Styles (1)
 
-42. `src/index.css` - CSS design tokens, glassmorphism utilities, cyan accents
+42. `src/index.css` - CSS design tokens, paper/ink variables, custom fonts
 
 ## Documentation (8)
 
@@ -129,7 +129,7 @@ screensearch-ui/
 └── src/
     ├── main.tsx
     ├── App.tsx
-    ├── index.css              # Design tokens, glassmorphism utilities
+    ├── index.css              # Design tokens, paper/ink variables, typography
     ├── vite-env.d.ts
     │
     ├── api/

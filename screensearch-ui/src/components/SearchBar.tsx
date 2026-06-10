@@ -63,11 +63,8 @@ export function SearchBar() {
     <div className="space-y-6 w-full max-w-4xl mx-auto">
       {/* Main Search Bar */}
       <div className="relative group z-30" ref={autocompleteRef}>
-        <div className="relative transition-all duration-300 transform group-hover:-translate-y-0.5 group-focus-within:-translate-y-1">
-          {/* Glow effect */}
-          <div className="absolute inset-0 bg-gradient-to-r from-primary/30 via-primary-light/20 to-primary/10 rounded-2xl blur-xl opacity-0 group-focus-within:opacity-100 transition-opacity duration-500" />
-
-          <div className="relative glass-card rounded-2xl group-hover:border-primary/30 group-focus-within:border-primary/50 group-focus-within:shadow-xl transition-all duration-300">
+        <div className="relative transition-all duration-300 transform">
+          <div className="relative bg-paper border border-rule rounded-none group-focus-within:border-ink transition-all duration-300">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
             <input
               type="text"
@@ -78,7 +75,7 @@ export function SearchBar() {
               }}
               onFocus={() => setShowAutocomplete(true)}
               placeholder="What did I work on yesterday?"
-              className="w-full pl-12 pr-12 py-4 bg-transparent border-none rounded-2xl text-lg placeholder:text-muted-foreground/50 focus:outline-none focus:ring-0"
+              className="w-full pl-12 pr-12 py-4 bg-transparent border-none rounded-none text-lg font-serif italic placeholder:text-muted/50 focus:outline-none focus:ring-0"
             />
             {localQuery && (
               <button
@@ -86,7 +83,7 @@ export function SearchBar() {
                   setLocalQuery('');
                   setFilters({ searchQuery: '' });
                 }}
-                className="absolute right-4 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground bg-muted/50 hover:bg-muted rounded-full transition-all"
+                className="absolute right-4 top-1/2 -translate-y-1/2 p-1 text-muted hover:text-ink bg-paper-2 hover:bg-rule rounded-none transition-all border border-rule"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -96,7 +93,7 @@ export function SearchBar() {
 
         {/* Autocomplete Dropdown */}
         {showAutocomplete && suggestions.length > 0 && (
-          <div className="absolute top-full left-0 right-0 mt-3 glass-card z-50 max-h-80 overflow-y-auto animate-fade-in-up">
+          <div className="absolute top-full left-0 right-0 mt-3 bg-paper border border-ink z-50 max-h-80 overflow-y-auto animate-fade-in-up">
             <div className="p-2 space-y-1">
               {suggestions.map((suggestion, index) => (
                 <button
@@ -106,9 +103,9 @@ export function SearchBar() {
                     setFilters({ searchQuery: suggestion });
                     setShowAutocomplete(false);
                   }}
-                  className="w-full px-4 py-3 text-left hover:bg-primary/5 hover:text-primary rounded-lg transition-all flex items-center gap-3 group/item"
+                  className="w-full px-4 py-3 text-left hover:bg-paper-2 hover:text-ink border-b border-rule last:border-0 rounded-none transition-all flex items-center gap-3 group/item"
                 >
-                  <Search className="h-4 w-4 text-muted-foreground group-hover/item:text-primary/70" />
+                  <Search className="h-4 w-4 text-muted group-hover/item:text-ink" />
                   <span className="font-medium">{suggestion}</span>
                 </button>
               ))}
@@ -119,14 +116,14 @@ export function SearchBar() {
 
       {/* Search Mode Toggle */}
       <div className="flex justify-center">
-        <div className="bg-secondary/50 p-1 rounded-lg flex items-center gap-1 border border-border/50">
+        <div className="bg-paper-2 p-1 rounded-none flex items-center gap-1 border border-rule">
           {(['fts', 'semantic'] as const).map((mode) => (
             <button
               key={mode}
               onClick={() => setFilters({ searchMode: mode })}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${filters.searchMode === mode
-                  ? 'bg-background text-foreground shadow-sm ring-1 ring-border'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-background/50'
+              className={`px-3 py-1.5 rounded-none text-xs font-mono uppercase tracking-wider transition-all ${filters.searchMode === mode
+                  ? 'bg-ink text-paper shadow-none ring-0'
+                  : 'text-ink hover:text-ink hover:bg-rule-2'
                 }`}
             >
               {mode === 'fts' ? 'Exact Match' : 'Smart Search'}
@@ -140,8 +137,8 @@ export function SearchBar() {
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
           {hasActiveFilters && (
             <div className="flex items-center gap-2 animate-fade-in">
-              <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-              <span className="font-medium text-primary">Filters active</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-ink" />
+              <span className="font-serif text-[15px] text-ink">Filters active</span>
             </div>
           )}
         </div>
@@ -150,7 +147,7 @@ export function SearchBar() {
           {hasActiveFilters && (
             <button
               onClick={resetFilters}
-              className="text-sm text-muted-foreground hover:text-destructive transition-colors px-3 py-1.5 rounded-lg hover:bg-destructive/5"
+              className="text-sm text-ink hover:text-warn transition-colors px-3 py-1.5 rounded-none border border-transparent hover:border-warn hover:bg-paper-2"
             >
               Clear all
             </button>
@@ -158,25 +155,25 @@ export function SearchBar() {
 
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-200 border ${showFilters
-              ? 'bg-secondary text-secondary-foreground border-border'
-              : 'bg-background hover:bg-secondary/50 text-muted-foreground hover:text-foreground border-transparent'
+            className={`flex items-center gap-2 px-4 py-2 rounded-none transition-all duration-200 border ${showFilters
+              ? 'bg-paper-2 text-ink border-rule'
+              : 'bg-paper hover:bg-paper-2 text-muted hover:text-ink border-rule'
               }`}
           >
             <Calendar className={`h-4 w-4 ${showFilters ? 'text-primary' : ''}`} />
-            <span className="font-medium">Filters</span>
+            <span className="font-serif text-[15px]">Filters</span>
           </button>
         </div>
       </div>
 
       {/* Filter Panel */}
       {showFilters && (
-        <div className="glass-card p-6 space-y-6 animate-fade-in-up">
+        <div className="bg-paper border border-rule p-6 space-y-6 animate-fade-in-up">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             {/* Left Column */}
             <div className="space-y-4">
-              <label className="text-sm font-semibold flex items-center gap-2 text-foreground">
-                <Calendar className="h-4 w-4 text-primary" />
+              <label className="text-sm font-serif text-[18px] flex items-center gap-2 text-ink">
+                <Calendar className="h-4 w-4 text-muted" />
                 Date Range
               </label>
               <div className="grid grid-cols-2 gap-3">
@@ -193,7 +190,7 @@ export function SearchBar() {
                         },
                       })
                     }
-                    className="w-full px-3 py-2.5 bg-background border border-border rounded-xl text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary/50 outline-none transition-all"
+                    className="w-full px-3 py-2 bg-paper-2 border border-rule rounded-none text-sm font-mono focus:border-ink outline-none transition-all"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -209,7 +206,7 @@ export function SearchBar() {
                         },
                       })
                     }
-                    className="w-full px-3 py-2.5 bg-background border border-border rounded-xl text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary/50 outline-none transition-all"
+                    className="w-full px-3 py-2 bg-paper-2 border border-rule rounded-none text-sm font-mono focus:border-ink outline-none transition-all"
                   />
                 </div>
               </div>
@@ -217,8 +214,8 @@ export function SearchBar() {
 
             {/* Right Column */}
             <div className="space-y-4">
-              <label className="text-sm font-semibold flex items-center gap-2 text-foreground">
-                <Monitor className="h-4 w-4 text-primary" />
+              <label className="text-sm font-serif text-[18px] flex items-center gap-2 text-ink">
+                <Monitor className="h-4 w-4 text-muted" />
                 Application
               </label>
               <div className="space-y-1.5">
@@ -232,18 +229,18 @@ export function SearchBar() {
                       applications: e.target.value ? [e.target.value] : [],
                     })
                   }
-                  className="w-full px-4 py-2.5 bg-background border border-border rounded-xl text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary/50 outline-none transition-all"
+                  className="w-full px-4 py-2 bg-paper-2 border border-rule rounded-none text-sm font-sans focus:border-ink outline-none transition-all"
                 />
               </div>
             </div>
           </div>
 
-          <div className="h-px bg-border/50" />
+          <div className="h-px bg-rule" />
 
           {/* Tag Filter */}
           <div className="space-y-3">
-            <label className="text-sm font-semibold flex items-center gap-2 text-foreground">
-              <TagIcon className="h-4 w-4 text-primary" />
+            <label className="text-sm font-serif text-[18px] flex items-center gap-2 text-ink">
+              <TagIcon className="h-4 w-4 text-muted" />
               Tags
             </label>
             <div className="flex flex-wrap gap-2">
@@ -259,9 +256,9 @@ export function SearchBar() {
                           : [...filters.tags, tag.id],
                       });
                     }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 border ${isSelected
-                      ? 'bg-primary/10 text-primary border-primary/20 scale-105 shadow-sm'
-                      : 'bg-secondary/50 text-muted-foreground border-transparent hover:bg-secondary hover:text-foreground'
+                    className={`px-3 py-1.5 rounded-none text-[11px] font-mono uppercase tracking-wider transition-all duration-200 border ${isSelected
+                      ? 'bg-ink text-paper border-ink shadow-none'
+                      : 'bg-paper-2 text-ink border-rule hover:bg-rule hover:text-ink'
                       }`}
                     style={
                       isSelected && tag.color

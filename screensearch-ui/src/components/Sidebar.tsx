@@ -44,21 +44,16 @@ export function Sidebar() {
                 disabled={isDisabled}
                 title={isSidebarCollapsed ? item.label : undefined}
                 className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-300 relative overflow-hidden group",
+                    "w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium transition-all duration-200 relative group border-l-2",
                     isSidebarCollapsed && "justify-center",
                     isActive && !isDisabled
-                        ? "active-border bg-primary/10 text-primary"
+                        ? "border-ink bg-paper-2 text-ink"
                         : isDisabled
-                            ? "text-muted-foreground/50 cursor-not-allowed"
-                            : "text-muted-foreground hover:bg-surface-2 hover:text-foreground hover:glow-cyan-subtle"
+                            ? "border-transparent text-muted/50 cursor-not-allowed"
+                            : "border-transparent text-muted hover:bg-paper-2 hover:text-ink hover:border-rule"
                 )}
             >
-                {/* Active Indicator Glimmer */}
-                {isActive && !isDisabled && (
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/10 to-transparent translate-x-[-100%] animate-[shimmer_2s_infinite]" />
-                )}
-                
-                <Icon className={cn("h-4 w-4 flex-shrink-0 transition-colors duration-300", isActive && "text-primary drop-shadow-[0_0_8px_rgba(0,242,255,0.6)]")} />
+                <Icon className={cn("h-4 w-4 flex-shrink-0 transition-colors duration-200", isActive && "text-ink")} />
 
                 <AnimatePresence mode="wait">
                     {!isSidebarCollapsed && (
@@ -69,9 +64,9 @@ export function Sidebar() {
                             transition={{ duration: 0.2 }}
                             className="flex items-center justify-between flex-1 overflow-hidden"
                         >
-                            <span className={cn("whitespace-nowrap transition-all duration-300", isActive && "neon-text")}>{item.label}</span>
+                            <span className={cn("whitespace-nowrap transition-all duration-200 font-sans")}>{item.label}</span>
                             {item.comingSoon && (
-                                <span className="badge-coming-soon text-[10px] px-1.5 ml-2">Soon</span>
+                                <span className="font-mono text-[10px] text-muted uppercase tracking-wider px-1.5 py-0.5 border border-rule">Soon</span>
                             )}
                         </motion.div>
                     )}
@@ -84,25 +79,25 @@ export function Sidebar() {
         <motion.div
             animate={{ width: isSidebarCollapsed ? 72 : 256 }}
             transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
-            className="h-screen glass-panel border-r border-border flex flex-col z-10"
+            className="h-screen bg-paper border-r border-rule flex flex-col z-10"
         >
             {/* Logo */}
             <div className={cn(
-                "p-4 flex items-center",
+                "p-4 flex items-center border-b border-rule",
                 isSidebarCollapsed ? "justify-center" : "px-6"
             )}>
                 <Logo collapsed={isSidebarCollapsed} />
             </div>
 
             {/* Search Shortcut */}
-            <div className={cn("px-4 mb-4", isSidebarCollapsed && "px-2")}>
+            <div className={cn("p-4 border-b border-rule", isSidebarCollapsed && "px-2")}>
                 <button
                     onClick={openSearchModal}
                     title={isSidebarCollapsed ? "Search (⌘K)" : undefined}
                     className={cn(
-                        "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm",
-                        "bg-surface-1 hover:bg-surface-2 border border-border hover:border-primary/30",
-                        "text-muted-foreground hover:text-foreground transition-all",
+                        "w-full flex items-center gap-3 px-3 py-2.5 text-sm",
+                        "bg-paper-2 hover:bg-rule-2 border border-rule",
+                        "text-ink transition-all rounded-none",
                         isSidebarCollapsed && "justify-center"
                     )}
                 >
@@ -116,12 +111,12 @@ export function Sidebar() {
                                 transition={{ duration: 0.2 }}
                                 className="flex items-center justify-between flex-1 overflow-hidden"
                             >
-                                <span className="whitespace-nowrap">Search...</span>
-                                <div className="flex items-center gap-0.5 text-xs">
-                                    <kbd className="px-1.5 py-0.5 bg-surface-2 rounded text-[10px]">
+                                <span className="whitespace-nowrap font-serif italic text-[15px]">Search...</span>
+                                <div className="flex items-center gap-1 text-xs">
+                                    <kbd className="px-1.5 py-0.5 bg-paper border border-rule font-mono text-[10px]">
                                         <Command className="h-2.5 w-2.5 inline" />
                                     </kbd>
-                                    <kbd className="px-1.5 py-0.5 bg-surface-2 rounded text-[10px]">K</kbd>
+                                    <kbd className="px-1.5 py-0.5 bg-paper border border-rule font-mono text-[10px]">K</kbd>
                                 </div>
                             </motion.div>
                         )}
@@ -130,7 +125,7 @@ export function Sidebar() {
             </div>
 
             {/* Navigation */}
-            <div className="flex-1 px-3 space-y-6 overflow-y-auto overflow-x-hidden">
+            <div className="flex-1 py-4 space-y-6 overflow-y-auto overflow-x-hidden">
                 {/* Main Navigation */}
                 <div className="space-y-1">
                     <AnimatePresence mode="wait">
@@ -139,7 +134,7 @@ export function Sidebar() {
                                 initial={{ opacity: 0 }}
                                 animate={{ opacity: 1 }}
                                 exit={{ opacity: 0 }}
-                                className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-2"
+                                className="font-mono text-[11px] text-muted uppercase tracking-[0.12em] mb-3 px-4"
                             >
                                 Menu
                             </motion.div>
@@ -156,7 +151,7 @@ export function Sidebar() {
                                 initial={{ opacity: 0 }}
                                 animate={{ opacity: 1 }}
                                 exit={{ opacity: 0 }}
-                                className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-2"
+                                className="font-mono text-[11px] text-muted uppercase tracking-[0.12em] mb-3 px-4"
                             >
                                 AI Features
                             </motion.div>
@@ -167,14 +162,14 @@ export function Sidebar() {
             </div>
 
             {/* Footer Actions */}
-            <div className="p-3 border-t border-border space-y-1">
+            <div className="p-3 border-t border-rule space-y-1 bg-paper-2/50">
                 {/* Settings */}
                 <button
                     onClick={toggleSettingsPanel}
                     title={isSidebarCollapsed ? "Settings" : undefined}
                     className={cn(
-                        "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium",
-                        "text-muted-foreground hover:bg-surface-2 hover:text-foreground transition-all duration-200",
+                        "w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium border-l-2 border-transparent",
+                        "text-muted hover:bg-rule-2 hover:text-ink transition-all duration-200",
                         isSidebarCollapsed && "justify-center"
                     )}
                 >
@@ -186,7 +181,7 @@ export function Sidebar() {
                                 animate={{ opacity: 1, width: 'auto' }}
                                 exit={{ opacity: 0, width: 0 }}
                                 transition={{ duration: 0.2 }}
-                                className="whitespace-nowrap"
+                                className="whitespace-nowrap font-sans"
                             >
                                 Settings
                             </motion.span>
@@ -199,8 +194,8 @@ export function Sidebar() {
                     onClick={toggleSidebar}
                     title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
                     className={cn(
-                        "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium",
-                        "text-muted-foreground hover:bg-surface-2 hover:text-foreground transition-all duration-200",
+                        "w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium border-l-2 border-transparent",
+                        "text-muted hover:bg-rule-2 hover:text-ink transition-all duration-200",
                         isSidebarCollapsed && "justify-center"
                     )}
                 >
@@ -217,7 +212,7 @@ export function Sidebar() {
                                 animate={{ opacity: 1, width: 'auto' }}
                                 exit={{ opacity: 0, width: 0 }}
                                 transition={{ duration: 0.2 }}
-                                className="whitespace-nowrap"
+                                className="whitespace-nowrap font-sans"
                             >
                                 Collapse
                             </motion.span>

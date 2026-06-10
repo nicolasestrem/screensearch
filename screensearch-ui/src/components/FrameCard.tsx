@@ -66,10 +66,10 @@ function FrameCardComponent({ frame, searchQuery = '' }: FrameCardProps) {
   }, [showTagMenu]);
 
   return (
-    <div className="group/card relative bg-card rounded-xl overflow-hidden shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-300 ring-1 ring-border/50 hover:ring-primary/20 hover:-translate-y-1">
+    <div className="group/card relative bg-paper border border-rule hover:border-ink transition-all duration-300 hover:-translate-y-[2px]">
       {/* Image */}
       <div
-        className="relative aspect-video bg-muted/30 cursor-pointer overflow-hidden"
+        className="relative aspect-video bg-paper-2 border-b border-rule cursor-pointer overflow-hidden"
         onClick={() => setSelectedFrameId(frame.id)}
       >
         {imageUrl && !imageError ? (
@@ -89,7 +89,7 @@ function FrameCardComponent({ frame, searchQuery = '' }: FrameCardProps) {
         {/* Overlays */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover/card:opacity-100 transition-opacity duration-300" />
 
-        <div className="absolute top-3 right-3 px-2.5 py-1 bg-black/60 backdrop-blur-md text-white text-[10px] font-medium tracking-wide rounded-full border border-white/10 shadow-sm">
+        <div className="absolute top-3 right-3 px-2 py-1 bg-ink text-paper font-mono text-[10px] uppercase tracking-widest border border-ink shadow-sm">
           {formatRelativeTime(frame.timestamp)}
         </div>
       </div>
@@ -99,8 +99,8 @@ function FrameCardComponent({ frame, searchQuery = '' }: FrameCardProps) {
         {/* App Info */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <div className="p-1.5 rounded-md bg-secondary text-primary">
+            <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+              <div className="p-1.5 border border-rule bg-paper-2 text-ink">
                 <Monitor className="h-3 w-3" />
               </div>
               <span className="truncate">{frame.app_name}</span>
@@ -117,7 +117,7 @@ function FrameCardComponent({ frame, searchQuery = '' }: FrameCardProps) {
         {frame.description ? (
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-primary/80 uppercase tracking-widest px-1.5 py-0.5 rounded-sm bg-primary/10">
+              <span className="font-mono text-[10px] uppercase tracking-widest px-1.5 py-0.5 border border-rule text-ink bg-paper">
                 AI Summary
               </span>
               {frame.confidence !== undefined && (
@@ -149,14 +149,14 @@ function FrameCardComponent({ frame, searchQuery = '' }: FrameCardProps) {
           {frame.tags.map((tag) => (
             <div
               key={tag.id}
-              className="group/tag flex items-center gap-1 px-2 py-0.5 bg-secondary/50 hover:bg-secondary text-secondary-foreground rounded-md text-[10px] font-medium transition-colors border border-transparent hover:border-border"
+              className="group/tag flex items-center gap-1 px-2 py-0.5 border border-rule bg-paper hover:bg-paper-2 text-ink text-[10px] font-medium transition-colors"
               style={tag.color ? { backgroundColor: `${tag.color}20`, color: tag.color, borderColor: `${tag.color}40` } : undefined}
             >
               <TagIcon className="h-2.5 w-2.5" />
               <span>{tag.name}</span>
               <button
                 onClick={(e) => { e.stopPropagation(); handleRemoveTag(tag.id); }}
-                className="opacity-0 group-hover/tag:opacity-100 p-0.5 hover:bg-black/5 rounded-full transition-all"
+                className="opacity-0 group-hover/tag:opacity-100 p-0.5 hover:bg-rule rounded-none transition-all"
               >
                 <X className="h-2.5 w-2.5" />
               </button>
@@ -169,7 +169,7 @@ function FrameCardComponent({ frame, searchQuery = '' }: FrameCardProps) {
               onClick={() => setShowTagMenu(!showTagMenu)}
               aria-label="Add tag to frame"
               aria-expanded={showTagMenu}
-              className="opacity-0 group-hover/card:opacity-100 transition-opacity flex items-center gap-1 px-2 py-0.5 border border-dashed border-border rounded-md text-[10px] text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+              className="opacity-0 group-hover/card:opacity-100 transition-opacity flex items-center gap-1 px-2 py-0.5 border border-dashed border-rule text-[10px] text-muted hover:text-ink hover:bg-paper-2"
             >
               <Plus className="h-2.5 w-2.5" />
               <span>Tag</span>
@@ -178,11 +178,11 @@ function FrameCardComponent({ frame, searchQuery = '' }: FrameCardProps) {
             {/* Tag Menu */}
             {showTagMenu && availableTags.length > 0 && (
               <div
-                className="absolute top-full left-0 mt-2 bg-popover border border-border rounded-lg shadow-xl shadow-black/10 z-50 min-w-[160px] p-1 animate-in fade-in zoom-in-95 duration-100"
+                className="absolute top-full left-0 mt-2 bg-paper border border-ink shadow-hard z-50 min-w-[160px] p-1 animate-in fade-in zoom-in-95 duration-100"
                 role="menu"
                 aria-label="Available tags"
               >
-                <div className="text-[10px] font-medium text-muted-foreground px-2 py-1.5 uppercase tracking-wider">
+                <div className="font-mono text-[10px] text-muted px-2 py-1.5 uppercase tracking-wider">
                   Select Tag
                 </div>
                 <div className="max-h-32 overflow-y-auto">
@@ -191,7 +191,7 @@ function FrameCardComponent({ frame, searchQuery = '' }: FrameCardProps) {
                       key={tag.id}
                       onClick={() => handleAddTag(tag.id)}
                       role="menuitem"
-                      className="w-full px-2 py-1.5 text-left text-xs hover:bg-accent rounded-md transition-colors flex items-center gap-2"
+                      className="w-full px-2 py-1.5 text-left text-xs hover:bg-paper-2 border border-transparent hover:border-rule transition-colors flex items-center gap-2"
                     >
                       <div
                         className="w-2 h-2 rounded-full ring-1 ring-inset ring-black/10"

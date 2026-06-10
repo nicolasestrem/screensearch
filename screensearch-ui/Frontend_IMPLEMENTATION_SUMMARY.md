@@ -1,8 +1,8 @@
 # Implementation Summary - ScreenSearch Frontend
 
-## Project Completion Status: COMPLETE (v0.3.0 - AI-First UI Redesign)
+## Project Completion Status: COMPLETE (v0.4.0 - Brutalist/Minimalist Paper UI Redesign)
 
-Complete React 18 frontend implementation for ScreenSearch with AI-First UI redesign featuring glassmorphism design system, search modal (Cmd+K), collapsible sidebar, and cyan accent theme.
+Complete React 18 frontend implementation for ScreenSearch with AI-First UI featuring the Brutalist / Minimalist Paper design system matching `screensearch-website`, light/dark mode support, search modal (Cmd+K), collapsible sidebar, and editorial layout.
 
 ## Files Created
 
@@ -66,6 +66,18 @@ Complete React 18 frontend implementation for ScreenSearch with AI-First UI rede
 37. `src/components/search/SearchInvite.tsx` - Search modal with Cmd+K trigger
 38. `src/components/search/SmartAnswer.tsx` - AI answer display with activity sources
 39. `src/lib/animations.ts` - Framer Motion animation variants
+
+### v0.4.0 Brutalist & Dark Mode Redesign (Updated Files)
+- `src/index.css` - Defined HSL paper, ink, rule border theme variables for light and dark modes
+- `tailwind.config.js` - Integrated custom fonts (Newsreader, Geist, Geist Mono) and brutalist CSS color tokens
+- `index.html` - Google Font link integration for Geist and Newsreader fonts
+- `src/components/ui/GlassCard.tsx` - Replaced glassmorphism layouts with unified flat paper boxes (`bg-paper`, `rounded-none`, `border-rule`)
+- `src/components/Sidebar.tsx` - Zero border-radius collapsible sidebar using solid borders and active state highlights
+- `src/components/SearchBar.tsx` - Minimalist search input with serif italic placeholder and zero border-radius
+- `src/components/FrameCard.tsx` - Flat card layout with sharp edges and translate hover effects
+- `src/components/Timeline.tsx` - Editorial timeline headers
+- `src/components/SettingsPanel.tsx` & `src/components/AiSettings.tsx` - Zero border-radius widgets and sharp inputs
+- `src/pages/Dashboard.tsx` & `src/pages/Intelligence.tsx` - Paper themes, serif styling, and removal of gradient backdrops
 
 ### v0.3.0 Updated Files
 - `src/index.css` - Cyan accent design tokens, glassmorphism utilities
@@ -164,17 +176,13 @@ Complete React 18 frontend implementation for ScreenSearch with AI-First UI rede
 - [x] Responsive design
 - [x] Smooth transitions
 
-### 9. AI-First UI Redesign (v0.3.0)
-- [x] Search Modal (Cmd+K) - Full-screen modal with glassmorphism
-- [x] Smart Answer Card - AI-generated answers with activity sources
-- [x] Collapsible Sidebar - Icon-only mode with framer-motion animations
-- [x] Cyan Accent Design System - Deep space background with cyan glow
-- [x] Glassmorphism Cards - Translucent cards with backdrop blur
-- [x] Circular Gauge - SVG radial progress with gradient glow
-- [x] Productivity Pulse Chart - Cyan gradient line chart
-- [x] Daily Digest Card - AI-powered daily summaries
-- [x] Animation System - Framer Motion variants for consistent animations
-- [x] ScreenSearch Intel branding - Updated dashboard title
+### 9. Brutalist & Minimalist Paper Design (v0.4.0)
+- [x] Paper & Ink Design - Warm cream paper background and dark ink text
+- [x] Dark Paper Mode - Built-in dark theme activated via `.dark` class
+- [x] Zero Border Radius - Razor sharp 90-degree corners on all elements
+- [x] Rule Border Systems - Solid 1px borders for structured editorial layout
+- [x] Editorial Typography - Newsreader (Serif) headings and Geist (Sans) copy
+- [x] Flat Components - Removed glassmorphism, drop shadows, glows, and gradients
 
 ### 7. Performance
 - [x] React Query caching

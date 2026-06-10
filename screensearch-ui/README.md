@@ -1,6 +1,6 @@
 # ScreenSearch - Frontend UI
 
-Modern React-based web interface for ScreenSearch, a Windows screen capture and OCR tool. Features an AI-First UI redesign with glassmorphism design system, search modal (Cmd+K), and cyan accent theme.
+Modern React-based web interface for ScreenSearch, a Windows screen capture and OCR tool. Features an AI-First UI with a Brutalist / Minimalist Paper design system, light and dark modes, search modal (Cmd+K), and sharp editorial typography.
 
 ## Features
 
@@ -9,18 +9,18 @@ Modern React-based web interface for ScreenSearch, a Windows screen capture and 
 - **Timeline View**: Visual timeline of all captured screens with thumbnails
 - **Tag Management**: Organize captures with custom tags
 - **Settings Panel**: Configure capture intervals, privacy controls, and database management
-- **Dark Mode**: Full dark mode support with theme persistence
+- **Dark Mode**: Full dark mode support with theme persistence and custom HSL paper variables
 - **Responsive Design**: Desktop-optimized interface with fluid layouts
 - **Performance Optimized**: < 100ms interaction response time
 
-### AI-First UI Redesign (v0.3.0)
-- **Search Modal (Cmd+K)**: Full-screen search with glassmorphism, Smart Answers, and activity sources
-- **Collapsible Sidebar**: Icon-only mode with smooth framer-motion animations
-- **ScreenSearch Intel Dashboard**: AI-powered productivity insights with Daily Digest and Memory Status
-- **Cyan Accent Design System**: Deep space background with cyan glow effects
-- **Glassmorphism Cards**: Translucent cards with backdrop blur and glow variants
-- **Productivity Pulse Chart**: Custom SVG line chart with cyan gradient
-- **Circular Gauge**: SVG radial progress for Memory Status with glow effects
+### Brutalist & Minimalist Paper Design (v0.4.0)
+- **Paper & Ink Palette**: Custom warm cream/paper (`bg-paper`) backgrounds and deep ink (`text-ink`) text with a dark paper variant.
+- **Zero Border Radius**: Crisp 90-degree sharp corners across the entire application interface.
+- **Rule Borders**: Fine, solid 1px borders (`border-rule`) demarcating components and inputs.
+- **Editorial Typography**: Styled headers and search inputs using Newsreader (Serif) typography, with Geist (Sans) for UI copy and Geist Mono (Monospace) for data metrics.
+- **Search Modal (Cmd+K)**: Flat paper search interface with Smart Answers and activity sources.
+- **Collapsible Sidebar**: Zero border-radius sidebar with active states marked by clear border highlights.
+- **ScreenSearch Intel Dashboard**: AI-powered productivity insights with Daily Digest, Memory Status gauge, and a minimalist Productivity Pulse chart.
 
 ## Tech Stack
 
@@ -29,7 +29,7 @@ Modern React-based web interface for ScreenSearch, a Windows screen capture and 
 - **Vite** - Build tool and dev server
 - **TanStack Query** - Data fetching and caching
 - **Zustand** - Global state management
-- **Tailwind CSS** - Styling with custom glassmorphism utilities
+- **Tailwind CSS** - Styling with custom brutalist/paper theme tokens
 - **Framer Motion** - Animation library (v0.3.0+)
 - **Lucide React** - Icons
 - **React Hot Toast** - Notifications
