@@ -19,17 +19,17 @@ export default {
       },
       colors: {
         // Core design system colors from screensearch-website
-        ink: "hsl(var(--ink))",
-        "ink-2": "hsl(var(--ink-2))",
-        muted: "hsl(var(--muted))",
-        rule: "hsl(var(--rule))",
-        "rule-2": "hsl(var(--rule-2))",
-        paper: "hsl(var(--paper))",
-        "paper-2": "hsl(var(--paper-2))",
-        accent: "hsl(var(--accent))",
-        "accent-ink": "hsl(var(--accent-ink))",
-        warn: "hsl(var(--warn))",
-        good: "hsl(var(--good))",
+        ink: "hsl(var(--ink) / <alpha-value>)",
+        "ink-2": "hsl(var(--ink-2) / <alpha-value>)",
+        muted: "hsl(var(--muted) / <alpha-value>)",
+        rule: "hsl(var(--rule) / <alpha-value>)",
+        "rule-2": "hsl(var(--rule-2) / <alpha-value>)",
+        paper: "hsl(var(--paper) / <alpha-value>)",
+        "paper-2": "hsl(var(--paper-2) / <alpha-value>)",
+        accent: "hsl(var(--accent) / <alpha-value>)",
+        "accent-ink": "hsl(var(--accent-ink) / <alpha-value>)",
+        warn: "hsl(var(--warn) / <alpha-value>)",
+        good: "hsl(var(--good) / <alpha-value>)",
         
         // Semantic mapping for existing UI components
         border: "hsl(var(--rule))",
