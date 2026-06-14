@@ -134,6 +134,9 @@ def ocr_model(language: str):
 
     return PaddleOCR(
         lang=language,
+        ocr_version="PP-OCRv5",
+        device="cpu",
+        enable_mkldnn=False,
         use_doc_orientation_classify=True,
         use_doc_unwarping=False,
         use_textline_orientation=True,

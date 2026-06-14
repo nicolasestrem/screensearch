@@ -120,6 +120,11 @@ metadata. PaddleX checks the `ocr` and `ocr-core` optional dependencies through
 `importlib.metadata`, so the metadata is part of the executable runtime
 contract rather than packaging-only documentation.
 
+The sidecar passes `ocr_version="PP-OCRv5"` instead of accepting PaddleOCR's
+language-dependent default and uses standard Paddle CPU inference with oneDNN
+disabled. This avoids PaddlePaddle 3.3.1's unsupported PIR attribute conversion
+in the oneDNN executor while preserving the release's advertised v5 contract.
+
 Choosing `engine = "windows"` bypasses PP-OCRv5 entirely. OCR provider
 selection currently requires an application restart because it is loaded from
 `config.toml`, not the runtime settings table.

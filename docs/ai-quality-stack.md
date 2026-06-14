@@ -19,6 +19,12 @@ and can consume up to 5 GB. Each embedding stores provider, model, revision,
 dimension, and content hash. A changed model contract clears incompatible
 vectors and queues a resumable reindex.
 
+The managed OCR constructor explicitly requests `ocr_version="PP-OCRv5"`.
+PaddleOCR 3.7 otherwise defaults supported languages such as English to
+PP-OCRv6. The packaged CPU runtime also disables oneDNN because PaddlePaddle
+3.3.1 cannot execute the current detector's PIR double-array attributes through
+that backend; standard Paddle CPU inference remains enabled.
+
 Quality changes must be measured with the versioned cases under `evaluation/`.
 Track Recall@10, MRR, OCR character/word error rate, citation correctness,
 p95 latency, peak memory, and index size on Windows CPU and GPU systems.
