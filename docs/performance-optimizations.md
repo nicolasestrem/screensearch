@@ -60,8 +60,8 @@ The sidecar uses a PyInstaller on-directory bundle. A one-file bundle would
 unpack the large Torch and Paddle runtime on every launch and can hit archive
 size limits.
 
-Model weights are downloaded separately on first use. Allow up to 5 GB of disk
-space for models and caches.
+Model weights are downloaded separately during **Download / verify** or first
+model use. Allow up to 5 GB of disk space for models and caches.
 
 ## Generation
 

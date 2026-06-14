@@ -78,8 +78,9 @@ The main process:
 The PyInstaller build uses an on-directory bundle. This avoids repeatedly
 unpacking Torch and Paddle and is more reliable for a multi-gigabyte runtime.
 
-Models are downloaded to the normal Hugging Face and Paddle caches on first
-use. Allow up to 5 GB for model files and runtime caches.
+Models are downloaded to the normal Hugging Face and Paddle caches when
+**Download / verify** is selected or when a model is first used. Allow up to
+5 GB for model files and runtime caches.
 
 ## OCR Pipeline
 
@@ -222,8 +223,8 @@ The Windows quality installer includes:
 - configuration, license, and documentation;
 - the Visual C++ runtime installer.
 
-Model weights are downloaded on first use. The portable ZIP contains the same
-sidecar directory.
+Model weights are prepared from Settings or downloaded on first model use. The
+portable ZIP contains the same sidecar directory.
 
 Release CI builds:
 

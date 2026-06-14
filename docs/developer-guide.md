@@ -133,18 +133,24 @@ used as quality-sidecar status.
 ## Sidecar Build
 
 ```powershell
-python -m pip install -r sidecar\requirements.txt
-python sidecar\build.py
+powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1
 ```
 
 Output:
 
 ```text
-sidecar/dist/screensearch-ai-sidecar/
+target/release/screensearch-local/
+  screensearch.exe
+  bin/screensearch-ai-sidecar/
 ```
 
-PyInstaller builds an on-directory bundle. Installer and portable packaging
-must preserve that directory structure.
+The script builds the dashboard, Rust executable, and PyInstaller on-directory
+sidecar, then assembles the same runtime layout used by portable releases.
+Installer and portable packaging must preserve that directory structure.
+
+Use `-Debug` for `target/debug/screensearch-local`. Use
+`-SkipDependencyInstall` only after the pinned sidecar requirements are already
+installed.
 
 ## Tests And Quality
 
@@ -208,8 +214,8 @@ Use:
 .\scripts\build-release.ps1 -Version 0.4.35
 ```
 
-Models are not stored in the installer. They download on first use and can
-consume up to 5 GB.
+Models are not stored in the installer. They are prepared from Settings or
+downloaded on first model use and can consume up to 5 GB.
 
 ## Security Rules
 

@@ -20,6 +20,15 @@ the executable is written under
 Repository debug builds also search this `dist/` path. A Cargo build does not
 install Python dependencies or build the sidecar automatically.
 
+For a complete local Windows build, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1
+```
+
+Run `target\release\screensearch-local\screensearch.exe` and keep its `bin`
+directory beside it.
+
 Model management endpoints:
 
 - `GET /v1/models/status` reports `idle`, `preparing`, `ready`, or `error`;

@@ -722,19 +722,17 @@ async fn ensure_quality_sidecar(settings: &OcrSettings) -> Option<Child> {
                 .join(filename),
         );
     }
-    if cfg!(debug_assertions) {
-        candidates.push(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("sidecar")
-                .join("dist")
-                .join("screensearch-ai-sidecar")
-                .join(filename),
-        );
-    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("sidecar")
+            .join("dist")
+            .join("screensearch-ai-sidecar")
+            .join(filename),
+    );
     let sidecar_path = candidates.iter().find(|path| path.exists()).cloned();
     let Some(sidecar_path) = sidecar_path else {
         warn!(
-            "Quality sidecar binary not found; searched: {}. Build it with `python sidecar/build.py` or use the installer. Windows OCR fallback will be used",
+            "Quality sidecar binary not found; searched: {}. Run `powershell -File scripts/build-local.ps1` or use the installer. Windows OCR fallback will be used",
             candidates
                 .iter()
                 .map(|path| path.display().to_string())

@@ -100,7 +100,8 @@ Windows sidecar directory in the expected `bin/` location.
 ### Models unavailable
 
 Model weights are not part of the Rust build. PP-OCRv5 and Qwen models download
-on first use through their standard caches.
+when **Download / verify** is selected or when a model is first used. The
+sidecar runtime must already be present in `bin/`.
 
 ## CI
 

@@ -135,19 +135,17 @@ Install UI dependencies before Cargo. The API build script rebuilds changed
 frontend sources before embedding `screensearch-ui/dist/`.
 
 ```powershell
-cd screensearch-ui
-npm ci
-cd ..
-cargo build --release --locked
-python -m pip install -r sidecar\requirements.txt
-python sidecar\build.py
+powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1
 ```
 
-The sidecar output is:
+The runnable output is:
 
 ```text
-sidecar/dist/screensearch-ai-sidecar/screensearch-ai-sidecar.exe
+target/release/screensearch-local/screensearch.exe
+target/release/screensearch-local/bin/screensearch-ai-sidecar/
 ```
+
+`cargo build --release` alone does not create this complete AI runtime layout.
 
 ## Key Paths
 

@@ -89,4 +89,4 @@ Do not commit:
 - `checksums.txt`
 
 Both application packages contain the sidecar runtime directory. Model weights
-download on first use.
+are prepared from Settings or downloaded on first model use.

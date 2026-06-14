@@ -75,6 +75,7 @@
 | Sidecar PyInstaller build | `sidecar/build.py` |
 | Inno Setup installer | `installer/screensearch.iss` |
 | Local release build | `scripts/build-release.ps1` |
+| Complete local Windows build | `scripts/build-local.ps1` |
 | GitHub release build | `.github/workflows/release.yml` |
 | Quality gates | `.github/workflows/quality.yml` |
 

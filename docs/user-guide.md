@@ -16,7 +16,7 @@ builds a local retrieval index for search, answers, and reports.
 1. Install or extract the quality build.
 2. Start `screensearch.exe`.
 3. Open `http://localhost:3131`.
-4. Allow the quality sidecar to download its models on first use.
+4. In Settings, select **Download / verify** to prepare the quality models.
 5. Open **Settings > Data & AI** to check quality-stack readiness.
 6. Enable semantic indexing when you want semantic or hybrid search.
 
@@ -196,15 +196,16 @@ diagnosis, run `npm run build` directly and confirm it succeeds.
 
 - Confirm the installer contains
   `bin/screensearch-ai-sidecar/screensearch-ai-sidecar.exe`.
-- For a source build, install `sidecar/requirements.txt`, run
-  `py -3.12 sidecar\build.py`, and restart ScreenSearch. Debug builds discover
-  `sidecar\dist\screensearch-ai-sidecar\screensearch-ai-sidecar.exe`.
-- A successful `cargo build` does not build the Python runtime.
+- For a source build, run
+  `powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1`, then use
+  `target\release\screensearch-local\screensearch.exe`.
+- A successful `cargo build` does not build the Python runtime. Copying
+  `target\release\screensearch.exe` by itself produces a core-only app that
+  uses Windows OCR fallback and cannot download Qwen models.
 - Confirm port `3132` is not occupied by another process.
 - Check available disk space.
 - Check outbound access to Hugging Face and Paddle model hosts.
-- Restart ScreenSearch after the initial model download if initialization was
-  interrupted.
+- Select **Download / verify** again if model preparation was interrupted.
 
 ### Reindex required
 
@@ -244,3 +245,13 @@ ready.
 The button is available only when the quality runtime is running. If the panel
 shows **Quality runtime unavailable**, install or build the sidecar first; no
 Qwen download can start without it.
+
+The complete source-build directory has this layout:
+
+```text
+target\release\screensearch-local\
+  screensearch.exe
+  bin\screensearch-ai-sidecar\screensearch-ai-sidecar.exe
+```
+
+Keep the `bin` directory beside `screensearch.exe` when moving the app.

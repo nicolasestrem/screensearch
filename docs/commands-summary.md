@@ -11,6 +11,7 @@ cd ..
 cargo check
 cargo build
 cargo build --release --locked
+powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1
 ```
 
 Build the UI before Rust because the production assets are embedded into

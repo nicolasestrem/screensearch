@@ -232,12 +232,16 @@ Powerful logging and diagnostics. Watch ScreenSearch initialize, start capture l
 git clone https://github.com/nicolasestrem/screensearch.git
 cd screensearch
 
-# Build the project
-cargo build --release
+# Build the complete local app, including PP-OCRv5 and Qwen runtime
+powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1
 
-# Run ScreenSearch (starts API on localhost:3131)
-cargo run --release
+# Run the assembled app (starts API on localhost:3131)
+.\target\release\screensearch-local\screensearch.exe
 ```
+
+`cargo build --release` builds only the Rust executable. It is sufficient for
+core development, but the standalone EXE cannot run PP-OCRv5 or Qwen. Do not
+copy that EXE by itself when testing AI features.
 
 #### Cross-Compilation from Linux
 
