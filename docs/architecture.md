@@ -110,6 +110,11 @@ exception type and message to the caller. This keeps model download, Paddle
 runtime, and inference failures diagnosable without running the sidecar
 manually. Bearer tokens and image contents are never logged.
 
+Background model preparation logs the full chained exception before exposing a
+sanitized error through the status endpoint. This is important because PaddleX
+can wrap a missing Python or native dependency in a generic pipeline-creation
+error.
+
 Choosing `engine = "windows"` bypasses PP-OCRv5 entirely. OCR provider
 selection currently requires an application restart because it is loaded from
 `config.toml`, not the runtime settings table.

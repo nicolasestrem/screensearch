@@ -187,6 +187,10 @@ def _prepare_models(components: list[str], ocr_language: str) -> None:
                 ready_components=ready,
             )
     except Exception as error:
+        logger.exception(
+            "Model preparation failed while initializing %s",
+            _preparation_status.current_component,
+        )
         with _preparation_lock:
             _preparation_status = ModelPreparationStatus(
                 state="error",
