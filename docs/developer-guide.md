@@ -243,6 +243,11 @@ PyInstaller executable, prepares the English PP-OCRv5 models, and recognizes a
 generated image. A healthy HTTP endpoint alone is not sufficient for the
 release job to pass.
 
+`sidecar/build.py` also copies distribution metadata for PaddleX OCR
+dependencies. PaddleX validates optional OCR dependencies through
+`importlib.metadata`; bundling only their Python modules causes pipeline
+creation to fail even when the modules are importable.
+
 PowerShell helpers are retained for maintainers working directly on Windows,
 but they are not the primary development or release entrypoints.
 

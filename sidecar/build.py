@@ -5,6 +5,20 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parent
+OCR_METADATA_PACKAGES = (
+    "imagesize",
+    "opencv-contrib-python",
+    "pyclipper",
+    "pypdfium2",
+    "python-bidi",
+    "shapely",
+)
+
+metadata_args = [
+    argument
+    for package in OCR_METADATA_PACKAGES
+    for argument in ("--copy-metadata", package)
+]
 
 subprocess.run(
     [
@@ -23,6 +37,7 @@ subprocess.run(
         "paddlex",
         "--collect-all",
         "sentence_transformers",
+        *metadata_args,
         str(ROOT / "app.py"),
     ],
     cwd=ROOT,

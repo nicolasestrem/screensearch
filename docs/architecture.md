@@ -115,6 +115,11 @@ sanitized error through the status endpoint. This is important because PaddleX
 can wrap a missing Python or native dependency in a generic pipeline-creation
 error.
 
+The PyInstaller directory includes both OCR modules and their distribution
+metadata. PaddleX checks the `ocr` and `ocr-core` optional dependencies through
+`importlib.metadata`, so the metadata is part of the executable runtime
+contract rather than packaging-only documentation.
+
 Choosing `engine = "windows"` bypasses PP-OCRv5 entirely. OCR provider
 selection currently requires an application restart because it is loaded from
 `config.toml`, not the runtime settings table.
