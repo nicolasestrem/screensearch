@@ -157,7 +157,7 @@ Launch configuration (`.vscode/launch.json`):
       "request": "launch",
       "name": "Debug ScreenSearch",
       "cargo": {
-        "args": ["build", "--bin=screen-memories", "--package=screen-memories"]
+        "args": ["build", "--bin=screensearch", "--package=screensearch"]
       },
       "args": [],
       "cwd": "${workspaceFolder}",
@@ -180,8 +180,8 @@ Launch configuration (`.vscode/launch.json`):
 
 ```bash
 # Clone repository
-git clone https://github.com/nicolasestrem/screen-memories.git
-cd screen-memories
+git clone https://github.com/nicolasestrem/screensearch.git
+cd screensearch
 
 # Build all workspace crates
 cargo build
@@ -202,7 +202,7 @@ For first-time setup, the database will be created automatically at `screen_memo
 ScreenSearch uses a Cargo workspace architecture with five crates plus a frontend application.
 
 ```
-screen-memories/
+screensearch/
 ├── Cargo.toml                 # Workspace manifest
 ├── config.toml                # Application configuration
                                   # [storage]: format="jpeg", quality=80, max_width=1920
@@ -1494,7 +1494,7 @@ winget install Microsoft.VisualStudio.2022.BuildTools
 **Solution:**
 ```bash
 # Ensure no other instances running
-tasklist | findstr screen-memories
+tasklist | findstr screensearch
 
 # Remove WAL files
 rm screen_memories.db-wal
@@ -1525,11 +1525,11 @@ rm screen_memories.db-shm
       "cargo": {
         "args": [
           "build",
-          "--bin=screen-memories",
-          "--package=screen-memories"
+          "--bin=screensearch",
+          "--package=screensearch"
         ],
         "filter": {
-          "name": "screen-memories",
+          "name": "screensearch",
           "kind": "bin"
         }
       },
@@ -1566,7 +1566,7 @@ Use Windows Performance Analyzer or Task Manager:
 
 ```powershell
 # Monitor memory usage
-tasklist | findstr screen-memories
+tasklist | findstr screensearch
 ```
 
 #### Performance Checklist

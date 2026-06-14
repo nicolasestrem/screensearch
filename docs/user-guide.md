@@ -151,8 +151,8 @@ cd "C:\Users\nicol\Desktop"
 
 If using Git:
 ```bash
-git clone https://github.com/nicolasestrem/screen-memories.git
-cd screen-memories
+git clone https://github.com/nicolasestrem/screensearch.git
+cd screensearch
 ```
 
 #### Step 2: Build the Backend
@@ -1828,8 +1828,8 @@ VACUUM;
 
 ### Resource Links
 
-- **Project Repository**: [GitHub](https://github.com/nicolasestrem/screen-memories)
-- **Issue Tracker**: [GitHub Issues](https://github.com/nicolasestrem/screen-memories/issues)
+- **Project Repository**: [GitHub](https://github.com/nicolasestrem/screensearch)
+- **Issue Tracker**: [GitHub Issues](https://github.com/nicolasestrem/screensearch/issues)
 - **Rust Documentation**: https://www.rust-lang.org/learn
 - **React Documentation**: https://react.dev/
 - **SQLite Documentation**: https://www.sqlite.org/docs.html

@@ -116,7 +116,7 @@ export const useStore = create<AppStore>()(
       setSidebarCollapsed: (collapsed) => set({ isSidebarCollapsed: collapsed }),
     }),
     {
-      name: 'screen-memories-store',
+      name: 'screensearch-store',
       partialize: (state) => ({
         isDarkMode: state.isDarkMode,
         viewMode: state.viewMode,
