@@ -12,6 +12,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::signal;
 use tokio::sync::broadcast;
@@ -747,8 +748,8 @@ async fn ensure_quality_sidecar(settings: &OcrSettings) -> Option<Child> {
     command
         .env("SCREENSEARCH_AI_SIDECAR_TOKEN", &token)
         .kill_on_drop(true)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -756,6 +757,22 @@ async fn ensure_quality_sidecar(settings: &OcrSettings) -> Option<Child> {
             return None;
         }
     };
+    if let Some(stdout) = child.stdout.take() {
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                info!("Quality sidecar: {}", line);
+            }
+        });
+    }
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                warn!("Quality sidecar: {}", line);
+            }
+        });
+    }
 
     for _ in 0..120 {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;

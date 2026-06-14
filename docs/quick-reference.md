@@ -173,5 +173,5 @@ tag is pushed.
 | Sidecar not ready | Port 3132, bundle path, disk, model network access |
 | Reindex required | Enable embeddings and allow background processing |
 | Semantic search empty | Index coverage and sidecar status |
-| Windows OCR active | PP-OCRv5 sidecar health and request errors |
+| Windows OCR active | Search the app log for `Quality sidecar:` and `PP-OCRv5 request failed` |
 | Generation unavailable | Selected LLM runtime, model, endpoint, API key |

@@ -221,9 +221,17 @@ The warning clears after all OCR frames use the current model contract.
 
 ### Windows OCR fallback is active
 
-This indicates PP-OCRv5 initialization or a request failed. Check the sidecar
-status and logs. Windows OCR is expected only as a fallback unless explicitly
-selected in `config.toml`.
+This indicates PP-OCRv5 initialization or an individual inference request
+failed. Search the ScreenSearch log for `Quality sidecar:` to find the Python
+exception and for `PP-OCRv5 request failed` to find the corresponding client
+error. Model download, Paddle runtime, and unsupported response-shape errors
+are reported there without logging the sidecar token or image contents.
+
+Select **Download / verify** and wait for OCR preparation to become ready. If
+the error persists, preserve the `Quality sidecar:` lines when reporting it.
+ScreenSearch continues capture with Windows OCR when
+`fallback_to_windows = true`; Windows OCR is expected only as a fallback unless
+explicitly selected in `config.toml`.
 
 ## Data Locations
 

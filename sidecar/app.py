@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from functools import lru_cache
@@ -12,6 +13,8 @@ from typing import Annotated, Literal
 import numpy as np
 import torch
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
+from starlette.requests import Request
 from pydantic import BaseModel, Field
 from PIL import Image
 from sentence_transformers import CrossEncoder, SentenceTransformer
@@ -26,6 +29,7 @@ RETRIEVAL_INSTRUCTION = (
 )
 
 app = FastAPI(title="ScreenSearch Quality Sidecar", version="1")
+logger = logging.getLogger("screensearch.sidecar")
 
 
 class EmbeddingRequest(BaseModel):
@@ -133,6 +137,15 @@ def ocr_model(language: str):
         use_doc_orientation_classify=True,
         use_doc_unwarping=False,
         use_textline_orientation=True,
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(_request: Request, error: Exception) -> JSONResponse:
+    logger.exception("Unhandled quality sidecar request failure")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(error).__name__}: {error}"},
     )
 
 
@@ -293,7 +306,7 @@ async def ocr(
     language: Annotated[str, Form()] = "en",
 ) -> OcrResponse:
     raw = await image.read()
-    pixels = np.asarray(Image.open(BytesIO(raw)).convert("RGB"))
+    pixels = np.asarray(Image.open(BytesIO(raw)).convert("RGB")).copy()
     results = ocr_model(language).predict(pixels)
     lines: list[OcrLine] = []
     orientation: float | None = None
@@ -312,11 +325,23 @@ async def ocr(
         texts = payload.get("rec_texts", [])
         scores = payload.get("rec_scores", [])
         boxes = payload.get("rec_boxes", [])
-        orientation = payload.get("doc_preprocessor_res", {}).get(
-            "angle", orientation
-        )
+        preprocessor = payload.get("doc_preprocessor_res")
+        if isinstance(preprocessor, dict):
+            orientation = preprocessor.get("angle", orientation)
         for text, score, box in zip(texts, scores, boxes, strict=False):
-            x1, y1, x2, y2 = [int(value) for value in box]
+            coordinates = np.asarray(box)
+            if coordinates.shape == (4,):
+                x1, y1, x2, y2 = [int(value) for value in coordinates]
+            elif coordinates.ndim == 2 and coordinates.shape[1] == 2:
+                x1 = int(coordinates[:, 0].min())
+                y1 = int(coordinates[:, 1].min())
+                x2 = int(coordinates[:, 0].max())
+                y2 = int(coordinates[:, 1].max())
+            else:
+                logger.warning(
+                    "Ignoring unsupported OCR box shape: %s", coordinates.shape
+                )
+                continue
             lines.append(
                 OcrLine(
                     text=str(text),

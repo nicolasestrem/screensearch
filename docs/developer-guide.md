@@ -235,7 +235,10 @@ Publish the release tag only after validation:
 
 The pushed tag triggers `.github/workflows/release.yml` on a Windows runner.
 That job builds the Windows Python sidecar, Inno Setup installer, portable ZIP,
-checksums, and draft GitHub release.
+checksums, and draft GitHub release. Before packaging, it starts the generated
+PyInstaller executable, prepares the English PP-OCRv5 models, and recognizes a
+generated image. A healthy HTTP endpoint alone is not sufficient for the
+release job to pass.
 
 PowerShell helpers are retained for maintainers working directly on Windows,
 but they are not the primary development or release entrypoints.

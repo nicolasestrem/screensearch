@@ -107,6 +107,107 @@ jobs:
           python sidecar/build.py
         shell: pwsh
 
+      - name: Smoke test packaged PP-OCRv5
+        shell: pwsh
+        run: |
+          $env:SCREENSEARCH_AI_SIDECAR_TOKEN = "release-smoke-test"
+          $stdout = Join-Path $env:RUNNER_TEMP "sidecar-stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "sidecar-stderr.log"
+          $sidecar = Start-Process `
+            -FilePath "sidecar/dist/screensearch-ai-sidecar/screensearch-ai-sidecar.exe" `
+            -PassThru `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr
+          $headers = @{ Authorization = "Bearer $env:SCREENSEARCH_AI_SIDECAR_TOKEN" }
+
+          try {
+            $healthy = $false
+            for ($attempt = 0; $attempt -lt 120; $attempt++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                Invoke-RestMethod -Uri "http://127.0.0.1:3132/health" -Headers $headers | Out-Null
+                $healthy = $true
+                break
+              }
+              catch {
+                if ($sidecar.HasExited) {
+                  throw "Packaged quality sidecar exited before becoming healthy."
+                }
+              }
+            }
+            if (-not $healthy) {
+              throw "Packaged quality sidecar did not become healthy within 60 seconds."
+            }
+
+            $prepareBody = @{
+              components = @("ocr")
+              ocr_language = "en"
+            } | ConvertTo-Json
+            Invoke-RestMethod `
+              -Method Post `
+              -Uri "http://127.0.0.1:3132/v1/models/prepare" `
+              -Headers $headers `
+              -ContentType "application/json" `
+              -Body $prepareBody | Out-Null
+
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 600; $attempt++) {
+              Start-Sleep -Seconds 1
+              $status = Invoke-RestMethod `
+                -Uri "http://127.0.0.1:3132/v1/models/status" `
+                -Headers $headers
+              if ($status.state -eq "ready") {
+                $ready = $true
+                break
+              }
+              if ($status.state -eq "error") {
+                throw "PP-OCRv5 preparation failed: $($status.error)"
+              }
+            }
+            if (-not $ready) {
+              throw "PP-OCRv5 preparation did not finish within 10 minutes."
+            }
+
+            Add-Type -AssemblyName System.Drawing
+            $imagePath = Join-Path $env:RUNNER_TEMP "ocr-smoke-test.png"
+            $bitmap = New-Object System.Drawing.Bitmap 640, 160
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            try {
+              $graphics.Clear([System.Drawing.Color]::White)
+              $font = New-Object System.Drawing.Font "Arial", 32
+              $graphics.DrawString(
+                "ScreenSearch OCR smoke test",
+                $font,
+                [System.Drawing.Brushes]::Black,
+                20,
+                45
+              )
+              $bitmap.Save($imagePath, [System.Drawing.Imaging.ImageFormat]::Png)
+            }
+            finally {
+              $graphics.Dispose()
+              $bitmap.Dispose()
+            }
+
+            $response = Invoke-RestMethod `
+              -Method Post `
+              -Uri "http://127.0.0.1:3132/v1/ocr" `
+              -Headers $headers `
+              -Form @{ image = (Get-Item $imagePath); language = "en" }
+            if ($response.provider -ne "ppocr-v5" -or $response.lines.Count -eq 0) {
+              throw "Packaged PP-OCRv5 returned no recognized lines."
+            }
+          }
+          finally {
+            if (-not $sidecar.HasExited) {
+              Stop-Process -Id $sidecar.Id -Force
+            }
+            Write-Host "--- quality sidecar stdout ---"
+            if (Test-Path $stdout) { Get-Content $stdout }
+            Write-Host "--- quality sidecar stderr ---"
+            if (Test-Path $stderr) { Get-Content $stderr }
+          }
+
       - name: Download VC++ Redistributable
         run: |
           Write-Host "Downloading Visual C++ 2015-2022 Redistributable..."

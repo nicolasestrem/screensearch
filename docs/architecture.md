@@ -104,6 +104,12 @@ fallback. It is used when:
 - the sidecar is unavailable during OCR initialization; or
 - an individual PP-OCR request fails.
 
+Sidecar stdout and stderr are forwarded into the main ScreenSearch log with a
+`Quality sidecar:` prefix. Authenticated sidecar failures also return the
+exception type and message to the caller. This keeps model download, Paddle
+runtime, and inference failures diagnosable without running the sidecar
+manually. Bearer tokens and image contents are never logged.
+
 Choosing `engine = "windows"` bypasses PP-OCRv5 entirely. OCR provider
 selection currently requires an application restart because it is loaded from
 `config.toml`, not the runtime settings table.
