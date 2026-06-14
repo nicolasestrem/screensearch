@@ -239,6 +239,7 @@ jobs:
       - name: Create Portable ZIP
         run: |
           $version = $env:RELEASE_VERSION
+          Remove-Item target/release/bin -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path target/release/bin
           Copy-Item sidecar/dist/screensearch-ai-sidecar target/release/bin/ -Recurse
           Compress-Archive -Path target/release/screensearch.exe, target/release/bin, config.toml, LICENSE, README.md `

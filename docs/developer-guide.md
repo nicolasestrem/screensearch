@@ -226,6 +226,9 @@ Build and download complete Windows artifacts without publishing a tag:
 
 The helper matches the dispatched workflow by branch, commit SHA, and dispatch
 time so an earlier successful run cannot be mistaken for the new build.
+The Windows workflow recreates its portable staging directory after restoring
+build caches, preventing stale sidecar files from contaminating or blocking a
+new archive.
 
 The installer, portable ZIP, and checksums are downloaded under
 `target/x86_64-pc-windows-msvc/release/bundles/windows-full/`.
