@@ -20,14 +20,14 @@ the executable is written under
 Repository debug builds also search this `dist/` path. A Cargo build does not
 install Python dependencies or build the sidecar automatically.
 
-For a complete local Windows build, run:
+For a complete native Linux development build, run:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1
+```bash
+./scripts/build-local.sh
 ```
 
-Run `target\release\screensearch-local\screensearch.exe` and keep its `bin`
-directory beside it.
+Windows sidecars are built on the Windows GitHub Actions release runner because
+Linux PyInstaller output is not Windows-compatible.
 
 Model management endpoints:
 

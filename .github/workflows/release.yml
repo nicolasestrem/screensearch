@@ -209,7 +209,7 @@ jobs:
 
             **Quality Installer**
             - Includes the managed local PP-OCRv5/Qwen inference sidecar
-            - Downloads selected models on first use
+            - Prepares selected models from Settings with **Download / verify**
             - Supports CPU and compatible GPU acceleration
 
             **Portable ZIP**
@@ -247,8 +247,8 @@ jobs:
 
             Verify download integrity with SHA256 checksums:
 
-            ```powershell
-            Get-FileHash ScreenSearch-v${{ steps.get_version.outputs.VERSION }}-Setup-Quality.exe -Algorithm SHA256
+            ```bash
+            sha256sum ScreenSearch-v${{ steps.get_version.outputs.VERSION }}-Setup-Quality.exe
             ```
 
             Compare output with `checksums.txt` in release assets.

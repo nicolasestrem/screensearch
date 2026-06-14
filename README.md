@@ -232,16 +232,16 @@ Powerful logging and diagnostics. Watch ScreenSearch initialize, start capture l
 git clone https://github.com/nicolasestrem/screensearch.git
 cd screensearch
 
-# Build the complete local app, including PP-OCRv5 and Qwen runtime
-powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1
+# Build the native Linux development bundle, including the AI sidecar
+./scripts/build-local.sh --release
 
-# Run the assembled app (starts API on localhost:3131)
-.\target\release\screensearch-local\screensearch.exe
+# Run the assembled Linux app (starts API on localhost:3131)
+./target/release/screensearch-local/screensearch
 ```
 
-`cargo build --release` builds only the Rust executable. It is sufficient for
-core development, but the standalone EXE cannot run PP-OCRv5 or Qwen. Do not
-copy that EXE by itself when testing AI features.
+The Linux bundle is for development. Windows releases are prepared from Linux
+with `./scripts/build-release.sh <version>` and packaged by the Windows GitHub
+Actions runner after the version tag is published.
 
 #### Cross-Compilation from Linux
 
@@ -253,8 +253,8 @@ cargo install cargo-xwin
 rustup target add x86_64-pc-windows-msvc
 sudo apt-get install -y clang lld llvm  # Ubuntu/Debian
 
-# Build Windows executable from Linux
-cargo xwin build --release --target x86_64-pc-windows-msvc
+# Validate and build the Windows executable from Linux
+./scripts/build-release.sh 0.4.35
 
 # Binary will be at: target/x86_64-pc-windows-msvc/release/screensearch.exe
 ```

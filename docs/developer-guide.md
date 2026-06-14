@@ -130,27 +130,27 @@ Supported runtimes:
 The local model-management routes belong to generation only. They must not be
 used as quality-sidecar status.
 
-## Sidecar Build
+## Local Linux Build
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1
+```bash
+./scripts/build-local.sh
 ```
 
 Output:
 
 ```text
-target/release/screensearch-local/
-  screensearch.exe
+target/debug/screensearch-local/
+  screensearch
   bin/screensearch-ai-sidecar/
 ```
 
-The script builds the dashboard, Rust executable, and PyInstaller on-directory
-sidecar, then assembles the same runtime layout used by portable releases.
-Installer and portable packaging must preserve that directory structure.
-
-Use `-Debug` for `target/debug/screensearch-local`. Use
-`-SkipDependencyInstall` only after the pinned sidecar requirements are already
+The script builds the dashboard, native Linux Rust executable, and native Linux
+PyInstaller sidecar. Use `--release` for `target/release/screensearch-local`.
+Use `--skip-sidecar-deps` only after the pinned Python requirements are already
 installed.
+
+This development bundle is not a Windows distributable. Linux cannot produce a
+valid Windows PyInstaller sidecar.
 
 ## Tests And Quality
 
@@ -208,11 +208,28 @@ The release workflow:
 5. creates the portable ZIP;
 6. publishes checksums.
 
-Use:
+From Linux, validate and cross-compile with:
 
-```powershell
-.\scripts\build-release.ps1 -Version 0.4.35
+```bash
+./scripts/build-release.sh 0.4.35
 ```
+
+This produces an explicitly labeled Windows core-preview ZIP under
+`target/x86_64-pc-windows-msvc/release/bundles/`. It is useful for checking the
+cross-compiled executable but does not contain the Windows sidecar.
+
+Publish the release tag only after validation:
+
+```bash
+./scripts/build-release.sh 0.4.35 --publish
+```
+
+The pushed tag triggers `.github/workflows/release.yml` on a Windows runner.
+That job builds the Windows Python sidecar, Inno Setup installer, portable ZIP,
+checksums, and draft GitHub release.
+
+PowerShell helpers are retained for maintainers working directly on Windows,
+but they are not the primary development or release entrypoints.
 
 Models are not stored in the installer. They are prepared from Settings or
 downloaded on first model use and can consume up to 5 GB.

@@ -196,12 +196,11 @@ diagnosis, run `npm run build` directly and confirm it succeeds.
 
 - Confirm the installer contains
   `bin/screensearch-ai-sidecar/screensearch-ai-sidecar.exe`.
-- For a source build, run
-  `powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1`, then use
-  `target\release\screensearch-local\screensearch.exe`.
-- A successful `cargo build` does not build the Python runtime. Copying
-  `target\release\screensearch.exe` by itself produces a core-only app that
-  uses Windows OCR fallback and cannot download Qwen models.
+- For Linux development, run `./scripts/build-local.sh --release`, then use
+  `target/release/screensearch-local/screensearch`.
+- For Windows, use the installer or portable ZIP produced by the release
+  workflow. A cross-compiled `screensearch.exe` by itself is core-only and
+  cannot download Qwen models.
 - Confirm port `3132` is not occupied by another process.
 - Check available disk space.
 - Check outbound access to Hugging Face and Paddle model hosts.
@@ -246,7 +245,7 @@ The button is available only when the quality runtime is running. If the panel
 shows **Quality runtime unavailable**, install or build the sidecar first; no
 Qwen download can start without it.
 
-The complete source-build directory has this layout:
+The packaged Windows directory has this layout:
 
 ```text
 target\release\screensearch-local\
@@ -254,4 +253,5 @@ target\release\screensearch-local\
   bin\screensearch-ai-sidecar\screensearch-ai-sidecar.exe
 ```
 
-Keep the `bin` directory beside `screensearch.exe` when moving the app.
+Keep the `bin` directory beside `screensearch.exe` when moving the portable
+app. Linux development bundles use the same layout without `.exe` suffixes.

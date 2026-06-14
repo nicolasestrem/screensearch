@@ -134,18 +134,26 @@ python evaluation/evaluate.py evaluation/results.jsonl
 Install UI dependencies before Cargo. The API build script rebuilds changed
 frontend sources before embedding `screensearch-ui/dist/`.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1
+```bash
+./scripts/build-local.sh --release
 ```
 
-The runnable output is:
+The native Linux development output is:
 
 ```text
-target/release/screensearch-local/screensearch.exe
+target/release/screensearch-local/screensearch
 target/release/screensearch-local/bin/screensearch-ai-sidecar/
 ```
 
-`cargo build --release` alone does not create this complete AI runtime layout.
+Prepare a Windows release from Linux with:
+
+```bash
+./scripts/build-release.sh 0.4.35
+./scripts/build-release.sh 0.4.35 --publish
+```
+
+The Windows CI runner creates the distributable sidecar and installer after the
+tag is pushed.
 
 ## Key Paths
 

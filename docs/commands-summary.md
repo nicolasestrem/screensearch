@@ -11,7 +11,8 @@ cd ..
 cargo check
 cargo build
 cargo build --release --locked
-powershell -ExecutionPolicy Bypass -File scripts\build-local.ps1
+./scripts/build-local.sh
+./scripts/build-local.sh --release
 ```
 
 Build the UI before Rust because the production assets are embedded into
@@ -117,9 +118,26 @@ python evaluation/evaluate.py evaluation/results.jsonl
 
 ## Release
 
-```powershell
-.\scripts\build-release.ps1 -Version 0.4.35
+```bash
+./scripts/build-release.sh 0.4.35
+./scripts/build-release.sh 0.4.35 --publish
 ```
+
+The first command validates and cross-compiles from Linux. `--publish` creates
+and pushes `v0.4.35`, which triggers the Windows GitHub Actions runner to build
+the sidecar, installer, portable ZIP, checksums, and draft release.
+
+The validation command also creates a clearly labeled core preview:
+
+```text
+target/x86_64-pc-windows-msvc/release/bundles/
+  ScreenSearch-v0.4.35-Windows-Core-Preview.zip
+```
+
+It does not contain the Windows AI sidecar.
+
+The existing PowerShell scripts remain available for direct Windows use. Linux
+development and release preparation should use the Bash entrypoints above.
 
 The release build includes the sidecar directory. Prepare uncached model
 weights from Settings or `POST /api/embeddings/models/prepare`.

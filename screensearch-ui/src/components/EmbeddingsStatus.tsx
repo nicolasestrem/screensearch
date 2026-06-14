@@ -193,9 +193,9 @@ export function EmbeddingsStatus() {
                         <p className="font-medium text-destructive">Quality runtime unavailable</p>
                         <p className="text-xs text-muted-foreground mt-1">{status.error}</p>
                         <p className="text-xs text-muted-foreground mt-2">
-                            A standalone EXE does not contain the AI runtime. Build a complete local
-                            directory with <span className="font-mono">scripts\build-local.ps1</span>,
-                            or use the installer.
+                            A standalone EXE does not contain the AI runtime. Use a packaged Windows
+                            release, or build the native Linux development bundle with{' '}
+                            <span className="font-mono">scripts/build-local.sh</span>.
                         </p>
                     </div>
                 )}

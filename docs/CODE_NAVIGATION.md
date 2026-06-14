@@ -74,8 +74,12 @@
 | Sidecar Python dependencies | `sidecar/requirements.txt` |
 | Sidecar PyInstaller build | `sidecar/build.py` |
 | Inno Setup installer | `installer/screensearch.iss` |
-| Local release build | `scripts/build-release.ps1` |
-| Complete local Windows build | `scripts/build-local.ps1` |
+| Linux development bundle | `scripts/build-local.sh` |
+| Linux release preparation | `scripts/build-release.sh` |
+| API smoke test | `scripts/verify-api.sh` |
+| Windows local bundle helper | `scripts/build-local.ps1` |
+| Windows release helper | `scripts/build-release.ps1` |
+| Windows checksum/signing helpers | `scripts/generate-checksums.ps1`, `scripts/sign-binary.ps1` |
 | GitHub release build | `.github/workflows/release.yml` |
 | Quality gates | `.github/workflows/quality.yml` |
 

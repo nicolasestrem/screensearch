@@ -18,39 +18,34 @@ rustup target add x86_64-pc-windows-msvc
 
 ## Build
 
-Build the frontend first because it is embedded into the API crate:
+Use the repository release script:
 
 ```bash
-cd screensearch-ui
-npm ci
-npm run build
-cd ..
-
-cargo xwin build --release \
-  --target x86_64-pc-windows-msvc \
-  --locked
+./scripts/build-release.sh 0.4.35
 ```
 
 Output:
 
 ```text
 target/x86_64-pc-windows-msvc/release/screensearch.exe
+target/x86_64-pc-windows-msvc/release/bundles/
+  ScreenSearch-v0.4.35-Windows-Core-Preview.zip
 ```
 
-## Sidecar
+The preview ZIP contains the cross-compiled core executable, configuration,
+license, and README. It does not contain the Windows AI sidecar.
 
-The Python sidecar is not cross-compiled by Cargo. Build it on Windows:
+## Sidecar And Installer
 
-```powershell
-python -m pip install -r sidecar\requirements.txt
-python sidecar\build.py
+Linux PyInstaller cannot emit the Windows sidecar. Publishing the validated tag
+delegates platform-specific packaging to the Windows GitHub Actions runner:
+
+```bash
+./scripts/build-release.sh 0.4.35 --publish
 ```
 
-Output:
-
-```text
-sidecar\dist\screensearch-ai-sidecar\
-```
+The runner builds the Windows sidecar, Inno Setup installer, portable ZIP,
+checksums, and draft GitHub release.
 
 The final application layout must include:
 
