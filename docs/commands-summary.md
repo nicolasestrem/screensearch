@@ -120,12 +120,14 @@ python evaluation/evaluate.py evaluation/results.jsonl
 
 ```bash
 ./scripts/build-release.sh 0.4.35
+./scripts/build-release.sh 0.4.35 --windows-bundle
 ./scripts/build-release.sh 0.4.35 --publish
 ```
 
-The first command validates and cross-compiles from Linux. `--publish` creates
-and pushes `v0.4.35`, which triggers the Windows GitHub Actions runner to build
-the sidecar, installer, portable ZIP, checksums, and draft release.
+The first command validates and cross-compiles from Linux. `--windows-bundle`
+runs Windows packaging in GitHub Actions and downloads the installer, portable
+ZIP, and checksums without creating a release. `--publish` creates and pushes
+`v0.4.35`, producing a draft release.
 
 The validation command also creates a clearly labeled core preview:
 

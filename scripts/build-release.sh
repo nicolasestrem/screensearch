@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="x86_64-pc-windows-msvc"
 PUBLISH=0
+WINDOWS_BUNDLE=0
 CLEAN=0
 SKIP_CHECKS=0
 
@@ -18,6 +19,8 @@ tag-triggered GitHub Actions release workflow.
 
 Options:
   --publish       Create and push tag vVERSION after validation.
+  --windows-bundle
+                  Run Windows packaging in GitHub Actions and download it.
   --clean         Remove the cross-compiled release directory first.
   --skip-checks   Skip tests and frontend lint.
   -h, --help      Show this help.
@@ -41,6 +44,9 @@ while (($#)); do
   case "$1" in
     --publish)
       PUBLISH=1
+      ;;
+    --windows-bundle)
+      WINDOWS_BUNDLE=1
       ;;
     --clean)
       CLEAN=1
@@ -77,6 +83,11 @@ fi
 if ((PUBLISH)) && [[ -n "$(git status --porcelain)" ]]; then
   echo "Release preparation requires a clean worktree" >&2
   exit 1
+fi
+
+if ((PUBLISH && WINDOWS_BUNDLE)); then
+  echo "Use either --publish or --windows-bundle, not both" >&2
+  exit 2
 fi
 
 if ! command -v cargo-xwin >/dev/null 2>&1 && ! cargo xwin --version >/dev/null 2>&1; then
@@ -139,7 +150,51 @@ echo "[5/5] Release preparation complete"
 ls -lh "$binary"
 ls -lh "$bundle"
 
-if ((PUBLISH)); then
+if ((WINDOWS_BUNDLE)); then
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "GitHub CLI is required for --windows-bundle" >&2
+    exit 1
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    echo "GitHub CLI is not authenticated. Run: gh auth login" >&2
+    exit 1
+  fi
+
+  branch="$(git branch --show-current)"
+  echo
+  echo "Triggering Windows bundle build for $branch"
+  gh workflow run release.yml \
+    --ref "$branch" \
+    -f "version=$VERSION" \
+    -f publish_release=false
+
+  run_id=""
+  for _ in {1..20}; do
+    run_id="$(gh run list \
+      --workflow release.yml \
+      --branch "$branch" \
+      --event workflow_dispatch \
+      --limit 1 \
+      --json databaseId \
+      --jq '.[0].databaseId // empty')"
+    [[ -n "$run_id" ]] && break
+    sleep 3
+  done
+  if [[ -z "$run_id" ]]; then
+    echo "Could not locate the dispatched Windows build" >&2
+    exit 1
+  fi
+
+  gh run watch "$run_id" --exit-status
+  full_bundle_dir="$bundle_dir/windows-full"
+  rm -rf "$full_bundle_dir"
+  mkdir -p "$full_bundle_dir"
+  gh run download "$run_id" \
+    --name release-artifacts \
+    --dir "$full_bundle_dir"
+  echo
+  echo "Full Windows artifacts: $full_bundle_dir"
+elif ((PUBLISH)); then
   tag="v$VERSION"
   if git rev-parse "$tag" >/dev/null 2>&1; then
     echo "Tag $tag already exists" >&2
@@ -153,6 +208,8 @@ if ((PUBLISH)); then
 else
   echo
   echo "The core-preview ZIP does not contain the Windows AI sidecar."
-  echo "Run again with --publish to trigger the authoritative Windows release:"
+  echo "Build and download full Windows artifacts without publishing a tag:"
+  echo "  ./scripts/build-release.sh $VERSION --windows-bundle"
+  echo "Or publish the release tag:"
   echo "  ./scripts/build-release.sh $VERSION --publish"
 fi

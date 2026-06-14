@@ -41,11 +41,13 @@ Linux PyInstaller cannot emit the Windows sidecar. Publishing the validated tag
 delegates platform-specific packaging to the Windows GitHub Actions runner:
 
 ```bash
+./scripts/build-release.sh 0.4.35 --windows-bundle
 ./scripts/build-release.sh 0.4.35 --publish
 ```
 
-The runner builds the Windows sidecar, Inno Setup installer, portable ZIP,
-checksums, and draft GitHub release.
+`--windows-bundle` downloads the installer, portable ZIP, and checksums without
+publishing. `--publish` additionally creates the release tag and draft GitHub
+release.
 
 The final application layout must include:
 

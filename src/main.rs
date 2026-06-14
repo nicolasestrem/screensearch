@@ -722,13 +722,14 @@ async fn ensure_quality_sidecar(settings: &OcrSettings) -> Option<Child> {
                 .join(filename),
         );
     }
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("sidecar")
-            .join("dist")
-            .join("screensearch-ai-sidecar")
-            .join(filename),
-    );
+    let manifest_sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("sidecar")
+        .join("dist")
+        .join("screensearch-ai-sidecar")
+        .join(filename);
+    if manifest_sidecar.exists() {
+        candidates.push(manifest_sidecar);
+    }
     let sidecar_path = candidates.iter().find(|path| path.exists()).cloned();
     let Some(sidecar_path) = sidecar_path else {
         warn!(

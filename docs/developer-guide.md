@@ -218,6 +218,15 @@ This produces an explicitly labeled Windows core-preview ZIP under
 `target/x86_64-pc-windows-msvc/release/bundles/`. It is useful for checking the
 cross-compiled executable but does not contain the Windows sidecar.
 
+Build and download complete Windows artifacts without publishing a tag:
+
+```bash
+./scripts/build-release.sh 0.4.35 --windows-bundle
+```
+
+The installer, portable ZIP, and checksums are downloaded under
+`target/x86_64-pc-windows-msvc/release/bundles/windows-full/`.
+
 Publish the release tag only after validation:
 
 ```bash

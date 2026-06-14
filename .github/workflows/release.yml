@@ -4,6 +4,18 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to use in artifact names
+        required: true
+        default: '0.4.35'
+        type: string
+      publish_release:
+        description: Create a draft GitHub release
+        required: true
+        default: false
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,6 +29,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ inputs.version }}"
+          }
+          else {
+            $version = "${{ github.ref_name }}" -replace '^v', ''
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Invalid release version: $version"
+          }
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Setup Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -102,8 +128,7 @@ jobs:
 
       - name: Build Installer
         run: |
-          # Extract version from git tag
-          $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
+          $version = $env:RELEASE_VERSION
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" installer\screensearch.iss
 
           Move-Item "target\release\installers\ScreenSearch-v$version-Setup.exe" `
@@ -112,8 +137,7 @@ jobs:
 
       - name: Create Portable ZIP
         run: |
-          # Extract version from git tag
-          $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
+          $version = $env:RELEASE_VERSION
           New-Item -ItemType Directory -Force -Path target/release/bin
           Copy-Item sidecar/dist/screensearch-ai-sidecar target/release/bin/ -Recurse
           Compress-Archive -Path target/release/screensearch.exe, target/release/bin, config.toml, LICENSE, README.md `
@@ -149,6 +173,7 @@ jobs:
   create-release:
     name: Create GitHub Release
     needs: build-release
+    if: ${{ github.event_name == 'push' || inputs.publish_release }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -165,13 +190,20 @@ jobs:
 
       - name: Extract version from tag
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=$DISPATCH_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Extract Changelog
         id: changelog
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
-
           # Extract version section from CHANGELOG.md
           CHANGELOG_SECTION=$(awk '
             /^## \['"$VERSION"'\]/ { found=1; next }
