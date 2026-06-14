@@ -704,7 +704,7 @@ async fn ensure_quality_sidecar(settings: &OcrSettings) -> Option<Child> {
     } else {
         "screensearch-ai-sidecar"
     };
-    let candidates = [
+    let mut candidates = vec![
         exe_dir.join(filename),
         exe_dir.join("bin").join(filename),
         exe_dir.join("screensearch-ai-sidecar").join(filename),
@@ -713,9 +713,34 @@ async fn ensure_quality_sidecar(settings: &OcrSettings) -> Option<Child> {
             .join("screensearch-ai-sidecar")
             .join(filename),
     ];
-    let sidecar_path = candidates.into_iter().find(|path| path.exists());
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(
+            current_dir
+                .join("sidecar")
+                .join("dist")
+                .join("screensearch-ai-sidecar")
+                .join(filename),
+        );
+    }
+    if cfg!(debug_assertions) {
+        candidates.push(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("sidecar")
+                .join("dist")
+                .join("screensearch-ai-sidecar")
+                .join(filename),
+        );
+    }
+    let sidecar_path = candidates.iter().find(|path| path.exists()).cloned();
     let Some(sidecar_path) = sidecar_path else {
-        warn!("Quality sidecar binary not found; Windows OCR fallback will be used");
+        warn!(
+            "Quality sidecar binary not found; searched: {}. Build it with `python sidecar/build.py` or use the installer. Windows OCR fallback will be used",
+            candidates
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         return None;
     };
 
@@ -938,24 +963,7 @@ fn main() -> Result<()> {
 
     tray_menu.append_items(&[&open_item, &PredefinedMenuItem::separator(), &quit_item])?;
 
-    // Load icon from assets - try multiple locations for installed vs development
-    let icon_path = if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let installed_icon = exe_dir.join("assets").join("icon.png");
-            if installed_icon.exists() {
-                installed_icon
-            } else {
-                // Development fallback
-                PathBuf::from("assets/icon.png")
-            }
-        } else {
-            PathBuf::from("assets/icon.png")
-        }
-    } else {
-        PathBuf::from("assets/icon.png")
-    };
-
-    let icon = match image::open(&icon_path) {
+    let icon = match image::load_from_memory(include_bytes!("../assets/icon.png")) {
         Ok(img) => {
             let rgba = img.into_rgba8();
             let (width, height) = rgba.dimensions();
@@ -966,7 +974,7 @@ fn main() -> Result<()> {
             })
         }
         Err(e) => {
-            error!("Failed to load icon from {:?}: {}", icon_path, e);
+            error!("Failed to load embedded tray icon: {}", e);
             // Fallback to white square
             tray_icon::Icon::from_rgba(vec![255u8; 4 * 32 * 32], 32, 32).unwrap()
         }

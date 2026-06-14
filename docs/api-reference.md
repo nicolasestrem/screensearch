@@ -97,6 +97,12 @@ Example response:
   "dimension": 1024,
   "reindex_required": false,
   "sidecar_ready": true,
+  "model_preparation": {
+    "state": "ready",
+    "current_component": null,
+    "ready_components": ["ocr", "embeddings", "reranker"],
+    "error": null
+  },
   "error": null,
   "total_frames": 1523,
   "frames_with_embeddings": 890,
@@ -107,6 +113,18 @@ Example response:
 
 `total_frames` counts frames with OCR text. `reindex_required` remains true
 until all eligible frames use the active model contract.
+
+### `POST /embeddings/models/prepare`
+
+Starts background download and initialization of the fixed quality models:
+
+```bash
+curl -X POST "http://127.0.0.1:3131/api/embeddings/models/prepare"
+```
+
+Poll `GET /embeddings/status` while `model_preparation.state` is `preparing`.
+A missing sidecar returns an HTTP error rather than reporting a successful
+download.
 
 ### `POST /embeddings/enable`
 
@@ -233,7 +251,8 @@ generation provider; it does not test PP-OCRv5 or Qwen retrieval.
 
 Returns progress for managed generation-model and llama-server downloads.
 Quality-sidecar model downloads currently use the Hugging Face and Paddle
-caches and are reported through sidecar readiness rather than this endpoint.
+caches and are reported through `model_preparation` on
+`GET /embeddings/status`, rather than this endpoint.
 
 ## Automation
 

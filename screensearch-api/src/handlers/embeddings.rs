@@ -6,6 +6,7 @@
 use crate::error::Result;
 use crate::state::AppState;
 use axum::extract::{Json, State};
+use screensearch_embeddings::ModelPreparationStatus;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::debug;
@@ -24,6 +25,7 @@ pub struct EmbeddingStatusResponse {
     pub dimension: i64,
     pub reindex_required: bool,
     pub sidecar_ready: bool,
+    pub model_preparation: Option<ModelPreparationStatus>,
     pub error: Option<String>,
     pub total_frames: i64,
     pub frames_with_embeddings: i64,
@@ -57,7 +59,14 @@ pub async fn get_embedding_status(
 ) -> Result<Json<EmbeddingStatusResponse>> {
     debug!("Getting embedding status");
 
-    let sidecar_error = state.get_embedding_engine().await.err();
+    let (sidecar_ready, model_preparation, sidecar_error) = match state.get_embedding_engine().await
+    {
+        Ok(engine) => match engine.model_preparation_status().await {
+            Ok(preparation) => (true, Some(preparation), None),
+            Err(error) => (false, None, Some(error.to_string())),
+        },
+        Err(error) => (false, None, Some(error)),
+    };
     let status = state.db.get_embedding_status().await?;
 
     Ok(Json(EmbeddingStatusResponse {
@@ -67,13 +76,30 @@ pub async fn get_embedding_status(
         model_version: status.model_version,
         dimension: status.dimension,
         reindex_required: status.reindex_required,
-        sidecar_ready: sidecar_error.is_none(),
+        sidecar_ready,
+        model_preparation,
         error: sidecar_error,
         total_frames: status.total_frames,
         frames_with_embeddings: status.frames_with_embeddings,
         coverage_percent: status.coverage_percent,
         last_processed_frame_id: status.last_processed_frame_id,
     }))
+}
+
+/// POST /embeddings/models/prepare
+/// Download and initialize the fixed OCR, embedding, and reranking models.
+pub async fn prepare_quality_models(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ModelPreparationStatus>> {
+    let engine = state
+        .get_embedding_engine()
+        .await
+        .map_err(crate::error::AppError::Internal)?;
+    let status = engine
+        .prepare_models()
+        .await
+        .map_err(|error| crate::error::AppError::Internal(error.to_string()))?;
+    Ok(Json(status))
 }
 
 /// POST /embeddings/generate

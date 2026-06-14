@@ -174,6 +174,7 @@ fn ai_routes() -> Router<Arc<AppState>> {
 fn embeddings_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/status", get(handlers::get_embedding_status))
+        .route("/models/prepare", post(handlers::prepare_quality_models))
         .route("/generate", post(handlers::generate_embeddings))
         .route("/enable", post(handlers::toggle_embeddings))
 }

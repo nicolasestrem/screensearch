@@ -120,13 +120,15 @@ failure.
 2. Start the application.
 3. Confirm `GET /api/embeddings/status` reports the Qwen model and dimension
    1024.
-4. Capture English, multilingual, terminal, and small-font screens.
-5. Confirm PP-OCRv5 metadata is stored.
-6. Enable embeddings and wait for coverage to increase.
-7. Compare `fts`, `semantic`, and `hybrid` searches.
-8. Generate an answer and verify source frame IDs.
-9. Stop the sidecar and verify degraded status plus Windows OCR fallback.
-10. Restart and confirm indexing resumes.
+4. Start `POST /api/embeddings/models/prepare`, poll status, and confirm each
+   quality component reaches `ready`.
+5. Capture English, multilingual, terminal, and small-font screens.
+6. Confirm PP-OCRv5 metadata is stored.
+7. Enable embeddings and wait for coverage to increase.
+8. Compare `fts`, `semantic`, and `hybrid` searches.
+9. Generate an answer and verify source frame IDs.
+10. Stop the sidecar and verify degraded status plus Windows OCR fallback.
+11. Restart and confirm indexing resumes.
 
 ## CI
 

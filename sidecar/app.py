@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from functools import lru_cache
 from io import BytesIO
 from typing import Annotated, Literal
@@ -74,6 +75,25 @@ class OcrResponse(BaseModel):
     lines: list[OcrLine]
 
 
+class ModelPreparationRequest(BaseModel):
+    components: list[Literal["ocr", "embeddings", "reranker"]] = Field(
+        default_factory=lambda: ["ocr", "embeddings", "reranker"],
+        min_length=1,
+    )
+    ocr_language: str = "en"
+
+
+class ModelPreparationStatus(BaseModel):
+    state: Literal["idle", "preparing", "ready", "error"]
+    current_component: str | None = None
+    ready_components: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+_preparation_lock = threading.Lock()
+_preparation_status = ModelPreparationStatus(state="idle")
+
+
 def authorize(authorization: Annotated[str | None, Header()] = None) -> None:
     expected = os.getenv("SCREENSEARCH_AI_SIDECAR_TOKEN")
     if expected and authorization != f"Bearer {expected}":
@@ -125,6 +145,77 @@ def health() -> dict[str, object]:
         "reranker_model": RERANKER_MODEL,
         "embedding_dimension": EMBEDDING_DIMENSION,
     }
+
+
+def _prepare_models(components: list[str], ocr_language: str) -> None:
+    global _preparation_status
+
+    ready: list[str] = []
+    try:
+        for component in components:
+            with _preparation_lock:
+                _preparation_status = ModelPreparationStatus(
+                    state="preparing",
+                    current_component=component,
+                    ready_components=ready,
+                )
+
+            if component == "ocr":
+                ocr_model(ocr_language)
+            elif component == "embeddings":
+                embedding_model()
+            elif component == "reranker":
+                reranker_model()
+            ready.append(component)
+
+        with _preparation_lock:
+            _preparation_status = ModelPreparationStatus(
+                state="ready",
+                ready_components=ready,
+            )
+    except Exception as error:
+        with _preparation_lock:
+            _preparation_status = ModelPreparationStatus(
+                state="error",
+                current_component=_preparation_status.current_component,
+                ready_components=ready,
+                error=str(error),
+            )
+
+
+@app.get(
+    "/v1/models/status",
+    response_model=ModelPreparationStatus,
+    dependencies=[Depends(authorize)],
+)
+def model_preparation_status() -> ModelPreparationStatus:
+    with _preparation_lock:
+        return _preparation_status.model_copy(deep=True)
+
+
+@app.post(
+    "/v1/models/prepare",
+    response_model=ModelPreparationStatus,
+    dependencies=[Depends(authorize)],
+)
+def prepare_models(request: ModelPreparationRequest) -> ModelPreparationStatus:
+    global _preparation_status
+
+    with _preparation_lock:
+        if _preparation_status.state == "preparing":
+            return _preparation_status.model_copy(deep=True)
+        _preparation_status = ModelPreparationStatus(
+            state="preparing",
+            current_component=request.components[0],
+        )
+
+    threading.Thread(
+        target=_prepare_models,
+        args=(request.components, request.ocr_language),
+        daemon=True,
+        name="model-preparation",
+    ).start()
+    return _preparation_status.model_copy(deep=True)
 
 
 @app.post(

@@ -577,7 +577,7 @@ export function SettingsPanel() {
                       </div>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Models download on first use through the loopback quality sidecar and can use up to 5 GB.
+                      Use Download / verify below to prepare the fixed local OCR and RAG models. They can use up to 5 GB.
                     </p>
                   </div>
 

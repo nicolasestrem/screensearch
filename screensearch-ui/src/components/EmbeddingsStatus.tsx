@@ -1,6 +1,13 @@
 import { useState, useEffect } from 'react';
-import { Brain, RefreshCw, Check, X, AlertTriangle } from 'lucide-react';
+import { Brain, RefreshCw, Check, X, AlertTriangle, Download } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+
+interface ModelPreparationStatus {
+    state: 'idle' | 'preparing' | 'ready' | 'error';
+    current_component?: string;
+    ready_components: string[];
+    error?: string;
+}
 
 interface EmbeddingStatus {
     enabled: boolean;
@@ -10,6 +17,7 @@ interface EmbeddingStatus {
     dimension: number;
     reindex_required: boolean;
     sidecar_ready: boolean;
+    model_preparation?: ModelPreparationStatus;
     error?: string;
     total_frames: number;
     frames_with_embeddings: number;
@@ -21,6 +29,7 @@ export function EmbeddingsStatus() {
     const [status, setStatus] = useState<EmbeddingStatus | null>(null);
     const [loading, setLoading] = useState(false);
     const [generating, setGenerating] = useState(false);
+    const [preparingModels, setPreparingModels] = useState(false);
     const [selectedPercentage, setSelectedPercentage] = useState<25 | 50 | 100>(50);
 
     const fetchStatus = async () => {
@@ -41,6 +50,16 @@ export function EmbeddingsStatus() {
     useEffect(() => {
         fetchStatus();
     }, []);
+
+    useEffect(() => {
+        if (status?.model_preparation?.state !== 'preparing') {
+            setPreparingModels(false);
+            return;
+        }
+        setPreparingModels(true);
+        const timer = window.setInterval(fetchStatus, 2000);
+        return () => window.clearInterval(timer);
+    }, [status?.model_preparation?.state]);
 
     const toggleEnabled = async () => {
         if (!status) return;
@@ -73,18 +92,35 @@ export function EmbeddingsStatus() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ batch_size: batchSize }),
             });
-            if (response.ok) {
-                // Refresh status after generation
+            const data = await response.json();
+            if (response.ok && data.success) {
                 await fetchStatus();
-                toast.success(`Embedding generation triggered (${batchSize} frames)`);
+                toast.success(data.message);
             } else {
-                toast.error("Failed to start generation");
+                toast.error(data.message || data.error || "Failed to start generation");
             }
         } catch (error) {
             console.error('Failed to trigger generation:', error);
             toast.error("Failed to trigger generation");
         } finally {
             setGenerating(false);
+        }
+    };
+
+    const prepareModels = async () => {
+        try {
+            setPreparingModels(true);
+            const response = await fetch('/api/embeddings/models/prepare', { method: 'POST' });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to start model download');
+            }
+            await fetchStatus();
+            toast.success('Quality model download started');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to start model download';
+            toast.error(message);
+            setPreparingModels(false);
         }
     };
 
@@ -154,8 +190,50 @@ export function EmbeddingsStatus() {
 
                 {!status.sidecar_ready && (
                     <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 text-sm">
-                        <p className="font-medium text-destructive">Quality sidecar unavailable</p>
+                        <p className="font-medium text-destructive">Quality runtime unavailable</p>
                         <p className="text-xs text-muted-foreground mt-1">{status.error}</p>
+                        <p className="text-xs text-muted-foreground mt-2">
+                            Source builds require <span className="font-mono">python sidecar/build.py</span>.
+                            Installed builds include the runtime automatically.
+                        </p>
+                    </div>
+                )}
+
+                {status.sidecar_ready && (
+                    <div className="border border-border rounded-lg p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <p className="text-sm font-medium">Quality models</p>
+                                <p className="text-xs text-muted-foreground">
+                                    PP-OCRv5, Qwen3 embeddings, and Qwen3 reranking
+                                </p>
+                            </div>
+                            <button
+                                onClick={prepareModels}
+                                disabled={preparingModels}
+                                className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-secondary hover:bg-accent text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {preparingModels
+                                    ? <RefreshCw className="h-4 w-4 animate-spin" />
+                                    : <Download className="h-4 w-4" />}
+                                {preparingModels ? 'Preparing...' : 'Download / verify'}
+                            </button>
+                        </div>
+                        {status.model_preparation?.state === 'preparing' && (
+                            <p className="text-xs text-muted-foreground">
+                                Preparing {status.model_preparation.current_component}. Downloads can take several minutes.
+                            </p>
+                        )}
+                        {status.model_preparation?.state === 'ready' && (
+                            <p className="text-xs text-green-500">
+                                All quality models are downloaded and initialized.
+                            </p>
+                        )}
+                        {status.model_preparation?.state === 'error' && (
+                            <p className="text-xs text-destructive">
+                                {status.model_preparation.error}
+                            </p>
+                        )}
                     </div>
                 )}
 

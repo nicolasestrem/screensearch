@@ -196,6 +196,10 @@ diagnosis, run `npm run build` directly and confirm it succeeds.
 
 - Confirm the installer contains
   `bin/screensearch-ai-sidecar/screensearch-ai-sidecar.exe`.
+- For a source build, install `sidecar/requirements.txt`, run
+  `py -3.12 sidecar\build.py`, and restart ScreenSearch. Debug builds discover
+  `sidecar\dist\screensearch-ai-sidecar\screensearch-ai-sidecar.exe`.
+- A successful `cargo build` does not build the Python runtime.
 - Confirm port `3132` is not occupied by another process.
 - Check available disk space.
 - Check outbound access to Hugging Face and Paddle model hosts.
@@ -228,3 +232,15 @@ platform data directories. Never place them in the Git repository.
 
 The sidecar uses standard Hugging Face and Paddle caches. Removing those caches
 forces model downloads on the next use.
+
+### Download or verify quality models
+
+Open **Settings > AI > AI Embeddings (RAG)** and select **Download / verify**.
+ScreenSearch prepares PP-OCRv5, Qwen3 embeddings, and Qwen3 reranking in the
+background. The panel shows the component currently being initialized and any
+download or model-loading error. Leave ScreenSearch running until the status is
+ready.
+
+The button is available only when the quality runtime is running. If the panel
+shows **Quality runtime unavailable**, install or build the sidecar first; no
+Qwen download can start without it.

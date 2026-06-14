@@ -217,7 +217,7 @@ Powerful logging and diagnostics. Watch ScreenSearch initialize, start capture l
 ### Prerequisites
 
 - **Windows 10/11** — Production platform for capture, automation, and the Windows OCR fallback
-- **Up to 5 GB free disk space** — PP-OCRv5 and Qwen models download on first use
+- **Up to 5 GB free disk space** — PP-OCRv5 and Qwen model preparation
 - **Rust 1.70+** — Install from [rustup.rs](https://rustup.rs/)
 - **Visual Studio Build Tools** — Required for native compilation ([download](https://visualstudio.microsoft.com/downloads/))
 - **Node.js 22+** — Required to rebuild the embedded dashboard

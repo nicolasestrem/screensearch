@@ -46,6 +46,20 @@ struct ChunkResponse {
     chunks: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPreparationStatus {
+    pub state: String,
+    pub current_component: Option<String>,
+    pub ready_components: Vec<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ModelPreparationRequest<'a> {
+    components: &'a [&'a str],
+    ocr_language: &'a str,
+}
+
 /// Result returned by the quality reranker.
 #[derive(Debug, Clone)]
 pub struct RerankScore {
@@ -90,6 +104,34 @@ impl EmbeddingEngine {
             )));
         }
         Ok(())
+    }
+
+    pub async fn model_preparation_status(&self) -> Result<ModelPreparationStatus> {
+        let response = self
+            .authorized(self.client.get(format!(
+                "{}/v1/models/status",
+                self.config.sidecar_url.trim_end_matches('/')
+            )))
+            .send()
+            .await
+            .map_err(|error| EmbeddingError::SidecarUnavailable(error.to_string()))?;
+        self.parse_model_preparation_response(response).await
+    }
+
+    pub async fn prepare_models(&self) -> Result<ModelPreparationStatus> {
+        let response = self
+            .authorized(self.client.post(format!(
+                "{}/v1/models/prepare",
+                self.config.sidecar_url.trim_end_matches('/')
+            )))
+            .json(&ModelPreparationRequest {
+                components: &["ocr", "embeddings", "reranker"],
+                ocr_language: "en",
+            })
+            .send()
+            .await
+            .map_err(|error| EmbeddingError::SidecarUnavailable(error.to_string()))?;
+        self.parse_model_preparation_response(response).await
     }
 
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
@@ -278,6 +320,23 @@ impl EmbeddingEngine {
             Some(token) => request.bearer_auth(token),
             None => request,
         }
+    }
+
+    async fn parse_model_preparation_response(
+        &self,
+        response: reqwest::Response,
+    ) -> Result<ModelPreparationStatus> {
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(EmbeddingError::ModelInitError(format!(
+                "model preparation request failed ({status}): {body}"
+            )));
+        }
+        response
+            .json()
+            .await
+            .map_err(|error| EmbeddingError::ModelInitError(error.to_string()))
     }
 }
 

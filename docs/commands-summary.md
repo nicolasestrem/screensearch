@@ -63,6 +63,8 @@ curl -X POST "http://127.0.0.1:3131/api/embeddings/enable" \
 curl -X POST "http://127.0.0.1:3131/api/embeddings/generate" \
   -H "Content-Type: application/json" \
   -d '{"batch_size":50}'
+
+curl -X POST "http://127.0.0.1:3131/api/embeddings/models/prepare"
 ```
 
 ## Grounded Answer
@@ -118,5 +120,5 @@ python evaluation/evaluate.py evaluation/results.jsonl
 .\scripts\build-release.ps1 -Version 0.4.35
 ```
 
-The release build includes the sidecar directory but downloads model weights
-on first use.
+The release build includes the sidecar directory. Prepare uncached model
+weights from Settings or `POST /api/embeddings/models/prepare`.

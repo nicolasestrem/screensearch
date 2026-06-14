@@ -52,11 +52,13 @@ sidecar runs on `127.0.0.1:3132`.
 
 ## Quality Sidecar
 
-The managed sidecar provides four endpoints:
+The managed sidecar provides these endpoints:
 
 | Endpoint | Model or function |
 |---|---|
 | `GET /health` | Readiness and model contract |
+| `GET /v1/models/status` | Background model preparation status |
+| `POST /v1/models/prepare` | Download and initialize quality models |
 | `POST /v1/ocr` | PP-OCRv5 |
 | `POST /v1/embeddings` | Qwen3-Embedding-0.6B |
 | `POST /v1/chunk` | Qwen tokenizer-aware chunking |
@@ -67,6 +69,8 @@ The main process:
 1. Generates an ephemeral bearer token unless one is already configured.
 2. Checks for an existing authenticated sidecar.
 3. Locates the bundled sidecar beside the executable or under `bin/`.
+   Debug builds also search the repository's
+   `sidecar/dist/screensearch-ai-sidecar/` directory.
 4. Starts it with `kill_on_drop`.
 5. Waits up to 60 seconds for readiness.
 6. Continues with explicit degraded behavior if startup fails.
@@ -197,7 +201,13 @@ configured provider.
 - index coverage;
 - reindex requirement;
 - sidecar readiness;
+- model preparation state and current component;
 - current initialization error.
+
+`POST /api/embeddings/models/prepare` asks the sidecar to initialize the fixed
+PP-OCRv5, Qwen3 embedding, and Qwen3 reranking models. Preparation runs in the
+sidecar background process, and the UI polls status until it reaches `ready` or
+`error`.
 
 The dashboard uses this response to distinguish ready, indexing, degraded, and
 error states. Grounded generation is disabled when required quality inference
