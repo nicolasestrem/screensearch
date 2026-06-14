@@ -33,7 +33,7 @@ export function AnswerCard() {
             setAnswer(response.answer);
         } catch (err) {
             console.error("Failed to generate answer:", err);
-            setError("Failed to generate answer. Ensure the Vision Engine is enabled in settings.");
+            setError("Failed to generate answer. Ensure Answer Generation is enabled and configured.");
         } finally {
             setLoading(false);
         }

@@ -50,7 +50,7 @@ fn default_embeddings_settings() -> EmbeddingsSettings {
     EmbeddingsSettings {
         enabled: false,
         batch_size: 50,
-        model: "local".to_string(),
+        model: "quality-sidecar".to_string(),
         model_name: "Qwen/Qwen3-Embedding-0.6B".to_string(),
         embedding_dim: 1024,
         max_chunk_tokens: 512,

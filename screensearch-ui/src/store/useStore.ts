@@ -86,7 +86,7 @@ export const useStore = create<AppStore>()(
       activeTab: 'dashboard',
       setActiveTab: (tab) => set({ activeTab: tab }),
 
-      // AI Config - Default to local embedded Ministral-3B
+      // Optional answer-generation LLM. OCR and RAG models are fixed by the quality sidecar.
       aiConfig: {
         providerUrl: 'local',
         apiKey: '',

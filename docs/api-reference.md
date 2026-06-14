@@ -1,1763 +1,264 @@
 # ScreenSearch API Reference
 
-Complete API reference for the ScreenSearch REST API server. This API provides search capabilities for captured screen content, computer automation controls, tag management, and AI-powered intelligence reports with vector embeddings.
+## Conventions
 
-**Total Endpoints**: 33
+- Base URL: `http://127.0.0.1:3131/api`
+- Content type: `application/json`
+- Authentication: none on the application API; keep it bound to loopback.
+- Timestamps: ISO 8601 UTC.
+- The quality sidecar on port `3132` is internal and bearer-authenticated when
+  managed by ScreenSearch.
 
-## Overview
+## Health
 
-### Base URL
-```
-http://localhost:3131
-```
+### `GET /health`
 
-### Content Type
-All endpoints accept and return JSON unless otherwise specified:
-```
-Content-Type: application/json
-```
+Returns application health, version, uptime, frame count, and recent capture
+information.
 
-### Authentication
-No authentication required. The API is designed for local use only and binds to `127.0.0.1` by default.
+## Search
 
-### Response Format
-All successful responses return JSON with appropriate HTTP status codes. Error responses follow a consistent format:
+### `GET /search/`
 
-```json
-{
-  "error": "Error message describing what went wrong",
-  "status": 400
-}
-```
+Query parameters:
 
-### HTTP Status Codes
+| Name | Description |
+|---|---|
+| `q` | Search query |
+| `mode` | `fts`, `semantic`, or `hybrid` |
+| `limit` | Maximum results |
+| `offset` | Pagination offset |
+| `start_time` | Optional lower timestamp |
+| `end_time` | Optional upper timestamp |
+| `app` | Optional application filter |
 
-| Status Code | Description |
-|-------------|-------------|
-| `200 OK` | Request succeeded |
-| `400 Bad Request` | Invalid request parameters or malformed JSON |
-| `404 Not Found` | Resource not found |
-| `500 Internal Server Error` | Server error or automation failure |
-
-### Endpoint Categories
-
-| Category | Endpoints | Description |
-|----------|-----------|-------------|
-| **Search & Retrieval** | 5 endpoints | Full-text search, keyword search, frame retrieval |
-| **Embeddings (RAG)** | 3 endpoints | Vector embeddings for semantic search |
-| **Automation** | 9 endpoints | Computer control via Windows UIAutomation |
-| **Tag Management** | 6 endpoints | Organize frames with tags |
-| **AI Intelligence** | 10 endpoints | Generate reports, local LLM management, model downloads, download progress tracking |
-| **System** | 2 endpoints | Health checks and settings |
-
----
-
-## Context Retrieval Endpoints
-
-### GET /search
-
-Full-text search across all captured OCR content using SQLite FTS5 with BM25 ranking.
-
-#### Query Parameters
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `q` | string | Yes | - | Search query string (FTS5 syntax supported) |
-| `start_time` | string | No | - | Filter results after this time (ISO 8601 format) |
-| `end_time` | string | No | - | Filter results before this time (ISO 8601 format) |
-| `app` | string | No | - | Filter by application name |
-| `limit` | integer | No | 100 | Maximum number of results to return |
-
-#### Response
-
-Returns an array of search results, each containing the matching frame, OCR text matches, and relevance score.
-
-```json
-[
-  {
-    "frame": {
-      "id": 1,
-      "timestamp": "2025-12-10T10:30:00Z",
-      "file_path": "C:\\captures\\frame_001.png",
-      "active_window": "Chrome - Google Search",
-      "monitor_index": 0,
-      "width": 1920,
-      "height": 1080
-    },
-    "ocr_matches": [
-      {
-        "id": 1,
-        "frame_id": 1,
-        "text": "hello world example",
-        "x": 100,
-        "y": 200,
-        "width": 150,
-        "height": 20,
-        "confidence": 0.95
-      }
-    ],
-    "relevance_score": 0.85,
-    "tags": [
-      {
-        "id": 1,
-        "tag_name": "important",
-        "description": "Important screens",
-        "color": "#FF0000"
-      }
-    ]
-  }
-]
-```
-
-#### Example
+Examples:
 
 ```bash
-# Basic search
-curl "http://localhost:3131/search?q=hello&limit=10"
-
-# Search with time filter
-curl "http://localhost:3131/search?q=password&start_time=2025-12-10T00:00:00Z&end_time=2025-12-10T23:59:59Z"
-
-# Search by application
-curl "http://localhost:3131/search?q=error&app=Chrome"
+curl "http://127.0.0.1:3131/api/search/?q=invoice&mode=fts"
+curl "http://127.0.0.1:3131/api/search/?q=why%20did%20the%20build%20fail&mode=hybrid"
 ```
 
----
+Semantic and hybrid modes require a ready quality sidecar. Hybrid mode combines
+FTS5 and sqlite-vec candidates using RRF.
 
-### GET /search/keywords
+### `GET /search/keywords`
 
-Keyword-based search with exact matching. Useful for finding specific terms across captured content.
+Returns keyword suggestions from OCR content.
 
-#### Query Parameters
+## Frames
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `keywords` | string | Yes | - | Comma-separated keywords to search for |
-| `limit` | integer | No | 100 | Maximum number of results to return |
+### `GET /frames/`
 
-#### Response
+Returns paginated frames with optional time, monitor, application, and tag
+filters.
 
-Returns an array of frames containing the specified keywords.
+### `GET /frames/:id`
 
-```json
-[
-  {
-    "frame": {
-      "id": 2,
-      "timestamp": "2025-12-10T11:00:00Z",
-      "file_path": "C:\\captures\\frame_002.png",
-      "active_window": "Notepad",
-      "monitor_index": 0
-    },
-    "matching_keywords": ["password", "login"],
-    "match_count": 2
-  }
-]
-```
+Returns one frame and its OCR, tags, and analysis metadata.
 
-#### Example
+### `GET /frames/:id/image`
 
-```bash
-# Search for multiple keywords
-curl "http://localhost:3131/search/keywords?keywords=password,login,authentication"
+Returns the stored frame image.
 
-# Single keyword search
-curl "http://localhost:3131/search/keywords?keywords=error&limit=50"
-```
+### `GET /frames/:id/tags`
 
----
+Returns tags assigned to a frame.
 
-### GET /frames
+### `POST /frames/:id/tags`
 
-Retrieve captured frames with optional filtering by time and monitor.
+Assigns a tag to a frame.
 
-#### Query Parameters
+### `DELETE /frames/:id/tags/:tag_id`
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `start_time` | string | No | - | Filter frames after this time (ISO 8601) |
-| `end_time` | string | No | - | Filter frames before this time (ISO 8601) |
-| `monitor_index` | integer | No | - | Filter by monitor index (0-based) |
-| `limit` | integer | No | 100 | Maximum number of results to return |
+Removes a tag from a frame.
 
-#### Response
+## Tags
 
-```json
-[
-  {
-    "id": 1,
-    "timestamp": "2025-12-10T10:30:00Z",
-    "file_path": "C:\\captures\\frame_001.png",
-    "active_window": "Visual Studio Code",
-    "monitor_index": 0,
-    "width": 1920,
-    "height": 1080,
-    "frame_hash": "a1b2c3d4e5f6",
-    "tags": []
-  }
-]
-```
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/tags/` | List tags |
+| `POST` | `/tags/` | Create a tag |
+| `PUT` | `/tags/:id` | Update a tag |
+| `DELETE` | `/tags/:id` | Delete a tag |
 
-#### Example
+## Embeddings And RAG
 
-```bash
-# Get recent frames
-curl "http://localhost:3131/frames?limit=20"
+### `GET /embeddings/status`
 
-# Get frames from specific time range
-curl "http://localhost:3131/frames?start_time=2025-12-10T00:00:00Z&end_time=2025-12-10T12:00:00Z"
-
-# Get frames from specific monitor
-curl "http://localhost:3131/frames?monitor_index=1&limit=10"
-```
-
----
-
-### GET /api/frames/:id
-
-Get detailed information about a single frame by ID, including OCR text and associated tags.
-
-#### Path Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `id` | integer | Frame ID to retrieve |
-
-#### Response
-
-```json
-{
-  "id": 123,
-  "timestamp": "2025-12-10T14:30:00Z",
-  "file_path": "C:\\captures\\frame_123.jpg",
-  "app_name": "Chrome",
-  "window_name": "Google Search - Chrome",
-  "ocr_text": "search results for machine learning tutorial documentation example code",
-  "tags": [
-    {
-      "id": 1,
-      "name": "research",
-      "color": "#4CAF50",
-      "created_at": "2025-12-01T10:00:00Z"
-    },
-    {
-      "id": 2,
-      "name": "important",
-      "color": "#FF5722",
-      "created_at": "2025-12-02T11:00:00Z"
-    }
-  ],
-  "thumbnail": null
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | integer | Frame ID |
-| `timestamp` | string | Frame capture timestamp (ISO 8601) |
-| `file_path` | string | Path to stored image file |
-| `app_name` | string | Name of active application |
-| `window_name` | string | Window title at capture time |
-| `ocr_text` | string | Combined OCR text from all regions |
-| `tags` | array | Array of tag objects associated with frame |
-| `thumbnail` | string/null | Optional base64-encoded thumbnail |
-
-#### Example
-
-```bash
-# Get frame by ID
-curl "http://localhost:3131/api/frames/123"
-```
-
-#### Error Responses
-
-**404 Not Found** - If frame doesn't exist:
-```json
-{
-  "error": "Frame 999 not found",
-  "status": 404
-}
-```
-
-#### Notes
-
-- Returns full OCR text as a single combined string (space-separated)
-- Tags are included inline for convenient access
-- Use `/api/frames/:id/image` to retrieve the actual image data
-
----
-
-### GET /api/frames/:id/image
-
-Get the raw image data for a frame. Returns binary image data (JPEG or PNG).
-
-#### Path Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `id` | integer | Frame ID to retrieve image for |
-
-#### Response
-
-Binary image data with appropriate content type header:
-- `image/jpeg` for JPEG files
-- `image/png` for PNG files
-
-#### Example
-
-```bash
-# Download frame image
-curl "http://localhost:3131/api/frames/123/image" --output frame_123.jpg
-
-# Display in browser
-# Open: http://localhost:3131/api/frames/123/image
-```
-
-#### Error Responses
-
-**404 Not Found** - If frame or image file doesn't exist:
-```json
-{
-  "error": "Frame 999 not found",
-  "status": 404
-}
-```
-
-```json
-{
-  "error": "Image file not found: C:\\captures\\missing.jpg",
-  "status": 404
-}
-```
-
-#### Notes
-
-- Returns raw binary image data, not JSON
-- Image format depends on storage settings (JPEG by default since v0.2.0)
-- Content-Type header is set automatically based on file extension
-- This endpoint is used by the web UI to display frame previews
-- Large images may take time to transfer; consider thumbnail generation for previews
-
----
-
-### GET /health
-
-Health check endpoint providing system status and database statistics.
-
-#### Response
-
-```json
-{
-  "status": "ok",
-  "version": "0.1.0",
-  "uptime_seconds": 3600,
-  "frame_count": 1523,
-  "ocr_count": 15234,
-  "tag_count": 5,
-  "oldest_frame": "2025-12-01T00:00:00Z",
-  "newest_frame": "2025-12-10T23:59:59Z"
-}
-```
-
-#### Status Values
-
-- `ok` - System is healthy and operational
-- `degraded` - System is operational but experiencing issues
-- `error` - System has critical errors
-
-#### Example
-
-```bash
-curl "http://localhost:3131/health"
-```
-
----
-
-### GET /api/embeddings/status
-
-Get the current status of the embedding system, including coverage statistics and processing state.
-
-#### Response
+Example response:
 
 ```json
 {
   "enabled": true,
-  "provider": "quality-sidecar",
   "model": "Qwen/Qwen3-Embedding-0.6B",
+  "provider": "quality-sidecar",
   "model_version": "main",
   "dimension": 1024,
+  "reindex_required": false,
+  "sidecar_ready": true,
+  "error": null,
   "total_frames": 1523,
   "frames_with_embeddings": 890,
   "coverage_percent": 58.4,
-  "last_processed_frame_id": 1200,
-  "reindex_required": false,
-  "sidecar_ready": true,
-  "sidecar_error": null
+  "last_processed_frame_id": 1200
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `enabled` | boolean | Whether embedding generation is enabled |
-| `provider` | string | Embedding inference provider |
-| `model` | string | Name of the embedding model being used |
-| `model_version` | string | Model revision used for index invalidation |
-| `dimension` | integer | Vector dimension stored in sqlite-vec |
-| `total_frames` | integer | Total number of frames in database |
-| `frames_with_embeddings` | integer | Number of frames with embeddings generated |
-| `coverage_percent` | float | Percentage of frames with embeddings (0-100) |
-| `last_processed_frame_id` | integer | ID of the last frame processed for embeddings |
-| `reindex_required` | boolean | Whether stored embeddings must be regenerated |
-| `sidecar_ready` | boolean | Whether local quality inference is reachable |
-| `sidecar_error` | string/null | Current sidecar initialization error |
+`total_frames` counts frames with OCR text. `reindex_required` remains true
+until all eligible frames use the active model contract.
 
-#### Example
+### `POST /embeddings/enable`
+
+The body is a JSON boolean:
 
 ```bash
-curl "http://localhost:3131/api/embeddings/status"
-```
-
-#### Notes
-
-- This endpoint provides real-time status for RAG (Retrieval-Augmented Generation) features
-- Coverage percentage helps track embedding generation progress
-- Used by the UI to display embedding system health
-
----
-
-### POST /api/embeddings/generate
-
-Trigger background embedding generation for frames that don't have embeddings yet.
-
-#### Request Body
-
-```json
-{
-  "batch_size": 100
-}
-```
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `batch_size` | integer | No | 50 | Number of frames to process in this batch |
-
-#### Response
-
-```json
-{
-  "success": true,
-  "message": "Processed 100 frames with embeddings",
-  "frames_processed": 100
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | boolean | Whether the operation succeeded |
-| `message` | string | Human-readable status message |
-| `frames_processed` | integer | Actual number of frames processed |
-
-#### Example
-
-```bash
-# Generate embeddings for next 50 frames (default)
-curl -X POST "http://localhost:3131/api/embeddings/generate" \
+curl -X POST "http://127.0.0.1:3131/api/embeddings/enable" \
   -H "Content-Type: application/json" \
-  -d '{}'
-
-# Generate embeddings for next 200 frames
-curl -X POST "http://localhost:3131/api/embeddings/generate" \
-  -H "Content-Type: application/json" \
-  -d '{"batch_size": 200}'
+  -d "true"
 ```
 
-#### Notes
+### `POST /embeddings/generate`
 
-- Only processes frames that don't already have embeddings
-- Processing is done synchronously in the request (may take several seconds for large batches)
-- Recommended batch size: 50-100 frames for responsive UI
-- Embeddings enable semantic search in AI intelligence reports
-
----
-
-### POST /api/embeddings/enable
-
-Enable or disable the embedding generation system.
-
-#### Request Body
-
-```json
-true
-```
-
-The request body is a simple boolean value (not wrapped in an object).
-
-| Value | Description |
-|-------|-------------|
-| `true` | Enable embedding generation |
-| `false` | Disable embedding generation |
-
-#### Response
-
-Returns the updated embedding status (same format as `/api/embeddings/status`):
+Processes OCR frames without current embeddings:
 
 ```json
 {
-  "enabled": true,
-  "provider": "quality-sidecar",
-  "model": "Qwen/Qwen3-Embedding-0.6B",
-  "model_version": "main",
-  "dimension": 1024,
-  "total_frames": 1523,
-  "frames_with_embeddings": 890,
-  "coverage_percent": 58.4,
-  "last_processed_frame_id": 1200,
-  "reindex_required": false,
-  "sidecar_ready": true,
-  "sidecar_error": null
+  "batch_size": 50
 }
 ```
 
-#### Example
+The background worker also processes batches while embeddings are enabled.
 
-```bash
-# Enable embeddings
-curl -X POST "http://localhost:3131/api/embeddings/enable" \
-  -H "Content-Type: application/json" \
-  -d 'true'
+### `POST /generate`
 
-# Disable embeddings
-curl -X POST "http://localhost:3131/api/embeddings/enable" \
-  -H "Content-Type: application/json" \
-  -d 'false'
-```
-
-#### Notes
-
-- Disabling embeddings stops new embeddings from being generated
-- Existing embeddings are preserved in the database
-- This setting persists across application restarts
-
----
-
-## Computer Automation Endpoints
-
-All automation endpoints use POST requests and accept JSON request bodies. These endpoints interact with the Windows UIAutomation API to control the desktop.
-
-> **Note**: These endpoints are **Windows-only**. On Linux/macOS, they will return a `501 Not Implemented` or `500 Internal Server Error` (Stubbed) response.
-
-### POST /automation/find-elements
-
-Locate UI elements on screen using selector syntax.
-
-#### Request Body
+Generates a grounded answer:
 
 ```json
 {
-  "selector": "Button[@Name='Save']",
-  "timeout_ms": 5000
+  "query": "What deployment issue was I investigating?"
 }
 ```
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `selector` | string | Yes | - | Element selector (UIAutomation syntax) |
-| `timeout_ms` | integer | No | 5000 | Maximum time to wait for elements (milliseconds) |
-
-#### Selector Syntax
-
-- `Button[@Name='Save']` - Button with Name property
-- `Edit[@AutomationId='searchBox']` - Edit field by AutomationId
-- `Window[@Name='Chrome']` - Window by name
-- `Text[@Name*='contains']` - Partial name match
-
-#### Response
+Example response:
 
 ```json
 {
-  "elements": [
-    {
-      "name": "Save",
-      "control_type": "Button",
-      "x": 100,
-      "y": 200,
-      "width": 80,
-      "height": 30,
-      "is_enabled": true,
-      "is_visible": true
-    }
-  ]
+  "answer": "The answer includes citations such as [frame:123].",
+  "sources": [123, 127]
 }
 ```
 
-#### Example
+Retrieval uses hybrid RRF and Qwen reranking. The selected generation provider
+writes the final answer.
 
-```bash
-curl -X POST "http://localhost:3131/automation/find-elements" \
-  -H "Content-Type: application/json" \
-  -d '{"selector": "Button[@Name=\"Submit\"]", "timeout_ms": 3000}'
-```
+## Runtime Settings
 
----
+### `GET /settings/`
 
-### POST /automation/click
+Returns capture, privacy, retention, and optional generation settings.
 
-Simulate mouse click at specified screen coordinates.
+### `POST /settings/`
 
-#### Request Body
+Example:
 
 ```json
 {
-  "x": 100,
-  "y": 200,
-  "button": "left"
+  "capture_interval": 3,
+  "monitors": "[0]",
+  "excluded_apps": "[\"1Password\",\"KeePass\"]",
+  "is_paused": 0,
+  "retention_days": 30,
+  "vision_enabled": 1,
+  "vision_provider": "local",
+  "vision_model": "ministral-3:3b",
+  "vision_endpoint": "http://127.0.0.1:31130",
+  "vision_api_key": null
 }
 ```
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `x` | integer | Yes | - | X coordinate on screen |
-| `y` | integer | Yes | - | Y coordinate on screen |
-| `button` | string | No | "left" | Mouse button: "left", "right", or "middle" |
+The `vision_*` names are retained by the database API for compatibility. They
+configure only the optional generation LLM. OCR and retrieval are configured
+through `config.toml` and the fixed sidecar contract.
 
-#### Response
+## Generation LLM
+
+### `POST /ai/validate`
+
+Validates a report-generation provider:
 
 ```json
 {
-  "success": true,
-  "message": "Click performed at (100, 200)"
+  "provider_url": "http://localhost:11434/v1",
+  "model": "qwen3:8b"
 }
 ```
 
-#### Example
+Use `"provider_url": "local"` for the bundled Ministral runtime.
 
-```bash
-# Left click
-curl -X POST "http://localhost:3131/automation/click" \
-  -H "Content-Type: application/json" \
-  -d '{"x": 500, "y": 300}'
+### `POST /ai/generate`
 
-# Right click
-curl -X POST "http://localhost:3131/automation/click" \
-  -H "Content-Type: application/json" \
-  -d '{"x": 500, "y": 300, "button": "right"}'
-```
-
----
-
-### POST /automation/type
-
-Type text into the currently focused UI element.
-
-#### Request Body
-
-```json
-{
-  "text": "Hello, World!",
-  "delay_ms": 50
-}
-```
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `text` | string | Yes | - | Text to type |
-| `delay_ms` | integer | No | 0 | Delay between characters (milliseconds) |
-
-#### Response
-
-```json
-{
-  "success": true,
-  "message": "Text typed successfully"
-}
-```
-
-#### Example
-
-```bash
-curl -X POST "http://localhost:3131/automation/type" \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Hello, World!", "delay_ms": 100}'
-```
-
----
-
-### POST /automation/scroll
-
-Scroll the active window or element in a specified direction.
-
-#### Request Body
-
-```json
-{
-  "direction": "down",
-  "amount": 3
-}
-```
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `direction` | string | Yes | - | Scroll direction: "up", "down", "left", "right" |
-| `amount` | integer | Yes | - | Scroll amount (lines or units) |
-
-#### Response
-
-```json
-{
-  "success": true,
-  "message": "Scrolled down by 3 units"
-}
-```
-
-#### Example
-
-```bash
-# Scroll down
-curl -X POST "http://localhost:3131/automation/scroll" \
-  -H "Content-Type: application/json" \
-  -d '{"direction": "down", "amount": 5}'
-
-# Scroll up
-curl -X POST "http://localhost:3131/automation/scroll" \
-  -H "Content-Type: application/json" \
-  -d '{"direction": "up", "amount": 2}'
-```
-
----
-
-### POST /automation/press-key
-
-Press a keyboard key with optional modifier keys.
-
-#### Request Body
-
-```json
-{
-  "key": "enter",
-  "modifiers": ["ctrl", "shift"]
-}
-```
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `key` | string | Yes | - | Key to press (see key names below) |
-| `modifiers` | array | No | [] | Modifier keys: "ctrl", "alt", "shift", "win" |
-
-#### Supported Keys
-
-- **Special**: "enter", "escape", "tab", "backspace", "delete", "space"
-- **Function**: "f1", "f2", ... "f12"
-- **Navigation**: "up", "down", "left", "right", "home", "end", "pageup", "pagedown"
-- **Characters**: "a"-"z", "0"-"9", and punctuation
-
-#### Response
-
-```json
-{
-  "success": true,
-  "message": "Key pressed: ctrl+shift+enter"
-}
-```
-
-#### Example
-
-```bash
-# Press Enter
-curl -X POST "http://localhost:3131/automation/press-key" \
-  -H "Content-Type: application/json" \
-  -d '{"key": "enter"}'
-
-# Press Ctrl+S (Save)
-curl -X POST "http://localhost:3131/automation/press-key" \
-  -H "Content-Type: application/json" \
-  -d '{"key": "s", "modifiers": ["ctrl"]}'
-
-# Press Ctrl+Shift+P
-curl -X POST "http://localhost:3131/automation/press-key" \
-  -H "Content-Type: application/json" \
-  -d '{"key": "p", "modifiers": ["ctrl", "shift"]}'
-```
-
----
-
-### POST /automation/get-text
-
-Extract text content from a UI element specified by selector.
-
-#### Request Body
-
-```json
-{
-  "selector": "Edit[@Name='Search']"
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `selector` | string | Yes | Element selector to extract text from |
-
-#### Response
-
-```json
-{
-  "text": "Extracted text content from the element"
-}
-```
-
-#### Example
-
-```bash
-curl -X POST "http://localhost:3131/automation/get-text" \
-  -H "Content-Type: application/json" \
-  -d '{"selector": "Edit[@AutomationId=\"searchBox\"]"}'
-```
-
----
-
-### POST /automation/list-elements
-
-List all interactive UI elements in the active window or under a specified root element.
-
-#### Request Body
-
-```json
-{
-  "root_selector": "Window[@Name='Chrome']"
-}
-```
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `root_selector` | string | No | Active window | Root element to start listing from |
-
-#### Response
-
-```json
-{
-  "elements": [
-    {
-      "name": "Address bar",
-      "control_type": "Edit",
-      "x": 200,
-      "y": 100,
-      "width": 600,
-      "height": 30,
-      "is_enabled": true,
-      "is_visible": true
-    },
-    {
-      "name": "Refresh",
-      "control_type": "Button",
-      "x": 850,
-      "y": 100,
-      "width": 40,
-      "height": 30,
-      "is_enabled": true,
-      "is_visible": true
-    }
-  ]
-}
-```
-
-#### Example
-
-```bash
-# List all elements in active window
-curl -X POST "http://localhost:3131/automation/list-elements" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-
-# List elements in specific window
-curl -X POST "http://localhost:3131/automation/list-elements" \
-  -H "Content-Type: application/json" \
-  -d '{"root_selector": "Window[@Name=\"Visual Studio Code\"]"}'
-```
-
----
-
-### POST /automation/open-app
-
-Launch an application by name or executable path.
-
-#### Request Body
-
-```json
-{
-  "app_name": "notepad.exe"
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `app_name` | string | Yes | Application name or full path to executable |
-
-#### Response
-
-```json
-{
-  "success": true,
-  "message": "Application launched: notepad.exe"
-}
-```
-
-#### Example
-
-```bash
-# Launch Notepad
-curl -X POST "http://localhost:3131/automation/open-app" \
-  -H "Content-Type: application/json" \
-  -d '{"app_name": "notepad.exe"}'
-
-# Launch with full path
-curl -X POST "http://localhost:3131/automation/open-app" \
-  -H "Content-Type: application/json" \
-  -d '{"app_name": "C:\\Program Files\\MyApp\\app.exe"}'
-```
-
----
-
-### POST /automation/open-url
-
-Open a URL in the default web browser.
-
-#### Request Body
-
-```json
-{
-  "url": "https://example.com"
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `url` | string | Yes | URL to open (must include protocol) |
-
-#### Response
-
-```json
-{
-  "success": true,
-  "message": "URL opened: https://example.com"
-}
-```
-
-#### Example
-
-```bash
-curl -X POST "http://localhost:3131/automation/open-url" \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://github.com"}'
-```
-
----
-
-## Tag Management Endpoints
-
-### GET /tags
-
-List all available tags with optional pagination.
-
-#### Query Parameters
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `limit` | integer | No | 100 | Maximum number of tags to return |
-| `offset` | integer | No | 0 | Number of tags to skip |
-
-#### Response
-
-```json
-[
-  {
-    "id": 1,
-    "tag_name": "important",
-    "description": "Important screens to review",
-    "color": "#FF0000",
-    "created_at": "2025-12-01T10:00:00Z"
-  },
-  {
-    "id": 2,
-    "tag_name": "work",
-    "description": "Work-related captures",
-    "color": "#0000FF",
-    "created_at": "2025-12-02T09:00:00Z"
-  }
-]
-```
-
-#### Example
-
-```bash
-# Get all tags
-curl "http://localhost:3131/tags"
-
-# Get tags with pagination
-curl "http://localhost:3131/tags?limit=10&offset=20"
-```
-
----
-
-### POST /tags
-
-Create a new tag for organizing captured frames.
-
-#### Request Body
-
-```json
-{
-  "tag_name": "important",
-  "description": "Important screens to review",
-  "color": "#FF0000"
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `tag_name` | string | Yes | Unique name for the tag |
-| `description` | string | No | Optional description |
-| `color` | string | No | Hex color code (e.g., "#FF0000") |
-
-#### Response
-
-```json
-{
-  "id": 1,
-  "tag_name": "important",
-  "description": "Important screens to review",
-  "color": "#FF0000",
-  "created_at": "2025-12-10T10:00:00Z"
-}
-```
-
-#### Example
-
-```bash
-curl -X POST "http://localhost:3131/tags" \
-  -H "Content-Type: application/json" \
-  -d '{"tag_name": "urgent", "description": "Urgent items", "color": "#FF6600"}'
-```
-
----
-
-### DELETE /tags/:id
-
-Delete a tag by ID. This removes the tag and all associations with frames.
-
-#### Path Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `id` | integer | Tag ID to delete |
-
-#### Response
-
-```json
-{
-  "success": true,
-  "message": "Tag deleted successfully"
-}
-```
-
-#### Example
-
-```bash
-curl -X DELETE "http://localhost:3131/tags/1"
-```
-
----
-
-### GET /frames/:id/tags
-
-Get all tags associated with a specific frame.
-
-#### Path Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `id` | integer | Frame ID |
-
-#### Response
-
-```json
-[
-  {
-    "id": 1,
-    "tag_name": "important",
-    "description": "Important screens to review",
-    "color": "#FF0000"
-  },
-  {
-    "id": 2,
-    "tag_name": "work",
-    "description": "Work-related captures",
-    "color": "#0000FF"
-  }
-]
-```
-
-#### Example
-
-```bash
-curl "http://localhost:3131/frames/123/tags"
-```
-
----
-
-### POST /frames/:id/tags
-
-Add a tag to a frame.
-
-#### Path Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `id` | integer | Frame ID |
-
-#### Request Body
-
-```json
-{
-  "tag_id": 1
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `tag_id` | integer | Yes | ID of tag to add to frame |
-
-#### Response
-
-```json
-{
-  "success": true,
-  "message": "Tag added to frame"
-}
-```
-
-#### Example
-
-```bash
-curl -X POST "http://localhost:3131/frames/123/tags" \
-  -H "Content-Type: application/json" \
-  -d '{"tag_id": 1}'
-```
-
----
-
-### DELETE /frames/:id/tags/:tag_id
-
-Remove a tag from a frame.
-
-#### Path Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `id` | integer | Frame ID |
-| `tag_id` | integer | Tag ID to remove |
-
-#### Response
-
-```json
-{
-  "success": true,
-  "message": "Tag removed from frame"
-}
-```
-
-#### Example
-
-```bash
-curl -X DELETE "http://localhost:3131/frames/123/tags/1"
-```
-
----
-
-## Error Handling
-
-### Error Response Format
-
-All errors return a consistent JSON structure with appropriate HTTP status codes:
-
-```json
-{
-  "error": "Detailed error message",
-  "status": 400
-}
-```
-
-### Common Error Scenarios
-
-#### 400 Bad Request
-
-Returned when request parameters are invalid or malformed.
-
-```json
-{
-  "error": "Missing required parameter: q",
-  "status": 400
-}
-```
-
-**Common causes:**
-- Missing required parameters
-- Invalid JSON in request body
-- Malformed date/time formats
-- Invalid selector syntax
-
-#### 404 Not Found
-
-Returned when a requested resource doesn't exist.
-
-```json
-{
-  "error": "Frame with id 999 not found",
-  "status": 404
-}
-```
-
-**Common causes:**
-- Non-existent frame ID
-- Non-existent tag ID
-- Invalid endpoint path
-
-#### 500 Internal Server Error
-
-Returned when the server encounters an unexpected error.
-
-```json
-{
-  "error": "Database connection failed",
-  "status": 500
-}
-```
-
-**Common causes:**
-- Database connectivity issues
-- Automation API failures
-- File system errors
-- Internal server bugs
-
----
-
-## Complete Examples
-
-### Search and Tag Workflow
-
-```bash
-# 1. Search for content
-RESULTS=$(curl -s "http://localhost:3131/search?q=important+document&limit=1")
-FRAME_ID=$(echo $RESULTS | jq -r '.[0].frame.id')
-
-# 2. Create a tag
-TAG=$(curl -s -X POST "http://localhost:3131/tags" \
-  -H "Content-Type: application/json" \
-  -d '{"tag_name": "review", "color": "#FF9900"}')
-TAG_ID=$(echo $TAG | jq -r '.id')
-
-# 3. Add tag to frame
-curl -X POST "http://localhost:3131/frames/$FRAME_ID/tags" \
-  -H "Content-Type: application/json" \
-  -d "{\"tag_id\": $TAG_ID}"
-
-# 4. Verify tags on frame
-curl "http://localhost:3131/frames/$FRAME_ID/tags"
-```
-
-### Automation Workflow
-
-```bash
-# 1. Open application
-curl -X POST "http://localhost:3131/automation/open-app" \
-  -H "Content-Type: application/json" \
-  -d '{"app_name": "notepad.exe"}'
-
-# 2. Wait for window to appear (add delay in script)
-sleep 2
-
-# 3. Find text input element
-curl -X POST "http://localhost:3131/automation/find-elements" \
-  -H "Content-Type: application/json" \
-  -d '{"selector": "Edit[@Name=\"Text Editor\"]"}'
-
-# 4. Click on text area
-curl -X POST "http://localhost:3131/automation/click" \
-  -H "Content-Type: application/json" \
-  -d '{"x": 400, "y": 300}'
-
-# 5. Type text
-curl -X POST "http://localhost:3131/automation/type" \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Hello from ScreenSearch API!"}'
-
-# 6. Save file (Ctrl+S)
-curl -X POST "http://localhost:3131/automation/press-key" \
-  -H "Content-Type: application/json" \
-  -d '{"key": "s", "modifiers": ["ctrl"]}'
-```
-
-### Advanced Search with Multiple Filters
-
-```bash
-# Search for "error" in Chrome during specific time window
-curl -G "http://localhost:3131/search" \
-  --data-urlencode "q=error OR exception" \
-  --data-urlencode "app=Chrome" \
-  --data-urlencode "start_time=2025-12-10T09:00:00Z" \
-  --data-urlencode "end_time=2025-12-10T17:00:00Z" \
-  --data-urlencode "limit=50"
-```
-
----
-
-## Performance Targets
-
-The API is designed to meet these performance benchmarks:
-
-| Operation | Target | Description |
-|-----------|--------|-------------|
-| Search response time | < 100ms | 95th percentile for full-text search |
-| Frame retrieval | < 50ms | 95th percentile for frame queries |
-| Automation actions | < 200ms | 95th percentile for UI automation |
-| Health check | < 10ms | Health endpoint response time |
-| Concurrent connections | 50+ | Simultaneous API connections supported |
-
----
-
-## Configuration
-
-### Environment Variables
-
-Configure the API server using these environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `RUST_LOG` | `screen_api=debug` | Logging level |
-| `SCREEN_DB_PATH` | `screensearch.db` | Path to SQLite database |
-| `API_HOST` | `127.0.0.1` | API server bind address |
-| `API_PORT` | `3131` | API server port |
-
-### Example Configuration
-
-```bash
-# Windows PowerShell
-$env:RUST_LOG="screen_api=info"
-$env:SCREEN_DB_PATH="C:\Users\user\screensearch.db"
-cargo run --release
-
-# Windows CMD
-set RUST_LOG=screen_api=info
-set SCREEN_DB_PATH=C:\Users\user\screensearch.db
-cargo run --release
-```
-
----
-
-## Security Considerations
-
-### Local-Only Access
-
-The API binds to `127.0.0.1` by default and is designed for local use only. Do not expose this API to external networks without proper authentication and encryption.
-
-### Automation Risks
-
-The automation endpoints have full desktop access and can control any application. Use these endpoints carefully:
-
-- Validate all automation requests
-- Implement rate limiting for automation endpoints
-- Monitor automation actions for unexpected behavior
-- Consider application exclusion lists for sensitive apps
-
-### Data Privacy
-
-All captured screen content is stored locally. The API does not:
-- Transmit data to external services
-- Include built-in authentication (add your own if needed)
-- Log sensitive captured content
-
----
-
-## Version History
-
-### v0.3.0 (Current)
-
-Embedded LLM and AI-First UI:
-- **Embedded Ministral-3B**: Local LLM via llama.cpp server
-- **Vulkan GPU acceleration**: Cross-platform GPU support (NVIDIA, AMD, Intel)
-- **Local provider option**: `provider_url: "local"` for zero-config AI
-- **Model management endpoints**: Download, status, server control
-- **AI-First Dashboard**: Intel Dash with glassmorphism design
-- See `docs/embedded-llm.md` for complete LLM documentation
-
-### v0.2.0
-
-Hybrid search and semantic understanding:
-- Vector embeddings for semantic search
-- Hybrid FTS5 + vector ranking
-- AI intelligence reports with RAG context
-- External LLM provider support (Ollama, OpenAI-compatible)
-
-### v0.1.0
-
-Initial release with core functionality:
-- Full-text search with FTS5
-- Frame retrieval and filtering
-- Computer automation via Windows UIAutomation
-- Tag management system
-- Health monitoring
-
----
-
-## AI Reporting Endpoints
-
-### POST /ai/generate
-
-Generate an intelligence report based on user query + context from captured screen history (RAG).
-
-#### Request Body
-
-```json
-{
-  "query": "What did I work on yesterday regarding the database migration?",
-  "model": "gpt-4o",
-  "api_key": "sk-...",
-  "provider": "openai"
-}
-```
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `query` | string | Yes | - | The question or topic to generate a report on |
-| `model` | string | Yes | - | Model identifier (e.g., "gpt-4o", "claude-3-sonnet") |
-| `provider` | string | Yes | "openai" | Provider: "openai", "anthropic", "google", "ollama" |
-| `api_key` | string | No | - | API Key (optional if configured in env/settings) |
-
-#### Response
-
-```json
-{
-  "report": "# Analysis\n\nBased on your screen activity...",
-  "context_source": "Semantic Search (50 results)"
-}
-```
-
--   **report**: Markdown-formatted text generated by the LLM.
--   **context_source**: Indicators of RAG source (e.g., "Semantic Search" or "Recent Activity Fallback").
-
----
-
-## Support and Resources
-
-### Documentation
-
-- Project README: `\path\to\app\ScreenSearch\README_FULL.md`
-- Architecture Guide: `\path\to\app\ScreenSearch\CLAUDE.md`
-- API Server README: `\path\to\app\ScreenSearch\screen-api\README.md`
-
-### Development
-
-- Source Code: `\path\to\app\ScreenSearch\`
-- API Routes: `screen-api\src\routes.rs`
-- Request Models: `screen-api\src\models.rs`
-- Handler Implementation: `screen-api\src\handlers\`
-
-### Testing
-
-Run API tests:
-```bash
-# Unit tests
-cargo test --lib -p screen-api
-
-# Integration tests
-cargo test --test integration_tests -- --ignored
-
-# All tests
-cargo test -p screen-api
-```
-
----
-
-**ScreenSearch API** - Locally stored, searchable screen capture with powerful automation.
-
----
-
-## AI Intelligence Endpoints
-
-### POST /api/test-vision
-
-Test the configuration of an AI provider (Vision or LLM) by sending a simple prompt.
-
-#### Request Body
-
-```json
-{
-  "provider": "ollama",
-  "model": "llama3",
-  "endpoint": "http://localhost:11434",
-  "api_key": ""
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `provider` | string | Yes | Provider type: "ollama" or "openai" |
-| `model` | string | Yes | Model name |
-| `endpoint` | string | Yes | Base URL of the API |
-| `api_key` | string | No | Authentication token (if required) |
-
-#### Response
-
-```json
-{
-  "success": true,
-  "message": "Connection successful",
-  "response": "OK"
-}
-```
-
----
-
-### POST /api/ai/generate
-
-Generate an intelligence report using RAG context from captured screens. Supports both local embedded LLM and external providers.
-
-#### Request Body
-
-```json
-{
-  "query": "What did I work on yesterday?",
-  "provider_url": "local",
-  "model": "ministral-3b",
-  "api_key": ""
-}
-```
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `query` | string | Yes | - | User question or prompt |
-| `provider_url` | string | No | From settings | `"local"` for embedded LLM, or OpenAI-compatible URL |
-| `model` | string | No | From settings | Model name (ignored for local) |
-| `api_key` | string | No | - | API key for external providers |
-
-#### Response
-
-```json
-{
-  "answer": "Yesterday, you spent most of your time on...",
-  "sources": [123, 124, 125]
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `answer` | string | Generated markdown text response |
-| `sources` | array | List of Frame IDs used as context |
-
-#### Notes
-
-- When `provider_url` is `"local"`, uses the embedded Ministral-3B model
-- Local provider auto-starts llama-server if not running
-- Model must be downloaded before first use (see `/api/ai/model/download`)
-
----
-
-### POST /api/ai/validate
-
-Test AI provider connection and configuration.
-
-#### Request Body
+Generates a report over a time range:
 
 ```json
 {
   "provider_url": "local",
   "model": "ministral-3b",
-  "api_key": ""
+  "start_time": "2026-06-14T00:00:00Z",
+  "end_time": "2026-06-15T00:00:00Z",
+  "prompt": "Summarize completed engineering work"
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `provider_url` | string | Yes | `"local"` or OpenAI-compatible endpoint URL |
-| `model` | string | Yes | Model name to test |
-| `api_key` | string | No | API key for external providers |
+### Bundled Runtime Management
 
-#### Response
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/ai/model/status` | Local Ministral model status |
+| `POST` | `/ai/model/download` | Start local model download |
+| `GET` | `/ai/server/status` | llama-server state |
+| `POST` | `/ai/server/start` | Start llama-server |
+| `POST` | `/ai/server/stop` | Stop llama-server |
+| `POST` | `/ai/server/ttl` | Set idle shutdown timeout |
+| `POST` | `/ai/server/download` | Download llama-server |
 
-```json
-{
-  "success": true,
-  "message": "Local Ministral-3B model ready"
-}
-```
+### `POST /test-vision`
 
----
+Legacy route name retained for compatibility. It tests the configured
+generation provider; it does not test PP-OCRv5 or Qwen retrieval.
 
-### GET /api/ai/model/status
+## Download Progress
 
-Get the status of the embedded local LLM model.
+### `GET /downloads/status`
 
-#### Response
+Returns progress for managed generation-model and llama-server downloads.
+Quality-sidecar model downloads currently use the Hugging Face and Paddle
+caches and are reported through sidecar readiness rather than this endpoint.
 
-```json
-{
-  "downloaded": true,
-  "downloading": false,
-  "model_name": "Ministral-3B-Instruct-2512-Q4_K_M",
-  "model_size_bytes": 2150000000,
-  "model_path": "C:\\Users\\...\\ScreenSearch\\models\\Ministral-3B-Instruct-2512-Q4_K_M.gguf"
-}
-```
+## Automation
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `downloaded` | boolean | Whether the model file exists |
-| `downloading` | boolean | Whether download is in progress |
-| `model_name` | string | Full model filename |
-| `model_size_bytes` | integer | Expected model size (~2.15 GB) |
-| `model_path` | string/null | Path to model file if downloaded |
+Windows-only endpoints:
 
----
+| Method | Path |
+|---|---|
+| `POST` | `/automation/find-elements` |
+| `POST` | `/automation/click` |
+| `POST` | `/automation/type` |
+| `POST` | `/automation/scroll` |
+| `POST` | `/automation/press-key` |
+| `POST` | `/automation/get-text` |
+| `POST` | `/automation/list-elements` |
+| `POST` | `/automation/open-app` |
+| `POST` | `/automation/open-url` |
 
-### POST /api/ai/model/download
+These endpoints can control the desktop. Do not expose the API beyond
+loopback.
 
-Trigger download of the embedded LLM model and llama-server binary.
+## Errors
 
-#### Request Body
+Handlers return an HTTP error status and JSON error message for invalid input,
+database failures, unavailable inference, or automation failures.
 
-No request body required.
-
-#### Response
-
-```json
-{
-  "success": true,
-  "message": "Download started. Model size: 2.15 GB"
-}
-```
-
-#### Notes
-
-- Downloads from HuggingFace (model) and GitHub (llama.cpp binary)
-- Model: `Ministral-3B-Instruct-2512-Q4_K_M.gguf` (~2.15 GB)
-- Binary: `llama-b7562-bin-win-vulkan-x64.zip` (Vulkan GPU support)
-- Files stored in `%APPDATA%\ScreenSearch\models\`
-- Use `/api/downloads/status` to track download progress in real-time
-
----
-
-### GET /api/downloads/status
-
-Get real-time progress for all active downloads (model, llama-server, embeddings).
-
-#### Response
-
-```json
-{
-  "downloads": [
-    {
-      "name": "llm_model",
-      "bytes_downloaded": 1073741824,
-      "total_bytes": 2150000000,
-      "speed_bps": 5242880,
-      "eta_seconds": 205,
-      "percentage": 49.9,
-      "error": null
-    },
-    {
-      "name": "llama_server",
-      "bytes_downloaded": 8388608,
-      "total_bytes": 16777216,
-      "speed_bps": 1048576,
-      "eta_seconds": 8,
-      "percentage": 50.0,
-      "error": null
-    }
-  ]
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `downloads` | array | List of active downloads |
-| `name` | string | Download identifier: `llm_model`, `llama_server`, `embeddings_model`, or `embeddings_tokenizer` |
-| `bytes_downloaded` | integer | Bytes downloaded so far |
-| `total_bytes` | integer | Total expected download size |
-| `speed_bps` | integer | Current download speed (bytes per second) |
-| `eta_seconds` | integer | Estimated time to completion (capped at 24 hours) |
-| `percentage` | float | Download completion percentage (0-100) |
-| `error` | string/null | Error message if download failed, null otherwise |
-
-#### Notes
-
-- Returns empty array if no downloads are active
-- Automatically updates every second while downloads are in progress
-- Error states persist in the UI until download is retried or completed
-- Frontend should poll this endpoint to display progress bars
-
----
-
-### POST /api/ai/server/start
-
-Manually start the llama-server process for local inference.
-
-#### Request Body
-
-No request body required.
-
-#### Response
-
-```json
-{
-  "success": true,
-  "message": "Server started on port 31130",
-  "port": 31130
-}
-```
-
-#### Notes
-
-- Server auto-starts on first `/api/ai/generate` request with `provider_url: "local"`
-- Tries ports 31130, 31131, 31132 if primary port is busy
-- Server auto-shuts down after 5 minutes of inactivity (configurable)
-
----
-
-### POST /api/ai/server/stop
-
-Stop the running llama-server process.
-
-#### Request Body
-
-No request body required.
-
-#### Response
-
-```json
-{
-  "success": true,
-  "message": "Server stopped"
-}
-```
-
----
-
-### GET /api/ai/server/status
-
-Check if llama-server is running.
-
-#### Response
-
-```json
-{
-  "running": true,
-  "port": 31130,
-  "pid": 12345,
-  "uptime_seconds": 300
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `running` | boolean | Whether server process is alive |
-| `port` | integer/null | Port server is listening on |
-| `pid` | integer/null | Process ID of llama-server |
-| `uptime_seconds` | integer/null | How long server has been running |
+Quality-stack degradation is also represented in
+`GET /embeddings/status` through `sidecar_ready`, `reindex_required`, and
+`error`.

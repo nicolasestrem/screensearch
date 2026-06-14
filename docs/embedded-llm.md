@@ -585,9 +585,9 @@ interface AppStore {
 
 ```typescript
 const PROVIDER_OPTIONS = [
-  { value: 'local', label: 'Local (Ministral-3B)', description: 'Built-in GPU-accelerated model' },
-  { value: 'http://localhost:11434/v1', label: 'Ollama', description: 'Local Ollama server' },
-  { value: 'custom', label: 'Custom API', description: 'OpenAI-compatible endpoint' },
+  { value: 'local', label: 'Bundled Ministral-3-3B', description: 'Optional local answer-generation model' },
+  { value: 'http://localhost:11434/v1', label: 'Ollama-compatible', description: 'Local generation server' },
+  { value: 'custom', label: 'OpenAI-compatible', description: 'Remote or local generation endpoint' },
 ];
 ```
 
@@ -605,9 +605,12 @@ const PROVIDER_OPTIONS = [
 
 The SettingsPanel (Data & AI tab) provides additional controls:
 
-- **Vision toggle**: Enable/disable AI features
+- **Answer Generation toggle**: Enable/disable descriptions, answers, digests, and reports
 - **Model download**: Trigger model download with progress
 - **Server management**: Start/stop/TTL controls
+
+This runtime is not used for OCR, embeddings, vector search, or reranking.
+Those functions are provided by the PP-OCRv5/Qwen quality sidecar.
 - **Status monitoring**: Real-time server status polling
 
 ---
@@ -772,4 +775,4 @@ The embedded LLM system provides a fully local, privacy-preserving AI experience
 
 ---
 
-*Last updated: 2026-01-08 (v0.4.2)*
+*Last updated: 2026-06-14 (v0.4.35)*

@@ -21,3 +21,27 @@ contract clears incompatible vectors and queues a resumable reindex.
 Quality changes must be measured with the versioned cases under `evaluation/`.
 Track Recall@10, MRR, OCR character/word error rate, citation correctness,
 p95 latency, peak memory, and index size on Windows CPU and GPU systems.
+
+## Fixed And Configurable Components
+
+PP-OCRv5, Qwen3 embeddings, Qwen3 reranking, sqlite-vec, and RRF are fixed
+quality-stack components for this release. The provider options shown under
+**Answer Generation** configure only the LLM that writes descriptions,
+answers, digests, and reports.
+
+Changing the generation LLM does not change OCR or retrieval. Remote generation
+can receive selected grounded context; the quality stack itself remains local.
+
+## Build And Packaging
+
+Run `npm ci` in `screensearch-ui` before the first Cargo build. The API build
+script then rebuilds changed frontend sources before embedding them. Build the
+sidecar on Windows with:
+
+```powershell
+python -m pip install -r sidecar\requirements.txt
+python sidecar\build.py
+```
+
+The installer and portable archive preserve the generated
+`screensearch-ai-sidecar` directory under `bin/`.

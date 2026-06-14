@@ -6,9 +6,9 @@ import { toast } from 'react-hot-toast';
 
 // Provider options
 const PROVIDER_OPTIONS = [
-    { value: 'local', label: 'Local (Ministral-3B)', description: 'Built-in GPU-accelerated model - No API needed' },
-    { value: 'http://localhost:11434/v1', label: 'Ollama', description: 'Local Ollama server on port 11434' },
-    { value: 'custom', label: 'Custom API', description: 'OpenAI-compatible endpoint' },
+    { value: 'local', label: 'Bundled Ministral-3-3B', description: 'Optional local model for answers and reports; not used for OCR or retrieval' },
+    { value: 'http://localhost:11434/v1', label: 'Ollama-compatible', description: 'Local generation server on port 11434' },
+    { value: 'custom', label: 'OpenAI-compatible', description: 'Remote or local generation endpoint' },
 ] as const;
 
 export function AiSettings() {
@@ -64,13 +64,13 @@ export function AiSettings() {
         <div className="bg-paper border border-rule rounded-none p-6 space-y-6">
             <div className="flex items-center gap-2 pb-4 border-b border-rule">
                 <Settings className="w-5 h-5 text-ink" />
-                <h2 className="text-[18px] font-serif text-ink">AI Provider Settings</h2>
+                <h2 className="text-[18px] font-serif text-ink">Answer Generation Provider</h2>
             </div>
 
             <div className="space-y-4">
                 {/* Provider Selection */}
                 <div className="space-y-2">
-                    <label className="text-sm font-medium">AI Provider</label>
+                    <label className="text-sm font-medium">LLM Runtime</label>
                     <select
                         value={isCustom ? 'custom' : aiConfig.providerUrl}
                         onChange={(e) => handleProviderChange(e.target.value)}
@@ -94,7 +94,7 @@ export function AiSettings() {
                     <div className="flex items-center gap-3 p-4 bg-paper-2 border border-rule rounded-none">
                         <Cpu className="w-8 h-8 text-ink flex-shrink-0" />
                         <div>
-                            <p className="font-serif text-[15px]">Ministral-3B (Embedded)</p>
+                            <p className="font-serif text-[15px]">Ministral-3-3B (Bundled Generation)</p>
                             <p className="text-xs font-serif italic text-muted">
                                 GPU-accelerated via Vulkan. Works on NVIDIA, AMD, and Intel GPUs.
                                 Model runs entirely on your machine - no API key required.

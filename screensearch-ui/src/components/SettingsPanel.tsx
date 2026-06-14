@@ -13,7 +13,9 @@ import {
   Download,
   CheckCircle,
   Loader2,
-  Cpu
+  Cpu,
+  ScanText,
+  Waypoints
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { TagManager } from './TagManager';
@@ -200,9 +202,9 @@ export function SettingsPanel() {
   const [isPaused, setIsPaused] = useState(false);
   const [retentionDays, setRetentionDays] = useState(30);
   const [visionEnabled, setVisionEnabled] = useState(false);
-  const [visionProvider, setVisionProvider] = useState('ollama');
+  const [visionProvider, setVisionProvider] = useState('local');
   const [visionModel, setVisionModel] = useState('ministral-3:3b');
-  const [visionEndpoint, setVisionEndpoint] = useState('http://localhost:11434');
+  const [visionEndpoint, setVisionEndpoint] = useState('http://127.0.0.1:31130');
   const [visionApiKey, setVisionApiKey] = useState('');
   const [newExcludedApp, setNewExcludedApp] = useState('');
 
@@ -215,9 +217,9 @@ export function SettingsPanel() {
       setIsPaused(apiSettings.is_paused === 1);
       setRetentionDays(Number(apiSettings.retention_days));
       setVisionEnabled(apiSettings.vision_enabled === 1);
-      setVisionProvider(apiSettings.vision_provider || 'ollama');
+      setVisionProvider(apiSettings.vision_provider || 'local');
       setVisionModel(apiSettings.vision_model || 'ministral-3:3b');
-      setVisionEndpoint(apiSettings.vision_endpoint || 'http://localhost:11434');
+      setVisionEndpoint(apiSettings.vision_endpoint || 'http://127.0.0.1:31130');
       setVisionApiKey(apiSettings.vision_api_key || '');
     }
   }, [apiSettings]);
@@ -544,11 +546,50 @@ export function SettingsPanel() {
                 <section className="space-y-4">
                   <h3 className="text-lg font-semibold border-b border-border pb-2">AI & Intelligence</h3>
 
-                  {/* Vision Toggle */}
+                  <div className="p-4 bg-card rounded-xl border border-border space-y-4">
+                    <div>
+                      <p className="font-medium">Screen Understanding & Retrieval</p>
+                      <p className="text-sm text-muted-foreground">
+                        Managed local quality stack. These model contracts are fixed for this release.
+                      </p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="p-3 bg-secondary/30 border border-border/50 rounded-lg">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <ScanText className="h-4 w-4 text-primary" />
+                          OCR
+                        </div>
+                        <p className="mt-1 font-mono text-xs">PP-OCRv5</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Windows OCR is used only as an explicit fallback.
+                        </p>
+                      </div>
+                      <div className="p-3 bg-secondary/30 border border-border/50 rounded-lg">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Waypoints className="h-4 w-4 text-primary" />
+                          RAG retrieval
+                        </div>
+                        <p className="mt-1 font-mono text-xs">Qwen3-Embedding-0.6B</p>
+                        <p className="font-mono text-xs">Qwen3-Reranker-0.6B</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          1024-dimensional sqlite-vec KNN with FTS5 and RRF.
+                        </p>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Models download on first use through the loopback quality sidecar and can use up to 5 GB.
+                    </p>
+                  </div>
+
+                  <EmbeddingsStatus />
+
+                  {/* Generative LLM Toggle */}
                   <div className="flex items-center justify-between p-4 bg-card rounded-xl border border-border">
                     <div>
-                      <p className="font-medium">Vision Engine</p>
-                      <p className="text-sm text-muted-foreground">Enable AI analysis and RAG features</p>
+                      <p className="font-medium">Answer Generation</p>
+                      <p className="text-sm text-muted-foreground">
+                        Optional LLM for descriptions, grounded answers, digests, and reports
+                      </p>
                     </div>
                     <button
                       onClick={() => {
@@ -580,26 +621,26 @@ export function SettingsPanel() {
                     </button>
                   </div>
 
-                  {/* AI Configuration */}
+                  {/* Generative LLM Configuration */}
                   {visionEnabled && (
                     <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
                       <div className="p-4 bg-card rounded-xl border border-border space-y-4">
                         <div className="flex items-center gap-2 mb-2">
                           <SettingsIcon className="w-4 h-4 text-primary" />
-                          <h4 className="font-semibold">AI Provider Settings</h4>
+                          <h4 className="font-semibold">Generation Provider</h4>
                         </div>
                         <div className="h-px bg-border my-2" />
 
                         <div>
-                          <label className="block text-sm font-medium mb-2">Provider Protocol</label>
+                          <label className="block text-sm font-medium mb-2">LLM Runtime</label>
                           <select
                             value={visionProvider}
                             onChange={(e) => setVisionProvider(e.target.value)}
                             className="w-full bg-background border border-input rounded-lg px-3 py-2 font-mono text-sm"
                           >
-                            <option value="local">Local (Ministral-3B) - No API needed</option>
-                            <option value="ollama">Ollama (Local Server)</option>
-                            <option value="openai">OpenAI Compatible (ChatGPT, vLLM, LM Studio)</option>
+                            <option value="local">Bundled local Ministral-3-3B</option>
+                            <option value="ollama">Ollama-compatible local server</option>
+                            <option value="openai">OpenAI-compatible endpoint</option>
                           </select>
                         </div>
 
@@ -610,7 +651,7 @@ export function SettingsPanel() {
                             <div className="space-y-3">
                               <div className="flex items-center gap-2">
                                 <Cpu className="h-4 w-4 text-primary" />
-                                <span className="font-medium">Ministral-3B Model</span>
+                                <span className="font-medium">Ministral-3-3B Generation Model</span>
                               </div>
 
                               {modelStatus?.downloaded ? (
@@ -843,14 +884,14 @@ export function SettingsPanel() {
 
                       <div className="p-4 bg-secondary/20 rounded-xl border border-border/50 text-sm text-muted-foreground">
                         <p>
-                          <span className="font-semibold text-foreground">Privacy Note:</span> When generating reports, context from your screen (text, app names)
-                          will be sent to the configured provider. Local providers (like Ollama) keep data device-side.
+                          <span className="font-semibold text-foreground">Data boundary:</span> OCR, embeddings, vector search, and reranking remain local.
+                          Only grounded context used for an answer or report is sent to the selected generation provider.
+                          The bundled runtime and local Ollama-compatible servers keep that context on-device.
                         </p>
                       </div>
                     </div>
                   )}
 
-                  <EmbeddingsStatus />
                 </section>
               </div>
             )}
