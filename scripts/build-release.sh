@@ -161,6 +161,8 @@ if ((WINDOWS_BUNDLE)); then
   fi
 
   branch="$(git branch --show-current)"
+  head_sha="$(git rev-parse HEAD)"
+  dispatch_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo
   echo "Triggering Windows bundle build for $branch"
   gh workflow run release.yml \
@@ -174,9 +176,10 @@ if ((WINDOWS_BUNDLE)); then
       --workflow release.yml \
       --branch "$branch" \
       --event workflow_dispatch \
-      --limit 1 \
-      --json databaseId \
-      --jq '.[0].databaseId // empty')"
+      --limit 10 \
+      --json databaseId,createdAt,headSha \
+      --jq ".[] | select(.headSha == \"$head_sha\" and .createdAt >= \"$dispatch_started\") | .databaseId" \
+      | head -1)"
     [[ -n "$run_id" ]] && break
     sleep 3
   done

@@ -224,6 +224,9 @@ Build and download complete Windows artifacts without publishing a tag:
 ./scripts/build-release.sh 0.4.35 --windows-bundle
 ```
 
+The helper matches the dispatched workflow by branch, commit SHA, and dispatch
+time so an earlier successful run cannot be mistaken for the new build.
+
 The installer, portable ZIP, and checksums are downloaded under
 `target/x86_64-pc-windows-msvc/release/bundles/windows-full/`.
 
