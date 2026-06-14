@@ -38,10 +38,11 @@ pub async fn search(
     }
 
     // Build filter from query parameters
+    let app_filter = params.app.clone();
     let filter = FrameFilter {
         start_time: params.start_time,
         end_time: params.end_time,
-        app_name: params.app,
+        app_name: params.app.clone(),
         device_name: None,
         tag_ids: None,
         monitor_index: None,
@@ -54,9 +55,10 @@ pub async fn search(
     };
 
     // Execute search based on mode
-    let results = if params.mode.as_deref() == Some("semantic") {
-        debug!("Performing semantic search for: {}", params.q);
-        
+    let results = if matches!(params.mode.as_deref(), Some("semantic" | "hybrid")) {
+        let mode = params.mode.as_deref().unwrap_or("semantic");
+        debug!("Performing {} search for: {}", mode, params.q);
+
         // Get embedding engine
         let engine = state.get_embedding_engine().await.map_err(|e| {
             error!("Failed to initialize embedding engine: {}", e);
@@ -64,29 +66,69 @@ pub async fn search(
         })?;
 
         // Generate query embedding
-        let embedding = engine.embed(&params.q).map_err(|e| {
-             error!("Failed to generate query embedding: {}", e);
-             AppError::Internal(e.to_string())
+        let embedding = engine.embed(&params.q).await.map_err(|e| {
+            error!("Failed to generate query embedding: {}", e);
+            AppError::Internal(e.to_string())
         })?;
 
-        // Search embeddings
-        let semantic_results = state.db
-            .search_embeddings(embedding, pagination.limit as usize, 0.3) // 0.3 threshold
-            .await
-            .map_err(AppError::Database)?;
+        let start_time = params
+            .start_time
+            .unwrap_or(chrono::DateTime::<chrono::Utc>::MIN_UTC);
+        let end_time = params.end_time.unwrap_or_else(chrono::Utc::now);
+        let mut semantic_results = if mode == "hybrid" {
+            state
+                .db
+                .hybrid_search(
+                    &params.q,
+                    embedding,
+                    0.3,
+                    pagination.limit,
+                    start_time,
+                    end_time,
+                )
+                .await
+                .map_err(AppError::Database)?
+        } else {
+            state
+                .db
+                .search_embeddings_with_time_range(
+                    embedding,
+                    pagination.limit as usize,
+                    0.0,
+                    Some(start_time),
+                    Some(end_time),
+                )
+                .await
+                .map_err(AppError::Database)?
+        };
+        if let Some(app) = app_filter.as_deref() {
+            semantic_results.retain(|result| {
+                result
+                    .frame
+                    .active_process
+                    .as_deref()
+                    .map(|process| process.eq_ignore_ascii_case(app))
+                    .unwrap_or(false)
+            });
+        }
 
         // Convert to SearchResult format
         let mut search_results = Vec::new();
-        
+
         // Bulk load tags
         let frame_ids: Vec<i64> = semantic_results.iter().map(|r| r.frame.id).collect();
-        let tags_map = state.db.get_tags_for_frames(&frame_ids).await.unwrap_or_default();
+        let tags_map = state
+            .db
+            .get_tags_for_frames(&frame_ids)
+            .await
+            .unwrap_or_default();
 
         for sem in semantic_results {
             // Convert tags to strings (SearchResult expects Vec<String> tags?)
             // Wait, SearchResult struct definition in db/models.rs?
             // Snippet 337: pub tags: Vec<String>.
-            let tags = tags_map.get(&sem.frame.id)
+            let tags = tags_map
+                .get(&sem.frame.id)
                 .map(|t_list| t_list.iter().map(|t| t.tag_name.clone()).collect())
                 .unwrap_or_default();
 
@@ -111,7 +153,7 @@ pub async fn search(
                 tags,
             });
         }
-        
+
         search_results
     } else {
         // Default FTS search
@@ -180,7 +222,7 @@ pub async fn search_keywords(
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .collect();
-            
+
             Ok(Json(suggestions))
         }
         Err(e) => {

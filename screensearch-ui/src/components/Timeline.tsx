@@ -6,6 +6,7 @@ import { useDailyActivity } from '../hooks/useDailyActivity';
 import { FrameCard } from './FrameCard';
 import { ActivityGraph } from './timeline/ActivityGraph';
 import { format } from 'date-fns';
+import type { Frame } from '../types';
 
 /**
  * Main Timeline view component.
@@ -62,7 +63,7 @@ export function Timeline() {
       }
       acc[date].push(frame);
       return acc;
-    }, {} as Record<string, any[]>);
+    }, {} as Record<string, Frame[]>);
   }, [data?.data]);
 
   // Use conditional rendering instead of early returns to maintain consistent hook calls

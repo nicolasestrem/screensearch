@@ -24,7 +24,10 @@ impl Default for TextChunker {
 impl TextChunker {
     /// Create a new text chunker with custom settings
     pub fn new(max_tokens: usize, overlap: usize) -> Self {
-        Self { max_tokens, overlap }
+        Self {
+            max_tokens,
+            overlap,
+        }
     }
 
     /// Split text into chunks suitable for embedding
@@ -58,11 +61,11 @@ impl TextChunker {
 
         for sentence in sentences {
             let sentence_words = sentence.split_whitespace().count();
-            
+
             if current_word_count + sentence_words > max_words && !current_chunk.is_empty() {
                 // Save current chunk and start new one
                 chunks.push(current_chunk.trim().to_string());
-                
+
                 // Start new chunk with overlap (last few words of previous)
                 let words: Vec<&str> = current_chunk.split_whitespace().collect();
                 let overlap_words = (self.overlap as f32 / 1.3) as usize;
@@ -130,7 +133,7 @@ mod tests {
         let chunker = TextChunker::new(50, 10); // Small chunks for testing
         let text = "First sentence here. Second sentence follows. Third one comes next. Fourth is also present. Fifth sentence ends it.";
         let chunks = chunker.chunk_text(text);
-        assert!(chunks.len() >= 1);
+        assert!(!chunks.is_empty());
     }
 
     #[test]

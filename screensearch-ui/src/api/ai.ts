@@ -54,13 +54,21 @@ export const aiApi = {
 
         if (!response.ok) {
             const errorText = await response.text();
-            // Try to parse error as json if possible
+            let errorMessage = errorText;
             try {
-                const errorJson = JSON.parse(errorText);
-                throw new Error(errorJson.message || errorText);
-            } catch (e) {
-                throw new Error(`Report generation failed: ${response.statusText}. ${errorText}`);
+                const errorJson: unknown = JSON.parse(errorText);
+                if (
+                    typeof errorJson === 'object' &&
+                    errorJson !== null &&
+                    'message' in errorJson &&
+                    typeof errorJson.message === 'string'
+                ) {
+                    errorMessage = errorJson.message;
+                }
+            } catch {
+                // The response was plain text.
             }
+            throw new Error(`Report generation failed: ${response.statusText}. ${errorMessage}`);
         }
 
         return response.json();

@@ -16,6 +16,7 @@ New to ScreenSearch? Start here:
 - **First Search** → [API Reference - Search Endpoints](api-reference.md#search-endpoints)
 
 **Quick Links:**
+- [AI Quality Stack](ai-quality-stack.md)
 - [Download Latest Release (v0.2.0)](https://github.com/nicolasestrem/screensearch/releases/latest)
 - [Build from Source](developer-guide.md#building-from-source)
 - [API Playground](http://localhost:3131/) (requires running instance)
@@ -181,7 +182,7 @@ pause_on_lock = true            # Auto-pause when screen locks
 
 ## Project Information
 
-**Version:** 0.4.32
+**Version:** 0.4.35
 **Platform:** Windows 10/11 only (uses Windows-specific APIs)
 **License:** MIT
 **Repository:** [github.com/nicolasestrem/screensearch](https://github.com/nicolasestrem/screensearch)
@@ -190,12 +191,12 @@ pause_on_lock = true            # Auto-pause when screen locks
 **Technology Stack:**
 - **Language:** Rust 2021 Edition
 - **Runtime:** Tokio async runtime
-- **Database:** SQLite with FTS5 full-text search
+- **Database:** SQLite with FTS5 and sqlite-vec
 - **API Framework:** Axum
 - **UI:** React + TypeScript + Vite
-- **OCR:** Windows OCR API (WinRT COM)
+- **OCR:** PP-OCRv5 sidecar with Windows OCR fallback
 - **Automation:** Windows UIAutomation API
-- **Embeddings:** ONNX Runtime + all-MiniLM-L6-v2 model
+- **Embeddings:** Qwen3 embeddings and reranking through the local quality sidecar
 
 **Performance Targets:**
 

@@ -3,7 +3,7 @@
 //! Processes frames without embeddings in the background.
 
 use screensearch_db::DatabaseManager;
-use screensearch_embeddings::{EmbeddingEngine, TextChunker};
+use screensearch_embeddings::EmbeddingEngine;
 use std::sync::Arc;
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
@@ -33,7 +33,6 @@ impl Default for EmbeddingWorkerConfig {
 pub struct EmbeddingWorker {
     db: Arc<DatabaseManager>,
     engine: Arc<EmbeddingEngine>,
-    chunker: TextChunker,
     config: EmbeddingWorkerConfig,
 }
 
@@ -44,12 +43,7 @@ impl EmbeddingWorker {
         engine: Arc<EmbeddingEngine>,
         config: EmbeddingWorkerConfig,
     ) -> Self {
-        Self {
-            db,
-            engine,
-            chunker: TextChunker::default(),
-            config,
-        }
+        Self { db, engine, config }
     }
 
     /// Process a batch of frames without embeddings
@@ -79,73 +73,52 @@ impl EmbeddingWorker {
             }
 
             // Combine OCR text and chunk it
-            let combined_text: String = ocr_texts
+            let ocr_text: String = ocr_texts
                 .iter()
                 .map(|o| o.text.as_str())
                 .collect::<Vec<_>>()
                 .join(" ");
+            let combined_text = format!(
+                "Timestamp: {}\nApplication: {}\nWindow: {}\nScreen text:\n{}",
+                frame.timestamp,
+                frame.active_process.as_deref().unwrap_or("Unknown"),
+                frame.active_window.as_deref().unwrap_or(""),
+                ocr_text
+            );
+            let chunks = self.engine.chunk_text(&combined_text, 512, 64).await?;
 
-            let chunks = self.chunker.chunk_text(&combined_text);
+            let chunk_refs: Vec<&str> = chunks.iter().map(String::as_str).collect();
+            let embeddings = self.engine.embed_batch(&chunk_refs).await?;
 
-            // Generate embeddings for each chunk
-            // Start a transaction for this frame's embeddings
-            // This ensures we don't have partial embeddings if something fails
-            let mut tx = self.db.pool().begin().await.map_err(|e| {
-                Box::new(std::io::Error::other(
-                    format!("Failed to start transaction: {}", e),
-                )) as Box<dyn std::error::Error + Send + Sync>
-            })?;
-
-            // Generate embeddings for each chunk
-            for (chunk_index, chunk_text) in chunks.iter().enumerate() {
-                // Generate embedding
-                let embedding = self.engine.embed(chunk_text)?;
-
-                // Convert Vec<f32> to Vec<u8> (little-endian bytes) for BLOB storage
-                let embedding_bytes: Vec<u8> = embedding
-                    .iter()
-                    .flat_map(|f| f.to_le_bytes())
-                    .collect();
-
-                // Insert into DB using the transaction
-                sqlx::query(
-                    r#"
-                    INSERT INTO embeddings (frame_id, chunk_text, chunk_index, embedding, embedding_dim)
-                    VALUES (?, ?, ?, ?, ?)
-                    "#
-                )
-                .bind(frame.id)
-                .bind(chunk_text)
-                .bind(chunk_index as i32)
-                .bind(embedding_bytes)
-                .bind(384) // Dimension
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| {
-                   Box::new(std::io::Error::other(
-                       format!("Failed to insert embedding: {}", e),
-                   )) as Box<dyn std::error::Error + Send + Sync>
-                })?;
+            for (chunk_index, (chunk_text, embedding)) in chunks.iter().zip(embeddings).enumerate()
+            {
+                self.db
+                    .insert_embedding(screensearch_db::NewEmbedding {
+                        frame_id: frame.id,
+                        chunk_text: chunk_text.clone(),
+                        chunk_index: chunk_index as i32,
+                        embedding,
+                        provider: self.engine.provider().to_string(),
+                        model: self.engine.model().to_string(),
+                        model_version: self.engine.model_version().to_string(),
+                        content_hash: EmbeddingEngine::content_hash(chunk_text),
+                    })
+                    .await?;
             }
-            
-            // Commit transaction
-            tx.commit().await.map_err(|e| {
-                Box::new(std::io::Error::other(
-                    format!("Failed to commit transaction: {}", e),
-                )) as Box<dyn std::error::Error + Send + Sync>
-            })?;
 
             processed += 1;
 
             // Update last processed frame ID
             self.db
-                .set_metadata(
-                    "embeddings_last_processed_frame_id",
-                    &frame.id.to_string(),
-                )
+                .set_metadata("embeddings_last_processed_frame_id", &frame.id.to_string())
                 .await?;
         }
 
+        if processed > 0 && self.db.get_frames_without_embeddings(1).await?.is_empty() {
+            self.db
+                .set_metadata("embeddings_reindex_required", "false")
+                .await?;
+        }
         info!("Processed {} frames", processed);
         Ok(processed)
     }
@@ -172,12 +145,12 @@ impl EmbeddingWorker {
             // If missing, we fall back to config (or keep running if enabled initially)
             // But since API sets it to "true"/"false", we should respect it.
             let enabled = match self.db.get_metadata("embeddings_enabled").await {
-               Ok(Some(val)) => val == "true",
-               Ok(None) => self.config.enabled, // Fallback to config if not set
-               Err(e) => {
-                   warn!("Failed to fetch embedding status: {}", e);
-                   self.config.enabled // Conservative fallback
-               }
+                Ok(Some(val)) => val == "true",
+                Ok(None) => self.config.enabled, // Fallback to config if not set
+                Err(e) => {
+                    warn!("Failed to fetch embedding status: {}", e);
+                    self.config.enabled // Conservative fallback
+                }
             };
 
             if !enabled {

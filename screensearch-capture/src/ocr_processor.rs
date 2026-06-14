@@ -34,7 +34,7 @@
 //! }
 //! ```
 
-use crate::{CaptureError, CapturedFrame, OcrEngine, OcrResult, Result};
+use crate::{CaptureError, CapturedFrame, OcrProviderEngine, OcrResult, Result};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,6 +44,21 @@ use tokio::time::interval;
 /// Configuration for OCR processor
 #[derive(Debug, Clone)]
 pub struct OcrProcessorConfig {
+    /// Preferred OCR provider: `ppocr-v5` or `windows`.
+    pub provider: String,
+
+    /// Loopback URL for the managed quality sidecar.
+    pub sidecar_url: String,
+
+    /// Optional bearer token shared with the sidecar.
+    pub sidecar_token: Option<String>,
+
+    /// OCR language hint.
+    pub language: String,
+
+    /// Fall back to Windows OCR if PP-OCRv5 is unavailable.
+    pub fallback_to_windows: bool,
+
     /// Minimum confidence threshold for storing OCR results (0.0 - 1.0)
     /// Results below this threshold are discarded
     pub min_confidence: f32,
@@ -73,6 +88,11 @@ pub struct OcrProcessorConfig {
 impl Default for OcrProcessorConfig {
     fn default() -> Self {
         Self {
+            provider: "ppocr-v5".to_string(),
+            sidecar_url: "http://127.0.0.1:3132".to_string(),
+            sidecar_token: None,
+            language: "en".to_string(),
+            fallback_to_windows: true,
             min_confidence: 0.7,
             worker_threads: 2,
             max_retries: 3,
@@ -194,7 +214,7 @@ pub struct ProcessedFrame {
 /// and producing OCR results for database storage.
 pub struct OcrProcessor {
     config: OcrProcessorConfig,
-    ocr_engine: OcrEngine,
+    ocr_engine: OcrProviderEngine,
     running: Arc<AtomicBool>,
     metrics: OcrMetrics,
 }
@@ -208,7 +228,14 @@ impl OcrProcessor {
     pub async fn new(config: OcrProcessorConfig) -> Result<Self> {
         tracing::info!("Initializing OCR processor with config: {:?}", config);
 
-        let ocr_engine = OcrEngine::new().await?;
+        let ocr_engine = OcrProviderEngine::new(
+            &config.provider,
+            config.sidecar_url.clone(),
+            config.sidecar_token.clone(),
+            config.language.clone(),
+            config.fallback_to_windows,
+        )
+        .await?;
         let metrics = OcrMetrics::new();
 
         Ok(Self {

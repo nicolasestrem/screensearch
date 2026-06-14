@@ -19,6 +19,12 @@ use tracing::debug;
 pub struct EmbeddingStatusResponse {
     pub enabled: bool,
     pub model: String,
+    pub provider: String,
+    pub model_version: String,
+    pub dimension: i64,
+    pub reindex_required: bool,
+    pub sidecar_ready: bool,
+    pub error: Option<String>,
     pub total_frames: i64,
     pub frames_with_embeddings: i64,
     pub coverage_percent: f32,
@@ -51,11 +57,18 @@ pub async fn get_embedding_status(
 ) -> Result<Json<EmbeddingStatusResponse>> {
     debug!("Getting embedding status");
 
+    let sidecar_error = state.get_embedding_engine().await.err();
     let status = state.db.get_embedding_status().await?;
 
     Ok(Json(EmbeddingStatusResponse {
         enabled: status.enabled,
         model: status.model,
+        provider: status.provider,
+        model_version: status.model_version,
+        dimension: status.dimension,
+        reindex_required: status.reindex_required,
+        sidecar_ready: sidecar_error.is_none(),
+        error: sidecar_error,
         total_frames: status.total_frames,
         frames_with_embeddings: status.frames_with_embeddings,
         coverage_percent: status.coverage_percent,
@@ -73,10 +86,7 @@ pub async fn generate_embeddings(
     debug!("Triggering embedding generation for {} frames", batch_size);
 
     // Get frames without embeddings
-    let frames = state
-        .db
-        .get_frames_without_embeddings(batch_size)
-        .await?;
+    let frames = state.db.get_frames_without_embeddings(batch_size).await?;
 
     let frames_count = frames.len() as i64;
 
@@ -100,7 +110,6 @@ pub async fn generate_embeddings(
         }
     };
 
-    let chunker = screensearch_embeddings::TextChunker::default();
     let mut processed = 0;
 
     for frame in frames {
@@ -115,30 +124,46 @@ pub async fn generate_embeddings(
         }
 
         // Combine OCR text and chunk it
-        let combined_text: String = ocr_texts
+        let ocr_text: String = ocr_texts
             .iter()
             .map(|o| o.text.as_str())
             .collect::<Vec<_>>()
             .join(" ");
+        let combined_text = format!(
+            "Timestamp: {}\nApplication: {}\nWindow: {}\nScreen text:\n{}",
+            frame.timestamp,
+            frame.active_process.as_deref().unwrap_or("Unknown"),
+            frame.active_window.as_deref().unwrap_or(""),
+            ocr_text
+        );
+        let chunks = match engine.chunk_text(&combined_text, 512, 64).await {
+            Ok(chunks) => chunks,
+            Err(error) => {
+                tracing::warn!("Failed to chunk frame {}: {}", frame.id, error);
+                continue;
+            }
+        };
 
-        let chunks = chunker.chunk_text(&combined_text);
+        let chunk_refs: Vec<&str> = chunks.iter().map(String::as_str).collect();
+        let embeddings = match engine.embed_batch(&chunk_refs).await {
+            Ok(embeddings) => embeddings,
+            Err(error) => {
+                tracing::warn!("Failed to embed frame {}: {}", frame.id, error);
+                continue;
+            }
+        };
 
-        // Generate embeddings for each chunk
-        for (chunk_index, chunk_text) in chunks.iter().enumerate() {
-            let embedding = match engine.embed(chunk_text) {
-                Ok(e) => e,
-                Err(e) => {
-                    tracing::warn!("Failed to embed chunk for frame {}: {}", frame.id, e);
-                    continue;
-                }
-            };
-
+        for (chunk_index, (chunk_text, embedding)) in chunks.iter().zip(embeddings).enumerate() {
             // Insert embedding record
             let new_embedding = screensearch_db::NewEmbedding {
                 frame_id: frame.id,
                 chunk_text: chunk_text.clone(),
                 chunk_index: chunk_index as i32,
                 embedding,
+                provider: engine.provider().to_string(),
+                model: engine.model().to_string(),
+                model_version: engine.model_version().to_string(),
+                content_hash: screensearch_embeddings::EmbeddingEngine::content_hash(chunk_text),
             };
 
             if let Err(e) = state.db.insert_embedding(new_embedding).await {
@@ -153,6 +178,13 @@ pub async fn generate_embeddings(
         let _ = state
             .db
             .set_metadata("embeddings_last_processed_frame_id", &frame.id.to_string())
+            .await;
+    }
+
+    if processed > 0 && state.db.get_frames_without_embeddings(1).await?.is_empty() {
+        let _ = state
+            .db
+            .set_metadata("embeddings_reindex_required", "false")
             .await;
     }
 

@@ -32,8 +32,14 @@ jpeg_quality = 80
 max_width = 1920
 
 [ocr]
-# OCR engine: "windows" (Windows OCR API) or "tesseract"
-engine = "windows"
+# OCR engine: "ppocr-v5" (quality sidecar) or "windows"
+engine = "ppocr-v5"
+
+# Managed local AI sidecar. It remains loopback-only.
+sidecar_url = "http://127.0.0.1:3132"
+sidecar_token_env = "SCREENSEARCH_AI_SIDECAR_TOKEN"
+language = "en"
+fallback_to_windows = true
 
 # Minimum confidence threshold for storing OCR results (0.0 - 1.0)
 # Results below this threshold are discarded
@@ -166,26 +172,26 @@ log_rotation_count = 5
 # Enable semantic search with embeddings for RAG-enhanced reports
 enabled = false
 
-# Embedding model: "local" (bundled multilingual MiniLM) or "api" (use LLM provider)
-model = "local"
+# Embeddings run through the managed local quality sidecar.
+model = "quality-sidecar"
 
 # Model name for local embeddings
-model_name = "paraphrase-multilingual-MiniLM-L12-v2"
+model_name = "Qwen/Qwen3-Embedding-0.6B"
 
-# Embedding dimension (384 for MiniLM models)
-embedding_dim = 384
+# Embedding dimension for Qwen3-Embedding-0.6B
+embedding_dim = 1024
 
 # Batch size for background embedding generation
 batch_size = 50
 
 # Maximum text length per chunk (tokens)
-max_chunk_tokens = 256
+max_chunk_tokens = 512
 
 # Chunk overlap (tokens) for context preservation
-chunk_overlap = 32
+chunk_overlap = 64
 
-# Hybrid search weight (0.0 = all FTS5, 1.0 = all vector)
-# Default 0.3 means 70% FTS5, 30% vector similarity
+# Retained for configuration compatibility. Hybrid retrieval now uses
+# Reciprocal Rank Fusion rather than mixing incomparable raw scores.
 hybrid_search_alpha = 0.3
 
 # Maximum number of relevant chunks to include in LLM context

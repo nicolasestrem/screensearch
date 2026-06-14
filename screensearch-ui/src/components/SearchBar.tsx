@@ -117,7 +117,7 @@ export function SearchBar() {
       {/* Search Mode Toggle */}
       <div className="flex justify-center">
         <div className="bg-paper-2 p-1 rounded-none flex items-center gap-1 border border-rule">
-          {(['fts', 'semantic'] as const).map((mode) => (
+          {(['fts', 'semantic', 'hybrid'] as const).map((mode) => (
             <button
               key={mode}
               onClick={() => setFilters({ searchMode: mode })}

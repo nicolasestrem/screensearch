@@ -382,22 +382,34 @@ Get the current status of the embedding system, including coverage statistics an
 ```json
 {
   "enabled": true,
-  "model": "all-MiniLM-L6-v2",
+  "provider": "quality-sidecar",
+  "model": "Qwen/Qwen3-Embedding-0.6B",
+  "model_version": "main",
+  "dimension": 1024,
   "total_frames": 1523,
   "frames_with_embeddings": 890,
   "coverage_percent": 58.4,
-  "last_processed_frame_id": 1200
+  "last_processed_frame_id": 1200,
+  "reindex_required": false,
+  "sidecar_ready": true,
+  "sidecar_error": null
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `enabled` | boolean | Whether embedding generation is enabled |
+| `provider` | string | Embedding inference provider |
 | `model` | string | Name of the embedding model being used |
+| `model_version` | string | Model revision used for index invalidation |
+| `dimension` | integer | Vector dimension stored in sqlite-vec |
 | `total_frames` | integer | Total number of frames in database |
 | `frames_with_embeddings` | integer | Number of frames with embeddings generated |
 | `coverage_percent` | float | Percentage of frames with embeddings (0-100) |
 | `last_processed_frame_id` | integer | ID of the last frame processed for embeddings |
+| `reindex_required` | boolean | Whether stored embeddings must be regenerated |
+| `sidecar_ready` | boolean | Whether local quality inference is reachable |
+| `sidecar_error` | string/null | Current sidecar initialization error |
 
 #### Example
 
@@ -492,11 +504,17 @@ Returns the updated embedding status (same format as `/api/embeddings/status`):
 ```json
 {
   "enabled": true,
-  "model": "all-MiniLM-L6-v2",
+  "provider": "quality-sidecar",
+  "model": "Qwen/Qwen3-Embedding-0.6B",
+  "model_version": "main",
+  "dimension": 1024,
   "total_frames": 1523,
   "frames_with_embeddings": 890,
   "coverage_percent": 58.4,
-  "last_processed_frame_id": 1200
+  "last_processed_frame_id": 1200,
+  "reindex_required": false,
+  "sidecar_ready": true,
+  "sidecar_error": null
 }
 ```
 

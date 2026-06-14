@@ -1,5 +1,9 @@
 # Screen Memory User Guide
 
+> AI setup changed in the quality-stack update. See
+> [AI Quality Stack](ai-quality-stack.md) for PP-OCRv5, Qwen3 model downloads,
+> sidecar health, Windows OCR fallback, and reindex behavior.
+
 ## Table of Contents
 
 1. [Introduction](#introduction)

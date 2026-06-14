@@ -75,12 +75,14 @@ export function truncateText(text: string, maxLength: number): string {
   return text.slice(0, maxLength) + '...';
 }
 
-export interface DebouncedFunction<T extends (...args: any[]) => any> {
+type AnyFunction = (...args: never[]) => unknown;
+
+export interface DebouncedFunction<T extends AnyFunction> {
   (...args: Parameters<T>): void;
   cancel: () => void;
 }
 
-export function debounce<T extends (...args: any[]) => any>(
+export function debounce<T extends AnyFunction>(
   func: T,
   wait: number
 ): DebouncedFunction<T> {

@@ -1,0 +1,57 @@
+name: Quality
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting for the quality-stack changes
+        shell: bash
+        run: rustfmt --edition 2021 --config skip_children=true --check screensearch-db/src/db.rs screensearch-db/src/migrations.rs screensearch-db/src/models.rs screensearch-db/src/queries.rs screensearch-db/src/vector_search.rs screensearch-db/tests/integration_tests.rs screensearch-embeddings/src/chunker.rs screensearch-embeddings/src/engine.rs screensearch-embeddings/src/lib.rs screensearch-capture/src/lib.rs screensearch-capture/src/ocr.rs screensearch-capture/src/ocr_processor.rs screensearch-capture/src/ocr_provider.rs screensearch-capture/src/sidecar_ocr.rs screensearch-api/src/handlers/embeddings.rs screensearch-api/src/handlers/generate.rs screensearch-api/src/handlers/rag_helpers.rs screensearch-api/src/handlers/reranker.rs screensearch-api/src/handlers/search.rs screensearch-api/src/server.rs screensearch-api/src/state.rs screensearch-api/src/workers/embedding_worker.rs src/main.rs
+      - run: cargo clippy -p screensearch-db -p screensearch-embeddings -p screensearch-capture -p screensearch-api --all-targets --no-deps -- -D warnings
+      - run: cargo test -p screensearch-db -p screensearch-embeddings -p screensearch-capture -p screensearch-api
+
+  rust-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: screensearch-ui/package-lock.json
+      - working-directory: screensearch-ui
+        run: npm ci
+      - working-directory: screensearch-ui
+        run: npm run lint
+      - working-directory: screensearch-ui
+        run: npm run build
+      - working-directory: screensearch-ui
+        run: npm audit --audit-level=high
+
+  sidecar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m py_compile sidecar/app.py sidecar/build.py evaluation/evaluate.py

@@ -38,7 +38,7 @@ pub struct FrameRecord {
     pub offset_index: i32,
     pub focused: Option<bool>,
     pub created_at: DateTime<Utc>,
-    
+
     // Vision Analysis Fields (Migration 005)
     pub analysis_status: Option<String>,
     pub description: Option<String>,
@@ -94,10 +94,10 @@ pub struct SettingsRecord {
     pub is_paused: i64,        // SQLite boolean (0/1)
     pub retention_days: i64,
     pub updated_at: DateTime<Utc>,
-    
+
     // Vision Settings
     #[serde(default)]
-    pub vision_enabled: i64,   // 0/1
+    pub vision_enabled: i64, // 0/1
     #[serde(default)]
     pub vision_provider: String,
     #[serde(default)]
@@ -251,6 +251,10 @@ pub struct EmbeddingRecord {
     pub chunk_text: String,
     pub chunk_index: i32,
     pub embedding_dim: i32,
+    pub provider: String,
+    pub model: String,
+    pub model_version: String,
+    pub content_hash: String,
     pub created_at: DateTime<Utc>,
     #[sqlx(default)]
     pub embedding: Vec<f32>, // Manually populated from blob
@@ -263,6 +267,10 @@ pub struct NewEmbedding {
     pub chunk_text: String,
     pub chunk_index: i32,
     pub embedding: Vec<f32>,
+    pub provider: String,
+    pub model: String,
+    pub model_version: String,
+    pub content_hash: String,
 }
 
 /// Semantic search result with similarity score
@@ -272,6 +280,8 @@ pub struct SemanticResult {
     pub chunk_text: String,
     pub chunk_index: i32,
     pub similarity_score: f32,
+    #[serde(default)]
+    pub retrieval_source: String,
 }
 
 /// Hybrid search result combining FTS5 and vector scores
@@ -289,6 +299,10 @@ pub struct HybridResult {
 pub struct EmbeddingStatus {
     pub enabled: bool,
     pub model: String,
+    pub provider: String,
+    pub model_version: String,
+    pub dimension: i64,
+    pub reindex_required: bool,
     pub total_frames: i64,
     pub frames_with_embeddings: i64,
     pub coverage_percent: f32,
@@ -326,4 +340,3 @@ pub struct TestVisionRequest {
     pub endpoint: String,
     pub api_key: Option<String>,
 }
-

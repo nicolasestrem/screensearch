@@ -31,7 +31,7 @@ export function AnswerCard() {
         try {
             const response = await apiClient.generateAnswer(query);
             setAnswer(response.answer);
-        } catch (err: any) {
+        } catch (err) {
             console.error("Failed to generate answer:", err);
             setError("Failed to generate answer. Ensure the Vision Engine is enabled in settings.");
         } finally {

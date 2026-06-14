@@ -1,5 +1,9 @@
 # ScreenSearch - System Architecture Documentation
 
+> The current OCR, embedding, vector-search, and reranking design is documented
+> in [AI Quality Stack](ai-quality-stack.md). Older ONNX/MiniLM sections below
+> describe the pre-quality-stack implementation and remain as historical context.
+
 **Version**: 0.2.0
 **Last Updated**: 2025-12-13
 **Status**: Production Ready

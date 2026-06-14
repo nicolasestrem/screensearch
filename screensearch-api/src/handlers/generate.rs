@@ -1,7 +1,8 @@
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 use axum::{extract::State, Json};
-use screensearch_vision::client::OllamaClient; // Use struct directly
+use chrono::{Duration, Utc};
+use screensearch_vision::client::OllamaClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, error};
@@ -36,29 +37,19 @@ pub async fn generate_answer(
         ));
     }
 
-    // 2. Perform Semantic Search for Context
-    // Initialize embedding engine
-    let engine = state.get_embedding_engine().await.map_err(|e| {
-        error!("Failed to initialize embedding engine: {}", e);
-        AppError::Internal(e)
-    })?;
-
-    // Embed query
-    let embedding = engine.embed(&req.query).map_err(|e| {
-        error!("Failed to generate query embedding: {}", e);
-        AppError::Internal(e.to_string())
-    })?;
-
-    // Search DB (limit 5 for context)
-    let search_results = state
-        .db
-        .search_embeddings(embedding, 5, 0.4) // Threshold 0.4
-        .await
-        .map_err(AppError::Database)?;
+    let search_results = super::rag_helpers::retrieve_rag_results(
+        &state,
+        &req.query,
+        Utc::now() - Duration::days(30),
+        Utc::now(),
+        8,
+    )
+    .await?;
 
     if search_results.is_empty() {
         return Ok(Json(GenerateResponse {
-            answer: "I couldn't find any relevant screen content to answer your question.".to_string(),
+            answer: "I couldn't find any relevant screen content to answer your question."
+                .to_string(),
             sources: vec![],
         }));
     }
@@ -71,12 +62,21 @@ pub async fn generate_answer(
         // Format timestamp
         let time = res.frame.timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
         let app = res.frame.active_process.as_deref().unwrap_or("Unknown App");
-        let window = res.frame.active_window.as_deref().unwrap_or("Unknown Window");
+        let window = res
+            .frame
+            .active_window
+            .as_deref()
+            .unwrap_or("Unknown Window");
         let text = &res.chunk_text;
 
         context_str.push_str(&format!(
-            "[{}] Time: {}, App: {}, Window: {}\nContent: {}\n\n",
-            i + 1, time, app, window, text
+            "[frame:{}] Source {}, Time: {}, App: {}, Window: {}\nContent: {}\n\n",
+            res.frame.id,
+            i + 1,
+            time,
+            app,
+            window,
+            text
         ));
         source_ids.push(res.frame.id);
     }
@@ -94,7 +94,7 @@ pub async fn generate_answer(
     If the context doesn't contain the answer, say so. 
     Be concise but helpful. 
     Cite sources by referring to the App or Time if relevant.";
-    
+
     let user_prompt = format!(
         "User Question: {}\n\nContext from Screen History:\n{}",
         req.query, context_str

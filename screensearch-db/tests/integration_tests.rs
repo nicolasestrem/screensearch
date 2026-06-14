@@ -4,7 +4,9 @@
 //! full-text search, tag management, and filtering.
 
 use chrono::{Duration, Utc};
-use screensearch_db::{DatabaseManager, FrameFilter, NewFrame, NewOcrText, NewTag, Pagination};
+use screensearch_db::{
+    DatabaseManager, FrameFilter, NewEmbedding, NewFrame, NewOcrText, NewTag, Pagination,
+};
 use tempfile::NamedTempFile;
 
 /// Create a temporary database for testing
@@ -62,6 +64,55 @@ async fn test_database_initialization() {
     assert_eq!(stats.frame_count, 0);
     assert_eq!(stats.ocr_count, 0);
     assert_eq!(stats.tag_count, 0);
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_sqlite_vec_search_and_delete_sync() {
+    let (db, _path) = create_test_db().await;
+    let first_frame = db
+        .insert_frame(create_test_frame(Utc::now(), "code", "First"))
+        .await
+        .unwrap();
+    let second_frame = db
+        .insert_frame(create_test_frame(Utc::now(), "browser", "Second"))
+        .await
+        .unwrap();
+
+    let mut first_vector = vec![0.0; 1024];
+    first_vector[0] = 1.0;
+    let mut second_vector = vec![0.0; 1024];
+    second_vector[1] = 1.0;
+
+    for (frame_id, text, embedding) in [
+        (first_frame, "first document", first_vector.clone()),
+        (second_frame, "second document", second_vector),
+    ] {
+        db.insert_embedding(NewEmbedding {
+            frame_id,
+            chunk_text: text.to_string(),
+            chunk_index: 0,
+            embedding,
+            provider: "test".to_string(),
+            model: "test-model".to_string(),
+            model_version: "1".to_string(),
+            content_hash: text.to_string(),
+        })
+        .await
+        .unwrap();
+    }
+
+    let results = db.search_embeddings(first_vector, 2, 0.0).await.unwrap();
+    assert_eq!(results[0].frame.id, first_frame);
+    assert_eq!(results[0].retrieval_source, "vector");
+
+    db.delete_embeddings_for_frame(first_frame).await.unwrap();
+    let mut remaining_query = vec![0.0; 1024];
+    remaining_query[1] = 1.0;
+    let remaining = db.search_embeddings(remaining_query, 2, 0.0).await.unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].frame.id, second_frame);
 
     db.close().await;
 }
@@ -218,10 +269,12 @@ async fn test_frame_filtering_by_app() {
 
     // Query frames from chrome only
     let wide_range = (now - Duration::days(1), now + Duration::days(1));
-    let mut filter = FrameFilter::default();
-    filter.start_time = Some(wide_range.0);
-    filter.end_time = Some(wide_range.1);
-    filter.app_name = Some("chrome".to_string());
+    let filter = FrameFilter {
+        start_time: Some(wide_range.0),
+        end_time: Some(wide_range.1),
+        app_name: Some("chrome".to_string()),
+        ..FrameFilter::default()
+    };
 
     let frames = db
         .get_frames_in_range(wide_range.0, wide_range.1, filter, Pagination::default())

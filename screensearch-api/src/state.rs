@@ -2,7 +2,7 @@
 
 use screensearch_automation::AutomationEngine;
 use screensearch_db::DatabaseManager;
-use screensearch_embeddings::EmbeddingEngine;
+use screensearch_embeddings::{EmbeddingEngine, EMBEDDING_DIM};
 use screensearch_llm::LlamaServer;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,19 +37,6 @@ impl DownloadProgress {
 // Conversion from screensearch_llm::DownloadProgress
 impl From<screensearch_llm::DownloadProgress> for DownloadProgress {
     fn from(p: screensearch_llm::DownloadProgress) -> Self {
-        Self {
-            bytes_downloaded: p.bytes_downloaded,
-            total_bytes: p.total_bytes,
-            speed_bps: p.speed_bps,
-            eta_seconds: p.eta_seconds,
-            error: None,
-        }
-    }
-}
-
-// Conversion from screensearch_embeddings::DownloadProgress
-impl From<screensearch_embeddings::DownloadProgress> for DownloadProgress {
-    fn from(p: screensearch_embeddings::DownloadProgress) -> Self {
         Self {
             bytes_downloaded: p.bytes_downloaded,
             total_bytes: p.total_bytes,
@@ -113,6 +100,16 @@ impl AppState {
 
         // Initialize the engine
         let engine = EmbeddingEngine::new().await.map_err(|e| e.to_string())?;
+        engine.health_check().await.map_err(|e| e.to_string())?;
+        self.db
+            .ensure_embedding_model(
+                engine.provider(),
+                engine.model(),
+                engine.model_version(),
+                EMBEDDING_DIM,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
         let engine_arc = Arc::new(engine);
 
         // Store it
@@ -126,7 +123,7 @@ impl AppState {
 
     /// Get or initialize the LlamaServer
     pub async fn get_llama_server(&self) -> Result<Arc<LlamaServer>, String> {
-        use screensearch_llm::{LlamaServerConfig, get_model_path, get_models_dir};
+        use screensearch_llm::{get_model_path, get_models_dir, LlamaServerConfig};
 
         // Check if already initialized
         {

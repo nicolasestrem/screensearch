@@ -66,6 +66,7 @@ reqwest = { version = "0.11", features = ["json"] }
 
 # Platform directories (for AppData paths)
 dirs = "5.0"
+uuid = { version = "1", features = ["v4"] }
 
 [workspace.package]
 version = "0.4.35"

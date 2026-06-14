@@ -1,15 +1,13 @@
 //! Embedding Generation for ScreenSearch RAG
 //!
-//! This crate provides local ML-based text embedding generation using ONNX Runtime.
-//! It uses the `paraphrase-multilingual-MiniLM-L12-v2` model for multilingual support,
-//! producing 384-dimensional embeddings suitable for semantic search.
+//! This crate uses the managed ScreenSearch quality sidecar for multilingual
+//! embedding and reranking inference.
 //!
 //! # Architecture
 //!
 //! - `EmbeddingEngine`: Main interface for generating embeddings
-//! - Uses ONNX Runtime for efficient CPU/GPU inference
-//! - HuggingFace tokenizers for text preprocessing
-//! - Supports batch processing for efficiency
+//! - Uses a loopback sidecar for CPU/GPU inference
+//! - Supports batch embedding and quality reranking
 //!
 //! # Example
 //!
@@ -20,8 +18,8 @@
 //! async fn main() -> anyhow::Result<()> {
 //!     let engine = EmbeddingEngine::new().await?;
 //!     
-//!     let embedding = engine.embed("Hello, world!")?;
-//!     println!("Embedding dimension: {}", embedding.len()); // 384
+//!     let embedding = engine.embed("Hello, world!").await?;
+//!     println!("Embedding dimension: {}", embedding.len()); // 1024
 //!     
 //!     Ok(())
 //! }
@@ -29,19 +27,18 @@
 
 use thiserror::Error;
 
-mod engine;
 mod chunker;
-mod download;
+mod engine;
 
-pub use engine::EmbeddingEngine;
 pub use chunker::TextChunker;
-pub use download::{download_model, download_model_with_progress, get_models_dir, model_exists, needs_download, DownloadProgress};
+pub use engine::{EmbeddingEngine, RerankScore};
 
-/// Embedding dimension for the multilingual MiniLM model
-pub const EMBEDDING_DIM: usize = 384;
+/// Full embedding dimension for Qwen3-Embedding-0.6B.
+pub const EMBEDDING_DIM: usize = 1024;
 
 /// Model name for metadata tracking
-pub const MODEL_NAME: &str = "paraphrase-multilingual-MiniLM-L12-v2";
+pub const MODEL_NAME: &str = "Qwen/Qwen3-Embedding-0.6B";
+pub const RERANKER_MODEL_NAME: &str = "Qwen/Qwen3-Reranker-0.6B";
 
 /// Embedding-related errors
 #[derive(Error, Debug)]
@@ -55,8 +52,8 @@ pub enum EmbeddingError {
     #[error("Inference failed: {0}")]
     InferenceError(String),
 
-    #[error("Model not found at path: {0}")]
-    ModelNotFound(String),
+    #[error("Quality sidecar is unavailable: {0}")]
+    SidecarUnavailable(String),
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
@@ -68,30 +65,29 @@ pub type Result<T> = std::result::Result<T, EmbeddingError>;
 /// Configuration for the embedding engine
 #[derive(Debug, Clone)]
 pub struct EmbeddingConfig {
-    /// Path to the ONNX model file
-    pub model_path: Option<String>,
-    
-    /// Path to the tokenizer.json file
-    pub tokenizer_path: Option<String>,
-    
-    /// Maximum sequence length (tokens)
-    pub max_seq_length: usize,
-    
-    /// Batch size for batch processing
+    /// Loopback URL for the managed AI sidecar.
+    pub sidecar_url: String,
+    /// Optional bearer token shared with the sidecar process.
+    pub sidecar_token: Option<String>,
+    /// Embedding model identifier.
+    pub model: String,
+    /// Model revision used to invalidate stale vectors.
+    pub model_version: String,
+    /// Reranker model identifier.
+    pub reranker_model: String,
     pub batch_size: usize,
-    
-    /// Whether to normalize embeddings to unit vectors
-    pub normalize: bool,
 }
 
 impl Default for EmbeddingConfig {
     fn default() -> Self {
         Self {
-            model_path: None,
-            tokenizer_path: None,
-            max_seq_length: 256,
-            batch_size: 32,
-            normalize: true,
+            sidecar_url: std::env::var("SCREENSEARCH_AI_SIDECAR_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:3132".to_string()),
+            sidecar_token: std::env::var("SCREENSEARCH_AI_SIDECAR_TOKEN").ok(),
+            model: MODEL_NAME.to_string(),
+            model_version: "main".to_string(),
+            reranker_model: RERANKER_MODEL_NAME.to_string(),
+            batch_size: 16,
         }
     }
 }
@@ -103,14 +99,13 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let config = EmbeddingConfig::default();
-        assert_eq!(config.max_seq_length, 256);
-        assert_eq!(config.batch_size, 32);
-        assert!(config.normalize);
+        assert_eq!(config.batch_size, 16);
+        assert_eq!(config.model, MODEL_NAME);
     }
 
     #[test]
     fn test_constants() {
-        assert_eq!(EMBEDDING_DIM, 384);
-        assert_eq!(MODEL_NAME, "paraphrase-multilingual-MiniLM-L12-v2");
+        assert_eq!(EMBEDDING_DIM, 1024);
+        assert_eq!(MODEL_NAME, "Qwen/Qwen3-Embedding-0.6B");
     }
 }

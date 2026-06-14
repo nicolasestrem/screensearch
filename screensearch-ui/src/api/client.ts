@@ -136,8 +136,8 @@ class APIClient {
       blobUrlCache.delete(id);
     }
 
-    const { data } = await this.client.get<string>(`/frames/${id}/image`, {
-      responseType: 'blob' as any,
+    const { data } = await this.client.get<Blob>(`/frames/${id}/image`, {
+      responseType: 'blob',
     });
     const blobUrl = URL.createObjectURL(new Blob([data]));
 
@@ -238,8 +238,8 @@ class APIClient {
     return data;
   }
 
-  async testVisionConfig(config: { provider: string; model: string; endpoint: string; api_key?: string }): Promise<any> {
-    const { data } = await this.client.post('/test-vision', config);
+  async testVisionConfig(config: { provider: string; model: string; endpoint: string; api_key?: string }): Promise<{ success: boolean; message: string }> {
+    const { data } = await this.client.post<{ success: boolean; message: string }>('/test-vision', config);
     return data;
   }
 }

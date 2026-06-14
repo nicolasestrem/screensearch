@@ -829,8 +829,9 @@ export function SettingsPanel() {
                                 } else {
                                   toast.error(`Connection failed: ${result.message}`, { id: toastId });
                                 }
-                              } catch (err: any) {
-                                toast.error(`Connection error: ${err.message}`, { id: toastId });
+                              } catch (err) {
+                                const message = err instanceof Error ? err.message : 'Unknown error';
+                                toast.error(`Connection error: ${message}`, { id: toastId });
                               }
                             }}
                             className="px-4 py-2 bg-secondary hover:bg-secondary/80 rounded-lg text-sm font-medium"

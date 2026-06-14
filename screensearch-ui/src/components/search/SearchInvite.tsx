@@ -165,7 +165,7 @@ export function SearchInvite({ isOpen, onClose }: SearchInviteProps) {
               {/* Search mode toggle */}
               <div className="px-5 pb-4 flex items-center gap-3 border-b border-glass-border/30">
                 <div className="flex items-center gap-1 p-1 bg-surface-1 rounded-lg">
-                  {(['fts', 'semantic'] as const).map((mode) => (
+                  {(['fts', 'semantic', 'hybrid'] as const).map((mode) => (
                     <button
                       key={mode}
                       onClick={() => setFilters({ searchMode: mode })}

@@ -1,0 +1,8 @@
+{"id":"code-symbol","query":"Where did I edit the retry backoff?","relevant_frames":["code-retry"],"category":"code"}
+{"id":"terminal-error","query":"What command failed because cargo was missing?","relevant_frames":["terminal-cargo"],"category":"terminal"}
+{"id":"browser-title","query":"Which documentation page described vector search?","relevant_frames":["browser-sqlite-vec"],"category":"browser"}
+{"id":"dark-small-text","query":"Find the dark-mode settings panel with small text.","relevant_frames":["settings-dark"],"category":"ocr-small-font"}
+{"id":"multilingual","query":"Where was the French deployment note visible?","relevant_frames":["notes-fr"],"category":"multilingual"}
+{"id":"temporal","query":"What was I doing immediately before the build failed?","relevant_frames":["code-before-build","terminal-build"],"category":"temporal"}
+{"id":"duplicate","query":"Find the latest occurrence of the release checklist.","relevant_frames":["release-latest"],"category":"duplicate-frames"}
+{"id":"citation","query":"Which screen showed the model dimension?","relevant_frames":["settings-model"],"category":"citation"}

@@ -1,5 +1,9 @@
 # ScreenSearch Quick Reference
 
+> For the current PP-OCRv5, Qwen3, and sqlite-vec configuration, use
+> [AI Quality Stack](ai-quality-stack.md). MiniLM/ONNX commands later in this
+> document apply only to older releases.
+
 **Single-page cheat sheet for common tasks, commands, and troubleshooting**
 
 ---

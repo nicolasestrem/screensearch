@@ -34,6 +34,8 @@ pub mod frame_diff;
 pub mod monitor;
 pub mod ocr;
 pub mod ocr_processor;
+mod ocr_provider;
+mod sidecar_ocr;
 pub mod window_context;
 
 pub use capture::{CaptureConfig, CaptureEngine, ScreenCapture};
@@ -43,6 +45,7 @@ pub use ocr::{OcrEngine, OcrResult, TextRegion};
 pub use ocr_processor::{
     OcrMetrics, OcrProcessor, OcrProcessorBuilder, OcrProcessorConfig, ProcessedFrame,
 };
+pub use ocr_provider::OcrProviderEngine;
 pub use window_context::WindowContext;
 
 /// Errors that can occur during screen capture operations

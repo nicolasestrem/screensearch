@@ -5,6 +5,12 @@ import { toast } from 'react-hot-toast';
 interface EmbeddingStatus {
     enabled: boolean;
     model: string;
+    provider: string;
+    model_version: string;
+    dimension: number;
+    reindex_required: boolean;
+    sidecar_ready: boolean;
+    error?: string;
     total_frames: number;
     frames_with_embeddings: number;
     coverage_percent: number;
@@ -134,7 +140,7 @@ export function EmbeddingsStatus() {
                     <div className="text-sm">
                         <p className="font-medium text-yellow-500">Resource Intensive Feature</p>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            Enabling RAG runs a local AI model to embed screen text. This uses significant CPU (~20%) and RAM (~1GB) during processing.
+                            The quality profile downloads several GB of local OCR, embedding, and reranking models and may use GPU acceleration.
                         </p>
                     </div>
                 </div>
@@ -143,7 +149,21 @@ export function EmbeddingsStatus() {
                 <div className="text-sm">
                     <span className="text-muted-foreground">Model: </span>
                     <span className="font-mono">{status.model}</span>
+                    <span className="text-muted-foreground"> · {status.dimension}d · {status.model_version}</span>
                 </div>
+
+                {!status.sidecar_ready && (
+                    <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 text-sm">
+                        <p className="font-medium text-destructive">Quality sidecar unavailable</p>
+                        <p className="text-xs text-muted-foreground mt-1">{status.error}</p>
+                    </div>
+                )}
+
+                {status.reindex_required && (
+                    <div className="bg-primary/10 border border-primary/30 rounded-lg p-3 text-sm">
+                        Existing vectors were created by another model and must be regenerated.
+                    </div>
+                )}
 
                 {/* Coverage Bar */}
                 <div>
@@ -189,7 +209,7 @@ export function EmbeddingsStatus() {
                                         setSelectedPercentage(percentage);
                                         triggerGeneration(percentage);
                                     }}
-                                    disabled={generating || !status.enabled || framesWithoutEmbeddings === 0}
+                                    disabled={generating || !status.enabled || !status.sidecar_ready || framesWithoutEmbeddings === 0}
                                     className={`flex flex-col items-center justify-center gap-1 px-3 py-2.5 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                                         isSelected && !generating
                                             ? 'bg-primary text-primary-foreground border-primary shadow-sm'

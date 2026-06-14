@@ -23,9 +23,9 @@
 
 <br/>
 
-### [>] [**Download Latest Release (v0.4.1)**](https://github.com/nicolasestrem/screensearch/releases/latest)
+### [>] [**Download Latest Release (v0.4.35)**](https://github.com/nicolasestrem/screensearch/releases/latest)
 
-**Windows 10/11** • **11MB** • **No installation required** • **Just extract and run**
+**Windows 10/11** • **Local-first** • **Quality models downloaded on demand**
 
 > **Note for Linux Users:** This project now supports Linux for **UI development and backend logic**, with Windows-specific features (OCR, Automation) stubbed out. See [Developer Guide](docs/developer-guide.md) for details.
 
@@ -64,9 +64,9 @@
 - [*] **Editorial Brutalist UI** — Premium Minimalist "Paper & Ink" design system with light and dark mode, sharp edges, and elegant typography
 - [*] **AI-First Dashboard** — "Intel Dash" with Daily Digest, Memory Status gauge, and Productivity Pulse charts
 - [*] **Continuous Screen Capture** — Configurable intervals (2-5 seconds) with multi-monitor support
-- [*] **OCR Text Extraction** — Windows OCR API with bounding box coordinates and confidence scores
+- [*] **OCR Text Extraction** — PP-OCRv5 with confidence, language, orientation, bounding boxes, and Windows OCR fallback
 - [*] **AI-Powered Intelligence** — Generate insights from your screen history using local LLMs (Ollama, LM Studio) or cloud providers (OpenAI)
-- [*] **Hybrid Search** — Combines FTS5 (Sparse) and Vector Embeddings (Dense) for semantic understanding
+- [*] **Hybrid Search** — Fuses FTS5 and sqlite-vec retrieval with Qwen3 reranking
 - [*] **Smart Search** — Conversational AI answers with context from your screen history
 - [*] **REST API** — 27 endpoints for search, automation, and tag management on localhost:3131
 - [*] **UI Automation** — Programmatic control of Windows applications via accessibility APIs
@@ -182,7 +182,7 @@ Fine-tune every aspect of ScreenSearch with comprehensive, intuitive settings pa
 #### Embeddings & Semantic Search
 <div align="center">
   <img src="screenshots/settings-embeddings.png" width="65%" alt="Embeddings settings - Enable semantic search, batch processing">
-  <p><em>Enable AI-powered semantic search with local ONNX models, configure batch sizes, tune hybrid search weighting</em></p>
+  <p><em>Run local Qwen3 embeddings and reranking through the managed quality sidecar, with explicit health and reindex status</em></p>
 </div>
 
 #### Data Management
@@ -368,7 +368,7 @@ ScreenSearch is optimized for efficiency and speed:
 |--------|--------|--------|--------|
 | **OCR Processing** | < 100 ms | **70-80 ms** | [OK] Fast |
 | **API Response** | < 100 ms | ~50 ms | [OK] 2x faster |
-| **Vector Search** | < 200 ms | **150 ms** | [OK] In-Memory Optimized |
+| **Vector Search** | Dataset-dependent | sqlite-vec KNN + Qwen reranking | Evaluate locally |
 | **Test Coverage** | 100% | 59/59 passing | [OK] Complete |
 
 ### Recent Performance Optimizations
@@ -381,7 +381,9 @@ ScreenSearch is optimized for efficiency and speed:
 
 **[+] Search Security** — FTS5 query sanitization prevents injection attacks while correctly handling special characters (`C++`, `$100`, etc.).
 
-**[+] In-Memory Vector Search** — Bypasses SQLite extension limitations by effectively managing embeddings in Rust memory, enabling robust semantic search on Windows.
+**[+] Persistent Vector Search** — sqlite-vec performs KNN retrieval without loading every embedding into Rust memory. Reciprocal Rank Fusion combines lexical and semantic candidates before Qwen3 reranking.
+
+See [AI Quality Stack](docs/ai-quality-stack.md) for model sizes, fallback behavior, evaluation, and packaging details.
 
 ---
 

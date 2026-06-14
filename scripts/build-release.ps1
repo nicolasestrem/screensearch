@@ -1,12 +1,13 @@
 # Build ScreenSearch release artifacts
-# Usage: .\build-release.ps1 [-Version 0.2.0] [-SignBinary] [-SkipModel]
+# Usage: .\build-release.ps1 -Version 0.4.35 [-SignBinary] [-SkipSidecar]
 
 param(
     [Parameter(Mandatory=$true)]
     [string]$Version,
 
     [switch]$SignBinary,
-    [switch]$SkipModel,
+    [Alias("SkipModel")]
+    [switch]$SkipSidecar,
     [switch]$Clean
 )
 
@@ -73,19 +74,19 @@ else {
     Write-Host ""
 }
 
-# Step 4: Download AI RAG Search Model
-if (-not $SkipModel) {
-    Write-Host "[4/8] Downloading AI RAG Search Model..." -ForegroundColor Cyan
-    if (Test-Path "installer\models\model.onnx") {
-        Write-Host "Model already exists, skipping download" -ForegroundColor Yellow
-    }
-    else {
-        & ".\installer\scripts\download-model.ps1"
+# Step 4: Build the managed quality sidecar
+if (-not $SkipSidecar) {
+    Write-Host "[4/8] Building PP-OCRv5/Qwen quality sidecar..." -ForegroundColor Cyan
+    python -m pip install -r sidecar\requirements.txt
+    python sidecar\build.py
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Quality sidecar build failed" -ForegroundColor Red
+        exit 1
     }
     Write-Host ""
 }
 else {
-    Write-Host "[4/8] Skipping model download (use -SkipModel=`$false to download)" -ForegroundColor Yellow
+    Write-Host "[4/8] Skipping quality sidecar build" -ForegroundColor Yellow
     Write-Host ""
 }
 
@@ -100,57 +101,31 @@ if (-not (Test-Path $isccPath)) {
 Write-Host "Inno Setup found" -ForegroundColor Green
 Write-Host ""
 
-# Step 6: Build Full Installer
-if (-not $SkipModel -and (Test-Path "installer\models\model.onnx")) {
-    Write-Host "[6/8] Building Full Installer..." -ForegroundColor Cyan
-    $env:FULL_INSTALLER = "1"
-    & $isccPath /DFULL_INSTALLER "installer\screensearch.iss"
-
-    if ($LASTEXITCODE -eq 0) {
-        # Rename to include "Full"
-        $installerPath = "target\release\installers\ScreenSearch-v$Version-Setup.exe"
-        $fullPath = "target\release\installers\ScreenSearch-v$Version-Setup-Full.exe"
-
-        if (Test-Path $installerPath) {
-            Move-Item $installerPath $fullPath -Force
-            Write-Host "Full installer created: $fullPath" -ForegroundColor Green
-        }
-    }
-    else {
-        Write-Host "Full installer build failed" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host ""
-}
-else {
-    Write-Host "[6/8] Skipping Full Installer (no model found)" -ForegroundColor Yellow
-    Write-Host ""
-}
-
-# Step 7: Build Lightweight Installer
-Write-Host "[7/8] Building Lightweight Installer..." -ForegroundColor Cyan
+# Step 6: Build quality installer
+Write-Host "[6/8] Building Quality Installer..." -ForegroundColor Cyan
 & $isccPath "installer\screensearch.iss"
 
 if ($LASTEXITCODE -eq 0) {
-    # Rename to include "Lite"
     $installerPath = "target\release\installers\ScreenSearch-v$Version-Setup.exe"
-    $litePath = "target\release\installers\ScreenSearch-v$Version-Setup-Lite.exe"
+    $qualityPath = "target\release\installers\ScreenSearch-v$Version-Setup-Quality.exe"
 
     if (Test-Path $installerPath) {
-        Move-Item $installerPath $litePath -Force
-        Write-Host "Lightweight installer created: $litePath" -ForegroundColor Green
+        Move-Item $installerPath $qualityPath -Force
+        Write-Host "Quality installer created: $qualityPath" -ForegroundColor Green
     }
 }
 else {
-    Write-Host "Lightweight installer build failed" -ForegroundColor Red
+    Write-Host "Quality installer build failed" -ForegroundColor Red
     exit 1
 }
 Write-Host ""
 
 # Create Portable ZIP
-Write-Host "[7.5/8] Creating Portable ZIP..." -ForegroundColor Cyan
+Write-Host "[7/8] Creating Portable ZIP..." -ForegroundColor Cyan
 $zipPath = "target\release\installers\ScreenSearch-v$Version-Portable.zip"
-Compress-Archive -Path "target\release\screensearch.exe", "config.toml", "LICENSE", "README.md" `
+New-Item -ItemType Directory -Force -Path "target\release\bin" | Out-Null
+Copy-Item "sidecar\dist\screensearch-ai-sidecar" "target\release\bin\" -Recurse -Force
+Compress-Archive -Path "target\release\screensearch.exe", "target\release\bin", "config.toml", "LICENSE", "README.md" `
                  -DestinationPath $zipPath -Force
 Write-Host "Portable ZIP created: $zipPath" -ForegroundColor Green
 Write-Host ""

@@ -1,13 +1,10 @@
 //! Vector similarity search for RAG
 //!
-//! Provides in-memory vector search using cosine similarity.
-//! This is a simple implementation that loads embeddings into memory
-//! for fast KNN search. For production with millions of vectors,
-//! consider using a dedicated vector database.
+//! Provides sqlite-vec KNN retrieval and rank-based hybrid fusion.
 
-use crate::{DatabaseManager, FrameRecord, Result, SemanticResult};
-use std::collections::HashMap;
+use crate::{DatabaseManager, Result, SemanticResult};
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
 
 /// Vector index for fast similarity search
 pub struct VectorIndex {
@@ -36,7 +33,8 @@ impl VectorIndex {
             );
             return;
         }
-        self.vectors.insert(embedding_id, (frame_id, chunk_index, vector));
+        self.vectors
+            .insert(embedding_id, (frame_id, chunk_index, vector));
     }
 
     /// Find K nearest neighbors using cosine similarity
@@ -96,33 +94,17 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 }
 
 impl DatabaseManager {
-    /// Build a vector index from all embeddings in the database
-    ///
-    /// This loads all embeddings into memory for fast similarity search.
-    /// For very large datasets, consider using a persistent vector database.
+    /// Legacy utility retained for API compatibility.
     pub async fn build_vector_index(&self) -> Result<VectorIndex> {
-        // For now, we'll use a simple in-memory index
-        // In production, you'd want to use sqlite-vec or a dedicated vector DB
-        
-        let index = VectorIndex::new(384); // MiniLM dimension
-        
+        let index = VectorIndex::new(1024);
+
         tracing::info!("Building vector index from database...");
-        
-        // Note: This is a placeholder. To actually load vectors, we need to store them
-        // in a separate table or use sqlite-vec. For now, this creates an empty index.
-        
+
         tracing::info!("Vector index built with {} vectors", index.len());
         Ok(index)
     }
 
-    /// Perform semantic search using in-memory vector similarity
-    ///
-    /// Fetches all embeddings, computes similarity in Rust, and returns top results.
-    /// This avoids dependency on sqlite-vec extension availability.
-    /// Perform semantic search using in-memory vector similarity
-    ///
-    /// Fetches all embeddings within the time range, computes similarity in Rust, and returns top results.
-    /// This avoids dependency on sqlite-vec extension availability.
+    /// Perform semantic KNN search using the persistent sqlite-vec index.
     pub async fn semantic_search(
         &self,
         query_embedding: Vec<f32>,
@@ -130,109 +112,14 @@ impl DatabaseManager {
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
     ) -> Result<Vec<SemanticResult>> {
-        // 1. Fetch embeddings from DB within time range
-        // We only fetch ID and Vector to save bandwidth, then fetch details for top K
-        // Column 'embedding' is assumed to be BLOB of f32 le_bytes.
-        let rows = sqlx::query(
-            r#"
-            SELECT e.frame_id, e.chunk_text, e.chunk_index, e.embedding, e.embedding_dim 
-            FROM embeddings e
-            JOIN frames f ON e.frame_id = f.id
-            WHERE f.timestamp >= ? AND f.timestamp <= ?
-            "#
+        self.search_embeddings_with_time_range(
+            query_embedding,
+            limit.max(0) as usize,
+            0.0,
+            Some(start_time),
+            Some(end_time),
         )
-        .bind(start_time)
-        .bind(end_time)
-        .fetch_all(self.pool())
         .await
-        .map_err(|e| crate::DatabaseError::QueryError(format!("Failed to fetch embeddings: {}", e)))?;
-
-        if rows.len() > 10000 {
-            tracing::warn!("Loading {} embeddings into memory for vector search. This may impact performance.", rows.len());
-        }
-
-        let mut candidates: Vec<(i64, String, i32, f32)> = Vec::with_capacity(rows.len());
-
-        for row in rows {
-            use sqlx::Row;
-            let frame_id: i64 = row.get("frame_id");
-            let chunk_text: String = row.get("chunk_text");
-            let chunk_index: i32 = row.get("chunk_index");
-            let embedding_blob: Vec<u8> = row.get("embedding");
-            // Although we don't strictly use embedding_dim for parsing, we can check it
-            let dim: i32 = row.get("embedding_dim");
-
-            // Basic validation
-            let expected_bytes = (dim as usize) * 4;
-            if embedding_blob.len() != expected_bytes {
-                // Skip malformed
-                continue;
-            }
-
-            // Convert raw bytes to Vec<f32>
-            // Assuming little-endian f32
-            let vector: Vec<f32> = embedding_blob
-                .chunks_exact(4)
-                .map(|chunk| {
-                    match chunk.try_into() {
-                         Ok(bytes) => f32::from_le_bytes(bytes),
-                         Err(_) => 0.0, // Should be unreachable with chunks_exact(4)
-                    }
-                })
-                .collect();
-
-            let similarity = cosine_similarity(&query_embedding, &vector);
-            candidates.push((frame_id, chunk_text, chunk_index, similarity));
-        }
-
-        // 2. Sort by similarity (descending)
-        candidates.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
-        
-        // 3. Take Top K
-        let top_k = candidates.iter().take(limit as usize).collect::<Vec<_>>();
-        
-        if top_k.is_empty() {
-            // Early return if no candidates
-            return Ok(Vec::new());
-        }
-
-        // 4. Fetch Frame Metadata for Top K
-        // We use chunking to prevent SQLite variable limit issues if batch is large
-        let frame_ids: Vec<i64> = top_k.iter().map(|(id, ..)| *id).collect();
-        let mut frames: Vec<FrameRecord> = Vec::with_capacity(frame_ids.len());
-        
-        for chunk in frame_ids.chunks(100) {
-            let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM frames WHERE id IN (");
-            let mut separated = query_builder.separated(", ");
-            for id in chunk {
-                separated.push_bind(id);
-            }
-            separated.push_unseparated(")");
-            
-            let chunk_frames: Vec<FrameRecord> = query_builder.build_query_as()
-                .fetch_all(self.pool())
-                .await
-                .map_err(|e| crate::DatabaseError::QueryError(format!("Failed to fetch frame details: {}", e)))?;
-                
-            frames.extend(chunk_frames);
-        }
-
-        // 5. Build Result Map
-        let frame_map: HashMap<i64, FrameRecord> = frames.into_iter().map(|f| (f.id, f)).collect();
-
-        let mut results = Vec::new();
-        for (frame_id, chunk_text, chunk_index, score) in top_k {
-             if let Some(frame) = frame_map.get(frame_id) {
-                 results.push(SemanticResult {
-                     frame: frame.clone(),
-                     chunk_text: chunk_text.clone(),
-                     chunk_index: *chunk_index,
-                     similarity_score: *score,
-                 });
-             }
-        }
-
-        Ok(results)
     }
 
     /// Hybrid search combining FTS5 and vector similarity
@@ -240,61 +127,79 @@ impl DatabaseManager {
         &self,
         query: &str,
         query_embedding: Vec<f32>,
-        alpha: f32,
+        _alpha: f32,
         limit: i64,
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
     ) -> Result<Vec<SemanticResult>> {
-        // 1. Get Vector Results (Semantic) via in-memory search
-        let semantic_results = match self.semantic_search(query_embedding, limit, start_time, end_time).await {
+        const RRF_K: f32 = 60.0;
+        let candidate_limit = limit.saturating_mul(4);
+
+        let semantic_results = match self
+            .semantic_search(query_embedding, candidate_limit, start_time, end_time)
+            .await
+        {
             Ok(res) => res,
             Err(e) => {
                 tracing::error!("Semantic search failed: {}", e);
-                Vec::new() 
+                Vec::new()
             }
         };
 
-        // 2. Get Keyword Results (FTS)
-        let fts_limit = limit; 
-        let fts_results = self.search_ocr_text(
-            query, 
-            crate::FrameFilter::default(),
-            crate::Pagination { limit: fts_limit, offset: 0 }
-        ).await?;
+        let fts_results = self
+            .search_ocr_text(
+                query,
+                crate::FrameFilter {
+                    start_time: Some(start_time),
+                    end_time: Some(end_time),
+                    ..Default::default()
+                },
+                crate::Pagination {
+                    limit: candidate_limit,
+                    offset: 0,
+                },
+            )
+            .await?;
 
-        // 3. Merge Results (Simple Fusion)
         let mut merged: HashMap<(i64, String), SemanticResult> = HashMap::new();
 
-        // Add semantic results
-        for res in semantic_results {
+        for (rank, res) in semantic_results.into_iter().enumerate() {
             let key = (res.frame.id, res.chunk_text.clone());
             let mut new_res = res.clone();
-            new_res.similarity_score *= alpha; // Weighted semantic score
+            new_res.similarity_score = 1.0 / (RRF_K + rank as f32 + 1.0);
+            new_res.retrieval_source = "vector".to_string();
             merged.insert(key, new_res);
         }
 
-        // Add/Boost FTS results
-        for fts in fts_results {
+        for (rank, fts) in fts_results.into_iter().enumerate() {
             for (idx, match_item) in fts.ocr_matches.into_iter().enumerate() {
                 let key = (fts.frame.id, match_item.text.clone());
-                let score_boost = fts.relevance_score * (1.0 - alpha);
+                let score_boost = 1.0 / (RRF_K + rank as f32 + 1.0);
 
                 merged
                     .entry(key)
-                    .and_modify(|e| e.similarity_score += score_boost)
+                    .and_modify(|result| {
+                        result.similarity_score += score_boost;
+                        result.retrieval_source = "hybrid".to_string();
+                    })
                     .or_insert_with(|| SemanticResult {
                         frame: fts.frame.clone(),
                         chunk_text: match_item.text,
                         chunk_index: idx as i32,
                         similarity_score: score_boost,
+                        retrieval_source: "fts".to_string(),
                     });
             }
         }
 
         // Convert to Vec and sort
         let mut final_results: Vec<SemanticResult> = merged.into_values().collect();
-        final_results.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap_or(std::cmp::Ordering::Equal));
-        
+        final_results.sort_by(|a, b| {
+            b.similarity_score
+                .partial_cmp(&a.similarity_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
         if final_results.len() > limit as usize {
             final_results.truncate(limit as usize);
         }

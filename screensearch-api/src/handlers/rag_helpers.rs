@@ -3,9 +3,9 @@
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 use chrono::{DateTime, Utc};
-use screensearch_db::{FrameFilter, Pagination};
+use screensearch_db::{FrameFilter, Pagination, SemanticResult};
 use std::sync::Arc;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 
 /// Weight for semantic results in hybrid search (0.0 to 1.0)
 const SEMANTIC_WEIGHT: f32 = 0.3;
@@ -42,61 +42,19 @@ async fn build_rag_enhanced_context(
 ) -> Result<(String, String)> {
     info!("Using RAG-enhanced report generation");
 
-    // Generate embedding for the query
-    let engine = state.get_embedding_engine()
-        .await
-        .map_err(|e| AppError::Internal(format!("Failed to load embedding engine: {}", e)))?;
-        
-    let query_embedding = engine
-        .embed(user_query)
-        .map_err(|e| AppError::Internal(format!("Failed to generate query embedding: {}", e)))?;
+    let relevant_results =
+        retrieve_rag_results(state, user_query, start_time, end_time, 20).await?;
 
-    // Perform hybrid search combining FTS5 and vector similarity
-    let search_result = state
-        .db
-        .hybrid_search(
-            user_query, 
-            query_embedding, 
-            SEMANTIC_WEIGHT, 
-            MAX_RAG_RESULTS,
-            start_time,
-            end_time
-        )
-        .await;
-
-    let mut relevant_results = match search_result {
-        Ok(results) => {
-            info!("Hybrid search found {} raw results", results.len());
-            results
-        },
-        Err(e) => {
-            error!("Hybrid search failed: {}", e);
-            vec![]
-        }
-    };
-    
     // Note: Time filtering is now done in the SQL query within hybrid_search/semantic_search
     // so we don't need to filter here.
-    
+
     if relevant_results.is_empty() {
         warn!("No relevant results found after filtering. Context will be empty.");
-        // Fallback to traditional context if RAG yields nothing? 
-        // Or just let it be empty? 
+        // Fallback to traditional context if RAG yields nothing?
+        // Or just let it be empty?
         // Better to provide at least simple logs.
         return build_traditional_context(state, start_time, end_time).await;
     }
-
-    // Apply keyword boosting for query terms
-    super::reranker::boost_keyword_matches(&mut relevant_results, user_query, 0.2);
-
-    // Rerank results for better relevance
-    let config = super::reranker::RerankConfig {
-        top_k: 20,
-        recency_weight: 0.1,
-        length_weight: 0.05,
-        min_score: 0.0,
-    };
-    let reranked_results = super::reranker::rerank_results(relevant_results, &config);
 
     // Build rich context from relevant OCR text chunks
     let mut context = String::new();
@@ -108,17 +66,14 @@ async fn build_rag_enhanced_context(
 
     // Build context directly, limiting to 20 items early to avoid unnecessary allocations
     context.push_str("Relevant Screen Content (OCR):\n");
-    for result in reranked_results.iter().take(20) {
-        let app = result
-            .frame
-            .active_process
-            .as_deref()
-            .unwrap_or("Unknown");
+    for result in relevant_results.iter().take(20) {
+        let app = result.frame.active_process.as_deref().unwrap_or("Unknown");
         let window = result.frame.active_window.as_deref().unwrap_or("");
         let text: String = result.chunk_text.chars().take(200).collect();
 
         context.push_str(&format!(
-            "- [{}] {} - {}: {}\n",
+            "- [frame:{}] [{}] {} - {}: {}\n",
+            result.frame.id,
             result.frame.timestamp.format("%H:%M"),
             app,
             window,
@@ -127,6 +82,74 @@ async fn build_rag_enhanced_context(
     }
 
     Ok((context, "Semantic Search".to_string()))
+}
+
+/// Shared quality retrieval used by reports and conversational answers.
+pub async fn retrieve_rag_results(
+    state: &Arc<AppState>,
+    user_query: &str,
+    start_time: DateTime<Utc>,
+    end_time: DateTime<Utc>,
+    top_k: usize,
+) -> Result<Vec<SemanticResult>> {
+    let engine = state
+        .get_embedding_engine()
+        .await
+        .map_err(|error| AppError::Internal(format!("Failed to load embedding engine: {error}")))?;
+    let query_embedding = engine.embed(user_query).await.map_err(|error| {
+        AppError::Internal(format!("Failed to generate query embedding: {error}"))
+    })?;
+
+    let candidates = state
+        .db
+        .hybrid_search(
+            user_query,
+            query_embedding,
+            SEMANTIC_WEIGHT,
+            MAX_RAG_RESULTS,
+            start_time,
+            end_time,
+        )
+        .await
+        .map_err(AppError::Database)?;
+    info!("Hybrid retrieval found {} candidates", candidates.len());
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let documents: Vec<String> = candidates
+        .iter()
+        .map(|result| {
+            format!(
+                "{} | {} | {} | {}",
+                result.frame.timestamp,
+                result.frame.active_process.as_deref().unwrap_or("Unknown"),
+                result.frame.active_window.as_deref().unwrap_or(""),
+                result.chunk_text
+            )
+        })
+        .collect();
+
+    match engine.rerank(user_query, &documents).await {
+        Ok(scores) => Ok(scores
+            .into_iter()
+            .take(top_k)
+            .filter_map(|score| {
+                candidates.get(score.index).cloned().map(|mut result| {
+                    result.similarity_score = score.score;
+                    result.retrieval_source = format!("{}+qwen-reranker", result.retrieval_source);
+                    result
+                })
+            })
+            .collect()),
+        Err(error) => {
+            warn!(
+                "Quality reranker unavailable; retaining RRF order: {}",
+                error
+            );
+            Ok(candidates.into_iter().take(top_k).collect())
+        }
+    }
 }
 
 /// Build context using traditional frame-based approach
@@ -159,8 +182,7 @@ async fn build_traditional_context(
 
     // Summarize data for the prompt
     let total_frames = frames.len();
-    let mut app_counts: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
+    let mut app_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut timeline_text = String::new();
 
     for frame in &frames {
