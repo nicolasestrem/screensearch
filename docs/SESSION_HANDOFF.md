@@ -251,3 +251,43 @@ All true:
 4. Verbatim build/test output pasted as evidence (per `CLAUDE.md`).
 5. `CHANGELOG.md` reflects any new changes; no tag pushed unless the user
    approved it.
+
+---
+
+## 9. Outcome — v0.4.35 Windows bundle COMPLETE (2026-06-15)
+
+The objective was met on the Windows machine. All three artifacts were built in
+`target\release\installers\` and the packaged sidecar passed the §6 smoke test
+(`/health` → ok; `/v1/models/prepare` + `/v1/models/status` → `state: ready`,
+`ready_components: ["ocr"]`).
+
+### Environment deltas from CI (resolved this session)
+The canonical `scripts\build-release.ps1` could not run unmodified on this host;
+the pipeline was executed manually with these fixes (no edit to that script):
+- Rust default toolchain was GNU → switched to `stable-x86_64-pc-windows-msvc`.
+- `lld` (required by `.cargo/config.toml` for the msvc target) was absent →
+  installed **LLVM** via winget so `lld`/`lld-link` are on PATH (matches CI's
+  `windows-latest`).
+- Default `python` was 3.14 (no torch/paddle wheels) → built the sidecar in a
+  **Python 3.12 venv** (`sidecar\.venv`).
+- `installer\resources\vc_redist.x64.exe` was missing (CI downloads it; the
+  `.ps1` does not) → downloaded from `https://aka.ms/vs/17/release/vc_redist.x64.exe`.
+- Inno Setup **7** is installed at `C:\Program Files\Inno Setup 7\ISCC.exe`; the
+  `.ps1` hard-codes the absent v6 path, so `ISCC.exe` was invoked directly.
+
+### Release-blocking bug found and fixed
+The first sidecar build crashed at launch with
+`OSError: [WinError 1114]` importing torch. Root cause: PyInstaller bundled a
+stale MSVC C runtime (`msvcp140`/`vcruntime140_1` at **v14.34**) older than what
+PyTorch's `c10.dll` requires (**v14.51**). PyTorch loads its DLLs with a
+restricted search (`LoadLibraryExW(..., 0x1100)`) that prefers the bundle's
+`_internal` directory over System32, so the stale runtime would have crashed the
+shipped app on **every** machine. CI escaped it only because `windows-latest`
+had a newer CRT for PyInstaller to bundle. Fixed permanently in
+`sidecar/build.py`, which now refreshes the bundled MSVC runtime from the host's
+System32 after PyInstaller runs (no-op off Windows). Verified on a clean rebuild.
+
+### Still open (not done — user declined patching the `.ps1`)
+For self-sufficient local Windows builds, `scripts\build-release.ps1` would still
+need: (a) the Inno Setup path made version-agnostic, and (b) a `vc_redist`
+download step. CI (`release.yml`) already covers both.

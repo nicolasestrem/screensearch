@@ -47,6 +47,9 @@ __pycache__/
 *.py[cod]
 /sidecar/build/
 /sidecar/dist/
+# Sidecar build environment and generated PyInstaller spec
+/sidecar/.venv/
+/sidecar/*.spec
 
 # Installer resources (large files)
 installer/models/
