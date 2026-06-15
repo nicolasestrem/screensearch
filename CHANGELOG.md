@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   heads-up message before `gh run watch`.
 
 ### Fixed
+- The packaged Windows sidecar no longer crashes on launch with
+  `OSError: [WinError 1114]` while importing torch. PyInstaller could bundle an
+  older MSVC C runtime (`msvcp140`/`vcruntime140_1`) than PyTorch's `c10.dll`
+  requires; because PyTorch's restricted DLL search prefers the bundle's
+  `_internal` directory over System32, the stale runtime broke startup on every
+  machine. `sidecar/build.py` now refreshes the bundled MSVC runtime from the
+  host's System32 (the same version vc_redist installs) after PyInstaller runs.
 - Frame embedding chunks are now replaced atomically, preventing partially
   indexed frames after an insertion failure.
 - Migration 010 removes legacy duplicate chunks and enforces one embedding per
