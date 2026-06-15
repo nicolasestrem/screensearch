@@ -13,7 +13,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use screen_capture::{CaptureConfig, ScreenCapture};
+//! use screensearch_capture::{CaptureConfig, ScreenCapture};
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -21,7 +21,7 @@
 //!     let mut capture = ScreenCapture::new(config)?;
 //!
 //!     // Start capture loop
-//!     capture.start().await?;
+//!     capture.start(|_frame| Ok(())).await?;
 //!
 //!     Ok(())
 //! }

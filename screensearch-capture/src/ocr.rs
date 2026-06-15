@@ -23,7 +23,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use screen_capture::{OcrEngine, OcrResult};
+//! use screensearch_capture::{OcrEngine, OcrResult};
 //! use image::RgbaImage;
 //!
 //! #[tokio::main]

@@ -17,7 +17,9 @@
 //! # Example
 //!
 //! ```no_run
-//! use screen_capture::{OcrProcessor, OcrProcessorConfig, CaptureEngine, CaptureConfig};
+//! use screensearch_capture::{
+//!     CaptureConfig, CaptureEngine, OcrProcessor, OcrProcessorConfig,
+//! };
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
