@@ -78,14 +78,7 @@ pub async fn search(
         let mut semantic_results = if mode == "hybrid" {
             state
                 .db
-                .hybrid_search(
-                    &params.q,
-                    embedding,
-                    0.3,
-                    pagination.limit,
-                    start_time,
-                    end_time,
-                )
+                .hybrid_search(&params.q, embedding, pagination.limit, start_time, end_time)
                 .await
                 .map_err(AppError::Database)?
         } else {

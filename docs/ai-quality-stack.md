@@ -19,6 +19,11 @@ and can consume up to 5 GB. Each embedding stores provider, model, revision,
 dimension, and content hash. A changed model contract clears incompatible
 vectors and queues a resumable reindex.
 
+Model initialization is serialized inside the sidecar. Concurrent first-use
+requests cannot create duplicate embedding, reranking, or OCR model instances.
+Use **Download / verify** before enabling indexing or issuing the first AI
+request when predictable first-request latency matters.
+
 The managed OCR constructor explicitly requests `ocr_version="PP-OCRv5"`.
 PaddleOCR 3.7 otherwise defaults supported languages such as English to
 PP-OCRv6. The packaged CPU runtime also disables oneDNN because PaddlePaddle
@@ -52,3 +57,23 @@ python sidecar\build.py
 
 The installer and portable archive preserve the generated
 `screensearch-ai-sidecar` directory under `bin/`.
+
+## Index Integrity And Retrieval
+
+All chunks for one frame are replaced in a single SQLite transaction. Metadata
+rows and sqlite-vec rows either commit together or remain unchanged. Migration
+010 also enforces a unique `(frame_id, chunk_index)` identity.
+
+For time-filtered search, ScreenSearch overfetches global sqlite-vec candidates,
+retries with a larger window when too few survive, and finally searches the
+complete vector index when needed. This prevents false-empty results for narrow
+time windows.
+
+The embedding client requires the sidecar response to match the configured
+model, revision, 1024-dimensional contract, input count, and per-vector
+dimension. Model-name validation is intentionally strict because mixing a
+different model into an existing index invalidates similarity scores.
+
+Migration 009 clears legacy 384-dimensional vectors. Captures and OCR text are
+retained, but large histories may take substantial time to return to 100%
+indexing coverage.

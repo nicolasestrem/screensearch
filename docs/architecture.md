@@ -162,11 +162,16 @@ Migration `009_quality_rag`:
 - marks the database as requiring reindexing.
 
 Embedding insertion writes the metadata row and sqlite-vec row in one
-transaction. Deleting an embedding removes its vector through the trigger.
+transaction. All chunks for a frame are replaced atomically, so a failed batch
+does not leave a frame partially indexed. Migration 010 enforces unique
+`(frame_id, chunk_index)` rows. Deleting an embedding removes its vector through
+the trigger.
 
 At startup, the API compares the active sidecar model contract with database
 metadata. A mismatch invalidates stale embeddings and schedules a resumable
-reindex.
+reindex. Migration 009 performs this invalidation for the v0.4.35 upgrade by
+deleting incompatible legacy 384-dimensional vectors while retaining frames
+and OCR text.
 
 ## Retrieval Pipeline
 
@@ -179,6 +184,12 @@ ScreenSearch supports three search modes:
 Hybrid retrieval uses Reciprocal Rank Fusion with `k = 60`. Rank fusion avoids
 mixing FTS and vector scores that have unrelated scales. The
 `hybrid_search_alpha` setting remains only for configuration compatibility.
+
+sqlite-vec applies its KNN limit before timestamps from the joined frame table
+can be filtered. Time-constrained search expands the candidate set from the
+normal overfetch to a larger retry and, if necessary, the complete vector
+index. The full-index fallback prevents narrow time windows from returning no
+results merely because global neighbors occupied the initial KNN window.
 
 For grounded generation:
 

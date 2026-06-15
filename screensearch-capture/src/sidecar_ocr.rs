@@ -1,10 +1,10 @@
 //! PP-OCRv5 client for the managed local quality sidecar.
 
 use crate::{CaptureError, OcrResult, Result, TextRegion};
+use image::codecs::jpeg::JpegEncoder;
 use image::RgbaImage;
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
-use std::io::Cursor;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -64,14 +64,20 @@ impl SidecarOcrEngine {
 
     pub async fn process_image(&self, image: &RgbaImage) -> Result<OcrResult> {
         let started = Instant::now();
-        let mut png = Vec::new();
-        image
-            .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+        let rgb = image::DynamicImage::ImageRgba8(image.clone()).to_rgb8();
+        let mut jpeg = Vec::new();
+        JpegEncoder::new_with_quality(&mut jpeg, 85)
+            .encode(
+                rgb.as_raw(),
+                rgb.width(),
+                rgb.height(),
+                image::ColorType::Rgb8,
+            )
             .map_err(|error| CaptureError::ImageProcessingError(error.to_string()))?;
 
-        let image_part = Part::bytes(png)
-            .file_name("capture.png")
-            .mime_str("image/png")
+        let image_part = Part::bytes(jpeg)
+            .file_name("capture.jpg")
+            .mime_str("image/jpeg")
             .map_err(|error| CaptureError::OcrError(error.to_string()))?;
         let form = Form::new()
             .text("language", self.config.language.clone())

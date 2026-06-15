@@ -94,6 +94,13 @@ weights download at runtime. Production hardening should add:
 
 These remain secondary hardening work beyond the immediate quality migration.
 
+The authenticated OCR endpoint bounds both encoded request size and decoded
+pixel count. Current limits are 20 MiB and 50 million pixels. Keep both checks:
+an encoded-byte limit alone does not prevent a highly compressed image from
+expanding into excessive memory. Requests with a declared multipart body above
+21 MiB are rejected before endpoint processing, and the endpoint still performs
+its own bounded read for clients that omit `Content-Length`.
+
 ## Logs
 
 Avoid logging:

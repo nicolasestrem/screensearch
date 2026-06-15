@@ -89,11 +89,12 @@ impl EmbeddingWorker {
 
             let chunk_refs: Vec<&str> = chunks.iter().map(String::as_str).collect();
             let embeddings = self.engine.embed_batch(&chunk_refs).await?;
-
-            for (chunk_index, (chunk_text, embedding)) in chunks.iter().zip(embeddings).enumerate()
-            {
-                self.db
-                    .insert_embedding(screensearch_db::NewEmbedding {
+            let new_embeddings = chunks
+                .iter()
+                .zip(embeddings)
+                .enumerate()
+                .map(
+                    |(chunk_index, (chunk_text, embedding))| screensearch_db::NewEmbedding {
                         frame_id: frame.id,
                         chunk_text: chunk_text.clone(),
                         chunk_index: chunk_index as i32,
@@ -102,9 +103,10 @@ impl EmbeddingWorker {
                         model: self.engine.model().to_string(),
                         model_version: self.engine.model_version().to_string(),
                         content_hash: EmbeddingEngine::content_hash(chunk_text),
-                    })
-                    .await?;
-            }
+                    },
+                )
+                .collect();
+            self.db.insert_embeddings(new_embeddings).await?;
 
             processed += 1;
 

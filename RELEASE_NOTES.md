@@ -1,4 +1,33 @@
-# ScreenSearch v0.2.0 Release Implementation
+# ScreenSearch v0.4.35 AI Quality Modernization
+
+ScreenSearch v0.4.35 introduces a managed local quality runtime for PP-OCRv5,
+Qwen3 embeddings, Qwen3 reranking, and the bundled Ministral generation model.
+Windows OCR and FTS5 remain deterministic fallbacks when the quality runtime is
+unavailable.
+
+## Upgrade Notice
+
+Migration 009 clears existing legacy 384-dimensional embeddings because they
+cannot be mixed with Qwen3's 1024-dimensional vectors. Captures and OCR text
+are retained. After upgrading, use **Settings > Data & AI > Download / verify**,
+enable embeddings, and leave ScreenSearch running until coverage reaches 100%.
+
+Indexing writes every chunk for a frame in one transaction. A failed frame is
+retried rather than being left partially indexed.
+
+## Validated Windows Bundle
+
+GitHub Actions run `27511498808` built the installer, portable ZIP, complete
+PyInstaller sidecar, checksums, and passed executable-level PP-OCRv5 model
+preparation and inference.
+
+The artifacts still require final interactive Windows validation of Settings
+downloads, live capture OCR, Qwen indexing and retrieval, and Ministral
+generation before publication.
+
+---
+
+# Historical ScreenSearch v0.2.0 Release Implementation
 
 ## Implementation Complete
 

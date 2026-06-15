@@ -52,6 +52,12 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
     )
     .await?;
     apply_migration(pool, "009_quality_rag", MIGRATION_009_QUALITY_RAG).await?;
+    apply_migration(
+        pool,
+        "010_unique_embedding_chunks",
+        MIGRATION_010_UNIQUE_EMBEDDING_CHUNKS,
+    )
+    .await?;
 
     tracing::info!("All migrations completed successfully");
     Ok(())
@@ -284,13 +290,15 @@ ALTER TABLE embeddings ADD COLUMN embedding BLOB;
 DELETE FROM embeddings;
 "#;
 
-/// Versioned embeddings and an in-process sqlite-vec index.
+/// Versioned embeddings and a persistent sqlite-vec index.
 const MIGRATION_009_QUALITY_RAG: &str = r#"
 ALTER TABLE embeddings ADD COLUMN provider TEXT NOT NULL DEFAULT 'legacy';
 ALTER TABLE embeddings ADD COLUMN model TEXT NOT NULL DEFAULT 'unknown';
 ALTER TABLE embeddings ADD COLUMN model_version TEXT NOT NULL DEFAULT 'unknown';
 ALTER TABLE embeddings ADD COLUMN content_hash TEXT NOT NULL DEFAULT '';
 
+-- Existing 384-dimensional vectors are incompatible with the fixed
+-- Qwen3 1024-dimensional contract. Clear them and require a full reindex.
 DELETE FROM embeddings;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS embedding_vectors USING vec0(
@@ -310,6 +318,22 @@ INSERT OR REPLACE INTO metadata (key, value) VALUES
     ('embeddings_dimension', '1024'),
     ('embeddings_last_processed_frame_id', '0'),
     ('embeddings_reindex_required', 'true');
+"#;
+
+/// Prevent concurrent or repeated indexing from duplicating frame chunks.
+const MIGRATION_010_UNIQUE_EMBEDDING_CHUNKS: &str = r#"
+-- Keep the oldest row if an earlier build created duplicate frame chunks.
+-- The delete trigger removes the corresponding sqlite-vec rows.
+DELETE FROM embeddings
+WHERE id NOT IN (
+    SELECT MIN(id)
+    FROM embeddings
+    GROUP BY frame_id, chunk_index
+);
+
+DROP INDEX IF EXISTS idx_embeddings_chunk;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_embeddings_frame_chunk
+ON embeddings(frame_id, chunk_index);
 "#;
 
 /// Migration 005 - Vision Analysis Support

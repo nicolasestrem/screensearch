@@ -7,8 +7,6 @@ use screensearch_db::{FrameFilter, Pagination, SemanticResult};
 use std::sync::Arc;
 use tracing::{info, warn};
 
-/// Weight for semantic results in hybrid search (0.0 to 1.0)
-const SEMANTIC_WEIGHT: f32 = 0.3;
 /// Maximum number of results to fetch for RAG context
 const MAX_RAG_RESULTS: i64 = 50;
 
@@ -105,7 +103,6 @@ pub async fn retrieve_rag_results(
         .hybrid_search(
             user_query,
             query_embedding,
-            SEMANTIC_WEIGHT,
             MAX_RAG_RESULTS,
             start_time,
             end_time,

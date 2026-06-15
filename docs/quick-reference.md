@@ -97,6 +97,10 @@ chunk_overlap = 64
 `hybrid_search_alpha` is retained for compatibility but is not used by the
 current RRF implementation.
 
+Migration 009 clears incompatible legacy embeddings, and migration 010 enforces
+one row per frame chunk. Captures and OCR text are retained; enable embeddings
+to rebuild coverage after upgrading.
+
 ## Development
 
 Backend:

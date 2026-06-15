@@ -9,7 +9,7 @@ use axum::extract::{Json, State};
 use screensearch_embeddings::ModelPreparationStatus;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, warn};
 
 // ============================================================
 // Models
@@ -142,7 +142,10 @@ pub async fn generate_embeddings(
         // Get OCR text for the frame
         let ocr_texts = match state.db.get_ocr_text_for_frame(frame.id).await {
             Ok(texts) => texts,
-            Err(_) => continue,
+            Err(error) => {
+                warn!("Failed to load OCR text for frame {}: {}", frame.id, error);
+                continue;
+            }
         };
 
         if ocr_texts.is_empty() {
@@ -179,23 +182,32 @@ pub async fn generate_embeddings(
             }
         };
 
-        for (chunk_index, (chunk_text, embedding)) in chunks.iter().zip(embeddings).enumerate() {
-            // Insert embedding record
-            let new_embedding = screensearch_db::NewEmbedding {
-                frame_id: frame.id,
-                chunk_text: chunk_text.clone(),
-                chunk_index: chunk_index as i32,
-                embedding,
-                provider: engine.provider().to_string(),
-                model: engine.model().to_string(),
-                model_version: engine.model_version().to_string(),
-                content_hash: screensearch_embeddings::EmbeddingEngine::content_hash(chunk_text),
-            };
+        let new_embeddings = chunks
+            .iter()
+            .zip(embeddings)
+            .enumerate()
+            .map(
+                |(chunk_index, (chunk_text, embedding))| screensearch_db::NewEmbedding {
+                    frame_id: frame.id,
+                    chunk_text: chunk_text.clone(),
+                    chunk_index: chunk_index as i32,
+                    embedding,
+                    provider: engine.provider().to_string(),
+                    model: engine.model().to_string(),
+                    model_version: engine.model_version().to_string(),
+                    content_hash: screensearch_embeddings::EmbeddingEngine::content_hash(
+                        chunk_text,
+                    ),
+                },
+            )
+            .collect();
 
-            if let Err(e) = state.db.insert_embedding(new_embedding).await {
-                tracing::warn!("Failed to insert embedding: {}", e);
-                continue;
-            }
+        if let Err(error) = state.db.insert_embeddings(new_embeddings).await {
+            warn!(
+                "Failed to atomically store embeddings for frame {}: {}",
+                frame.id, error
+            );
+            continue;
         }
 
         processed += 1;

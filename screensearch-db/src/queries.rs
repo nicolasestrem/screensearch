@@ -789,7 +789,6 @@ impl DatabaseManager {
 
     /// Insert an embedding record (stores metadata and vector blob)
     pub async fn insert_embedding(&self, embedding: NewEmbedding) -> Result<i64> {
-        // Convert f32 vector to bytes (BLOB)
         let embedding_blob: Vec<u8> = embedding
             .embedding
             .iter()
@@ -797,13 +796,23 @@ impl DatabaseManager {
             .collect();
 
         let mut tx = self.pool().begin().await?;
-        let result = sqlx::query(
+        let embedding_id = sqlx::query_scalar::<_, i64>(
             r#"
             INSERT INTO embeddings (
                 frame_id, chunk_text, chunk_index, embedding_dim, embedding,
                 provider, model, model_version, content_hash
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(frame_id, chunk_index) DO UPDATE SET
+                chunk_text = excluded.chunk_text,
+                embedding_dim = excluded.embedding_dim,
+                embedding = excluded.embedding,
+                provider = excluded.provider,
+                model = excluded.model,
+                model_version = excluded.model_version,
+                content_hash = excluded.content_hash,
+                created_at = CURRENT_TIMESTAMP
+            RETURNING id
             "#,
         )
         .bind(embedding.frame_id)
@@ -815,10 +824,13 @@ impl DatabaseManager {
         .bind(embedding.model)
         .bind(embedding.model_version)
         .bind(embedding.content_hash)
-        .execute(&mut *tx)
+        .fetch_one(&mut *tx)
         .await?;
 
-        let embedding_id = result.last_insert_rowid();
+        sqlx::query("DELETE FROM embedding_vectors WHERE embedding_id = ?")
+            .bind(embedding_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("INSERT INTO embedding_vectors (embedding_id, embedding) VALUES (?, ?)")
             .bind(embedding_id)
             .bind(embedding_blob)
@@ -827,6 +839,67 @@ impl DatabaseManager {
 
         tx.commit().await?;
         Ok(embedding_id)
+    }
+
+    /// Replace every embedding chunk for one frame atomically.
+    ///
+    /// Existing chunks remain visible if any insertion fails because the
+    /// delete and all metadata/vector inserts share one transaction.
+    pub async fn insert_embeddings(&self, embeddings: Vec<NewEmbedding>) -> Result<()> {
+        let Some(frame_id) = embeddings.first().map(|embedding| embedding.frame_id) else {
+            return Ok(());
+        };
+        if embeddings
+            .iter()
+            .any(|embedding| embedding.frame_id != frame_id)
+        {
+            return Err(crate::DatabaseError::InvalidParameter(
+                "batch embeddings must belong to one frame".to_string(),
+            ));
+        }
+
+        let mut tx = self.pool().begin().await?;
+        sqlx::query("DELETE FROM embeddings WHERE frame_id = ?")
+            .bind(frame_id)
+            .execute(&mut *tx)
+            .await?;
+
+        for embedding in embeddings {
+            let embedding_blob: Vec<u8> = embedding
+                .embedding
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect();
+            let result = sqlx::query(
+                r#"
+                INSERT INTO embeddings (
+                    frame_id, chunk_text, chunk_index, embedding_dim, embedding,
+                    provider, model, model_version, content_hash
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(embedding.frame_id)
+            .bind(embedding.chunk_text)
+            .bind(embedding.chunk_index)
+            .bind(embedding.embedding.len() as i32)
+            .bind(&embedding_blob)
+            .bind(embedding.provider)
+            .bind(embedding.model)
+            .bind(embedding.model_version)
+            .bind(embedding.content_hash)
+            .execute(&mut *tx)
+            .await?;
+
+            sqlx::query("INSERT INTO embedding_vectors (embedding_id, embedding) VALUES (?, ?)")
+                .bind(result.last_insert_rowid())
+                .bind(embedding_blob)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Get all embeddings for a frame
@@ -917,6 +990,9 @@ impl DatabaseManager {
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
     ) -> Result<Vec<SemanticResult>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
         if query_vector.len() != 1024 {
             return Err(crate::DatabaseError::InvalidParameter(format!(
                 "Expected a 1024-dimensional query vector, got {}",
@@ -928,7 +1004,12 @@ impl DatabaseManager {
             .iter()
             .flat_map(|value| value.to_le_bytes())
             .collect();
-        let candidate_limit = limit.saturating_mul(12).max(100) as i64;
+        let total_vectors = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM embedding_vectors")
+            .fetch_one(self.pool())
+            .await?;
+        if total_vectors == 0 {
+            return Ok(Vec::new());
+        }
 
         let base_query = r#"
             WITH nearest AS (
@@ -965,16 +1046,31 @@ impl DatabaseManager {
             format!("{} WHERE {}", base_query, conditions.join(" AND "))
         };
 
-        // Bind parameters in order
-        let mut query_builder = sqlx::query(&query).bind(query_blob).bind(candidate_limit);
-        if let Some(start) = &start_time {
-            query_builder = query_builder.bind(start);
-        }
-        if let Some(end) = &end_time {
-            query_builder = query_builder.bind(end);
-        }
+        let filtered = start_time.is_some() || end_time.is_some();
+        let initial_limit = if filtered {
+            limit.saturating_mul(12).max(100)
+        } else {
+            limit
+        };
+        let expanded_limit = limit.saturating_mul(100).max(initial_limit);
+        let candidate_limits = [initial_limit, expanded_limit, total_vectors as usize];
+        let mut rows = Vec::new();
 
-        let rows = query_builder.fetch_all(self.pool()).await?;
+        for requested_limit in candidate_limits {
+            let candidate_limit = requested_limit.min(total_vectors as usize).max(limit) as i64;
+            let mut query_builder = sqlx::query(&query).bind(&query_blob).bind(candidate_limit);
+            if let Some(start) = &start_time {
+                query_builder = query_builder.bind(start);
+            }
+            if let Some(end) = &end_time {
+                query_builder = query_builder.bind(end);
+            }
+
+            rows = query_builder.fetch_all(self.pool()).await?;
+            if !filtered || rows.len() >= limit || candidate_limit >= total_vectors {
+                break;
+            }
+        }
 
         let mut candidates: Vec<SemanticResult> = Vec::new();
 

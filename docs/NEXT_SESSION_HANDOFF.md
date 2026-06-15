@@ -409,11 +409,8 @@ git status --short
 
 Do not open another pull request. Update PR #63 only.
 
-The local `gh` client returned HTTP 401 on June 15, 2026. The connected GitHub
-integration still confirmed that PR #63 was open, draft, mergeable, and at
-head `c97317e`, but returned HTTP 403 when asked to update the PR description.
-Re-authenticate `gh` or grant the integration pull-request write access before
-relying on the CLI commands or attempting the PR-description update above.
+GitHub CLI authentication was restored on June 15, 2026. Use `gh` for PR
+metadata, checks, comments, thread replies, and workflow logs.
 
 ### 5. Address only evidence-based follow-up failures
 
@@ -481,3 +478,63 @@ secondary CI-maintenance task after PR #63's Windows application validation.
 
 Dependabot also reports two vulnerabilities on the default branch. They were
 not introduced or addressed by this OCR fix and should be handled separately.
+
+## PR Review Follow-Up Started June 15, 2026
+
+PR #63 received five unresolved inline threads and a comprehensive review with
+15 findings. The follow-up implementation addresses:
+
+- atomic per-frame embedding replacement;
+- unique frame/chunk identities through migration 010;
+- embedding response count validation;
+- time-filtered KNN expansion through a guaranteed full-index fallback;
+- empty chunk filtering and OCR database-error logging;
+- JPEG OCR transport and bounded sidecar uploads;
+- removal of the misleading empty in-memory vector index;
+- OCR result-length warnings and PaddleOCR 3.x validation;
+- serialized cached model initialization;
+- removal of the ignored hybrid-search alpha parameter from runtime calls;
+- explicit migration and release documentation.
+
+The configured embedding model-name check remains intentionally strict. The
+persisted vector contract is fixed for v0.4.35, so accepting a different
+quantized or otherwise compatible-looking model would mix non-equivalent
+vectors in one index.
+
+Files additionally modified during review follow-up:
+
+```text
+CHANGELOG.md
+RELEASE_NOTES.md
+docs/security.md
+screensearch-api/src/handlers/embeddings.rs
+screensearch-api/src/handlers/rag_helpers.rs
+screensearch-api/src/handlers/search.rs
+screensearch-api/src/workers/embedding_worker.rs
+screensearch-capture/src/sidecar_ocr.rs
+screensearch-db/src/migrations.rs
+screensearch-db/src/queries.rs
+screensearch-db/src/vector_search.rs
+screensearch-db/tests/integration_tests.rs
+screensearch-embeddings/src/engine.rs
+```
+
+Review-follow-up verification completed:
+
+```text
+python3 -m py_compile sidecar/app.py sidecar/build.py
+cargo check --locked -p screensearch-db -p screensearch-embeddings -p screensearch-api -p screensearch-capture
+cargo test --locked -p screensearch-db
+cargo test --locked -p screensearch-embeddings -p screensearch-api --lib
+cargo check --locked -p screensearch-capture --all-targets
+cargo clippy --locked -p screensearch-db -p screensearch-embeddings -p screensearch-api -p screensearch-capture --all-targets --no-deps -- -D warnings
+cargo xwin check --locked --target x86_64-pc-windows-msvc -p screensearch-db -p screensearch-embeddings -p screensearch-api -p screensearch-capture
+rustfmt --edition 2021 --check <all changed Rust files>
+git diff --check
+```
+
+The database integration suite passed 17 tests. The API suite passed 14 tests,
+and the embeddings suite passed 8 tests. Native Linux linking of the
+`screensearch-capture` test binary remains blocked by pre-existing unresolved
+Windows symbols; capture compiles for Linux all-targets and the changed crates
+pass the Windows MSVC cross-check.

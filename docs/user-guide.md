@@ -175,6 +175,11 @@ Do not change `model_name` or `embedding_dim` independently. A different model
 requires a schema and migration change because sqlite-vec dimensions are fixed
 when the virtual table is created.
 
+When upgrading to v0.4.35, ScreenSearch removes old 384-dimensional embedding
+vectors because they are incompatible with the fixed Qwen3 1024-dimensional
+index. Captures and OCR text remain intact. Settings reports that existing
+vectors must be regenerated until the new index is complete.
+
 ## Troubleshooting
 
 ### The settings panel still shows old AI wording

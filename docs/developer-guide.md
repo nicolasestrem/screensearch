@@ -55,6 +55,12 @@ cargo run
 Normally the application starts the bundled sidecar itself. Direct sidecar
 startup is useful for development.
 
+The model loaders serialize first initialization around their cached loader.
+Keep this behavior when changing model lifecycle code: `lru_cache` alone can
+execute a loader more than once when concurrent cache misses arrive. Use
+`POST /v1/models/prepare` before load testing to exclude initialization from
+steady-state latency measurements.
+
 To require authentication in manual development, set the same token for both
 processes:
 
@@ -250,6 +256,17 @@ release job to pass.
 dependencies. PaddleX validates optional OCR dependencies through
 `importlib.metadata`; bundling only their Python modules causes pipeline
 creation to fail even when the modules are importable.
+
+The sidecar verifies PaddleOCR major version 3 at startup. The OCR endpoint
+rejects encoded uploads above 20 MiB and decoded images above 50 million
+pixels. The Rust OCR client sends quality-85 JPEG to avoid full-screen PNG
+encoding overhead. Declared multipart requests above 21 MiB are rejected before
+endpoint processing; the endpoint also uses a bounded read.
+
+Embedding writers must use `DatabaseManager::insert_embeddings` for complete
+frames. It replaces all chunks in one transaction. Do not restore per-chunk
+writes because one successful chunk would make an incomplete frame appear
+indexed.
 
 PowerShell helpers are retained for maintainers working directly on Windows,
 but they are not the primary development or release entrypoints.

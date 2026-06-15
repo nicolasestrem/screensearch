@@ -7,6 +7,7 @@ import logging
 import os
 import threading
 from functools import lru_cache
+from importlib.metadata import PackageNotFoundError, version
 from io import BytesIO
 from typing import Annotated, Literal
 
@@ -23,6 +24,9 @@ EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 RERANKER_MODEL = "Qwen/Qwen3-Reranker-0.6B"
 MODEL_VERSION = "main"
 EMBEDDING_DIMENSION = 1024
+MAX_OCR_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_OCR_REQUEST_BYTES = MAX_OCR_UPLOAD_BYTES + 1024 * 1024
+MAX_OCR_PIXELS = 50_000_000
 RETRIEVAL_INSTRUCTION = (
     "Given a screen-history search query, retrieve relevant timestamped OCR "
     "passages that answer the query."
@@ -96,6 +100,42 @@ class ModelPreparationStatus(BaseModel):
 
 _preparation_lock = threading.Lock()
 _preparation_status = ModelPreparationStatus(state="idle")
+_embedding_model_lock = threading.Lock()
+_reranker_model_lock = threading.Lock()
+_ocr_model_lock = threading.Lock()
+
+
+def _paddleocr_version() -> str:
+    try:
+        installed = version("paddleocr")
+    except PackageNotFoundError as error:
+        raise RuntimeError("PaddleOCR 3.x is required but is not installed") from error
+    if installed.split(".", maxsplit=1)[0] != "3":
+        raise RuntimeError(f"PaddleOCR 3.x is required, got {installed}")
+    return installed
+
+
+PADDLEOCR_VERSION = _paddleocr_version()
+
+
+@app.middleware("http")
+async def reject_oversized_ocr_request(request: Request, call_next):
+    if request.url.path == "/v1/ocr":
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                request_bytes = int(content_length)
+            except ValueError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "invalid Content-Length header"},
+                )
+            if request_bytes > MAX_OCR_REQUEST_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "OCR multipart request is too large"},
+                )
+    return await call_next(request)
 
 
 def authorize(authorization: Annotated[str | None, Header()] = None) -> None:
@@ -109,7 +149,7 @@ def device() -> str:
 
 
 @lru_cache(maxsize=1)
-def embedding_model() -> SentenceTransformer:
+def _load_embedding_model() -> SentenceTransformer:
     return SentenceTransformer(
         EMBEDDING_MODEL,
         device=device(),
@@ -117,8 +157,13 @@ def embedding_model() -> SentenceTransformer:
     )
 
 
+def embedding_model() -> SentenceTransformer:
+    with _embedding_model_lock:
+        return _load_embedding_model()
+
+
 @lru_cache(maxsize=1)
-def reranker_model() -> CrossEncoder:
+def _load_reranker_model() -> CrossEncoder:
     return CrossEncoder(
         RERANKER_MODEL,
         device=device(),
@@ -128,8 +173,13 @@ def reranker_model() -> CrossEncoder:
     )
 
 
+def reranker_model() -> CrossEncoder:
+    with _reranker_model_lock:
+        return _load_reranker_model()
+
+
 @lru_cache(maxsize=8)
-def ocr_model(language: str):
+def _load_ocr_model(language: str):
     from paddleocr import PaddleOCR
 
     return PaddleOCR(
@@ -141,6 +191,11 @@ def ocr_model(language: str):
         use_doc_unwarping=False,
         use_textline_orientation=True,
     )
+
+
+def ocr_model(language: str):
+    with _ocr_model_lock:
+        return _load_ocr_model(language)
 
 
 @app.exception_handler(Exception)
@@ -160,6 +215,7 @@ def health() -> dict[str, object]:
         "embedding_model": EMBEDDING_MODEL,
         "reranker_model": RERANKER_MODEL,
         "embedding_dimension": EMBEDDING_DIMENSION,
+        "paddleocr_version": PADDLEOCR_VERSION,
     }
 
 
@@ -312,8 +368,20 @@ async def ocr(
     image: Annotated[UploadFile, File()],
     language: Annotated[str, Form()] = "en",
 ) -> OcrResponse:
-    raw = await image.read()
-    pixels = np.asarray(Image.open(BytesIO(raw)).convert("RGB")).copy()
+    raw = await image.read(MAX_OCR_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_OCR_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"OCR image exceeds {MAX_OCR_UPLOAD_BYTES} bytes",
+        )
+
+    source = Image.open(BytesIO(raw))
+    if source.width * source.height > MAX_OCR_PIXELS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"OCR image exceeds {MAX_OCR_PIXELS} pixels",
+        )
+    pixels = np.asarray(source.convert("RGB")).copy()
     results = ocr_model(language).predict(pixels)
     lines: list[OcrLine] = []
     orientation: float | None = None
@@ -329,9 +397,16 @@ async def ocr(
         if not isinstance(payload, dict):
             continue
 
-        texts = payload.get("rec_texts", [])
-        scores = payload.get("rec_scores", [])
-        boxes = payload.get("rec_boxes", [])
+        texts = payload.get("rec_texts") or []
+        scores = payload.get("rec_scores") or []
+        boxes = payload.get("rec_boxes") or []
+        if len(texts) != len(scores) or len(texts) != len(boxes):
+            logger.warning(
+                "Mismatched OCR result lengths: texts=%d, scores=%d, boxes=%d",
+                len(texts),
+                len(scores),
+                len(boxes),
+            )
         preprocessor = payload.get("doc_preprocessor_res")
         if isinstance(preprocessor, dict):
             orientation = preprocessor.get("angle", orientation)

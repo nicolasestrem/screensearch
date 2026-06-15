@@ -118,6 +118,125 @@ async fn test_sqlite_vec_search_and_delete_sync() {
 }
 
 #[tokio::test]
+async fn test_embedding_batch_replacement_is_atomic_and_deduplicated() {
+    let (db, _path) = create_test_db().await;
+    let frame_id = db
+        .insert_frame(create_test_frame(Utc::now(), "code", "Atomic"))
+        .await
+        .unwrap();
+    let base = NewEmbedding {
+        frame_id,
+        chunk_text: "existing chunk".to_string(),
+        chunk_index: 0,
+        embedding: vec![0.0; 1024],
+        provider: "test".to_string(),
+        model: "test-model".to_string(),
+        model_version: "1".to_string(),
+        content_hash: "existing".to_string(),
+    };
+    db.insert_embeddings(vec![base]).await.unwrap();
+
+    let duplicate_batch = vec![
+        NewEmbedding {
+            frame_id,
+            chunk_text: "replacement one".to_string(),
+            chunk_index: 0,
+            embedding: vec![0.0; 1024],
+            provider: "test".to_string(),
+            model: "test-model".to_string(),
+            model_version: "1".to_string(),
+            content_hash: "replacement-one".to_string(),
+        },
+        NewEmbedding {
+            frame_id,
+            chunk_text: "replacement duplicate".to_string(),
+            chunk_index: 0,
+            embedding: vec![0.0; 1024],
+            provider: "test".to_string(),
+            model: "test-model".to_string(),
+            model_version: "1".to_string(),
+            content_hash: "replacement-duplicate".to_string(),
+        },
+    ];
+    assert!(db.insert_embeddings(duplicate_batch).await.is_err());
+
+    let stored = db.get_embeddings_for_frame(frame_id).await.unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].chunk_text, "existing chunk");
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_time_filtered_vector_search_expands_past_global_neighbors() {
+    let (db, _path) = create_test_db().await;
+    let now = Utc::now();
+
+    for index in 0..100 {
+        let frame_id = db
+            .insert_frame(create_test_frame(
+                now - Duration::days(30),
+                "archive",
+                &format!("Out of range {index}"),
+            ))
+            .await
+            .unwrap();
+        let mut vector = vec![0.0; 1024];
+        vector[0] = 1.0;
+        db.insert_embedding(NewEmbedding {
+            frame_id,
+            chunk_text: format!("global neighbor {index}"),
+            chunk_index: 0,
+            embedding: vector,
+            provider: "test".to_string(),
+            model: "test-model".to_string(),
+            model_version: "1".to_string(),
+            content_hash: format!("global-{index}"),
+        })
+        .await
+        .unwrap();
+    }
+
+    let relevant_frame = db
+        .insert_frame(create_test_frame(now, "code", "Relevant"))
+        .await
+        .unwrap();
+    let mut relevant_vector = vec![0.0; 1024];
+    relevant_vector[0] = 0.8;
+    relevant_vector[1] = 0.6;
+    db.insert_embedding(NewEmbedding {
+        frame_id: relevant_frame,
+        chunk_text: "relevant in-range result".to_string(),
+        chunk_index: 0,
+        embedding: relevant_vector,
+        provider: "test".to_string(),
+        model: "test-model".to_string(),
+        model_version: "1".to_string(),
+        content_hash: "relevant".to_string(),
+    })
+    .await
+    .unwrap();
+
+    let mut query = vec![0.0; 1024];
+    query[0] = 1.0;
+    let results = db
+        .search_embeddings_with_time_range(
+            query,
+            1,
+            0.0,
+            Some(now - Duration::minutes(1)),
+            Some(now + Duration::minutes(1)),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].frame.id, relevant_frame);
+
+    db.close().await;
+}
+
+#[tokio::test]
 async fn test_frame_insertion() {
     let (db, _path) = create_test_db().await;
 

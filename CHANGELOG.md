@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.35] - 2026-06-15
+
+### Changed
+- Replaced legacy OCR and retrieval choices with the fixed local PP-OCRv5,
+  Qwen3 embedding, Qwen3 reranking, sqlite-vec, and RRF quality stack.
+- Added Linux-first local and release build scripts while retaining PowerShell
+  helpers for Windows maintainers.
+- Added packaged Windows sidecar validation that performs real PP-OCRv5
+  inference before installer and portable artifacts are published.
+
+### Fixed
+- Frame embedding chunks are now replaced atomically, preventing partially
+  indexed frames after an insertion failure.
+- Migration 010 removes legacy duplicate chunks and enforces one embedding per
+  `(frame_id, chunk_index)`.
+- Time-filtered vector search expands its global candidate window and falls
+  back to the full sqlite-vec index when required.
+- Embedding responses validate model identity, revision, dimension, vector
+  count, and per-vector dimensions.
+- Sidecar model loaders are serialized during first initialization.
+- PP-OCR uploads use JPEG transport and reject encoded images over 20 MiB or
+  decoded images over 50 million pixels.
+- PaddleOCR result cardinality mismatches are logged instead of silently
+  truncated.
+
+### Migration Notice
+- Migration 009 intentionally deletes all legacy 384-dimensional embeddings
+  because they are incompatible with the fixed 1024-dimensional Qwen3
+  contract. Existing OCR data is retained and must be reindexed.
+
+---
+
 ## [0.5.0] - 2026-06-10
 
 ### Changed

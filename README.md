@@ -243,6 +243,11 @@ The Linux bundle is for development. Windows releases are prepared from Linux
 with `./scripts/build-release.sh <version>` and packaged by the Windows GitHub
 Actions runner after the version tag is published.
 
+After launching a bundled build, use **Settings > Data & AI > Download /
+verify** before enabling indexing. This warms the serialized PP-OCRv5, Qwen3
+embedding, and Qwen3 reranking loaders and avoids first-request model download
+latency.
+
 #### Cross-Compilation from Linux
 
 You can build Windows binaries from Linux using `cargo-xwin`:

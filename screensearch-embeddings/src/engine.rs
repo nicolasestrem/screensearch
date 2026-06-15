@@ -5,6 +5,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
+use tracing::warn;
 
 #[derive(Debug, Serialize)]
 struct EmbeddingRequest<'a> {
@@ -19,6 +20,35 @@ struct EmbeddingResponse {
     model: String,
     version: String,
     dimension: usize,
+}
+
+fn validate_embedding_response(
+    payload: &EmbeddingResponse,
+    expected_model: &str,
+    expected_version: &str,
+    expected_count: usize,
+) -> Result<()> {
+    // Model identity is part of the fixed persisted-vector contract. Accepting
+    // a compatible-looking variant here could mix vectors from two models.
+    if payload.model != expected_model
+        || payload.version != expected_version
+        || payload.dimension != EMBEDDING_DIM
+        || payload.embeddings.len() != expected_count
+        || payload
+            .embeddings
+            .iter()
+            .any(|embedding| embedding.len() != EMBEDDING_DIM)
+    {
+        return Err(EmbeddingError::InferenceError(format!(
+            "unexpected embedding model response: model={}, version={}, dimension={}, count={}/{}",
+            payload.model,
+            payload.version,
+            payload.dimension,
+            payload.embeddings.len(),
+            expected_count
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]
@@ -149,15 +179,24 @@ impl EmbeddingEngine {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-        if texts.iter().any(|text| text.trim().is_empty()) {
-            return Err(EmbeddingError::TokenizationError(
-                "empty text cannot be embedded".to_string(),
-            ));
+        let non_empty_texts: Vec<&str> = texts
+            .iter()
+            .copied()
+            .filter(|text| !text.trim().is_empty())
+            .collect();
+        if non_empty_texts.len() != texts.len() {
+            warn!(
+                "Ignoring {} empty text(s) in embedding batch",
+                texts.len() - non_empty_texts.len()
+            );
+        }
+        if non_empty_texts.is_empty() {
+            return Ok(Vec::new());
         }
 
         let request = EmbeddingRequest {
             model: &self.config.model,
-            texts,
+            texts: &non_empty_texts,
             task,
         };
         let response = self
@@ -182,19 +221,12 @@ impl EmbeddingEngine {
             .json()
             .await
             .map_err(|error| EmbeddingError::InferenceError(error.to_string()))?;
-        if payload.model != self.config.model
-            || payload.version != self.config.model_version
-            || payload.dimension != EMBEDDING_DIM
-            || payload
-                .embeddings
-                .iter()
-                .any(|embedding| embedding.len() != EMBEDDING_DIM)
-        {
-            return Err(EmbeddingError::InferenceError(format!(
-                "unexpected embedding model response: model={}, version={}, dimension={}",
-                payload.model, payload.version, payload.dimension
-            )));
-        }
+        validate_embedding_response(
+            &payload,
+            &self.config.model,
+            &self.config.model_version,
+            non_empty_texts.len(),
+        )?;
 
         Ok(payload.embeddings)
     }
@@ -288,11 +320,16 @@ impl EmbeddingEngine {
                 "chunking request failed ({status}): {body}"
             )));
         }
-        response
+        let chunks = response
             .json::<ChunkResponse>()
             .await
-            .map(|payload| payload.chunks)
-            .map_err(|error| EmbeddingError::TokenizationError(error.to_string()))
+            .map_err(|error| EmbeddingError::TokenizationError(error.to_string()))?
+            .chunks;
+        let non_empty_chunks: Vec<String> = chunks
+            .into_iter()
+            .filter(|chunk| !chunk.trim().is_empty())
+            .collect();
+        Ok(non_empty_chunks)
     }
 
     pub fn content_hash(text: &str) -> String {
@@ -353,6 +390,20 @@ mod tests {
         assert_ne!(
             EmbeddingEngine::content_hash("screen search"),
             EmbeddingEngine::content_hash("screen-search")
+        );
+    }
+
+    #[test]
+    fn embedding_response_rejects_truncated_batches() {
+        let payload = EmbeddingResponse {
+            embeddings: vec![vec![0.0; EMBEDDING_DIM]],
+            model: "Qwen/Qwen3-Embedding-0.6B".to_string(),
+            version: "main".to_string(),
+            dimension: EMBEDDING_DIM,
+        };
+
+        assert!(
+            validate_embedding_response(&payload, "Qwen/Qwen3-Embedding-0.6B", "main", 2).is_err()
         );
     }
 }
