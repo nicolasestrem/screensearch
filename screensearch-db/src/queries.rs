@@ -796,23 +796,19 @@ impl DatabaseManager {
             .collect();
 
         let mut tx = self.pool().begin().await?;
-        let embedding_id = sqlx::query_scalar::<_, i64>(
+        sqlx::query("DELETE FROM embeddings WHERE frame_id = ? AND chunk_index = ?")
+            .bind(embedding.frame_id)
+            .bind(embedding.chunk_index)
+            .execute(&mut *tx)
+            .await?;
+
+        let result = sqlx::query(
             r#"
             INSERT INTO embeddings (
                 frame_id, chunk_text, chunk_index, embedding_dim, embedding,
                 provider, model, model_version, content_hash
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(frame_id, chunk_index) DO UPDATE SET
-                chunk_text = excluded.chunk_text,
-                embedding_dim = excluded.embedding_dim,
-                embedding = excluded.embedding,
-                provider = excluded.provider,
-                model = excluded.model,
-                model_version = excluded.model_version,
-                content_hash = excluded.content_hash,
-                created_at = CURRENT_TIMESTAMP
-            RETURNING id
             "#,
         )
         .bind(embedding.frame_id)
@@ -824,13 +820,10 @@ impl DatabaseManager {
         .bind(embedding.model)
         .bind(embedding.model_version)
         .bind(embedding.content_hash)
-        .fetch_one(&mut *tx)
+        .execute(&mut *tx)
         .await?;
+        let embedding_id = result.last_insert_rowid();
 
-        sqlx::query("DELETE FROM embedding_vectors WHERE embedding_id = ?")
-            .bind(embedding_id)
-            .execute(&mut *tx)
-            .await?;
         sqlx::query("INSERT INTO embedding_vectors (embedding_id, embedding) VALUES (?, ?)")
             .bind(embedding_id)
             .bind(embedding_blob)
