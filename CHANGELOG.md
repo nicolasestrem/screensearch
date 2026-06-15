@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.4.35] - 2026-06-15
+## [0.4.36] - 2026-06-15
 
 ### Changed
 - Replaced legacy OCR and retrieval choices with the fixed local PP-OCRv5,

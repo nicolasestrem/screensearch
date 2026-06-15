@@ -9,7 +9,7 @@ on:
       version:
         description: Version to use in artifact names
         required: true
-        default: '0.4.35'
+        default: '0.4.36'
         type: string
       publish_release:
         description: Create a draft GitHub release
