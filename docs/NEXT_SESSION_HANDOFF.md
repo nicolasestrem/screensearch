@@ -25,10 +25,11 @@ Continue using the existing pull request:
 PR #63: https://github.com/nicolasestrem/screensearch/pull/63
 ```
 
-At handoff time, PR #63 is open and its head is:
+At the latest verification on June 15, 2026, PR #63 is open, draft,
+mergeable, and its head is:
 
 ```text
-d15a36d997a3600ae61957a7f91d2533de1317f3
+c97317edf7e5db6d674422023dfdb98a7f333782
 ```
 
 ## Confirmed State
@@ -61,15 +62,33 @@ Python test. It starts the PyInstaller sidecar, prepares English OCR models,
 generates an image containing `ScreenSearch OCR smoke test`, calls
 `POST /v1/ocr`, and requires at least one recognized line.
 
-The local artifact download was interrupted after the successful workflow. The
-directory below exists but was empty when this handoff was written:
+The final artifacts were downloaded and verified locally in:
 
 ```text
 target/x86_64-pc-windows-msvc/release/bundles/windows-full/
 ```
 
-No code fix is required for that interruption. Download artifacts from run
-`27511498808` again.
+The verified files are:
+
+```text
+ScreenSearch-v0.4.35-Setup-Quality.exe 313862430 bytes
+ScreenSearch-v0.4.35-Portable.zip       446984262 bytes
+checksums.txt                           207 bytes
+```
+
+The local SHA-256 calculations match `checksums.txt`:
+
+```text
+29ed23b16a8ab5b6513b9e254c277fa0d963c977193330159ba0715c35fdc741  ScreenSearch-v0.4.35-Setup-Quality.exe
+751c90987badd9e1d6b1faa150932c29e21b2fd7fe9ef6c08f855fcf1cd425ff  ScreenSearch-v0.4.35-Portable.zip
+```
+
+The portable ZIP was also inspected and contains the complete sidecar entry
+point at:
+
+```text
+bin/screensearch-ai-sidecar/screensearch-ai-sidecar.exe
+```
 
 ## What Was Accomplished
 
@@ -300,16 +319,21 @@ git status --short
 git log -1 --oneline
 ```
 
-Expected head before committing this handoff:
+Expected head before committing the June 15 artifact-verification update:
 
 ```text
-d15a36d fix(release): recreate portable bundle staging
+c97317e docs: add AI modernization session handoff
 ```
 
 If `docs/NEXT_SESSION_HANDOFF.md` has been committed after this text was
-written, the head will be that handoff commit instead. Do not reset it.
+written, the head will be the artifact-verification documentation commit
+instead. Do not reset it.
 
-### 2. Download the final validated Windows artifacts
+### 2. Preserve or re-download the final validated Windows artifacts
+
+The artifacts and checksums are already present and verified locally. Do not
+delete them unless a fresh download is required. To restore them from the
+authoritative successful run:
 
 ```bash
 rm -rf target/x86_64-pc-windows-msvc/release/bundles/windows-full
@@ -339,9 +363,13 @@ sha256sum \
 cat target/x86_64-pc-windows-msvc/release/bundles/windows-full/checksums.txt
 ```
 
-The locally calculated hashes must match `checksums.txt`.
+The locally calculated hashes must match the values recorded above and
+`checksums.txt`.
 
 ### 3. Perform Windows end-to-end validation
+
+This is the primary remaining release gate. It requires a Windows machine and
+cannot be replaced by another Linux source-level test.
 
 Test either the final installer or the final portable ZIP from run
 `27511498808`; do not retest an older artifact.
@@ -380,6 +408,12 @@ git status --short
 ```
 
 Do not open another pull request. Update PR #63 only.
+
+The local `gh` client returned HTTP 401 on June 15, 2026. The connected GitHub
+integration still confirmed that PR #63 was open, draft, mergeable, and at
+head `c97317e`, but returned HTTP 403 when asked to update the PR description.
+Re-authenticate `gh` or grant the integration pull-request write access before
+relying on the CLI commands or attempting the PR-description update above.
 
 ### 5. Address only evidence-based follow-up failures
 
