@@ -188,6 +188,9 @@ if ((WINDOWS_BUNDLE)); then
     exit 1
   fi
 
+  echo
+  echo "Watching run $run_id. The 'Bundle sidecar with PyInstaller' phase"
+  echo "takes ~5 min with no line movement — this is expected, not a hang."
   gh run watch "$run_id" --exit-status
   full_bundle_dir="$bundle_dir/windows-full"
   rm -rf "$full_bundle_dir"

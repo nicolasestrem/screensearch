@@ -100,11 +100,19 @@ jobs:
         run: cargo build --release --locked
         shell: pwsh
 
-      - name: Build quality AI sidecar
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r sidecar/requirements.txt
-          python sidecar/build.py
+      # Split into staged steps so `gh run watch` (used by
+      # scripts/build-release.sh --windows-bundle) advances through visible
+      # boundaries instead of sitting on one ~7.5 min step that looks hung.
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+        shell: pwsh
+
+      - name: Install sidecar dependencies
+        run: pip install -r sidecar/requirements.txt
+        shell: pwsh
+
+      - name: Bundle sidecar with PyInstaller
+        run: python sidecar/build.py
         shell: pwsh
 
       - name: Smoke test packaged PP-OCRv5

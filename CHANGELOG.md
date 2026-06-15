@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helpers for Windows maintainers.
 - Added packaged Windows sidecar validation that performs real PP-OCRv5
   inference before installer and portable artifacts are published.
+- Split the release workflow's sidecar build into staged steps (pip upgrade,
+  dependency install, PyInstaller bundle) so `--windows-bundle` watchers see
+  progress instead of one ~7.5 min step that appears to hang, and added a
+  heads-up message before `gh run watch`.
 
 ### Fixed
 - Frame embedding chunks are now replaced atomically, preventing partially
