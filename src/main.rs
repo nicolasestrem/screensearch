@@ -628,8 +628,25 @@ impl App {
                              // First tick of new interval fires immediately, which is fine
                         }
 
+                        // Drain captured frames without ever blocking this select
+                        // loop. `send().await` would park here whenever OCR is
+                        // backed up (the channel fills because a frame can take
+                        // tens of seconds on CPU), and a parked loop cannot react
+                        // to monitor reconfiguration or shutdown — which makes
+                        // toggling a monitor appear to freeze capture entirely.
+                        // `try_send` instead applies backpressure by leaving
+                        // frames in the engine queue (which drops oldest when
+                        // full), so the loop stays responsive.
                         while let Some(frame) = capture_engine.try_get_frame() {
-                           if frame_tx.send(frame).await.is_err() { break; }
+                           use tokio::sync::mpsc::error::TrySendError;
+                           match frame_tx.try_send(frame) {
+                               Ok(()) => {}
+                               // OCR not keeping up: stop draining this tick and
+                               // retry next tick; surplus frames age out of the
+                               // capture queue rather than blocking reconfig.
+                               Err(TrySendError::Full(_)) => break,
+                               Err(TrySendError::Closed(_)) => break,
+                           }
                         }
                     }
                     _ = shutdown_rx1.recv() => {
