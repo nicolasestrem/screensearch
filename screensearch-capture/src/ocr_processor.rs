@@ -276,8 +276,18 @@ impl OcrProcessor {
         let frame_timestamp = frame.timestamp;
         tracing::debug!("Processing frame from {}", frame_timestamp);
 
-        // Attempt OCR with retry logic
-        let ocr_result = self.process_with_retry(&frame.image).await?;
+        // Attempt OCR with retry logic. A failed OCR (e.g. the sidecar reset the
+        // connection with WinError 10054) must NOT lose the captured screenshot:
+        // fall back to an empty result so the frame still flows through the normal
+        // `store_empty_frames` gate below instead of being silently dropped.
+        let ocr_result = match self.process_with_retry(&frame.image).await {
+            Ok(result) => result,
+            Err(e) => {
+                tracing::error!("OCR failed for frame from {}: {}", frame_timestamp, e);
+                self.metrics.errors.fetch_add(1, Ordering::Relaxed);
+                OcrResult::empty(frame.image.dimensions())
+            }
+        };
 
         // Check if frame should be stored
         let should_store = if ocr_result.regions.is_empty() {

@@ -151,6 +151,15 @@ export interface UIElement {
   value?: string;
 }
 
+// Monitor info returned by GET /api/monitors
+export interface MonitorInfo {
+  index: number;
+  label: string;
+  width: number;
+  height: number;
+  is_primary: boolean;
+}
+
 // Settings Types
 export interface Settings {
   id: number;

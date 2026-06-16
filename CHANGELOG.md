@@ -9,7 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `GET /api/monitors` enumerates connected displays (index, label, resolution,
+  primary flag) from the same `screenshots::Screen::all()` source the capture
+  engine indexes, so reported indices match what is actually captured.
+- The Settings → Capture **Monitors** picker is now a real multi-select of the
+  detected monitors. Selecting/deselecting monitors reconfigures the running
+  capture engine live (no restart) via a `tokio::sync::watch` channel, and the
+  selection is read back from the database at startup so it survives restarts.
+
 ### Fixed
+- Capture no longer stops after a single frame. `FrameDiffer` defaulted to the
+  histogram method, but the `0.006` threshold is calibrated for the pixel method
+  ("0.6% pixel change"); the histogram's chi-squared-over-pixel-count value sits
+  far below that scale, so once screen content was visually stable nearly every
+  frame after the first was judged "unchanged" and skipped. The differ now
+  defaults to `DiffMethod::Pixel` (configurable via `capture.diff_method`).
+  Verified: a content-swap unit test where the histogram method misses the change
+  and the pixel method detects it, plus a live run capturing continuously from
+  both monitors.
+- OCR failures no longer discard the captured screenshot. When the sidecar reset
+  the connection (`WinError 10054`) the frame was logged and dropped, losing it
+  from history; the frame is now stored with an empty OCR result through the
+  existing `store_empty_frames` gate so the screenshot is preserved.
+- The Monitors setting now actually drives capture. Previously it was written to
+  the database but never applied to the running engine, and the frontend's "All
+  Monitors" option sent `[0]` — which the backend reads as *only monitor 0*
+  (empty `[]` means all monitors).
 - The quality sidecar no longer freezes while OCR runs. The `/v1/ocr` route was
   declared `async` but called the blocking, CPU-bound PaddleOCR predict directly
   on the asyncio event loop, stalling every other route (`/health`,

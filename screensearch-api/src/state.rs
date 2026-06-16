@@ -62,6 +62,10 @@ pub struct AppState {
     /// Shared capture interval in milliseconds (atomic for thread safety)
     pub capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
 
+    /// Desired capture monitor indices (`[]` = all monitors). Updating settings
+    /// sends the new selection here so the capture engine can reconfigure live.
+    pub monitor_config_tx: tokio::sync::watch::Sender<Vec<usize>>,
+
     /// Local LLM server (auto-managed llama-server process)
     pub llama_server: Arc<RwLock<Option<Arc<LlamaServer>>>>,
 
@@ -77,12 +81,14 @@ impl AppState {
         db: DatabaseManager,
         automation: AutomationEngine,
         capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
+        monitor_config_tx: tokio::sync::watch::Sender<Vec<usize>>,
     ) -> Self {
         Self {
             db: Arc::new(db),
             automation: Arc::new(automation),
             embedding_engine: Arc::new(RwLock::new(None)),
             capture_interval_ms,
+            monitor_config_tx,
             llama_server: Arc::new(RwLock::new(None)),
             download_progress: Arc::new(RwLock::new(HashMap::new())),
         }

@@ -39,7 +39,7 @@ mod sidecar_ocr;
 pub mod window_context;
 
 pub use capture::{CaptureConfig, CaptureEngine, ScreenCapture};
-pub use frame_diff::FrameDiffer;
+pub use frame_diff::{DiffMethod, FrameDiffer};
 pub use monitor::MonitorInfo;
 pub use ocr::{OcrEngine, OcrResult, TextRegion};
 pub use ocr_processor::{

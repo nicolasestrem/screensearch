@@ -172,6 +172,19 @@ writes the final answer.
 
 ## Runtime Settings
 
+### `GET /monitors`
+
+Lists connected displays for the capture monitor picker. Indices come from the
+same `screenshots::Screen::all()` source the capture engine uses, so they match
+what is actually captured.
+
+```json
+[
+  { "index": 0, "label": "Monitor 1 (3440x1440) — Primary", "width": 3440, "height": 1440, "is_primary": true },
+  { "index": 1, "label": "Monitor 2 (1920x1080)", "width": 1920, "height": 1080, "is_primary": false }
+]
+```
+
 ### `GET /settings/`
 
 Returns capture, privacy, retention, and optional generation settings.
@@ -194,6 +207,10 @@ Example:
   "vision_api_key": null
 }
 ```
+
+`monitors` is a JSON array of monitor indices (see `GET /monitors`); an empty
+array `"[]"` means **all monitors**. Updating it reconfigures the running capture
+engine immediately — no restart required — and the value is restored at startup.
 
 The `vision_*` names are retained by the database API for compatibility. They
 configure only the optional generation LLM. OCR and retrieval are configured

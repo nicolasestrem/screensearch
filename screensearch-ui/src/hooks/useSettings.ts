@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient, UseQueryResult, UseMutationResult } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
-import type { Settings, UpdateSettingsRequest } from '../types';
+import type { Settings, UpdateSettingsRequest, MonitorInfo } from '../types';
 import toast from 'react-hot-toast';
 
 export function useSettings(
@@ -9,6 +9,17 @@ export function useSettings(
   return useQuery({
     queryKey: ['settings'],
     queryFn: () => apiClient.getSettings(),
+    enabled,
+    staleTime: 60000, // 1 minute
+  });
+}
+
+export function useMonitors(
+  enabled = true
+): UseQueryResult<MonitorInfo[], Error> {
+  return useQuery({
+    queryKey: ['monitors'],
+    queryFn: () => apiClient.getMonitors(),
     enabled,
     staleTime: 60000, // 1 minute
   });

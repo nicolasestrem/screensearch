@@ -253,6 +253,44 @@ mod tests {
     }
 
     #[test]
+    fn test_histogram_misses_content_swap_that_pixel_detects() {
+        // Two frames with an identical colour distribution but completely
+        // different content: the left and right halves are swapped. The
+        // histogram method (chi-squared over colour bins) sees no change and
+        // skips the frame at the 0.006 threshold — this is the root cause of
+        // "captures one frame, then nothing". The pixel method (the new default)
+        // correctly detects the change.
+        let (w, h) = (64u32, 64u32);
+        let mut frame1 = RgbaImage::new(w, h);
+        let mut frame2 = RgbaImage::new(w, h);
+        let white = image::Rgba([255, 255, 255, 255]);
+        let black = image::Rgba([0, 0, 0, 255]);
+        for y in 0..h {
+            for x in 0..w {
+                let left = x < w / 2;
+                frame1.put_pixel(x, y, if left { white } else { black });
+                frame2.put_pixel(x, y, if left { black } else { white });
+            }
+        }
+
+        // Histogram differ: first frame always changes, but the swap is missed.
+        let mut hist = FrameDiffer::with_method(0.006, DiffMethod::Histogram);
+        assert!(hist.has_changed(&frame1));
+        assert!(
+            !hist.has_changed(&frame2),
+            "histogram method should miss a content swap at the 0.006 threshold"
+        );
+
+        // Pixel differ (new default): the same swap is correctly detected.
+        let mut pixel = FrameDiffer::with_method(0.006, DiffMethod::Pixel);
+        assert!(pixel.has_changed(&frame1));
+        assert!(
+            pixel.has_changed(&frame2),
+            "pixel method should detect a full content swap"
+        );
+    }
+
+    #[test]
     fn test_frame_differ_with_change() {
         // Use pixel-based differ for this test since it's more deterministic
         let mut differ = FrameDiffer::with_method(0.005, DiffMethod::Pixel);

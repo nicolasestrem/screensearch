@@ -20,7 +20,7 @@ import {
 import { useStore } from '../store/useStore';
 import { TagManager } from './TagManager';
 import { EmbeddingsStatus } from './EmbeddingsStatus';
-import { useSettings, useUpdateSettings } from '../hooks/useSettings';
+import { useSettings, useUpdateSettings, useMonitors } from '../hooks/useSettings';
 import { cn } from '../lib/utils';
 import { useQuery, useMutation } from '@tanstack/react-query';
 
@@ -55,6 +55,7 @@ function formatIdleTime(seconds: number): string {
 export function SettingsPanel() {
   const { isSettingsPanelOpen, toggleSettingsPanel, isDarkMode, toggleDarkMode } = useStore();
   const { data: apiSettings } = useSettings(isSettingsPanelOpen);
+  const { data: monitorList, isLoading: monitorsLoading } = useMonitors(isSettingsPanelOpen);
   const updateSettings = useUpdateSettings();
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
@@ -197,7 +198,9 @@ export function SettingsPanel() {
 
   // Local state for editing
   const [captureInterval, setCaptureInterval] = useState(5);
-  const [monitors, setMonitors] = useState<number[]>([0]);
+  // Selected monitor indices. An empty array means "all monitors" (the backend's
+  // canonical value), which is also how a fresh install is configured.
+  const [monitors, setMonitors] = useState<number[]>([]);
   const [excludedApps, setExcludedApps] = useState<string[]>(['1Password', 'KeePass']);
   const [isPaused, setIsPaused] = useState(false);
   const [retentionDays, setRetentionDays] = useState(30);
@@ -261,6 +264,39 @@ export function SettingsPanel() {
       vision_endpoint: visionEndpoint,
       vision_api_key: visionApiKey,
     });
+  };
+
+  // Save a new monitor selection immediately (the rest of the settings come from
+  // current local state, matching the inline-save pattern used elsewhere here).
+  const persistMonitors = (next: number[]) => {
+    setMonitors(next);
+    updateSettings.mutate({
+      capture_interval: captureInterval,
+      monitors: JSON.stringify(next),
+      excluded_apps: JSON.stringify(excludedApps),
+      is_paused: isPaused ? 1 : 0,
+      retention_days: retentionDays,
+      vision_enabled: visionEnabled ? 1 : 0,
+      vision_provider: visionProvider,
+      vision_model: visionModel,
+      vision_endpoint: visionEndpoint,
+      vision_api_key: visionApiKey,
+    });
+  };
+
+  // Toggle one monitor. `[]` means "all", so we expand it before removing one,
+  // and collapse back to `[]` when every monitor ends up selected.
+  const toggleMonitor = (index: number) => {
+    const allIndices = (monitorList ?? []).map((m) => m.index);
+    const currentlySelected = monitors.length === 0 ? allIndices : monitors;
+    let next: number[];
+    if (currentlySelected.includes(index)) {
+      next = currentlySelected.filter((i) => i !== index);
+      if (next.length === 0) return; // keep at least one monitor selected
+    } else {
+      next = [...currentlySelected, index].sort((a, b) => a - b);
+    }
+    persistMonitors(next.length === allIndices.length ? [] : next);
   };
 
   const handleAddExcludedApp = () => {
@@ -449,26 +485,37 @@ export function SettingsPanel() {
 
                 <section className="space-y-4">
                   <label className="block text-sm font-medium">Monitors</label>
-                  <div className="p-4 bg-card rounded-xl border border-border">
-                    <select
-                      value={monitors[0] || 0}
-                      onChange={(e) => {
-                        const newMonitors = [parseInt(e.target.value)];
-                        setMonitors(newMonitors);
-                        updateSettings.mutate({
-                          capture_interval: captureInterval, monitors: JSON.stringify(newMonitors), excluded_apps: JSON.stringify(excludedApps), is_paused: isPaused ? 1 : 0, retention_days: retentionDays, vision_enabled: visionEnabled ? 1 : 0,
-                          vision_provider: visionProvider,
-                          vision_model: visionModel,
-                          vision_endpoint: visionEndpoint,
-                          vision_api_key: visionApiKey,
-                        });
-                      }}
-                      className="w-full bg-background border border-input rounded-lg px-3 py-2"
-                    >
-                      <option value={0}>All Monitors</option>
-                      <option value={1}>Monitor 1</option>
-                      <option value={2}>Monitor 2</option>
-                    </select>
+                  <div className="p-4 bg-card rounded-xl border border-border space-y-2">
+                    {monitorsLoading ? (
+                      <p className="text-sm text-muted-foreground">Detecting monitors…</p>
+                    ) : monitorList && monitorList.length > 0 ? (
+                      <>
+                        {monitorList.map((m) => {
+                          const checked = monitors.length === 0 || monitors.includes(m.index);
+                          return (
+                            <label
+                              key={m.index}
+                              className="flex items-center gap-3 px-3 py-2 bg-secondary/30 border border-border/50 rounded-lg cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleMonitor(m.index)}
+                                className="h-4 w-4 cursor-pointer"
+                              />
+                              <span className="text-sm">{m.label}</span>
+                            </label>
+                          );
+                        })}
+                        <p className="text-xs text-muted-foreground">
+                          {monitors.length === 0
+                            ? 'Capturing all monitors.'
+                            : `Capturing ${monitors.length} of ${monitorList.length} monitors.`}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No monitors detected.</p>
+                    )}
                   </div>
                 </section>
               </div>

@@ -15,6 +15,7 @@ import type {
   HealthStatus,
   Settings,
   UpdateSettingsRequest,
+  MonitorInfo,
 } from '../types';
 
 // Track blob URLs to prevent memory leaks
@@ -229,6 +230,11 @@ class APIClient {
 
   async updateSettings(settings: UpdateSettingsRequest): Promise<Settings> {
     const { data } = await this.client.post<Settings>('/settings', settings);
+    return data;
+  }
+
+  async getMonitors(): Promise<MonitorInfo[]> {
+    const { data } = await this.client.get<MonitorInfo[]>('/monitors');
     return data;
   }
 

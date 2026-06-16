@@ -40,6 +40,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .nest("/api", api_routes
             .route("/health", get(handlers::system::health))
             .route("/test-vision", post(handlers::system::test_vision_config))
+            .route("/monitors", get(handlers::system::list_monitors))
         )
         // Serve embedded static files for all other routes (SPA fallback)
         .fallback(serve_embedded)

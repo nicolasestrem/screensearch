@@ -11,6 +11,12 @@ enable_frame_diff = true
 # Default 0.006 means skip if < 0.6% change
 diff_threshold = 0.006
 
+# Frame difference algorithm: "pixel" (default), "histogram", or "ssim".
+# "pixel" treats diff_threshold as the fraction of differing pixels, which is the
+# scale diff_threshold is calibrated for. "histogram" uses a different (much
+# smaller) scale and will skip almost every frame at the default threshold.
+diff_method = "pixel"
+
 # Maximum frames to buffer in memory
 max_frames_buffer = 30
 

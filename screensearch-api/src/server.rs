@@ -45,6 +45,7 @@ impl ApiServer {
     pub async fn new(
         config: ApiConfig,
         capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
+        monitor_config_tx: tokio::sync::watch::Sender<Vec<usize>>,
     ) -> anyhow::Result<Self> {
         tracing::info!("Initializing API server at {}:{}", config.host, config.port);
 
@@ -62,7 +63,12 @@ impl ApiServer {
         tracing::info!("Automation engine initialized");
 
         // Create application state
-        let state = Arc::new(AppState::new(db, automation, capture_interval_ms));
+        let state = Arc::new(AppState::new(
+            db,
+            automation,
+            capture_interval_ms,
+            monitor_config_tx,
+        ));
 
         Ok(Self { config, state })
     }

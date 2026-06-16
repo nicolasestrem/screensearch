@@ -21,7 +21,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 // Import workspace crates
 use screensearch_api::{ApiConfig, ApiServer};
-use screensearch_capture::{CaptureConfig, CaptureEngine, OcrProcessor, OcrProcessorConfig};
+use screensearch_capture::{
+    CaptureConfig, CaptureEngine, DiffMethod, OcrProcessor, OcrProcessorConfig,
+};
 use screensearch_db::{DatabaseConfig, DatabaseManager};
 
 // Version and update checking modules
@@ -73,10 +75,26 @@ struct CaptureSettings {
     interval_ms: u64,
     enable_frame_diff: bool,
     diff_threshold: f32,
+    #[serde(default = "default_diff_method")]
+    diff_method: String,
     max_frames_buffer: usize,
     monitor_indices: Vec<usize>,
     include_cursor: bool,
     draw_border: bool,
+}
+
+fn default_diff_method() -> String {
+    "pixel".to_string()
+}
+
+/// Map the `diff_method` config string to a `DiffMethod`. Unknown values fall
+/// back to `Pixel`, whose semantics match the default `diff_threshold`.
+fn parse_diff_method(value: &str) -> DiffMethod {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "histogram" => DiffMethod::Histogram,
+        "ssim" => DiffMethod::Ssim,
+        _ => DiffMethod::Pixel,
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -199,6 +217,7 @@ impl Default for AppConfig {
                 interval_ms: 3000,
                 enable_frame_diff: true,
                 diff_threshold: 0.006,
+                diff_method: default_diff_method(),
                 max_frames_buffer: 30,
                 monitor_indices: Vec::new(),
                 include_cursor: true,
@@ -290,6 +309,7 @@ impl AppConfig {
             monitor_indices: self.capture.monitor_indices.clone(),
             enable_frame_diff: self.capture.enable_frame_diff,
             diff_threshold: self.capture.diff_threshold,
+            diff_method: parse_diff_method(&self.capture.diff_method),
             max_frames_buffer: self.capture.max_frames_buffer,
             include_cursor: self.capture.include_cursor,
             draw_border: self.capture.draw_border,
@@ -515,17 +535,41 @@ impl App {
         let ocr_config = self.config.ocr_config();
         let ocr_processor = Arc::new(OcrProcessor::new(ocr_config).await?);
 
-        // Initialize capture engine
-        let capture_config = self.config.capture_config();
+        // Load persisted runtime settings (monitor selection + capture interval)
+        // so a choice made in the UI survives restarts. These override the
+        // config.toml defaults. Empty/unparseable monitors means "all monitors".
+        let persisted_settings = db.get_settings().await.ok();
+        let initial_monitors: Vec<usize> = persisted_settings
+            .as_ref()
+            .and_then(|s| serde_json::from_str(&s.monitors).ok())
+            .unwrap_or_else(|| self.config.capture.monitor_indices.clone());
+        let initial_interval_ms = persisted_settings
+            .as_ref()
+            .map(|s| (s.capture_interval.max(1) as u64) * 1000)
+            .unwrap_or(self.config.capture.interval_ms);
+
+        // Initialize capture engine using the persisted monitor selection.
+        let mut capture_config = self.config.capture_config();
+        capture_config.monitor_indices = initial_monitors.clone();
+        // Base config (other capture fields) reused when the monitor set changes.
+        let base_capture_config = capture_config.clone();
         let mut capture_engine = CaptureEngine::new(capture_config)?;
 
         // Shared capture interval
-        let capture_interval_ms = Arc::new(AtomicU64::new(self.config.capture.interval_ms));
+        let capture_interval_ms = Arc::new(AtomicU64::new(initial_interval_ms));
+
+        // Channel that carries live monitor-selection changes to the capture task.
+        let (monitor_config_tx, mut monitor_config_rx) =
+            tokio::sync::watch::channel(initial_monitors);
 
         // Initialize API server with the same database path
         let api_config = self.config.api_config(&db_config.path);
-        let api_server =
-            ApiServer::new(api_config.clone(), Arc::clone(&capture_interval_ms)).await?;
+        let api_server = ApiServer::new(
+            api_config.clone(),
+            Arc::clone(&capture_interval_ms),
+            monitor_config_tx,
+        )
+        .await?;
         api_server
             .set_embeddings_enabled(self.config.embeddings.enabled)
             .await?;
@@ -569,8 +613,29 @@ impl App {
                 tokio::time::interval(tokio::time::Duration::from_millis(current_interval_ms));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+            // Mark the initial monitor selection as seen so `changed()` only fires
+            // on real updates, not once at startup.
+            monitor_config_rx.borrow_and_update();
+
             loop {
                 tokio::select! {
+                    _ = monitor_config_rx.changed() => {
+                        let new_monitors = monitor_config_rx.borrow_and_update().clone();
+                        info!("Reconfiguring capture for monitors: {:?}", new_monitors);
+                        // Stop the current engine; its detached per-monitor threads
+                        // exit on their next loop check and drain into the queue we
+                        // are about to drop. Build a fresh engine (new queue + flag).
+                        let _ = capture_engine.stop();
+                        let mut new_config = base_capture_config.clone();
+                        new_config.monitor_indices = new_monitors;
+                        match CaptureEngine::new(new_config) {
+                            Ok(mut engine) => match engine.start() {
+                                Ok(()) => capture_engine = engine,
+                                Err(e) => error!("Failed to restart capture engine: {}", e),
+                            },
+                            Err(e) => error!("Failed to rebuild capture engine: {}", e),
+                        }
+                    }
                     _ = interval.tick() => {
                         // Check for interval update
                         let new_interval_ms = capture_interval_clone.load(Ordering::Relaxed);

@@ -24,9 +24,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Create dummy share state for standalone API server
     let capture_interval = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(3000));
+    // No capture engine runs in the standalone server, so the monitor selection
+    // receiver is never read; keep the sender alive to satisfy the signature.
+    let (monitor_config_tx, _monitor_config_rx) = tokio::sync::watch::channel(Vec::new());
 
     // Initialize and run server
-    let server = ApiServer::new(config, capture_interval).await?;
+    let server = ApiServer::new(config, capture_interval, monitor_config_tx).await?;
 
     tracing::info!("Server initialized, listening on port 3131");
     tracing::info!("Press Ctrl+C to shut down");

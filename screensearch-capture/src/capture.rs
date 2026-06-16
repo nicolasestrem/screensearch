@@ -3,7 +3,9 @@
 //! This module provides the core screen capture functionality using the modern
 //! Windows Graphics Capture API for hardware-accelerated, efficient screen recording.
 
-use crate::{CaptureError, CapturedFrame, FrameDiffer, MonitorInfo, Result, WindowContext};
+use crate::{
+    CaptureError, CapturedFrame, DiffMethod, FrameDiffer, MonitorInfo, Result, WindowContext,
+};
 use crossbeam::queue::ArrayQueue;
 use image::RgbaImage;
 use screenshots::Screen;
@@ -30,6 +32,11 @@ pub struct CaptureConfig {
     /// Default 0.006 means skip if < 0.6% change
     pub diff_threshold: f32,
 
+    /// Algorithm used to decide whether a frame changed enough to keep.
+    /// `Pixel` (the default) treats `diff_threshold` as a fraction of differing
+    /// pixels, which is the scale the default threshold is calibrated for.
+    pub diff_method: DiffMethod,
+
     /// Maximum frames to buffer in memory
     pub max_frames_buffer: usize,
 
@@ -47,6 +54,7 @@ impl Default for CaptureConfig {
             monitor_indices: Vec::new(),
             enable_frame_diff: true,
             diff_threshold: 0.006, // 0.6% change threshold
+            diff_method: DiffMethod::Pixel,
             max_frames_buffer: 30,
             include_cursor: true,
             draw_border: false,
@@ -162,7 +170,10 @@ impl ScreenCapture {
         );
 
         let mut differ = if config.enable_frame_diff {
-            Some(FrameDiffer::new(config.diff_threshold))
+            Some(FrameDiffer::with_method(
+                config.diff_threshold,
+                config.diff_method,
+            ))
         } else {
             None
         };
@@ -329,7 +340,10 @@ impl CaptureEngine {
         );
 
         let mut differ = if config.enable_frame_diff {
-            Some(FrameDiffer::new(config.diff_threshold))
+            Some(FrameDiffer::with_method(
+                config.diff_threshold,
+                config.diff_method,
+            ))
         } else {
             None
         };

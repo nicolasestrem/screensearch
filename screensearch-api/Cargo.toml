@@ -16,6 +16,10 @@ axum = { workspace = true, features = ["macros"] }
 tower-http = { workspace = true, features = ["cors", "trace", "fs"] }
 tower = { version = "0.4", features = ["util"] }
 
+# Monitor enumeration for the /api/monitors endpoint (same source the capture
+# engine indexes, so reported indices match what is actually captured)
+screenshots = { workspace = true }
+
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
 
