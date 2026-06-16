@@ -27,6 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no GPU is present. `/health` now reports `ocr_device` alongside `device`.
 
 ### Fixed
+- PR #63 review follow-up:
+  - `AppState::get_embedding_engine` no longer races on first use. The fast-path
+    read lock is retained, but initialization now happens under the write lock
+    with a second `is_some` check, so concurrent first callers serialize instead
+    of building and health-checking duplicate engines.
+  - Hybrid search no longer reports a bogus `chunk_index` for FTS-only hits. The
+    FTS match position is not an embedding chunk boundary, so FTS-only results now
+    use `-1` as an "unknown chunk" sentinel instead of the match index.
+  - The sidecar OCR client per-attempt timeout dropped from 120 s to 30 s so a
+    hung sidecar can no longer stall a capture worker for minutes across the retry
+    sequence before the Windows OCR fallback engages.
+  - Sidecar model-preparation error logging now reads the failing component from a
+    local variable instead of the shared `_preparation_status` outside its lock.
+  - The `screensearch-api` integration test was updated for the new
+    `ApiServer::new(..., monitor_config_tx)` signature so the test target compiles.
 - Capture no longer stops after a single frame. `FrameDiffer` defaulted to the
   histogram method, but the `0.006` threshold is calibrated for the pixel method
   ("0.6% pixel change"); the histogram's chi-squared-over-pixel-count value sits

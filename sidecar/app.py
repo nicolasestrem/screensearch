@@ -254,8 +254,10 @@ def _prepare_models(components: list[str], ocr_language: str) -> None:
     global _preparation_status
 
     ready: list[str] = []
+    current_component: str | None = None
     try:
         for component in components:
+            current_component = component
             with _preparation_lock:
                 _preparation_status = ModelPreparationStatus(
                     state="preparing",
@@ -277,14 +279,16 @@ def _prepare_models(components: list[str], ocr_language: str) -> None:
                 ready_components=ready,
             )
     except Exception as error:
+        # Use the locally tracked component instead of reading the shared
+        # _preparation_status outside the lock.
         logger.exception(
             "Model preparation failed while initializing %s",
-            _preparation_status.current_component,
+            current_component,
         )
         with _preparation_lock:
             _preparation_status = ModelPreparationStatus(
                 state="error",
-                current_component=_preparation_status.current_component,
+                current_component=current_component,
                 ready_components=ready,
                 error=str(error),
             )

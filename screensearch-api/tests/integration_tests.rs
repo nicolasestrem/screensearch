@@ -15,7 +15,8 @@ async fn test_server_initialization() {
 
     // Server should initialize without errors
     let interval = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(5000));
-    let result = ApiServer::new(config, interval).await;
+    let (monitor_config_tx, _monitor_config_rx) = tokio::sync::watch::channel(Vec::new());
+    let result = ApiServer::new(config, interval, monitor_config_tx).await;
     assert!(result.is_ok(), "Server initialization should succeed");
 }
 

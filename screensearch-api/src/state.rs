@@ -96,7 +96,7 @@ impl AppState {
 
     /// Get or initialize the embedding engine
     pub async fn get_embedding_engine(&self) -> Result<Arc<EmbeddingEngine>, String> {
-        // Check if already initialized
+        // Fast path: already initialized.
         {
             let guard = self.embedding_engine.read().await;
             if let Some(engine) = guard.as_ref() {
@@ -104,7 +104,15 @@ impl AppState {
             }
         }
 
-        // Initialize the engine
+        // Slow path: hold the write lock across initialization so that
+        // concurrent first-use callers serialize here instead of racing to
+        // build and health-check duplicate engines. Re-check inside the write
+        // lock in case another task initialized while we waited for it.
+        let mut guard = self.embedding_engine.write().await;
+        if let Some(engine) = guard.as_ref() {
+            return Ok(Arc::clone(engine));
+        }
+
         let engine = EmbeddingEngine::new().await.map_err(|e| e.to_string())?;
         engine.health_check().await.map_err(|e| e.to_string())?;
         self.db
@@ -117,12 +125,7 @@ impl AppState {
             .await
             .map_err(|e| e.to_string())?;
         let engine_arc = Arc::new(engine);
-
-        // Store it
-        {
-            let mut guard = self.embedding_engine.write().await;
-            *guard = Some(Arc::clone(&engine_arc));
-        }
+        *guard = Some(Arc::clone(&engine_arc));
 
         Ok(engine_arc)
     }

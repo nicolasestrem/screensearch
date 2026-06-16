@@ -45,7 +45,10 @@ impl SidecarOcrEngine {
     pub fn new(config: SidecarOcrConfig) -> Result<Self> {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(3))
-            .timeout(Duration::from_secs(120))
+            // Per-attempt cap kept tight so a hung sidecar can't stall a capture
+            // worker for minutes across the retry sequence before Windows OCR
+            // fallback kicks in. PP-OCRv5 reads a downscaled frame well under 30s.
+            .timeout(Duration::from_secs(30))
             .build()
             .map_err(|error| CaptureError::OcrError(error.to_string()))?;
         Ok(Self { config, client })

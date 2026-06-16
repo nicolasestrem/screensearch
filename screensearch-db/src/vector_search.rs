@@ -91,7 +91,7 @@ impl DatabaseManager {
         }
 
         for (rank, fts) in fts_results.into_iter().enumerate() {
-            for (idx, match_item) in fts.ocr_matches.into_iter().enumerate() {
+            for match_item in fts.ocr_matches.into_iter() {
                 let key = (fts.frame.id, match_item.text.clone());
                 let score_boost = 1.0 / (RRF_K + rank as f32 + 1.0);
 
@@ -104,7 +104,10 @@ impl DatabaseManager {
                     .or_insert_with(|| SemanticResult {
                         frame: fts.frame.clone(),
                         chunk_text: match_item.text,
-                        chunk_index: idx as i32,
+                        // FTS matches don't map to embedding chunk boundaries, so
+                        // the real chunk_index is unknown for FTS-only hits. Use
+                        // -1 as a sentinel rather than the FTS match position.
+                        chunk_index: -1,
                         similarity_score: score_boost,
                         retrieval_source: "fts".to_string(),
                     });
