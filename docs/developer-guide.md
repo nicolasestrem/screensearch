@@ -4,9 +4,10 @@
 
 - Rust stable with `rustfmt` and `clippy`;
 - Node.js 22 and npm;
-- Python 3.12 for sidecar development;
+- Python **3.12.1 or newer** for sidecar development — **do not use 3.12.0**, which
+  produces a sidecar that crashes at startup (see "Native Windows release build");
 - Windows 10/11 and Visual Studio Build Tools for production validation;
-- Inno Setup 6 for installer builds.
+- Inno Setup 6 or 7 for installer builds.
 
 Linux is suitable for frontend work and most Rust checks. Windows remains the
 authoritative platform for capture, Windows OCR fallback, UI Automation, tray
@@ -251,6 +252,53 @@ checksums, and draft GitHub release. Before packaging, it starts the generated
 PyInstaller executable, prepares the English PP-OCRv5 models, and recognizes a
 generated image. A healthy HTTP endpoint alone is not sufficient for the
 release job to pass.
+
+### Native Windows release build
+
+`scripts/build-release.ps1` builds the entire bundle directly on a Windows host
+(frontend, Rust binary, PyInstaller sidecar, Inno Setup installer, portable ZIP,
+checksums):
+
+```powershell
+.\scripts\build-release.ps1 -Version 0.4.37 -PythonExe "C:\Path\to\python3.12\python.exe"
+```
+
+The script handles two native-Windows specifics automatically:
+
+- **Linker.** `.cargo/config.toml` hard-codes the `lld` linker for the
+  Linux→Windows cross-compile, which is absent on a native Windows host (`cargo`
+  would fail with "linker `lld` not found"). The script imports the MSVC build
+  environment via `vswhere` and overrides `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER`
+  to `link.exe`. Do not edit `.cargo/config.toml`. (For plain `cargo build/check/
+  test/clippy` outside the script, set those env vars yourself — import
+  `vcvars64.bat`, then `$env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER="link.exe"`.)
+- **Inno Setup.** It locates `ISCC.exe` across Inno Setup 6 and 7 install paths
+  (and `PATH`) rather than assuming a single location.
+
+`-PythonExe` selects the interpreter used to install `sidecar/requirements.txt`
+and run `sidecar/build.py`. **Use Python 3.12.1 or newer.** Python 3.12.0 has a
+PEP 709 (inlined-comprehension) code-generation bug that corrupts module-level
+loop/comprehension bindings in large modules once frozen by PyInstaller. It makes
+the bundled sidecar abort at startup with
+`NameError: name 'obj' is not defined` in `scipy/stats/_distn_infrastructure.py`,
+which takes down sentence-transformers and the whole sidecar — OCR then silently
+falls back to Windows OCR and embeddings never index. Plain `python`/`python -OO`
+imports succeed; only the frozen build fails. Verified by bisection: same scipy
+1.17.1 + PyInstaller 6.21.0, only the interpreter changed — 3.12.0 fails, 3.12.10
+works. `sidecar/build.py` hard-errors when run under Python < 3.12.1 so a broken
+sidecar can never be produced.
+
+A clean patched interpreter can be provisioned with `uv` without touching the
+system Python:
+
+```powershell
+uv venv --python 3.12 C:\path\to\venv
+uv pip install --python C:\path\to\venv\Scripts\python.exe pip -r sidecar\requirements.txt
+.\scripts\build-release.ps1 -Version 0.4.37 -PythonExe "C:\path\to\venv\Scripts\python.exe"
+```
+
+Use `-SkipSidecar` to reuse an existing `sidecar\dist\screensearch-ai-sidecar`,
+`-SignBinary` to sign, and `-Clean` to force a from-scratch Rust build.
 
 `sidecar/build.py` also copies distribution metadata for PaddleX OCR
 dependencies. PaddleX validates optional OCR dependencies through

@@ -70,6 +70,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   health check, so PP-OCRv5 stays the preferred provider and frames fall back to
   Windows OCR per request only until the sidecar is healthy — then upgrade to
   PP-OCRv5 automatically with no restart (`screensearch-capture/src/ocr_provider.rs`).
+- `sidecar/build.py` refuses to build under Python < 3.12.1. Python 3.12.0 has a
+  PEP 709 (inlined-comprehension) codegen bug that, once frozen by PyInstaller,
+  makes the bundled sidecar crash at startup importing scipy
+  (`NameError: name 'obj' is not defined` in `scipy/stats/_distn_infrastructure.py`),
+  which silently degraded OCR to the Windows fallback. Verified by bisection:
+  same scipy 1.17.1 + PyInstaller 6.21.0, only the interpreter changed — 3.12.0
+  fails, 3.12.10 works.
+- `scripts/build-release.ps1` now builds on a native Windows host: it imports the
+  MSVC environment and overrides the linker (the `.cargo/config.toml` `lld` linker
+  is cross-compile-only), detects Inno Setup 6 or 7, and takes a `-PythonExe`
+  parameter so the sidecar can be built with a specific Python 3.12.x.
 
 ### Removed
 - Dropped the dead ONNX-era `[embeddings]` config keys (`model`, `model_name`,

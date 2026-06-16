@@ -50,6 +50,23 @@ Quality changes must be measured with the versioned cases under `evaluation/`.
 Track Recall@10, MRR, OCR character/word error rate, citation correctness,
 p95 latency, peak memory, and index size on Windows CPU and GPU systems.
 
+## Startup And Fallback
+
+The main process spawns the sidecar but does **not** block startup on it. The
+sidecar is a PyInstaller bundle whose cold start (unpacking plus Torch/Paddle
+import) takes roughly 15–45 s; blocking would make the whole app unusable for
+that long. Instead the process spawns the sidecar, returns immediately, and polls
+`/health` in a background task. The REST API and web UI are available in about two
+seconds while the sidecar warms up (`src/main.rs::ensure_quality_sidecar`).
+
+Because the sidecar is usually still cold-starting when OCR initializes, the OCR
+provider no longer gates on an initial health check
+(`screensearch-capture/src/ocr_provider.rs`). PP-OCRv5 stays the preferred
+provider; each request tries the sidecar first and falls back to Windows OCR per
+frame only while the sidecar is unavailable. Once the sidecar reports healthy,
+requests succeed on PP-OCRv5 automatically with no restart. The embedding worker
+likewise retries until the sidecar is ready.
+
 ## Fixed And Configurable Components
 
 PP-OCRv5, Qwen3 embeddings, Qwen3 reranking, sqlite-vec, and RRF are fixed
@@ -70,6 +87,15 @@ sidecar on Windows with:
 python -m pip install -r sidecar\requirements.txt
 python sidecar\build.py
 ```
+
+**Use Python 3.12.1 or newer.** Python 3.12.0 has a PEP 709 code-generation bug
+that, once frozen by PyInstaller, makes the bundled sidecar crash at startup
+importing scipy (`NameError: name 'obj' is not defined` in
+`scipy/stats/_distn_infrastructure.py`), silently degrading OCR to the Windows
+fallback. `sidecar/build.py` hard-errors on Python < 3.12.1. The full bundle is
+normally produced by `scripts/build-release.ps1 -Version <x> -PythonExe <py3.12>`
+(see the Developer Guide → "Native Windows release build"), which also configures
+the MSVC linker and locates Inno Setup automatically.
 
 The installer and portable archive preserve the generated
 `screensearch-ai-sidecar` directory under `bin/`.
