@@ -28,26 +28,21 @@ impl OcrProviderEngine {
                 token: sidecar_token,
                 language,
             })?;
-            match sidecar.health_check().await {
-                Ok(()) => {
-                    let windows_fallback = if fallback_to_windows {
-                        Some(OcrEngine::new().await?)
-                    } else {
-                        None
-                    };
-                    return Ok(Self {
-                        preferred: PreferredProvider::PpOcr(sidecar),
-                        windows_fallback,
-                    });
-                }
-                Err(error) if fallback_to_windows => {
-                    tracing::warn!(
-                        "PP-OCRv5 sidecar unavailable; using Windows OCR fallback: {}",
-                        error
-                    );
-                }
-                Err(error) => return Err(error),
-            }
+            // Always prefer the sidecar without gating on an initial health
+            // check. The sidecar is launched non-blocking and is usually still
+            // cold-starting at this point; gating here would permanently demote
+            // OCR to the Windows engine. Instead `process_image` tries the
+            // sidecar first and falls back per-request, so OCR upgrades to
+            // PP-OCRv5 automatically once the sidecar reports healthy.
+            let windows_fallback = if fallback_to_windows {
+                Some(OcrEngine::new().await?)
+            } else {
+                None
+            };
+            return Ok(Self {
+                preferred: PreferredProvider::PpOcr(sidecar),
+                windows_fallback,
+            });
         }
 
         Ok(Self {

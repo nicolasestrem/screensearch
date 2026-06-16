@@ -51,24 +51,6 @@ impl SidecarOcrEngine {
         Ok(Self { config, client })
     }
 
-    pub async fn health_check(&self) -> Result<()> {
-        let response = self
-            .authorized(
-                self.client
-                    .get(format!("{}/health", self.config.url.trim_end_matches('/'))),
-            )
-            .send()
-            .await
-            .map_err(|error| CaptureError::OcrError(error.to_string()))?;
-        if !response.status().is_success() {
-            return Err(CaptureError::OcrError(format!(
-                "OCR sidecar health check returned {}",
-                response.status()
-            )));
-        }
-        Ok(())
-    }
-
     pub async fn process_image(&self, image: &RgbaImage) -> Result<OcrResult> {
         let started = Instant::now();
         let (orig_width, orig_height) = image.dimensions();

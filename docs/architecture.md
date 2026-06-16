@@ -72,8 +72,13 @@ The main process:
    Debug builds also search the repository's
    `sidecar/dist/screensearch-ai-sidecar/` directory.
 4. Starts it with `kill_on_drop`.
-5. Waits up to 60 seconds for readiness.
-6. Continues with explicit degraded behavior if startup fails.
+5. Returns immediately and polls `/health` in a background task — startup is
+   **not** blocked on the sidecar. The sidecar's cold start (PyInstaller unpack
+   + Torch/Paddle import) can take 15-45 seconds; blocking would make the whole
+   app unusable for that long, so the API and UI come up in ~2 seconds while the
+   sidecar warms up in the background.
+6. OCR and embeddings attach to the sidecar automatically once it reports
+   healthy (per-request), with Windows OCR used as the fallback meanwhile.
 
 The PyInstaller build uses an on-directory bundle. This avoids repeatedly
 unpacking Torch and Paddle and is more reliable for a multi-gigabyte runtime.
@@ -99,10 +104,12 @@ OCR metadata is stored in `ocr_text.text_json`. The plain text and bounding
 box columns remain searchable through existing APIs.
 
 When `fallback_to_windows = true`, ScreenSearch initializes Windows OCR as a
-fallback. It is used when:
-
-- the sidecar is unavailable during OCR initialization; or
-- an individual PP-OCR request fails.
+fallback. PP-OCRv5 is always the preferred provider (the OCR engine does not
+gate on an initial sidecar health check, so it is never permanently demoted to
+Windows while the sidecar is still cold-starting). Windows OCR is used per
+request whenever a PP-OCR request fails — which includes the window before the
+sidecar finishes warming up. Once the sidecar is healthy, requests succeed on
+PP-OCRv5 with no restart.
 
 Sidecar stdout and stderr are forwarded into the main ScreenSearch log with a
 `Quality sidecar:` prefix. Authenticated sidecar failures also return the

@@ -27,10 +27,8 @@
 
 use thiserror::Error;
 
-mod chunker;
 mod engine;
 
-pub use chunker::TextChunker;
 pub use engine::{EmbeddingEngine, ModelPreparationStatus, RerankScore};
 
 /// Full embedding dimension for Qwen3-Embedding-0.6B.

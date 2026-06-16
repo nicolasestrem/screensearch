@@ -8,7 +8,12 @@ param(
     [switch]$SignBinary,
     [Alias("SkipModel")]
     [switch]$SkipSidecar,
-    [switch]$Clean
+    [switch]$Clean,
+
+    # Python interpreter used to build the quality sidecar. The sidecar targets
+    # Python 3.12; pass e.g. -PythonExe "C:\Python312\python.exe" when the
+    # default `python` on PATH is a different version.
+    [string]$PythonExe = "python"
 )
 
 $ErrorActionPreference = "Stop"
@@ -55,6 +60,25 @@ Write-Host ""
 
 # Step 2: Build Rust binary
 Write-Host "[2/8] Building Rust release binary..." -ForegroundColor Cyan
+# .cargo/config.toml hard-codes the `lld` linker for Linux->Windows cross-compile,
+# which is absent on a native Windows host (cargo would fail with "linker `lld`
+# not found"). Import the MSVC build environment and override the linker per
+# target via env vars (CARGO_TARGET_*_LINKER wins over the config file's linker
+# key). Do NOT edit .cargo/config.toml.
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+if (Test-Path $vswhere) {
+    $vsPath = & $vswhere -latest -property installationPath
+    $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+    if (Test-Path $vcvars) {
+        cmd /c "`"$vcvars`" >nul 2>&1 && set" | ForEach-Object {
+            if ($_ -match '^(.*?)=(.*)$') { Set-Item -Path "env:$($matches[1])" -Value $matches[2] }
+        }
+        $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER = "link.exe"
+        $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS = "-C target-feature=+crt-static"
+    }
+}
+# The UI bundle was built in step 1; skip build.rs re-running npm.
+$env:SKIP_UI_BUILD = "1"
 cargo build --release
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Rust build failed" -ForegroundColor Red
@@ -76,9 +100,13 @@ else {
 
 # Step 4: Build the managed quality sidecar
 if (-not $SkipSidecar) {
-    Write-Host "[4/8] Building PP-OCRv5/Qwen quality sidecar..." -ForegroundColor Cyan
-    python -m pip install -r sidecar\requirements.txt
-    python sidecar\build.py
+    Write-Host "[4/8] Building PP-OCRv5/Qwen quality sidecar (python: $PythonExe)..." -ForegroundColor Cyan
+    & $PythonExe -m pip install -r sidecar\requirements.txt
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Quality sidecar dependency install failed" -ForegroundColor Red
+        exit 1
+    }
+    & $PythonExe sidecar\build.py
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Quality sidecar build failed" -ForegroundColor Red
         exit 1
@@ -92,13 +120,23 @@ else {
 
 # Step 5: Check for Inno Setup
 Write-Host "[5/8] Checking for Inno Setup..." -ForegroundColor Cyan
-$isccPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-if (-not (Test-Path $isccPath)) {
-    Write-Host "Error: Inno Setup not found at $isccPath" -ForegroundColor Red
+$isccCandidates = @(
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    "C:\Program Files\Inno Setup 6\ISCC.exe",
+    "C:\Program Files\Inno Setup 7\ISCC.exe",
+    "C:\Program Files (x86)\Inno Setup 7\ISCC.exe"
+)
+$isccPath = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $isccPath) {
+    $isccCmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($isccCmd) { $isccPath = $isccCmd.Source }
+}
+if (-not $isccPath) {
+    Write-Host "Error: Inno Setup compiler (ISCC.exe) not found." -ForegroundColor Red
     Write-Host "Install from: https://jrsoftware.org/isdl.php" -ForegroundColor Yellow
     exit 1
 }
-Write-Host "Inno Setup found" -ForegroundColor Green
+Write-Host "Inno Setup found: $isccPath" -ForegroundColor Green
 Write-Host ""
 
 # Step 6: Build quality installer

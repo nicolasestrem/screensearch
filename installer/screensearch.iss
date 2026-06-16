@@ -3,7 +3,7 @@
 
 #define MyAppName "ScreenSearch"
 #ifndef MyAppVersion
-#define MyAppVersion "0.4.36"
+#define MyAppVersion "0.4.37"
 #endif
 #define MyAppPublisher "Nicolas Estrem"
 #define MyAppURL "https://github.com/nicolasestrem/screensearch"

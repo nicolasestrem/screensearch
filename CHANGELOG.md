@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.4.37] - 2026-06-16
 
 ### Added
 - `GET /api/monitors` enumerates connected displays (index, label, resolution,
@@ -58,6 +58,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MKLDNN/oneDNN acceleration is explicitly kept disabled for PP-OCRv5: enabling
   it crashes detection under PaddleOCR 3.x's PIR executor
   (`ConvertPirAttribute2RuntimeAttribute not support`).
+- Sidecar startup is now non-blocking. `ensure_quality_sidecar` previously
+  blocked the whole launch for up to 60 s polling `/health`; because the
+  PyInstaller-bundled Torch/Paddle sidecar cold-starts in ~15-45 s, the API and
+  UI were unusable for that long. The sidecar is now spawned and its readiness
+  polled in a background task, so the API/UI come up in ~2 s while it warms up
+  (`src/main.rs`).
+- OCR no longer gets permanently demoted to Windows OCR at startup. With the
+  non-blocking launch the sidecar is usually still cold-starting when the OCR
+  provider initializes; `OcrProviderEngine::new` no longer gates on an initial
+  health check, so PP-OCRv5 stays the preferred provider and frames fall back to
+  Windows OCR per request only until the sidecar is healthy — then upgrade to
+  PP-OCRv5 automatically with no restart (`screensearch-capture/src/ocr_provider.rs`).
+
+### Removed
+- Dropped the dead ONNX-era `[embeddings]` config keys (`model`, `model_name`,
+  `embedding_dim`, `max_chunk_tokens`, `chunk_overlap`, `hybrid_search_alpha`,
+  `max_context_chunks`) from `EmbeddingsSettings` and `config.toml`. The model
+  identity, dimension, chunking, and RRF retrieval are owned by the sidecar
+  contract; only `enabled` and `batch_size` remain. Older config files with the
+  removed keys still load (no `deny_unknown_fields`).
+- Deleted the unused in-Rust `TextChunker` (`screensearch-embeddings/src/chunker.rs`);
+  chunking is delegated to the sidecar `/v1/chunk` endpoint.
 
 ## [0.4.36] - 2026-06-15
 

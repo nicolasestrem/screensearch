@@ -175,30 +175,12 @@ max_log_size_mb = 100
 log_rotation_count = 5
 
 [embeddings]
-# Enable semantic search with embeddings for RAG-enhanced reports
+# Enable semantic search with embeddings for RAG-enhanced reports.
+# Embeddings run through the managed local quality sidecar
+# (Qwen/Qwen3-Embedding-0.6B, 1024-dim, sqlite-vec). The model identity,
+# dimension, and chunking are owned by the sidecar contract and are not
+# configurable here.
 enabled = false
-
-# Embeddings run through the managed local quality sidecar.
-model = "quality-sidecar"
-
-# Model name for local embeddings
-model_name = "Qwen/Qwen3-Embedding-0.6B"
-
-# Embedding dimension for Qwen3-Embedding-0.6B
-embedding_dim = 1024
 
 # Batch size for background embedding generation
 batch_size = 50
-
-# Maximum text length per chunk (tokens)
-max_chunk_tokens = 512
-
-# Chunk overlap (tokens) for context preservation
-chunk_overlap = 64
-
-# Retained for configuration compatibility. Hybrid retrieval now uses
-# Reciprocal Rank Fusion rather than mixing incomparable raw scores.
-hybrid_search_alpha = 0.3
-
-# Maximum number of relevant chunks to include in LLM context
-max_context_chunks = 20

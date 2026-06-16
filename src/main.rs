@@ -53,13 +53,6 @@ fn default_embeddings_settings() -> EmbeddingsSettings {
     EmbeddingsSettings {
         enabled: false,
         batch_size: 50,
-        model: "quality-sidecar".to_string(),
-        model_name: "Qwen/Qwen3-Embedding-0.6B".to_string(),
-        embedding_dim: 1024,
-        max_chunk_tokens: 512,
-        chunk_overlap: 64,
-        hybrid_search_alpha: 0.3,
-        max_context_chunks: 20,
     }
 }
 
@@ -194,20 +187,6 @@ struct LoggingSettings {
 struct EmbeddingsSettings {
     enabled: bool,
     batch_size: i64,
-    #[allow(dead_code)]
-    model: String,
-    #[allow(dead_code)]
-    model_name: String,
-    #[allow(dead_code)]
-    embedding_dim: usize,
-    #[allow(dead_code)]
-    max_chunk_tokens: usize,
-    #[allow(dead_code)]
-    chunk_overlap: usize,
-    #[allow(dead_code)]
-    hybrid_search_alpha: f32,
-    #[allow(dead_code)]
-    max_context_chunks: usize,
 }
 
 impl Default for AppConfig {
@@ -839,23 +818,35 @@ async fn ensure_quality_sidecar(settings: &OcrSettings) -> Option<Child> {
         });
     }
 
-    for _ in 0..120 {
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        if let Ok(response) = client.get(&health_url).bearer_auth(&token).send().await {
-            if response.status().is_success() {
-                info!("ScreenSearch quality sidecar is ready");
-                return Some(child);
+    // Poll readiness in the background instead of blocking startup. The sidecar
+    // is a PyInstaller-bundled Python app whose cold start (unpack + torch/paddle
+    // import) can take 15-45s; blocking here would make the whole app unusable
+    // for that long. OCR and embeddings attach automatically once it reports
+    // healthy (Windows OCR is used as a fallback meanwhile). The spawned `child`
+    // is returned and kept alive by the caller; its `kill_on_drop(true)` tears
+    // the sidecar down on app exit, and the stderr task above surfaces crashes.
+    let readiness_client = client.clone();
+    let readiness_url = health_url.clone();
+    let readiness_token = token.clone();
+    tokio::spawn(async move {
+        for _ in 0..120 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if let Ok(response) = readiness_client
+                .get(&readiness_url)
+                .bearer_auth(&readiness_token)
+                .send()
+                .await
+            {
+                if response.status().is_success() {
+                    info!("ScreenSearch quality sidecar is ready");
+                    return;
+                }
             }
         }
-        if matches!(child.try_wait(), Ok(Some(_))) {
-            warn!("Quality sidecar exited before becoming ready");
-            return None;
-        }
-    }
+        warn!("Quality sidecar did not become ready within 60 seconds");
+    });
 
-    warn!("Quality sidecar did not become ready within 60 seconds");
-    let _ = child.kill().await;
-    None
+    Some(child)
 }
 
 impl winit::application::ApplicationHandler for EventLoopState {

@@ -3826,7 +3826,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "screensearch"
-version = "0.4.36"
+version = "0.4.37"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3855,7 +3855,7 @@ dependencies = [
 
 [[package]]
 name = "screensearch-api"
-version = "0.4.36"
+version = "0.4.37"
 dependencies = [
  "anyhow",
  "axum",
@@ -3884,7 +3884,7 @@ dependencies = [
 
 [[package]]
 name = "screensearch-automation"
-version = "0.4.36"
+version = "0.4.37"
 dependencies = [
  "serde",
  "serde_json",
@@ -3898,7 +3898,7 @@ dependencies = [
 
 [[package]]
 name = "screensearch-capture"
-version = "0.4.36"
+version = "0.4.37"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3920,7 +3920,7 @@ dependencies = [
 
 [[package]]
 name = "screensearch-db"
-version = "0.4.36"
+version = "0.4.37"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3939,7 +3939,7 @@ dependencies = [
 
 [[package]]
 name = "screensearch-embeddings"
-version = "0.4.36"
+version = "0.4.37"
 dependencies = [
  "anyhow",
  "reqwest",
@@ -3953,7 +3953,7 @@ dependencies = [
 
 [[package]]
 name = "screensearch-llm"
-version = "0.4.36"
+version = "0.4.37"
 dependencies = [
  "anyhow",
  "async-trait",
