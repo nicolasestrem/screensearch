@@ -6,6 +6,23 @@ import shutil
 import subprocess
 import sys
 
+# Python 3.12.0 ships a PEP 709 (inlined comprehension) code-generation bug that
+# corrupts module-level loop/comprehension bindings in large modules once frozen
+# by PyInstaller. It makes `import scipy.stats` abort with
+# "NameError: name 'obj' is not defined" in scipy/stats/_distn_infrastructure.py
+# (the docstring cleanup `for obj in [s for s in dir() ...]: ... ; del obj`),
+# which takes down sentence-transformers and the whole sidecar at startup. The
+# bug is fixed in later 3.12 patch releases (verified: 3.12.0 fails, 3.12.10
+# works, same scipy + PyInstaller). Refuse to build a sidecar that would crash on
+# every machine.
+if sys.version_info[:2] == (3, 12) and sys.version_info[2] < 1:
+    raise SystemExit(
+        "Refusing to build the sidecar with Python "
+        f"{'.'.join(map(str, sys.version_info[:3]))}: the 3.12.0 PEP 709 codegen "
+        "bug makes the frozen scipy/sentence-transformers import crash at startup. "
+        "Use a patched 3.12.x (>= 3.12.1; 3.12.10 verified) instead."
+    )
+
 ROOT = Path(__file__).resolve().parent
 OCR_METADATA_PACKAGES = (
     "imagesize",
