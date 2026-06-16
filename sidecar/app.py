@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 import numpy as np
 import torch
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
 from pydantic import BaseModel, Field
@@ -186,6 +187,11 @@ def _load_ocr_model(language: str):
         lang=language,
         ocr_version="PP-OCRv5",
         device="cpu",
+        # MKLDNN/oneDNN crashes PP-OCRv5 detection under PaddleOCR 3.x's PIR
+        # executor ("ConvertPirAttribute2RuntimeAttribute not support"), so it
+        # stays disabled. OCR speed comes from downscaling frames before send
+        # (see screensearch-capture/src/sidecar_ocr.rs) plus off-loading
+        # inference to the threadpool so it never blocks the event loop.
         enable_mkldnn=False,
         use_doc_orientation_classify=True,
         use_doc_unwarping=False,
@@ -382,7 +388,12 @@ async def ocr(
             detail=f"OCR image exceeds {MAX_OCR_PIXELS} pixels",
         )
     pixels = np.asarray(source.convert("RGB")).copy()
-    results = ocr_model(language).predict(pixels)
+    # PaddleOCR's model load and predict are blocking and CPU-bound. Run them in
+    # the threadpool so they never freeze the asyncio event loop; otherwise a
+    # single slow OCR call would stall every other sidecar route (health,
+    # /v1/models/status) for its entire duration.
+    model = await run_in_threadpool(ocr_model, language)
+    results = await run_in_threadpool(model.predict, pixels)
     lines: list[OcrLine] = []
     orientation: float | None = None
 

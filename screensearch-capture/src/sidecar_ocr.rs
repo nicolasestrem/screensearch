@@ -2,10 +2,17 @@
 
 use crate::{CaptureError, OcrResult, Result, TextRegion};
 use image::codecs::jpeg::JpegEncoder;
+use image::imageops::FilterType;
 use image::RgbaImage;
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
 use std::time::{Duration, Instant};
+
+/// Cap the longest side of frames sent to OCR. Detection cost grows with pixel
+/// count, and ultrawide/4K frames are far larger than PP-OCRv5 needs to read
+/// on-screen text. Downscaling here is the single biggest OCR speedup; returned
+/// boxes are mapped back to original frame coordinates.
+const MAX_OCR_LONGEST_SIDE: u32 = 2000;
 
 #[derive(Debug, Clone)]
 pub struct SidecarOcrConfig {
@@ -64,7 +71,26 @@ impl SidecarOcrEngine {
 
     pub async fn process_image(&self, image: &RgbaImage) -> Result<OcrResult> {
         let started = Instant::now();
-        let rgb = image::DynamicImage::ImageRgba8(image.clone()).to_rgb8();
+        let (orig_width, orig_height) = image.dimensions();
+        let longest = orig_width.max(orig_height);
+        // Scale factor applied before OCR (<= 1.0). Returned boxes are divided
+        // by this to recover original-frame coordinates.
+        let scale = if longest > MAX_OCR_LONGEST_SIDE {
+            MAX_OCR_LONGEST_SIDE as f32 / longest as f32
+        } else {
+            1.0
+        };
+
+        let dynamic = image::DynamicImage::ImageRgba8(image.clone());
+        let rgb = if scale < 1.0 {
+            let new_width = ((orig_width as f32 * scale).round() as u32).max(1);
+            let new_height = ((orig_height as f32 * scale).round() as u32).max(1);
+            dynamic
+                .resize_exact(new_width, new_height, FilterType::Triangle)
+                .to_rgb8()
+        } else {
+            dynamic.to_rgb8()
+        };
         let mut jpeg = Vec::new();
         JpegEncoder::new_with_quality(&mut jpeg, 85)
             .encode(
@@ -104,6 +130,10 @@ impl SidecarOcrEngine {
             .json()
             .await
             .map_err(|error| CaptureError::OcrError(error.to_string()))?;
+        // Map boxes from the (possibly downscaled) sent image back to the
+        // original frame so downstream highlight overlays line up.
+        let inverse_scale = 1.0 / scale;
+        let restore = |value: u32| (value as f32 * inverse_scale).round() as u32;
         let regions = payload
             .lines
             .into_iter()
@@ -111,10 +141,10 @@ impl SidecarOcrEngine {
             .map(|line| {
                 TextRegion::new(
                     line.text,
-                    line.bbox[0],
-                    line.bbox[1],
-                    line.bbox[2],
-                    line.bbox[3],
+                    restore(line.bbox[0]),
+                    restore(line.bbox[1]),
+                    restore(line.bbox[2]),
+                    restore(line.bbox[3]),
                     line.confidence.clamp(0.0, 1.0),
                 )
             })

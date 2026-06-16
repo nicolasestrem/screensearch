@@ -28,6 +28,7 @@ interface EmbeddingStatus {
 export function EmbeddingsStatus() {
     const [status, setStatus] = useState<EmbeddingStatus | null>(null);
     const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [generating, setGenerating] = useState(false);
     const [preparingModels, setPreparingModels] = useState(false);
     const [selectedPercentage, setSelectedPercentage] = useState<25 | 50 | 100>(50);
@@ -39,9 +40,13 @@ export function EmbeddingsStatus() {
             if (response.ok) {
                 const data = await response.json();
                 setStatus(data);
+                setLoadError(null);
+            } else {
+                setLoadError(`Status request failed (${response.status})`);
             }
         } catch (error) {
             console.error('Failed to fetch embedding status:', error);
+            setLoadError(error instanceof Error ? error.message : 'Failed to load status');
         } finally {
             setLoading(false);
         }
@@ -135,7 +140,27 @@ export function EmbeddingsStatus() {
         );
     }
 
-    if (!status) return null;
+    if (!status) {
+        if (loadError) {
+            return (
+                <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 text-sm flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0" />
+                    <div>
+                        <p className="font-medium text-destructive">Could not load AI status</p>
+                        <p className="text-xs text-muted-foreground mt-1">{loadError}</p>
+                        <button
+                            onClick={fetchStatus}
+                            className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-secondary hover:bg-accent text-xs"
+                        >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            Retry
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+        return null;
+    }
 
     const coverageColor = status.coverage_percent > 80
         ? 'text-green-500'

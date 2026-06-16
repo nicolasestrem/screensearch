@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- The quality sidecar no longer freezes while OCR runs. The `/v1/ocr` route was
+  declared `async` but called the blocking, CPU-bound PaddleOCR predict directly
+  on the asyncio event loop, stalling every other route (`/health`,
+  `/v1/models/status`) for the entire OCR duration. With OCR taking tens of
+  seconds, this left the Settings → Data & AI panel stuck on its loading
+  skeleton because `/api/embeddings/status` (which proxies to
+  `/v1/models/status`) was queued behind the in-flight OCR. Model loading and
+  inference now run via `run_in_threadpool`, so the sidecar stays responsive
+  (verified: status returned HTTP 200 at ~234 ms while a multi-second OCR was in
+  flight).
+- `EmbeddingsStatus` now shows a retryable error state instead of an indefinite
+  blank when `/api/embeddings/status` fails or times out.
+
+### Changed
+- OCR frames are downscaled to a 2000 px longest side before being sent to the
+  sidecar (`screensearch-capture/src/sidecar_ocr.rs`), with returned boxes mapped
+  back to original-frame coordinates. On a 3440×1440 ultrawide frame this cut
+  PP-OCRv5 inference time ~3.2× (88.7 s → 27.6 s in a warm contended benchmark)
+  with no change to stored frame resolution.
+- MKLDNN/oneDNN acceleration is explicitly kept disabled for PP-OCRv5: enabling
+  it crashes detection under PaddleOCR 3.x's PIR executor
+  (`ConvertPirAttribute2RuntimeAttribute not support`).
+
 ## [0.4.36] - 2026-06-15
 
 ### Changed

@@ -26,9 +26,25 @@ request when predictable first-request latency matters.
 
 The managed OCR constructor explicitly requests `ocr_version="PP-OCRv5"`.
 PaddleOCR 3.7 otherwise defaults supported languages such as English to
-PP-OCRv6. The packaged CPU runtime also disables oneDNN because PaddlePaddle
-3.3.1 cannot execute the current detector's PIR double-array attributes through
-that backend; standard Paddle CPU inference remains enabled.
+PP-OCRv6. The packaged CPU runtime also disables oneDNN/MKLDNN because
+PaddlePaddle cannot execute the current detector's PIR double-array attributes
+through that backend (`ConvertPirAttribute2RuntimeAttribute not support`);
+standard Paddle CPU inference remains enabled.
+
+The `/v1/ocr` route offloads both model loading and inference to a worker thread
+via `run_in_threadpool`. PP-OCRv5 prediction is synchronous and CPU-bound, so
+running it directly on the asyncio event loop would freeze every other route
+(`/health`, `/v1/models/status`, embeddings) for the full duration of a capture.
+Off-loading keeps the sidecar responsive while OCR runs — status calls return in
+hundreds of milliseconds even while a multi-second OCR is in flight.
+
+Because detector cost scales with pixel count, the capture client downscales
+frames to a 2000 px longest side before sending them to OCR
+(`screensearch-capture/src/sidecar_ocr.rs`, `MAX_OCR_LONGEST_SIDE`). On a
+3440×1440 ultrawide frame this reduces PP-OCRv5 time roughly threefold. The
+sidecar returns boxes in the coordinate space of the image it received, so the
+client multiplies them back by the inverse scale to recover original-frame
+coordinates; stored frame resolution is unaffected.
 
 Quality changes must be measured with the versioned cases under `evaluation/`.
 Track Recall@10, MRR, OCR character/word error rate, citation correctness,
