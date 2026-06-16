@@ -1,0 +1,29 @@
+# GPU sidecar dependencies.
+#
+# Only OCR (PaddleOCR) runs on the GPU; that is the throughput bottleneck
+# (~60s/frame on CPU vs ~1.5s on a CUDA GPU). Embeddings and reranking stay on
+# CPU torch, because torch and paddle each bundle their own CUDA runtime DLLs
+# (cublas64_12.dll, cudart64_12.dll, ...) and there is no CUDA build both
+# support that also targets Blackwell / compute capability 12.0: torch needs
+# cu128, paddle only ships cu126/cu129, and the mismatched DLLs collide in one
+# process (WinError 127). torch-CPU has no CUDA DLLs, so it coexists cleanly.
+#
+# paddlepaddle-gpu is NOT listed here: it must be installed first from its own
+# CUDA 12.9 index (which supports Blackwell), because pip cannot resolve it from
+# PyPI. build-release.ps1 -Gpu does this before installing this file:
+#
+#   pip install "paddlepaddle-gpu>=3,<4" -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
+#   pip install -r sidecar/requirements-gpu.txt
+#
+# paddleocr installs cleanly against paddlepaddle-gpu (it does not pull the CPU
+# paddlepaddle package).
+fastapi==0.115.12
+uvicorn[standard]==0.34.3
+python-multipart==0.0.20
+sentence-transformers>=5.0.0,<6
+transformers>=4.51.0,<5
+torch>=2.6.0,<3
+paddleocr>=3.0.0,<4
+numpy>=2.0.0,<3
+pillow>=11.0.0,<12
+pyinstaller>=6.13.0,<7

@@ -300,6 +300,26 @@ uv pip install --python C:\path\to\venv\Scripts\python.exe pip -r sidecar\requir
 Use `-SkipSidecar` to reuse an existing `sidecar\dist\screensearch-ai-sidecar`,
 `-SignBinary` to sign, and `-Clean` to force a from-scratch Rust build.
 
+#### GPU-accelerated OCR (`-Gpu`)
+
+```powershell
+.\scripts\build-release.ps1 -Version 0.4.37 -Gpu -PythonExe "C:\path\to\venv\Scripts\python.exe"
+```
+
+`-Gpu` builds a sidecar whose OCR runs on a CUDA GPU (~1.5 s/frame vs ~60 s on
+CPU). It installs `paddlepaddle-gpu` from paddle's CUDA 12.9 index (which supports
+Blackwell / compute capability 12.0) and the rest from `sidecar/requirements-gpu.txt`,
+then `sidecar/build.py` auto-detects the CUDA build and tells PyInstaller to bundle
+paddle's NVIDIA runtime DLLs (`--collect-all nvidia`). The bundle is several GB
+larger as a result.
+
+Only OCR is GPU-accelerated. torch (embeddings/reranking) stays on CPU because
+torch and paddle each bundle their own CUDA runtime DLLs under identical names and
+there is no CUDA version both support that also targets Blackwell; loading both in
+one process collides (`WinError 127`). `paddle_device()` still falls back to CPU
+OCR when no GPU is present, so the GPU build also runs (more slowly) on GPU-less
+machines. See `docs/ai-quality-stack.md` → "GPU Acceleration".
+
 `sidecar/build.py` also copies distribution metadata for PaddleX OCR
 dependencies. PaddleX validates optional OCR dependencies through
 `importlib.metadata`; bundling only their Python modules causes pipeline

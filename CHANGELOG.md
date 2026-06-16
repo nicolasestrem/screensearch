@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detected monitors. Selecting/deselecting monitors reconfigures the running
   capture engine live (no restart) via a `tokio::sync::watch` channel, and the
   selection is read back from the database at startup so it survives restarts.
+- GPU-accelerated OCR via `scripts/build-release.ps1 -Gpu`. OCR is the throughput
+  bottleneck — ~60 s/frame on CPU versus ~1.5 s on a CUDA GPU. The GPU build uses
+  `paddlepaddle-gpu` (CUDA 12.9, supports Blackwell / compute capability 12.0) and
+  `sidecar/requirements-gpu.txt`; `sidecar/build.py` auto-detects the CUDA build
+  and bundles paddle's NVIDIA runtime DLLs. Embeddings/reranking remain on CPU
+  torch (torch and paddle cannot share a CUDA runtime that also targets Blackwell
+  in one process — `WinError 127`); `paddle_device()` falls back to CPU OCR when
+  no GPU is present. `/health` now reports `ocr_device` alongside `device`.
 
 ### Fixed
 - Capture no longer stops after a single frame. `FrameDiffer` defaulted to the
@@ -81,6 +89,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MSVC environment and overrides the linker (the `.cargo/config.toml` `lld` linker
   is cross-compile-only), detects Inno Setup 6 or 7, and takes a `-PythonExe`
   parameter so the sidecar can be built with a specific Python 3.12.x.
+- Toggling a monitor no longer appears to freeze capture. The capture-drain loop
+  used a blocking `frame_tx.send().await`, which parked the whole select loop
+  whenever OCR was backed up (the channel fills because a frame can take tens of
+  seconds on CPU) — so monitor reconfiguration and shutdown could not be processed.
+  It now uses `try_send` and sheds surplus frames via the bounded capture queue,
+  keeping reconfiguration responsive under OCR backpressure (`src/main.rs`).
+- The PP-OCRv5 document- and textline-orientation classifiers are disabled. Screen
+  captures are upright, so they were pure overhead (the textline classifier ran
+  once per detected line — dozens to hundreds per frame).
 
 ### Removed
 - Dropped the dead ONNX-era `[embeddings]` config keys (`model`, `model_name`,

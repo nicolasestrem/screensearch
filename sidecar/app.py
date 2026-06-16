@@ -149,6 +149,23 @@ def device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def paddle_device() -> str:
+    """Select the PaddleOCR device, preferring an available CUDA GPU.
+
+    Returns "gpu" only when Paddle was built with CUDA AND a usable device is
+    present, so a GPU-enabled build still falls back to CPU on machines without
+    an NVIDIA GPU. Any probing failure also falls back to CPU.
+    """
+    try:
+        import paddle
+
+        if paddle.device.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0:
+            return "gpu"
+    except Exception:
+        logger.exception("Paddle GPU probe failed; using CPU for OCR")
+    return "cpu"
+
+
 @lru_cache(maxsize=1)
 def _load_embedding_model() -> SentenceTransformer:
     return SentenceTransformer(
@@ -186,16 +203,23 @@ def _load_ocr_model(language: str):
     return PaddleOCR(
         lang=language,
         ocr_version="PP-OCRv5",
-        device="cpu",
+        # Use the GPU when available; on the RTX-class CPU baseline a dense
+        # screen takes ~60s/frame, while the same frame runs in ~1s on a CUDA
+        # GPU. Falls back to CPU automatically (see paddle_device).
+        device=paddle_device(),
         # MKLDNN/oneDNN crashes PP-OCRv5 detection under PaddleOCR 3.x's PIR
-        # executor ("ConvertPirAttribute2RuntimeAttribute not support"), so it
-        # stays disabled. OCR speed comes from downscaling frames before send
-        # (see screensearch-capture/src/sidecar_ocr.rs) plus off-loading
-        # inference to the threadpool so it never blocks the event loop.
+        # executor ("ConvertPirAttribute2RuntimeAttribute not support") and is a
+        # CPU-only accelerator, so it stays disabled on both backends. OCR cost
+        # is further reduced by downscaling frames before send (see
+        # screensearch-capture/src/sidecar_ocr.rs) and off-loading inference to
+        # the threadpool so it never blocks the event loop.
         enable_mkldnn=False,
-        use_doc_orientation_classify=True,
+        # Screen captures are always upright, so the document- and textline-
+        # orientation classifiers are pure overhead (the textline classifier runs
+        # once per detected line — dozens to hundreds per frame). Disable both.
+        use_doc_orientation_classify=False,
         use_doc_unwarping=False,
-        use_textline_orientation=True,
+        use_textline_orientation=False,
     )
 
 
@@ -218,6 +242,7 @@ def health() -> dict[str, object]:
     return {
         "status": "ok",
         "device": device(),
+        "ocr_device": paddle_device(),
         "embedding_model": EMBEDDING_MODEL,
         "reranker_model": RERANKER_MODEL,
         "embedding_dimension": EMBEDDING_DIMENSION,

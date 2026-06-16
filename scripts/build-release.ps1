@@ -10,9 +10,16 @@ param(
     [switch]$SkipSidecar,
     [switch]$Clean,
 
+    # Build a CUDA-accelerated sidecar (torch cu128 + paddlepaddle-gpu cu129).
+    # OCR/embeddings/reranking then run on an NVIDIA GPU when present and fall
+    # back to CPU otherwise. The bundle is several GB larger because it carries
+    # the CUDA runtime. Without this switch the sidecar uses the CPU builds.
+    [switch]$Gpu,
+
     # Python interpreter used to build the quality sidecar. The sidecar targets
-    # Python 3.12; pass e.g. -PythonExe "C:\Python312\python.exe" when the
-    # default `python` on PATH is a different version.
+    # Python 3.12 (>= 3.12.1; 3.12.0 is rejected by sidecar/build.py). Pass e.g.
+    # -PythonExe "C:\Python312\python.exe" when the default `python` on PATH is a
+    # different version.
     [string]$PythonExe = "python"
 )
 
@@ -100,8 +107,20 @@ else {
 
 # Step 4: Build the managed quality sidecar
 if (-not $SkipSidecar) {
-    Write-Host "[4/8] Building PP-OCRv5/Qwen quality sidecar (python: $PythonExe)..." -ForegroundColor Cyan
-    & $PythonExe -m pip install -r sidecar\requirements.txt
+    $sidecarKind = if ($Gpu) { "CUDA GPU" } else { "CPU" }
+    Write-Host "[4/8] Building PP-OCRv5/Qwen quality sidecar ($sidecarKind, python: $PythonExe)..." -ForegroundColor Cyan
+    if ($Gpu) {
+        # GPU OCR only: paddlepaddle-gpu (CUDA 12.9, supports Blackwell) must come
+        # from paddle's own index. torch stays on CPU (installed via the plain
+        # requirements file) because torch's CUDA build and paddle's CUDA runtime
+        # collide in one process on Blackwell. Install paddle-gpu first, then the
+        # rest (CPU torch + paddleocr + server deps).
+        & $PythonExe -m pip install "paddlepaddle-gpu>=3,<4" -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
+        if ($LASTEXITCODE -ne 0) { Write-Host "paddlepaddle-gpu install failed" -ForegroundColor Red; exit 1 }
+        & $PythonExe -m pip install -r sidecar\requirements-gpu.txt
+    } else {
+        & $PythonExe -m pip install -r sidecar\requirements.txt
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Quality sidecar dependency install failed" -ForegroundColor Red
         exit 1

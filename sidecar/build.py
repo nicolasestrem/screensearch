@@ -39,6 +39,39 @@ metadata_args = [
     for argument in ("--copy-metadata", package)
 ]
 
+
+def _is_gpu_build() -> bool:
+    """Detect a CUDA build so PyInstaller also bundles the CUDA runtime DLLs."""
+    try:
+        import torch
+
+        if getattr(torch.version, "cuda", None):
+            return True
+    except Exception:
+        pass
+    try:
+        import paddle
+
+        return bool(paddle.device.is_compiled_with_cuda())
+    except Exception:
+        return False
+
+
+# On a CUDA build the GPU runtime DLLs live outside the paddle/torch package
+# trees: paddlepaddle-gpu depends on the separate ``nvidia-*-cu12`` wheels
+# (DLLs under site-packages/nvidia/*/bin), and torch's CUDA libs live in
+# torch/lib. `--collect-all paddle` does not reach the nvidia packages, so the
+# frozen sidecar would fail to load CUDA at runtime. Collect them explicitly.
+gpu_args: list[str] = []
+if _is_gpu_build():
+    print("Building CUDA GPU sidecar: collecting torch + NVIDIA CUDA runtime")
+    gpu_args = [
+        "--collect-all",
+        "torch",
+        "--collect-all",
+        "nvidia",
+    ]
+
 subprocess.run(
     [
         sys.executable,
@@ -56,6 +89,7 @@ subprocess.run(
         "paddlex",
         "--collect-all",
         "sentence_transformers",
+        *gpu_args,
         *metadata_args,
         str(ROOT / "app.py"),
     ],

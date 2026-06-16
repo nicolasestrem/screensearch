@@ -67,6 +67,31 @@ frame only while the sidecar is unavailable. Once the sidecar reports healthy,
 requests succeed on PP-OCRv5 automatically with no restart. The embedding worker
 likewise retries until the sidecar is ready.
 
+## GPU Acceleration
+
+OCR is the throughput bottleneck. On CPU a dense screen takes roughly 60 s/frame,
+which backs up the capture queue, drops frames, and starves embedding requests
+until they time out. On a CUDA GPU the same frame runs in about 1.5 s.
+
+The default sidecar ships CPU builds of paddle and torch. A GPU sidecar is built
+with `scripts/build-release.ps1 -Gpu` (see the Developer Guide). In that build:
+
+- **OCR (PaddleOCR) runs on the GPU** via `paddlepaddle-gpu` (CUDA 12.9, which
+  supports Blackwell / compute capability 12.0). `paddle_device()` selects the
+  GPU only when a CUDA device is actually present, so the same build falls back
+  to CPU OCR on machines without an NVIDIA GPU.
+- **Embeddings and reranking stay on CPU torch.** torch and paddle each bundle
+  their own CUDA runtime DLLs (`cublas64_12.dll`, `cudart64_12.dll`, …) under
+  identical names, and there is no CUDA version both support that also targets
+  Blackwell — torch needs cu128, paddle ships cu126/cu129. Loading both GPU
+  runtimes in one process collides (`WinError 127`). torch-CPU has no CUDA DLLs,
+  so it coexists cleanly, and OCR was the only component that needed the GPU.
+
+`/health` reports both `device` (torch) and `ocr_device` (paddle) so the active
+backends are visible. The document- and textline-orientation classifiers are
+disabled on both backends: screen captures are upright, so they are pure overhead
+(the textline classifier otherwise runs once per detected line).
+
 ## Fixed And Configurable Components
 
 PP-OCRv5, Qwen3 embeddings, Qwen3 reranking, sqlite-vec, and RRF are fixed
