@@ -3,7 +3,7 @@
 
 #define MyAppName "ScreenSearch"
 #ifndef MyAppVersion
-#define MyAppVersion "0.4.35"
+#define MyAppVersion "0.4.37"
 #endif
 #define MyAppPublisher "Nicolas Estrem"
 #define MyAppURL "https://github.com/nicolasestrem/screensearch"
@@ -43,10 +43,8 @@ LZMANumFastBytes=273
 
 ; Visual appearance
 WizardStyle=modern
-#ifdef FULL_INSTALLER
 WizardImageFile=resources\sidebar.bmp
 WizardSmallImageFile=resources\banner.bmp
-#endif
 
 ; System requirements
 MinVersion=10.0.17763
@@ -67,27 +65,11 @@ InfoAfterFile=resources\readme.txt
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Types]
-#ifdef FULL_INSTALLER
-Name: "full"; Description: "Full Installation (with ONNX model)"
-Name: "lite"; Description: "Lightweight Installation (download model on first run)"
-#else
-Name: "lite"; Description: "Standard Installation"
-#endif
+Name: "standard"; Description: "Standard Installation"
 
 [Components]
-#ifdef FULL_INSTALLER
-Name: "core"; Description: "ScreenSearch Application (required)"; Types: full lite; Flags: fixed
-#else
-Name: "core"; Description: "ScreenSearch Application (required)"; Types: lite; Flags: fixed
-#endif
-#ifdef FULL_INSTALLER
-Name: "model"; Description: "AI RAG Search Model (449 MB)"; Types: full
-#endif
-#ifdef FULL_INSTALLER
-Name: "startup"; Description: "Launch on Windows startup"; Types: full lite
-#else
-Name: "startup"; Description: "Launch on Windows startup"; Types: lite
-#endif
+Name: "core"; Description: "ScreenSearch Application and quality AI sidecar (required)"; Types: standard; Flags: fixed
+Name: "startup"; Description: "Launch on Windows startup"; Types: standard
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -100,14 +82,11 @@ Source: "resources\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinsta
 ; Main executable
 Source: "..\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion; Components: core
 
+; Managed local PP-OCRv5/Qwen inference sidecar
+Source: "..\sidecar\dist\screensearch-ai-sidecar\*"; DestDir: "{app}\bin\screensearch-ai-sidecar"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: core
+
 ; Configuration template
 Source: "..\config.toml"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist; Components: core
-
-; AI RAG Search Model (Full installer only)
-#ifdef FULL_INSTALLER
-Source: "models\model.onnx"; DestDir: "{app}\models"; Flags: ignoreversion; Components: model
-Source: "models\tokenizer.json"; DestDir: "{app}\models"; Flags: ignoreversion; Components: model
-#endif
 
 ; License and documentation
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion; Components: core
@@ -203,14 +182,11 @@ begin
     if not DirExists(ExpandConstant('{app}\captures')) then
       CreateDir(ExpandConstant('{app}\captures'));
 
-#ifndef FULL_INSTALLER
-    // Show message about model download for lightweight installer
     if WizardIsComponentSelected('core') then
     begin
-      MsgBox('ScreenSearch will download the AI RAG Search Model (449 MB) on first run if you enable embeddings. ' +
-             'An internet connection is required for this feature.', mbInformation, MB_OK);
+      MsgBox('The quality AI sidecar downloads PP-OCRv5 and Qwen models on first use. ' +
+             'Allow up to 5 GB of disk space and an internet connection for initial setup.', mbInformation, MB_OK);
     end;
-#endif
   end;
 end;
 

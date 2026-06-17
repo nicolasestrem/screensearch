@@ -6,6 +6,7 @@ import { CircularGauge } from '../ui/CircularGauge';
 interface EmbeddingStatus {
   enabled: boolean;
   model: string;
+  sidecar_ready: boolean;
   total_frames: number;
   frames_with_embeddings: number;
   coverage_percent: number;
@@ -50,6 +51,7 @@ export function MemoryStatusGauge() {
   const displayStatus = status || {
       enabled: true,
       model: "ministral-3:3b",
+      sidecar_ready: false,
       total_frames: 12450,
       frames_with_embeddings: 10890,
       coverage_percent: 87,
@@ -67,7 +69,7 @@ export function MemoryStatusGauge() {
           value={displayStatus.coverage_percent}
           size={160}
           label="Indexed"
-          sublabel={displayStatus.enabled ? 'RAG Active' : 'RAG Disabled'}
+          sublabel={displayStatus.enabled && displayStatus.sidecar_ready ? 'RAG Active' : 'RAG Degraded'}
         />
 
         <div className="mt-4 w-full space-y-2 text-sm">
@@ -95,11 +97,11 @@ export function MemoryStatusGauge() {
         <div className="mt-4 flex items-center gap-2">
           <div
             className={`w-2 h-2 rounded-full ${
-              displayStatus.enabled ? 'bg-green-500 animate-pulse' : 'bg-muted-foreground'
+              displayStatus.enabled && displayStatus.sidecar_ready ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'
             }`}
           />
           <span className="text-xs text-muted-foreground">
-            {displayStatus.enabled ? 'Semantic search enabled' : 'Using keyword search'}
+            {displayStatus.enabled && displayStatus.sidecar_ready ? 'Quality retrieval ready' : 'Using keyword fallback'}
           </span>
         </div>
       </div>

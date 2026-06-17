@@ -200,10 +200,10 @@ fn bench_frame_insertion(c: &mut Criterion) {
 
 /// Benchmark: Vector search simulation (cosine similarity)
 fn bench_cosine_similarity(c: &mut Criterion) {
-    // Generate test vectors (384-dimensional like our embeddings)
-    let query_vector: Vec<f32> = (0..384).map(|i| (i as f32 * 0.001).sin()).collect();
+    // Generate test vectors (1024-dimensional like our Qwen3 embeddings)
+    let query_vector: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.001).sin()).collect();
     let db_vectors: Vec<Vec<f32>> = (0..1000)
-        .map(|j| (0..384).map(|i| ((i + j) as f32 * 0.001).cos()).collect())
+        .map(|j| (0..1024).map(|i| ((i + j) as f32 * 0.001).cos()).collect())
         .collect();
 
     c.bench_function("cosine_similarity_1000_vectors", |b| {

@@ -72,8 +72,7 @@ pub fn rerank_results(
             let base_score = r.similarity_score;
 
             // Recency boost: newer = higher
-            let recency_normalized =
-                (r.frame.timestamp.timestamp() - min_time) as f32 / time_range;
+            let recency_normalized = (r.frame.timestamp.timestamp() - min_time) as f32 / time_range;
             let recency_boost = recency_normalized * config.recency_weight;
 
             // Length boost: longer = higher (normalized)
@@ -113,15 +112,8 @@ pub fn rerank_results(
 /// Simple keyword-based reranking boost
 ///
 /// Boosts results that contain query keywords in the chunk text.
-pub fn boost_keyword_matches(
-    results: &mut [SemanticResult],
-    query: &str,
-    boost_factor: f32,
-) {
-    let keywords: Vec<&str> = query
-        .split_whitespace()
-        .filter(|w| w.len() > 2)
-        .collect();
+pub fn boost_keyword_matches(results: &mut [SemanticResult], query: &str, boost_factor: f32) {
+    let keywords: Vec<&str> = query.split_whitespace().filter(|w| w.len() > 2).collect();
 
     for result in results.iter_mut() {
         let text_lower = result.chunk_text.to_lowercase();
@@ -175,6 +167,7 @@ mod tests {
             chunk_text: text.to_string(),
             chunk_index: 0,
             similarity_score: score,
+            retrieval_source: "test".to_string(),
         }
     }
 
@@ -193,9 +186,12 @@ mod tests {
             make_result(2, 0.9, "high score"),
             make_result(3, 0.7, "medium score"),
         ];
-        let config = RerankConfig { top_k: 10, ..Default::default() };
+        let config = RerankConfig {
+            top_k: 10,
+            ..Default::default()
+        };
         let reranked = rerank_results(results, &config);
-        
+
         assert_eq!(reranked.len(), 3);
         // Highest score first (with some tolerance for boosts)
         assert!(reranked[0].similarity_score >= reranked[1].similarity_score);
@@ -210,7 +206,7 @@ mod tests {
         ];
         let config = RerankConfig::default();
         let reranked = rerank_results(results, &config);
-        
+
         // Should only have 2 results (one per frame)
         assert_eq!(reranked.len(), 2);
     }

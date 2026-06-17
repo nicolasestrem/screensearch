@@ -1,4 +1,4 @@
-Never mark a task complete without pasting the verbatim output of the verification command (tests, build, lint, or run). No summary, no paraphrase � the raw output.
+Never mark a task complete without pasting the verbatim output of the verification command (tests, build, lint, or run). No summary, no paraphrase � the raw output.
 Never stub, mock, hardcode expected values, or insert placeholder code (TODO, pass, ...) to make something appear to work. If blocked, stop and ask.
 
 # CLAUDE.md
@@ -120,9 +120,11 @@ cargo clippy --workspace --fix
 ```
 
 **Build artifacts**:
-- `ScreenSearch-v{version}-Setup-Full.exe` - Includes 449MB ONNX model
-- `ScreenSearch-v{version}-Setup-Lite.exe` - Downloads model on first run if embeddings enabled
-- `ScreenSearch-v{version}-Portable.zip` - Standalone executable + config
+- `ScreenSearch-v{version}-Setup-Quality.exe` - Installer bundling the Python quality sidecar
+- `ScreenSearch-v{version}-Portable.zip` - Standalone executable + bundled sidecar + config
+
+Models (PP-OCRv5, Qwen3) are downloaded by the sidecar to the HuggingFace/Paddle
+caches on first use, not embedded in the installer.
 
 ### Cross-Compilation (Linux to Windows)
 
@@ -186,7 +188,7 @@ Main Binary (src/main.rs)
     ├─> screensearch-db (SQLite database + vector search)
     ├─> screensearch-api (REST API server)
     ├─> screensearch-automation (Windows UI automation)
-    └─> screensearch-embeddings (ONNX embeddings engine)
+    └─> screensearch-embeddings (sidecar embeddings/rerank client)
 ```
 
 ### Workspace Members
@@ -222,12 +224,12 @@ Main Binary (src/main.rs)
    - Window management
 
 5. **screensearch-embeddings** (`screensearch-embeddings/`)
-   - Local ML embedding generation using ONNX Runtime
-   - HuggingFace tokenizers for text processing
-   - Text chunking with configurable overlap
-   - 384-dimensional embeddings (paraphrase-multilingual-MiniLM-L12-v2)
+   - Thin HTTP client to the managed Python quality sidecar (no in-Rust ML)
+   - Embeddings, reranking, and chunking are delegated to the sidecar endpoints
+   - 1024-dimensional embeddings (Qwen/Qwen3-Embedding-0.6B)
+   - Reranking via Qwen/Qwen3-Reranker-0.6B
    - Batch processing for efficiency
-   - Auto-downloads model from HuggingFace on first use
+   - The sidecar manages model download/caching (HuggingFace + Paddle caches)
 
 ### Main Binary (`src/main.rs`)
 
@@ -249,15 +251,15 @@ CaptureEngine → frame_tx → OcrProcessor → processed_tx → DatabaseManager
 
 **Embeddings Pipeline** (when enabled in config):
 ```
-Background Worker (24h loop)
+Background Worker
     ↓
 Fetch frames without embeddings (batch: 50)
     ↓
-Text Chunking (max 256 tokens, overlap: 32)
+Chunking via sidecar /v1/chunk
     ↓
-ONNX Model Inference (384-dim vectors)
+Sidecar /v1/embeddings inference (Qwen3, 1024-dim vectors)
     ↓
-Store embeddings in SQLite (BLOB)
+Store embeddings in SQLite (sqlite-vec)
 ```
 
 ## Performance-Critical Code
@@ -359,12 +361,9 @@ max_width = 1920                # Resize frames to max width (maintains aspect r
 [embeddings]
 enabled = false                 # Enable semantic search with embeddings
 batch_size = 50                 # Frames to process per batch
-model = "local"                 # Model type (currently only "local" supported)
-model_name = "paraphrase-multilingual-MiniLM-L12-v2"
-embedding_dim = 384             # Embedding vector dimensions
-max_chunk_tokens = 256          # Max tokens per text chunk
-chunk_overlap = 32              # Token overlap between chunks
-hybrid_search_alpha = 0.3       # Weight for FTS5 vs vector (0.0 = pure vector, 1.0 = pure FTS5)
+# Model identity (Qwen/Qwen3-Embedding-0.6B, 1024-dim), chunking, and hybrid
+# retrieval (Reciprocal Rank Fusion) are owned by the sidecar contract and are
+# not configurable here.
 
 [api]
 port = 3131
@@ -412,7 +411,7 @@ CREATE TRIGGER ocr_text_after_insert ...
 
 **Embeddings Table** (Dense/Semantic):
 ```sql
--- Stores 384-dim vectors for semantic search
+-- Stores 1024-dim Qwen3 vectors for semantic search (queried via sqlite-vec)
 CREATE TABLE embeddings (
     id INTEGER PRIMARY KEY,
     frame_id INTEGER NOT NULL,
@@ -443,14 +442,14 @@ ScreenSearch combines **sparse (FTS5)** and **dense (vector embeddings)** search
    - Use for: Known keywords, specific terms
 
 2. **Vector Search** (semantic similarity):
-   - Cosine similarity on 384-dim embeddings
+   - sqlite-vec KNN over 1024-dim Qwen3 embeddings
    - Understands context and meaning
    - Use for: Concepts, questions, paraphrases
 
 3. **Hybrid Search** (combines both):
-   - Weighted combination: `alpha * fts5_score + (1-alpha) * vector_score`
-   - Default `alpha = 0.3` (70% semantic, 30% keyword)
-   - Configure via `embeddings.hybrid_search_alpha` in config.toml
+   - Reciprocal Rank Fusion (RRF) merges FTS5 and vector rankings, then
+     Qwen3-Reranker (via the sidecar) reorders the candidates
+   - No tunable alpha: RRF avoids mixing incomparable raw scores
 
 **API Usage**:
 ```bash
@@ -610,7 +609,7 @@ Maintain these performance characteristics:
 3. **Privacy-first**: All data stored locally in SQLite. No cloud uploads.
 4. **Zero-copy**: Prefer Arc and reference counting over cloning large buffers.
 5. **Async-first**: Use tokio for all I/O operations.
-6. **Portable binary**: UI assets embedded via rust-embed, ONNX model auto-downloads on first use.
+6. **Portable binary**: UI assets embedded via rust-embed; the Python quality sidecar ships alongside the executable and downloads its models (PP-OCRv5, Qwen3) on first use.
 
 ## Git Workflow
 

@@ -57,7 +57,7 @@ export function ReportGenerator() {
             setIsCopied(true);
             toast.success('Copied to clipboard');
             setTimeout(() => setIsCopied(false), 2000);
-        } catch (err) {
+        } catch {
             toast.error('Failed to copy');
         }
     };

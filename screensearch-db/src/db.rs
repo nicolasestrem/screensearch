@@ -7,7 +7,25 @@ use crate::{DatabaseConfig, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Pool, Sqlite};
 use std::str::FromStr;
+use std::sync::Once;
 use std::time::Duration;
+
+static SQLITE_VEC_INIT: Once = Once::new();
+
+fn register_sqlite_vec() {
+    SQLITE_VEC_INIT.call_once(|| unsafe {
+        libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute::<
+            *const (),
+            unsafe extern "C" fn(
+                *mut libsqlite3_sys::sqlite3,
+                *mut *mut std::ffi::c_char,
+                *const libsqlite3_sys::sqlite3_api_routines,
+            ) -> std::ffi::c_int,
+        >(
+            sqlite_vec::sqlite3_vec_init as *const ()
+        )));
+    });
+}
 
 /// Main database manager with connection pooling and query execution
 pub struct DatabaseManager {
@@ -30,6 +48,8 @@ impl DatabaseManager {
     /// # Returns
     /// Result containing initialized DatabaseManager or error
     pub async fn with_config(config: DatabaseConfig) -> Result<Self> {
+        register_sqlite_vec();
+
         tracing::info!(
             "Initializing database at: {} (max_connections: {}, min_connections: {})",
             config.path,

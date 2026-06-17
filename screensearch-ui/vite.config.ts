@@ -29,22 +29,28 @@ export default defineConfig({
     rollupOptions: {
       output: {
         // Manual chunk splitting for better caching
-        manualChunks: {
-          // Core React runtime - rarely changes, cached long-term
-          'vendor-react': ['react', 'react-dom'],
-          // Data fetching layer - changes occasionally
-          'vendor-query': ['@tanstack/react-query', 'axios'],
-          // UI utilities - animation, icons
-          'vendor-ui': ['framer-motion', 'lucide-react'],
-          // Heavy dependencies that are conditionally loaded
-          'vendor-markdown': ['react-markdown'],
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (/[\\/]node_modules[\\/](react|react-dom)[\\/]/.test(id)) {
+            return 'vendor-react'
+          }
+          if (/[\\/]node_modules[\\/](@tanstack[\\/]react-query|axios)[\\/]/.test(id)) {
+            return 'vendor-query'
+          }
+          if (/[\\/]node_modules[\\/](framer-motion|lucide-react)[\\/]/.test(id)) {
+            return 'vendor-ui'
+          }
+          if (/[\\/]node_modules[\\/]react-markdown[\\/]/.test(id)) {
+            return 'vendor-markdown'
+          }
+          return undefined
         },
       },
     },
     // Enable source maps for debugging production issues
     sourcemap: false,
-    // Minification settings
-    minify: 'esbuild',
+    // Use Vite 8's built-in Oxc minifier.
+    minify: 'oxc',
     // Target modern browsers for smaller bundle
     target: 'es2020',
   },

@@ -33,7 +33,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use screen_api::{ApiConfig, ApiServer};
+//! use screensearch_api::{ApiConfig, ApiServer};
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -42,7 +42,9 @@
 //!
 //!     // Create server with default config
 //!     let config = ApiConfig::default();
-//!     let server = ApiServer::new(config).await?;
+//!     let capture_interval = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(3_000));
+//!     let (monitor_config_tx, _monitor_config_rx) = tokio::sync::watch::channel(Vec::new());
+//!     let server = ApiServer::new(config, capture_interval, monitor_config_tx).await?;
 //!
 //!     // Run server
 //!     server.run().await?;

@@ -2,7 +2,7 @@
 
 use screensearch_automation::AutomationEngine;
 use screensearch_db::DatabaseManager;
-use screensearch_embeddings::EmbeddingEngine;
+use screensearch_embeddings::{EmbeddingEngine, EMBEDDING_DIM};
 use screensearch_llm::LlamaServer;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -47,19 +47,6 @@ impl From<screensearch_llm::DownloadProgress> for DownloadProgress {
     }
 }
 
-// Conversion from screensearch_embeddings::DownloadProgress
-impl From<screensearch_embeddings::DownloadProgress> for DownloadProgress {
-    fn from(p: screensearch_embeddings::DownloadProgress) -> Self {
-        Self {
-            bytes_downloaded: p.bytes_downloaded,
-            total_bytes: p.total_bytes,
-            speed_bps: p.speed_bps,
-            eta_seconds: p.eta_seconds,
-            error: None,
-        }
-    }
-}
-
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
@@ -74,6 +61,10 @@ pub struct AppState {
 
     /// Shared capture interval in milliseconds (atomic for thread safety)
     pub capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
+
+    /// Desired capture monitor indices (`[]` = all monitors). Updating settings
+    /// sends the new selection here so the capture engine can reconfigure live.
+    pub monitor_config_tx: tokio::sync::watch::Sender<Vec<usize>>,
 
     /// Local LLM server (auto-managed llama-server process)
     pub llama_server: Arc<RwLock<Option<Arc<LlamaServer>>>>,
@@ -90,12 +81,14 @@ impl AppState {
         db: DatabaseManager,
         automation: AutomationEngine,
         capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
+        monitor_config_tx: tokio::sync::watch::Sender<Vec<usize>>,
     ) -> Self {
         Self {
             db: Arc::new(db),
             automation: Arc::new(automation),
             embedding_engine: Arc::new(RwLock::new(None)),
             capture_interval_ms,
+            monitor_config_tx,
             llama_server: Arc::new(RwLock::new(None)),
             download_progress: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -103,7 +96,7 @@ impl AppState {
 
     /// Get or initialize the embedding engine
     pub async fn get_embedding_engine(&self) -> Result<Arc<EmbeddingEngine>, String> {
-        // Check if already initialized
+        // Fast path: already initialized.
         {
             let guard = self.embedding_engine.read().await;
             if let Some(engine) = guard.as_ref() {
@@ -111,22 +104,35 @@ impl AppState {
             }
         }
 
-        // Initialize the engine
-        let engine = EmbeddingEngine::new().await.map_err(|e| e.to_string())?;
-        let engine_arc = Arc::new(engine);
-
-        // Store it
-        {
-            let mut guard = self.embedding_engine.write().await;
-            *guard = Some(Arc::clone(&engine_arc));
+        // Slow path: hold the write lock across initialization so that
+        // concurrent first-use callers serialize here instead of racing to
+        // build and health-check duplicate engines. Re-check inside the write
+        // lock in case another task initialized while we waited for it.
+        let mut guard = self.embedding_engine.write().await;
+        if let Some(engine) = guard.as_ref() {
+            return Ok(Arc::clone(engine));
         }
+
+        let engine = EmbeddingEngine::new().await.map_err(|e| e.to_string())?;
+        engine.health_check().await.map_err(|e| e.to_string())?;
+        self.db
+            .ensure_embedding_model(
+                engine.provider(),
+                engine.model(),
+                engine.model_version(),
+                EMBEDDING_DIM,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let engine_arc = Arc::new(engine);
+        *guard = Some(Arc::clone(&engine_arc));
 
         Ok(engine_arc)
     }
 
     /// Get or initialize the LlamaServer
     pub async fn get_llama_server(&self) -> Result<Arc<LlamaServer>, String> {
-        use screensearch_llm::{LlamaServerConfig, get_model_path, get_models_dir};
+        use screensearch_llm::{get_model_path, get_models_dir, LlamaServerConfig};
 
         // Check if already initialized
         {

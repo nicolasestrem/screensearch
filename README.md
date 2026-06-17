@@ -23,9 +23,9 @@
 
 <br/>
 
-### [>] [**Download Latest Release (v0.4.1)**](https://github.com/nicolasestrem/screensearch/releases/latest)
+### [>] [**Download Latest Release (v0.4.35)**](https://github.com/nicolasestrem/screensearch/releases/latest)
 
-**Windows 10/11** • **11MB** • **No installation required** • **Just extract and run**
+**Windows 10/11** • **Local-first** • **Quality models downloaded on demand**
 
 > **Note for Linux Users:** This project now supports Linux for **UI development and backend logic**, with Windows-specific features (OCR, Automation) stubbed out. See [Developer Guide](docs/developer-guide.md) for details.
 
@@ -64,9 +64,9 @@
 - [*] **Editorial Brutalist UI** — Premium Minimalist "Paper & Ink" design system with light and dark mode, sharp edges, and elegant typography
 - [*] **AI-First Dashboard** — "Intel Dash" with Daily Digest, Memory Status gauge, and Productivity Pulse charts
 - [*] **Continuous Screen Capture** — Configurable intervals (2-5 seconds) with multi-monitor support
-- [*] **OCR Text Extraction** — Windows OCR API with bounding box coordinates and confidence scores
+- [*] **OCR Text Extraction** — PP-OCRv5 with confidence, language, orientation, bounding boxes, and Windows OCR fallback
 - [*] **AI-Powered Intelligence** — Generate insights from your screen history using local LLMs (Ollama, LM Studio) or cloud providers (OpenAI)
-- [*] **Hybrid Search** — Combines FTS5 (Sparse) and Vector Embeddings (Dense) for semantic understanding
+- [*] **Hybrid Search** — Fuses FTS5 and sqlite-vec retrieval with Qwen3 reranking
 - [*] **Smart Search** — Conversational AI answers with context from your screen history
 - [*] **REST API** — 27 endpoints for search, automation, and tag management on localhost:3131
 - [*] **UI Automation** — Programmatic control of Windows applications via accessibility APIs
@@ -182,7 +182,7 @@ Fine-tune every aspect of ScreenSearch with comprehensive, intuitive settings pa
 #### Embeddings & Semantic Search
 <div align="center">
   <img src="screenshots/settings-embeddings.png" width="65%" alt="Embeddings settings - Enable semantic search, batch processing">
-  <p><em>Enable AI-powered semantic search with local ONNX models, configure batch sizes, tune hybrid search weighting</em></p>
+  <p><em>Run local Qwen3 embeddings and reranking through the managed quality sidecar, with explicit health and reindex status</em></p>
 </div>
 
 #### Data Management
@@ -216,10 +216,12 @@ Powerful logging and diagnostics. Watch ScreenSearch initialize, start capture l
 
 ### Prerequisites
 
-- **Windows 10/11** — Ensure Windows OCR Language Pack is installed (Settings → Language → English)
+- **Windows 10/11** — Production platform for capture, automation, and the Windows OCR fallback
+- **Up to 5 GB free disk space** — PP-OCRv5 and Qwen model preparation
 - **Rust 1.70+** — Install from [rustup.rs](https://rustup.rs/)
 - **Visual Studio Build Tools** — Required for native compilation ([download](https://visualstudio.microsoft.com/downloads/))
-- **Node.js 18+** — For the web UI (optional, only if using the dashboard)
+- **Node.js 22+** — Required to rebuild the embedded dashboard
+- **Python 3.12** — Required only when building the quality sidecar from source
 
 ### Installation & Setup
 
@@ -230,12 +232,21 @@ Powerful logging and diagnostics. Watch ScreenSearch initialize, start capture l
 git clone https://github.com/nicolasestrem/screensearch.git
 cd screensearch
 
-# Build the project
-cargo build --release
+# Build the native Linux development bundle, including the AI sidecar
+./scripts/build-local.sh --release
 
-# Run ScreenSearch (starts API on localhost:3131)
-cargo run --release
+# Run the assembled Linux app (starts API on localhost:3131)
+./target/release/screensearch-local/screensearch
 ```
+
+The Linux bundle is for development. Windows releases are prepared from Linux
+with `./scripts/build-release.sh <version>` and packaged by the Windows GitHub
+Actions runner after the version tag is published.
+
+After launching a bundled build, use **Settings > Data & AI > Download /
+verify** before enabling indexing. This warms the serialized PP-OCRv5, Qwen3
+embedding, and Qwen3 reranking loaders and avoids first-request model download
+latency.
 
 #### Cross-Compilation from Linux
 
@@ -247,8 +258,8 @@ cargo install cargo-xwin
 rustup target add x86_64-pc-windows-msvc
 sudo apt-get install -y clang lld llvm  # Ubuntu/Debian
 
-# Build Windows executable from Linux
-cargo xwin build --release --target x86_64-pc-windows-msvc
+# Validate and build the Windows executable from Linux
+./scripts/build-release.sh 0.4.35
 
 # Binary will be at: target/x86_64-pc-windows-msvc/release/screensearch.exe
 ```
@@ -260,8 +271,8 @@ cargo xwin build --release --target x86_64-pc-windows-msvc
 Launch the beautiful web interface to visualize and manage your captures:
 
 ```bash
-cd screen-ui
-npm install
+cd screensearch-ui
+npm ci
 npm run dev
 # Open http://localhost:5173 in your browser
 ```
@@ -330,22 +341,16 @@ You can verify the safety of the binary:
 ```
 screensearch/
 ├── src/main.rs                 # Application entry point and orchestration
-├── screen-capture/             # Screen capture engine and OCR pipeline
-│   ├── src/capture.rs         # Frame capture with ffmpeg-sidecar
-│   ├── src/ocr.rs             # Windows OCR API integration
-│   └── src/frame_diff.rs       # Zero-copy frame differencing
-├── screen-db/                  # SQLite database with FTS5 search
-│   ├── src/queries.rs         # SQL queries and migrations
-│   └── src/migrations/        # Schema versioning
-├── screen-api/                 # REST API server (Axum framework)
+├── screensearch-capture/       # Capture, PP-OCR client, Windows fallback
+├── screensearch-db/            # SQLite, FTS5, sqlite-vec, migrations
+├── screensearch-embeddings/    # Qwen sidecar client and model contract
+├── screensearch-api/           # REST API server (Axum framework)
 │   ├── src/routes.rs          # API endpoint definitions
-│   ├── src/handlers/          # Request handlers
-│   │   ├── ai.rs              # AI intelligence endpoints
-│   │   └── ...                # Other handlers
-├── screen-automation/          # Windows UI automation engine
-│   ├── src/engine.rs          # Automation orchestration
-│   └── src/element.rs         # Element detection and interaction
-├── screen-ui/                  # Modern React web dashboard
+│   └── src/handlers/          # Search, embeddings, RAG, generation
+├── screensearch-automation/    # Windows UI automation engine
+├── sidecar/                    # PP-OCRv5 and Qwen3 inference service
+├── evaluation/                 # Versioned retrieval quality cases
+├── screensearch-ui/            # Modern React web dashboard
 │   ├── src/components/        # UI components (Timeline, Search, Settings)
 │   ├── src/pages/             # Main pages (Intelligence, Timeline)
 │   └── src/api/               # Frontend API client (including AI endpoints)
@@ -368,7 +373,7 @@ ScreenSearch is optimized for efficiency and speed:
 |--------|--------|--------|--------|
 | **OCR Processing** | < 100 ms | **70-80 ms** | [OK] Fast |
 | **API Response** | < 100 ms | ~50 ms | [OK] 2x faster |
-| **Vector Search** | < 200 ms | **150 ms** | [OK] In-Memory Optimized |
+| **Vector Search** | Dataset-dependent | sqlite-vec KNN + Qwen reranking | Evaluate locally |
 | **Test Coverage** | 100% | 59/59 passing | [OK] Complete |
 
 ### Recent Performance Optimizations
@@ -381,7 +386,9 @@ ScreenSearch is optimized for efficiency and speed:
 
 **[+] Search Security** — FTS5 query sanitization prevents injection attacks while correctly handling special characters (`C++`, `$100`, etc.).
 
-**[+] In-Memory Vector Search** — Bypasses SQLite extension limitations by effectively managing embeddings in Rust memory, enabling robust semantic search on Windows.
+**[+] Persistent Vector Search** — sqlite-vec performs KNN retrieval without loading every embedding into Rust memory. Reciprocal Rank Fusion combines lexical and semantic candidates before Qwen3 reranking.
+
+See [AI Quality Stack](docs/ai-quality-stack.md) for model sizes, fallback behavior, evaluation, and packaging details.
 
 ---
 
@@ -395,28 +402,28 @@ ScreenSearch is optimized for efficiency and speed:
 
 ```bash
 # Search for any text captured on your screen
-curl "http://localhost:3131/search?q=meeting&limit=10"
+curl "http://localhost:3131/api/search/?q=meeting&mode=hybrid&limit=10"
 
 # Search with filters (timestamp, application name, etc.)
-curl "http://localhost:3131/search?q=meeting&app=Chrome&start=2025-12-10"
+curl "http://localhost:3131/api/search/?q=meeting&app=Chrome&start_time=2026-06-14T00:00:00Z"
 ```
 
 ### Generate AI Intelligence Reports
 
 ```bash
 # Test your AI provider connection
-curl -X POST http://localhost:3131/ai/validate \
+curl -X POST http://localhost:3131/api/ai/validate \
   -H "Content-Type: application/json" \
   -d '{"provider_url":"http://localhost:11434/v1","model":"llama3"}'
 
 # Generate a daily activity summary
-curl -X POST http://localhost:3131/ai/generate \
+curl -X POST http://localhost:3131/api/ai/generate \
   -H "Content-Type: application/json" \
   -d '{
     "provider_url": "http://localhost:11434/v1",
     "model": "llama3",
-    "start_time": "2025-12-10T00:00:00Z",
-    "end_time": "2025-12-11T00:00:00Z",
+    "start_time": "2026-06-14T00:00:00Z",
+    "end_time": "2026-06-15T00:00:00Z",
     "prompt": "Summarize my work activity"
   }'
 ```
@@ -425,22 +432,22 @@ curl -X POST http://localhost:3131/ai/generate \
 
 ```bash
 # Click at specific coordinates
-curl -X POST http://localhost:3131/automation/click \
+curl -X POST http://localhost:3131/api/automation/click \
   -H "Content-Type: application/json" \
   -d '{"x":100,"y":200,"button":"left"}'
 
 # Type text programmatically
-curl -X POST http://localhost:3131/automation/type \
+curl -X POST http://localhost:3131/api/automation/type \
   -H "Content-Type: application/json" \
   -d '{"text":"Hello, World!"}'
 
 # Find UI elements by accessibility patterns
-curl -X POST http://localhost:3131/automation/find-elements \
+curl -X POST http://localhost:3131/api/automation/find-elements \
   -H "Content-Type: application/json" \
   -d '{"role":"Button","name":"Submit"}'
 ```
 
-See the [API Reference](docs/api-reference.md) for all 27 endpoints.
+See the [API Reference](docs/api-reference.md) for the current route tree.
 
 ---
 

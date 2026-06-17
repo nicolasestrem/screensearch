@@ -31,11 +31,33 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
     apply_migration(pool, "001_initial_schema", MIGRATION_001_INITIAL).await?;
     apply_migration(pool, "002_settings_table", MIGRATION_002_SETTINGS).await?;
     apply_migration(pool, "003_embeddings_table", MIGRATION_003_EMBEDDINGS).await?;
-    apply_migration(pool, "004_add_embedding_column", MIGRATION_004_ADD_EMBEDDING_COLUMN).await?;
+    apply_migration(
+        pool,
+        "004_add_embedding_column",
+        MIGRATION_004_ADD_EMBEDDING_COLUMN,
+    )
+    .await?;
     apply_migration(pool, "005_vision_analysis", MIGRATION_005_VISION).await?;
     apply_migration(pool, "006_api_key", MIGRATION_006_API_KEY).await?;
-    apply_migration(pool, "007_reset_vision_defaults", MIGRATION_007_RESET_VISION_DEFAULTS).await?;
-    apply_migration(pool, "008_performance_indexes", MIGRATION_008_PERFORMANCE_INDEXES).await?;
+    apply_migration(
+        pool,
+        "007_reset_vision_defaults",
+        MIGRATION_007_RESET_VISION_DEFAULTS,
+    )
+    .await?;
+    apply_migration(
+        pool,
+        "008_performance_indexes",
+        MIGRATION_008_PERFORMANCE_INDEXES,
+    )
+    .await?;
+    apply_migration(pool, "009_quality_rag", MIGRATION_009_QUALITY_RAG).await?;
+    apply_migration(
+        pool,
+        "010_unique_embedding_chunks",
+        MIGRATION_010_UNIQUE_EMBEDDING_CHUNKS,
+    )
+    .await?;
 
     tracing::info!("All migrations completed successfully");
     Ok(())
@@ -266,6 +288,52 @@ const MIGRATION_004_ADD_EMBEDDING_COLUMN: &str = r#"
 ALTER TABLE embeddings ADD COLUMN embedding BLOB;
 -- Clear existing data to force re-processing with actual vectors
 DELETE FROM embeddings;
+"#;
+
+/// Versioned embeddings and a persistent sqlite-vec index.
+const MIGRATION_009_QUALITY_RAG: &str = r#"
+ALTER TABLE embeddings ADD COLUMN provider TEXT NOT NULL DEFAULT 'legacy';
+ALTER TABLE embeddings ADD COLUMN model TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE embeddings ADD COLUMN model_version TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE embeddings ADD COLUMN content_hash TEXT NOT NULL DEFAULT '';
+
+-- Existing 384-dimensional vectors are incompatible with the fixed
+-- Qwen3 1024-dimensional contract. Clear them and require a full reindex.
+DELETE FROM embeddings;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS embedding_vectors USING vec0(
+    embedding_id INTEGER PRIMARY KEY,
+    embedding float[1024] distance_metric=cosine
+);
+
+CREATE TRIGGER IF NOT EXISTS embeddings_vector_delete
+AFTER DELETE ON embeddings BEGIN
+    DELETE FROM embedding_vectors WHERE embedding_id = old.id;
+END;
+
+INSERT OR REPLACE INTO metadata (key, value) VALUES
+    ('embeddings_model', 'Qwen/Qwen3-Embedding-0.6B'),
+    ('embeddings_provider', 'quality-sidecar'),
+    ('embeddings_model_version', 'main'),
+    ('embeddings_dimension', '1024'),
+    ('embeddings_last_processed_frame_id', '0'),
+    ('embeddings_reindex_required', 'true');
+"#;
+
+/// Prevent concurrent or repeated indexing from duplicating frame chunks.
+const MIGRATION_010_UNIQUE_EMBEDDING_CHUNKS: &str = r#"
+-- Keep the oldest row if an earlier build created duplicate frame chunks.
+-- The delete trigger removes the corresponding sqlite-vec rows.
+DELETE FROM embeddings
+WHERE id NOT IN (
+    SELECT MIN(id)
+    FROM embeddings
+    GROUP BY frame_id, chunk_index
+);
+
+DROP INDEX IF EXISTS idx_embeddings_chunk;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_embeddings_frame_chunk
+ON embeddings(frame_id, chunk_index);
 "#;
 
 /// Migration 005 - Vision Analysis Support

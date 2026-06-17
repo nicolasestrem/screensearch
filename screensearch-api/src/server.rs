@@ -45,6 +45,7 @@ impl ApiServer {
     pub async fn new(
         config: ApiConfig,
         capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
+        monitor_config_tx: tokio::sync::watch::Sender<Vec<usize>>,
     ) -> anyhow::Result<Self> {
         tracing::info!("Initializing API server at {}:{}", config.host, config.port);
 
@@ -62,7 +63,12 @@ impl ApiServer {
         tracing::info!("Automation engine initialized");
 
         // Create application state
-        let state = Arc::new(AppState::new(db, automation, capture_interval_ms));
+        let state = Arc::new(AppState::new(
+            db,
+            automation,
+            capture_interval_ms,
+            monitor_config_tx,
+        ));
 
         Ok(Self { config, state })
     }
@@ -144,22 +150,41 @@ impl ApiServer {
             return Ok(());
         }
 
-        tracing::info!("Initializing embedding engine for background worker...");
-        
-        // Force initialization of embedding engine
-        let engine = self.state.get_embedding_engine().await
-            .map_err(|e| anyhow::anyhow!("Failed to initialize embedding engine: {}", e))?;
-
-        tracing::info!("Starting background embedding worker...");
-        
-        // Spawn worker
-        crate::workers::embedding_worker::spawn_embedding_worker(
-            std::sync::Arc::clone(&self.state.db),
-            engine,
-            config,
-        );
+        let state = Arc::clone(&self.state);
+        tokio::spawn(async move {
+            loop {
+                match state.get_embedding_engine().await {
+                    Ok(engine) => {
+                        tracing::info!("Starting background embedding worker");
+                        let worker = crate::workers::embedding_worker::EmbeddingWorker::new(
+                            Arc::clone(&state.db),
+                            engine,
+                            config,
+                        );
+                        worker.run().await;
+                        break;
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            "Quality sidecar unavailable; retrying embedding worker startup: {}",
+                            error
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    }
+                }
+            }
+        });
 
         Ok(())
+    }
+
+    /// Synchronize the startup configuration with the runtime metadata toggle.
+    pub async fn set_embeddings_enabled(&self, enabled: bool) -> anyhow::Result<()> {
+        self.state
+            .db
+            .set_metadata("embeddings_enabled", if enabled { "true" } else { "false" })
+            .await
+            .map_err(|error| anyhow::anyhow!("Failed to update embedding state: {error}"))
     }
 }
 

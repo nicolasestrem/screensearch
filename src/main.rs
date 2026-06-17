@@ -12,6 +12,8 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
 use tokio::signal;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
@@ -19,12 +21,14 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 // Import workspace crates
 use screensearch_api::{ApiConfig, ApiServer};
-use screensearch_capture::{CaptureConfig, CaptureEngine, OcrProcessor, OcrProcessorConfig};
+use screensearch_capture::{
+    CaptureConfig, CaptureEngine, DiffMethod, OcrProcessor, OcrProcessorConfig,
+};
 use screensearch_db::{DatabaseConfig, DatabaseManager};
 
 // Version and update checking modules
-mod version;
 mod update_checker;
+mod version;
 
 /// Application configuration loaded from config.toml
 #[derive(Debug, Clone, Deserialize)]
@@ -49,13 +53,6 @@ fn default_embeddings_settings() -> EmbeddingsSettings {
     EmbeddingsSettings {
         enabled: false,
         batch_size: 50,
-        model: "local".to_string(),
-        model_name: "paraphrase-multilingual-MiniLM-L12-v2".to_string(),
-        embedding_dim: 384,
-        max_chunk_tokens: 256,
-        chunk_overlap: 32,
-        hybrid_search_alpha: 0.3,
-        max_context_chunks: 20,
     }
 }
 
@@ -71,17 +68,40 @@ struct CaptureSettings {
     interval_ms: u64,
     enable_frame_diff: bool,
     diff_threshold: f32,
+    #[serde(default = "default_diff_method")]
+    diff_method: String,
     max_frames_buffer: usize,
     monitor_indices: Vec<usize>,
     include_cursor: bool,
     draw_border: bool,
 }
 
+fn default_diff_method() -> String {
+    "pixel".to_string()
+}
+
+/// Map the `diff_method` config string to a `DiffMethod`. Unknown values fall
+/// back to `Pixel`, whose semantics match the default `diff_threshold`.
+fn parse_diff_method(value: &str) -> DiffMethod {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "histogram" => DiffMethod::Histogram,
+        "ssim" => DiffMethod::Ssim,
+        _ => DiffMethod::Pixel,
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct OcrSettings {
-    /// OCR engine selection (feature pending - currently uses Windows OCR only)
-    #[allow(dead_code)]
+    /// OCR engine selection: `ppocr-v5` or `windows`.
     engine: String,
+    #[serde(default = "default_sidecar_url")]
+    sidecar_url: String,
+    #[serde(default = "default_sidecar_token_env")]
+    sidecar_token_env: String,
+    #[serde(default = "default_ocr_language")]
+    language: String,
+    #[serde(default = "default_true")]
+    fallback_to_windows: bool,
     min_confidence: f32,
     worker_threads: usize,
     max_retries: u32,
@@ -90,6 +110,22 @@ struct OcrSettings {
     channel_buffer_size: usize,
     enable_metrics: bool,
     metrics_interval_secs: u64,
+}
+
+fn default_sidecar_url() -> String {
+    "http://127.0.0.1:3132".to_string()
+}
+
+fn default_sidecar_token_env() -> String {
+    "SCREENSEARCH_AI_SIDECAR_TOKEN".to_string()
+}
+
+fn default_ocr_language() -> String {
+    "en".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -151,20 +187,6 @@ struct LoggingSettings {
 struct EmbeddingsSettings {
     enabled: bool,
     batch_size: i64,
-    #[allow(dead_code)]
-    model: String,
-    #[allow(dead_code)]
-    model_name: String,
-    #[allow(dead_code)]
-    embedding_dim: usize,
-    #[allow(dead_code)]
-    max_chunk_tokens: usize,
-    #[allow(dead_code)]
-    chunk_overlap: usize,
-    #[allow(dead_code)]
-    hybrid_search_alpha: f32,
-    #[allow(dead_code)]
-    max_context_chunks: usize,
 }
 
 impl Default for AppConfig {
@@ -174,13 +196,18 @@ impl Default for AppConfig {
                 interval_ms: 3000,
                 enable_frame_diff: true,
                 diff_threshold: 0.006,
+                diff_method: default_diff_method(),
                 max_frames_buffer: 30,
                 monitor_indices: Vec::new(),
                 include_cursor: true,
                 draw_border: false,
             },
             ocr: OcrSettings {
-                engine: "windows".to_string(),
+                engine: "ppocr-v5".to_string(),
+                sidecar_url: default_sidecar_url(),
+                sidecar_token_env: default_sidecar_token_env(),
+                language: default_ocr_language(),
+                fallback_to_windows: true,
                 min_confidence: 0.7,
                 worker_threads: 2,
                 max_retries: 3,
@@ -261,6 +288,7 @@ impl AppConfig {
             monitor_indices: self.capture.monitor_indices.clone(),
             enable_frame_diff: self.capture.enable_frame_diff,
             diff_threshold: self.capture.diff_threshold,
+            diff_method: parse_diff_method(&self.capture.diff_method),
             max_frames_buffer: self.capture.max_frames_buffer,
             include_cursor: self.capture.include_cursor,
             draw_border: self.capture.draw_border,
@@ -270,6 +298,11 @@ impl AppConfig {
     /// Convert to OcrProcessorConfig
     fn ocr_config(&self) -> OcrProcessorConfig {
         OcrProcessorConfig {
+            provider: self.ocr.engine.clone(),
+            sidecar_url: self.ocr.sidecar_url.clone(),
+            sidecar_token: std::env::var(&self.ocr.sidecar_token_env).ok(),
+            language: self.ocr.language.clone(),
+            fallback_to_windows: self.ocr.fallback_to_windows,
             min_confidence: self.ocr.min_confidence,
             worker_threads: self.ocr.worker_threads,
             max_retries: self.ocr.max_retries,
@@ -295,7 +328,10 @@ impl AppConfig {
                     warn!("Could not create AppData directory: {}", e);
                     self.database.path.clone()
                 } else {
-                    app_dir.join(&self.database.path).to_string_lossy().to_string()
+                    app_dir
+                        .join(&self.database.path)
+                        .to_string_lossy()
+                        .to_string()
                 }
             } else {
                 warn!("Could not determine AppData directory, using relative path");
@@ -324,7 +360,9 @@ impl AppConfig {
 }
 
 /// Initialize tracing/logging subsystem
-fn init_tracing(config: &LoggingSettings) -> Result<Option<tracing_appender::non_blocking::WorkerGuard>> {
+fn init_tracing(
+    config: &LoggingSettings,
+) -> Result<Option<tracing_appender::non_blocking::WorkerGuard>> {
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
     let env_filter =
@@ -397,8 +435,14 @@ fn init_tracing(config: &LoggingSettings) -> Result<Option<tracing_appender::non
             .with(file_layer)
             .init();
 
-        info!("File logging enabled: {:?}", log_dir.join(format!("{}.log", log_filename)));
-        info!("Log rotation: {} files, daily rotation", config.log_rotation_count);
+        info!(
+            "File logging enabled: {:?}",
+            log_dir.join(format!("{}.log", log_filename))
+        );
+        info!(
+            "Log rotation: {} files, daily rotation",
+            config.log_rotation_count
+        );
 
         Ok(Some(guard))
     } else {
@@ -417,12 +461,12 @@ fn init_tracing(config: &LoggingSettings) -> Result<Option<tracing_appender::non
     }
 }
 
+use crossbeam::channel::Receiver;
 use tray_icon::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     TrayIconBuilder,
 };
 use winit::event_loop::{ControlFlow, EventLoop};
-use crossbeam::channel::Receiver;
 
 struct App {
     config: AppConfig,
@@ -448,7 +492,10 @@ impl App {
         }
     }
 
-    async fn run_with_signal(&self, mut external_shutdown: tokio::sync::mpsc::Receiver<()>) -> Result<()> {
+    async fn run_with_signal(
+        &self,
+        mut external_shutdown: tokio::sync::mpsc::Receiver<()>,
+    ) -> Result<()> {
         info!("Starting ScreenSearch v{}", env!("CARGO_PKG_VERSION"));
         info!("Configuration loaded: {:?}", self.config);
 
@@ -461,31 +508,59 @@ impl App {
                 .context("Failed to initialize database")?,
         );
 
+        let _quality_sidecar = ensure_quality_sidecar(&self.config.ocr).await;
+
         // Initialize OCR processor
         let ocr_config = self.config.ocr_config();
         let ocr_processor = Arc::new(OcrProcessor::new(ocr_config).await?);
 
-        // Initialize capture engine
-        let capture_config = self.config.capture_config();
+        // Load persisted runtime settings (monitor selection + capture interval)
+        // so a choice made in the UI survives restarts. These override the
+        // config.toml defaults. Empty/unparseable monitors means "all monitors".
+        let persisted_settings = db.get_settings().await.ok();
+        let initial_monitors: Vec<usize> = persisted_settings
+            .as_ref()
+            .and_then(|s| serde_json::from_str(&s.monitors).ok())
+            .unwrap_or_else(|| self.config.capture.monitor_indices.clone());
+        let initial_interval_ms = persisted_settings
+            .as_ref()
+            .map(|s| (s.capture_interval.max(1) as u64) * 1000)
+            .unwrap_or(self.config.capture.interval_ms);
+
+        // Initialize capture engine using the persisted monitor selection.
+        let mut capture_config = self.config.capture_config();
+        capture_config.monitor_indices = initial_monitors.clone();
+        // Base config (other capture fields) reused when the monitor set changes.
+        let base_capture_config = capture_config.clone();
         let mut capture_engine = CaptureEngine::new(capture_config)?;
 
         // Shared capture interval
-        let capture_interval_ms = Arc::new(AtomicU64::new(self.config.capture.interval_ms));
+        let capture_interval_ms = Arc::new(AtomicU64::new(initial_interval_ms));
+
+        // Channel that carries live monitor-selection changes to the capture task.
+        let (monitor_config_tx, mut monitor_config_rx) =
+            tokio::sync::watch::channel(initial_monitors);
 
         // Initialize API server with the same database path
         let api_config = self.config.api_config(&db_config.path);
-        let api_server = ApiServer::new(api_config.clone(), Arc::clone(&capture_interval_ms)).await?;
+        let api_server = ApiServer::new(
+            api_config.clone(),
+            Arc::clone(&capture_interval_ms),
+            monitor_config_tx,
+        )
+        .await?;
+        api_server
+            .set_embeddings_enabled(self.config.embeddings.enabled)
+            .await?;
 
-        // Start background embedding worker
-        if self.config.embeddings.enabled {
-             let worker_config = screensearch_api::workers::embedding_worker::EmbeddingWorkerConfig {
-                enabled: true,
-                batch_size: self.config.embeddings.batch_size,
-                interval_secs: 60,
-            };
-            if let Err(e) = api_server.start_embedding_worker(worker_config).await {
-                error!("Failed to start embedding worker: {}", e);
-            }
+        // Keep the worker alive so the API toggle can enable indexing later.
+        let worker_config = screensearch_api::workers::embedding_worker::EmbeddingWorkerConfig {
+            enabled: true,
+            batch_size: self.config.embeddings.batch_size,
+            interval_secs: 60,
+        };
+        if let Err(e) = api_server.start_embedding_worker(worker_config).await {
+            warn!("Embedding worker is waiting for the quality sidecar: {}", e);
         }
 
         // Start vision analysis worker
@@ -493,11 +568,11 @@ impl App {
 
         let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(100);
         let (processed_tx, mut processed_rx) = tokio::sync::mpsc::channel(100);
-        
+
         let app_config_clone = self.config.clone();
         let db_clone = Arc::clone(&db);
         let ocr_clone = Arc::clone(&ocr_processor);
-        
+
         let mut shutdown_rx1 = self.shutdown_tx.subscribe();
         let mut shutdown_rx2 = self.shutdown_tx.subscribe();
         let mut shutdown_rx3 = self.shutdown_tx.subscribe();
@@ -509,13 +584,37 @@ impl App {
         let capture_handle = tokio::spawn(async move {
             let mut current_interval_ms = capture_interval_clone.load(Ordering::Relaxed);
             // Ensure minimum interval of 500ms
-            if current_interval_ms < 500 { current_interval_ms = 500; }
-            
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(current_interval_ms));
+            if current_interval_ms < 500 {
+                current_interval_ms = 500;
+            }
+
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_millis(current_interval_ms));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            // Mark the initial monitor selection as seen so `changed()` only fires
+            // on real updates, not once at startup.
+            monitor_config_rx.borrow_and_update();
 
             loop {
                 tokio::select! {
+                    _ = monitor_config_rx.changed() => {
+                        let new_monitors = monitor_config_rx.borrow_and_update().clone();
+                        info!("Reconfiguring capture for monitors: {:?}", new_monitors);
+                        // Stop the current engine; its detached per-monitor threads
+                        // exit on their next loop check and drain into the queue we
+                        // are about to drop. Build a fresh engine (new queue + flag).
+                        let _ = capture_engine.stop();
+                        let mut new_config = base_capture_config.clone();
+                        new_config.monitor_indices = new_monitors;
+                        match CaptureEngine::new(new_config) {
+                            Ok(mut engine) => match engine.start() {
+                                Ok(()) => capture_engine = engine,
+                                Err(e) => error!("Failed to restart capture engine: {}", e),
+                            },
+                            Err(e) => error!("Failed to rebuild capture engine: {}", e),
+                        }
+                    }
                     _ = interval.tick() => {
                         // Check for interval update
                         let new_interval_ms = capture_interval_clone.load(Ordering::Relaxed);
@@ -529,8 +628,25 @@ impl App {
                              // First tick of new interval fires immediately, which is fine
                         }
 
+                        // Drain captured frames without ever blocking this select
+                        // loop. `send().await` would park here whenever OCR is
+                        // backed up (the channel fills because a frame can take
+                        // tens of seconds on CPU), and a parked loop cannot react
+                        // to monitor reconfiguration or shutdown — which makes
+                        // toggling a monitor appear to freeze capture entirely.
+                        // `try_send` instead applies backpressure by leaving
+                        // frames in the engine queue (which drops oldest when
+                        // full), so the loop stays responsive.
                         while let Some(frame) = capture_engine.try_get_frame() {
-                           if frame_tx.send(frame).await.is_err() { break; }
+                           use tokio::sync::mpsc::error::TrySendError;
+                           match frame_tx.try_send(frame) {
+                               Ok(()) => {}
+                               // OCR not keeping up: stop draining this tick and
+                               // retry next tick; surplus frames age out of the
+                               // capture queue rather than blocking reconfig.
+                               Err(TrySendError::Full(_)) => break,
+                               Err(TrySendError::Closed(_)) => break,
+                           }
                         }
                     }
                     _ = shutdown_rx1.recv() => {
@@ -542,7 +658,9 @@ impl App {
         });
 
         let ocr_handle = ocr_clone.start_processing(frame_rx, processed_tx);
-        let ocr_shutdown = tokio::spawn(async move { let _ = shutdown_rx2.recv().await; });
+        let ocr_shutdown = tokio::spawn(async move {
+            let _ = shutdown_rx2.recv().await;
+        });
 
         let db_handle = tokio::spawn(async move {
             loop {
@@ -559,21 +677,23 @@ impl App {
         });
 
         let api_handle = tokio::spawn(async move {
-            if let Err(e) = api_server.run().await { error!("{}", e); }
-             let _ = shutdown_rx4.recv().await;
+            if let Err(e) = api_server.run().await {
+                error!("{}", e);
+            }
+            let _ = shutdown_rx4.recv().await;
         });
-        
+
         let mut shutdown_rx6 = self.shutdown_tx.subscribe();
         tokio::spawn(async move {
-             let _ = shutdown_rx6.recv().await;
+            let _ = shutdown_rx6.recv().await;
         });
 
         if self.config.api.auto_open_browser {
-             let url = format!("http://{}:{}", api_config.host, api_config.port);
-             tokio::spawn(async move {
+            let url = format!("http://{}:{}", api_config.host, api_config.port);
+            tokio::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                 let _ = webbrowser::open(&url);
-             });
+            });
         }
 
         // Check for updates in background
@@ -602,12 +722,148 @@ impl App {
         // We just need to ensure the shutdown broadcast is sent.
 
         let _ = self.shutdown_tx.send(());
-        let _ = tokio::join!(capture_handle, ocr_handle, ocr_shutdown, db_handle, api_handle);
+        let _ = tokio::join!(
+            capture_handle,
+            ocr_handle,
+            ocr_shutdown,
+            db_handle,
+            api_handle
+        );
 
         info!("All services stopped. Shutdown complete.");
 
         Ok(())
     }
+}
+
+async fn ensure_quality_sidecar(settings: &OcrSettings) -> Option<Child> {
+    if settings.engine == "windows" {
+        return None;
+    }
+
+    std::env::set_var("SCREENSEARCH_AI_SIDECAR_URL", &settings.sidecar_url);
+    let token = std::env::var(&settings.sidecar_token_env).unwrap_or_else(|_| {
+        let token = uuid::Uuid::new_v4().to_string();
+        std::env::set_var(&settings.sidecar_token_env, &token);
+        token
+    });
+    std::env::set_var("SCREENSEARCH_AI_SIDECAR_TOKEN", &token);
+
+    let client = reqwest::Client::new();
+    let health_url = format!("{}/health", settings.sidecar_url.trim_end_matches('/'));
+    if let Ok(response) = client.get(&health_url).bearer_auth(&token).send().await {
+        if response.status().is_success() {
+            info!("Using an existing ScreenSearch quality sidecar");
+            return None;
+        }
+    }
+
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))?;
+    let filename = if cfg!(windows) {
+        "screensearch-ai-sidecar.exe"
+    } else {
+        "screensearch-ai-sidecar"
+    };
+    let mut candidates = vec![
+        exe_dir.join(filename),
+        exe_dir.join("bin").join(filename),
+        exe_dir.join("screensearch-ai-sidecar").join(filename),
+        exe_dir
+            .join("bin")
+            .join("screensearch-ai-sidecar")
+            .join(filename),
+    ];
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(
+            current_dir
+                .join("sidecar")
+                .join("dist")
+                .join("screensearch-ai-sidecar")
+                .join(filename),
+        );
+    }
+    let manifest_sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("sidecar")
+        .join("dist")
+        .join("screensearch-ai-sidecar")
+        .join(filename);
+    if manifest_sidecar.exists() {
+        candidates.push(manifest_sidecar);
+    }
+    let sidecar_path = candidates.iter().find(|path| path.exists()).cloned();
+    let Some(sidecar_path) = sidecar_path else {
+        warn!(
+            "Quality sidecar binary not found; searched: {}. Run `./scripts/build-local.sh` for Linux development or use a packaged Windows release. Windows OCR fallback will be used",
+            candidates
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        return None;
+    };
+
+    let mut command = Command::new(sidecar_path);
+    command
+        .env("SCREENSEARCH_AI_SIDECAR_TOKEN", &token)
+        .kill_on_drop(true)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            warn!("Failed to start quality sidecar: {}", error);
+            return None;
+        }
+    };
+    if let Some(stdout) = child.stdout.take() {
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                info!("Quality sidecar: {}", line);
+            }
+        });
+    }
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                warn!("Quality sidecar: {}", line);
+            }
+        });
+    }
+
+    // Poll readiness in the background instead of blocking startup. The sidecar
+    // is a PyInstaller-bundled Python app whose cold start (unpack + torch/paddle
+    // import) can take 15-45s; blocking here would make the whole app unusable
+    // for that long. OCR and embeddings attach automatically once it reports
+    // healthy (Windows OCR is used as a fallback meanwhile). The spawned `child`
+    // is returned and kept alive by the caller; its `kill_on_drop(true)` tears
+    // the sidecar down on app exit, and the stderr task above surfaces crashes.
+    let readiness_client = client.clone();
+    let readiness_url = health_url.clone();
+    let readiness_token = token.clone();
+    tokio::spawn(async move {
+        for _ in 0..120 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if let Ok(response) = readiness_client
+                .get(&readiness_url)
+                .bearer_auth(&readiness_token)
+                .send()
+                .await
+            {
+                if response.status().is_success() {
+                    info!("ScreenSearch quality sidecar is ready");
+                    return;
+                }
+            }
+        }
+        warn!("Quality sidecar did not become ready within 60 seconds");
+    });
+
+    Some(child)
 }
 
 impl winit::application::ApplicationHandler for EventLoopState {
@@ -683,8 +939,8 @@ async fn store_processed_frame(
     processed: screensearch_capture::ProcessedFrame,
     config: &StorageSettings,
 ) -> Result<i64> {
-     use screensearch_db::{NewFrame, NewOcrText};
     use image::DynamicImage;
+    use screensearch_db::{NewFrame, NewOcrText};
 
     let mut image = DynamicImage::ImageRgba8(processed.frame.image.clone());
 
@@ -693,12 +949,13 @@ async fn store_processed_frame(
         let n_height = (image.height() as f64 * (n_width as f64 / image.width() as f64)) as u32;
         image = image.resize(n_width, n_height, image::imageops::FilterType::Lanczos3);
     }
-    
-    let (ext, format) = if config.format.to_lowercase() == "jpeg" || config.format.to_lowercase() == "jpg" {
-        ("jpg", image::ImageOutputFormat::Jpeg(config.jpeg_quality))
-    } else {
-        ("png", image::ImageOutputFormat::Png)
-    };
+
+    let (ext, format) =
+        if config.format.to_lowercase() == "jpeg" || config.format.to_lowercase() == "jpg" {
+            ("jpg", image::ImageOutputFormat::Jpeg(config.jpeg_quality))
+        } else {
+            ("png", image::ImageOutputFormat::Png)
+        };
 
     let timestamp_str = processed.frame.timestamp.format("%Y%m%d_%H%M%S_%3f");
     let image_filename = format!(
@@ -724,7 +981,9 @@ async fn store_processed_frame(
     }
 
     let mut file = std::fs::File::create(&image_path)?;
-    image.write_to(&mut file, format).context("Failed to save frame image")?;
+    image
+        .write_to(&mut file, format)
+        .context("Failed to save frame image")?;
 
     let new_frame = NewFrame {
         timestamp: processed.frame.timestamp,
@@ -752,6 +1011,9 @@ async fn store_processed_frame(
             text: region.text.clone(),
             text_json: Some(
                 serde_json::json!({
+                    "provider": processed.ocr_result.provider.clone(),
+                    "language": processed.ocr_result.language.clone(),
+                    "orientation_degrees": processed.ocr_result.orientation_degrees,
                     "confidence": region.confidence,
                     "x": region.x,
                     "y": region.y,
@@ -782,33 +1044,15 @@ fn main() -> Result<()> {
         .build()
         .context("Failed to build Tokio runtime")?;
 
-    let event_loop = EventLoop::new()
-        .context("Failed to build EventLoop")?;
+    let event_loop = EventLoop::new().context("Failed to build EventLoop")?;
 
     let tray_menu = Menu::new();
     let open_item = MenuItem::new("Open Interface", true, None);
     let quit_item = MenuItem::new("Quit ScreenSearch", true, None);
-    
+
     tray_menu.append_items(&[&open_item, &PredefinedMenuItem::separator(), &quit_item])?;
 
-    // Load icon from assets - try multiple locations for installed vs development
-    let icon_path = if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let installed_icon = exe_dir.join("assets").join("icon.png");
-            if installed_icon.exists() {
-                installed_icon
-            } else {
-                // Development fallback
-                PathBuf::from("assets/icon.png")
-            }
-        } else {
-            PathBuf::from("assets/icon.png")
-        }
-    } else {
-        PathBuf::from("assets/icon.png")
-    };
-
-    let icon = match image::open(&icon_path) {
+    let icon = match image::load_from_memory(include_bytes!("../assets/icon.png")) {
         Ok(img) => {
             let rgba = img.into_rgba8();
             let (width, height) = rgba.dimensions();
@@ -819,7 +1063,7 @@ fn main() -> Result<()> {
             })
         }
         Err(e) => {
-            error!("Failed to load icon from {:?}: {}", icon_path, e);
+            error!("Failed to load embedded tray icon: {}", e);
             // Fallback to white square
             tray_icon::Icon::from_rgba(vec![255u8; 4 * 32 * 32], 32, 32).unwrap()
         }
@@ -867,4 +1111,3 @@ fn main() -> Result<()> {
 
     Ok(())
 }
-

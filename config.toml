@@ -11,6 +11,12 @@ enable_frame_diff = true
 # Default 0.006 means skip if < 0.6% change
 diff_threshold = 0.006
 
+# Frame difference algorithm: "pixel" (default), "histogram", or "ssim".
+# "pixel" treats diff_threshold as the fraction of differing pixels, which is the
+# scale diff_threshold is calibrated for. "histogram" uses a different (much
+# smaller) scale and will skip almost every frame at the default threshold.
+diff_method = "pixel"
+
 # Maximum frames to buffer in memory
 max_frames_buffer = 30
 
@@ -32,8 +38,14 @@ jpeg_quality = 80
 max_width = 1920
 
 [ocr]
-# OCR engine: "windows" (Windows OCR API) or "tesseract"
-engine = "windows"
+# OCR engine: "ppocr-v5" (quality sidecar) or "windows"
+engine = "ppocr-v5"
+
+# Managed local AI sidecar. It remains loopback-only.
+sidecar_url = "http://127.0.0.1:3132"
+sidecar_token_env = "SCREENSEARCH_AI_SIDECAR_TOKEN"
+language = "en"
+fallback_to_windows = true
 
 # Minimum confidence threshold for storing OCR results (0.0 - 1.0)
 # Results below this threshold are discarded
@@ -163,30 +175,12 @@ max_log_size_mb = 100
 log_rotation_count = 5
 
 [embeddings]
-# Enable semantic search with embeddings for RAG-enhanced reports
+# Enable semantic search with embeddings for RAG-enhanced reports.
+# Embeddings run through the managed local quality sidecar
+# (Qwen/Qwen3-Embedding-0.6B, 1024-dim, sqlite-vec). The model identity,
+# dimension, and chunking are owned by the sidecar contract and are not
+# configurable here.
 enabled = false
-
-# Embedding model: "local" (bundled multilingual MiniLM) or "api" (use LLM provider)
-model = "local"
-
-# Model name for local embeddings
-model_name = "paraphrase-multilingual-MiniLM-L12-v2"
-
-# Embedding dimension (384 for MiniLM models)
-embedding_dim = 384
 
 # Batch size for background embedding generation
 batch_size = 50
-
-# Maximum text length per chunk (tokens)
-max_chunk_tokens = 256
-
-# Chunk overlap (tokens) for context preservation
-chunk_overlap = 32
-
-# Hybrid search weight (0.0 = all FTS5, 1.0 = all vector)
-# Default 0.3 means 70% FTS5, 30% vector similarity
-hybrid_search_alpha = 0.3
-
-# Maximum number of relevant chunks to include in LLM context
-max_context_chunks = 20

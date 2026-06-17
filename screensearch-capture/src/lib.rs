@@ -13,7 +13,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use screen_capture::{CaptureConfig, ScreenCapture};
+//! use screensearch_capture::{CaptureConfig, ScreenCapture};
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -21,7 +21,7 @@
 //!     let mut capture = ScreenCapture::new(config)?;
 //!
 //!     // Start capture loop
-//!     capture.start().await?;
+//!     capture.start(|_frame| Ok(())).await?;
 //!
 //!     Ok(())
 //! }
@@ -34,15 +34,18 @@ pub mod frame_diff;
 pub mod monitor;
 pub mod ocr;
 pub mod ocr_processor;
+mod ocr_provider;
+mod sidecar_ocr;
 pub mod window_context;
 
 pub use capture::{CaptureConfig, CaptureEngine, ScreenCapture};
-pub use frame_diff::FrameDiffer;
+pub use frame_diff::{DiffMethod, FrameDiffer};
 pub use monitor::MonitorInfo;
 pub use ocr::{OcrEngine, OcrResult, TextRegion};
 pub use ocr_processor::{
     OcrMetrics, OcrProcessor, OcrProcessorBuilder, OcrProcessorConfig, ProcessedFrame,
 };
+pub use ocr_provider::OcrProviderEngine;
 pub use window_context::WindowContext;
 
 /// Errors that can occur during screen capture operations

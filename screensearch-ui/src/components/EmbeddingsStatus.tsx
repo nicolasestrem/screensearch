@@ -1,10 +1,24 @@
 import { useState, useEffect } from 'react';
-import { Brain, RefreshCw, Check, X, AlertTriangle } from 'lucide-react';
+import { Brain, RefreshCw, Check, X, AlertTriangle, Download } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+
+interface ModelPreparationStatus {
+    state: 'idle' | 'preparing' | 'ready' | 'error';
+    current_component?: string;
+    ready_components: string[];
+    error?: string;
+}
 
 interface EmbeddingStatus {
     enabled: boolean;
     model: string;
+    provider: string;
+    model_version: string;
+    dimension: number;
+    reindex_required: boolean;
+    sidecar_ready: boolean;
+    model_preparation?: ModelPreparationStatus;
+    error?: string;
     total_frames: number;
     frames_with_embeddings: number;
     coverage_percent: number;
@@ -14,7 +28,9 @@ interface EmbeddingStatus {
 export function EmbeddingsStatus() {
     const [status, setStatus] = useState<EmbeddingStatus | null>(null);
     const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [generating, setGenerating] = useState(false);
+    const [preparingModels, setPreparingModels] = useState(false);
     const [selectedPercentage, setSelectedPercentage] = useState<25 | 50 | 100>(50);
 
     const fetchStatus = async () => {
@@ -24,9 +40,13 @@ export function EmbeddingsStatus() {
             if (response.ok) {
                 const data = await response.json();
                 setStatus(data);
+                setLoadError(null);
+            } else {
+                setLoadError(`Status request failed (${response.status})`);
             }
         } catch (error) {
             console.error('Failed to fetch embedding status:', error);
+            setLoadError(error instanceof Error ? error.message : 'Failed to load status');
         } finally {
             setLoading(false);
         }
@@ -35,6 +55,16 @@ export function EmbeddingsStatus() {
     useEffect(() => {
         fetchStatus();
     }, []);
+
+    useEffect(() => {
+        if (status?.model_preparation?.state !== 'preparing') {
+            setPreparingModels(false);
+            return;
+        }
+        setPreparingModels(true);
+        const timer = window.setInterval(fetchStatus, 2000);
+        return () => window.clearInterval(timer);
+    }, [status?.model_preparation?.state]);
 
     const toggleEnabled = async () => {
         if (!status) return;
@@ -67,18 +97,35 @@ export function EmbeddingsStatus() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ batch_size: batchSize }),
             });
-            if (response.ok) {
-                // Refresh status after generation
+            const data = await response.json();
+            if (response.ok && data.success) {
                 await fetchStatus();
-                toast.success(`Embedding generation triggered (${batchSize} frames)`);
+                toast.success(data.message);
             } else {
-                toast.error("Failed to start generation");
+                toast.error(data.message || data.error || "Failed to start generation");
             }
         } catch (error) {
             console.error('Failed to trigger generation:', error);
             toast.error("Failed to trigger generation");
         } finally {
             setGenerating(false);
+        }
+    };
+
+    const prepareModels = async () => {
+        try {
+            setPreparingModels(true);
+            const response = await fetch('/api/embeddings/models/prepare', { method: 'POST' });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to start model download');
+            }
+            await fetchStatus();
+            toast.success('Quality model download started');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to start model download';
+            toast.error(message);
+            setPreparingModels(false);
         }
     };
 
@@ -93,7 +140,27 @@ export function EmbeddingsStatus() {
         );
     }
 
-    if (!status) return null;
+    if (!status) {
+        if (loadError) {
+            return (
+                <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 text-sm flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0" />
+                    <div>
+                        <p className="font-medium text-destructive">Could not load AI status</p>
+                        <p className="text-xs text-muted-foreground mt-1">{loadError}</p>
+                        <button
+                            onClick={fetchStatus}
+                            className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-secondary hover:bg-accent text-xs"
+                        >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            Retry
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+        return null;
+    }
 
     const coverageColor = status.coverage_percent > 80
         ? 'text-green-500'
@@ -134,7 +201,7 @@ export function EmbeddingsStatus() {
                     <div className="text-sm">
                         <p className="font-medium text-yellow-500">Resource Intensive Feature</p>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            Enabling RAG runs a local AI model to embed screen text. This uses significant CPU (~20%) and RAM (~1GB) during processing.
+                            The quality profile downloads several GB of local OCR, embedding, and reranking models and may use GPU acceleration.
                         </p>
                     </div>
                 </div>
@@ -143,7 +210,64 @@ export function EmbeddingsStatus() {
                 <div className="text-sm">
                     <span className="text-muted-foreground">Model: </span>
                     <span className="font-mono">{status.model}</span>
+                    <span className="text-muted-foreground"> · {status.dimension}d · {status.model_version}</span>
                 </div>
+
+                {!status.sidecar_ready && (
+                    <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 text-sm">
+                        <p className="font-medium text-destructive">Quality runtime unavailable</p>
+                        <p className="text-xs text-muted-foreground mt-1">{status.error}</p>
+                        <p className="text-xs text-muted-foreground mt-2">
+                            A standalone EXE does not contain the AI runtime. Use a packaged Windows
+                            release, or build the native Linux development bundle with{' '}
+                            <span className="font-mono">scripts/build-local.sh</span>.
+                        </p>
+                    </div>
+                )}
+
+                {status.sidecar_ready && (
+                    <div className="border border-border rounded-lg p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <p className="text-sm font-medium">Quality models</p>
+                                <p className="text-xs text-muted-foreground">
+                                    PP-OCRv5, Qwen3 embeddings, and Qwen3 reranking
+                                </p>
+                            </div>
+                            <button
+                                onClick={prepareModels}
+                                disabled={preparingModels}
+                                className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-secondary hover:bg-accent text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {preparingModels
+                                    ? <RefreshCw className="h-4 w-4 animate-spin" />
+                                    : <Download className="h-4 w-4" />}
+                                {preparingModels ? 'Preparing...' : 'Download / verify'}
+                            </button>
+                        </div>
+                        {status.model_preparation?.state === 'preparing' && (
+                            <p className="text-xs text-muted-foreground">
+                                Preparing {status.model_preparation.current_component}. Downloads can take several minutes.
+                            </p>
+                        )}
+                        {status.model_preparation?.state === 'ready' && (
+                            <p className="text-xs text-green-500">
+                                All quality models are downloaded and initialized.
+                            </p>
+                        )}
+                        {status.model_preparation?.state === 'error' && (
+                            <p className="text-xs text-destructive">
+                                {status.model_preparation.error}
+                            </p>
+                        )}
+                    </div>
+                )}
+
+                {status.reindex_required && (
+                    <div className="bg-primary/10 border border-primary/30 rounded-lg p-3 text-sm">
+                        Existing vectors were created by another model and must be regenerated.
+                    </div>
+                )}
 
                 {/* Coverage Bar */}
                 <div>
@@ -189,7 +313,7 @@ export function EmbeddingsStatus() {
                                         setSelectedPercentage(percentage);
                                         triggerGeneration(percentage);
                                     }}
-                                    disabled={generating || !status.enabled || framesWithoutEmbeddings === 0}
+                                    disabled={generating || !status.enabled || !status.sidecar_ready || framesWithoutEmbeddings === 0}
                                     className={`flex flex-col items-center justify-center gap-1 px-3 py-2.5 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                                         isSelected && !generating
                                             ? 'bg-primary text-primary-foreground border-primary shadow-sm'

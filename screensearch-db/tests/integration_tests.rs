@@ -4,7 +4,9 @@
 //! full-text search, tag management, and filtering.
 
 use chrono::{Duration, Utc};
-use screensearch_db::{DatabaseManager, FrameFilter, NewFrame, NewOcrText, NewTag, Pagination};
+use screensearch_db::{
+    DatabaseManager, FrameFilter, NewEmbedding, NewFrame, NewOcrText, NewTag, Pagination,
+};
 use tempfile::NamedTempFile;
 
 /// Create a temporary database for testing
@@ -62,6 +64,174 @@ async fn test_database_initialization() {
     assert_eq!(stats.frame_count, 0);
     assert_eq!(stats.ocr_count, 0);
     assert_eq!(stats.tag_count, 0);
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_sqlite_vec_search_and_delete_sync() {
+    let (db, _path) = create_test_db().await;
+    let first_frame = db
+        .insert_frame(create_test_frame(Utc::now(), "code", "First"))
+        .await
+        .unwrap();
+    let second_frame = db
+        .insert_frame(create_test_frame(Utc::now(), "browser", "Second"))
+        .await
+        .unwrap();
+
+    let mut first_vector = vec![0.0; 1024];
+    first_vector[0] = 1.0;
+    let mut second_vector = vec![0.0; 1024];
+    second_vector[1] = 1.0;
+
+    for (frame_id, text, embedding) in [
+        (first_frame, "first document", first_vector.clone()),
+        (second_frame, "second document", second_vector),
+    ] {
+        db.insert_embedding(NewEmbedding {
+            frame_id,
+            chunk_text: text.to_string(),
+            chunk_index: 0,
+            embedding,
+            provider: "test".to_string(),
+            model: "test-model".to_string(),
+            model_version: "1".to_string(),
+            content_hash: text.to_string(),
+        })
+        .await
+        .unwrap();
+    }
+
+    let results = db.search_embeddings(first_vector, 2, 0.0).await.unwrap();
+    assert_eq!(results[0].frame.id, first_frame);
+    assert_eq!(results[0].retrieval_source, "vector");
+
+    db.delete_embeddings_for_frame(first_frame).await.unwrap();
+    let mut remaining_query = vec![0.0; 1024];
+    remaining_query[1] = 1.0;
+    let remaining = db.search_embeddings(remaining_query, 2, 0.0).await.unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].frame.id, second_frame);
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_embedding_batch_replacement_is_atomic_and_deduplicated() {
+    let (db, _path) = create_test_db().await;
+    let frame_id = db
+        .insert_frame(create_test_frame(Utc::now(), "code", "Atomic"))
+        .await
+        .unwrap();
+    let base = NewEmbedding {
+        frame_id,
+        chunk_text: "existing chunk".to_string(),
+        chunk_index: 0,
+        embedding: vec![0.0; 1024],
+        provider: "test".to_string(),
+        model: "test-model".to_string(),
+        model_version: "1".to_string(),
+        content_hash: "existing".to_string(),
+    };
+    db.insert_embeddings(vec![base]).await.unwrap();
+
+    let duplicate_batch = vec![
+        NewEmbedding {
+            frame_id,
+            chunk_text: "replacement one".to_string(),
+            chunk_index: 0,
+            embedding: vec![0.0; 1024],
+            provider: "test".to_string(),
+            model: "test-model".to_string(),
+            model_version: "1".to_string(),
+            content_hash: "replacement-one".to_string(),
+        },
+        NewEmbedding {
+            frame_id,
+            chunk_text: "replacement duplicate".to_string(),
+            chunk_index: 0,
+            embedding: vec![0.0; 1024],
+            provider: "test".to_string(),
+            model: "test-model".to_string(),
+            model_version: "1".to_string(),
+            content_hash: "replacement-duplicate".to_string(),
+        },
+    ];
+    assert!(db.insert_embeddings(duplicate_batch).await.is_err());
+
+    let stored = db.get_embeddings_for_frame(frame_id).await.unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].chunk_text, "existing chunk");
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_time_filtered_vector_search_expands_past_global_neighbors() {
+    let (db, _path) = create_test_db().await;
+    let now = Utc::now();
+
+    for index in 0..100 {
+        let frame_id = db
+            .insert_frame(create_test_frame(
+                now - Duration::days(30),
+                "archive",
+                &format!("Out of range {index}"),
+            ))
+            .await
+            .unwrap();
+        let mut vector = vec![0.0; 1024];
+        vector[0] = 1.0;
+        db.insert_embedding(NewEmbedding {
+            frame_id,
+            chunk_text: format!("global neighbor {index}"),
+            chunk_index: 0,
+            embedding: vector,
+            provider: "test".to_string(),
+            model: "test-model".to_string(),
+            model_version: "1".to_string(),
+            content_hash: format!("global-{index}"),
+        })
+        .await
+        .unwrap();
+    }
+
+    let relevant_frame = db
+        .insert_frame(create_test_frame(now, "code", "Relevant"))
+        .await
+        .unwrap();
+    let mut relevant_vector = vec![0.0; 1024];
+    relevant_vector[0] = 0.8;
+    relevant_vector[1] = 0.6;
+    db.insert_embedding(NewEmbedding {
+        frame_id: relevant_frame,
+        chunk_text: "relevant in-range result".to_string(),
+        chunk_index: 0,
+        embedding: relevant_vector,
+        provider: "test".to_string(),
+        model: "test-model".to_string(),
+        model_version: "1".to_string(),
+        content_hash: "relevant".to_string(),
+    })
+    .await
+    .unwrap();
+
+    let mut query = vec![0.0; 1024];
+    query[0] = 1.0;
+    let results = db
+        .search_embeddings_with_time_range(
+            query,
+            1,
+            0.0,
+            Some(now - Duration::minutes(1)),
+            Some(now + Duration::minutes(1)),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].frame.id, relevant_frame);
 
     db.close().await;
 }
@@ -218,10 +388,12 @@ async fn test_frame_filtering_by_app() {
 
     // Query frames from chrome only
     let wide_range = (now - Duration::days(1), now + Duration::days(1));
-    let mut filter = FrameFilter::default();
-    filter.start_time = Some(wide_range.0);
-    filter.end_time = Some(wide_range.1);
-    filter.app_name = Some("chrome".to_string());
+    let filter = FrameFilter {
+        start_time: Some(wide_range.0),
+        end_time: Some(wide_range.1),
+        app_name: Some("chrome".to_string()),
+        ..FrameFilter::default()
+    };
 
     let frames = db
         .get_frames_in_range(wide_range.0, wide_range.1, filter, Pagination::default())

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Newspaper, RefreshCw, AlertCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { GlassCard, GlassCardHeader } from '../ui/GlassCard';
@@ -21,28 +21,7 @@ export function DailyDigestCard() {
 
   const today = new Date().toISOString().split('T')[0] ?? '';
 
-  // Check cache on mount
-  useEffect(() => {
-    const cached = sessionStorage.getItem(DIGEST_CACHE_KEY);
-    if (cached) {
-      try {
-        const parsedCache: DigestCache = JSON.parse(cached);
-        // Only use cache if it's from today
-        if (parsedCache.date === today) {
-          setDigest(parsedCache.content);
-          return;
-        }
-      } catch {
-        sessionStorage.removeItem(DIGEST_CACHE_KEY);
-      }
-    }
-    // Auto-generate on mount if AI is configured
-    if (aiConfig.providerUrl && aiConfig.model) {
-      generateDigest();
-    }
-  }, [today, aiConfig.providerUrl, aiConfig.model]);
-
-  const generateDigest = async () => {
+  const generateDigest = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -95,7 +74,26 @@ Keep it concise and actionable. Use bullet points.`,
     } finally {
       setLoading(false);
     }
-  };
+  }, [aiConfig.apiKey, aiConfig.model, aiConfig.providerUrl, today]);
+
+  // Check cache on mount and regenerate when the configured provider changes.
+  useEffect(() => {
+    const cached = sessionStorage.getItem(DIGEST_CACHE_KEY);
+    if (cached) {
+      try {
+        const parsedCache: DigestCache = JSON.parse(cached);
+        if (parsedCache.date === today) {
+          setDigest(parsedCache.content);
+          return;
+        }
+      } catch {
+        sessionStorage.removeItem(DIGEST_CACHE_KEY);
+      }
+    }
+    if (aiConfig.providerUrl && aiConfig.model) {
+      void generateDigest();
+    }
+  }, [aiConfig.model, aiConfig.providerUrl, generateDigest, today]);
 
   // MOCK SUMMARY if AI not configured (Visual Fidelity)
   if (!aiConfig.providerUrl || !aiConfig.model) {

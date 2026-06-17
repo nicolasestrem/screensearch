@@ -23,7 +23,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use screen_capture::{OcrEngine, OcrResult};
+//! use screensearch_capture::{OcrEngine, OcrResult};
 //! use image::RgbaImage;
 //!
 //! #[tokio::main]
@@ -118,6 +118,15 @@ pub struct OcrResult {
 
     /// Image dimensions (width, height)
     pub image_dimensions: (u32, u32),
+
+    /// OCR provider that produced this result.
+    pub provider: String,
+
+    /// Detected or configured language.
+    pub language: Option<String>,
+
+    /// Page orientation reported by the provider.
+    pub orientation_degrees: Option<f32>,
 }
 
 impl OcrResult {
@@ -138,6 +147,9 @@ impl OcrResult {
             full_text,
             processing_time_ms,
             image_dimensions,
+            provider: "windows-ocr".to_string(),
+            language: None,
+            orientation_degrees: None,
         }
     }
 
@@ -148,6 +160,9 @@ impl OcrResult {
             full_text: String::new(),
             processing_time_ms: 0,
             image_dimensions,
+            provider: "windows-ocr".to_string(),
+            language: None,
+            orientation_degrees: None,
         }
     }
 

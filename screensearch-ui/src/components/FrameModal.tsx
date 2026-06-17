@@ -5,6 +5,14 @@ import { useFrame, useFrameImage } from '../hooks/useFrames';
 import { useTags, useAddTagToFrame, useRemoveTagFromFrame } from '../hooks/useTags';
 import { formatDateTime } from '../lib/utils';
 import toast from 'react-hot-toast';
+import axios from 'axios';
+
+function getApiErrorMessage(error: unknown, fallback: string): string {
+  if (axios.isAxiosError<{ error?: string; message?: string }>(error)) {
+    return error.response?.data?.error || error.response?.data?.message || error.message || fallback;
+  }
+  return error instanceof Error ? error.message : fallback;
+}
 
 export function FrameModal() {
   const { selectedFrameId, setSelectedFrameId } = useStore();
@@ -60,12 +68,8 @@ export function FrameModal() {
       await addTagToFrame.mutateAsync({ frameId: selectedFrameId, tagId });
       setShowTagPicker(false);
       toast.success('Tag added successfully');
-    } catch (error: any) {
-      // Extract specific error message from API response
-      const message = error.response?.data?.error ||
-                     error.response?.data?.message ||
-                     error.message ||
-                     'Failed to add tag';
+    } catch (error) {
+      const message = getApiErrorMessage(error, 'Failed to add tag');
       toast.error(message);
       console.error('Error adding tag:', error);
     }
@@ -76,12 +80,8 @@ export function FrameModal() {
     try {
       await removeTagFromFrame.mutateAsync({ frameId: selectedFrameId, tagId });
       toast.success('Tag removed successfully');
-    } catch (error: any) {
-      // Extract specific error message from API response
-      const message = error.response?.data?.error ||
-                     error.response?.data?.message ||
-                     error.message ||
-                     'Failed to remove tag';
+    } catch (error) {
+      const message = getApiErrorMessage(error, 'Failed to remove tag');
       toast.error(message);
       console.error('Error removing tag:', error);
     }

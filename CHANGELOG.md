@@ -7,6 +7,183 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.37] - 2026-06-16
+
+### Added
+- `GET /api/monitors` enumerates connected displays (index, label, resolution,
+  primary flag) from the same `screenshots::Screen::all()` source the capture
+  engine indexes, so reported indices match what is actually captured.
+- The Settings → Capture **Monitors** picker is now a real multi-select of the
+  detected monitors. Selecting/deselecting monitors reconfigures the running
+  capture engine live (no restart) via a `tokio::sync::watch` channel, and the
+  selection is read back from the database at startup so it survives restarts.
+- GPU-accelerated OCR via `scripts/build-release.ps1 -Gpu`. OCR is the throughput
+  bottleneck — ~60 s/frame on CPU versus ~1.5 s on a CUDA GPU. The GPU build uses
+  `paddlepaddle-gpu` (CUDA 12.9, supports Blackwell / compute capability 12.0) and
+  `sidecar/requirements-gpu.txt`; `sidecar/build.py` auto-detects the CUDA build
+  and bundles paddle's NVIDIA runtime DLLs. Embeddings/reranking remain on CPU
+  torch (torch and paddle cannot share a CUDA runtime that also targets Blackwell
+  in one process — `WinError 127`); `paddle_device()` falls back to CPU OCR when
+  no GPU is present. `/health` now reports `ocr_device` alongside `device`.
+
+### Fixed
+- PR #63 review follow-up:
+  - `AppState::get_embedding_engine` no longer races on first use. The fast-path
+    read lock is retained, but initialization now happens under the write lock
+    with a second `is_some` check, so concurrent first callers serialize instead
+    of building and health-checking duplicate engines.
+  - Hybrid search no longer reports a bogus `chunk_index` for FTS-only hits. The
+    FTS match position is not an embedding chunk boundary, so FTS-only results now
+    use `-1` as an "unknown chunk" sentinel instead of the match index.
+  - The sidecar OCR client per-attempt timeout dropped from 120 s to 30 s so a
+    hung sidecar can no longer stall a capture worker for minutes across the retry
+    sequence before the Windows OCR fallback engages.
+  - Sidecar model-preparation error logging now reads the failing component from a
+    local variable instead of the shared `_preparation_status` outside its lock.
+  - The `screensearch-api` integration test was updated for the new
+    `ApiServer::new(..., monitor_config_tx)` signature so the test target compiles.
+  - The `rust-audit` CI job (`cargo audit`) now passes. It failed on
+    RUSTSEC-2023-0071 (`rsa` "Marvin Attack"), but `rsa` is never compiled — it
+    is a lockfile-only artifact of `sqlx`'s optional `sqlx-mysql` backend, which
+    we do not enable (`cargo tree -i rsa` is empty on every target). A documented
+    `.cargo/audit.toml` ignores that single advisory; the remaining entries are
+    "allowed" unmaintained/unsound warnings that do not fail the job.
+  - The `rust` CI job's formatting step no longer references a deleted file. Its
+    curated rustfmt file list still named `screensearch-embeddings/src/chunker.rs`,
+    which this PR removed when chunking moved to the sidecar, so the step errored
+    with "file does not exist" before clippy/tests could run. The stale path is
+    dropped; the remaining 22 files are rustfmt-clean.
+  - The two open `esbuild` Dependabot alerts (GHSA-gv7w-rqvm-qjhr high,
+    GHSA-g7r4-m6w7-qqqr low; both `< 0.28.1`) are eliminated on this branch: the
+    Vite 8 upgrade makes `esbuild` an optional peer dependency that is no longer
+    installed (`npm ls esbuild` is empty, `npm audit` reports 0 vulnerabilities),
+    so the vulnerable `esbuild` 0.27.7 still present on `main` is gone. The alerts
+    will auto-dismiss once this PR merges.
+- Capture no longer stops after a single frame. `FrameDiffer` defaulted to the
+  histogram method, but the `0.006` threshold is calibrated for the pixel method
+  ("0.6% pixel change"); the histogram's chi-squared-over-pixel-count value sits
+  far below that scale, so once screen content was visually stable nearly every
+  frame after the first was judged "unchanged" and skipped. The differ now
+  defaults to `DiffMethod::Pixel` (configurable via `capture.diff_method`).
+  Verified: a content-swap unit test where the histogram method misses the change
+  and the pixel method detects it, plus a live run capturing continuously from
+  both monitors.
+- OCR failures no longer discard the captured screenshot. When the sidecar reset
+  the connection (`WinError 10054`) the frame was logged and dropped, losing it
+  from history; the frame is now stored with an empty OCR result through the
+  existing `store_empty_frames` gate so the screenshot is preserved.
+- The Monitors setting now actually drives capture. Previously it was written to
+  the database but never applied to the running engine, and the frontend's "All
+  Monitors" option sent `[0]` — which the backend reads as *only monitor 0*
+  (empty `[]` means all monitors).
+- The quality sidecar no longer freezes while OCR runs. The `/v1/ocr` route was
+  declared `async` but called the blocking, CPU-bound PaddleOCR predict directly
+  on the asyncio event loop, stalling every other route (`/health`,
+  `/v1/models/status`) for the entire OCR duration. With OCR taking tens of
+  seconds, this left the Settings → Data & AI panel stuck on its loading
+  skeleton because `/api/embeddings/status` (which proxies to
+  `/v1/models/status`) was queued behind the in-flight OCR. Model loading and
+  inference now run via `run_in_threadpool`, so the sidecar stays responsive
+  (verified: status returned HTTP 200 at ~234 ms while a multi-second OCR was in
+  flight).
+- `EmbeddingsStatus` now shows a retryable error state instead of an indefinite
+  blank when `/api/embeddings/status` fails or times out.
+
+### Changed
+- OCR frames are downscaled to a 2000 px longest side before being sent to the
+  sidecar (`screensearch-capture/src/sidecar_ocr.rs`), with returned boxes mapped
+  back to original-frame coordinates. On a 3440×1440 ultrawide frame this cut
+  PP-OCRv5 inference time ~3.2× (88.7 s → 27.6 s in a warm contended benchmark)
+  with no change to stored frame resolution.
+- MKLDNN/oneDNN acceleration is explicitly kept disabled for PP-OCRv5: enabling
+  it crashes detection under PaddleOCR 3.x's PIR executor
+  (`ConvertPirAttribute2RuntimeAttribute not support`).
+- Sidecar startup is now non-blocking. `ensure_quality_sidecar` previously
+  blocked the whole launch for up to 60 s polling `/health`; because the
+  PyInstaller-bundled Torch/Paddle sidecar cold-starts in ~15-45 s, the API and
+  UI were unusable for that long. The sidecar is now spawned and its readiness
+  polled in a background task, so the API/UI come up in ~2 s while it warms up
+  (`src/main.rs`).
+- OCR no longer gets permanently demoted to Windows OCR at startup. With the
+  non-blocking launch the sidecar is usually still cold-starting when the OCR
+  provider initializes; `OcrProviderEngine::new` no longer gates on an initial
+  health check, so PP-OCRv5 stays the preferred provider and frames fall back to
+  Windows OCR per request only until the sidecar is healthy — then upgrade to
+  PP-OCRv5 automatically with no restart (`screensearch-capture/src/ocr_provider.rs`).
+- `sidecar/build.py` refuses to build under Python < 3.12.1. Python 3.12.0 has a
+  PEP 709 (inlined-comprehension) codegen bug that, once frozen by PyInstaller,
+  makes the bundled sidecar crash at startup importing scipy
+  (`NameError: name 'obj' is not defined` in `scipy/stats/_distn_infrastructure.py`),
+  which silently degraded OCR to the Windows fallback. Verified by bisection:
+  same scipy 1.17.1 + PyInstaller 6.21.0, only the interpreter changed — 3.12.0
+  fails, 3.12.10 works.
+- `scripts/build-release.ps1` now builds on a native Windows host: it imports the
+  MSVC environment and overrides the linker (the `.cargo/config.toml` `lld` linker
+  is cross-compile-only), detects Inno Setup 6 or 7, and takes a `-PythonExe`
+  parameter so the sidecar can be built with a specific Python 3.12.x.
+- Toggling a monitor no longer appears to freeze capture. The capture-drain loop
+  used a blocking `frame_tx.send().await`, which parked the whole select loop
+  whenever OCR was backed up (the channel fills because a frame can take tens of
+  seconds on CPU) — so monitor reconfiguration and shutdown could not be processed.
+  It now uses `try_send` and sheds surplus frames via the bounded capture queue,
+  keeping reconfiguration responsive under OCR backpressure (`src/main.rs`).
+- The PP-OCRv5 document- and textline-orientation classifiers are disabled. Screen
+  captures are upright, so they were pure overhead (the textline classifier ran
+  once per detected line — dozens to hundreds per frame).
+
+### Removed
+- Dropped the dead ONNX-era `[embeddings]` config keys (`model`, `model_name`,
+  `embedding_dim`, `max_chunk_tokens`, `chunk_overlap`, `hybrid_search_alpha`,
+  `max_context_chunks`) from `EmbeddingsSettings` and `config.toml`. The model
+  identity, dimension, chunking, and RRF retrieval are owned by the sidecar
+  contract; only `enabled` and `batch_size` remain. Older config files with the
+  removed keys still load (no `deny_unknown_fields`).
+- Deleted the unused in-Rust `TextChunker` (`screensearch-embeddings/src/chunker.rs`);
+  chunking is delegated to the sidecar `/v1/chunk` endpoint.
+
+## [0.4.36] - 2026-06-15
+
+### Changed
+- Replaced legacy OCR and retrieval choices with the fixed local PP-OCRv5,
+  Qwen3 embedding, Qwen3 reranking, sqlite-vec, and RRF quality stack.
+- Added Linux-first local and release build scripts while retaining PowerShell
+  helpers for Windows maintainers.
+- Added packaged Windows sidecar validation that performs real PP-OCRv5
+  inference before installer and portable artifacts are published.
+- Split the release workflow's sidecar build into staged steps (pip upgrade,
+  dependency install, PyInstaller bundle) so `--windows-bundle` watchers see
+  progress instead of one ~7.5 min step that appears to hang, and added a
+  heads-up message before `gh run watch`.
+
+### Fixed
+- The packaged Windows sidecar no longer crashes on launch with
+  `OSError: [WinError 1114]` while importing torch. PyInstaller could bundle an
+  older MSVC C runtime (`msvcp140`/`vcruntime140_1`) than PyTorch's `c10.dll`
+  requires; because PyTorch's restricted DLL search prefers the bundle's
+  `_internal` directory over System32, the stale runtime broke startup on every
+  machine. `sidecar/build.py` now refreshes the bundled MSVC runtime from the
+  host's System32 (the same version vc_redist installs) after PyInstaller runs.
+- Frame embedding chunks are now replaced atomically, preventing partially
+  indexed frames after an insertion failure.
+- Migration 010 removes legacy duplicate chunks and enforces one embedding per
+  `(frame_id, chunk_index)`.
+- Time-filtered vector search expands its global candidate window and falls
+  back to the full sqlite-vec index when required.
+- Embedding responses validate model identity, revision, dimension, vector
+  count, and per-vector dimensions.
+- Sidecar model loaders are serialized during first initialization.
+- PP-OCR uploads use JPEG transport and reject encoded images over 20 MiB or
+  decoded images over 50 million pixels.
+- PaddleOCR result cardinality mismatches are logged instead of silently
+  truncated.
+
+### Migration Notice
+- Migration 009 intentionally deletes all legacy 384-dimensional embeddings
+  because they are incompatible with the fixed 1024-dimensional Qwen3
+  contract. Existing OCR data is retained and must be reindexed.
+
+---
+
 ## [0.5.0] - 2026-06-10
 
 ### Changed

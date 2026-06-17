@@ -510,9 +510,14 @@ pub async fn update_settings(
             debug!("Settings updated successfully");
             // Update shared state for capture loop
             state.capture_interval_ms.store(
-                updated_settings.capture_interval as u64 * 1000, 
-                std::sync::atomic::Ordering::Relaxed
+                updated_settings.capture_interval as u64 * 1000,
+                std::sync::atomic::Ordering::Relaxed,
             );
+            // Push the new monitor selection to the capture engine so it can
+            // reconfigure live. `[]` (or unparseable) means "all monitors".
+            let monitors: Vec<usize> =
+                serde_json::from_str(&updated_settings.monitors).unwrap_or_default();
+            let _ = state.monitor_config_tx.send(monitors);
             Ok(Json(updated_settings))
         }
         Err(e) => {
@@ -522,7 +527,57 @@ pub async fn update_settings(
     }
 }
 
+/// A monitor as exposed to the frontend monitor picker.
+#[derive(Debug, serde::Serialize)]
+pub struct MonitorInfoDto {
+    /// 0-based index — matches the order the capture engine uses.
+    pub index: usize,
+    /// Human-readable label, e.g. "Monitor 1 (3440x1440) — Primary".
+    pub label: String,
+    pub width: u32,
+    pub height: u32,
+    pub is_primary: bool,
+}
 
+/// GET /monitors - List connected monitors
+///
+/// Enumerates monitors via the same `screenshots::Screen::all()` source the
+/// capture engine indexes, so the returned indices line up with what is
+/// actually captured. Returns an empty list if enumeration fails (e.g. a
+/// transient display hotplug) rather than erroring the UI.
+pub async fn list_monitors() -> Result<Json<Vec<MonitorInfoDto>>> {
+    debug!("List monitors request");
+
+    // Screen enumeration is a blocking platform call; keep it off the runtime.
+    let monitors = tokio::task::spawn_blocking(|| {
+        let screens = screenshots::Screen::all().unwrap_or_default();
+        screens
+            .into_iter()
+            .enumerate()
+            .map(|(index, screen)| {
+                let info = screen.display_info;
+                let label = format!(
+                    "Monitor {} ({}x{}){}",
+                    index + 1,
+                    info.width,
+                    info.height,
+                    if info.is_primary { " — Primary" } else { "" }
+                );
+                MonitorInfoDto {
+                    index,
+                    label,
+                    width: info.width,
+                    height: info.height,
+                    is_primary: info.is_primary,
+                }
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+
+    Ok(Json(monitors))
+}
 
 /// POST /api/test-vision - Test vision configuration
 pub async fn test_vision_config(

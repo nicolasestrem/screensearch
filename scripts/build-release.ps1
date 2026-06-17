@@ -1,13 +1,26 @@
 # Build ScreenSearch release artifacts
-# Usage: .\build-release.ps1 [-Version 0.2.0] [-SignBinary] [-SkipModel]
+# Usage: .\build-release.ps1 -Version 0.4.35 [-SignBinary] [-SkipSidecar]
 
 param(
     [Parameter(Mandatory=$true)]
     [string]$Version,
 
     [switch]$SignBinary,
-    [switch]$SkipModel,
-    [switch]$Clean
+    [Alias("SkipModel")]
+    [switch]$SkipSidecar,
+    [switch]$Clean,
+
+    # Build a CUDA-accelerated sidecar (torch cu128 + paddlepaddle-gpu cu129).
+    # OCR/embeddings/reranking then run on an NVIDIA GPU when present and fall
+    # back to CPU otherwise. The bundle is several GB larger because it carries
+    # the CUDA runtime. Without this switch the sidecar uses the CPU builds.
+    [switch]$Gpu,
+
+    # Python interpreter used to build the quality sidecar. The sidecar targets
+    # Python 3.12 (>= 3.12.1; 3.12.0 is rejected by sidecar/build.py). Pass e.g.
+    # -PythonExe "C:\Python312\python.exe" when the default `python` on PATH is a
+    # different version.
+    [string]$PythonExe = "python"
 )
 
 $ErrorActionPreference = "Stop"
@@ -54,6 +67,25 @@ Write-Host ""
 
 # Step 2: Build Rust binary
 Write-Host "[2/8] Building Rust release binary..." -ForegroundColor Cyan
+# .cargo/config.toml hard-codes the `lld` linker for Linux->Windows cross-compile,
+# which is absent on a native Windows host (cargo would fail with "linker `lld`
+# not found"). Import the MSVC build environment and override the linker per
+# target via env vars (CARGO_TARGET_*_LINKER wins over the config file's linker
+# key). Do NOT edit .cargo/config.toml.
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+if (Test-Path $vswhere) {
+    $vsPath = & $vswhere -latest -property installationPath
+    $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+    if (Test-Path $vcvars) {
+        cmd /c "`"$vcvars`" >nul 2>&1 && set" | ForEach-Object {
+            if ($_ -match '^(.*?)=(.*)$') { Set-Item -Path "env:$($matches[1])" -Value $matches[2] }
+        }
+        $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER = "link.exe"
+        $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS = "-C target-feature=+crt-static"
+    }
+}
+# The UI bundle was built in step 1; skip build.rs re-running npm.
+$env:SKIP_UI_BUILD = "1"
 cargo build --release
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Rust build failed" -ForegroundColor Red
@@ -73,84 +105,84 @@ else {
     Write-Host ""
 }
 
-# Step 4: Download AI RAG Search Model
-if (-not $SkipModel) {
-    Write-Host "[4/8] Downloading AI RAG Search Model..." -ForegroundColor Cyan
-    if (Test-Path "installer\models\model.onnx") {
-        Write-Host "Model already exists, skipping download" -ForegroundColor Yellow
+# Step 4: Build the managed quality sidecar
+if (-not $SkipSidecar) {
+    $sidecarKind = if ($Gpu) { "CUDA GPU" } else { "CPU" }
+    Write-Host "[4/8] Building PP-OCRv5/Qwen quality sidecar ($sidecarKind, python: $PythonExe)..." -ForegroundColor Cyan
+    if ($Gpu) {
+        # GPU OCR only: paddlepaddle-gpu (CUDA 12.9, supports Blackwell) must come
+        # from paddle's own index. torch stays on CPU (installed via the plain
+        # requirements file) because torch's CUDA build and paddle's CUDA runtime
+        # collide in one process on Blackwell. Install paddle-gpu first, then the
+        # rest (CPU torch + paddleocr + server deps).
+        & $PythonExe -m pip install "paddlepaddle-gpu>=3,<4" -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
+        if ($LASTEXITCODE -ne 0) { Write-Host "paddlepaddle-gpu install failed" -ForegroundColor Red; exit 1 }
+        & $PythonExe -m pip install -r sidecar\requirements-gpu.txt
+    } else {
+        & $PythonExe -m pip install -r sidecar\requirements.txt
     }
-    else {
-        & ".\installer\scripts\download-model.ps1"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Quality sidecar dependency install failed" -ForegroundColor Red
+        exit 1
     }
-    Write-Host ""
-}
-else {
-    Write-Host "[4/8] Skipping model download (use -SkipModel=`$false to download)" -ForegroundColor Yellow
-    Write-Host ""
-}
-
-# Step 5: Check for Inno Setup
-Write-Host "[5/8] Checking for Inno Setup..." -ForegroundColor Cyan
-$isccPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-if (-not (Test-Path $isccPath)) {
-    Write-Host "Error: Inno Setup not found at $isccPath" -ForegroundColor Red
-    Write-Host "Install from: https://jrsoftware.org/isdl.php" -ForegroundColor Yellow
-    exit 1
-}
-Write-Host "Inno Setup found" -ForegroundColor Green
-Write-Host ""
-
-# Step 6: Build Full Installer
-if (-not $SkipModel -and (Test-Path "installer\models\model.onnx")) {
-    Write-Host "[6/8] Building Full Installer..." -ForegroundColor Cyan
-    $env:FULL_INSTALLER = "1"
-    & $isccPath /DFULL_INSTALLER "installer\screensearch.iss"
-
-    if ($LASTEXITCODE -eq 0) {
-        # Rename to include "Full"
-        $installerPath = "target\release\installers\ScreenSearch-v$Version-Setup.exe"
-        $fullPath = "target\release\installers\ScreenSearch-v$Version-Setup-Full.exe"
-
-        if (Test-Path $installerPath) {
-            Move-Item $installerPath $fullPath -Force
-            Write-Host "Full installer created: $fullPath" -ForegroundColor Green
-        }
-    }
-    else {
-        Write-Host "Full installer build failed" -ForegroundColor Red
+    & $PythonExe sidecar\build.py
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Quality sidecar build failed" -ForegroundColor Red
         exit 1
     }
     Write-Host ""
 }
 else {
-    Write-Host "[6/8] Skipping Full Installer (no model found)" -ForegroundColor Yellow
+    Write-Host "[4/8] Skipping quality sidecar build" -ForegroundColor Yellow
     Write-Host ""
 }
 
-# Step 7: Build Lightweight Installer
-Write-Host "[7/8] Building Lightweight Installer..." -ForegroundColor Cyan
+# Step 5: Check for Inno Setup
+Write-Host "[5/8] Checking for Inno Setup..." -ForegroundColor Cyan
+$isccCandidates = @(
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    "C:\Program Files\Inno Setup 6\ISCC.exe",
+    "C:\Program Files\Inno Setup 7\ISCC.exe",
+    "C:\Program Files (x86)\Inno Setup 7\ISCC.exe"
+)
+$isccPath = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $isccPath) {
+    $isccCmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($isccCmd) { $isccPath = $isccCmd.Source }
+}
+if (-not $isccPath) {
+    Write-Host "Error: Inno Setup compiler (ISCC.exe) not found." -ForegroundColor Red
+    Write-Host "Install from: https://jrsoftware.org/isdl.php" -ForegroundColor Yellow
+    exit 1
+}
+Write-Host "Inno Setup found: $isccPath" -ForegroundColor Green
+Write-Host ""
+
+# Step 6: Build quality installer
+Write-Host "[6/8] Building Quality Installer..." -ForegroundColor Cyan
 & $isccPath "installer\screensearch.iss"
 
 if ($LASTEXITCODE -eq 0) {
-    # Rename to include "Lite"
     $installerPath = "target\release\installers\ScreenSearch-v$Version-Setup.exe"
-    $litePath = "target\release\installers\ScreenSearch-v$Version-Setup-Lite.exe"
+    $qualityPath = "target\release\installers\ScreenSearch-v$Version-Setup-Quality.exe"
 
     if (Test-Path $installerPath) {
-        Move-Item $installerPath $litePath -Force
-        Write-Host "Lightweight installer created: $litePath" -ForegroundColor Green
+        Move-Item $installerPath $qualityPath -Force
+        Write-Host "Quality installer created: $qualityPath" -ForegroundColor Green
     }
 }
 else {
-    Write-Host "Lightweight installer build failed" -ForegroundColor Red
+    Write-Host "Quality installer build failed" -ForegroundColor Red
     exit 1
 }
 Write-Host ""
 
 # Create Portable ZIP
-Write-Host "[7.5/8] Creating Portable ZIP..." -ForegroundColor Cyan
+Write-Host "[7/8] Creating Portable ZIP..." -ForegroundColor Cyan
 $zipPath = "target\release\installers\ScreenSearch-v$Version-Portable.zip"
-Compress-Archive -Path "target\release\screensearch.exe", "config.toml", "LICENSE", "README.md" `
+New-Item -ItemType Directory -Force -Path "target\release\bin" | Out-Null
+Copy-Item "sidecar\dist\screensearch-ai-sidecar" "target\release\bin\" -Recurse -Force
+Compress-Archive -Path "target\release\screensearch.exe", "target\release\bin", "config.toml", "LICENSE", "README.md" `
                  -DestinationPath $zipPath -Force
 Write-Host "Portable ZIP created: $zipPath" -ForegroundColor Green
 Write-Host ""

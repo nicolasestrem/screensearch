@@ -4,6 +4,18 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to use in artifact names
+        required: true
+        default: '0.4.36'
+        type: string
+      publish_release:
+        description: Create a draft GitHub release
+        required: true
+        default: false
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
@@ -18,6 +30,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ inputs.version }}"
+          }
+          else {
+            $version = "${{ github.ref_name }}" -replace '^v', ''
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Invalid release version: $version"
+          }
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Setup Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -28,9 +54,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: screensearch-ui/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: sidecar/requirements.txt
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -56,13 +89,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-build-target-
 
-      - name: Cache ONNX model
-        id: cache-onnx
-        uses: actions/cache@v4
-        with:
-          path: installer/models
-          key: onnx-model-${{ hashFiles('.github/workflows/release.yml') }}
-
       - name: Build React UI
         run: |
           cd screensearch-ui
@@ -74,27 +100,121 @@ jobs:
         run: cargo build --release --locked
         shell: pwsh
 
-      - name: Download ONNX model
-        if: steps.cache-onnx.outputs.cache-hit != 'true'
-        run: |
-          New-Item -ItemType Directory -Force -Path installer/models
-
-          Write-Host "Downloading ONNX model..."
-          $modelUrl = "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/main/onnx/model.onnx"
-          $tokenizerUrl = "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/main/tokenizer.json"
-
-          Invoke-WebRequest -Uri $modelUrl -OutFile "installer/models/model.onnx" -MaximumRetryCount 3
-          Invoke-WebRequest -Uri $tokenizerUrl -OutFile "installer/models/tokenizer.json" -MaximumRetryCount 3
-
-          # Verify model size (should be around 449 MB)
-          $modelSize = (Get-Item "installer/models/model.onnx").Length / 1MB
-          if ($modelSize -lt 400) {
-            Write-Error "Model file too small: $modelSize MB (expected >400 MB)"
-            exit 1
-          }
-
-          Write-Host "Model downloaded successfully: $modelSize MB"
+      # Split into staged steps so `gh run watch` (used by
+      # scripts/build-release.sh --windows-bundle) advances through visible
+      # boundaries instead of sitting on one ~7.5 min step that looks hung.
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
         shell: pwsh
+
+      - name: Install sidecar dependencies
+        run: pip install -r sidecar/requirements.txt
+        shell: pwsh
+
+      - name: Bundle sidecar with PyInstaller
+        run: python sidecar/build.py
+        shell: pwsh
+
+      - name: Smoke test packaged PP-OCRv5
+        shell: pwsh
+        run: |
+          $env:SCREENSEARCH_AI_SIDECAR_TOKEN = "release-smoke-test"
+          $stdout = Join-Path $env:RUNNER_TEMP "sidecar-stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "sidecar-stderr.log"
+          $sidecar = Start-Process `
+            -FilePath "sidecar/dist/screensearch-ai-sidecar/screensearch-ai-sidecar.exe" `
+            -PassThru `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr
+          $headers = @{ Authorization = "Bearer $env:SCREENSEARCH_AI_SIDECAR_TOKEN" }
+
+          try {
+            $healthy = $false
+            for ($attempt = 0; $attempt -lt 120; $attempt++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                Invoke-RestMethod -Uri "http://127.0.0.1:3132/health" -Headers $headers | Out-Null
+                $healthy = $true
+                break
+              }
+              catch {
+                if ($sidecar.HasExited) {
+                  throw "Packaged quality sidecar exited before becoming healthy."
+                }
+              }
+            }
+            if (-not $healthy) {
+              throw "Packaged quality sidecar did not become healthy within 60 seconds."
+            }
+
+            $prepareBody = @{
+              components = @("ocr")
+              ocr_language = "en"
+            } | ConvertTo-Json
+            Invoke-RestMethod `
+              -Method Post `
+              -Uri "http://127.0.0.1:3132/v1/models/prepare" `
+              -Headers $headers `
+              -ContentType "application/json" `
+              -Body $prepareBody | Out-Null
+
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 600; $attempt++) {
+              Start-Sleep -Seconds 1
+              $status = Invoke-RestMethod `
+                -Uri "http://127.0.0.1:3132/v1/models/status" `
+                -Headers $headers
+              if ($status.state -eq "ready") {
+                $ready = $true
+                break
+              }
+              if ($status.state -eq "error") {
+                throw "PP-OCRv5 preparation failed: $($status.error)"
+              }
+            }
+            if (-not $ready) {
+              throw "PP-OCRv5 preparation did not finish within 10 minutes."
+            }
+
+            Add-Type -AssemblyName System.Drawing
+            $imagePath = Join-Path $env:RUNNER_TEMP "ocr-smoke-test.png"
+            $bitmap = New-Object System.Drawing.Bitmap 640, 160
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            try {
+              $graphics.Clear([System.Drawing.Color]::White)
+              $font = New-Object System.Drawing.Font "Arial", 32
+              $graphics.DrawString(
+                "ScreenSearch OCR smoke test",
+                $font,
+                [System.Drawing.Brushes]::Black,
+                20,
+                45
+              )
+              $bitmap.Save($imagePath, [System.Drawing.Imaging.ImageFormat]::Png)
+            }
+            finally {
+              $graphics.Dispose()
+              $bitmap.Dispose()
+            }
+
+            $response = Invoke-RestMethod `
+              -Method Post `
+              -Uri "http://127.0.0.1:3132/v1/ocr" `
+              -Headers $headers `
+              -Form @{ image = (Get-Item $imagePath); language = "en" }
+            if ($response.provider -ne "ppocr-v5" -or $response.lines.Count -eq 0) {
+              throw "Packaged PP-OCRv5 returned no recognized lines."
+            }
+          }
+          finally {
+            if (-not $sidecar.HasExited) {
+              Stop-Process -Id $sidecar.Id -Force
+            }
+            Write-Host "--- quality sidecar stdout ---"
+            if (Test-Path $stdout) { Get-Content $stdout }
+            Write-Host "--- quality sidecar stderr ---"
+            if (Test-Path $stderr) { Get-Content $stderr }
+          }
 
       - name: Download VC++ Redistributable
         run: |
@@ -115,33 +235,22 @@ jobs:
         run: choco install innosetup -y
         shell: pwsh
 
-      - name: Build Full Installer
+      - name: Build Installer
         run: |
-          $env:FULL_INSTALLER = "1"
-          
-          # Extract version from git tag
-          $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DFULL_INSTALLER "/DMyAppVersion=$version" installer\screensearch.iss
-
-          Move-Item "target\release\installers\ScreenSearch-v$version-Setup.exe" `
-                    "target\release\installers\ScreenSearch-v$version-Setup-Full.exe" -Force
-        shell: pwsh
-
-      - name: Build Lightweight Installer
-        run: |
-          # Extract version from git tag
-          $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
+          $version = $env:RELEASE_VERSION
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" installer\screensearch.iss
 
           Move-Item "target\release\installers\ScreenSearch-v$version-Setup.exe" `
-                    "target\release\installers\ScreenSearch-v$version-Setup-Lite.exe" -Force
+                    "target\release\installers\ScreenSearch-v$version-Setup-Quality.exe" -Force
         shell: pwsh
 
       - name: Create Portable ZIP
         run: |
-          # Extract version from git tag
-          $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
-          Compress-Archive -Path target/release/screensearch.exe, config.toml, LICENSE, README.md `
+          $version = $env:RELEASE_VERSION
+          Remove-Item target/release/bin -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path target/release/bin
+          Copy-Item sidecar/dist/screensearch-ai-sidecar target/release/bin/ -Recurse
+          Compress-Archive -Path target/release/screensearch.exe, target/release/bin, config.toml, LICENSE, README.md `
                            -DestinationPath "target/release/installers/ScreenSearch-v$version-Portable.zip" `
                            -Force
         shell: pwsh
@@ -174,6 +283,7 @@ jobs:
   create-release:
     name: Create GitHub Release
     needs: build-release
+    if: ${{ github.event_name == 'push' || inputs.publish_release }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -190,13 +300,20 @@ jobs:
 
       - name: Extract version from tag
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=$DISPATCH_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Extract Changelog
         id: changelog
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
-
           # Extract version section from CHANGELOG.md
           CHANGELOG_SECTION=$(awk '
             /^## \['"$VERSION"'\]/ { found=1; next }
@@ -232,18 +349,14 @@ jobs:
 
             ## Download Options
 
-            **Full Installer** (~460 MB)
-            - Includes AI RAG Search Model for semantic search
-            - No internet required for AI features
-            - Recommended for offline systems
+            **Quality Installer**
+            - Includes the managed local PP-OCRv5/Qwen inference sidecar
+            - Prepares selected models from Settings with **Download / verify**
+            - Supports CPU and compatible GPU acceleration
 
-            **Lightweight Installer** (~11 MB)
-            - Downloads model on first run (requires internet)
-            - Smaller initial download
-
-            **Portable ZIP** (~17 MB)
+            **Portable ZIP**
             - Extract and run, no installation
-            - Downloads model when AI features are used
+            - Includes the same local quality sidecar
 
             ---
 
@@ -257,7 +370,7 @@ jobs:
 
             ### Quick Start
 
-            1. Download the Full Installer above
+            1. Download the Quality Installer above
             2. Run the installer executable
             3. **Windows SmartScreen Warning**: Click "More info" → "Run anyway"
                - This is expected for self-signed applications
@@ -267,8 +380,8 @@ jobs:
             ### System Requirements
 
             - Windows 10/11 (64-bit)
-            - Windows OCR Language Pack (for OCR functionality)
-            - ~500MB disk space (for Full Installer)
+            - Up to 5 GB disk space for optional quality models
+            - Windows OCR Language Pack for fallback OCR
 
             ---
 
@@ -276,8 +389,8 @@ jobs:
 
             Verify download integrity with SHA256 checksums:
 
-            ```powershell
-            Get-FileHash ScreenSearch-v${{ steps.get_version.outputs.VERSION }}-Setup-Full.exe -Algorithm SHA256
+            ```bash
+            sha256sum ScreenSearch-v${{ steps.get_version.outputs.VERSION }}-Setup-Quality.exe
             ```
 
             Compare output with `checksums.txt` in release assets.
