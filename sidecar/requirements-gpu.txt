@@ -19,11 +19,11 @@
 # paddlepaddle package).
 fastapi==0.115.12
 uvicorn[standard]==0.34.3
-python-multipart==0.0.20
+python-multipart==0.0.31
 sentence-transformers>=5.0.0,<6
 transformers>=4.51.0,<5
 torch>=2.6.0,<3
 paddleocr>=3.0.0,<4
 numpy>=2.0.0,<3
-pillow>=11.0.0,<12
+pillow>=12.2.0,<13
 pyinstaller>=6.13.0,<7
