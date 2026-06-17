@@ -48,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     we do not enable (`cargo tree -i rsa` is empty on every target). A documented
     `.cargo/audit.toml` ignores that single advisory; the remaining entries are
     "allowed" unmaintained/unsound warnings that do not fail the job.
+  - The `rust` CI job's formatting step no longer references a deleted file. Its
+    curated rustfmt file list still named `screensearch-embeddings/src/chunker.rs`,
+    which this PR removed when chunking moved to the sidecar, so the step errored
+    with "file does not exist" before clippy/tests could run. The stale path is
+    dropped; the remaining 22 files are rustfmt-clean.
   - The two open `esbuild` Dependabot alerts (GHSA-gv7w-rqvm-qjhr high,
     GHSA-g7r4-m6w7-qqqr low; both `< 0.28.1`) are eliminated on this branch: the
     Vite 8 upgrade makes `esbuild` an optional peer dependency that is no longer
