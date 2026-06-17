@@ -43,7 +43,8 @@
 //!     // Create server with default config
 //!     let config = ApiConfig::default();
 //!     let capture_interval = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(3_000));
-//!     let server = ApiServer::new(config, capture_interval).await?;
+//!     let (monitor_config_tx, _monitor_config_rx) = tokio::sync::watch::channel(Vec::new());
+//!     let server = ApiServer::new(config, capture_interval, monitor_config_tx).await?;
 //!
 //!     // Run server
 //!     server.run().await?;
