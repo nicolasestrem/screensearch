@@ -42,6 +42,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     local variable instead of the shared `_preparation_status` outside its lock.
   - The `screensearch-api` integration test was updated for the new
     `ApiServer::new(..., monitor_config_tx)` signature so the test target compiles.
+  - The `rust-audit` CI job (`cargo audit`) now passes. It failed on
+    RUSTSEC-2023-0071 (`rsa` "Marvin Attack"), but `rsa` is never compiled — it
+    is a lockfile-only artifact of `sqlx`'s optional `sqlx-mysql` backend, which
+    we do not enable (`cargo tree -i rsa` is empty on every target). A documented
+    `.cargo/audit.toml` ignores that single advisory; the remaining entries are
+    "allowed" unmaintained/unsound warnings that do not fail the job.
+  - The two open `esbuild` Dependabot alerts (GHSA-gv7w-rqvm-qjhr high,
+    GHSA-g7r4-m6w7-qqqr low; both `< 0.28.1`) are eliminated on this branch: the
+    Vite 8 upgrade makes `esbuild` an optional peer dependency that is no longer
+    installed (`npm ls esbuild` is empty, `npm audit` reports 0 vulnerabilities),
+    so the vulnerable `esbuild` 0.27.7 still present on `main` is gone. The alerts
+    will auto-dismiss once this PR merges.
 - Capture no longer stops after a single frame. `FrameDiffer` defaulted to the
   histogram method, but the `0.006` threshold is calibrated for the pixel method
   ("0.6% pixel change"); the histogram's chi-squared-over-pixel-count value sits

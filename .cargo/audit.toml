@@ -1,0 +1,16 @@
+# cargo-audit configuration
+#
+# See: https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
+#
+# RUSTSEC-2023-0071 (rsa 0.9.x "Marvin Attack" timing sidechannel) is ignored
+# because the `rsa` crate is NOT compiled into any ScreenSearch binary. It is a
+# lockfile-only artifact: `sqlx` declares `sqlx-mysql` / `sqlx-postgres` as
+# optional dependencies, so Cargo records them (and their transitive `rsa`) in
+# Cargo.lock even though we only enable the `sqlite` feature. `cargo tree -i rsa`
+# returns nothing on every target, confirming `rsa` is absent from the build
+# graph. There is currently no fixed upgrade for the advisory, and no supported
+# way to prune an unused optional dependency from Cargo.lock. Re-evaluate this
+# entry if ScreenSearch ever enables the sqlx MySQL/Postgres backends.
+
+[advisories]
+ignore = ["RUSTSEC-2023-0071"]
