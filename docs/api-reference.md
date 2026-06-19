@@ -258,6 +258,41 @@ Generates a report over a time range:
 Legacy route name retained for compatibility. It tests the configured
 generation provider; it does not test OCR or embedding retrieval.
 
+## Vision (Screen Understanding)
+
+On-device screenshot analysis. When vision is enabled with the `local` provider
+(see `POST /settings/`), the unified auto-managed llama-server is launched with
+`--mmproj` so a single Gemma&nbsp;4 model serves both text and image questions;
+analysis populates each frame's `description`, `visible_text`, `activity_type`,
+`app_hint`, and `confidence`. Drop a Gemma&nbsp;4 GGUF **and** its
+`*mmproj*.gguf` projector into `.models/`.
+
+### `POST /vision/analyze/:frame_id`
+
+Enqueue a single frame for vision analysis on demand (high priority — jumps
+ahead of the background trickle). The worker performs the analysis
+asynchronously.
+
+```bash
+curl -X POST "http://127.0.0.1:3131/api/vision/analyze/123"
+# -> {"success":true,"frame_id":123,"queue_id":7,"already_queued":false}
+```
+
+Returns `404` if the frame does not exist; `queue_id` is `0` (and
+`already_queued` is `true`) if the frame was already queued.
+
+### `GET /vision/status`
+
+Aggregate analysis status: configured provider/model plus per-status frame
+counts and queue depth.
+
+```bash
+curl "http://127.0.0.1:3131/api/vision/status"
+# -> {"enabled":1,"provider":"local","model":"gemma-4-E4B...",
+#     "total_frames":1024,"completed":300,"pending":4,"processing":1,
+#     "failed":0,"queue_depth":5}
+```
+
 ## Download Progress
 
 ### `GET /downloads/status`

@@ -684,7 +684,7 @@ export function SettingsPanel() {
                             onChange={(e) => setVisionProvider(e.target.value)}
                             className="w-full bg-background border border-input rounded-lg px-3 py-2 font-mono text-sm"
                           >
-                            <option value="local">Bundled local Ministral-3-3B</option>
+                            <option value="local">Bundled local model (auto-detected GGUF)</option>
                             <option value="ollama">Ollama-compatible local server</option>
                             <option value="openai">OpenAI-compatible endpoint</option>
                           </select>
@@ -697,7 +697,7 @@ export function SettingsPanel() {
                             <div className="space-y-3">
                               <div className="flex items-center gap-2">
                                 <Cpu className="h-4 w-4 text-primary" />
-                                <span className="font-medium">Ministral-3-3B Generation Model</span>
+                                <span className="font-medium">Local Generation Model</span>
                               </div>
 
                               {modelStatus?.downloaded ? (
@@ -839,6 +839,13 @@ export function SettingsPanel() {
 
                             <p className="text-xs text-muted-foreground pt-1">
                               Runs entirely on your device. Server starts automatically on first AI request.
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Vision uses a single unified server: it loads a Gemma&nbsp;4 model plus its
+                              <code className="mx-1 px-1 rounded bg-secondary/60">*mmproj*.gguf</code>
+                              projector (drop both into <code className="px-1 rounded bg-secondary/60">.models/</code>)
+                              so the same model answers both text and image questions. Screenshots are
+                              analyzed on demand and as a throttled background trickle.
                             </p>
                           </div>
                         )}

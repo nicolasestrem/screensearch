@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **On-device vision (screen understanding) via the unified local llama-server.**
+  When vision is enabled with the `local` provider, the same auto-managed
+  llama.cpp server that answers AI reports is now launched with `--mmproj` so a
+  single Gemma&nbsp;4 model serves **both** text generation and image analysis
+  (Option B — unify on gemma-4). The vision worker analyzes frames against this
+  local server's OpenAI-compatible `/v1/chat/completions` endpoint (no external
+  Ollama/OpenAI needed) and populates each frame's `description`,
+  `visible_text`, `activity_type`, `app_hint`, and `confidence`.
+  - **Model/projector auto-discovery**: `resolve_mmproj_for()` pairs a model with
+    the correct `*mmproj*.gguf` projector beside it by size signature (e.g. an
+    E4B model gets the E4B projector, a 12B model the 12B projector; a text-only
+    model like Qwen3.5 is never mis-paired). `resolve_vision_model()` picks the
+    unified vision model, preferring a Gemma&nbsp;4 **E4B**. Drop a Gemma&nbsp;4
+    GGUF and its `*mmproj*.gguf` into `.models/`.
+  - **Enqueue is on-demand + throttled**: `POST /api/vision/analyze/:frame_id`
+    queues a single frame at high priority; the worker also trickles in a small
+    batch (4) of recent un-analyzed frames per idle cycle to keep GPU load
+    bounded. `GET /api/vision/status` reports per-status frame counts and queue
+    depth.
+  - The unified server is rebuilt automatically when vision is toggled (it
+    switches the loaded model to the vision model + projector and back).
+  - Files: `screensearch-llm/src/{server.rs,download.rs}`,
+    `screensearch-api/src/{state.rs,server.rs,routes.rs,handlers/vision.rs,
+    workers/vision_worker.rs}`, `screensearch-db/src/{queries.rs,models.rs}`.
 - **Bundled `onnxruntime.dll` (ONNX Runtime 1.24.2, x64) in all Windows
   artifacts**, so a fresh install has working semantic search out of the box. The
   in-process fastembed engine loads ONNX Runtime dynamically and looks for the DLL

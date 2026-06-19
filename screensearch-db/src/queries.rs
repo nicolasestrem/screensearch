@@ -1148,6 +1148,69 @@ impl DatabaseManager {
         Ok(result.last_insert_rowid())
     }
 
+    /// Recent frames that still need vision analysis and are not already queued.
+    ///
+    /// Captured frames default to `analysis_status = 'pending'` but are not
+    /// auto-queued, so "needs analysis" is any frame whose status is not a
+    /// terminal/in-flight state (`completed`/`processing`/`failed`) and that is
+    /// not already in the queue. Returned newest-first so a throttled background
+    /// enqueuer works through the most relevant (recent) history first.
+    pub async fn get_unanalyzed_frame_ids(&self, limit: i64) -> Result<Vec<i64>> {
+        let ids = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT f.id
+            FROM frames f
+            WHERE (f.analysis_status IS NULL
+                   OR f.analysis_status NOT IN ('completed', 'processing', 'failed'))
+              AND NOT EXISTS (SELECT 1 FROM analysis_queue q WHERE q.frame_id = f.id)
+            ORDER BY f.id DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(ids)
+    }
+
+    /// Aggregate status of vision analysis (counts by frame analysis_status plus
+    /// the current queue depth and the configured vision settings).
+    pub async fn get_vision_status(&self) -> Result<crate::models::VisionStatus> {
+        let settings = self.get_settings().await?;
+
+        let total_frames = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM frames")
+            .fetch_one(self.pool())
+            .await?;
+
+        let count_status = |status: &str| {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM frames WHERE analysis_status = ?")
+                .bind(status.to_string())
+                .fetch_one(self.pool())
+        };
+
+        let completed = count_status("completed").await?;
+        let pending = count_status("pending").await?;
+        let processing = count_status("processing").await?;
+        let failed = count_status("failed").await?;
+
+        let queue_depth = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM analysis_queue")
+            .fetch_one(self.pool())
+            .await?;
+
+        Ok(crate::models::VisionStatus {
+            enabled: settings.vision_enabled,
+            provider: settings.vision_provider,
+            model: settings.vision_model,
+            total_frames,
+            completed,
+            pending,
+            processing,
+            failed,
+            queue_depth,
+        })
+    }
+
     /// Get pending analysis tasks (locks them implicitly by return, caller must process)
     /// Ideally we should use a transaction to lock rows, but SQLite is single-writer.
     /// We can use 'locked_until' to implement a soft lock.

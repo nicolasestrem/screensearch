@@ -533,8 +533,9 @@ impl App {
             warn!("Embedding worker did not start yet: {}", e);
         }
 
-        // Start vision analysis worker
-        screensearch_api::workers::vision_worker::spawn_vision_worker(Arc::clone(&db));
+        // Start vision analysis worker (shares AppState to drive the unified
+        // local llama-server with --mmproj for on-device vision).
+        api_server.start_vision_worker();
 
         let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(100);
         let (processed_tx, mut processed_rx) = tokio::sync::mpsc::channel(100);

@@ -17,3 +17,5 @@ pub mod reranker;
 pub use generate::*;
 pub mod downloads;
 pub use downloads::*;
+pub mod vision;
+pub use vision::*;

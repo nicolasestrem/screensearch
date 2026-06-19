@@ -178,6 +178,14 @@ impl ApiServer {
         Ok(())
     }
 
+    /// Start the background vision analysis worker.
+    ///
+    /// The worker shares the API server's `AppState` so it can drive the unified
+    /// auto-managed llama-server (started with `--mmproj`) for local vision.
+    pub fn start_vision_worker(&self) {
+        crate::workers::vision_worker::spawn_vision_worker(Arc::clone(&self.state));
+    }
+
     /// Synchronize the startup configuration with the runtime metadata toggle.
     pub async fn set_embeddings_enabled(&self, enabled: bool) -> anyhow::Result<()> {
         self.state
