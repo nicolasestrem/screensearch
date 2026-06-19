@@ -21,7 +21,19 @@ impl OcrProviderEngine {
         let engine = if language.trim().is_empty() {
             OcrEngine::new().await?
         } else {
-            OcrEngine::new_with_language(&language).await?
+            // A missing language pack must not break OCR startup: warn and fall
+            // back to the user's profile languages.
+            match OcrEngine::new_with_language(&language).await {
+                Ok(engine) => engine,
+                Err(error) => {
+                    tracing::warn!(
+                        "OCR language '{}' is unavailable; falling back to profile languages: {}",
+                        language,
+                        error
+                    );
+                    OcrEngine::new().await?
+                }
+            }
         };
         Ok(Self { engine })
     }

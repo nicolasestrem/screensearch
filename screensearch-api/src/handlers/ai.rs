@@ -8,8 +8,7 @@ use axum::extract::{Json, State};
 use chrono::{DateTime, Duration, Utc};
 use reqwest::RequestBuilder;
 use screensearch_llm::{
-    get_models_dir, model_exists, DownloadProgress as LlmDownloadProgress, MODEL_FILENAME,
-    MODEL_SIZE_BYTES,
+    get_models_dir, DownloadProgress as LlmDownloadProgress, MODEL_FILENAME, MODEL_SIZE_BYTES,
 };
 
 use serde::{Deserialize, Serialize};
@@ -26,7 +25,7 @@ const LOCAL_LLM_ENDPOINT: &str = "http://127.0.0.1:31130/v1";
 /// Whether a local GGUF model is available — either a user-provided model
 /// discovered in `.models/` (etc.) or the downloadable default.
 fn local_model_available() -> bool {
-    !screensearch_llm::discover_local_models().is_empty() || model_exists(&get_models_dir())
+    screensearch_llm::local_model_available()
 }
 
 /// Validates that a provider URL is safe to use

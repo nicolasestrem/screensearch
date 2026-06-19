@@ -51,6 +51,7 @@ pub use download::{
     get_model_path,
     get_models_dir,
     llama_server_exists,
+    local_model_available,
     model_exists,
     model_search_dirs,
     needs_download,

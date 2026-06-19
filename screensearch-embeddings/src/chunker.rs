@@ -56,11 +56,27 @@ impl TextChunker {
         let max_words = ((self.max_tokens as f32) / TOKENS_PER_WORD).max(1.0) as usize;
         let overlap_words = ((self.overlap as f32) / TOKENS_PER_WORD) as usize;
 
+        // Hard-split any sentence longer than the per-chunk budget (e.g. OCR
+        // output with no sentence punctuation) into word groups of `max_words`,
+        // so no single piece can produce an oversized chunk that silently
+        // truncates at embedding time.
+        let mut units: Vec<String> = Vec::new();
+        for sentence in sentences {
+            let words: Vec<&str> = sentence.split_whitespace().collect();
+            if words.len() > max_words {
+                for group in words.chunks(max_words) {
+                    units.push(group.join(" "));
+                }
+            } else {
+                units.push(sentence.to_string());
+            }
+        }
+
         let mut chunks = Vec::new();
         let mut current_chunk = String::new();
         let mut current_word_count = 0;
 
-        for sentence in sentences {
+        for sentence in units {
             let sentence_words = sentence.split_whitespace().count();
 
             if current_word_count + sentence_words > max_words && !current_chunk.is_empty() {
@@ -80,7 +96,7 @@ impl TextChunker {
             if !current_chunk.is_empty() {
                 current_chunk.push_str(". ");
             }
-            current_chunk.push_str(sentence);
+            current_chunk.push_str(&sentence);
             current_word_count += sentence_words;
         }
 
@@ -130,6 +146,26 @@ mod tests {
         let joined = chunks.join(" ");
         for needle in ["First", "Second", "Third", "Fourth", "Fifth"] {
             assert!(joined.contains(needle), "missing {needle} in {chunks:?}");
+        }
+    }
+
+    #[test]
+    fn punctuation_free_text_is_split_to_budget() {
+        // 100 words, no sentence punctuation. With max_tokens=10 (~7 words),
+        // every produced chunk must stay within the word budget.
+        let chunker = TextChunker::new(10, 0);
+        let max_words = ((10_f32) / TOKENS_PER_WORD).max(1.0) as usize;
+        let text = (0..100)
+            .map(|i| format!("word{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let chunks = chunker.chunk_text(&text);
+        assert!(chunks.len() > 1, "expected multiple chunks, got {chunks:?}");
+        for chunk in &chunks {
+            assert!(
+                chunk.split_whitespace().count() <= max_words,
+                "chunk exceeds {max_words} words: {chunk:?}"
+            );
         }
     }
 

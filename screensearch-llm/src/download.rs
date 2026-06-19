@@ -249,6 +249,10 @@ pub fn discover_local_models() -> Vec<PathBuf> {
                         .and_then(|ext| ext.to_str())
                         .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
             })
+            // Canonicalize so the same physical file reached via different
+            // search dirs (e.g. relative `.models` and an absolute exe-dir
+            // path) is not reported twice.
+            .map(|path| path.canonicalize().unwrap_or(path))
             .collect();
         in_dir.sort();
         for path in in_dir {
@@ -258,6 +262,13 @@ pub fn discover_local_models() -> Vec<PathBuf> {
         }
     }
     models
+}
+
+/// Whether a local GGUF model is available for the answer-generation LLM —
+/// either a user-provided model discovered in `.models/` (etc.) or the
+/// downloadable default model.
+pub fn local_model_available() -> bool {
+    !discover_local_models().is_empty() || model_exists(&get_models_dir())
 }
 
 /// The GGUF model the LLM server should use by default: the first discovered

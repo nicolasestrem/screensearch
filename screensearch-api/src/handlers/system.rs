@@ -590,12 +590,12 @@ pub async fn test_vision_config(
 
     // Handle local provider specially - check llama-server health
     if req.provider == "local" {
-        // Check if model is downloaded
-        let models_dir = screensearch_llm::get_models_dir();
-        if !screensearch_llm::model_exists(&models_dir) {
+        // Accept any user-provided GGUF discovered in `.models/` (etc.), not just
+        // the downloadable default model.
+        if !screensearch_llm::local_model_available() {
             return Ok(Json(serde_json::json!({
                 "success": false,
-                "message": "Local model not downloaded. Please download the Ministral-3B model first."
+                "message": "No local model found. Drop a GGUF into .models/ or download the default model first."
             })));
         }
 
