@@ -9,8 +9,12 @@ pub const DEFAULT_TEMPERATURE: f32 = 0.7;
 /// Default maximum tokens to generate
 pub const DEFAULT_MAX_TOKENS: usize = 2048;
 
-/// Default context length (Ministral-3B supports up to 256k, but we limit for performance)
-pub const DEFAULT_CONTEXT_LENGTH: usize = 8192;
+/// Default context length (prompt + response). Raised to leave room for
+/// reasoning ("thinking") models like Qwen3.5 / Gemma 4, whose chain-of-thought
+/// can consume several thousand tokens before the final answer — at 8192 the
+/// RAG prompt + thinking filled the window and the answer was truncated to empty.
+/// These models train at 131k-262k context; 16384 is a memory/perf compromise.
+pub const DEFAULT_CONTEXT_LENGTH: usize = 16384;
 
 /// Default number of threads (0 = auto-detect)
 pub const DEFAULT_THREADS: usize = 0;

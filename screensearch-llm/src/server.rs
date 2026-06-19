@@ -302,7 +302,11 @@ impl LlamaServer {
             .arg("--host")
             .arg(&config.host)
             .arg("-c")
-            .arg(config.context_length.to_string());
+            .arg(config.context_length.to_string())
+            // Use each model's embedded chat template (Jinja). Required for
+            // correct formatting of modern instruct models and to surface
+            // reasoning/"thinking" output from models like Qwen3.5 / Gemma 4.
+            .arg("--jinja");
 
         // Add GPU flag if enabled (use configured number of layers)
         if use_gpu {
