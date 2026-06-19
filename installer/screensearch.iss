@@ -82,6 +82,10 @@ Source: "resources\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinsta
 ; Main executable
 Source: "..\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion; Components: core
 
+; ONNX Runtime (the in-process fastembed embedding engine loads it dynamically
+; from beside the executable; staged into target\release by fetch-onnxruntime.ps1)
+Source: "..\target\release\onnxruntime.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: core
+
 ; Configuration template
 Source: "..\config.toml"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist; Components: core
 

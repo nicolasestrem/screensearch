@@ -93,6 +93,13 @@ jobs:
         run: cargo build --release --locked
         shell: pwsh
 
+      - name: Stage ONNX Runtime DLL
+        # The in-process fastembed engine loads onnxruntime.dll dynamically; the
+        # installer ([Files]) and portable ZIP below ship it. Pinned + checksummed
+        # to ONNX Runtime 1.24.2 inside the script.
+        run: pwsh -File scripts/fetch-onnxruntime.ps1 -DestDir target/release
+        shell: pwsh
+
       - name: Download VC++ Redistributable
         run: |
           Write-Host "Downloading Visual C++ 2015-2022 Redistributable..."
@@ -124,7 +131,7 @@ jobs:
       - name: Create Portable ZIP
         run: |
           $version = $env:RELEASE_VERSION
-          Compress-Archive -Path target/release/screensearch.exe, config.toml, LICENSE, README.md `
+          Compress-Archive -Path target/release/screensearch.exe, target/release/onnxruntime.dll, config.toml, LICENSE, README.md `
                            -DestinationPath "target/release/installers/ScreenSearch-v$version-Portable.zip" `
                            -Force
         shell: pwsh

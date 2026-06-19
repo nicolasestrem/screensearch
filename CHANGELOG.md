@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Bundled `onnxruntime.dll` (ONNX Runtime 1.24.2, x64) in all Windows
+  artifacts**, so a fresh install has working semantic search out of the box. The
+  in-process fastembed engine loads ONNX Runtime dynamically and looks for the DLL
+  beside `screensearch.exe`; a new `scripts/fetch-onnxruntime.ps1` helper
+  downloads and checksum-verifies the pinned version and stages it into
+  `target/release`. It is now shipped by the installer (`installer/screensearch.iss`),
+  the portable ZIP, `scripts/build-release.ps1`, and `scripts/build-local.ps1`, and
+  acquired in CI (`.github/workflows/release.yml`). Validated end-to-end on
+  Windows: native WinRT OCR, 768-dim EmbeddingGemma embeddings
+  (`provider":"fastembed"`, `engine_ready":true`), semantic + hybrid (RRF) search,
+  and local llama.cpp answer generation. Without the DLL the app still runs with
+  OCR + keyword search (semantic degrades to FTS5).
+
 ### Changed
 - **Reverted PR #63 (Python "quality sidecar") and restored a fully in-process
   Rust ML stack.** The sidecar ran PaddleOCR/Qwen3 over HTTP and made the app

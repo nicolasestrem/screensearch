@@ -41,6 +41,20 @@ Copy-Item "config.toml" $Bundle -Force
 Copy-Item "README.md" $Bundle -Force
 Copy-Item "LICENSE" $Bundle -Force
 
+# Stage onnxruntime.dll beside the executable so semantic search works out of the
+# box. Best-effort: if the download fails (e.g. offline), the app still runs with
+# OCR + keyword search; semantic search degrades to FTS5.
+$Dll = Join-Path $Root "target\$Profile\onnxruntime.dll"
+try {
+    & "$PSScriptRoot\fetch-onnxruntime.ps1" -DestDir "target\$Profile"
+    if (Test-Path $Dll) {
+        Copy-Item $Dll $Bundle -Force
+    }
+}
+catch {
+    Write-Host "Warning: could not stage onnxruntime.dll ($_). Semantic search will be disabled until it is present." -ForegroundColor Yellow
+}
+
 Write-Host ""
 Write-Host "Complete local build:" -ForegroundColor Green
 Write-Host "  $Bundle\screensearch.exe" -ForegroundColor White

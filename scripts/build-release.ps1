@@ -81,6 +81,17 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "Rust build complete" -ForegroundColor Green
 Write-Host ""
 
+# Stage onnxruntime.dll next to the binary. The in-process fastembed embedding
+# engine loads it dynamically (ort `load-dynamic`); the installer and portable
+# ZIP below ship it so a fresh install has working semantic search.
+Write-Host "Staging ONNX Runtime DLL..." -ForegroundColor Cyan
+& "$PSScriptRoot\fetch-onnxruntime.ps1" -DestDir "target\release"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Failed to stage onnxruntime.dll" -ForegroundColor Red
+    exit 1
+}
+Write-Host ""
+
 # Step 3: Code signing (optional)
 if ($SignBinary) {
     Write-Host "[3/7] Signing binary..." -ForegroundColor Cyan
@@ -135,7 +146,7 @@ Write-Host ""
 # Create Portable ZIP
 Write-Host "[6/7] Creating Portable ZIP..." -ForegroundColor Cyan
 $zipPath = "target\release\installers\ScreenSearch-v$Version-Portable.zip"
-Compress-Archive -Path "target\release\screensearch.exe", "config.toml", "LICENSE", "README.md" `
+Compress-Archive -Path "target\release\screensearch.exe", "target\release\onnxruntime.dll", "config.toml", "LICENSE", "README.md" `
                  -DestinationPath $zipPath -Force
 Write-Host "Portable ZIP created: $zipPath" -ForegroundColor Green
 Write-Host ""
