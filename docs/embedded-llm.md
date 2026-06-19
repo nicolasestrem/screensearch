@@ -123,7 +123,7 @@ pub struct LlmConfig {
     pub model_path: Option<PathBuf>,    // Auto-detected if None
     pub temperature: f32,                // Default: 0.7 (range: 0.0-2.0)
     pub max_tokens: usize,               // Default: 2048
-    pub context_length: usize,           // Default: 8192 (up to 256k supported)
+    pub context_length: usize,           // Default: 16384 (up to 256k supported)
     pub threads: usize,                  // Default: 0 (auto-detect CPU cores)
     pub use_gpu: bool,                   // Default: true (Vulkan acceleration)
     pub top_p: f32,                      // Default: 0.95 (nucleus sampling)
@@ -327,9 +327,18 @@ llama-server \
   --port <port> \
   --host 127.0.0.1 \
   -c <context_length> \
-  -ngl 99 \           # GPU layers (if use_gpu=true)
-  -t <threads>        # CPU threads (if specified)
+  --jinja \                  # use the model's embedded chat template (reasoning models)
+  --mmproj <projector> \     # only when LlamaServerConfig.mmproj_path is set (vision)
+  -ngl 99 \                  # GPU layers (if use_gpu=true)
+  -t <threads>               # CPU threads (if specified)
 ```
+
+`LlamaServerConfig.mmproj_path` is `None` for a text-only server. When set (vision
+enabled with the local provider), the server loads the multimodal projector so the
+**same** process serves both text generation and image (`image_url`) requests —
+ScreenSearch runs one unified Gemma 4 model rather than two servers. The API layer
+selects the model/projector and rebuilds the server when vision is toggled; the
+vision worker consumes the analysis queue. See `docs/vision.md`.
 
 ### 5.8 Port Fallback System
 

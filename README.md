@@ -66,9 +66,10 @@
 - [*] **Continuous Screen Capture** — Configurable intervals (2-5 seconds) with multi-monitor support
 - [*] **OCR Text Extraction** — Native Windows OCR (WinRT) running in-process with confidence and bounding boxes
 - [*] **AI-Powered Intelligence** — Generate insights from your screen history using local LLMs (Ollama, LM Studio) or cloud providers (OpenAI)
+- [*] **On-Device Vision** — Optional screen understanding: a unified local Gemma 4 model (llama.cpp `--mmproj`) describes each screenshot, reads on-screen text from the image, and classifies activity — entirely on-device (or via an external vision provider). See [docs/vision.md](docs/vision.md)
 - [*] **Hybrid Search** — Fuses FTS5 and sqlite-vec retrieval via Reciprocal Rank Fusion, with optional cross-encoder reranking
 - [*] **Smart Search** — Conversational AI answers with context from your screen history
-- [*] **REST API** — 27 endpoints for search, automation, and tag management on localhost:3131
+- [*] **REST API** — endpoints for search, vision, automation, and tag management on localhost:3131
 - [*] **UI Automation** — Programmatic control of Windows applications via accessibility APIs
 - [*] **System Tray** — unobtrusive background operation with quick access menu
 - [*] **Privacy Controls** — Exclude sensitive applications, pause on screen lock
@@ -343,10 +344,12 @@ screensearch/
 ├── screensearch-capture/       # Capture + native Windows OCR (in-process)
 ├── screensearch-db/            # SQLite, FTS5, sqlite-vec, migrations
 ├── screensearch-embeddings/    # In-process fastembed (EmbeddingGemma-300M)
-├── screensearch-llm/           # Manages external llama.cpp answer-generation server
+├── screensearch-llm/           # Manages external llama.cpp server (text + vision via --mmproj)
+├── screensearch-vision/        # Vision provider client (screen understanding)
 ├── screensearch-api/           # REST API server (Axum framework)
 │   ├── src/routes.rs          # API endpoint definitions
-│   └── src/handlers/          # Search, embeddings, RAG, generation
+│   ├── src/handlers/          # Search, embeddings, RAG, generation, vision
+│   └── src/workers/           # Background embedding + vision workers
 ├── screensearch-automation/    # Windows UI automation engine
 ├── evaluation/                 # Versioned retrieval quality cases
 ├── screensearch-ui/            # Modern React web dashboard

@@ -103,8 +103,8 @@ Do not reintroduce in-memory full-vector scans or synthetic hash embeddings.
 
 ## Generation Development
 
-Generation is independent from retrieval. Existing database field names use
-`vision_*`, but the UI describes them as answer-generation settings.
+Generation is independent from retrieval. The `vision_*` database fields
+configure both the answer-generation provider and the vision pipeline.
 
 Supported runtimes:
 
@@ -119,6 +119,33 @@ Supported runtimes:
 
 The local model-management routes belong to generation only. They are not the
 embedding-engine status.
+
+## Vision Development
+
+Vision analyzes screenshot pixels and writes `description`, `visible_text`,
+`activity_type`, `app_hint`, and `confidence` onto frames. It is off by default
+and shares the `vision_*` settings.
+
+- **Local provider = unified server.** `AppState::get_llama_server`
+  (`screensearch-api/src/state.rs`) is vision-aware: when vision is enabled with
+  `vision_provider = "local"`, it runs the single llama.cpp server with
+  `--mmproj` so one Gemma 4 model serves both text and images, and it rebuilds
+  the server when vision toggles. Model/projector selection lives in
+  `screensearch-llm/src/download.rs` (`resolve_vision_model`,
+  `resolve_mmproj_for`, `discover_vision_models`); `--mmproj` emission and the
+  `mmproj_path` config field are in `screensearch-llm/src/server.rs`.
+- **Worker.** `screensearch-api/src/workers/vision_worker.rs` consumes
+  `analysis_queue`, calls the provider via `screensearch-vision` (OpenAI-compat
+  vision path for `local`), and writes results back. It takes `Arc<AppState>` via
+  `ApiServer::start_vision_worker`.
+- **Enqueue.** On demand (`POST /api/vision/analyze/:frame_id`) plus a throttled
+  background trickle (`DatabaseManager::get_unanalyzed_frame_ids`, batch 4).
+  `GET /api/vision/status` reports counts.
+- **Frames default to `analysis_status = 'pending'`** but are not auto-queued;
+  the trickle query treats anything not in `('completed','processing','failed')`
+  and not already queued as needing analysis.
+
+See `docs/vision.md` for the full guide.
 
 ## Local Linux Build
 
