@@ -75,3 +75,7 @@ com[1-9]
 lpt[1-9]
 .dev_logs/
 .xwin-cache/
+/sidecar/.venv
+/sidecar/build
+/sidecar/dist
+sidecar/screensearch-ai-sidecar.spec
