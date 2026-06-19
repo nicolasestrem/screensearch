@@ -27,16 +27,20 @@ pub const LLAMA_SERVER_FILENAME: &str = "llama-server.exe";
 #[cfg(not(windows))]
 pub const LLAMA_SERVER_FILENAME: &str = "llama-server";
 
-/// Approximate llama-server binary size in bytes (~22MB for CPU build as of b7562)
-pub const LLAMA_SERVER_SIZE_BYTES: u64 = 22_500_000;
+/// Approximate llama-server binary size in bytes (~37MB ZIP for the Vulkan
+/// Windows build as of b9728)
+pub const LLAMA_SERVER_SIZE_BYTES: u64 = 37_000_000;
 
 /// llama.cpp releases base URL (moved from ggerganov to ggml-org)
 #[allow(dead_code)]
 const LLAMA_CPP_RELEASES_URL: &str = "https://github.com/ggml-org/llama.cpp/releases";
 
-/// Current llama.cpp version for downloads
-#[allow(dead_code)]
-const LLAMA_VERSION: &str = "b7562";
+/// Current pinned llama.cpp build. Bumped from b7562 → b9728 so the server can
+/// load recent model architectures (e.g. `gemma4`, `qwen35`); older builds fail
+/// with "unknown model architecture". Recorded next to the downloaded binary so
+/// an existing install re-downloads when this pin changes (see
+/// `llama_server_up_to_date`).
+pub const LLAMA_VERSION: &str = "b9728";
 
 /// Get the latest llama-server download URL for the current platform
 #[cfg(all(windows, target_arch = "x86_64"))]
@@ -44,25 +48,29 @@ pub fn get_llama_server_url() -> &'static str {
     // Vulkan GPU-accelerated Windows build (works on NVIDIA, AMD, Intel GPUs)
     // Falls back to CPU automatically if no compatible GPU is available
     // Vulkan is pre-installed with modern GPU drivers, no additional setup needed
-    "https://github.com/ggml-org/llama.cpp/releases/download/b7562/llama-b7562-bin-win-vulkan-x64.zip"
+    "https://github.com/ggml-org/llama.cpp/releases/download/b9728/llama-b9728-bin-win-vulkan-x64.zip"
 }
 
+// Note: ScreenSearch is a Windows-only application; the non-Windows URLs below
+// are kept current for completeness. Recent llama.cpp releases ship these as
+// .tar.gz (the extractor here handles .zip), so non-Windows targets are not a
+// supported runtime path.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn get_llama_server_url() -> &'static str {
     // Linux x64 build (CPU)
-    "https://github.com/ggml-org/llama.cpp/releases/download/b7562/llama-b7562-bin-ubuntu-x64.zip"
+    "https://github.com/ggml-org/llama.cpp/releases/download/b9728/llama-b9728-bin-ubuntu-x64.tar.gz"
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub fn get_llama_server_url() -> &'static str {
     // macOS ARM64 build (Apple Silicon)
-    "https://github.com/ggml-org/llama.cpp/releases/download/b7562/llama-b7562-bin-macos-arm64.zip"
+    "https://github.com/ggml-org/llama.cpp/releases/download/b9728/llama-b9728-bin-macos-arm64.tar.gz"
 }
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
 pub fn get_llama_server_url() -> &'static str {
     // macOS x64 build (Intel)
-    "https://github.com/ggml-org/llama.cpp/releases/download/b7562/llama-b7562-bin-macos-x64.zip"
+    "https://github.com/ggml-org/llama.cpp/releases/download/b9728/llama-b9728-bin-macos-x64.tar.gz"
 }
 
 // Fallback for unsupported platforms
@@ -148,10 +156,31 @@ pub fn llama_server_exists(bin_dir: &Path) -> bool {
     server_path.exists()
 }
 
-/// Check if llama-server download is needed
+/// Path to the marker recording which llama.cpp build is installed in `bin_dir`.
+fn llama_version_marker_path(bin_dir: &Path) -> PathBuf {
+    bin_dir.join("llama-version.txt")
+}
+
+/// The llama.cpp build recorded in `bin_dir`, if any.
+fn installed_llama_version(bin_dir: &Path) -> Option<String> {
+    std::fs::read_to_string(llama_version_marker_path(bin_dir))
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
+/// Whether the installed llama-server binary is present AND matches the pinned
+/// `LLAMA_VERSION`. A binary left over from an older pin is treated as out of
+/// date so the app re-downloads a build that supports current model
+/// architectures (e.g. `gemma4`, `qwen35`).
+pub fn llama_server_up_to_date(bin_dir: &Path) -> bool {
+    llama_server_exists(bin_dir)
+        && installed_llama_version(bin_dir).as_deref() == Some(LLAMA_VERSION)
+}
+
+/// Check if llama-server download is needed (missing or version mismatch)
 pub fn needs_llama_server_download() -> bool {
     let bin_dir = get_bin_dir();
-    !llama_server_exists(&bin_dir)
+    !llama_server_up_to_date(&bin_dir)
 }
 
 /// Get the models directory path
@@ -467,11 +496,21 @@ pub async fn download_llama_server_with_progress(
 ) -> Result<PathBuf> {
     let bin_dir = get_bin_dir();
 
-    // Check if already downloaded
-    if llama_server_exists(&bin_dir) {
+    // Check if already downloaded AND matching the pinned version. A binary from
+    // an older pin is re-downloaded so it can load current model architectures.
+    if llama_server_up_to_date(&bin_dir) {
         let server_path = bin_dir.join(LLAMA_SERVER_FILENAME);
-        info!("llama-server already downloaded at {:?}", server_path);
+        info!(
+            "llama-server {} already downloaded at {:?}",
+            LLAMA_VERSION, server_path
+        );
         return Ok(server_path);
+    }
+    if llama_server_exists(&bin_dir) {
+        info!(
+            "Existing llama-server is from a different build (need {}); re-downloading",
+            LLAMA_VERSION
+        );
     }
 
     // Get download URL for current platform
@@ -587,6 +626,12 @@ pub async fn download_llama_server_with_progress(
         return Err(LlmError::DownloadFailed(
             "Extraction failed - llama-server not found".to_string(),
         ));
+    }
+
+    // Record which build was installed so a future version bump triggers a
+    // re-download (see llama_server_up_to_date).
+    if let Err(e) = std::fs::write(llama_version_marker_path(&bin_dir), LLAMA_VERSION) {
+        warn!("Failed to write llama-server version marker: {}", e);
     }
 
     // Make executable on Unix

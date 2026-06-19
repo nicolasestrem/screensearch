@@ -24,6 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OCR + keyword search (semantic degrades to FTS5).
 
 ### Changed
+- **Bumped the pinned llama.cpp build from `b7562` to `b9728`** so the bundled
+  answer-generation server can load current model architectures (e.g. `gemma4`,
+  `qwen35`); older builds failed with "unknown model architecture". The installed
+  build is now recorded in `bin/llama-version.txt` and an existing install
+  **re-downloads** llama-server when the pin changes (previously the version-less
+  presence check kept a stale binary). The server is launched with `--jinja` so it
+  uses each model's embedded chat template, which is required for correct
+  formatting of modern instruct models and surfaces reasoning/"thinking" output
+  from models like Qwen3.5 / Gemma 4. To make reasoning models usable, the
+  default context window was raised from 8192 to 16384 (chain-of-thought was
+  filling the 8k window and truncating the answer to empty), the AI report now
+  reports the **actual** resolved model name instead of a hardcoded
+  "ministral-3b", and an empty answer (model spent the whole window thinking) now
+  yields a clear note instead of a blank report. (`screensearch-llm/src/download.rs`,
+  `server.rs`, `config.rs`; `screensearch-api/src/handlers/ai.rs`)
 - **Reverted PR #63 (Python "quality sidecar") and restored a fully in-process
   Rust ML stack.** The sidecar ran PaddleOCR/Qwen3 over HTTP and made the app
   slow and unusable (OCR on the asyncio event loop took tens of seconds/frame,

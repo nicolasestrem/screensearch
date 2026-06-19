@@ -113,6 +113,10 @@ struct OpenAIChatRequest {
 struct OpenAIMessage {
     role: String,
     content: String,
+    /// Reasoning/"thinking" output emitted by reasoning models (Qwen3.5, Gemma 4)
+    /// when the server runs with `--jinja`. Returned separately from `content`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -333,11 +337,12 @@ OUTPUT FORMAT (Markdown):
             ));
         }
 
-        // Check if llama-server binary is available
+        // Check if llama-server binary is available and matches the pinned build
+        // (an older build is treated as missing so it gets re-downloaded).
         let bin_dir = screensearch_llm::get_bin_dir();
-        if !screensearch_llm::llama_server_exists(&bin_dir) {
+        if !screensearch_llm::llama_server_up_to_date(&bin_dir) {
             return Err(AppError::InvalidRequest(
-                "llama-server not downloaded. Please download it from Settings → AI → Download Server.".to_string()
+                "llama-server not downloaded (or outdated). Please download it from Settings → AI → Download Server.".to_string()
             ));
         }
 
@@ -357,7 +362,13 @@ OUTPUT FORMAT (Markdown):
 
         // Get the endpoint from the running server (handles port fallback)
         let endpoint = format!("{}/v1", server.endpoint().await);
-        (endpoint, "ministral-3b".to_string())
+        // Report the actual GGUF the server resolved (not a hardcoded name).
+        let model_name = screensearch_llm::resolve_model_path()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "local".to_string());
+        (endpoint, model_name)
     } else {
         (payload.provider_url.clone(), payload.model.clone())
     };
@@ -382,10 +393,12 @@ OUTPUT FORMAT (Markdown):
             OpenAIMessage {
                 role: "system".to_string(),
                 content: system_prompt.to_string(),
+                reasoning_content: None,
             },
             OpenAIMessage {
                 role: "user".to_string(),
                 content: user_prompt,
+                reasoning_content: None,
             },
         ],
         temperature: Some(0.7),
@@ -447,10 +460,22 @@ OUTPUT FORMAT (Markdown):
         )
     })?;
 
+    // Use the model's answer (`content`). If a reasoning model exhausted the
+    // context window thinking and never produced a final answer, `content` is
+    // empty — surface a clear note instead of a blank report.
     let report_content = response_body
         .choices
         .first()
-        .map(|c| c.message.content.clone())
+        .map(|c| {
+            let content = c.message.content.trim();
+            if !content.is_empty() {
+                content.to_string()
+            } else if c.message.reasoning_content.is_some() {
+                "_The model spent the full context window reasoning and did not produce a final answer. Try a narrower time range or a smaller/non-reasoning model._".to_string()
+            } else {
+                "No report generated.".to_string()
+            }
+        })
         .unwrap_or_else(|| "No report generated.".to_string());
 
     // Add metadata header with generation date and model
@@ -676,10 +701,12 @@ pub struct ServerStatusResponse {
 pub async fn get_server_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ServerStatusResponse>> {
-    use screensearch_llm::{get_bin_dir, llama_server_exists, ServerStatus};
+    use screensearch_llm::{get_bin_dir, llama_server_up_to_date, ServerStatus};
 
     let bin_dir = get_bin_dir();
-    let server_binary_available = llama_server_exists(&bin_dir);
+    // "Available" means present AND matching the pinned build, so the UI prompts a
+    // re-download after a llama.cpp version bump.
+    let server_binary_available = llama_server_up_to_date(&bin_dir);
 
     // Check if server is initialized
     let guard = state.llama_server.read().await;
@@ -728,7 +755,7 @@ pub async fn start_server(
     }
 
     let bin_dir = screensearch_llm::get_bin_dir();
-    if !screensearch_llm::llama_server_exists(&bin_dir) {
+    if !screensearch_llm::llama_server_up_to_date(&bin_dir) {
         return Ok(Json(ServerControlResponse {
             success: false,
             message: "llama-server not found. Downloading...".to_string(),
@@ -845,12 +872,12 @@ pub async fn update_server_ttl(
 pub async fn download_llama_server(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ModelDownloadResponse>> {
-    use screensearch_llm::{get_bin_dir, llama_server_exists, LLAMA_SERVER_SIZE_BYTES};
+    use screensearch_llm::{get_bin_dir, llama_server_up_to_date, LLAMA_SERVER_SIZE_BYTES};
 
     let bin_dir = get_bin_dir();
 
-    // Check if already downloaded
-    if llama_server_exists(&bin_dir) {
+    // Check if already downloaded at the pinned build (re-download if outdated)
+    if llama_server_up_to_date(&bin_dir) {
         return Ok(Json(ModelDownloadResponse {
             success: true,
             message: "llama-server already downloaded".to_string(),
