@@ -75,6 +75,10 @@ com[1-9]
 lpt[1-9]
 .dev_logs/
 .xwin-cache/
+
+# Local working artifacts (model/DLL downloads, fastembed model cache)
+/vendor/
+/.fastembed_cache/
 /sidecar/.venv
 /sidecar/build
 /sidecar/dist

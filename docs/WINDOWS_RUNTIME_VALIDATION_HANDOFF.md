@@ -1,5 +1,21 @@
 # Session Handoff — Windows Runtime Validation of the In-Process Rust ML Stack
 
+> **STATUS (2026-06-19): COMPLETE — both deliverables done.** Validated on a real
+> Windows 11 box; deliverable B (DLL bundling) is in **PR #68**
+> (`feature/bundle-onnxruntime-dll`). Findings worth a follow-up (NOT blockers,
+> tracked in PR #68's description):
+> 1. `MIGRATION_009` uses `CREATE VIRTUAL TABLE IF NOT EXISTS`, so an existing
+>    `float[1024]` `embedding_vectors` (PR #63-era DB) is **not** rebuilt to
+>    `float[768]` → 768-dim inserts fail. Fine for fresh installs.
+> 2. Without `onnxruntime.dll`, a `mode=semantic`/`hybrid` search calls
+>    `EmbeddingEngine::new()` which stalls under the engine write-lock and wedges
+>    `/api/embeddings/status`; search does not fall back to FTS5 on engine-init
+>    failure. Bundling the DLL avoids this in production.
+> 3. Bleeding-edge local GGUFs (`qwen35`, `gemma4`) are unsupported by the pinned
+>    llama.cpp b7562; validation used the default Ministral-3B.
+>
+> The remainder of this document is the original (pre-completion) handoff.
+
 > **Read this file first and in full before taking any action.** It is the
 > authoritative continuation point. Every path is repo-relative unless marked
 > absolute. Every command, version, constant, commit hash, and API field below
