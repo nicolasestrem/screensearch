@@ -19,9 +19,15 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 
 # In-process embeddings + reranking via ONNX Runtime (no Python sidecar).
-# Pulls in `ort` (ONNX Runtime 2.x) and `hf-hub` transitively; downloads and
-# caches models from HuggingFace on first use.
-fastembed = "5.17"
+# `ort-load-dynamic` loads `onnxruntime.dll` at runtime instead of statically
+# linking it: a statically-linked ONNX Runtime fails to link under this repo's
+# forced static-CRT + lld config (unresolved UCRT symbols), and dynamic loading
+# is the right model for a portable Windows binary that ships the DLL alongside
+# the exe. `hf-hub-native-tls` keeps first-run model download/caching.
+fastembed = { version = "5.17", default-features = false, features = [
+    "ort-load-dynamic",
+    "hf-hub-native-tls",
+] }
 
 # Content hashing for chunk de-duplication
 sha2 = "0.10"

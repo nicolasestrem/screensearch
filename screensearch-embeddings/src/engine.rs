@@ -14,6 +14,35 @@ const GEMMA_QUERY_PREFIX: &str = "task: search result | query: ";
 /// EmbeddingGemma retrieval prompt for documents (per the model card).
 const GEMMA_DOCUMENT_PREFIX: &str = "title: none | text: ";
 
+/// Point the dynamically-loaded ONNX Runtime at a copy of the shared library
+/// shipped next to the executable, when one is present and the caller hasn't
+/// already set `ORT_DYLIB_PATH`. If neither is set, `ort` falls back to its
+/// default platform search (e.g. the system `PATH`).
+fn configure_ort_dylib_path() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        if std::env::var_os("ORT_DYLIB_PATH").is_some() {
+            return;
+        }
+        let lib_name = if cfg!(windows) {
+            "onnxruntime.dll"
+        } else if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let candidate = dir.join(lib_name);
+                if candidate.exists() {
+                    std::env::set_var("ORT_DYLIB_PATH", &candidate);
+                }
+            }
+        }
+    });
+}
+
 /// Result returned by the cross-encoder reranker.
 #[derive(Debug, Clone)]
 pub struct RerankScore {
@@ -42,6 +71,7 @@ impl EmbeddingEngine {
     /// Create an engine with explicit configuration. Loading (and, on first run,
     /// downloading) the model happens on the blocking pool.
     pub async fn with_config(config: EmbeddingConfig) -> Result<Self> {
+        configure_ort_dylib_path();
         let load_config = config.clone();
         let (model, reranker) = tokio::task::spawn_blocking(move || {
             let mut init = TextInitOptions::new(EmbeddingModel::EmbeddingGemma300MQ)

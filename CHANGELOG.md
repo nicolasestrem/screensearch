@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     from #63.
   - The sqlite-vec `embedding_vectors` contract changes from `float[1024]` to
     `float[768]`. No migration is provided (the embeddings table is rebuilt).
+  - ONNX Runtime is loaded **dynamically** (`ort`'s `load-dynamic`): the app
+    finds `onnxruntime.dll` next to the executable (or via `ORT_DYLIB_PATH` /
+    the system path). This keeps the portable binary linkable under the repo's
+    static-CRT + lld build. If the DLL is absent, embeddings degrade gracefully
+    (semantic search falls back to FTS5); OCR and keyword search are unaffected.
+    Windows release artifacts must ship a matching `onnxruntime.dll`.
 - **Answer-generation LLM is now model-agnostic.** The bundled llama.cpp server
   auto-discovers any `*.gguf` dropped into `.models/` (or the app models dir)
   and uses the first one found, instead of hardcoding Ministral-3B. The default
