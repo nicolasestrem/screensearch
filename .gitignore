@@ -45,11 +45,9 @@ Thumbs.db
 *.dylib
 __pycache__/
 *.py[cod]
-/sidecar/build/
-/sidecar/dist/
-# Sidecar build environment and generated PyInstaller spec
-/sidecar/.venv/
-/sidecar/*.spec
+
+# Local GGUF models dropped in for the answer-generation LLM
+/.models/
 
 # Installer resources (large files)
 installer/models/

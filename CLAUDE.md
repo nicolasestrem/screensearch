@@ -120,11 +120,13 @@ cargo clippy --workspace --fix
 ```
 
 **Build artifacts**:
-- `ScreenSearch-v{version}-Setup-Quality.exe` - Installer bundling the Python quality sidecar
-- `ScreenSearch-v{version}-Portable.zip` - Standalone executable + bundled sidecar + config
+- `ScreenSearch-v{version}-Setup.exe` - Installer for the self-contained executable
+- `ScreenSearch-v{version}-Portable.zip` - Standalone executable + config
 
-Models (PP-OCRv5, Qwen3) are downloaded by the sidecar to the HuggingFace/Paddle
-caches on first use, not embedded in the installer.
+The embedding model (EmbeddingGemma-300M) is downloaded by the in-process
+`fastembed` engine to the HuggingFace cache on first use, not embedded in the
+installer. OCR uses the native Windows OCR API and needs no model download. No
+Python is required to build or run ScreenSearch.
 
 ### Cross-Compilation (Linux to Windows)
 
@@ -188,14 +190,17 @@ Main Binary (src/main.rs)
     ├─> screensearch-db (SQLite database + vector search)
     ├─> screensearch-api (REST API server)
     ├─> screensearch-automation (Windows UI automation)
-    └─> screensearch-embeddings (sidecar embeddings/rerank client)
+    ├─> screensearch-embeddings (in-process fastembed embeddings/rerank)
+    └─> screensearch-llm (manages external llama.cpp answer-generation server)
 ```
 
 ### Workspace Members
 
 1. **screensearch-capture** (`screensearch-capture/`)
    - Screen capture engine with multi-monitor support
-   - Windows OCR API integration (WinRT COM via windows-rs)
+   - Native Windows OCR API integration (WinRT `Media.Ocr` via windows-rs),
+     in-process, ~70-80 ms/frame, no model download (`ocr.rs`; provider wrapper
+     `ocr_provider.rs`)
    - Zero-copy frame differencing using Arc<RgbaImage>
    - Multi-threaded OCR processing pipeline
    - JPEG compression and image resizing for storage optimization
@@ -224,12 +229,24 @@ Main Binary (src/main.rs)
    - Window management
 
 5. **screensearch-embeddings** (`screensearch-embeddings/`)
-   - Thin HTTP client to the managed Python quality sidecar (no in-Rust ML)
-   - Embeddings, reranking, and chunking are delegated to the sidecar endpoints
-   - 1024-dimensional embeddings (Qwen/Qwen3-Embedding-0.6B)
-   - Reranking via Qwen/Qwen3-Reranker-0.6B
-   - Batch processing for efficiency
-   - The sidecar manages model download/caching (HuggingFace + Paddle caches)
+   - In-process embeddings via the `fastembed` crate (ONNX Runtime / `ort` 2.x);
+     no separate process, no Python (`engine.rs`, `chunker.rs`, `lib.rs`)
+   - 768-dimensional embeddings (EmbeddingGemma-300M, fastembed variant
+     `EmbeddingGemma300MQ`). Constants: `EMBEDDING_DIM=768`,
+     `MODEL_NAME="EmbeddingGemma-300M"`, `provider()="fastembed"`
+   - Optional cross-encoder reranking (`bge-reranker-v2-m3`), off by default;
+     default retrieval is sqlite-vec KNN + Reciprocal Rank Fusion (RRF)
+   - Text chunking and batch processing for efficiency
+   - The model is downloaded/cached from HuggingFace on first use
+
+6. **screensearch-llm** (`screensearch-llm/`)
+   - Manages an **external** llama.cpp server (Vulkan GPU + CPU fallback) over an
+     OpenAI-compatible HTTP API, used only for answer generation (AI reports /
+     RAG answers)
+   - Model-agnostic: auto-discovers any `*.gguf` in `.models/` (repo root) or the
+     app models directory and uses the first found
+     (`resolve_model_path` / `discover_local_models`); Ministral-3B is the
+     downloadable default fallback
 
 ### Main Binary (`src/main.rs`)
 
@@ -255,9 +272,9 @@ Background Worker
     ↓
 Fetch frames without embeddings (batch: 50)
     ↓
-Chunking via sidecar /v1/chunk
+Text chunking (in-process)
     ↓
-Sidecar /v1/embeddings inference (Qwen3, 1024-dim vectors)
+fastembed inference (EmbeddingGemma-300M, 768-dim vectors)
     ↓
 Store embeddings in SQLite (sqlite-vec)
 ```
@@ -361,9 +378,10 @@ max_width = 1920                # Resize frames to max width (maintains aspect r
 [embeddings]
 enabled = false                 # Enable semantic search with embeddings
 batch_size = 50                 # Frames to process per batch
-# Model identity (Qwen/Qwen3-Embedding-0.6B, 1024-dim), chunking, and hybrid
-# retrieval (Reciprocal Rank Fusion) are owned by the sidecar contract and are
-# not configurable here.
+# Model identity (EmbeddingGemma-300M, 768-dim, fastembed), chunking, and hybrid
+# retrieval (Reciprocal Rank Fusion) are fixed by the in-process embedding engine
+# and are not configurable here. Optional bge-reranker-v2-m3 reranking is off by
+# default.
 
 [api]
 port = 3131
@@ -411,7 +429,7 @@ CREATE TRIGGER ocr_text_after_insert ...
 
 **Embeddings Table** (Dense/Semantic):
 ```sql
--- Stores 1024-dim Qwen3 vectors for semantic search (queried via sqlite-vec)
+-- Metadata for chunk embeddings (EmbeddingGemma-300M, 768-dim)
 CREATE TABLE embeddings (
     id INTEGER PRIMARY KEY,
     frame_id INTEGER NOT NULL,
@@ -425,6 +443,13 @@ CREATE TABLE embeddings (
 );
 
 CREATE INDEX idx_embeddings_frame_id ON embeddings(frame_id);
+
+-- sqlite-vec vec0 virtual table for KNN search
+CREATE VIRTUAL TABLE embedding_vectors USING vec0(
+    embedding float[768] distance_metric=cosine
+);
+-- Index metadata: embeddings_model="EmbeddingGemma-300M",
+-- embeddings_provider="fastembed", embeddings_dimension="768"
 ```
 
 **IMPORTANT**: FTS5 requires special query syntax. NEVER pass raw user input to MATCH.
@@ -442,13 +467,14 @@ ScreenSearch combines **sparse (FTS5)** and **dense (vector embeddings)** search
    - Use for: Known keywords, specific terms
 
 2. **Vector Search** (semantic similarity):
-   - sqlite-vec KNN over 1024-dim Qwen3 embeddings
+   - sqlite-vec KNN over 768-dim EmbeddingGemma-300M embeddings
    - Understands context and meaning
    - Use for: Concepts, questions, paraphrases
 
 3. **Hybrid Search** (combines both):
-   - Reciprocal Rank Fusion (RRF) merges FTS5 and vector rankings, then
-     Qwen3-Reranker (via the sidecar) reorders the candidates
+   - Reciprocal Rank Fusion (RRF) merges FTS5 and vector rankings; an optional
+     in-process cross-encoder (`bge-reranker-v2-m3` via fastembed, off by
+     default) can then reorder the candidates
    - No tunable alpha: RRF avoids mixing incomparable raw scores
 
 **API Usage**:
@@ -544,7 +570,8 @@ POST /api/embeddings/enable        - Enable/disable embeddings
 
 **Enable embeddings**:
 1. Set `embeddings.enabled = true` in `config.toml`
-2. First run downloads model from HuggingFace (449MB) to `%APPDATA%\ScreenSearch\models\`
+2. First run downloads the EmbeddingGemma-300M model from HuggingFace (via the
+   in-process `fastembed` engine) to the HuggingFace cache
 3. Background worker processes frames in batches (default: 50 frames per batch)
 
 **Generate embeddings for existing frames**:
@@ -558,9 +585,9 @@ curl "http://localhost:3131/api/embeddings/status"
 ```
 
 **Key files**:
-- Embedding engine: `screensearch-embeddings/src/engine.rs`
+- Embedding engine (fastembed): `screensearch-embeddings/src/engine.rs`
 - Text chunking: `screensearch-embeddings/src/chunker.rs`
-- Model download: `screensearch-embeddings/src/download.rs`
+- Crate API and constants: `screensearch-embeddings/src/lib.rs`
 - Vector search: `screensearch-db/src/vector_search.rs`
 
 ## Testing Notes
@@ -609,7 +636,7 @@ Maintain these performance characteristics:
 3. **Privacy-first**: All data stored locally in SQLite. No cloud uploads.
 4. **Zero-copy**: Prefer Arc and reference counting over cloning large buffers.
 5. **Async-first**: Use tokio for all I/O operations.
-6. **Portable binary**: UI assets embedded via rust-embed; the Python quality sidecar ships alongside the executable and downloads its models (PP-OCRv5, Qwen3) on first use.
+6. **Portable binary**: UI assets embedded via rust-embed; OCR and embeddings run in-process in Rust (native Windows OCR needs no download; the fastembed EmbeddingGemma-300M model downloads from HuggingFace on first use). The external llama.cpp answer-generation server is managed at runtime and uses an auto-discovered local GGUF or downloads the default. No Python is required.
 
 ## Git Workflow
 

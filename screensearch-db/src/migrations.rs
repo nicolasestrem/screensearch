@@ -297,13 +297,14 @@ ALTER TABLE embeddings ADD COLUMN model TEXT NOT NULL DEFAULT 'unknown';
 ALTER TABLE embeddings ADD COLUMN model_version TEXT NOT NULL DEFAULT 'unknown';
 ALTER TABLE embeddings ADD COLUMN content_hash TEXT NOT NULL DEFAULT '';
 
--- Existing 384-dimensional vectors are incompatible with the fixed
--- Qwen3 1024-dimensional contract. Clear them and require a full reindex.
+-- Embeddings are produced in-process by fastembed (EmbeddingGemma-300M, 768-dim).
+-- Any earlier vectors are incompatible with this fixed contract: clear them and
+-- require a full reindex.
 DELETE FROM embeddings;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS embedding_vectors USING vec0(
     embedding_id INTEGER PRIMARY KEY,
-    embedding float[1024] distance_metric=cosine
+    embedding float[768] distance_metric=cosine
 );
 
 CREATE TRIGGER IF NOT EXISTS embeddings_vector_delete
@@ -312,10 +313,10 @@ AFTER DELETE ON embeddings BEGIN
 END;
 
 INSERT OR REPLACE INTO metadata (key, value) VALUES
-    ('embeddings_model', 'Qwen/Qwen3-Embedding-0.6B'),
-    ('embeddings_provider', 'quality-sidecar'),
-    ('embeddings_model_version', 'main'),
-    ('embeddings_dimension', '1024'),
+    ('embeddings_model', 'EmbeddingGemma-300M'),
+    ('embeddings_provider', 'fastembed'),
+    ('embeddings_model_version', '1'),
+    ('embeddings_dimension', '768'),
     ('embeddings_last_processed_frame_id', '0'),
     ('embeddings_reindex_required', 'true');
 "#;

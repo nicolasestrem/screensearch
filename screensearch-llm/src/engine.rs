@@ -141,7 +141,9 @@ impl LlmEngine {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(300)) // 5 minute timeout for long generations
             .build()
-            .map_err(|e| LlmError::ModelInitError(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                LlmError::ModelInitError(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         // Use configured endpoint or default to local llama.cpp server
         // Priority: env var > config port > default
@@ -181,7 +183,13 @@ impl LlmEngine {
         params: Option<&InferenceParameters>,
     ) -> Result<String> {
         let (temp, max_tok, top_p, top_k, repeat_pen) = if let Some(p) = params {
-            (p.temperature, p.max_tokens, p.top_p, p.top_k, p.repeat_penalty)
+            (
+                p.temperature,
+                p.max_tokens,
+                p.top_p,
+                p.top_k,
+                p.repeat_penalty,
+            )
         } else {
             (
                 self.config.temperature,
@@ -269,7 +277,9 @@ impl LlmEngine {
         let mut buffer = Cursor::new(Vec::new());
         image
             .write_to(&mut buffer, image::ImageOutputFormat::Jpeg(80))
-            .map_err(|e| LlmError::ImageProcessingError(format!("Failed to encode image: {}", e)))?;
+            .map_err(|e| {
+                LlmError::ImageProcessingError(format!("Failed to encode image: {}", e))
+            })?;
 
         let encoded = base64::engine::general_purpose::STANDARD.encode(buffer.into_inner());
         Ok(format!("data:image/jpeg;base64,{}", encoded))
@@ -305,7 +315,8 @@ impl LlmEngine {
             content: MessageContent::Text(prompt.to_string()),
         });
 
-        self.chat_completion_with_params(messages, Some(&params)).await
+        self.chat_completion_with_params(messages, Some(&params))
+            .await
     }
 
     /// Generate text with an image using a specific inference profile
@@ -340,7 +351,8 @@ impl LlmEngine {
             ]),
         });
 
-        self.chat_completion_with_params(messages, Some(&params)).await
+        self.chat_completion_with_params(messages, Some(&params))
+            .await
     }
 
     /// Update the endpoint URL (useful when server port changes)

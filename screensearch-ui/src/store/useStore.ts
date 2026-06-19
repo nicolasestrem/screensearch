@@ -86,7 +86,7 @@ export const useStore = create<AppStore>()(
       activeTab: 'dashboard',
       setActiveTab: (tab) => set({ activeTab: tab }),
 
-      // Optional answer-generation LLM. OCR and RAG models are fixed by the quality sidecar.
+      // Optional answer-generation LLM. OCR (native Windows) and RAG embeddings run in-process.
       aiConfig: {
         providerUrl: 'local',
         apiKey: '',

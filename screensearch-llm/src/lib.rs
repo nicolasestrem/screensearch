@@ -39,18 +39,37 @@ pub use config::{
     LlmConfig, DEFAULT_IDLE_TTL_SECS, DEFAULT_LLAMA_PORT, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE,
 };
 pub use download::{
-    // Model download
-    download_model, download_model_with_progress, get_model_path, get_models_dir, model_exists,
-    needs_download, DownloadProgress, MODEL_FILENAME, MODEL_SIZE_BYTES, MODEL_URL,
+    // Model discovery + download
+    discover_local_models,
     // llama-server download
-    download_llama_server, download_llama_server_with_progress, get_bin_dir, get_llama_server_path,
-    llama_server_exists, needs_llama_server_download, LLAMA_SERVER_FILENAME, LLAMA_SERVER_SIZE_BYTES,
+    download_llama_server,
+    download_llama_server_with_progress,
+    download_model,
+    download_model_with_progress,
+    get_bin_dir,
+    get_llama_server_path,
+    get_model_path,
+    get_models_dir,
+    llama_server_exists,
+    local_model_available,
+    model_exists,
+    model_search_dirs,
+    needs_download,
+    needs_llama_server_download,
+    resolve_model_path,
+    DownloadProgress,
+    LLAMA_SERVER_FILENAME,
+    LLAMA_SERVER_SIZE_BYTES,
+    MODEL_FILENAME,
+    MODEL_SIZE_BYTES,
+    MODEL_URL,
 };
 pub use engine::LlmEngine;
 pub use error::{LlmError, Result};
 pub use profiles::{validate_parameters, InferenceParameters, InferenceProfile};
 pub use server::{
-    spawn_server_monitor, LlamaServer, LlamaServerConfig, ServerStatus, DEFAULT_LLAMA_PORT as SERVER_PORT,
+    spawn_server_monitor, LlamaServer, LlamaServerConfig, ServerStatus,
+    DEFAULT_LLAMA_PORT as SERVER_PORT,
 };
 
 use async_trait::async_trait;
@@ -111,8 +130,9 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_model_size_reasonable() {
-        // Model should be around 2GB
+        // Guards against accidental edits to the default-model size constant.
         assert!(MODEL_SIZE_BYTES > 1_000_000_000);
         assert!(MODEL_SIZE_BYTES < 5_000_000_000);
     }

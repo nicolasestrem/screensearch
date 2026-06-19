@@ -1,281 +1,229 @@
-//! Quality sidecar client for embeddings and reranking.
+//! In-process embedding + reranking engine backed by fastembed (ONNX Runtime).
 
+use crate::chunker::TextChunker;
 use crate::{EmbeddingConfig, EmbeddingError, Result, EMBEDDING_DIM};
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use fastembed::{
+    EmbeddingModel, RerankInitOptions, RerankerModel, TextEmbedding, TextInitOptions, TextRerank,
+};
 use sha2::{Digest, Sha256};
-use std::time::Duration;
-use tracing::warn;
+use std::sync::{Arc, Mutex};
+use tracing::{info, warn};
 
-#[derive(Debug, Serialize)]
-struct EmbeddingRequest<'a> {
-    model: &'a str,
-    texts: &'a [&'a str],
-    task: &'a str,
+/// EmbeddingGemma retrieval prompt for queries (per the model card).
+const GEMMA_QUERY_PREFIX: &str = "task: search result | query: ";
+/// EmbeddingGemma retrieval prompt for documents (per the model card).
+const GEMMA_DOCUMENT_PREFIX: &str = "title: none | text: ";
+
+/// Point the dynamically-loaded ONNX Runtime at a copy of the shared library
+/// shipped next to the executable, when one is present and the caller hasn't
+/// already set `ORT_DYLIB_PATH`. If neither is set, `ort` falls back to its
+/// default platform search (e.g. the system `PATH`).
+fn configure_ort_dylib_path() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        if std::env::var_os("ORT_DYLIB_PATH").is_some() {
+            return;
+        }
+        let lib_name = if cfg!(windows) {
+            "onnxruntime.dll"
+        } else if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let candidate = dir.join(lib_name);
+                if candidate.exists() {
+                    std::env::set_var("ORT_DYLIB_PATH", &candidate);
+                }
+            }
+        }
+    });
 }
 
-#[derive(Debug, Deserialize)]
-struct EmbeddingResponse {
-    embeddings: Vec<Vec<f32>>,
-    model: String,
-    version: String,
-    dimension: usize,
-}
-
-fn validate_embedding_response(
-    payload: &EmbeddingResponse,
-    expected_model: &str,
-    expected_version: &str,
-    expected_count: usize,
-) -> Result<()> {
-    // Model identity is part of the fixed persisted-vector contract. Accepting
-    // a compatible-looking variant here could mix vectors from two models.
-    if payload.model != expected_model
-        || payload.version != expected_version
-        || payload.dimension != EMBEDDING_DIM
-        || payload.embeddings.len() != expected_count
-        || payload
-            .embeddings
-            .iter()
-            .any(|embedding| embedding.len() != EMBEDDING_DIM)
-    {
-        return Err(EmbeddingError::InferenceError(format!(
-            "unexpected embedding model response: model={}, version={}, dimension={}, count={}/{}",
-            payload.model,
-            payload.version,
-            payload.dimension,
-            payload.embeddings.len(),
-            expected_count
-        )));
-    }
-    Ok(())
-}
-
-#[derive(Debug, Serialize)]
-struct RerankRequest<'a> {
-    model: &'a str,
-    query: &'a str,
-    documents: &'a [String],
-}
-
-#[derive(Debug, Deserialize)]
-struct RerankResponse {
-    scores: Vec<f32>,
-}
-
-#[derive(Debug, Serialize)]
-struct ChunkRequest<'a> {
-    model: &'a str,
-    text: &'a str,
-    max_tokens: usize,
-    overlap_tokens: usize,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChunkResponse {
-    chunks: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelPreparationStatus {
-    pub state: String,
-    pub current_component: Option<String>,
-    pub ready_components: Vec<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct ModelPreparationRequest<'a> {
-    components: &'a [&'a str],
-    ocr_language: &'a str,
-}
-
-/// Result returned by the quality reranker.
+/// Result returned by the cross-encoder reranker.
 #[derive(Debug, Clone)]
 pub struct RerankScore {
     pub index: usize,
     pub score: f32,
 }
 
-/// Client for the local quality sidecar.
+/// In-process embedding engine.
+///
+/// The underlying ONNX models are not `Sync`, so they live behind a `Mutex`.
+/// Inference is CPU-bound and runs on the blocking pool, serialized through the
+/// mutex (which also avoids oversubscribing CPU cores from concurrent requests).
 pub struct EmbeddingEngine {
     config: EmbeddingConfig,
-    client: Client,
+    model: Arc<Mutex<TextEmbedding>>,
+    reranker: Option<Arc<Mutex<TextRerank>>>,
+    chunker: TextChunker,
 }
 
 impl EmbeddingEngine {
+    /// Create an engine with default configuration (EmbeddingGemma-300M).
     pub async fn new() -> Result<Self> {
         Self::with_config(EmbeddingConfig::default()).await
     }
 
+    /// Create an engine with explicit configuration. Loading (and, on first run,
+    /// downloading) the model happens on the blocking pool.
     pub async fn with_config(config: EmbeddingConfig) -> Result<Self> {
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(3))
-            .timeout(Duration::from_secs(120))
-            .build()
-            .map_err(|error| EmbeddingError::ModelInitError(error.to_string()))?;
+        configure_ort_dylib_path();
+        let load_config = config.clone();
+        let (model, reranker) = tokio::task::spawn_blocking(move || {
+            let mut init = TextInitOptions::new(EmbeddingModel::EmbeddingGemma300MQ)
+                .with_show_download_progress(load_config.show_download_progress);
+            if let Some(dir) = &load_config.cache_dir {
+                init = init.with_cache_dir(dir.clone());
+            }
+            let model = TextEmbedding::try_new(init)
+                .map_err(|error| EmbeddingError::ModelInitError(error.to_string()))?;
 
-        Ok(Self { config, client })
+            let reranker = if load_config.reranker_enabled {
+                let mut rinit = RerankInitOptions::new(RerankerModel::BGERerankerV2M3)
+                    .with_show_download_progress(load_config.show_download_progress);
+                if let Some(dir) = &load_config.cache_dir {
+                    rinit = rinit.with_cache_dir(dir.clone());
+                }
+                let reranker = TextRerank::try_new(rinit)
+                    .map_err(|error| EmbeddingError::ModelInitError(error.to_string()))?;
+                Some(Arc::new(Mutex::new(reranker)))
+            } else {
+                None
+            };
+
+            Ok::<_, EmbeddingError>((Arc::new(Mutex::new(model)), reranker))
+        })
+        .await
+        .map_err(|error| EmbeddingError::ModelInitError(error.to_string()))??;
+
+        info!(
+            model = %config.model,
+            reranker_enabled = config.reranker_enabled,
+            "Initialized in-process embedding engine"
+        );
+
+        Ok(Self {
+            config,
+            model,
+            reranker,
+            chunker: TextChunker::default(),
+        })
     }
 
-    pub async fn health_check(&self) -> Result<()> {
-        let request = self.authorized(self.client.get(format!(
-            "{}/health",
-            self.config.sidecar_url.trim_end_matches('/')
-        )));
-        let response = request
-            .send()
-            .await
-            .map_err(|error| EmbeddingError::SidecarUnavailable(error.to_string()))?;
-        if !response.status().is_success() {
-            return Err(EmbeddingError::SidecarUnavailable(format!(
-                "health check returned {}",
-                response.status()
-            )));
-        }
-        Ok(())
-    }
-
-    pub async fn model_preparation_status(&self) -> Result<ModelPreparationStatus> {
-        let response = self
-            .authorized(self.client.get(format!(
-                "{}/v1/models/status",
-                self.config.sidecar_url.trim_end_matches('/')
-            )))
-            .send()
-            .await
-            .map_err(|error| EmbeddingError::SidecarUnavailable(error.to_string()))?;
-        self.parse_model_preparation_response(response).await
-    }
-
-    pub async fn prepare_models(&self) -> Result<ModelPreparationStatus> {
-        let response = self
-            .authorized(self.client.post(format!(
-                "{}/v1/models/prepare",
-                self.config.sidecar_url.trim_end_matches('/')
-            )))
-            .json(&ModelPreparationRequest {
-                components: &["ocr", "embeddings", "reranker"],
-                ocr_language: "en",
-            })
-            .send()
-            .await
-            .map_err(|error| EmbeddingError::SidecarUnavailable(error.to_string()))?;
-        self.parse_model_preparation_response(response).await
-    }
-
+    /// Embed a single query string (uses the EmbeddingGemma query prompt).
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        let mut embeddings = self.embed_texts(&[text], "query").await?;
+        let prompted = format!("{GEMMA_QUERY_PREFIX}{text}");
+        let mut embeddings = self.run_embed(vec![prompted]).await?;
         embeddings
             .pop()
-            .ok_or_else(|| EmbeddingError::InferenceError("sidecar returned no embedding".into()))
+            .ok_or_else(|| EmbeddingError::InferenceError("model returned no embedding".into()))
     }
 
+    /// Embed a batch of documents (uses the EmbeddingGemma document prompt).
     pub async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        self.embed_texts(texts, "document").await
-    }
-
-    async fn embed_texts(&self, texts: &[&str], task: &str) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-        let non_empty_texts: Vec<&str> = texts
+        let non_empty: Vec<String> = texts
             .iter()
             .copied()
             .filter(|text| !text.trim().is_empty())
+            .map(|text| format!("{GEMMA_DOCUMENT_PREFIX}{text}"))
             .collect();
-        if non_empty_texts.len() != texts.len() {
+        if non_empty.len() != texts.len() {
             warn!(
                 "Ignoring {} empty text(s) in embedding batch",
-                texts.len() - non_empty_texts.len()
+                texts.len() - non_empty.len()
             );
         }
-        if non_empty_texts.is_empty() {
+        if non_empty.is_empty() {
             return Ok(Vec::new());
         }
-
-        let request = EmbeddingRequest {
-            model: &self.config.model,
-            texts: &non_empty_texts,
-            task,
-        };
-        let response = self
-            .authorized(self.client.post(format!(
-                "{}/v1/embeddings",
-                self.config.sidecar_url.trim_end_matches('/')
-            )))
-            .json(&request)
-            .send()
-            .await
-            .map_err(|error| EmbeddingError::SidecarUnavailable(error.to_string()))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(EmbeddingError::InferenceError(format!(
-                "embedding request failed ({status}): {body}"
-            )));
-        }
-
-        let payload: EmbeddingResponse = response
-            .json()
-            .await
-            .map_err(|error| EmbeddingError::InferenceError(error.to_string()))?;
-        validate_embedding_response(
-            &payload,
-            &self.config.model,
-            &self.config.model_version,
-            non_empty_texts.len(),
-        )?;
-
-        Ok(payload.embeddings)
+        self.run_embed(non_empty).await
     }
 
+    async fn run_embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        let model = Arc::clone(&self.model);
+        let batch_size = self.config.batch_size;
+        let embeddings = tokio::task::spawn_blocking(move || {
+            let mut guard = model.lock().map_err(|_| {
+                EmbeddingError::InferenceError("embedding model lock poisoned".into())
+            })?;
+            let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+            guard
+                .embed(refs, Some(batch_size))
+                .map_err(|error| EmbeddingError::InferenceError(error.to_string()))
+        })
+        .await
+        .map_err(|error| EmbeddingError::InferenceError(error.to_string()))??;
+
+        for embedding in &embeddings {
+            if embedding.len() != EMBEDDING_DIM {
+                return Err(EmbeddingError::InferenceError(format!(
+                    "expected {EMBEDDING_DIM}-dim embeddings, got {}",
+                    embedding.len()
+                )));
+            }
+        }
+        Ok(embeddings)
+    }
+
+    /// Rerank `documents` against `query` with the cross-encoder, returning
+    /// scores sorted descending. If the reranker is disabled, returns the
+    /// documents in their original order with descending placeholder scores so
+    /// callers can fall back to fusion order transparently.
     pub async fn rerank(&self, query: &str, documents: &[String]) -> Result<Vec<RerankScore>> {
         if documents.is_empty() {
             return Ok(Vec::new());
         }
 
-        let response = self
-            .authorized(self.client.post(format!(
-                "{}/v1/rerank",
-                self.config.sidecar_url.trim_end_matches('/')
-            )))
-            .json(&RerankRequest {
-                model: &self.config.reranker_model,
-                query,
-                documents,
-            })
-            .send()
-            .await
-            .map_err(|error| EmbeddingError::SidecarUnavailable(error.to_string()))?;
+        let Some(reranker) = self.reranker.clone() else {
+            // Reranker disabled: preserve incoming (RRF) order.
+            return Ok(documents
+                .iter()
+                .enumerate()
+                .map(|(index, _)| RerankScore {
+                    index,
+                    score: 1.0 - (index as f32) / (documents.len() as f32),
+                })
+                .collect());
+        };
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+        let query = query.to_string();
+        let docs = documents.to_vec();
+        let expected = documents.len();
+        let mut scores = tokio::task::spawn_blocking(move || {
+            let mut guard = reranker
+                .lock()
+                .map_err(|_| EmbeddingError::InferenceError("reranker lock poisoned".into()))?;
+            // `query` and `documents` share the generic `S`; use `&str` for both.
+            let refs: Vec<&str> = docs.iter().map(String::as_str).collect();
+            let results = guard
+                .rerank(query.as_str(), &refs, false, None)
+                .map_err(|error| EmbeddingError::InferenceError(error.to_string()))?;
+            Ok::<_, EmbeddingError>(
+                results
+                    .into_iter()
+                    .map(|r| RerankScore {
+                        index: r.index,
+                        score: r.score,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .await
+        .map_err(|error| EmbeddingError::InferenceError(error.to_string()))??;
+
+        if scores.len() != expected {
             return Err(EmbeddingError::InferenceError(format!(
-                "rerank request failed ({status}): {body}"
+                "reranker returned {} scores for {expected} documents",
+                scores.len()
             )));
         }
-
-        let payload: RerankResponse = response
-            .json()
-            .await
-            .map_err(|error| EmbeddingError::InferenceError(error.to_string()))?;
-        if payload.scores.len() != documents.len() {
-            return Err(EmbeddingError::InferenceError(format!(
-                "reranker returned {} scores for {} documents",
-                payload.scores.len(),
-                documents.len()
-            )));
-        }
-
-        let mut scores: Vec<RerankScore> = payload
-            .scores
-            .into_iter()
-            .enumerate()
-            .map(|(index, score)| RerankScore { index, score })
-            .collect();
         scores.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -284,6 +232,8 @@ impl EmbeddingEngine {
         Ok(scores)
     }
 
+    /// Split text into overlapping chunks (token-approximate) for embedding.
+    /// Signature preserved from the previous sidecar client for caller parity.
     pub async fn chunk_text(
         &self,
         text: &str,
@@ -298,46 +248,21 @@ impl EmbeddingEngine {
                 "chunk overlap must be smaller than the maximum chunk size".to_string(),
             ));
         }
-
-        let response = self
-            .authorized(self.client.post(format!(
-                "{}/v1/chunk",
-                self.config.sidecar_url.trim_end_matches('/')
-            )))
-            .json(&ChunkRequest {
-                model: &self.config.model,
-                text,
-                max_tokens,
-                overlap_tokens,
-            })
-            .send()
-            .await
-            .map_err(|error| EmbeddingError::SidecarUnavailable(error.to_string()))?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(EmbeddingError::TokenizationError(format!(
-                "chunking request failed ({status}): {body}"
-            )));
-        }
-        let chunks = response
-            .json::<ChunkResponse>()
-            .await
-            .map_err(|error| EmbeddingError::TokenizationError(error.to_string()))?
-            .chunks;
-        let non_empty_chunks: Vec<String> = chunks
+        let chunker = TextChunker::new(max_tokens, overlap_tokens);
+        Ok(chunker
+            .chunk_text(text)
             .into_iter()
             .filter(|chunk| !chunk.trim().is_empty())
-            .collect();
-        Ok(non_empty_chunks)
+            .collect())
     }
 
+    /// Stable content hash used to deduplicate chunks.
     pub fn content_hash(text: &str) -> String {
         format!("{:x}", Sha256::digest(text.as_bytes()))
     }
 
     pub fn provider(&self) -> &'static str {
-        "quality-sidecar"
+        "fastembed"
     }
 
     pub fn model(&self) -> &str {
@@ -352,28 +277,14 @@ impl EmbeddingEngine {
         &self.config
     }
 
-    fn authorized(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match &self.config.sidecar_token {
-            Some(token) => request.bearer_auth(token),
-            None => request,
-        }
+    /// Whether the cross-encoder reranker is loaded.
+    pub fn reranker_enabled(&self) -> bool {
+        self.reranker.is_some()
     }
 
-    async fn parse_model_preparation_response(
-        &self,
-        response: reqwest::Response,
-    ) -> Result<ModelPreparationStatus> {
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(EmbeddingError::ModelInitError(format!(
-                "model preparation request failed ({status}): {body}"
-            )));
-        }
-        response
-            .json()
-            .await
-            .map_err(|error| EmbeddingError::ModelInitError(error.to_string()))
+    /// Reference to the configured chunker (default settings).
+    pub fn chunker(&self) -> &TextChunker {
+        &self.chunker
     }
 }
 
@@ -390,20 +301,6 @@ mod tests {
         assert_ne!(
             EmbeddingEngine::content_hash("screen search"),
             EmbeddingEngine::content_hash("screen-search")
-        );
-    }
-
-    #[test]
-    fn embedding_response_rejects_truncated_batches() {
-        let payload = EmbeddingResponse {
-            embeddings: vec![vec![0.0; EMBEDDING_DIM]],
-            model: "Qwen/Qwen3-Embedding-0.6B".to_string(),
-            version: "main".to_string(),
-            dimension: EMBEDDING_DIM,
-        };
-
-        assert!(
-            validate_embedding_response(&payload, "Qwen/Qwen3-Embedding-0.6B", "main", 2).is_err()
         );
     }
 }

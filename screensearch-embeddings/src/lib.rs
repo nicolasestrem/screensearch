@@ -1,13 +1,18 @@
-//! Embedding Generation for ScreenSearch RAG
+//! In-process embedding generation for ScreenSearch RAG.
 //!
-//! This crate uses the managed ScreenSearch quality sidecar for multilingual
-//! embedding and reranking inference.
+//! This crate runs embeddings and (optional) reranking fully in-process in Rust
+//! via [`fastembed`] (ONNX Runtime), with no Python sidecar and no network calls
+//! beyond the first-run model download from HuggingFace (cached locally).
 //!
 //! # Architecture
 //!
-//! - `EmbeddingEngine`: Main interface for generating embeddings
-//! - Uses a loopback sidecar for CPU/GPU inference
-//! - Supports batch embedding and quality reranking
+//! - [`EmbeddingEngine`]: loads an ONNX embedding model once and exposes async
+//!   `embed`/`embed_batch` helpers. Blocking ONNX inference is offloaded to a
+//!   blocking thread pool so it never stalls the async runtime.
+//! - [`chunker::TextChunker`]: splits OCR text into overlapping chunks before
+//!   embedding (previously done by the sidecar `/v1/chunk` endpoint).
+//! - Optional cross-encoder reranking via the same ONNX runtime; the default
+//!   retrieval path relies on Reciprocal Rank Fusion and skips it.
 //!
 //! # Example
 //!
@@ -17,28 +22,37 @@
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
 //!     let engine = EmbeddingEngine::new().await?;
-//!     
 //!     let embedding = engine.embed("Hello, world!").await?;
-//!     println!("Embedding dimension: {}", embedding.len()); // 1024
-//!     
+//!     assert_eq!(embedding.len(), screensearch_embeddings::EMBEDDING_DIM);
 //!     Ok(())
 //! }
 //! ```
 
+use std::path::PathBuf;
 use thiserror::Error;
 
+pub mod chunker;
 mod engine;
 
-pub use engine::{EmbeddingEngine, ModelPreparationStatus, RerankScore};
+pub use chunker::TextChunker;
+pub use engine::{EmbeddingEngine, RerankScore};
 
-/// Full embedding dimension for Qwen3-Embedding-0.6B.
-pub const EMBEDDING_DIM: usize = 1024;
+/// Embedding dimension for EmbeddingGemma-300M (and the configured fallbacks).
+pub const EMBEDDING_DIM: usize = 768;
 
-/// Model name for metadata tracking
-pub const MODEL_NAME: &str = "Qwen/Qwen3-Embedding-0.6B";
-pub const RERANKER_MODEL_NAME: &str = "Qwen/Qwen3-Reranker-0.6B";
+/// Stable model identity recorded in the persisted-vector contract.
+///
+/// Changing this string invalidates existing vectors and forces a reindex
+/// (see `embeddings_reindex_required` in the database metadata).
+pub const MODEL_NAME: &str = "EmbeddingGemma-300M";
 
-/// Embedding-related errors
+/// Model revision used to invalidate stale vectors.
+pub const MODEL_VERSION: &str = "1";
+
+/// Default cross-encoder reranker (only loaded when reranking is enabled).
+pub const RERANKER_MODEL_NAME: &str = "bge-reranker-v2-m3";
+
+/// Embedding-related errors.
 #[derive(Error, Debug)]
 pub enum EmbeddingError {
     #[error("Model initialization failed: {0}")]
@@ -50,42 +64,42 @@ pub enum EmbeddingError {
     #[error("Inference failed: {0}")]
     InferenceError(String),
 
-    #[error("Quality sidecar is unavailable: {0}")]
-    SidecarUnavailable(String),
-
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 }
 
-/// Result type alias for embedding operations
+/// Result type alias for embedding operations.
 pub type Result<T> = std::result::Result<T, EmbeddingError>;
 
-/// Configuration for the embedding engine
+/// Configuration for the in-process embedding engine.
 #[derive(Debug, Clone)]
 pub struct EmbeddingConfig {
-    /// Loopback URL for the managed AI sidecar.
-    pub sidecar_url: String,
-    /// Optional bearer token shared with the sidecar process.
-    pub sidecar_token: Option<String>,
-    /// Embedding model identifier.
+    /// Embedding model identity (recorded in the vector contract).
     pub model: String,
     /// Model revision used to invalidate stale vectors.
     pub model_version: String,
-    /// Reranker model identifier.
-    pub reranker_model: String,
+    /// Inference batch size.
     pub batch_size: usize,
+    /// Directory used to cache downloaded ONNX models (None = fastembed default).
+    pub cache_dir: Option<PathBuf>,
+    /// Show a progress bar while downloading models on first use.
+    pub show_download_progress: bool,
+    /// Load the cross-encoder reranker. Off by default; RRF handles fusion.
+    pub reranker_enabled: bool,
+    /// Reranker model identity (only used when `reranker_enabled`).
+    pub reranker_model: String,
 }
 
 impl Default for EmbeddingConfig {
     fn default() -> Self {
         Self {
-            sidecar_url: std::env::var("SCREENSEARCH_AI_SIDECAR_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:3132".to_string()),
-            sidecar_token: std::env::var("SCREENSEARCH_AI_SIDECAR_TOKEN").ok(),
             model: MODEL_NAME.to_string(),
-            model_version: "main".to_string(),
-            reranker_model: RERANKER_MODEL_NAME.to_string(),
+            model_version: MODEL_VERSION.to_string(),
             batch_size: 16,
+            cache_dir: std::env::var_os("SCREENSEARCH_MODEL_CACHE").map(PathBuf::from),
+            show_download_progress: true,
+            reranker_enabled: false,
+            reranker_model: RERANKER_MODEL_NAME.to_string(),
         }
     }
 }
@@ -99,11 +113,12 @@ mod tests {
         let config = EmbeddingConfig::default();
         assert_eq!(config.batch_size, 16);
         assert_eq!(config.model, MODEL_NAME);
+        assert!(!config.reranker_enabled);
     }
 
     #[test]
     fn test_constants() {
-        assert_eq!(EMBEDDING_DIM, 1024);
-        assert_eq!(MODEL_NAME, "Qwen/Qwen3-Embedding-0.6B");
+        assert_eq!(EMBEDDING_DIM, 768);
+        assert_eq!(MODEL_NAME, "EmbeddingGemma-300M");
     }
 }

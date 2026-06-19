@@ -1,11 +1,11 @@
 use crate::{VisionAnalysis, VisionModel};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use image::DynamicImage;
 use reqwest::Client;
 use serde_json::json;
 use std::io::Cursor;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 pub struct OllamaClient {
     client: Client,
@@ -39,18 +39,24 @@ impl OllamaClient {
                 body["system"] = json!(sys);
             }
 
-            let mut request = self.client.post(format!("{}/api/generate", self.base_url))
+            let mut request = self
+                .client
+                .post(format!("{}/api/generate", self.base_url))
                 .json(&body);
 
             if let Some(key) = &self.api_key {
                 request = request.header("Authorization", format!("Bearer {}", key));
             }
 
-            let response = request.send().await.context("Failed to send request to Ollama")?;
+            let response = request
+                .send()
+                .await
+                .context("Failed to send request to Ollama")?;
             let text = response.text().await?;
             let json_resp: serde_json::Value = serde_json::from_str(&text)?;
-            
-            json_resp["response"].as_str()
+
+            json_resp["response"]
+                .as_str()
                 .map(|s| s.to_string())
                 .context("Invalid Ollama response format")
         } else {
@@ -74,18 +80,22 @@ impl OllamaClient {
             } else {
                 format!("{}/v1/chat/completions", base)
             };
-            
+
             let mut request = self.client.post(&url).json(&body);
 
             if let Some(key) = &self.api_key {
                 request = request.header("Authorization", format!("Bearer {}", key));
             }
 
-            let response = request.send().await.context("Failed to send request to OpenAI-compatible provider")?;
+            let response = request
+                .send()
+                .await
+                .context("Failed to send request to OpenAI-compatible provider")?;
             let text = response.text().await?;
             let json_resp: serde_json::Value = serde_json::from_str(&text)?;
-            
-            json_resp["choices"][0]["message"]["content"].as_str()
+
+            json_resp["choices"][0]["message"]["content"]
+                .as_str()
                 .map(|s| s.to_string())
                 .context(format!("Invalid OpenAI response format: {}", text))
         }
@@ -97,7 +107,10 @@ impl VisionModel for OllamaClient {
     async fn analyze(&self, image: &DynamicImage, context: &str) -> Result<VisionAnalysis> {
         // Encode image to base64
         let mut buf = Vec::new();
-        image.write_to(&mut Cursor::new(&mut buf), image::ImageOutputFormat::Jpeg(80))?;
+        image.write_to(
+            &mut Cursor::new(&mut buf),
+            image::ImageOutputFormat::Jpeg(80),
+        )?;
         let base64_image = BASE64.encode(&buf);
 
         let system_prompt = r#"You are a visual intelligence engine.
@@ -116,7 +129,9 @@ Prefer intent, names, colors."#;
         let user_prompt = format!("Context: {}. Analyze this frame.", context);
 
         if self.provider == "ollama" {
-             let mut request = self.client.post(format!("{}/api/generate", self.base_url))
+            let mut request = self
+                .client
+                .post(format!("{}/api/generate", self.base_url))
                 .json(&json!({
                     "model": self.model,
                     "system": system_prompt,
@@ -130,11 +145,15 @@ Prefer intent, names, colors."#;
                 request = request.header("Authorization", format!("Bearer {}", key));
             }
 
-            let response = request.send().await.context("Failed to send request to Ollama")?;
+            let response = request
+                .send()
+                .await
+                .context("Failed to send request to Ollama")?;
             let text = response.text().await?;
             let json_resp: serde_json::Value = serde_json::from_str(&text)?;
-            
-            let response_content = json_resp["response"].as_str()
+
+            let response_content = json_resp["response"]
+                .as_str()
                 .context("Invalid Ollama response format")?;
 
             let analysis: VisionAnalysis = serde_json::from_str(response_content)
@@ -153,9 +172,9 @@ Prefer intent, names, colors."#;
                     {
                         "role": "user",
                         "content": [
-                            { 
-                                "type": "text", 
-                                "text": user_prompt 
+                            {
+                                "type": "text",
+                                "text": user_prompt
                             },
                             {
                                 "type": "image_url",
@@ -184,16 +203,20 @@ Prefer intent, names, colors."#;
                 request = request.header("Authorization", format!("Bearer {}", key));
             }
 
-            let response = request.send().await.context("Failed to send request to OpenAI Vision provider")?;
+            let response = request
+                .send()
+                .await
+                .context("Failed to send request to OpenAI Vision provider")?;
             let text = response.text().await?;
             let json_resp: serde_json::Value = serde_json::from_str(&text)?;
-            
-            let response_content = json_resp["choices"][0]["message"]["content"].as_str()
+
+            let response_content = json_resp["choices"][0]["message"]["content"]
+                .as_str()
                 .context(format!("Invalid OpenAI response format: {}", text))?;
 
             let analysis: VisionAnalysis = serde_json::from_str(response_content)
                 .context("Failed to parse VisionAnalysis JSON")?;
-            
+
             Ok(analysis)
         }
     }

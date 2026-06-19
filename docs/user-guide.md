@@ -7,32 +7,32 @@ builds a local retrieval index for search, answers, and reports.
 
 - Windows 10 or Windows 11, 64-bit;
 - enough storage for captures and the configured retention period;
-- up to 5 GB for PP-OCRv5, Qwen3 models, and runtime caches;
+- up to 2 GB for the EmbeddingGemma-300M model and runtime caches;
 - internet access during the first model download;
 - a generation provider only if you want generated answers or reports.
 
 ## First Run
 
-1. Install or extract the quality build.
+1. Install or extract the build.
 2. Start `screensearch.exe`.
 3. Open `http://localhost:3131`.
-4. In Settings, select **Download / verify** to prepare the quality models.
-5. Open **Settings > Data & AI** to check quality-stack readiness.
+4. In Settings, select **Download / verify** to prepare the embedding model.
+5. Open **Settings > Data & AI** to check retrieval-stack readiness.
 6. Enable semantic indexing when you want semantic or hybrid search.
 
-The first OCR or embedding request can take longer while models download and
-initialize. The settings panel reports sidecar and index status.
+The first embedding request can take longer while the model downloads and
+initializes. The settings panel reports engine and index status. Native Windows
+OCR runs in-process and needs no model download.
 
 ## What Each AI Component Does
 
 | Component | Purpose | User-selectable |
 |---|---|---|
-| PP-OCRv5 | Reads text and layout from screenshots | Fixed default |
-| Windows OCR | Fallback when PP-OCRv5 is unavailable | `config.toml` |
-| Qwen3-Embedding-0.6B | Converts OCR passages and queries to vectors | Fixed |
+| Windows OCR | Reads text from screenshots in-process (WinRT Media.Ocr) | Fixed |
+| EmbeddingGemma-300M | Converts OCR passages and queries to vectors (in-process via fastembed) | Fixed |
 | sqlite-vec | Performs local cosine KNN search | Fixed |
 | FTS5 + RRF | Combines keyword and semantic candidates | Fixed |
-| Qwen3-Reranker-0.6B | Reorders candidates by query relevance | Fixed |
+| bge-reranker-v2-m3 | Optionally reorders candidates by query relevance (off by default) | Fixed |
 | Generation LLM | Writes answers, descriptions, digests, and reports | Configurable |
 
 The generation provider does not control OCR or RAG retrieval.
@@ -66,17 +66,17 @@ related OCR and embedding data.
 
 ### Screen Understanding And Retrieval
 
-The settings panel displays the fixed quality stack:
+The settings panel displays the fixed retrieval stack:
 
-- PP-OCRv5 with Windows OCR fallback;
-- Qwen3-Embedding-0.6B;
-- Qwen3-Reranker-0.6B;
+- native Windows OCR (in-process);
+- EmbeddingGemma-300M embeddings (in-process via fastembed);
+- optional bge-reranker-v2-m3 reranking (off by default);
 - sqlite-vec KNN and FTS5/RRF fusion.
 
 The embedding status card shows:
 
 - whether indexing is enabled;
-- sidecar readiness;
+- engine readiness;
 - active model contract;
 - indexed frame coverage;
 - whether reindexing is required;
@@ -88,12 +88,14 @@ processed in batches. The operation is resumable.
 ### Answer Generation
 
 Answer generation is optional. It consumes grounded context retrieved by the
-quality stack.
+retrieval stack.
 
 Available runtimes:
 
-- **Bundled local Ministral-3-3B**: downloads a GGUF model and uses the bundled
-  `llama-server` management endpoints.
+- **Bundled local llama.cpp server**: auto-discovers any `*.gguf` file in
+  `.models/` (repo root) or the app models directory and uses the first one
+  found; if none is present, Ministral-3B is the downloadable default. Uses the
+  managed `llama-server` endpoints (Vulkan GPU with CPU fallback).
 - **Ollama-compatible local server**: configure the base URL and model.
 - **OpenAI-compatible endpoint**: configure the base URL, model, and API key.
 
@@ -110,8 +112,8 @@ URLs, and visible phrases.
 
 ### Semantic
 
-Semantic mode uses Qwen3 query embeddings and sqlite-vec. It requires a ready
-sidecar and an indexed corpus.
+Semantic mode uses EmbeddingGemma-300M query embeddings and sqlite-vec. It
+requires a ready embedding engine and an indexed corpus.
 
 ### Hybrid
 
@@ -133,38 +135,33 @@ Generated output depends on three independent readiness conditions:
 2. Embeddings are enabled and sufficiently indexed for semantic retrieval.
 3. A generation provider is configured and reachable.
 
-If the reranker is unavailable, results retain RRF order. If the quality
-sidecar is unavailable, the UI reports degraded retrieval. ScreenSearch does
-not substitute synthetic embeddings.
+If reranking is disabled or unavailable, results retain RRF order. If the
+embedding engine is unavailable, the UI reports degraded retrieval. ScreenSearch
+does not substitute synthetic embeddings.
 
 ## OCR Configuration
 
-OCR is configured in `config.toml` and requires a restart:
+OCR uses the native Windows OCR API (WinRT `Media.Ocr`) in-process. It needs no
+model download and runs at roughly 70-80 ms per frame. Configure it in
+`config.toml` (changes require a restart):
 
 ```toml
 [ocr]
-engine = "ppocr-v5"
-sidecar_url = "http://127.0.0.1:3132"
-sidecar_token_env = "SCREENSEARCH_AI_SIDECAR_TOKEN"
 language = "en"
-fallback_to_windows = true
 min_confidence = 0.7
 ```
 
-Use `engine = "windows"` to bypass the sidecar OCR provider. Use
-`fallback_to_windows = false` when OCR failures should be surfaced instead of
-retried through Windows OCR.
-
 ## Embedding Configuration
 
-The model contract is fixed by the current database migration and sidecar:
+The model contract is fixed by the current database migration and the
+in-process embedding engine:
 
 ```toml
 [embeddings]
 enabled = false
-model = "quality-sidecar"
-model_name = "Qwen/Qwen3-Embedding-0.6B"
-embedding_dim = 1024
+model = "fastembed"
+model_name = "EmbeddingGemma-300M"
+embedding_dim = 768
 batch_size = 50
 max_chunk_tokens = 512
 chunk_overlap = 64
@@ -175,10 +172,10 @@ Do not change `model_name` or `embedding_dim` independently. A different model
 requires a schema and migration change because sqlite-vec dimensions are fixed
 when the virtual table is created.
 
-When upgrading to v0.4.35, ScreenSearch removes old 384-dimensional embedding
-vectors because they are incompatible with the fixed Qwen3 1024-dimensional
-index. Captures and OCR text remain intact. Settings reports that existing
-vectors must be regenerated until the new index is complete.
+When the embedding dimension changes, ScreenSearch removes embedding vectors
+that are incompatible with the fixed EmbeddingGemma-300M 768-dimensional index.
+Captures and OCR text remain intact. Settings reports that existing vectors must
+be regenerated until the new index is complete.
 
 ## Troubleshooting
 
@@ -197,18 +194,11 @@ cargo build --release
 The API build script rebuilds changed frontend sources automatically. For
 diagnosis, run `npm run build` directly and confirm it succeeds.
 
-### Quality sidecar unavailable
+### Embedding engine unavailable
 
-- Confirm the installer contains
-  `bin/screensearch-ai-sidecar/screensearch-ai-sidecar.exe`.
-- For Linux development, run `./scripts/build-local.sh --release`, then use
-  `target/release/screensearch-local/screensearch`.
-- For Windows, use the installer or portable ZIP produced by the release
-  workflow. A cross-compiled `screensearch.exe` by itself is core-only and
-  cannot download Qwen models.
-- Confirm port `3132` is not occupied by another process.
-- Check available disk space.
-- Check outbound access to Hugging Face and Paddle model hosts.
+- The embedding model loads in-process; there is no separate service to start.
+- Check available disk space for the model cache.
+- Check outbound access to Hugging Face during the first download.
 - Select **Download / verify** again if model preparation was interrupted.
 
 ### Reindex required
@@ -224,47 +214,28 @@ The warning clears after all OCR frames use the current model contract.
   frames.
 - Review OCR confidence and language configuration.
 
-### Windows OCR fallback is active
+### OCR returns no text
 
-This indicates PP-OCRv5 initialization or an individual inference request
-failed. Search the ScreenSearch log for `Quality sidecar:` to find the Python
-exception and for `PP-OCRv5 request failed` to find the corresponding client
-error. Model download, Paddle runtime, and unsupported response-shape errors
-are reported there without logging the sidecar token or image contents.
-
-Select **Download / verify** and wait for OCR preparation to become ready. If
-the error persists, preserve the `Quality sidecar:` lines when reporting it.
-ScreenSearch continues capture with Windows OCR when
-`fallback_to_windows = true`; Windows OCR is expected only as a fallback unless
-explicitly selected in `config.toml`.
+Native Windows OCR requires the matching Windows language pack. Open
+**Settings > Time & language > Language** and confirm the OCR language (for
+example English) is installed. Search the ScreenSearch log for OCR errors. If
+the failure persists, preserve those log lines when reporting it.
 
 ## Data Locations
 
 Production captures, databases, logs, models, and caches belong in the
 platform data directories. Never place them in the Git repository.
 
-The sidecar uses standard Hugging Face and Paddle caches. Removing those caches
-forces model downloads on the next use.
+The embedding engine uses the standard Hugging Face cache. Removing that cache
+forces a model download on the next use.
 
-### Download or verify quality models
+### Download or verify the embedding model
 
 Open **Settings > AI > AI Embeddings (RAG)** and select **Download / verify**.
-ScreenSearch prepares PP-OCRv5, Qwen3 embeddings, and Qwen3 reranking in the
-background. The panel shows the component currently being initialized and any
-download or model-loading error. Leave ScreenSearch running until the status is
-ready.
+ScreenSearch pre-loads the in-process EmbeddingGemma-300M model in the
+background. The panel shows initialization progress and any download or
+model-loading error. Leave ScreenSearch running until the status is ready.
 
-The button is available only when the quality runtime is running. If the panel
-shows **Quality runtime unavailable**, install or build the sidecar first; no
-Qwen download can start without it.
-
-The packaged Windows directory has this layout:
-
-```text
-target\release\screensearch-local\
-  screensearch.exe
-  bin\screensearch-ai-sidecar\screensearch-ai-sidecar.exe
-```
-
-Keep the `bin` directory beside `screensearch.exe` when moving the portable
-app. Linux development bundles use the same layout without `.exe` suffixes.
+Native Windows OCR runs in-process and needs no download. The bundled answer-
+generation LLM (llama.cpp) is optional and only used for grounded answers and
+reports.

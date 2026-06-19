@@ -11,8 +11,8 @@ Aggressive capture intervals increase OCR, storage, and indexing load.
 
 ## OCR
 
-PP-OCRv5 runs in the managed sidecar and can use CPU or a compatible GPU.
-Windows OCR is a fallback, not the primary performance baseline.
+Native Windows OCR (WinRT `Media.Ocr`) runs in-process, with no model download.
+It processes roughly 70-80 ms per frame on CPU.
 
 Measure:
 
@@ -28,10 +28,11 @@ small-font accuracy are primary quality requirements.
 
 ## Embeddings
 
-Document chunking uses the Qwen tokenizer with 512-token chunks and 64-token
-overlap. Embeddings are generated in batches and stored once.
+Embeddings are generated in-process via the `fastembed` crate (ONNX Runtime)
+using the EmbeddingGemma-300M model, in batches, and stored once. Document
+chunking uses 512-token chunks with 64-token overlap.
 
-Each vector is 1024 float32 values. sqlite-vec performs KNN inside SQLite,
+Each vector is 768 float32 values. sqlite-vec performs KNN inside SQLite,
 avoiding a full Rust-side vector scan.
 
 Embedding provenance and content hashes allow stale vectors to be invalidated
@@ -44,7 +45,8 @@ Hybrid retrieval:
 1. fetches a wider sqlite-vec candidate set;
 2. fetches FTS5 candidates;
 3. combines ranks with RRF;
-4. reranks candidates with Qwen3-Reranker-0.6B;
+4. optionally reranks candidates with a cross-encoder (`bge-reranker-v2-m3`
+   via fastembed, off by default);
 5. truncates to the context budget.
 
 RRF is used because lexical and cosine scores are not directly comparable.
@@ -54,14 +56,14 @@ field.
 Measure Recall@10 and MRR before tuning candidate counts, RRF constants, or
 context size.
 
-## Sidecar Packaging
+## Model Caching
 
-The sidecar uses a PyInstaller on-directory bundle. A one-file bundle would
-unpack the large Torch and Paddle runtime on every launch and can hit archive
-size limits.
+The embedding model (EmbeddingGemma-300M) and the optional reranker
+(`bge-reranker-v2-m3`) run in-process via `fastembed`/ONNX Runtime. Weights are
+downloaded from Hugging Face and cached on first use. The optional answer-
+generation GGUF model is loaded by an external llama.cpp server.
 
-Model weights are downloaded separately during **Download / verify** or first
-model use. Allow up to 5 GB of disk space for models and caches.
+Allow disk space for the model and ONNX Runtime caches.
 
 ## Generation
 

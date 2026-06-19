@@ -7,21 +7,16 @@
 use serde::{Deserialize, Serialize};
 
 /// Inference profile type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InferenceProfile {
     /// Screen content extraction - precise, structured output
     VisionAnalysis,
     /// Conversational RAG - natural, source-citing responses
+    #[default]
     RagAnswer,
     /// Custom profile (use parameters directly from config)
     Custom,
-}
-
-impl Default for InferenceProfile {
-    fn default() -> Self {
-        Self::RagAnswer
-    }
 }
 
 impl InferenceProfile {

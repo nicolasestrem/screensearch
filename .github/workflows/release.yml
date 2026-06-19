@@ -58,13 +58,6 @@ jobs:
           cache: 'npm'
           cache-dependency-path: screensearch-ui/package-lock.json
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-          cache-dependency-path: sidecar/requirements.txt
-
       - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
@@ -100,122 +93,6 @@ jobs:
         run: cargo build --release --locked
         shell: pwsh
 
-      # Split into staged steps so `gh run watch` (used by
-      # scripts/build-release.sh --windows-bundle) advances through visible
-      # boundaries instead of sitting on one ~7.5 min step that looks hung.
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-        shell: pwsh
-
-      - name: Install sidecar dependencies
-        run: pip install -r sidecar/requirements.txt
-        shell: pwsh
-
-      - name: Bundle sidecar with PyInstaller
-        run: python sidecar/build.py
-        shell: pwsh
-
-      - name: Smoke test packaged PP-OCRv5
-        shell: pwsh
-        run: |
-          $env:SCREENSEARCH_AI_SIDECAR_TOKEN = "release-smoke-test"
-          $stdout = Join-Path $env:RUNNER_TEMP "sidecar-stdout.log"
-          $stderr = Join-Path $env:RUNNER_TEMP "sidecar-stderr.log"
-          $sidecar = Start-Process `
-            -FilePath "sidecar/dist/screensearch-ai-sidecar/screensearch-ai-sidecar.exe" `
-            -PassThru `
-            -RedirectStandardOutput $stdout `
-            -RedirectStandardError $stderr
-          $headers = @{ Authorization = "Bearer $env:SCREENSEARCH_AI_SIDECAR_TOKEN" }
-
-          try {
-            $healthy = $false
-            for ($attempt = 0; $attempt -lt 120; $attempt++) {
-              Start-Sleep -Milliseconds 500
-              try {
-                Invoke-RestMethod -Uri "http://127.0.0.1:3132/health" -Headers $headers | Out-Null
-                $healthy = $true
-                break
-              }
-              catch {
-                if ($sidecar.HasExited) {
-                  throw "Packaged quality sidecar exited before becoming healthy."
-                }
-              }
-            }
-            if (-not $healthy) {
-              throw "Packaged quality sidecar did not become healthy within 60 seconds."
-            }
-
-            $prepareBody = @{
-              components = @("ocr")
-              ocr_language = "en"
-            } | ConvertTo-Json
-            Invoke-RestMethod `
-              -Method Post `
-              -Uri "http://127.0.0.1:3132/v1/models/prepare" `
-              -Headers $headers `
-              -ContentType "application/json" `
-              -Body $prepareBody | Out-Null
-
-            $ready = $false
-            for ($attempt = 0; $attempt -lt 600; $attempt++) {
-              Start-Sleep -Seconds 1
-              $status = Invoke-RestMethod `
-                -Uri "http://127.0.0.1:3132/v1/models/status" `
-                -Headers $headers
-              if ($status.state -eq "ready") {
-                $ready = $true
-                break
-              }
-              if ($status.state -eq "error") {
-                throw "PP-OCRv5 preparation failed: $($status.error)"
-              }
-            }
-            if (-not $ready) {
-              throw "PP-OCRv5 preparation did not finish within 10 minutes."
-            }
-
-            Add-Type -AssemblyName System.Drawing
-            $imagePath = Join-Path $env:RUNNER_TEMP "ocr-smoke-test.png"
-            $bitmap = New-Object System.Drawing.Bitmap 640, 160
-            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-            try {
-              $graphics.Clear([System.Drawing.Color]::White)
-              $font = New-Object System.Drawing.Font "Arial", 32
-              $graphics.DrawString(
-                "ScreenSearch OCR smoke test",
-                $font,
-                [System.Drawing.Brushes]::Black,
-                20,
-                45
-              )
-              $bitmap.Save($imagePath, [System.Drawing.Imaging.ImageFormat]::Png)
-            }
-            finally {
-              $graphics.Dispose()
-              $bitmap.Dispose()
-            }
-
-            $response = Invoke-RestMethod `
-              -Method Post `
-              -Uri "http://127.0.0.1:3132/v1/ocr" `
-              -Headers $headers `
-              -Form @{ image = (Get-Item $imagePath); language = "en" }
-            if ($response.provider -ne "ppocr-v5" -or $response.lines.Count -eq 0) {
-              throw "Packaged PP-OCRv5 returned no recognized lines."
-            }
-          }
-          finally {
-            if (-not $sidecar.HasExited) {
-              Stop-Process -Id $sidecar.Id -Force
-            }
-            Write-Host "--- quality sidecar stdout ---"
-            if (Test-Path $stdout) { Get-Content $stdout }
-            Write-Host "--- quality sidecar stderr ---"
-            if (Test-Path $stderr) { Get-Content $stderr }
-          }
-
       - name: Download VC++ Redistributable
         run: |
           Write-Host "Downloading Visual C++ 2015-2022 Redistributable..."
@@ -247,10 +124,7 @@ jobs:
       - name: Create Portable ZIP
         run: |
           $version = $env:RELEASE_VERSION
-          Remove-Item target/release/bin -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path target/release/bin
-          Copy-Item sidecar/dist/screensearch-ai-sidecar target/release/bin/ -Recurse
-          Compress-Archive -Path target/release/screensearch.exe, target/release/bin, config.toml, LICENSE, README.md `
+          Compress-Archive -Path target/release/screensearch.exe, config.toml, LICENSE, README.md `
                            -DestinationPath "target/release/installers/ScreenSearch-v$version-Portable.zip" `
                            -Force
         shell: pwsh
@@ -349,14 +223,13 @@ jobs:
 
             ## Download Options
 
-            **Quality Installer**
-            - Includes the managed local PP-OCRv5/Qwen inference sidecar
-            - Prepares selected models from Settings with **Download / verify**
-            - Supports CPU and compatible GPU acceleration
+            **Installer**
+            - Fully in-process Rust ML: native Windows OCR + fastembed/ONNX embeddings
+            - Downloads the local embedding model on first use via **Download / verify**
+            - Optional local answer-generation LLM: drop a GGUF into `.models/`
 
             **Portable ZIP**
             - Extract and run, no installation
-            - Includes the same local quality sidecar
 
             ---
 

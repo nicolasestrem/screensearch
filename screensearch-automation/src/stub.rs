@@ -29,7 +29,7 @@ impl UIElement {
     pub fn click(&self) -> Result<ClickResultData, AutomationError> {
         Err(AutomationError::platform("Not implemented on Linux"))
     }
-    
+
     pub fn text(&self, _depth: usize) -> Result<String, AutomationError> {
         Err(AutomationError::platform("Not implemented on Linux"))
     }
@@ -39,7 +39,7 @@ impl UIElement {
     }
 
     pub fn bounds(&self) -> Result<(f64, f64, f64, f64), AutomationError> {
-         Ok((0.0, 0.0, 0.0, 0.0))
+        Ok((0.0, 0.0, 0.0, 0.0))
     }
 
     pub fn name(&self) -> Option<String> {
@@ -71,7 +71,7 @@ impl UIElement {
     pub fn type_text(&self, _text: &str) -> Result<(), AutomationError> {
         Err(AutomationError::platform("Not implemented on Linux"))
     }
-    
+
     pub fn id(&self) -> Option<String> {
         None
     }
@@ -149,8 +149,12 @@ impl AutomationEngine {
     pub async fn find_element(&self, _selector: &Selector) -> Result<UIElement, AutomationError> {
         Err(AutomationError::platform("Not implemented on Linux"))
     }
-    
-    pub async fn find_element_with_timeout(&self, _selector: &Selector, _timeout: Duration) -> Result<UIElement, AutomationError> {
+
+    pub async fn find_element_with_timeout(
+        &self,
+        _selector: &Selector,
+        _timeout: Duration,
+    ) -> Result<UIElement, AutomationError> {
         Err(AutomationError::platform("Not implemented on Linux"))
     }
 
@@ -158,12 +162,17 @@ impl AutomationEngine {
         Ok(vec![])
     }
 
-    pub async fn wait_for<F>(&self, _timeout: Duration, _condition: F) -> Result<(), AutomationError> 
-    where F: FnMut() -> Result<bool, AutomationError> 
+    pub async fn wait_for<F>(
+        &self,
+        _timeout: Duration,
+        _condition: F,
+    ) -> Result<(), AutomationError>
+    where
+        F: FnMut() -> Result<bool, AutomationError>,
     {
         Ok(())
     }
-    
+
     pub async fn open_app(&self, _app_name: &str) -> Result<(), AutomationError> {
         Err(AutomationError::platform("Not implemented on Linux"))
     }
@@ -172,7 +181,11 @@ impl AutomationEngine {
         Err(AutomationError::platform("Not implemented on Linux"))
     }
 
-    pub async fn open_url(&self, _url: &str, _browser: Option<&str>) -> Result<(), AutomationError> {
+    pub async fn open_url(
+        &self,
+        _url: &str,
+        _browser: Option<&str>,
+    ) -> Result<(), AutomationError> {
         Err(AutomationError::platform("Not implemented on Linux"))
     }
 

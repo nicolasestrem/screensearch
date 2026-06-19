@@ -13,9 +13,10 @@ usage() {
 Usage: ./scripts/build-release.sh VERSION [options]
 
 Prepare a Windows release from Linux. This script validates the repository,
-cross-compiles the Windows Rust executable, and creates a core-preview ZIP.
-Final Windows sidecar, installer, portable ZIP, and checksums are built by the
-tag-triggered GitHub Actions release workflow.
+cross-compiles the Windows Rust executable, and creates a portable ZIP.
+The installer, portable ZIP, and checksums are built by the tag-triggered
+GitHub Actions release workflow. All ML runs in-process in Rust — there is no
+Python sidecar to build or bundle.
 
 Options:
   --publish       Create and push tag vVERSION after validation.
@@ -114,7 +115,7 @@ if ((!SKIP_CHECKS)); then
     cd screensearch-ui
     npm run lint
   )
-  python3 -m py_compile sidecar/app.py sidecar/build.py evaluation/evaluate.py
+  python3 -m py_compile evaluation/evaluate.py
 else
   echo "[2/5] Skipping quality checks"
 fi
@@ -189,8 +190,7 @@ if ((WINDOWS_BUNDLE)); then
   fi
 
   echo
-  echo "Watching run $run_id. The 'Bundle sidecar with PyInstaller' phase"
-  echo "takes ~5 min with no line movement — this is expected, not a hang."
+  echo "Watching run $run_id."
   gh run watch "$run_id" --exit-status
   full_bundle_dir="$bundle_dir/windows-full"
   rm -rf "$full_bundle_dir"
@@ -209,11 +209,10 @@ elif ((PUBLISH)); then
   git tag -a "$tag" -m "Release $tag"
   git push origin "$tag"
   echo
-  echo "Published $tag. GitHub Actions will build the Windows sidecar,"
+  echo "Published $tag. GitHub Actions will build the Windows"
   echo "installer, portable ZIP, checksums, and draft GitHub release."
 else
   echo
-  echo "The core-preview ZIP does not contain the Windows AI sidecar."
   echo "Build and download full Windows artifacts without publishing a tag:"
   echo "  ./scripts/build-release.sh $VERSION --windows-bundle"
   echo "Or publish the release tag:"

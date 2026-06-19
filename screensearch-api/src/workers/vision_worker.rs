@@ -1,14 +1,12 @@
 use anyhow::{Context, Result};
-use screensearch_db::{DatabaseManager, models::FrameAnalysisUpdate};
+use screensearch_db::{models::FrameAnalysisUpdate, DatabaseManager};
 use screensearch_vision::{client::OllamaClient, VisionModel};
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
-use tracing::{error, info, debug};
+use tracing::{debug, error, info};
 
 /// Spawn the vision analysis worker
-pub fn spawn_vision_worker(
-    db: Arc<DatabaseManager>,
-) {
+pub fn spawn_vision_worker(db: Arc<DatabaseManager>) {
     tokio::spawn(async move {
         info!("Vision worker started");
 
@@ -35,14 +33,17 @@ pub fn spawn_vision_worker(
             }
 
             // Check if config changed
-            let config_changed = settings.vision_provider != current_provider ||
-                                 settings.vision_model != current_model ||
-                                 settings.vision_endpoint != current_endpoint ||
-                                 client.is_none();
+            let config_changed = settings.vision_provider != current_provider
+                || settings.vision_model != current_model
+                || settings.vision_endpoint != current_endpoint
+                || client.is_none();
 
             if config_changed {
-                info!("Vision settings changed, updating client: provider={}, model={}", settings.vision_provider, settings.vision_model);
-                
+                info!(
+                    "Vision settings changed, updating client: provider={}, model={}",
+                    settings.vision_provider, settings.vision_model
+                );
+
                 // create new client
                 let new_client: Arc<dyn VisionModel> = if settings.vision_provider == "ollama" {
                     Arc::new(OllamaClient::new(
@@ -52,15 +53,15 @@ pub fn spawn_vision_worker(
                         settings.vision_provider.clone(),
                     ))
                 } else {
-                     // TODO: Local model support
-                     // For now default to Ollama if unknown or "local" unimplemented
-                     if settings.vision_provider == "local" {
+                    // TODO: Local model support
+                    // For now default to Ollama if unknown or "local" unimplemented
+                    if settings.vision_provider == "local" {
                         // error!("Local model not fully implemented, falling back to Ollama stub or error");
                         // For now we don't have LocalClient implemented fully, so we might want to warn
                         // But let's stick to Ollama for the prototype as verified.
-                     }
-                     
-                     Arc::new(OllamaClient::new(
+                    }
+
+                    Arc::new(OllamaClient::new(
                         settings.vision_endpoint.clone(),
                         settings.vision_model.clone(),
                         settings.vision_api_key.clone(),
@@ -87,34 +88,36 @@ pub fn spawn_vision_worker(
                     }
                 }
             } else {
-                 sleep(Duration::from_secs(5)).await;
+                sleep(Duration::from_secs(5)).await;
             }
         }
     });
 }
 
-async fn process_next_item(
-    db: &DatabaseManager,
-    client: &Arc<dyn VisionModel>,
-) -> Result<bool> {
+async fn process_next_item(db: &DatabaseManager, client: &Arc<dyn VisionModel>) -> Result<bool> {
     // 1. Claim task
     let task = db.claim_analysis_task("worker-1").await?;
-    
+
     if let Some(task) = task {
-        debug!("Processing analysis task id: {} for frame: {}", task.id, task.frame_id);
-        
+        debug!(
+            "Processing analysis task id: {} for frame: {}",
+            task.id, task.frame_id
+        );
+
         // 2. Fetch frame data (image path)
-        let frame = db.get_frame(task.frame_id).await?
+        let frame = db
+            .get_frame(task.frame_id)
+            .await?
             .context("Frame not found for analysis task")?;
-            
+
         // 3. Load image
         let image = image::open(&frame.file_path)
             .context(format!("Failed to open image at {}", frame.file_path))?; // map_err?
 
         // 4. Analyze
         let context = format!(
-            "App: {}, Window: {}", 
-            frame.active_process.unwrap_or_default(), 
+            "App: {}, Window: {}",
+            frame.active_process.unwrap_or_default(),
             frame.active_window.unwrap_or_default()
         );
 
@@ -129,17 +132,19 @@ async fn process_next_item(
                     confidence: Some(analysis.confidence),
                     analysis_time_ms: Some(0), // Measure time?
                 };
-                
-                db.complete_analysis_task(task.id, task.frame_id, update).await?;
+
+                db.complete_analysis_task(task.id, task.frame_id, update)
+                    .await?;
                 info!("Analysis completed for frame {}", task.frame_id);
-            },
+            }
             Err(e) => {
                 // 6. Update failure
                 error!("Analysis failed for frame {}: {}", task.frame_id, e);
-                db.fail_analysis_task(task.id, task.frame_id, e.to_string()).await?;
+                db.fail_analysis_task(task.id, task.frame_id, e.to_string())
+                    .await?;
             }
         }
-        
+
         Ok(true)
     } else {
         Ok(false)

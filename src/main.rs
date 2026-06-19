@@ -12,8 +12,6 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
 use tokio::signal;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
@@ -92,16 +90,9 @@ fn parse_diff_method(value: &str) -> DiffMethod {
 
 #[derive(Debug, Clone, Deserialize)]
 struct OcrSettings {
-    /// OCR engine selection: `ppocr-v5` or `windows`.
-    engine: String,
-    #[serde(default = "default_sidecar_url")]
-    sidecar_url: String,
-    #[serde(default = "default_sidecar_token_env")]
-    sidecar_token_env: String,
+    /// OCR language hint (BCP-47 tag, e.g. `"en-US"`; empty = user profile).
     #[serde(default = "default_ocr_language")]
     language: String,
-    #[serde(default = "default_true")]
-    fallback_to_windows: bool,
     min_confidence: f32,
     worker_threads: usize,
     max_retries: u32,
@@ -112,20 +103,9 @@ struct OcrSettings {
     metrics_interval_secs: u64,
 }
 
-fn default_sidecar_url() -> String {
-    "http://127.0.0.1:3132".to_string()
-}
-
-fn default_sidecar_token_env() -> String {
-    "SCREENSEARCH_AI_SIDECAR_TOKEN".to_string()
-}
-
 fn default_ocr_language() -> String {
-    "en".to_string()
-}
-
-fn default_true() -> bool {
-    true
+    // Empty = use the user's Windows profile languages.
+    String::new()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -203,11 +183,7 @@ impl Default for AppConfig {
                 draw_border: false,
             },
             ocr: OcrSettings {
-                engine: "ppocr-v5".to_string(),
-                sidecar_url: default_sidecar_url(),
-                sidecar_token_env: default_sidecar_token_env(),
                 language: default_ocr_language(),
-                fallback_to_windows: true,
                 min_confidence: 0.7,
                 worker_threads: 2,
                 max_retries: 3,
@@ -298,11 +274,7 @@ impl AppConfig {
     /// Convert to OcrProcessorConfig
     fn ocr_config(&self) -> OcrProcessorConfig {
         OcrProcessorConfig {
-            provider: self.ocr.engine.clone(),
-            sidecar_url: self.ocr.sidecar_url.clone(),
-            sidecar_token: std::env::var(&self.ocr.sidecar_token_env).ok(),
             language: self.ocr.language.clone(),
-            fallback_to_windows: self.ocr.fallback_to_windows,
             min_confidence: self.ocr.min_confidence,
             worker_threads: self.ocr.worker_threads,
             max_retries: self.ocr.max_retries,
@@ -508,9 +480,7 @@ impl App {
                 .context("Failed to initialize database")?,
         );
 
-        let _quality_sidecar = ensure_quality_sidecar(&self.config.ocr).await;
-
-        // Initialize OCR processor
+        // Initialize OCR processor (native Windows OCR, in-process)
         let ocr_config = self.config.ocr_config();
         let ocr_processor = Arc::new(OcrProcessor::new(ocr_config).await?);
 
@@ -560,7 +530,7 @@ impl App {
             interval_secs: 60,
         };
         if let Err(e) = api_server.start_embedding_worker(worker_config).await {
-            warn!("Embedding worker is waiting for the quality sidecar: {}", e);
+            warn!("Embedding worker did not start yet: {}", e);
         }
 
         // Start vision analysis worker
@@ -734,136 +704,6 @@ impl App {
 
         Ok(())
     }
-}
-
-async fn ensure_quality_sidecar(settings: &OcrSettings) -> Option<Child> {
-    if settings.engine == "windows" {
-        return None;
-    }
-
-    std::env::set_var("SCREENSEARCH_AI_SIDECAR_URL", &settings.sidecar_url);
-    let token = std::env::var(&settings.sidecar_token_env).unwrap_or_else(|_| {
-        let token = uuid::Uuid::new_v4().to_string();
-        std::env::set_var(&settings.sidecar_token_env, &token);
-        token
-    });
-    std::env::set_var("SCREENSEARCH_AI_SIDECAR_TOKEN", &token);
-
-    let client = reqwest::Client::new();
-    let health_url = format!("{}/health", settings.sidecar_url.trim_end_matches('/'));
-    if let Ok(response) = client.get(&health_url).bearer_auth(&token).send().await {
-        if response.status().is_success() {
-            info!("Using an existing ScreenSearch quality sidecar");
-            return None;
-        }
-    }
-
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf))?;
-    let filename = if cfg!(windows) {
-        "screensearch-ai-sidecar.exe"
-    } else {
-        "screensearch-ai-sidecar"
-    };
-    let mut candidates = vec![
-        exe_dir.join(filename),
-        exe_dir.join("bin").join(filename),
-        exe_dir.join("screensearch-ai-sidecar").join(filename),
-        exe_dir
-            .join("bin")
-            .join("screensearch-ai-sidecar")
-            .join(filename),
-    ];
-    if let Ok(current_dir) = std::env::current_dir() {
-        candidates.push(
-            current_dir
-                .join("sidecar")
-                .join("dist")
-                .join("screensearch-ai-sidecar")
-                .join(filename),
-        );
-    }
-    let manifest_sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("sidecar")
-        .join("dist")
-        .join("screensearch-ai-sidecar")
-        .join(filename);
-    if manifest_sidecar.exists() {
-        candidates.push(manifest_sidecar);
-    }
-    let sidecar_path = candidates.iter().find(|path| path.exists()).cloned();
-    let Some(sidecar_path) = sidecar_path else {
-        warn!(
-            "Quality sidecar binary not found; searched: {}. Run `./scripts/build-local.sh` for Linux development or use a packaged Windows release. Windows OCR fallback will be used",
-            candidates
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        return None;
-    };
-
-    let mut command = Command::new(sidecar_path);
-    command
-        .env("SCREENSEARCH_AI_SIDECAR_TOKEN", &token)
-        .kill_on_drop(true)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            warn!("Failed to start quality sidecar: {}", error);
-            return None;
-        }
-    };
-    if let Some(stdout) = child.stdout.take() {
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                info!("Quality sidecar: {}", line);
-            }
-        });
-    }
-    if let Some(stderr) = child.stderr.take() {
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                warn!("Quality sidecar: {}", line);
-            }
-        });
-    }
-
-    // Poll readiness in the background instead of blocking startup. The sidecar
-    // is a PyInstaller-bundled Python app whose cold start (unpack + torch/paddle
-    // import) can take 15-45s; blocking here would make the whole app unusable
-    // for that long. OCR and embeddings attach automatically once it reports
-    // healthy (Windows OCR is used as a fallback meanwhile). The spawned `child`
-    // is returned and kept alive by the caller; its `kill_on_drop(true)` tears
-    // the sidecar down on app exit, and the stderr task above surfaces crashes.
-    let readiness_client = client.clone();
-    let readiness_url = health_url.clone();
-    let readiness_token = token.clone();
-    tokio::spawn(async move {
-        for _ in 0..120 {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            if let Ok(response) = readiness_client
-                .get(&readiness_url)
-                .bearer_auth(&readiness_token)
-                .send()
-                .await
-            {
-                if response.status().is_success() {
-                    info!("ScreenSearch quality sidecar is ready");
-                    return;
-                }
-            }
-        }
-        warn!("Quality sidecar did not become ready within 60 seconds");
-    });
-
-    Some(child)
 }
 
 impl winit::application::ApplicationHandler for EventLoopState {

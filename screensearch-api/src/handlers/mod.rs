@@ -11,12 +11,9 @@ pub mod ai;
 pub use ai::*;
 pub mod embeddings;
 pub use embeddings::*;
+pub mod generate;
 pub mod rag_helpers;
 pub mod reranker;
-pub mod generate;
 pub use generate::*;
 pub mod downloads;
 pub use downloads::*;
-
-
-

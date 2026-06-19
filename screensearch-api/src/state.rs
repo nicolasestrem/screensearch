@@ -94,6 +94,12 @@ impl AppState {
         }
     }
 
+    /// Whether the in-process embedding engine has already been loaded.
+    /// Cheap, non-blocking check that never triggers a model download.
+    pub async fn embedding_engine_initialized(&self) -> bool {
+        self.embedding_engine.read().await.is_some()
+    }
+
     /// Get or initialize the embedding engine
     pub async fn get_embedding_engine(&self) -> Result<Arc<EmbeddingEngine>, String> {
         // Fast path: already initialized.
@@ -113,8 +119,9 @@ impl AppState {
             return Ok(Arc::clone(engine));
         }
 
+        // Loads (and, on first run, downloads + caches) the in-process ONNX
+        // embedding model. No network health check is needed any more.
         let engine = EmbeddingEngine::new().await.map_err(|e| e.to_string())?;
-        engine.health_check().await.map_err(|e| e.to_string())?;
         self.db
             .ensure_embedding_model(
                 engine.provider(),
@@ -132,7 +139,7 @@ impl AppState {
 
     /// Get or initialize the LlamaServer
     pub async fn get_llama_server(&self) -> Result<Arc<LlamaServer>, String> {
-        use screensearch_llm::{get_model_path, get_models_dir, LlamaServerConfig};
+        use screensearch_llm::{resolve_model_path, LlamaServerConfig};
 
         // Check if already initialized
         {
@@ -142,9 +149,9 @@ impl AppState {
             }
         }
 
-        // Initialize the server
-        let models_dir = get_models_dir();
-        let model_path = get_model_path(&models_dir);
+        // Use the first user-provided GGUF discovered in `.models/` (etc.),
+        // falling back to the downloadable default path.
+        let model_path = resolve_model_path();
 
         let config = LlamaServerConfig {
             model_path,

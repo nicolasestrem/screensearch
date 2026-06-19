@@ -127,6 +127,14 @@ pub async fn retrieve_rag_results(
         })
         .collect();
 
+    // With the cross-encoder enabled, this reorders by relevance; when it is
+    // disabled (the default), the engine returns the candidates in their
+    // incoming RRF order so this path simply trims to `top_k`.
+    let source_suffix = if engine.reranker_enabled() {
+        "+reranker"
+    } else {
+        ""
+    };
     match engine.rerank(user_query, &documents).await {
         Ok(scores) => Ok(scores
             .into_iter()
@@ -134,7 +142,8 @@ pub async fn retrieve_rag_results(
             .filter_map(|score| {
                 candidates.get(score.index).cloned().map(|mut result| {
                     result.similarity_score = score.score;
-                    result.retrieval_source = format!("{}+qwen-reranker", result.retrieval_source);
+                    result.retrieval_source =
+                        format!("{}{}", result.retrieval_source, source_suffix);
                     result
                 })
             })

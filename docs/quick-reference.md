@@ -5,18 +5,16 @@
 | Service | Address |
 |---|---|
 | Application and API | `http://127.0.0.1:3131` |
-| Quality sidecar | `http://127.0.0.1:3132` |
 | Bundled generation server | `http://127.0.0.1:31130` |
 
 ## Current Models
 
 | Function | Model |
 |---|---|
-| OCR | PP-OCRv5 |
-| OCR fallback | Windows OCR |
-| Embeddings | `Qwen/Qwen3-Embedding-0.6B` |
-| Reranking | `Qwen/Qwen3-Reranker-0.6B` |
-| Optional bundled generation | Ministral-3-3B GGUF |
+| OCR | native Windows OCR (WinRT `Media.Ocr`, in-process) |
+| Embeddings | `EmbeddingGemma-300M` (in-process via `fastembed`, 768-dim) |
+| Reranking | `bge-reranker-v2-m3` (optional, off by default) |
+| Optional bundled generation | any `*.gguf` (auto-discovered; Ministral-3B default) |
 
 ## Search
 
@@ -71,7 +69,7 @@ Supported `vision_provider` values:
 
 | Value | Runtime |
 |---|---|
-| `local` | Bundled Ministral through `llama-server` |
+| `local` | Bundled llama.cpp server (auto-discovers `*.gguf`; Ministral-3B default) |
 | `ollama` | Ollama-compatible server |
 | `openai` | OpenAI-compatible endpoint |
 
@@ -79,16 +77,14 @@ Supported `vision_provider` values:
 
 ```toml
 [ocr]
-engine = "ppocr-v5"
-sidecar_url = "http://127.0.0.1:3132"
 language = "en"
-fallback_to_windows = true
+min_confidence = 0.7
 
 [embeddings]
 enabled = false
-model = "quality-sidecar"
-model_name = "Qwen/Qwen3-Embedding-0.6B"
-embedding_dim = 1024
+model = "fastembed"
+model_name = "EmbeddingGemma-300M"
+embedding_dim = 768
 batch_size = 50
 max_chunk_tokens = 512
 chunk_overlap = 64
@@ -120,13 +116,6 @@ npm run lint
 npm run build
 ```
 
-Sidecar:
-
-```bash
-python -m pip install -r sidecar/requirements.txt
-python sidecar/app.py
-```
-
 Evaluation:
 
 ```bash
@@ -146,7 +135,6 @@ The native Linux development output is:
 
 ```text
 target/release/screensearch-local/screensearch
-target/release/screensearch-local/bin/screensearch-ai-sidecar/
 ```
 
 Prepare a Windows release from Linux with:
@@ -156,8 +144,8 @@ Prepare a Windows release from Linux with:
 ./scripts/build-release.sh 0.4.35 --publish
 ```
 
-The Windows CI runner creates the distributable sidecar and installer after the
-tag is pushed.
+The Windows CI runner creates the distributable installer after the tag is
+pushed.
 
 ## Key Paths
 
@@ -165,17 +153,18 @@ tag is pushed.
 |---|---|
 | `config.toml` | Startup configuration |
 | `screensearch-ui/dist/` | UI embedded into the Rust binary |
-| `sidecar/` | PP-OCRv5 and Qwen inference |
+| `screensearch-embeddings/` | In-process embedding engine (`fastembed`) |
+| `.models/` | Auto-discovered `*.gguf` generation models |
 | `evaluation/` | Retrieval quality contract |
-| `docs/ai-quality-stack.md` | Model and fallback details |
+| `docs/ai-quality-stack.md` | Model details |
 
 ## Common Problems
 
 | Symptom | Check |
 |---|---|
 | Old settings UI | Rebuild UI before Rust |
-| Sidecar not ready | Port 3132, bundle path, disk, model network access |
+| Embedding engine not ready | Disk space and Hugging Face model download |
 | Reindex required | Enable embeddings and allow background processing |
-| Semantic search empty | Index coverage and sidecar status |
-| Windows OCR active | Search the app log for `Quality sidecar:` and `PP-OCRv5 request failed` |
+| Semantic search empty | Index coverage and embedding engine status |
+| OCR returns no text | Install the matching Windows OCR language pack |
 | Generation unavailable | Selected LLM runtime, model, endpoint, API key |

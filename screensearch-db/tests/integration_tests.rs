@@ -80,9 +80,9 @@ async fn test_sqlite_vec_search_and_delete_sync() {
         .await
         .unwrap();
 
-    let mut first_vector = vec![0.0; 1024];
+    let mut first_vector = vec![0.0; 768];
     first_vector[0] = 1.0;
-    let mut second_vector = vec![0.0; 1024];
+    let mut second_vector = vec![0.0; 768];
     second_vector[1] = 1.0;
 
     for (frame_id, text, embedding) in [
@@ -108,7 +108,7 @@ async fn test_sqlite_vec_search_and_delete_sync() {
     assert_eq!(results[0].retrieval_source, "vector");
 
     db.delete_embeddings_for_frame(first_frame).await.unwrap();
-    let mut remaining_query = vec![0.0; 1024];
+    let mut remaining_query = vec![0.0; 768];
     remaining_query[1] = 1.0;
     let remaining = db.search_embeddings(remaining_query, 2, 0.0).await.unwrap();
     assert_eq!(remaining.len(), 1);
@@ -128,7 +128,7 @@ async fn test_embedding_batch_replacement_is_atomic_and_deduplicated() {
         frame_id,
         chunk_text: "existing chunk".to_string(),
         chunk_index: 0,
-        embedding: vec![0.0; 1024],
+        embedding: vec![0.0; 768],
         provider: "test".to_string(),
         model: "test-model".to_string(),
         model_version: "1".to_string(),
@@ -141,7 +141,7 @@ async fn test_embedding_batch_replacement_is_atomic_and_deduplicated() {
             frame_id,
             chunk_text: "replacement one".to_string(),
             chunk_index: 0,
-            embedding: vec![0.0; 1024],
+            embedding: vec![0.0; 768],
             provider: "test".to_string(),
             model: "test-model".to_string(),
             model_version: "1".to_string(),
@@ -151,7 +151,7 @@ async fn test_embedding_batch_replacement_is_atomic_and_deduplicated() {
             frame_id,
             chunk_text: "replacement duplicate".to_string(),
             chunk_index: 0,
-            embedding: vec![0.0; 1024],
+            embedding: vec![0.0; 768],
             provider: "test".to_string(),
             model: "test-model".to_string(),
             model_version: "1".to_string(),
@@ -181,7 +181,7 @@ async fn test_time_filtered_vector_search_expands_past_global_neighbors() {
             ))
             .await
             .unwrap();
-        let mut vector = vec![0.0; 1024];
+        let mut vector = vec![0.0; 768];
         vector[0] = 1.0;
         db.insert_embedding(NewEmbedding {
             frame_id,
@@ -201,7 +201,7 @@ async fn test_time_filtered_vector_search_expands_past_global_neighbors() {
         .insert_frame(create_test_frame(now, "code", "Relevant"))
         .await
         .unwrap();
-    let mut relevant_vector = vec![0.0; 1024];
+    let mut relevant_vector = vec![0.0; 768];
     relevant_vector[0] = 0.8;
     relevant_vector[1] = 0.6;
     db.insert_embedding(NewEmbedding {
@@ -217,7 +217,7 @@ async fn test_time_filtered_vector_search_expands_past_global_neighbors() {
     .await
     .unwrap();
 
-    let mut query = vec![0.0; 1024];
+    let mut query = vec![0.0; 768];
     query[0] = 1.0;
     let results = db
         .search_embeddings_with_time_range(

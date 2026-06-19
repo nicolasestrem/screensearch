@@ -659,7 +659,6 @@ impl UIElement {
             ))),
         }
     }
-
 }
 
 impl PartialEq for UIElement {

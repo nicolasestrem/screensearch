@@ -597,7 +597,7 @@ export function SettingsPanel() {
                     <div>
                       <p className="font-medium">Screen Understanding & Retrieval</p>
                       <p className="text-sm text-muted-foreground">
-                        Managed local quality stack. These model contracts are fixed for this release.
+                        Fully in-process Rust stack — no Python sidecar.
                       </p>
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
@@ -606,9 +606,9 @@ export function SettingsPanel() {
                           <ScanText className="h-4 w-4 text-primary" />
                           OCR
                         </div>
-                        <p className="mt-1 font-mono text-xs">PP-OCRv5</p>
+                        <p className="mt-1 font-mono text-xs">Windows OCR (native)</p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          Windows OCR is used only as an explicit fallback.
+                          Fast (~70-80ms/frame), no model download.
                         </p>
                       </div>
                       <div className="p-3 bg-secondary/30 border border-border/50 rounded-lg">
@@ -616,15 +616,14 @@ export function SettingsPanel() {
                           <Waypoints className="h-4 w-4 text-primary" />
                           RAG retrieval
                         </div>
-                        <p className="mt-1 font-mono text-xs">Qwen3-Embedding-0.6B</p>
-                        <p className="font-mono text-xs">Qwen3-Reranker-0.6B</p>
+                        <p className="mt-1 font-mono text-xs">EmbeddingGemma-300M (ONNX)</p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          1024-dimensional sqlite-vec KNN with FTS5 and RRF.
+                          768-dimensional sqlite-vec KNN with FTS5 and RRF.
                         </p>
                       </div>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Use Download / verify below to prepare the fixed local OCR and RAG models. They can use up to 5 GB.
+                      Use Download / verify below to fetch and cache the local embedding model (~a few hundred MB).
                     </p>
                   </div>
 

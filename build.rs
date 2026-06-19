@@ -42,9 +42,9 @@ fn main() {
             // On Windows, npm is actually npm.cmd
             // When cross-compiling, use the host OS npm command
             let npm_cmd = if cfg!(target_os = "windows") && !is_cross_compiling {
-                "npm.cmd"  // Native Windows builds use "npm.cmd"
+                "npm.cmd" // Native Windows builds use "npm.cmd"
             } else {
-                "npm"  // Linux, cross-compiling, or other Unix-like systems
+                "npm" // Linux, cross-compiling, or other Unix-like systems
             };
 
             let install_status = Command::new(npm_cmd)

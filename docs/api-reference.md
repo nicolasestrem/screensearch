@@ -6,8 +6,6 @@
 - Content type: `application/json`
 - Authentication: none on the application API; keep it bound to loopback.
 - Timestamps: ISO 8601 UTC.
-- The quality sidecar on port `3132` is internal and bearer-authenticated when
-  managed by ScreenSearch.
 
 ## Health
 
@@ -39,8 +37,8 @@ curl "http://127.0.0.1:3131/api/search/?q=invoice&mode=fts"
 curl "http://127.0.0.1:3131/api/search/?q=why%20did%20the%20build%20fail&mode=hybrid"
 ```
 
-Semantic and hybrid modes require a ready quality sidecar. Hybrid mode combines
-FTS5 and sqlite-vec candidates using RRF.
+Semantic and hybrid modes require the in-process embedding engine to be ready.
+Hybrid mode combines FTS5 and sqlite-vec candidates using RRF.
 
 ### `GET /search/keywords`
 
@@ -91,18 +89,12 @@ Example response:
 ```json
 {
   "enabled": true,
-  "model": "Qwen/Qwen3-Embedding-0.6B",
-  "provider": "quality-sidecar",
+  "model": "EmbeddingGemma-300M",
+  "provider": "fastembed",
   "model_version": "main",
-  "dimension": 1024,
+  "dimension": 768,
   "reindex_required": false,
-  "sidecar_ready": true,
-  "model_preparation": {
-    "state": "ready",
-    "current_component": null,
-    "ready_components": ["ocr", "embeddings", "reranker"],
-    "error": null
-  },
+  "engine_ready": true,
   "error": null,
   "total_frames": 1523,
   "frames_with_embeddings": 890,
@@ -116,15 +108,15 @@ until all eligible frames use the active model contract.
 
 ### `POST /embeddings/models/prepare`
 
-Starts background download and initialization of the fixed quality models:
+Pre-loads the in-process embedding model (EmbeddingGemma-300M), downloading and
+caching it from Hugging Face on first use:
 
 ```bash
 curl -X POST "http://127.0.0.1:3131/api/embeddings/models/prepare"
 ```
 
-Poll `GET /embeddings/status` while `model_preparation.state` is `preparing`.
-A missing sidecar returns an HTTP error rather than reporting a successful
-download.
+Poll `GET /embeddings/status` and check `engine_ready` to confirm the model is
+loaded.
 
 ### `POST /embeddings/enable`
 
@@ -167,8 +159,9 @@ Example response:
 }
 ```
 
-Retrieval uses hybrid RRF and Qwen reranking. The selected generation provider
-writes the final answer.
+Retrieval uses hybrid RRF, with optional cross-encoder reranking
+(`bge-reranker-v2-m3`, off by default). The selected generation provider writes
+the final answer.
 
 ## Runtime Settings
 
@@ -214,7 +207,7 @@ engine immediately — no restart required — and the value is restored at star
 
 The `vision_*` names are retained by the database API for compatibility. They
 configure only the optional generation LLM. OCR and retrieval are configured
-through `config.toml` and the fixed sidecar contract.
+through `config.toml` and run in-process.
 
 ## Generation LLM
 
@@ -229,7 +222,10 @@ Validates a report-generation provider:
 }
 ```
 
-Use `"provider_url": "local"` for the bundled Ministral runtime.
+Use `"provider_url": "local"` for the bundled llama.cpp runtime. The local
+server is model-agnostic: it auto-discovers any `*.gguf` file in `.models/` or
+the app models directory and uses the first one found, falling back to the
+downloadable default (Ministral-3B) when none is present.
 
 ### `POST /ai/generate`
 
@@ -249,7 +245,7 @@ Generates a report over a time range:
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/ai/model/status` | Local Ministral model status |
+| `GET` | `/ai/model/status` | Local model status, including an `available_models` list |
 | `POST` | `/ai/model/download` | Start local model download |
 | `GET` | `/ai/server/status` | llama-server state |
 | `POST` | `/ai/server/start` | Start llama-server |
@@ -260,15 +256,15 @@ Generates a report over a time range:
 ### `POST /test-vision`
 
 Legacy route name retained for compatibility. It tests the configured
-generation provider; it does not test PP-OCRv5 or Qwen retrieval.
+generation provider; it does not test OCR or embedding retrieval.
 
 ## Download Progress
 
 ### `GET /downloads/status`
 
 Returns progress for managed generation-model and llama-server downloads.
-Quality-sidecar model downloads currently use the Hugging Face and Paddle
-caches and are reported through `model_preparation` on
+The in-process embedding model (EmbeddingGemma-300M) downloads to the Hugging
+Face cache on first use; its readiness is reported through `engine_ready` on
 `GET /embeddings/status`, rather than this endpoint.
 
 ## Automation
@@ -295,6 +291,6 @@ loopback.
 Handlers return an HTTP error status and JSON error message for invalid input,
 database failures, unavailable inference, or automation failures.
 
-Quality-stack degradation is also represented in
-`GET /embeddings/status` through `sidecar_ready`, `reindex_required`, and
+Embedding-engine degradation is also represented in
+`GET /embeddings/status` through `engine_ready`, `reindex_required`, and
 `error`.
