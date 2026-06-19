@@ -1,28 +1,34 @@
 # ScreenSearch v0.4.35 AI Quality Modernization
 
-ScreenSearch v0.4.35 introduces a managed local quality runtime for PP-OCRv5,
-Qwen3 embeddings, Qwen3 reranking, and the bundled Ministral generation model.
-Windows OCR and FTS5 remain deterministic fallbacks when the quality runtime is
-unavailable.
+ScreenSearch runs its quality stack fully in-process in Rust: native Windows OCR
+(WinRT `Media.Ocr`) for OCR, the `fastembed` engine (EmbeddingGemma-300M,
+768-dimensional vectors) for embeddings, and sqlite-vec + Reciprocal Rank Fusion
+for retrieval (with an optional `bge-reranker-v2-m3` cross-encoder, off by
+default). Answer generation uses an external llama.cpp server managed by the
+`screensearch-llm` crate. No Python sidecar is involved.
+
+> **Note:** an earlier iteration of v0.4.35 used a managed Python "quality
+> sidecar" (PaddleOCR + Qwen3 models over a loopback HTTP API). That approach was
+> reverted in favor of the in-process Rust stack described above.
 
 ## Upgrade Notice
 
-Migration 009 clears existing legacy 384-dimensional embeddings because they
-cannot be mixed with Qwen3's 1024-dimensional vectors. Captures and OCR text
-are retained. After upgrading, use **Settings > Data & AI > Download / verify**,
+Upgrading clears incompatible legacy embeddings because they cannot be mixed with
+EmbeddingGemma-300M's 768-dimensional vectors. Captures and OCR text are
+retained. After upgrading, use **Settings > Data & AI > Download / verify**,
 enable embeddings, and leave ScreenSearch running until coverage reaches 100%.
 
 Indexing writes every chunk for a frame in one transaction. A failed frame is
 retried rather than being left partially indexed.
 
-## Validated Windows Bundle
+## Windows Bundle
 
-GitHub Actions run `27511498808` built the installer, portable ZIP, complete
-PyInstaller sidecar, checksums, and passed executable-level PP-OCRv5 model
-preparation and inference.
+The release pipeline builds the installer, portable ZIP, and checksums. There is
+no Python sidecar to build or bundle; `fastembed`/`ort` link cleanly for
+`x86_64-pc-windows-msvc`.
 
 The artifacts still require final interactive Windows validation of Settings
-downloads, live capture OCR, Qwen indexing and retrieval, and Ministral
+downloads, live capture OCR, embedding indexing and retrieval, and answer
 generation before publication.
 
 ---

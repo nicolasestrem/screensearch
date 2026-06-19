@@ -9,7 +9,7 @@ async fn test_server_initialization() {
     // Use a test database
     let config = ApiConfig {
         host: "127.0.0.1".to_string(),
-        port: 3132,                            // Use different port for testing
+        port: 3199,                            // Use different port for testing
         database_path: ":memory:".to_string(), // In-memory database
     };
 

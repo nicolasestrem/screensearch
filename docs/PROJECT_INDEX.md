@@ -10,15 +10,14 @@ grounded answers and reports, and exposes Windows automation APIs.
 
 | Capability | Implementation |
 |---|---|
-| OCR | PP-OCRv5 |
-| OCR fallback | Windows OCR |
-| Embeddings | Qwen3-Embedding-0.6B, 1024 dimensions |
+| OCR | Native Windows OCR (WinRT Media.Ocr), in-process |
+| Embeddings | EmbeddingGemma-300M, 768 dimensions (fastembed, in-process) |
 | Vector search | sqlite-vec cosine KNN |
 | Lexical search | SQLite FTS5 |
 | Fusion | Reciprocal Rank Fusion |
-| Reranking | Qwen3-Reranker-0.6B |
+| Reranking | Optional bge-reranker-v2-m3 (fastembed), off by default |
 | Citations | Stable `[frame:<id>]` identifiers |
-| Optional generation | Ministral, Ollama-compatible, OpenAI-compatible |
+| Optional generation | Auto-discovered local GGUF via llama.cpp, Ollama-compatible, OpenAI-compatible |
 
 ## Entry Points
 
@@ -29,7 +28,7 @@ grounded answers and reports, and exposes Windows automation APIs.
 | Database | `screensearch-db/src/db.rs` |
 | OCR | `screensearch-capture/src/ocr_provider.rs` |
 | Embeddings | `screensearch-embeddings/src/engine.rs` |
-| Sidecar | `sidecar/app.py` |
+| Generation runtime | `screensearch-llm/` |
 | Frontend | `screensearch-ui/src/main.tsx` |
 | Installer | `installer/screensearch.iss` |
 
@@ -65,8 +64,7 @@ Do not commit:
 - `screensearch-ui/dist/` unless release policy changes;
 - captures and databases;
 - logs;
-- model weights and caches;
-- PyInstaller `build/` and `dist/`;
+- model weights and caches (including `.models/`);
 - API keys.
 
 ## Validation Matrix
@@ -77,9 +75,8 @@ Do not commit:
 | DB and embedding tests | Yes | Yes |
 | Most Rust compile checks | Yes | Yes |
 | Native capture | Limited | Required |
-| Windows OCR fallback | No | Required |
+| Windows OCR | No | Required |
 | UI Automation | No | Required |
-| Sidecar bundle | Limited | Required |
 | Inno Setup installer | No | Required |
 
 ## Release Artifacts
@@ -88,5 +85,6 @@ Do not commit:
 - `ScreenSearch-v<version>-Portable.zip`
 - `checksums.txt`
 
-Both application packages contain the sidecar runtime directory. Model weights
-are prepared from Settings or downloaded on first model use.
+Both application packages are self-contained executables. The embedding model
+is downloaded and cached on first use; the optional generation GGUF is
+auto-discovered locally or downloaded as the default fallback.

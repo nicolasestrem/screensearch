@@ -4,7 +4,7 @@
 //! operations. Uses parameterized queries to prevent SQL injection.
 
 use crate::models::*;
-use crate::{DatabaseManager, Result};
+use crate::{DatabaseManager, Result, EMBEDDING_DIM};
 use chrono::{DateTime, Utc};
 use sqlx::Row;
 
@@ -986,9 +986,9 @@ impl DatabaseManager {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        if query_vector.len() != 1024 {
+        if query_vector.len() != EMBEDDING_DIM {
             return Err(crate::DatabaseError::InvalidParameter(format!(
-                "Expected a 1024-dimensional query vector, got {}",
+                "Expected a {EMBEDDING_DIM}-dimensional query vector, got {}",
                 query_vector.len()
             )));
         }
@@ -1311,7 +1311,7 @@ impl DatabaseManager {
         let model = self
             .get_metadata("embeddings_model")
             .await?
-            .unwrap_or_else(|| "Qwen/Qwen3-Embedding-0.6B".to_string());
+            .unwrap_or_else(|| "EmbeddingGemma-300M".to_string());
         let provider = self
             .get_metadata("embeddings_provider")
             .await?

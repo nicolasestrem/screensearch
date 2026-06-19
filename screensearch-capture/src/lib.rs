@@ -35,7 +35,6 @@ pub mod monitor;
 pub mod ocr;
 pub mod ocr_processor;
 mod ocr_provider;
-mod sidecar_ocr;
 pub mod window_context;
 
 pub use capture::{CaptureConfig, CaptureEngine, ScreenCapture};

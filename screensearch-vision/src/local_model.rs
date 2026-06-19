@@ -19,6 +19,8 @@ impl VisionModel for LocalClient {
     async fn analyze(&self, _image: &DynamicImage, _context: &str) -> Result<VisionAnalysis> {
         // TODO: Implement actual inference using candle-transformers
         // For now, return a placeholder or error to indicate it's not ready
-        Err(anyhow::anyhow!("Local model inference not yet implemented. Please use Ollama/External provider."))
+        Err(anyhow::anyhow!(
+            "Local model inference not yet implemented. Please use Ollama/External provider."
+        ))
     }
 }

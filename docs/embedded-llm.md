@@ -162,9 +162,15 @@ let config = LlmConfig::new()
 
 ### 4.1 Model Details
 
+The generation runtime is **model-agnostic**: it auto-discovers any `*.gguf`
+file dropped into `.models/` (repo root) or the application models directory and
+uses the first one it finds (`resolve_model_path` / `discover_local_models`).
+When no local GGUF is present, Ministral-3B is the downloadable **default
+fallback** described below.
+
 | Property | Value |
 |----------|-------|
-| **Name** | Ministral-3B-Instruct-2512-Q4_K_M |
+| **Name** | Ministral-3B-Instruct-2512-Q4_K_M (default fallback) |
 | **Parameters** | 3 billion |
 | **Quantization** | Q4_K_M (4-bit) |
 | **Format** | GGUF |
@@ -174,12 +180,17 @@ let config = LlmConfig::new()
 
 ### 4.2 Model Path Resolution
 
-The model is located using this priority order:
+`resolve_model_path` / `discover_local_models` scan for `*.gguf` files and use
+the first one found, searching in this priority order:
 
-1. **Current working directory**: `./models/`
-2. **Next to executable**: `<exe_dir>/models/`
-3. **User app data**: `%APPDATA%\ScreenSearch\models\` (Windows)
-4. **Default fallback**: `./models/`
+1. **Repo root models directory**: `.models/`
+2. **Current working directory**: `./models/`
+3. **Next to executable**: `<exe_dir>/models/`
+4. **User app data**: `%APPDATA%\ScreenSearch\models\` (Windows)
+
+If no GGUF is discovered, the runtime falls back to downloading the default
+Ministral-3B model. `GET /api/ai/model/status` reports the active model and an
+`available_models` list of discovered GGUF files.
 
 ### 4.3 Download Functions
 
@@ -610,7 +621,9 @@ The SettingsPanel (Data & AI tab) provides additional controls:
 - **Server management**: Start/stop/TTL controls
 
 This runtime is not used for OCR, embeddings, vector search, or reranking.
-Those functions are provided by the PP-OCRv5/Qwen quality sidecar.
+Those functions run in-process in Rust (native Windows OCR for OCR, and the
+`fastembed` EmbeddingGemma-300M engine for embeddings, with optional
+`bge-reranker-v2-m3` reranking over sqlite-vec + RRF results).
 - **Status monitoring**: Real-time server status polling
 
 ---

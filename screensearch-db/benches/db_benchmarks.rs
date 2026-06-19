@@ -7,9 +7,9 @@
 //!
 //! Reports are generated in target/criterion/
 
+use chrono::{Duration, Utc};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use screensearch_db::{DatabaseConfig, DatabaseManager, FrameFilter, NewFrame, Pagination};
-use chrono::{Duration, Utc};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
@@ -53,13 +53,18 @@ async fn setup_test_db(frame_count: usize) -> (DatabaseManager, TempDir) {
             focused: Some(i % 2 == 0),
         };
 
-        db.insert_frame(frame).await.expect("Failed to insert frame");
+        db.insert_frame(frame)
+            .await
+            .expect("Failed to insert frame");
 
         // Add OCR text for some frames
         if i % 2 == 0 {
             let ocr = screensearch_db::NewOcrText {
                 frame_id: (i + 1) as i64,
-                text: format!("Sample OCR text for frame {} with searchable content benchmark test query", i),
+                text: format!(
+                    "Sample OCR text for frame {} with searchable content benchmark test query",
+                    i
+                ),
                 x: 0,
                 y: 0,
                 width: 1920,
@@ -106,7 +111,10 @@ fn bench_frame_range_query(c: &mut Criterion) {
                         black_box(start),
                         black_box(now),
                         FrameFilter::default(),
-                        Pagination { limit: 20, offset: 0 },
+                        Pagination {
+                            limit: 20,
+                            offset: 0,
+                        },
                     )
                     .await;
                 black_box(frames)
@@ -130,7 +138,10 @@ fn bench_fts5_search(c: &mut Criterion) {
                 .search_ocr_text(
                     black_box("benchmark"),
                     FrameFilter::default(),
-                    Pagination { limit: 20, offset: 0 },
+                    Pagination {
+                        limit: 20,
+                        offset: 0,
+                    },
                 )
                 .await;
             black_box(results)
@@ -144,7 +155,10 @@ fn bench_fts5_search(c: &mut Criterion) {
                 .search_ocr_text(
                     black_box("sample searchable content"),
                     FrameFilter::default(),
-                    Pagination { limit: 20, offset: 0 },
+                    Pagination {
+                        limit: 20,
+                        offset: 0,
+                    },
                 )
                 .await;
             black_box(results)
@@ -169,7 +183,9 @@ fn bench_frame_insertion(c: &mut Criterion) {
         cache_size_kb: -2000,
     };
 
-    let db = rt.block_on(DatabaseManager::with_config(config)).expect("Failed to create db");
+    let db = rt
+        .block_on(DatabaseManager::with_config(config))
+        .expect("Failed to create db");
 
     let mut counter = 0i64;
 
@@ -200,10 +216,10 @@ fn bench_frame_insertion(c: &mut Criterion) {
 
 /// Benchmark: Vector search simulation (cosine similarity)
 fn bench_cosine_similarity(c: &mut Criterion) {
-    // Generate test vectors (1024-dimensional like our Qwen3 embeddings)
-    let query_vector: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.001).sin()).collect();
+    // Generate test vectors (768-dimensional like our EmbeddingGemma embeddings)
+    let query_vector: Vec<f32> = (0..768).map(|i| (i as f32 * 0.001).sin()).collect();
     let db_vectors: Vec<Vec<f32>> = (0..1000)
-        .map(|j| (0..1024).map(|i| ((i + j) as f32 * 0.001).cos()).collect())
+        .map(|j| (0..768).map(|i| ((i + j) as f32 * 0.001).cos()).collect())
         .collect();
 
     c.bench_function("cosine_similarity_1000_vectors", |b| {
@@ -212,7 +228,11 @@ fn bench_cosine_similarity(c: &mut Criterion) {
                 .iter()
                 .enumerate()
                 .map(|(idx, vec)| {
-                    let dot: f32 = query_vector.iter().zip(vec.iter()).map(|(a, b)| a * b).sum();
+                    let dot: f32 = query_vector
+                        .iter()
+                        .zip(vec.iter())
+                        .map(|(a, b)| a * b)
+                        .sum();
                     let norm_q: f32 = query_vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                     let norm_v: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
                     let similarity = if norm_q > 0.0 && norm_v > 0.0 {

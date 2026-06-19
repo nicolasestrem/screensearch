@@ -11,7 +11,7 @@ Treat all of the following as sensitive:
 - embeddings;
 - grounded prompts and generated answers;
 - databases and logs;
-- API keys and sidecar bearer tokens.
+- API keys.
 
 None of these belong in Git.
 
@@ -22,7 +22,6 @@ Default local services:
 | Service | Binding |
 |---|---|
 | Application API | `127.0.0.1:3131` |
-| Quality sidecar | `127.0.0.1:3132` |
 | Bundled generation server | `127.0.0.1:31130` |
 
 Do not bind the application API to `0.0.0.0` without adding authentication and
@@ -31,8 +30,7 @@ desktop.
 
 The application can make outbound requests for:
 
-- first-use Hugging Face model downloads;
-- first-use Paddle model downloads;
+- first-use Hugging Face model downloads (embedding and optional reranker);
 - bundled generation-model and llama-server downloads;
 - optional remote OpenAI-compatible generation.
 
@@ -40,14 +38,11 @@ OCR, embeddings, sqlite-vec search, and reranking remain local. When remote
 generation is configured, selected OCR context and frame metadata leave the
 machine.
 
-## Sidecar Authentication
+## In-Process Inference
 
-The main process creates an ephemeral bearer token unless
-`SCREENSEARCH_AI_SIDECAR_TOKEN` is already set. It passes the token to the
-sidecar and authenticates requests.
-
-Do not log or persist the token. The sidecar remains loopback-only even with
-authentication enabled.
+OCR (native Windows `Media.Ocr`) and embeddings (`fastembed`/ONNX Runtime) run
+inside the main process. There is no separate inference service to authenticate
+or bind to a network port.
 
 ## Capture Exclusions
 
@@ -83,8 +78,8 @@ reduce accidental access to unsafe endpoints.
 
 ## Model Supply Chain
 
-Current sidecar requirements and model identifiers are explicit, but model
-weights download at runtime. Production hardening should add:
+Current model identifiers are explicit, but model weights download at runtime.
+Production hardening should add:
 
 - pinned model revisions;
 - checksums or signed manifests;
@@ -92,11 +87,11 @@ weights download at runtime. Production hardening should add:
 - cache ownership and permission checks;
 - documented model update review.
 
-These remain secondary hardening work beyond the immediate quality migration.
+These remain secondary hardening work.
 
-The authenticated OCR endpoint bounds both encoded request size and decoded
-pixel count. Current limits are 20 MiB and 50 million pixels. Keep both checks:
-an encoded-byte limit alone does not prevent a highly compressed image from
+Image-upload handling bounds both encoded request size and decoded pixel count.
+Current limits are 20 MiB and 50 million pixels. Keep both checks: an
+encoded-byte limit alone does not prevent a highly compressed image from
 expanding into excessive memory. Requests with a declared multipart body above
 21 MiB are rejected before endpoint processing, and the endpoint still performs
 its own bounded read for clients that omit `Content-Length`.
@@ -108,7 +103,6 @@ Avoid logging:
 - full OCR text;
 - generation prompts;
 - API keys;
-- bearer tokens;
 - remote-provider responses containing sensitive context.
 
 Operational logs should contain model identifiers, readiness state, frame IDs,

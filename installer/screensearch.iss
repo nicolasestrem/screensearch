@@ -68,7 +68,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "standard"; Description: "Standard Installation"
 
 [Components]
-Name: "core"; Description: "ScreenSearch Application and quality AI sidecar (required)"; Types: standard; Flags: fixed
+Name: "core"; Description: "ScreenSearch Application (required)"; Types: standard; Flags: fixed
 Name: "startup"; Description: "Launch on Windows startup"; Types: standard
 
 [Tasks]
@@ -81,9 +81,6 @@ Source: "resources\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinsta
 
 ; Main executable
 Source: "..\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion; Components: core
-
-; Managed local PP-OCRv5/Qwen inference sidecar
-Source: "..\sidecar\dist\screensearch-ai-sidecar\*"; DestDir: "{app}\bin\screensearch-ai-sidecar"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: core
 
 ; Configuration template
 Source: "..\config.toml"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist; Components: core
@@ -184,8 +181,8 @@ begin
 
     if WizardIsComponentSelected('core') then
     begin
-      MsgBox('The quality AI sidecar downloads PP-OCRv5 and Qwen models on first use. ' +
-             'Allow up to 5 GB of disk space and an internet connection for initial setup.', mbInformation, MB_OK);
+      MsgBox('ScreenSearch downloads its local embedding model (~a few hundred MB) on first use. ' +
+             'Semantic search needs an internet connection for that initial download.', mbInformation, MB_OK);
     end;
   end;
 end;

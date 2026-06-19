@@ -5,8 +5,9 @@ This document describes the architecture on the
 
 ## System Overview
 
-ScreenSearch is a Rust 2021 workspace with an embedded React dashboard and a
-managed Python inference sidecar.
+ScreenSearch is a Rust 2021 workspace with an embedded React dashboard. All
+OCR and embedding inference runs in-process in Rust; only the optional
+answer-generation LLM is an external process.
 
 ```text
 Windows capture
@@ -15,126 +16,60 @@ Windows capture
 Frame differencing and storage
     |
     v
-PP-OCRv5 sidecar ---------> Windows OCR fallback
+Windows OCR (WinRT Media.Ocr, in-process)
     |
     v
 SQLite frames + OCR + FTS5
     |
-    +----> Qwen3 embeddings ----> sqlite-vec KNN
-    |                                  |
-    +----> FTS5 lexical search --------+----> RRF ----> Qwen3 reranker
-                                                       |
-                                                       v
-                                                grounded context
-                                                       |
-                                                       v
-                                        optional generation LLM
+    +----> EmbeddingGemma embeddings (fastembed) ----> sqlite-vec KNN
+    |                                                        |
+    +----> FTS5 lexical search ------------------------------+----> RRF ----> optional reranker
+                                                                            |
+                                                                            v
+                                                                     grounded context
+                                                                            |
+                                                                            v
+                                                              optional generation LLM
 ```
 
-The application API and dashboard run on `127.0.0.1:3131`. The quality
-sidecar runs on `127.0.0.1:3132`.
+The application API and dashboard run on `127.0.0.1:3131`.
 
 ## Workspace Responsibilities
 
 | Path | Responsibility |
 |---|---|
-| `src/main.rs` | Configuration, process lifecycle, capture loop, sidecar startup |
+| `src/main.rs` | Configuration, process lifecycle, capture loop |
 | `screensearch-capture/` | Capture, OCR provider routing, OCR processing |
 | `screensearch-db/` | SQLite schema, FTS5, sqlite-vec, queries, migrations |
-| `screensearch-embeddings/` | Typed client for embeddings, chunking, reranking |
+| `screensearch-embeddings/` | In-process embeddings, chunking, optional reranking |
 | `screensearch-api/` | Axum API, RAG orchestration, workers, embedded UI |
 | `screensearch-vision/` | Optional generation-provider client |
-| `screensearch-llm/` | Bundled Ministral generation runtime and downloads |
+| `screensearch-llm/` | External llama.cpp generation runtime and downloads |
 | `screensearch-automation/` | Windows UI Automation |
 | `screensearch-ui/` | Vite, React, TypeScript dashboard |
-| `sidecar/` | FastAPI PP-OCRv5 and Qwen3 inference service |
 | `evaluation/` | Versioned retrieval evaluation cases and metrics |
-
-## Quality Sidecar
-
-The managed sidecar provides these endpoints:
-
-| Endpoint | Model or function |
-|---|---|
-| `GET /health` | Readiness and model contract |
-| `GET /v1/models/status` | Background model preparation status |
-| `POST /v1/models/prepare` | Download and initialize quality models |
-| `POST /v1/ocr` | PP-OCRv5 |
-| `POST /v1/embeddings` | Qwen3-Embedding-0.6B |
-| `POST /v1/chunk` | Qwen tokenizer-aware chunking |
-| `POST /v1/rerank` | Qwen3-Reranker-0.6B |
-
-The main process:
-
-1. Generates an ephemeral bearer token unless one is already configured.
-2. Checks for an existing authenticated sidecar.
-3. Locates the bundled sidecar beside the executable or under `bin/`.
-   Debug builds also search the repository's
-   `sidecar/dist/screensearch-ai-sidecar/` directory.
-4. Starts it with `kill_on_drop`.
-5. Returns immediately and polls `/health` in a background task — startup is
-   **not** blocked on the sidecar. The sidecar's cold start (PyInstaller unpack
-   + Torch/Paddle import) can take 15-45 seconds; blocking would make the whole
-   app unusable for that long, so the API and UI come up in ~2 seconds while the
-   sidecar warms up in the background.
-6. OCR and embeddings attach to the sidecar automatically once it reports
-   healthy (per-request), with Windows OCR used as the fallback meanwhile.
-
-The PyInstaller build uses an on-directory bundle. This avoids repeatedly
-unpacking Torch and Paddle and is more reliable for a multi-gigabyte runtime.
-
-Models are downloaded to the normal Hugging Face and Paddle caches when
-**Download / verify** is selected or when a model is first used. Allow up to
-5 GB for model files and runtime caches.
 
 ## OCR Pipeline
 
-The configured provider is `ppocr-v5` by default.
+OCR uses the native Windows OCR engine (WinRT `Media.Ocr`) in-process. There
+is no model download and no external process; recognition runs at roughly
+70-80 ms per frame.
 
-PP-OCRv5 returns:
+Windows OCR returns:
 
 - recognized text;
 - confidence per line;
 - line bounding boxes;
 - requested language;
-- document orientation when available;
 - provider identity.
 
 OCR metadata is stored in `ocr_text.text_json`. The plain text and bounding
 box columns remain searchable through existing APIs.
 
-When `fallback_to_windows = true`, ScreenSearch initializes Windows OCR as a
-fallback. PP-OCRv5 is always the preferred provider (the OCR engine does not
-gate on an initial sidecar health check, so it is never permanently demoted to
-Windows while the sidecar is still cold-starting). Windows OCR is used per
-request whenever a PP-OCR request fails — which includes the window before the
-sidecar finishes warming up. Once the sidecar is healthy, requests succeed on
-PP-OCRv5 with no restart.
-
-Sidecar stdout and stderr are forwarded into the main ScreenSearch log with a
-`Quality sidecar:` prefix. Authenticated sidecar failures also return the
-exception type and message to the caller. This keeps model download, Paddle
-runtime, and inference failures diagnosable without running the sidecar
-manually. Bearer tokens and image contents are never logged.
-
-Background model preparation logs the full chained exception before exposing a
-sanitized error through the status endpoint. This is important because PaddleX
-can wrap a missing Python or native dependency in a generic pipeline-creation
-error.
-
-The PyInstaller directory includes both OCR modules and their distribution
-metadata. PaddleX checks the `ocr` and `ocr-core` optional dependencies through
-`importlib.metadata`, so the metadata is part of the executable runtime
-contract rather than packaging-only documentation.
-
-The sidecar passes `ocr_version="PP-OCRv5"` instead of accepting PaddleOCR's
-language-dependent default and uses standard Paddle CPU inference with oneDNN
-disabled. This avoids PaddlePaddle 3.3.1's unsupported PIR attribute conversion
-in the oneDNN executor while preserving the release's advertised v5 contract.
-
-Choosing `engine = "windows"` bypasses PP-OCRv5 entirely. OCR provider
-selection currently requires an application restart because it is loaded from
-`config.toml`, not the runtime settings table.
+The provider wrapper in `screensearch-capture/src/ocr_provider.rs` routes OCR
+requests to the Windows engine implemented in `screensearch-capture/src/ocr.rs`.
+Because recognition is in-process, OCR is available immediately at startup with
+no warm-up window.
 
 ## Embedding Contract
 
@@ -142,16 +77,17 @@ The current embedding contract is fixed:
 
 | Field | Value |
 |---|---|
-| Provider | `quality-sidecar` |
-| Model | `Qwen/Qwen3-Embedding-0.6B` |
-| Revision | `main` |
-| Dimension | `1024` |
+| Provider | `fastembed` |
+| Model | `EmbeddingGemma-300M` |
+| Runtime | in-process via `fastembed` crate (ONNX Runtime / `ort` 2.x) |
+| Dimension | `768` |
 | Distance | cosine |
 | Chunk size | 512 tokens |
 | Chunk overlap | 64 tokens |
 
-Document chunks include OCR text plus frame timestamp, application, and window
-metadata. Query embeddings use the retrieval instruction expected by Qwen3.
+The model (fastembed variant `EmbeddingGemma300MQ`) is downloaded and cached
+from Hugging Face on first use. Document chunks include OCR text plus frame
+timestamp, application, and window metadata.
 
 Each stored embedding records provider, model, revision, dimension, and a
 SHA-256 content hash. ScreenSearch does not generate hash-based placeholder
@@ -174,11 +110,14 @@ does not leave a frame partially indexed. Migration 010 enforces unique
 `(frame_id, chunk_index)` rows. Deleting an embedding removes its vector through
 the trigger.
 
-At startup, the API compares the active sidecar model contract with database
+At startup, the API compares the active embedding model contract with database
 metadata. A mismatch invalidates stale embeddings and schedules a resumable
-reindex. Migration 009 performs this invalidation for the v0.4.35 upgrade by
-deleting incompatible legacy 384-dimensional vectors while retaining frames
-and OCR text.
+reindex. Migration 009 performs this invalidation by deleting incompatible
+legacy vectors while retaining frames and OCR text. The `embedding_vectors`
+sqlite-vec virtual table is declared as `embedding float[768]
+distance_metric=cosine`, and metadata records `embeddings_model =
+"EmbeddingGemma-300M"`, `embeddings_provider = "fastembed"`, and
+`embeddings_dimension = "768"`.
 
 ## Retrieval Pipeline
 
@@ -202,28 +141,36 @@ For grounded generation:
 
 1. Retrieve a broad hybrid candidate set.
 2. Apply time and application constraints.
-3. Rerank candidate text with Qwen3-Reranker-0.6B.
+3. Optionally rerank candidate text with the cross-encoder.
 4. Keep the highest-scoring context chunks.
 5. Label every context item with `[frame:<id>]`.
 6. Send the grounded context to the selected generation LLM.
 
-If the reranker is unavailable, ScreenSearch retains RRF order. If embeddings
-are unavailable, report generation can use recent frame metadata, but
-semantic search and grounded answers report the degraded state rather than
-inventing vectors.
+The default retrieval pipeline is sqlite-vec KNN plus Reciprocal Rank Fusion.
+An optional cross-encoder reranker (`bge-reranker-v2-m3`, run in-process via
+`fastembed`) is **off by default**; when disabled or unavailable, ScreenSearch
+retains RRF order. If embeddings are unavailable, report generation can use
+recent frame metadata, but semantic search and grounded answers report the
+degraded state rather than inventing vectors.
 
 ## Generation LLM Boundary
 
 The generation LLM is separate from OCR and retrieval.
 
-- PP-OCRv5 reads the screen.
-- Qwen3-Embedding and Qwen3-Reranker retrieve evidence.
+- Windows OCR reads the screen.
+- EmbeddingGemma embeddings (and the optional reranker) retrieve evidence.
 - The optional generation LLM writes descriptions, answers, digests, and
   reports from that evidence.
 
-Supported generation runtimes are:
+Generation runs against an external `llama.cpp` server (Vulkan GPU with CPU
+fallback) managed by the `screensearch-llm` crate over an OpenAI-compatible
+HTTP API. The runtime is model-agnostic: it auto-discovers any `*.gguf` file
+placed in `.models/` (repo root) or the application models directory via
+`resolve_model_path`/`discover_local_models` and uses the first one found.
+Ministral-3B remains the downloadable default fallback when no local GGUF is
+present. Supported generation runtimes are:
 
-- bundled local Ministral-3-3B through `llama-server`;
+- the managed local `llama.cpp` server;
 - an Ollama-compatible local server;
 - an OpenAI-compatible endpoint.
 
@@ -237,54 +184,53 @@ configured provider.
 `GET /api/embeddings/status` exposes:
 
 - enabled state;
-- provider, model, revision, and dimension;
+- provider, model, and dimension;
 - index coverage;
 - reindex requirement;
-- sidecar readiness;
-- model preparation state and current component;
+- `engine_ready: bool` (whether the in-process embedding engine is loaded);
 - current initialization error.
 
-`POST /api/embeddings/models/prepare` asks the sidecar to initialize the fixed
-PP-OCRv5, Qwen3 embedding, and Qwen3 reranking models. Preparation runs in the
-sidecar background process, and the UI polls status until it reaches `ready` or
-`error`.
+`POST /api/embeddings/models/prepare` pre-loads the in-process embedding model,
+downloading and caching it from Hugging Face if needed. The UI polls status
+until the engine is ready or an error is reported.
 
 The dashboard uses this response to distinguish ready, indexing, degraded, and
-error states. Grounded generation is disabled when required quality inference
-is unavailable.
+error states. Grounded generation is disabled when required inference is
+unavailable.
 
 ## Packaging
 
-The Windows quality installer includes:
+The Windows installer includes:
 
 - `screensearch.exe`;
-- `bin/screensearch-ai-sidecar/`;
 - configuration, license, and documentation;
 - the Visual C++ runtime installer.
 
-Model weights are prepared from Settings or downloaded on first model use. The
-portable ZIP contains the same sidecar directory.
+The embedding model is downloaded and cached on first use; the optional
+generation GGUF is auto-discovered from `.models/` or the app models directory,
+or downloaded as the default fallback. The portable ZIP contains the same
+self-contained executable.
 
 Release CI builds:
 
 1. the React UI;
 2. the Rust release binary;
-3. the Python sidecar directory;
-4. the Inno Setup quality installer;
-5. the portable archive and checksums.
+3. the Inno Setup installer;
+4. the portable archive and checksums.
+
+The build uses no Python. `cargo build` and cross-compilation via `cargo-xwin`
+both work; `fastembed`/`ort` cross-compile cleanly to `x86_64-pc-windows-msvc`.
 
 ## Security Boundaries
 
 - Application API: loopback by default.
-- Sidecar API: loopback only.
-- Sidecar requests: bearer-authenticated when launched by ScreenSearch.
 - Captures, OCR, embeddings, and models: local storage.
 - Generation context: local unless a remote generation endpoint is selected.
 - No API keys, captures, databases, logs, or model caches belong in Git.
 
 ## Platform Behavior
 
-Windows is the production platform for capture, OCR fallback, automation,
+Windows is the production platform for capture, OCR, automation,
 tray integration, and installer validation.
 
 Linux supports frontend work and compilation of most backend logic. Native

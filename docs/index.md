@@ -1,8 +1,8 @@
 # ScreenSearch Documentation
 
-ScreenSearch is a local-first Windows screen-history application with
-PP-OCRv5, Qwen3 retrieval, sqlite-vec, grounded generation, and Windows
-automation.
+ScreenSearch is a local-first Windows screen-history application with native
+Windows OCR, EmbeddingGemma-300M retrieval, sqlite-vec, grounded generation, and
+Windows automation. OCR and embeddings run fully in-process in Rust.
 
 ## Start Here
 
@@ -18,18 +18,18 @@ automation.
 
 | Document | Scope |
 |---|---|
-| [AI Quality Stack](ai-quality-stack.md) | PP-OCRv5, Qwen3, sqlite-vec, RRF, evaluation |
-| [Embedded LLM](embedded-llm.md) | Optional bundled Ministral generation runtime |
+| [AI Quality Stack](ai-quality-stack.md) | Windows OCR, EmbeddingGemma-300M, sqlite-vec, RRF, evaluation |
+| [Embedded LLM](embedded-llm.md) | Optional bundled llama.cpp generation runtime |
 | [Architecture](architecture.md) | Separation between retrieval and generation |
 | [User Guide](user-guide.md#what-each-ai-component-does) | User-facing component roles |
 
-The quality stack is fixed for this release:
+The retrieval stack is fixed for this release:
 
-- PP-OCRv5 with Windows OCR fallback;
-- Qwen3-Embedding-0.6B, 1024 dimensions;
+- native Windows OCR (WinRT `Media.Ocr`, in-process);
+- EmbeddingGemma-300M, 768 dimensions (in-process via `fastembed`);
 - sqlite-vec cosine KNN;
 - FTS5 plus Reciprocal Rank Fusion;
-- Qwen3-Reranker-0.6B.
+- optional `bge-reranker-v2-m3` reranking (off by default).
 
 The selectable LLM in settings is used only for descriptions, answers,
 digests, and reports.
@@ -64,7 +64,6 @@ The API build script rebuilds changed frontend sources automatically.
 | Service | Address |
 |---|---|
 | Dashboard and API | `127.0.0.1:3131` |
-| Quality sidecar | `127.0.0.1:3132` |
 | Bundled generation server | `127.0.0.1:31130` |
 
 ## Configuration
@@ -81,14 +80,14 @@ The API build script rebuilds changed frontend sources automatically.
 
 Runtime settings in SQLite control capture state, retention, exclusions, and
 the optional generation provider. The legacy `vision_*` field names refer to
-generation, not PP-OCRv5 or Qwen retrieval.
+generation, not OCR or embedding retrieval.
 
 ## Troubleshooting
 
 | Problem | Reference |
 |---|---|
 | Old settings UI | [User Guide](user-guide.md#the-settings-panel-still-shows-old-ai-wording) |
-| Sidecar unavailable | [User Guide](user-guide.md#quality-sidecar-unavailable) |
+| Embedding engine unavailable | [User Guide](user-guide.md#embedding-engine-unavailable) |
 | Reindex required | [User Guide](user-guide.md#reindex-required) |
 | Semantic search empty | [User Guide](user-guide.md#semantic-search-returns-few-results) |
 | Release packaging | [Developer Guide](developer-guide.md#release) |

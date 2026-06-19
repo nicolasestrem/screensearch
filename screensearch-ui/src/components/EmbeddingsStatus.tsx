@@ -2,13 +2,6 @@ import { useState, useEffect } from 'react';
 import { Brain, RefreshCw, Check, X, AlertTriangle, Download } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
-interface ModelPreparationStatus {
-    state: 'idle' | 'preparing' | 'ready' | 'error';
-    current_component?: string;
-    ready_components: string[];
-    error?: string;
-}
-
 interface EmbeddingStatus {
     enabled: boolean;
     model: string;
@@ -16,8 +9,7 @@ interface EmbeddingStatus {
     model_version: string;
     dimension: number;
     reindex_required: boolean;
-    sidecar_ready: boolean;
-    model_preparation?: ModelPreparationStatus;
+    engine_ready: boolean;
     error?: string;
     total_frames: number;
     frames_with_embeddings: number;
@@ -55,16 +47,6 @@ export function EmbeddingsStatus() {
     useEffect(() => {
         fetchStatus();
     }, []);
-
-    useEffect(() => {
-        if (status?.model_preparation?.state !== 'preparing') {
-            setPreparingModels(false);
-            return;
-        }
-        setPreparingModels(true);
-        const timer = window.setInterval(fetchStatus, 2000);
-        return () => window.clearInterval(timer);
-    }, [status?.model_preparation?.state]);
 
     const toggleEnabled = async () => {
         if (!status) return;
@@ -112,19 +94,23 @@ export function EmbeddingsStatus() {
         }
     };
 
+    // Pre-load (and, on first run, download + cache) the in-process embedding
+    // model. The request blocks until the model is ready, then returns the
+    // updated status.
     const prepareModels = async () => {
         try {
             setPreparingModels(true);
             const response = await fetch('/api/embeddings/models/prepare', { method: 'POST' });
             const data = await response.json();
             if (!response.ok) {
-                throw new Error(data.error || 'Failed to start model download');
+                throw new Error(data.error || 'Failed to load the embedding model');
             }
-            await fetchStatus();
-            toast.success('Quality model download started');
+            setStatus(data);
+            toast.success('Embedding model ready');
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to start model download';
+            const message = error instanceof Error ? error.message : 'Failed to load the embedding model';
             toast.error(message);
+        } finally {
             setPreparingModels(false);
         }
     };
@@ -195,17 +181,6 @@ export function EmbeddingsStatus() {
                     </button>
                 </div>
 
-                {/* Resource Warning */}
-                <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 flex gap-3">
-                    <AlertTriangle className="h-5 w-5 text-yellow-500 flex-shrink-0" />
-                    <div className="text-sm">
-                        <p className="font-medium text-yellow-500">Resource Intensive Feature</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                            The quality profile downloads several GB of local OCR, embedding, and reranking models and may use GPU acceleration.
-                        </p>
-                    </div>
-                </div>
-
                 {/* Model Info */}
                 <div className="text-sm">
                     <span className="text-muted-foreground">Model: </span>
@@ -213,55 +188,40 @@ export function EmbeddingsStatus() {
                     <span className="text-muted-foreground"> · {status.dimension}d · {status.model_version}</span>
                 </div>
 
-                {!status.sidecar_ready && (
-                    <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 text-sm">
-                        <p className="font-medium text-destructive">Quality runtime unavailable</p>
-                        <p className="text-xs text-muted-foreground mt-1">{status.error}</p>
-                        <p className="text-xs text-muted-foreground mt-2">
-                            A standalone EXE does not contain the AI runtime. Use a packaged Windows
-                            release, or build the native Linux development bundle with{' '}
-                            <span className="font-mono">scripts/build-local.sh</span>.
-                        </p>
-                    </div>
-                )}
-
-                {status.sidecar_ready && (
-                    <div className="border border-border rounded-lg p-3 space-y-2">
-                        <div className="flex items-center justify-between gap-3">
-                            <div>
-                                <p className="text-sm font-medium">Quality models</p>
-                                <p className="text-xs text-muted-foreground">
-                                    PP-OCRv5, Qwen3 embeddings, and Qwen3 reranking
-                                </p>
-                            </div>
-                            <button
-                                onClick={prepareModels}
-                                disabled={preparingModels}
-                                className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-secondary hover:bg-accent text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                {preparingModels
-                                    ? <RefreshCw className="h-4 w-4 animate-spin" />
-                                    : <Download className="h-4 w-4" />}
-                                {preparingModels ? 'Preparing...' : 'Download / verify'}
-                            </button>
-                        </div>
-                        {status.model_preparation?.state === 'preparing' && (
+                {/* In-process embedding model */}
+                <div className="border border-border rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                        <div>
+                            <p className="text-sm font-medium">Embedding model</p>
                             <p className="text-xs text-muted-foreground">
-                                Preparing {status.model_preparation.current_component}. Downloads can take several minutes.
+                                Runs in-process via ONNX Runtime. First load downloads and
+                                caches the model (~a few hundred MB).
                             </p>
-                        )}
-                        {status.model_preparation?.state === 'ready' && (
-                            <p className="text-xs text-green-500">
-                                All quality models are downloaded and initialized.
-                            </p>
-                        )}
-                        {status.model_preparation?.state === 'error' && (
-                            <p className="text-xs text-destructive">
-                                {status.model_preparation.error}
-                            </p>
-                        )}
+                        </div>
+                        <button
+                            onClick={prepareModels}
+                            disabled={preparingModels}
+                            className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-secondary hover:bg-accent text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {preparingModels
+                                ? <RefreshCw className="h-4 w-4 animate-spin" />
+                                : <Download className="h-4 w-4" />}
+                            {preparingModels ? 'Loading...' : 'Download / verify'}
+                        </button>
                     </div>
-                )}
+                    {status.engine_ready ? (
+                        <p className="text-xs text-green-500">
+                            Embedding model is downloaded and loaded.
+                        </p>
+                    ) : (
+                        <p className="text-xs text-muted-foreground">
+                            Not loaded yet — it will load on first use, or click Download / verify.
+                        </p>
+                    )}
+                    {status.error && (
+                        <p className="text-xs text-destructive">{status.error}</p>
+                    )}
+                </div>
 
                 {status.reindex_required && (
                     <div className="bg-primary/10 border border-primary/30 rounded-lg p-3 text-sm">
@@ -313,7 +273,7 @@ export function EmbeddingsStatus() {
                                         setSelectedPercentage(percentage);
                                         triggerGeneration(percentage);
                                     }}
-                                    disabled={generating || !status.enabled || !status.sidecar_ready || framesWithoutEmbeddings === 0}
+                                    disabled={generating || !status.enabled || framesWithoutEmbeddings === 0}
                                     className={`flex flex-col items-center justify-center gap-1 px-3 py-2.5 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                                         isSelected && !generating
                                             ? 'bg-primary text-primary-foreground border-primary shadow-sm'

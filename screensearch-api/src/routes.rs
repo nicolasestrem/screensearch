@@ -37,10 +37,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     // Root level routes (no prefix)
     Router::new()
         // Nest API routes under /api
-        .nest("/api", api_routes
-            .route("/health", get(handlers::system::health))
-            .route("/test-vision", post(handlers::system::test_vision_config))
-            .route("/monitors", get(handlers::system::list_monitors))
+        .nest(
+            "/api",
+            api_routes
+                .route("/health", get(handlers::system::health))
+                .route("/test-vision", post(handlers::system::test_vision_config))
+                .route("/monitors", get(handlers::system::list_monitors)),
         )
         // Serve embedded static files for all other routes (SPA fallback)
         .fallback(serve_embedded)
@@ -182,7 +184,5 @@ fn embeddings_routes() -> Router<Arc<AppState>> {
 
 /// Download progress routes
 fn downloads_routes() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/status", get(handlers::get_all_downloads_status))
+    Router::new().route("/status", get(handlers::get_all_downloads_status))
 }
-

@@ -33,12 +33,13 @@ target/x86_64-pc-windows-msvc/release/bundles/
 ```
 
 The preview ZIP contains the cross-compiled core executable, configuration,
-license, and README. It does not contain the Windows AI sidecar.
+license, and README. All ML (OCR and embeddings) runs in-process in Rust, so
+there is no separate runtime to package.
 
-## Sidecar And Installer
+## Installer
 
-Linux PyInstaller cannot emit the Windows sidecar. Publishing the validated tag
-delegates platform-specific packaging to the Windows GitHub Actions runner:
+Publishing the validated tag delegates platform-specific packaging (the Inno
+Setup installer) to the Windows GitHub Actions runner:
 
 ```bash
 ./scripts/build-release.sh 0.4.35 --windows-bundle
@@ -49,27 +50,17 @@ delegates platform-specific packaging to the Windows GitHub Actions runner:
 publishing. `--publish` additionally creates the release tag and draft GitHub
 release.
 
-The final application layout must include:
-
-```text
-screensearch.exe
-bin/
-  screensearch-ai-sidecar/
-    screensearch-ai-sidecar.exe
-    ...
-```
-
 ## What Cross Compilation Validates
 
 - Windows Rust type checking and linking;
 - embedded frontend assets;
-- most workspace crate integration.
+- most workspace crate integration;
+- `fastembed`/`ort` linking for `x86_64-pc-windows-msvc` (no Python required).
 
 It does not validate:
 
 - screen capture behavior;
-- PP-OCRv5 runtime imports;
-- Windows OCR fallback;
+- native Windows OCR runtime;
 - model downloads;
 - UI Automation;
 - tray behavior;
@@ -89,16 +80,12 @@ Rebuild `screensearch-ui/dist/` before Cargo.
 Upgrade Clang/LLD to the version required by the SDK downloaded by
 `cargo-xwin`, clear the xwin cache if needed, and rebuild.
 
-### Sidecar not found on Windows
-
-Cross compilation creates only the Rust executable. Copy or package the
-Windows sidecar directory in the expected `bin/` location.
-
 ### Models unavailable
 
-Model weights are not part of the Rust build. PP-OCRv5 and Qwen models download
-when **Download / verify** is selected or when a model is first used. The
-sidecar runtime must already be present in `bin/`.
+Model weights are not part of the Rust build. The EmbeddingGemma-300M embedding
+model (and optional `bge-reranker-v2-m3`) download from Hugging Face on first
+use; the optional answer-generation GGUF is discovered locally or downloaded by
+the bundled llama.cpp server.
 
 ## CI
 

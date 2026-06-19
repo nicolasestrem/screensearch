@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **Reverted PR #63 (Python "quality sidecar") and restored a fully in-process
+  Rust ML stack.** The sidecar ran PaddleOCR/Qwen3 over HTTP and made the app
+  slow and unusable (OCR on the asyncio event loop took tens of seconds/frame,
+  plus a 15-45 s PyInstaller cold start). Everything now runs in-process:
+  - **OCR** reverts to the native Windows OCR (WinRT) API — ~70-80 ms/frame, no
+    model download, no sidecar.
+  - **Embeddings** run in-process via `fastembed` (ONNX Runtime) using
+    **EmbeddingGemma-300M (768-dim)**, downloaded and cached from HuggingFace on
+    first use. Replaces the Qwen3-Embedding-0.6B (1024-dim) sidecar contract.
+  - **Reranking** is optional (`fastembed` cross-encoder, off by default);
+    retrieval relies on sqlite-vec KNN + Reciprocal Rank Fusion, both retained
+    from #63.
+  - The sqlite-vec `embedding_vectors` contract changes from `float[1024]` to
+    `float[768]`. No migration is provided (the embeddings table is rebuilt).
+- **Answer-generation LLM is now model-agnostic.** The bundled llama.cpp server
+  auto-discovers any `*.gguf` dropped into `.models/` (or the app models dir)
+  and uses the first one found, instead of hardcoding Ministral-3B. The default
+  download remains available as a fallback. `GET /api/ai/model/status` now lists
+  discovered models via `available_models`.
+
+### Removed
+- The Python sidecar (`sidecar/`), its PyInstaller packaging, and all sidecar
+  process management, build steps, and bundling from `main.rs`, the build
+  scripts, the installer, and the CI release workflow.
+- `POST /api/embeddings/models/prepare` now pre-loads the in-process embedding
+  model (instead of driving sidecar model preparation); the `sidecar_ready` /
+  `model_preparation` fields of `GET /api/embeddings/status` are replaced by a
+  single `engine_ready` flag.
+
 ## [0.4.37] - 2026-06-16
 
 ### Added

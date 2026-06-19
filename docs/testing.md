@@ -23,12 +23,6 @@ npm run build
 npm audit --audit-level=high
 ```
 
-Python:
-
-```bash
-python -m py_compile sidecar/app.py sidecar/build.py evaluation/evaluate.py
-```
-
 ## Database Coverage
 
 Database integration tests use temporary SQLite files and cover:
@@ -58,8 +52,8 @@ Embedding unit tests cover:
 - content hash stability;
 - legacy chunker behavior.
 
-Sidecar inference is not downloaded during unit tests. Contract integration is
-validated through typed HTTP responses, Windows smoke tests, and evaluation.
+The fastembed model is not downloaded during unit tests. End-to-end embedding
+inference is validated through Windows smoke tests and evaluation.
 
 ## Retrieval Evaluation
 
@@ -100,13 +94,11 @@ Required OCR coverage:
 The following tests require Windows:
 
 - native screen capture;
-- PP-OCRv5 request with a real sidecar bundle;
-- Windows OCR fallback;
+- native Windows OCR (WinRT `Media.Ocr`);
 - OCR language packs;
 - UI Automation;
 - system tray;
-- bundled Ministral and llama-server;
-- PyInstaller sidecar output;
+- bundled llama-server and discovered GGUF model;
 - Inno Setup installer;
 - portable archive layout.
 
@@ -118,17 +110,16 @@ failure.
 
 1. Build the UI before Rust.
 2. Start the application.
-3. Confirm `GET /api/embeddings/status` reports the Qwen model and dimension
-   1024.
-4. Start `POST /api/embeddings/models/prepare`, poll status, and confirm each
-   quality component reaches `ready`.
+3. Confirm `GET /api/embeddings/status` reports the EmbeddingGemma-300M model
+   and dimension 768.
+4. Start `POST /api/embeddings/models/prepare`, poll status, and confirm
+   `engine_ready` becomes `true`.
 5. Capture English, multilingual, terminal, and small-font screens.
-6. Confirm PP-OCRv5 metadata is stored.
+6. Confirm native Windows OCR metadata is stored.
 7. Enable embeddings and wait for coverage to increase.
 8. Compare `fts`, `semantic`, and `hybrid` searches.
 9. Generate an answer and verify source frame IDs.
-10. Stop the sidecar and verify degraded status plus Windows OCR fallback.
-11. Restart and confirm indexing resumes.
+10. Restart and confirm indexing resumes.
 
 ## CI
 
@@ -138,11 +129,10 @@ failure.
 - strict clippy for modernized crates;
 - Rust tests on Windows;
 - Rust dependency audit;
-- frontend lint, build, and audit;
-- Python syntax checks.
+- frontend lint, build, and audit.
 
 `.github/workflows/release.yml` performs the Windows production build and
-packages the sidecar.
+packages the portable artifacts.
 
 ## Test Data Safety
 

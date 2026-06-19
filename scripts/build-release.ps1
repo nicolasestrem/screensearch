@@ -1,26 +1,13 @@
-# Build ScreenSearch release artifacts
-# Usage: .\build-release.ps1 -Version 0.4.35 [-SignBinary] [-SkipSidecar]
+# Build ScreenSearch release artifacts. All ML runs in-process in Rust — there
+# is no Python sidecar to build or bundle.
+# Usage: .\build-release.ps1 -Version 0.4.35 [-SignBinary] [-Clean]
 
 param(
     [Parameter(Mandatory=$true)]
     [string]$Version,
 
     [switch]$SignBinary,
-    [Alias("SkipModel")]
-    [switch]$SkipSidecar,
-    [switch]$Clean,
-
-    # Build a CUDA-accelerated sidecar (torch cu128 + paddlepaddle-gpu cu129).
-    # OCR/embeddings/reranking then run on an NVIDIA GPU when present and fall
-    # back to CPU otherwise. The bundle is several GB larger because it carries
-    # the CUDA runtime. Without this switch the sidecar uses the CPU builds.
-    [switch]$Gpu,
-
-    # Python interpreter used to build the quality sidecar. The sidecar targets
-    # Python 3.12 (>= 3.12.1; 3.12.0 is rejected by sidecar/build.py). Pass e.g.
-    # -PythonExe "C:\Python312\python.exe" when the default `python` on PATH is a
-    # different version.
-    [string]$PythonExe = "python"
+    [switch]$Clean
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,7 +35,7 @@ if ($Clean) {
 }
 
 # Step 1: Build React UI
-Write-Host "[1/8] Building React UI..." -ForegroundColor Cyan
+Write-Host "[1/7] Building React UI..." -ForegroundColor Cyan
 Push-Location screensearch-ui
 try {
     npm ci
@@ -66,7 +53,7 @@ finally {
 Write-Host ""
 
 # Step 2: Build Rust binary
-Write-Host "[2/8] Building Rust release binary..." -ForegroundColor Cyan
+Write-Host "[2/7] Building Rust release binary..." -ForegroundColor Cyan
 # .cargo/config.toml hard-codes the `lld` linker for Linux->Windows cross-compile,
 # which is absent on a native Windows host (cargo would fail with "linker `lld`
 # not found"). Import the MSVC build environment and override the linker per
@@ -96,49 +83,17 @@ Write-Host ""
 
 # Step 3: Code signing (optional)
 if ($SignBinary) {
-    Write-Host "[3/8] Signing binary..." -ForegroundColor Cyan
+    Write-Host "[3/7] Signing binary..." -ForegroundColor Cyan
     & ".\scripts\sign-binary.ps1" -BinaryPath "target\release\screensearch.exe"
     Write-Host ""
 }
 else {
-    Write-Host "[3/8] Skipping code signing (use -SignBinary to enable)" -ForegroundColor Yellow
+    Write-Host "[3/7] Skipping code signing (use -SignBinary to enable)" -ForegroundColor Yellow
     Write-Host ""
 }
 
-# Step 4: Build the managed quality sidecar
-if (-not $SkipSidecar) {
-    $sidecarKind = if ($Gpu) { "CUDA GPU" } else { "CPU" }
-    Write-Host "[4/8] Building PP-OCRv5/Qwen quality sidecar ($sidecarKind, python: $PythonExe)..." -ForegroundColor Cyan
-    if ($Gpu) {
-        # GPU OCR only: paddlepaddle-gpu (CUDA 12.9, supports Blackwell) must come
-        # from paddle's own index. torch stays on CPU (installed via the plain
-        # requirements file) because torch's CUDA build and paddle's CUDA runtime
-        # collide in one process on Blackwell. Install paddle-gpu first, then the
-        # rest (CPU torch + paddleocr + server deps).
-        & $PythonExe -m pip install "paddlepaddle-gpu>=3,<4" -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
-        if ($LASTEXITCODE -ne 0) { Write-Host "paddlepaddle-gpu install failed" -ForegroundColor Red; exit 1 }
-        & $PythonExe -m pip install -r sidecar\requirements-gpu.txt
-    } else {
-        & $PythonExe -m pip install -r sidecar\requirements.txt
-    }
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Quality sidecar dependency install failed" -ForegroundColor Red
-        exit 1
-    }
-    & $PythonExe sidecar\build.py
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Quality sidecar build failed" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host ""
-}
-else {
-    Write-Host "[4/8] Skipping quality sidecar build" -ForegroundColor Yellow
-    Write-Host ""
-}
-
-# Step 5: Check for Inno Setup
-Write-Host "[5/8] Checking for Inno Setup..." -ForegroundColor Cyan
+# Step 4: Check for Inno Setup
+Write-Host "[4/7] Checking for Inno Setup..." -ForegroundColor Cyan
 $isccCandidates = @(
     "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
     "C:\Program Files\Inno Setup 6\ISCC.exe",
@@ -158,8 +113,8 @@ if (-not $isccPath) {
 Write-Host "Inno Setup found: $isccPath" -ForegroundColor Green
 Write-Host ""
 
-# Step 6: Build quality installer
-Write-Host "[6/8] Building Quality Installer..." -ForegroundColor Cyan
+# Step 5: Build installer
+Write-Host "[5/7] Building Installer..." -ForegroundColor Cyan
 & $isccPath "installer\screensearch.iss"
 
 if ($LASTEXITCODE -eq 0) {
@@ -178,17 +133,15 @@ else {
 Write-Host ""
 
 # Create Portable ZIP
-Write-Host "[7/8] Creating Portable ZIP..." -ForegroundColor Cyan
+Write-Host "[6/7] Creating Portable ZIP..." -ForegroundColor Cyan
 $zipPath = "target\release\installers\ScreenSearch-v$Version-Portable.zip"
-New-Item -ItemType Directory -Force -Path "target\release\bin" | Out-Null
-Copy-Item "sidecar\dist\screensearch-ai-sidecar" "target\release\bin\" -Recurse -Force
-Compress-Archive -Path "target\release\screensearch.exe", "target\release\bin", "config.toml", "LICENSE", "README.md" `
+Compress-Archive -Path "target\release\screensearch.exe", "config.toml", "LICENSE", "README.md" `
                  -DestinationPath $zipPath -Force
 Write-Host "Portable ZIP created: $zipPath" -ForegroundColor Green
 Write-Host ""
 
-# Step 8: Generate checksums
-Write-Host "[8/8] Generating checksums..." -ForegroundColor Cyan
+# Step 7: Generate checksums
+Write-Host "[7/7] Generating checksums..." -ForegroundColor Cyan
 & ".\scripts\generate-checksums.ps1" -Path "target\release\installers"
 Write-Host ""
 

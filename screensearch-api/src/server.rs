@@ -166,7 +166,7 @@ impl ApiServer {
                     }
                     Err(error) => {
                         tracing::warn!(
-                            "Quality sidecar unavailable; retrying embedding worker startup: {}",
+                            "Embedding engine unavailable; retrying embedding worker startup: {}",
                             error
                         );
                         tokio::time::sleep(std::time::Duration::from_secs(60)).await;

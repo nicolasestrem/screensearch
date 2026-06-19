@@ -64,9 +64,9 @@
 - [*] **Editorial Brutalist UI** — Premium Minimalist "Paper & Ink" design system with light and dark mode, sharp edges, and elegant typography
 - [*] **AI-First Dashboard** — "Intel Dash" with Daily Digest, Memory Status gauge, and Productivity Pulse charts
 - [*] **Continuous Screen Capture** — Configurable intervals (2-5 seconds) with multi-monitor support
-- [*] **OCR Text Extraction** — PP-OCRv5 with confidence, language, orientation, bounding boxes, and Windows OCR fallback
+- [*] **OCR Text Extraction** — Native Windows OCR (WinRT) running in-process with confidence and bounding boxes
 - [*] **AI-Powered Intelligence** — Generate insights from your screen history using local LLMs (Ollama, LM Studio) or cloud providers (OpenAI)
-- [*] **Hybrid Search** — Fuses FTS5 and sqlite-vec retrieval with Qwen3 reranking
+- [*] **Hybrid Search** — Fuses FTS5 and sqlite-vec retrieval via Reciprocal Rank Fusion, with optional cross-encoder reranking
 - [*] **Smart Search** — Conversational AI answers with context from your screen history
 - [*] **REST API** — 27 endpoints for search, automation, and tag management on localhost:3131
 - [*] **UI Automation** — Programmatic control of Windows applications via accessibility APIs
@@ -182,7 +182,7 @@ Fine-tune every aspect of ScreenSearch with comprehensive, intuitive settings pa
 #### Embeddings & Semantic Search
 <div align="center">
   <img src="screenshots/settings-embeddings.png" width="65%" alt="Embeddings settings - Enable semantic search, batch processing">
-  <p><em>Run local Qwen3 embeddings and reranking through the managed quality sidecar, with explicit health and reindex status</em></p>
+  <p><em>Run local EmbeddingGemma-300M embeddings and optional reranking in-process via fastembed, with explicit engine readiness and reindex status</em></p>
 </div>
 
 #### Data Management
@@ -216,12 +216,11 @@ Powerful logging and diagnostics. Watch ScreenSearch initialize, start capture l
 
 ### Prerequisites
 
-- **Windows 10/11** — Production platform for capture, automation, and the Windows OCR fallback
-- **Up to 5 GB free disk space** — PP-OCRv5 and Qwen model preparation
+- **Windows 10/11** — Production platform for capture, automation, and native Windows OCR
+- **A few GB free disk space** — for the EmbeddingGemma-300M model and the optional answer-generation GGUF
 - **Rust 1.70+** — Install from [rustup.rs](https://rustup.rs/)
 - **Visual Studio Build Tools** — Required for native compilation ([download](https://visualstudio.microsoft.com/downloads/))
 - **Node.js 22+** — Required to rebuild the embedded dashboard
-- **Python 3.12** — Required only when building the quality sidecar from source
 
 ### Installation & Setup
 
@@ -232,7 +231,7 @@ Powerful logging and diagnostics. Watch ScreenSearch initialize, start capture l
 git clone https://github.com/nicolasestrem/screensearch.git
 cd screensearch
 
-# Build the native Linux development bundle, including the AI sidecar
+# Build the native Linux development bundle
 ./scripts/build-local.sh --release
 
 # Run the assembled Linux app (starts API on localhost:3131)
@@ -244,9 +243,9 @@ with `./scripts/build-release.sh <version>` and packaged by the Windows GitHub
 Actions runner after the version tag is published.
 
 After launching a bundled build, use **Settings > Data & AI > Download /
-verify** before enabling indexing. This warms the serialized PP-OCRv5, Qwen3
-embedding, and Qwen3 reranking loaders and avoids first-request model download
-latency.
+verify** before enabling indexing. This pre-loads the in-process
+EmbeddingGemma-300M model and avoids first-request model download latency.
+(Native Windows OCR needs no download.)
 
 #### Cross-Compilation from Linux
 
@@ -341,14 +340,14 @@ You can verify the safety of the binary:
 ```
 screensearch/
 ├── src/main.rs                 # Application entry point and orchestration
-├── screensearch-capture/       # Capture, PP-OCR client, Windows fallback
+├── screensearch-capture/       # Capture + native Windows OCR (in-process)
 ├── screensearch-db/            # SQLite, FTS5, sqlite-vec, migrations
-├── screensearch-embeddings/    # Qwen sidecar client and model contract
+├── screensearch-embeddings/    # In-process fastembed (EmbeddingGemma-300M)
+├── screensearch-llm/           # Manages external llama.cpp answer-generation server
 ├── screensearch-api/           # REST API server (Axum framework)
 │   ├── src/routes.rs          # API endpoint definitions
 │   └── src/handlers/          # Search, embeddings, RAG, generation
 ├── screensearch-automation/    # Windows UI automation engine
-├── sidecar/                    # PP-OCRv5 and Qwen3 inference service
 ├── evaluation/                 # Versioned retrieval quality cases
 ├── screensearch-ui/            # Modern React web dashboard
 │   ├── src/components/        # UI components (Timeline, Search, Settings)
@@ -386,7 +385,7 @@ ScreenSearch is optimized for efficiency and speed:
 
 **[+] Search Security** — FTS5 query sanitization prevents injection attacks while correctly handling special characters (`C++`, `$100`, etc.).
 
-**[+] Persistent Vector Search** — sqlite-vec performs KNN retrieval without loading every embedding into Rust memory. Reciprocal Rank Fusion combines lexical and semantic candidates before Qwen3 reranking.
+**[+] Persistent Vector Search** — sqlite-vec performs KNN retrieval without loading every embedding into Rust memory. Reciprocal Rank Fusion combines lexical and semantic candidates, with optional `bge-reranker-v2-m3` cross-encoder reranking (off by default).
 
 See [AI Quality Stack](docs/ai-quality-stack.md) for model sizes, fallback behavior, evaluation, and packaging details.
 

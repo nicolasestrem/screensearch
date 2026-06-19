@@ -38,14 +38,10 @@ jpeg_quality = 80
 max_width = 1920
 
 [ocr]
-# OCR engine: "ppocr-v5" (quality sidecar) or "windows"
-engine = "ppocr-v5"
-
-# Managed local AI sidecar. It remains loopback-only.
-sidecar_url = "http://127.0.0.1:3132"
-sidecar_token_env = "SCREENSEARCH_AI_SIDECAR_TOKEN"
-language = "en"
-fallback_to_windows = true
+# OCR runs in-process via the native Windows OCR (WinRT) API — fast, no sidecar.
+# Language hint as a BCP-47 tag (e.g. "en-US"); leave empty to use the user's
+# Windows profile languages.
+language = ""
 
 # Minimum confidence threshold for storing OCR results (0.0 - 1.0)
 # Results below this threshold are discarded
@@ -176,11 +172,17 @@ log_rotation_count = 5
 
 [embeddings]
 # Enable semantic search with embeddings for RAG-enhanced reports.
-# Embeddings run through the managed local quality sidecar
-# (Qwen/Qwen3-Embedding-0.6B, 1024-dim, sqlite-vec). The model identity,
-# dimension, and chunking are owned by the sidecar contract and are not
-# configurable here.
+# Embeddings run fully in-process via fastembed/ONNX Runtime
+# (EmbeddingGemma-300M, 768-dim, sqlite-vec). The model is downloaded and
+# cached from HuggingFace on first use.
 enabled = false
 
 # Batch size for background embedding generation
 batch_size = 50
+
+[llm]
+# Optional local answer-generation model (RAG summaries / Q&A) served by the
+# bundled llama.cpp server. Drop a GGUF file into `.models/` (or the app models
+# directory) and it is auto-discovered; the first one found is used. Leave empty
+# to auto-discover, or set an explicit path to pin a specific model.
+# model_path = ""

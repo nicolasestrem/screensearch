@@ -5,7 +5,7 @@
 | Concern | File |
 |---|---|
 | Main application startup | `src/main.rs` |
-| Sidecar discovery and launch | `src/main.rs` |
+| Generation runtime discovery and launch | `screensearch-llm/` |
 | API server construction | `screensearch-api/src/server.rs` |
 | Shared API state | `screensearch-api/src/state.rs` |
 | Route definitions | `screensearch-api/src/routes.rs` |
@@ -17,9 +17,8 @@
 | Capture crate exports | `screensearch-capture/src/lib.rs` |
 | OCR result model | `screensearch-capture/src/ocr.rs` |
 | OCR processing worker | `screensearch-capture/src/ocr_processor.rs` |
-| Provider selection and fallback | `screensearch-capture/src/ocr_provider.rs` |
-| PP-OCRv5 sidecar client | `screensearch-capture/src/sidecar_ocr.rs` |
-| PP-OCRv5 service endpoint | `sidecar/app.py` |
+| Provider selection | `screensearch-capture/src/ocr_provider.rs` |
+| Windows OCR engine (WinRT Media.Ocr) | `screensearch-capture/src/ocr.rs` |
 
 ## Database And Retrieval
 
@@ -37,9 +36,8 @@
 | Concern | File |
 |---|---|
 | Model constants and configuration | `screensearch-embeddings/src/lib.rs` |
-| Sidecar client | `screensearch-embeddings/src/engine.rs` |
-| Legacy chunker compatibility | `screensearch-embeddings/src/chunker.rs` |
-| Qwen inference endpoints | `sidecar/app.py` |
+| In-process embedding engine (fastembed) | `screensearch-embeddings/src/engine.rs` |
+| Text chunker | `screensearch-embeddings/src/chunker.rs` |
 | Background indexing | `screensearch-api/src/workers/embedding_worker.rs` |
 | Manual indexing and status | `screensearch-api/src/handlers/embeddings.rs` |
 
@@ -71,8 +69,6 @@
 
 | Concern | File |
 |---|---|
-| Sidecar Python dependencies | `sidecar/requirements.txt` |
-| Sidecar PyInstaller build | `sidecar/build.py` |
 | Inno Setup installer | `installer/screensearch.iss` |
 | Linux development bundle | `scripts/build-local.sh` |
 | Linux release preparation | `scripts/build-release.sh` |
@@ -98,14 +94,15 @@
 
 ### Change OCR behavior
 
-Start with `ocr_provider.rs`, `sidecar_ocr.rs`, and `sidecar/app.py`. Verify
-Windows fallback and persisted OCR metadata.
+Start with `ocr_provider.rs` and `ocr.rs` (the in-process Windows OCR engine).
+Verify persisted OCR metadata.
 
 ### Change embedding model
 
-Treat this as a database contract change. Update constants, sidecar, migration,
-sqlite-vec dimension, invalidation metadata, tests, evaluation, settings
-display, and docs together.
+Treat this as a database contract change. Update constants in
+`screensearch-embeddings/src/lib.rs`, the engine, migration, sqlite-vec
+dimension, invalidation metadata, tests, evaluation, settings display, and docs
+together.
 
 ### Change retrieval ranking
 

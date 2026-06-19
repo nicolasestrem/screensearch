@@ -67,6 +67,13 @@ pub use models::{
 };
 pub use queries::DatabaseStatistics;
 
+/// Fixed embedding dimension for the persisted-vector contract.
+///
+/// Must match the `embedding float[N]` declaration in the `embedding_vectors`
+/// sqlite-vec virtual table (migration 009) and the in-process embedding model
+/// (`screensearch_embeddings::EMBEDDING_DIM`, EmbeddingGemma-300M = 768).
+pub const EMBEDDING_DIM: usize = 768;
+
 /// Database-related errors
 #[derive(Error, Debug)]
 pub enum DatabaseError {

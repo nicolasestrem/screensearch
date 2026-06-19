@@ -7,7 +7,10 @@ use crate::state::AppState;
 use axum::extract::{Json, State};
 use chrono::{DateTime, Duration, Utc};
 use reqwest::RequestBuilder;
-use screensearch_llm::{model_exists, get_models_dir, MODEL_FILENAME, MODEL_SIZE_BYTES, DownloadProgress as LlmDownloadProgress};
+use screensearch_llm::{
+    get_models_dir, model_exists, DownloadProgress as LlmDownloadProgress, MODEL_FILENAME,
+    MODEL_SIZE_BYTES,
+};
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -19,6 +22,12 @@ const LOCAL_LLM_ENDPOINT: &str = "http://127.0.0.1:31130/v1";
 // ============================================================
 // Helper Functions
 // ============================================================
+
+/// Whether a local GGUF model is available — either a user-provided model
+/// discovered in `.models/` (etc.) or the downloadable default.
+fn local_model_available() -> bool {
+    !screensearch_llm::discover_local_models().is_empty() || model_exists(&get_models_dir())
+}
 
 /// Validates that a provider URL is safe to use
 /// Returns Ok(()) if valid, Err with descriptive message if invalid
@@ -138,14 +147,19 @@ pub async fn validate_connection(
     // Handle local provider specially
     if payload.provider_url == "local" {
         let models_dir = get_models_dir();
-        if model_exists(&models_dir) {
+        if local_model_available() {
             // Check if llama-server is running
             let client = reqwest::Client::new();
-            match client.get(format!("{}/models", LOCAL_LLM_ENDPOINT)).send().await {
+            match client
+                .get(format!("{}/models", LOCAL_LLM_ENDPOINT))
+                .send()
+                .await
+            {
                 Ok(res) if res.status().is_success() => {
                     return Ok(Json(AiConnectionResponse {
                         success: true,
-                        message: "Local Ministral-3B model is ready. llama-server is running.".to_string(),
+                        message: "Local Ministral-3B model is ready. llama-server is running."
+                            .to_string(),
                     }));
                 }
                 _ => {
@@ -272,13 +286,9 @@ pub async fn generate_report(
     });
 
     // Build context using RAG (hybrid search) or traditional approach
-    let (context_text, context_source) = crate::handlers::rag_helpers::build_rag_context(
-        &state,
-        &user_query,
-        start_time,
-        end_time,
-    )
-    .await?;
+    let (context_text, context_source) =
+        crate::handlers::rag_helpers::build_rag_context(&state, &user_query, start_time, end_time)
+            .await?;
 
     // 2. Construct Prompt (Senior Productivity Analyst Persona)
     let system_prompt = r#"You are ScreenSearch Intelligence, a Senior Productivity Analyst.
@@ -317,11 +327,10 @@ OUTPUT FORMAT (Markdown):
 
     // Determine effective URL - use local endpoint if provider is "local"
     let (effective_url, effective_model) = if payload.provider_url == "local" {
-        // Check if model is available
-        let models_dir = get_models_dir();
-        if !model_exists(&models_dir) {
+        // Check if a local model is available
+        if !local_model_available() {
             return Err(AppError::InvalidRequest(
-                "Local model not downloaded. Please download the model first.".to_string()
+                "Local model not downloaded. Please download the model first.".to_string(),
             ));
         }
 
@@ -334,9 +343,10 @@ OUTPUT FORMAT (Markdown):
         }
 
         // Get or create llama-server and ensure it's running (auto-start on demand)
-        let server = state.get_llama_server().await.map_err(|e| {
-            AppError::Internal(format!("Failed to initialize llama-server: {}", e))
-        })?;
+        let server = state
+            .get_llama_server()
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to initialize llama-server: {}", e)))?;
 
         // Auto-start the server if not running
         if let Err(e) = server.ensure_started().await {
@@ -353,7 +363,6 @@ OUTPUT FORMAT (Markdown):
         (payload.provider_url.clone(), payload.model.clone())
     };
 
-
     // Validate URL format and security (skip for local which we already handle)
     if payload.provider_url != "local" {
         if let Err(err_msg) = validate_provider_url(&effective_url) {
@@ -366,10 +375,7 @@ OUTPUT FORMAT (Markdown):
 
     let client = reqwest::Client::new();
     // Ensure we handle URL construction carefully. Most providers need /chat/completions
-    let url = format!(
-        "{}/chat/completions",
-        effective_url.trim_end_matches('/')
-    );
+    let url = format!("{}/chat/completions", effective_url.trim_end_matches('/'));
 
     let request_body = OpenAIChatRequest {
         model: effective_model.clone(),
@@ -458,7 +464,10 @@ OUTPUT FORMAT (Markdown):
         end_time.format("%Y-%m-%d %H:%M")
     );
 
-    let final_report = format!("{}{}\n\n---\n*Context: {}*", metadata_header, report_content, context_source);
+    let final_report = format!(
+        "{}{}\n\n---\n*Context: {}*",
+        metadata_header, report_content, context_source
+    );
 
     Ok(Json(AiReportResponse {
         report: final_report,
@@ -479,6 +488,9 @@ pub struct ModelStatusResponse {
     pub model_name: String,
     pub model_size_bytes: u64,
     pub model_path: Option<String>,
+    /// All GGUF models discovered locally (e.g. dropped into `.models/`), as
+    /// absolute paths. The first entry is the one the server will use.
+    pub available_models: Vec<String>,
 }
 
 /// GET /ai/model/status
@@ -486,20 +498,46 @@ pub struct ModelStatusResponse {
 pub async fn get_model_status(
     State(_state): State<Arc<AppState>>,
 ) -> Result<Json<ModelStatusResponse>> {
+    // Prefer a user-provided GGUF discovered in `.models/` (etc.); fall back to
+    // the downloadable default model.
+    let discovered = screensearch_llm::discover_local_models();
+    let available_models: Vec<String> = discovered
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
     let models_dir = get_models_dir();
-    let downloaded = model_exists(&models_dir);
-    let model_path = if downloaded {
-        Some(models_dir.join(MODEL_FILENAME).to_string_lossy().to_string())
-    } else {
-        None
+    let (downloaded, model_name, model_path) = match discovered.first() {
+        Some(path) => {
+            let name = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "local-gguf".to_string());
+            (true, name, Some(path.to_string_lossy().to_string()))
+        }
+        None => {
+            let downloaded = local_model_available();
+            let model_path = downloaded.then(|| {
+                models_dir
+                    .join(MODEL_FILENAME)
+                    .to_string_lossy()
+                    .to_string()
+            });
+            (
+                downloaded,
+                "Ministral-3B-Instruct-2512-Q4_K_M".to_string(),
+                model_path,
+            )
+        }
     };
 
     Ok(Json(ModelStatusResponse {
         downloaded,
         downloading: false, // TODO: Track download state in AppState
-        model_name: "Ministral-3B-Instruct-2512-Q4_K_M".to_string(),
+        model_name,
         model_size_bytes: MODEL_SIZE_BYTES,
         model_path,
+        available_models,
     }))
 }
 
@@ -517,7 +555,7 @@ pub async fn start_model_download(
     let models_dir = get_models_dir();
 
     // Check if already downloaded
-    if model_exists(&models_dir) {
+    if local_model_available() {
         return Ok(Json(ModelDownloadResponse {
             success: true,
             message: "Model already downloaded".to_string(),
@@ -528,7 +566,8 @@ pub async fn start_model_download(
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<LlmDownloadProgress>(100);
 
     // Create oneshot channel to signal completion status (Ok = success, Err = error message)
-    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel::<std::result::Result<(), String>>();
+    let (completion_tx, completion_rx) =
+        tokio::sync::oneshot::channel::<std::result::Result<(), String>>();
 
     // Clone state for background task
     let state_clone = state.clone();
@@ -537,7 +576,9 @@ pub async fn start_model_download(
     tokio::spawn(async move {
         // Process all progress updates
         while let Some(progress) = progress_rx.recv().await {
-            state_clone.update_download_progress("llm_model".to_string(), progress.into()).await;
+            state_clone
+                .update_download_progress("llm_model".to_string(), progress.into())
+                .await;
         }
 
         // Wait for completion signal from download task (with 2-hour timeout to prevent task leak)
@@ -550,16 +591,18 @@ pub async fn start_model_download(
             Ok(Ok(Err(error_msg))) => {
                 // Error - update with error state
                 use crate::state::DownloadProgress;
-                state_clone.update_download_progress(
-                    "llm_model".to_string(),
-                    DownloadProgress {
-                        bytes_downloaded: 0,
-                        total_bytes: 0,
-                        speed_bps: 0,
-                        eta_seconds: 0,
-                        error: Some(error_msg),
-                    }
-                ).await;
+                state_clone
+                    .update_download_progress(
+                        "llm_model".to_string(),
+                        DownloadProgress {
+                            bytes_downloaded: 0,
+                            total_bytes: 0,
+                            speed_bps: 0,
+                            eta_seconds: 0,
+                            error: Some(error_msg),
+                        },
+                    )
+                    .await;
             }
             Ok(Err(_)) => {
                 // Channel closed without signal - treat as error
@@ -569,16 +612,18 @@ pub async fn start_model_download(
                 // Timeout - download task likely panicked or hung
                 error!("Download receiver task timed out after 2 hours for llm_model");
                 use crate::state::DownloadProgress;
-                state_clone.update_download_progress(
-                    "llm_model".to_string(),
-                    DownloadProgress {
-                        bytes_downloaded: 0,
-                        total_bytes: 0,
-                        speed_bps: 0,
-                        eta_seconds: 0,
-                        error: Some("Download timed out after 2 hours".to_string()),
-                    }
-                ).await;
+                state_clone
+                    .update_download_progress(
+                        "llm_model".to_string(),
+                        DownloadProgress {
+                            bytes_downloaded: 0,
+                            total_bytes: 0,
+                            speed_bps: 0,
+                            eta_seconds: 0,
+                            error: Some("Download timed out after 2 hours".to_string()),
+                        },
+                    )
+                    .await;
             }
         }
     });
@@ -586,10 +631,10 @@ pub async fn start_model_download(
     // Start download in background
     tokio::spawn(async move {
         info!("Starting model download in background...");
-        let result = screensearch_llm::download_model_with_progress(&models_dir, Some(progress_tx)).await;
+        let result =
+            screensearch_llm::download_model_with_progress(&models_dir, Some(progress_tx)).await;
 
         // Close progress channel to signal end of progress updates
-
 
         match result {
             Ok(_) => {
@@ -632,7 +677,7 @@ pub struct ServerStatusResponse {
 pub async fn get_server_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ServerStatusResponse>> {
-    use screensearch_llm::{llama_server_exists, get_bin_dir, ServerStatus};
+    use screensearch_llm::{get_bin_dir, llama_server_exists, ServerStatus};
 
     let bin_dir = get_bin_dir();
     let server_binary_available = llama_server_exists(&bin_dir);
@@ -675,8 +720,7 @@ pub async fn start_server(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ServerControlResponse>> {
     // Check prerequisites
-    let models_dir = get_models_dir();
-    if !model_exists(&models_dir) {
+    if !local_model_available() {
         return Ok(Json(ServerControlResponse {
             success: false,
             message: "Model not downloaded. Please download the model first.".to_string(),
@@ -706,22 +750,18 @@ pub async fn start_server(
                         status: status.as_str().to_string(),
                     }))
                 }
-                Err(e) => {
-                    Ok(Json(ServerControlResponse {
-                        success: false,
-                        message: format!("Failed to start server: {}", e),
-                        status: "error".to_string(),
-                    }))
-                }
+                Err(e) => Ok(Json(ServerControlResponse {
+                    success: false,
+                    message: format!("Failed to start server: {}", e),
+                    status: "error".to_string(),
+                })),
             }
         }
-        Err(e) => {
-            Ok(Json(ServerControlResponse {
-                success: false,
-                message: format!("Failed to initialize server: {}", e),
-                status: "error".to_string(),
-            }))
-        }
+        Err(e) => Ok(Json(ServerControlResponse {
+            success: false,
+            message: format!("Failed to initialize server: {}", e),
+            status: "error".to_string(),
+        })),
     }
 }
 
@@ -784,7 +824,9 @@ pub async fn update_server_ttl(
 
     let guard = state.llama_server.read().await;
     if let Some(server) = guard.as_ref() {
-        server.set_idle_ttl(Duration::from_secs(payload.ttl_seconds)).await;
+        server
+            .set_idle_ttl(Duration::from_secs(payload.ttl_seconds))
+            .await;
         Ok(Json(ServerControlResponse {
             success: true,
             message: format!("TTL updated to {} seconds", payload.ttl_seconds),
@@ -804,7 +846,7 @@ pub async fn update_server_ttl(
 pub async fn download_llama_server(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ModelDownloadResponse>> {
-    use screensearch_llm::{llama_server_exists, get_bin_dir, LLAMA_SERVER_SIZE_BYTES};
+    use screensearch_llm::{get_bin_dir, llama_server_exists, LLAMA_SERVER_SIZE_BYTES};
 
     let bin_dir = get_bin_dir();
 
@@ -820,7 +862,8 @@ pub async fn download_llama_server(
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<LlmDownloadProgress>(100);
 
     // Create oneshot channel to signal completion status (Ok = success, Err = error message)
-    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel::<std::result::Result<(), String>>();
+    let (completion_tx, completion_rx) =
+        tokio::sync::oneshot::channel::<std::result::Result<(), String>>();
 
     // Clone state for background task
     let state_clone = state.clone();
@@ -829,7 +872,9 @@ pub async fn download_llama_server(
     tokio::spawn(async move {
         // Process all progress updates
         while let Some(progress) = progress_rx.recv().await {
-            state_clone.update_download_progress("llama_server".to_string(), progress.into()).await;
+            state_clone
+                .update_download_progress("llama_server".to_string(), progress.into())
+                .await;
         }
 
         // Wait for completion signal from download task (with 2-hour timeout to prevent task leak)
@@ -842,16 +887,18 @@ pub async fn download_llama_server(
             Ok(Ok(Err(error_msg))) => {
                 // Error - update with error state
                 use crate::state::DownloadProgress;
-                state_clone.update_download_progress(
-                    "llama_server".to_string(),
-                    DownloadProgress {
-                        bytes_downloaded: 0,
-                        total_bytes: 0,
-                        speed_bps: 0,
-                        eta_seconds: 0,
-                        error: Some(error_msg),
-                    }
-                ).await;
+                state_clone
+                    .update_download_progress(
+                        "llama_server".to_string(),
+                        DownloadProgress {
+                            bytes_downloaded: 0,
+                            total_bytes: 0,
+                            speed_bps: 0,
+                            eta_seconds: 0,
+                            error: Some(error_msg),
+                        },
+                    )
+                    .await;
             }
             Ok(Err(_)) => {
                 // Channel closed without signal - treat as error
@@ -861,16 +908,18 @@ pub async fn download_llama_server(
                 // Timeout - download task likely panicked or hung
                 error!("Download receiver task timed out after 2 hours for llama_server");
                 use crate::state::DownloadProgress;
-                state_clone.update_download_progress(
-                    "llama_server".to_string(),
-                    DownloadProgress {
-                        bytes_downloaded: 0,
-                        total_bytes: 0,
-                        speed_bps: 0,
-                        eta_seconds: 0,
-                        error: Some("Download timed out after 2 hours".to_string()),
-                    }
-                ).await;
+                state_clone
+                    .update_download_progress(
+                        "llama_server".to_string(),
+                        DownloadProgress {
+                            bytes_downloaded: 0,
+                            total_bytes: 0,
+                            speed_bps: 0,
+                            eta_seconds: 0,
+                            error: Some("Download timed out after 2 hours".to_string()),
+                        },
+                    )
+                    .await;
             }
         }
     });
@@ -881,7 +930,6 @@ pub async fn download_llama_server(
         let result = screensearch_llm::download_llama_server_with_progress(Some(progress_tx)).await;
 
         // Close progress channel to signal end of progress updates
-
 
         match result {
             Ok(path) => {

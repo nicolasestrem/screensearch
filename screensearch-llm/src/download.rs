@@ -8,8 +8,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
 
 /// URL to download the Ministral-3B GGUF model from
-pub const MODEL_URL: &str =
-    "https://leophir.com/models/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf";
+pub const MODEL_URL: &str = "https://leophir.com/models/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf";
 
 /// Model filename
 pub const MODEL_FILENAME: &str = "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf";
@@ -193,9 +192,83 @@ pub fn get_models_dir() -> PathBuf {
     PathBuf::from("models")
 }
 
-/// Get the full path to the model file
+/// Get the full path to the default (downloadable) model file.
 pub fn get_model_path(models_dir: &Path) -> PathBuf {
     models_dir.join(MODEL_FILENAME)
+}
+
+/// Candidate directories scanned for user-provided GGUF models, in priority
+/// order. `.models/` (next to the binary or in the working directory) is where
+/// users drop their own models; the standard `models/` and AppData locations
+/// are also searched so a downloaded default is picked up too.
+pub fn model_search_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    fn push(dir: PathBuf, list: &mut Vec<PathBuf>) {
+        if !list.contains(&dir) {
+            list.push(dir);
+        }
+    }
+
+    // Working directory (dev runs from the repo root, where `.models/` lives).
+    push(PathBuf::from(".models"), &mut dirs);
+    push(PathBuf::from("models"), &mut dirs);
+
+    // Next to the executable (portable / installed layout).
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            push(exe_dir.join(".models"), &mut dirs);
+            push(exe_dir.join("models"), &mut dirs);
+        }
+    }
+
+    // Standard per-user data directory.
+    if let Some(data_dir) = dirs::data_local_dir() {
+        push(data_dir.join("ScreenSearch").join("models"), &mut dirs);
+    }
+
+    dirs
+}
+
+/// Discover every `*.gguf` file across the model search directories.
+///
+/// Results are ordered by directory priority, then by filename within a
+/// directory, so the ordering is stable across runs.
+pub fn discover_local_models() -> Vec<PathBuf> {
+    let mut models: Vec<PathBuf> = Vec::new();
+    for dir in model_search_dirs() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut in_dir: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file()
+                    && path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
+            })
+            .collect();
+        in_dir.sort();
+        for path in in_dir {
+            if !models.contains(&path) {
+                models.push(path);
+            }
+        }
+    }
+    models
+}
+
+/// The GGUF model the LLM server should use by default: the first discovered
+/// user-provided model, falling back to the downloadable default path (which
+/// may or may not exist yet).
+pub fn resolve_model_path() -> PathBuf {
+    if let Some(found) = discover_local_models().into_iter().next() {
+        debug!("Using discovered GGUF model: {:?}", found);
+        return found;
+    }
+    get_model_path(&get_models_dir())
 }
 
 /// Check if the model exists and is valid
@@ -322,11 +395,7 @@ pub async fn download_model_with_progress(
                 0
             };
             let remaining = total_size.saturating_sub(downloaded);
-            let eta = if speed > 0 {
-                remaining / speed
-            } else {
-                0
-            };
+            let eta = remaining.checked_div(speed).unwrap_or(0);
 
             let progress = DownloadProgress {
                 bytes_downloaded: downloaded,
@@ -429,7 +498,9 @@ pub async fn download_llama_server_with_progress(
         )));
     }
 
-    let total_size = response.content_length().unwrap_or(LLAMA_SERVER_SIZE_BYTES * 5); // ZIP is larger
+    let total_size = response
+        .content_length()
+        .unwrap_or(LLAMA_SERVER_SIZE_BYTES * 5); // ZIP is larger
 
     // Create progress bar for terminal
     let progress_bar = ProgressBar::new(total_size);
@@ -466,7 +537,7 @@ pub async fn download_llama_server_with_progress(
                 0
             };
             let remaining = total_size.saturating_sub(downloaded);
-            let eta = if speed > 0 { remaining / speed } else { 0 };
+            let eta = remaining.checked_div(speed).unwrap_or(0);
 
             let progress = DownloadProgress {
                 bytes_downloaded: downloaded,
@@ -490,11 +561,10 @@ pub async fn download_llama_server_with_progress(
 
     // Extract synchronously (zip crate isn't async)
     let bin_dir_clone = bin_dir.clone();
-    let server_path = tokio::task::spawn_blocking(move || {
-        extract_llama_server(&zip_path, &bin_dir_clone)
-    })
-    .await
-    .map_err(|e| LlmError::DownloadFailed(format!("Extract task failed: {}", e)))??;
+    let server_path =
+        tokio::task::spawn_blocking(move || extract_llama_server(&zip_path, &bin_dir_clone))
+            .await
+            .map_err(|e| LlmError::DownloadFailed(format!("Extract task failed: {}", e)))??;
 
     // Clean up ZIP file
     let _ = tokio::fs::remove_file(bin_dir.join("llama-server.zip")).await;
@@ -539,9 +609,9 @@ fn extract_llama_server(zip_path: &Path, bin_dir: &Path) -> Result<PathBuf> {
 
     // Extract ALL relevant files from the archive (executables and shared libraries)
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| {
-            LlmError::DownloadFailed(format!("Failed to read ZIP entry: {}", e))
-        })?;
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| LlmError::DownloadFailed(format!("Failed to read ZIP entry: {}", e)))?;
 
         // Skip directories
         if entry.is_dir() {
@@ -577,16 +647,21 @@ fn extract_llama_server(zip_path: &Path, bin_dir: &Path) -> Result<PathBuf> {
             let output_path = bin_dir.join(&filename);
             debug!("Extracting: {} -> {:?}", entry_name, output_path);
 
-            let mut output_file = std::fs::File::create(&output_path)
-                .map_err(|e| LlmError::DownloadFailed(format!("Failed to create {}: {}", filename, e)))?;
+            let mut output_file = std::fs::File::create(&output_path).map_err(|e| {
+                LlmError::DownloadFailed(format!("Failed to create {}: {}", filename, e))
+            })?;
 
-            std::io::copy(&mut entry, &mut output_file)
-                .map_err(|e| LlmError::DownloadFailed(format!("Failed to extract {}: {}", filename, e)))?;
+            std::io::copy(&mut entry, &mut output_file).map_err(|e| {
+                LlmError::DownloadFailed(format!("Failed to extract {}: {}", filename, e))
+            })?;
 
             extracted_count += 1;
 
             // Track the server executable path
-            if filename == target_filename || filename == "llama-server" || filename == "llama-server.exe" {
+            if filename == target_filename
+                || filename == "llama-server"
+                || filename == "llama-server.exe"
+            {
                 server_path = Some(output_path.clone());
                 info!("Found llama-server executable: {:?}", output_path);
             }
@@ -646,5 +721,29 @@ mod tests {
     fn test_needs_download_missing() {
         let temp_dir = PathBuf::from("/nonexistent/path");
         assert!(needs_download(&temp_dir));
+    }
+
+    #[test]
+    fn test_model_search_dirs_includes_dot_models() {
+        let dirs = model_search_dirs();
+        assert!(dirs.contains(&PathBuf::from(".models")));
+        assert!(dirs.contains(&PathBuf::from("models")));
+        // `.models/` is scanned before the standard `models/` directory.
+        let dot = dirs.iter().position(|p| p == &PathBuf::from(".models"));
+        let plain = dirs.iter().position(|p| p == &PathBuf::from("models"));
+        assert!(dot < plain);
+    }
+
+    #[test]
+    fn test_discover_local_models_only_returns_gguf() {
+        // Never panics, and only `.gguf` files are reported.
+        for path in discover_local_models() {
+            assert_eq!(
+                path.extension()
+                    .and_then(|e| e.to_str())
+                    .map(str::to_ascii_lowercase),
+                Some("gguf".to_string())
+            );
+        }
     }
 }

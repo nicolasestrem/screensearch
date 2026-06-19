@@ -28,8 +28,6 @@ cd screensearch-ui
 npm run lint
 npm run build
 npm audit --audit-level=high
-
-python -m py_compile sidecar/app.py sidecar/build.py evaluation/evaluate.py
 ```
 
 ## Run
@@ -38,12 +36,7 @@ python -m py_compile sidecar/app.py sidecar/build.py evaluation/evaluate.py
 cargo run
 ```
 
-Manual sidecar development:
-
-```bash
-python -m pip install -r sidecar/requirements.txt
-python sidecar/app.py
-```
+OCR and embeddings run in-process; no separate service is required.
 
 ## Search
 
@@ -136,10 +129,11 @@ target/x86_64-pc-windows-msvc/release/bundles/
   ScreenSearch-v0.4.35-Windows-Core-Preview.zip
 ```
 
-It does not contain the Windows AI sidecar.
+It is a cross-compiled executable for checking the Windows build.
 
 The existing PowerShell scripts remain available for direct Windows use. Linux
 development and release preparation should use the Bash entrypoints above.
 
-The release build includes the sidecar directory. Prepare uncached model
-weights from Settings or `POST /api/embeddings/models/prepare`.
+Models are not bundled in the installer. Prepare the in-process embedding model
+from Settings or `POST /api/embeddings/models/prepare`; the optional generation
+GGUF is auto-discovered from `.models/` or downloaded on demand.

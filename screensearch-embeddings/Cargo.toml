@@ -18,12 +18,12 @@ anyhow = { workspace = true }
 # Logging
 tracing = { workspace = true }
 
-# Serialization for config
-serde = { workspace = true }
-serde_json = { workspace = true }
+# In-process embeddings + reranking via ONNX Runtime (no Python sidecar).
+# Pulls in `ort` (ONNX Runtime 2.x) and `hf-hub` transitively; downloads and
+# caches models from HuggingFace on first use.
+fastembed = "5.17"
 
-# HTTP client for model download
-reqwest = { version = "0.11", features = ["json", "stream"] }
+# Content hashing for chunk de-duplication
 sha2 = "0.10"
 
 [dev-dependencies]
