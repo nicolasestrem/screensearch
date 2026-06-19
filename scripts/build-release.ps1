@@ -125,8 +125,11 @@ Write-Host "Inno Setup found: $isccPath" -ForegroundColor Green
 Write-Host ""
 
 # Step 5: Build installer
+# Pass the version to ISCC so OutputBaseFilename matches $Version; otherwise the
+# .iss falls back to its default MyAppVersion and the rename below silently no-ops
+# (CI's release.yml passes the same flag).
 Write-Host "[5/7] Building Installer..." -ForegroundColor Cyan
-& $isccPath "installer\screensearch.iss"
+& $isccPath "/DMyAppVersion=$Version" "installer\screensearch.iss"
 
 if ($LASTEXITCODE -eq 0) {
     $installerPath = "target\release\installers\ScreenSearch-v$Version-Setup.exe"
@@ -135,6 +138,10 @@ if ($LASTEXITCODE -eq 0) {
     if (Test-Path $installerPath) {
         Move-Item $installerPath $qualityPath -Force
         Write-Host "Quality installer created: $qualityPath" -ForegroundColor Green
+    }
+    else {
+        Write-Host "Expected installer not found at $installerPath" -ForegroundColor Red
+        exit 1
     }
 }
 else {
