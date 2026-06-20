@@ -18,7 +18,7 @@ const GEMMA_DOCUMENT_PREFIX: &str = "title: none | text: ";
 /// shipped next to the executable, when one is present and the caller hasn't
 /// already set `ORT_DYLIB_PATH`. If neither is set, `ort` falls back to its
 /// default platform search (e.g. the system `PATH`).
-fn configure_ort_dylib_path() {
+pub(crate) fn configure_ort_dylib_path() {
     use std::sync::Once;
     static INIT: Once = Once::new();
     INIT.call_once(|| {

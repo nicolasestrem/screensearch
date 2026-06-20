@@ -170,6 +170,36 @@ Processes OCR frames without current embeddings:
 
 The background worker also processes batches while embeddings are enabled.
 
+### Image embeddings (visual recall)
+
+An optional, in-process image-embedding index (nomic-embed-vision-v1.5, 768-dim)
+lets text queries retrieve frames by their pixels — including non-OCR visual
+content (charts, design canvases, icon-heavy UIs). Image hits are fused into
+`hybrid` search results via Reciprocal Rank Fusion. Off by default; the models
+download on first use and add per-frame image-embedding CPU.
+
+#### `GET /embeddings/image/status`
+
+Same shape as `GET /embeddings/status` (enabled, model, provider, dimension,
+coverage, `engine_ready`, …) but for the image index. `total_frames` counts all
+stored frames (no OCR requirement).
+
+#### `POST /embeddings/image/enable`
+
+Enable/disable the image index at runtime (JSON boolean body). The background
+image worker is always running and starts/stops processing accordingly.
+
+```bash
+curl -X POST "http://127.0.0.1:3131/api/embeddings/image/enable" \
+  -H "Content-Type: application/json" \
+  -d "true"
+```
+
+#### `POST /embeddings/image/generate`
+
+Backfill image embeddings for frames that lack one (same `{"batch_size": N}`
+body). Returns immediately; work runs in the background.
+
 ### `POST /generate`
 
 Generates a grounded answer:

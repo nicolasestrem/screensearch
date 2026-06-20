@@ -354,3 +354,137 @@ pub async fn toggle_embeddings(
     // Return updated status
     get_embedding_status(State(state)).await
 }
+
+// ============================================================
+// Image embeddings (visual recall) — mirror the text endpoints
+// ============================================================
+
+/// Guards against overlapping on-demand image-embedding backfills.
+static IMAGE_EMBEDDING_JOB_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// GET /embeddings/image/status — coverage + readiness of the image index.
+pub async fn get_image_embedding_status(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<EmbeddingStatusResponse>> {
+    let engine_ready = state.image_embedding_engine_initialized().await;
+    let status = state.db.get_image_embedding_status().await?;
+
+    Ok(Json(EmbeddingStatusResponse {
+        enabled: status.enabled,
+        model: status.model,
+        provider: status.provider,
+        model_version: status.model_version,
+        dimension: status.dimension,
+        reindex_required: status.reindex_required,
+        engine_ready,
+        error: None,
+        total_frames: status.total_frames,
+        frames_with_embeddings: status.frames_with_embeddings,
+        coverage_percent: status.coverage_percent,
+        last_processed_frame_id: status.last_processed_frame_id,
+    }))
+}
+
+/// POST /embeddings/image/generate — backfill image embeddings for frames that
+/// lack one. Returns immediately; work runs on a background task.
+pub async fn generate_image_embeddings(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<GenerateEmbeddingsRequest>,
+) -> Result<Json<GenerateEmbeddingsResponse>> {
+    let batch_size = payload.batch_size.unwrap_or(50);
+
+    let pending = state.db.get_frames_without_image_embeddings(1).await?;
+    if pending.is_empty() {
+        return Ok(Json(GenerateEmbeddingsResponse {
+            success: true,
+            message: "All frames already have image embeddings".to_string(),
+            frames_processed: 0,
+        }));
+    }
+
+    if IMAGE_EMBEDDING_JOB_RUNNING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Ok(Json(GenerateEmbeddingsResponse {
+            success: true,
+            message: "Image embedding generation is already running in the background".to_string(),
+            frames_processed: 0,
+        }));
+    }
+
+    let job_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        struct JobGuard;
+        impl Drop for JobGuard {
+            fn drop(&mut self) {
+                IMAGE_EMBEDDING_JOB_RUNNING.store(false, Ordering::SeqCst);
+            }
+        }
+        let _guard = JobGuard;
+
+        let processed = run_image_embedding_job(&job_state, batch_size).await;
+        info!(
+            "Background image embedding job finished: {} frame(s) processed",
+            processed
+        );
+    });
+
+    Ok(Json(GenerateEmbeddingsResponse {
+        success: true,
+        message: "Image embedding generation started in the background".to_string(),
+        frames_processed: 0,
+    }))
+}
+
+/// Drain the image-embedding backlog in batches. Returns the number of frames
+/// embedded.
+async fn run_image_embedding_job(state: &Arc<AppState>, batch_size: i64) -> i64 {
+    let engine = match state.get_image_embedding_engine().await {
+        Ok(engine) => engine,
+        Err(error) => {
+            warn!("Failed to initialize image embedding engine: {}", error);
+            return 0;
+        }
+    };
+
+    let worker = crate::workers::image_embedding_worker::ImageEmbeddingWorker::new(
+        Arc::clone(&state.db),
+        engine,
+        crate::workers::image_embedding_worker::ImageEmbeddingWorkerConfig {
+            batch_size,
+            interval_secs: 60,
+        },
+    );
+
+    let mut total: i64 = 0;
+    loop {
+        match worker.process_batch().await {
+            Ok(0) => break,
+            Ok(count) => total += count as i64,
+            Err(error) => {
+                warn!("Image embedding batch failed: {}", error);
+                break;
+            }
+        }
+    }
+    total
+}
+
+/// POST /embeddings/image/enable — enable or disable the image-embedding index.
+pub async fn toggle_image_embeddings(
+    State(state): State<Arc<AppState>>,
+    Json(enabled): Json<bool>,
+) -> Result<Json<EmbeddingStatusResponse>> {
+    debug!("Setting image embeddings enabled: {}", enabled);
+
+    state
+        .db
+        .set_metadata(
+            "image_embeddings_enabled",
+            if enabled { "true" } else { "false" },
+        )
+        .await?;
+
+    get_image_embedding_status(State(state)).await
+}

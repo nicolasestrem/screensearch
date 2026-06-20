@@ -103,6 +103,7 @@ pub async fn retrieve_rag_results(
         .hybrid_search(
             user_query,
             query_embedding,
+            None,
             MAX_RAG_RESULTS,
             start_time,
             end_time,

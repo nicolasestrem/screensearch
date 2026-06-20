@@ -42,11 +42,17 @@ impl DatabaseManager {
         .await
     }
 
-    /// Hybrid search combining FTS5 and vector similarity
+    /// Hybrid search combining FTS5 and vector similarity.
+    ///
+    /// When `image_query_embedding` is provided (a nomic-text vector aligned with
+    /// the image index), image-embedding hits are fused in as a third ranked list
+    /// via the same Reciprocal Rank Fusion, giving non-OCR visual content a path
+    /// into the results. Pass `None` to skip the image index entirely.
     pub async fn hybrid_search(
         &self,
         query: &str,
         query_embedding: Vec<f32>,
+        image_query_embedding: Option<Vec<f32>>,
         limit: i64,
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
@@ -110,6 +116,44 @@ impl DatabaseManager {
                         chunk_index: -1,
                         similarity_score: score_boost,
                         retrieval_source: "fts".to_string(),
+                    });
+            }
+        }
+
+        // Optional third list: image-embedding hits (queried with the aligned
+        // nomic-text vector), fused with the same RRF formula. Image vectors live
+        // in a separate space, so they come only from the image index.
+        if let Some(image_embedding) = image_query_embedding {
+            let image_results = match self
+                .search_image_embeddings_with_time_range(
+                    image_embedding,
+                    candidate_limit.max(0) as usize,
+                    0.0,
+                    Some(start_time),
+                    Some(end_time),
+                )
+                .await
+            {
+                Ok(res) => res,
+                Err(e) => {
+                    tracing::error!("Image search failed: {}", e);
+                    Vec::new()
+                }
+            };
+
+            for (rank, res) in image_results.into_iter().enumerate() {
+                let key = (res.frame.id, res.chunk_text.clone());
+                let score_boost = 1.0 / (RRF_K + rank as f32 + 1.0);
+                merged
+                    .entry(key)
+                    .and_modify(|result| {
+                        result.similarity_score += score_boost;
+                        result.retrieval_source = "hybrid".to_string();
+                    })
+                    .or_insert_with(|| SemanticResult {
+                        similarity_score: score_boost,
+                        retrieval_source: "image".to_string(),
+                        ..res
                     });
             }
         }

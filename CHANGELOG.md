@@ -29,6 +29,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `docs/qwen3vl-embedding-poc.md`.
 
 ### Added
+- **Visual recall, Tier 2: optional in-process image-embedding index.** Screenshots
+  are now embedded directly from pixels with `nomic-embed-vision-v1.5` (768-dim) into a
+  separate sqlite-vec index, and `hybrid` search fuses image hits in via Reciprocal
+  Rank Fusion (queries encoded with the aligned `nomic-embed-text-v1.5`). This catches
+  non-OCR visual content the vision description misses — charts, dense canvases,
+  icon-only screens. Runs fully in-process (fastembed/ONNX, CPU); no Python, llama.cpp,
+  or GPU. **Off by default** (`embeddings.image_enabled`, also toggleable at runtime via
+  `POST /api/embeddings/image/enable`); the nomic models download on first use and the
+  feature enables fastembed's `image-models` codecs (longer build). New: migration 013
+  (`image_embeddings` + `image_embedding_vectors` + contract metadata),
+  `ImageEmbeddingEngine`, `image_embedding_worker` (always spawned, lazy-loads only when
+  enabled), `hybrid_search` image fusion, and `GET/POST /api/embeddings/image/{status,
+  generate,enable}`. Proven 3/3: text queries retrieve the matching screenshot
+  (including a textless bar chart) via the shipping engine. Files:
+  `screensearch-embeddings/src/image_engine.rs`, `screensearch-db/src/{migrations,queries,vector_search}.rs`,
+  `screensearch-api/src/{state,server,routes}.rs`,
+  `screensearch-api/src/workers/image_embedding_worker.rs`,
+  `screensearch-api/src/handlers/{embeddings,search}.rs`, `src/main.rs`.
+
 - **Visual recall, Tier 1: the vision description is now embedded.** The generative
   vision worker's per-frame `description` + `visible_text` labels are now folded into
   each frame's text embedding (previously they were stored as metadata and never

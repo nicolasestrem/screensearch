@@ -76,9 +76,24 @@ pub async fn search(
             .unwrap_or(chrono::DateTime::<chrono::Utc>::MIN_UTC);
         let end_time = params.end_time.unwrap_or_else(chrono::Utc::now);
         let mut semantic_results = if mode == "hybrid" {
+            // Fuse the image-embedding index when its engine is already warm
+            // (loaded because image embeddings are enabled). The query is encoded
+            // with the aligned nomic-text encoder; we never block search on a
+            // first-run model load.
+            let image_embedding = match state.image_embedding_engine_if_ready().await {
+                Some(image_engine) => image_engine.embed_query(&params.q).await.ok(),
+                None => None,
+            };
             state
                 .db
-                .hybrid_search(&params.q, embedding, pagination.limit, start_time, end_time)
+                .hybrid_search(
+                    &params.q,
+                    embedding,
+                    image_embedding,
+                    pagination.limit,
+                    start_time,
+                    end_time,
+                )
                 .await
                 .map_err(AppError::Database)?
         } else {

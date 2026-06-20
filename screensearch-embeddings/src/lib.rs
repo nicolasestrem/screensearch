@@ -33,12 +33,24 @@ use thiserror::Error;
 
 pub mod chunker;
 mod engine;
+mod image_engine;
 
 pub use chunker::TextChunker;
 pub use engine::{EmbeddingEngine, RerankScore};
+pub use image_engine::ImageEmbeddingEngine;
 
 /// Embedding dimension for EmbeddingGemma-300M (and the configured fallbacks).
 pub const EMBEDDING_DIM: usize = 768;
+
+/// Image-embedding model (screenshots) — aligned with [`IMAGE_QUERY_MODEL_NAME`]
+/// in a shared 768-dim space. Used by the optional visual-recall index.
+pub const IMAGE_MODEL_NAME: &str = "nomic-embed-vision-v1.5";
+
+/// Text encoder for image-search queries, aligned with [`IMAGE_MODEL_NAME`].
+pub const IMAGE_QUERY_MODEL_NAME: &str = "nomic-embed-text-v1.5";
+
+/// Model revision recorded in the image-vector contract.
+pub const IMAGE_MODEL_VERSION: &str = "1";
 
 /// Stable model identity recorded in the persisted-vector contract.
 ///

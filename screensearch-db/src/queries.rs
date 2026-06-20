@@ -1438,6 +1438,346 @@ impl DatabaseManager {
     }
 
     /// Get embedding status statistics
+    /// Insert (replacing any existing) the single whole-frame image embedding for
+    /// a frame, into both the `image_embeddings` metadata table and the
+    /// `image_embedding_vectors` sqlite-vec index, in one transaction.
+    pub async fn insert_image_embedding(
+        &self,
+        frame_id: i64,
+        embedding: Vec<f32>,
+        provider: &str,
+        model: &str,
+        model_version: &str,
+        content_hash: &str,
+    ) -> Result<i64> {
+        let embedding_blob: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
+
+        let mut tx = self.pool().begin().await?;
+        // One image embedding per frame; replace on re-index. The delete trigger
+        // cascades into image_embedding_vectors.
+        sqlx::query("DELETE FROM image_embeddings WHERE frame_id = ?")
+            .bind(frame_id)
+            .execute(&mut *tx)
+            .await?;
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO image_embeddings (
+                frame_id, embedding, embedding_dim, provider, model, model_version, content_hash
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(frame_id)
+        .bind(&embedding_blob)
+        .bind(embedding.len() as i32)
+        .bind(provider)
+        .bind(model)
+        .bind(model_version)
+        .bind(content_hash)
+        .execute(&mut *tx)
+        .await?;
+        let embedding_id = result.last_insert_rowid();
+
+        sqlx::query("INSERT INTO image_embedding_vectors (embedding_id, embedding) VALUES (?, ?)")
+            .bind(embedding_id)
+            .bind(embedding_blob)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(embedding_id)
+    }
+
+    /// Get frames that don't have an image embedding yet (for background
+    /// processing). Unlike text embedding, this has no OCR requirement — image
+    /// recall must work for frames with little/no on-screen text — but the frame
+    /// must reference a stored screenshot (`file_path`).
+    pub async fn get_frames_without_image_embeddings(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<FrameRecord>> {
+        let frames = sqlx::query_as::<_, FrameRecord>(
+            r#"
+            SELECT f.id, f.chunk_id, f.timestamp, f.monitor_index, f.device_name,
+                   f.file_path, f.active_window, f.active_process, f.browser_url,
+                   f.width, f.height, f.offset_index, f.focused, f.created_at,
+                   f.analysis_status, f.description, f.visible_text_json, f.activity_type,
+                   f.app_hint, f.confidence, f.analysis_time_ms, f.analysis_error
+            FROM frames f
+            LEFT JOIN image_embeddings ie ON f.id = ie.frame_id
+            WHERE ie.id IS NULL
+              AND f.file_path IS NOT NULL
+              AND TRIM(f.file_path) <> ''
+            ORDER BY f.id ASC
+            LIMIT ?
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(frames)
+    }
+
+    /// KNN search over the image-embedding index. The query vector must come from
+    /// the paired nomic-text encoder (the image vectors are nomic-vision, a
+    /// different space than the EmbeddingGemma text index). Returns one result per
+    /// matching frame; `chunk_text` carries the frame's vision description (for
+    /// display / RRF keying) and `chunk_index` is -1.
+    pub async fn search_image_embeddings_with_time_range(
+        &self,
+        query_vector: Vec<f32>,
+        limit: usize,
+        min_score: f32,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
+    ) -> Result<Vec<SemanticResult>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        if query_vector.len() != EMBEDDING_DIM {
+            return Err(crate::DatabaseError::InvalidParameter(format!(
+                "Expected a {EMBEDDING_DIM}-dimensional query vector, got {}",
+                query_vector.len()
+            )));
+        }
+
+        let query_blob: Vec<u8> = query_vector
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect();
+        let total_vectors =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM image_embedding_vectors")
+                .fetch_one(self.pool())
+                .await?;
+        if total_vectors == 0 {
+            return Ok(Vec::new());
+        }
+
+        let base_query = r#"
+            WITH nearest AS (
+                SELECT embedding_id, distance
+                FROM image_embedding_vectors
+                WHERE embedding MATCH ?
+                ORDER BY distance
+                LIMIT ?
+            )
+            SELECT ie.frame_id,
+                   f.timestamp, f.monitor_index, f.device_name, f.file_path,
+                   f.active_window, f.active_process, f.browser_url, f.width, f.height,
+                   f.offset_index, f.focused, f.created_at,
+                   f.analysis_status, f.description, f.visible_text_json, f.activity_type,
+                   f.app_hint, f.confidence, f.analysis_time_ms, f.analysis_error,
+                   nearest.distance
+            FROM nearest
+            JOIN image_embeddings ie ON ie.id = nearest.embedding_id
+            JOIN frames f ON ie.frame_id = f.id
+        "#;
+
+        let mut conditions = Vec::new();
+        if start_time.is_some() {
+            conditions.push("f.timestamp >= ?");
+        }
+        if end_time.is_some() {
+            conditions.push("f.timestamp <= ?");
+        }
+        let query = if conditions.is_empty() {
+            base_query.to_string()
+        } else {
+            format!("{} WHERE {}", base_query, conditions.join(" AND "))
+        };
+
+        let filtered = start_time.is_some() || end_time.is_some();
+        let initial_limit = if filtered {
+            limit.saturating_mul(12).max(100)
+        } else {
+            limit
+        };
+        let expanded_limit = limit.saturating_mul(100).max(initial_limit);
+        let candidate_limits = [initial_limit, expanded_limit, total_vectors as usize];
+        let mut rows = Vec::new();
+
+        for requested_limit in candidate_limits {
+            let candidate_limit = requested_limit.min(total_vectors as usize).max(limit) as i64;
+            let mut query_builder = sqlx::query(&query).bind(&query_blob).bind(candidate_limit);
+            if let Some(start) = &start_time {
+                query_builder = query_builder.bind(start);
+            }
+            if let Some(end) = &end_time {
+                query_builder = query_builder.bind(end);
+            }
+            rows = query_builder.fetch_all(self.pool()).await?;
+            if !filtered || rows.len() >= limit || candidate_limit >= total_vectors {
+                break;
+            }
+        }
+
+        let mut candidates: Vec<SemanticResult> = Vec::new();
+        for row in rows {
+            let distance: f32 = row.get("distance");
+            let similarity = 1.0 - distance;
+            if similarity < min_score {
+                continue;
+            }
+            let description: Option<String> = row.try_get("description").ok();
+            let frame = FrameRecord {
+                id: row.get("frame_id"),
+                chunk_id: None,
+                timestamp: row.get("timestamp"),
+                monitor_index: row.get("monitor_index"),
+                device_name: row.get("device_name"),
+                file_path: row.get("file_path"),
+                active_window: row.get("active_window"),
+                active_process: row.get("active_process"),
+                browser_url: row.get("browser_url"),
+                width: row.get("width"),
+                height: row.get("height"),
+                offset_index: row.get("offset_index"),
+                focused: row.get("focused"),
+                created_at: row.get::<DateTime<Utc>, _>("created_at"),
+                analysis_status: row.try_get("analysis_status").ok(),
+                description: description.clone(),
+                visible_text_json: row.try_get("visible_text_json").ok(),
+                activity_type: row.try_get("activity_type").ok(),
+                app_hint: row.try_get("app_hint").ok(),
+                confidence: row.try_get("confidence").ok(),
+                analysis_time_ms: row.try_get("analysis_time_ms").ok(),
+                analysis_error: row.try_get("analysis_error").ok(),
+            };
+            candidates.push(SemanticResult {
+                frame,
+                chunk_text: description.unwrap_or_default(),
+                chunk_index: -1,
+                similarity_score: similarity,
+                retrieval_source: "image".to_string(),
+            });
+        }
+
+        candidates.sort_by(|a, b| {
+            b.similarity_score
+                .partial_cmp(&a.similarity_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(candidates.into_iter().take(limit).collect())
+    }
+
+    /// Status of the image-embedding index (coverage over all stored frames).
+    pub async fn get_image_embedding_status(&self) -> Result<EmbeddingStatus> {
+        let total_frames = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM frames WHERE file_path IS NOT NULL AND TRIM(file_path) <> ''",
+        )
+        .fetch_one(self.pool())
+        .await?;
+
+        let frames_with_embeddings =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(DISTINCT frame_id) FROM image_embeddings")
+                .fetch_one(self.pool())
+                .await?;
+
+        let enabled = self
+            .get_metadata("image_embeddings_enabled")
+            .await?
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        let model = self
+            .get_metadata("image_embeddings_model")
+            .await?
+            .unwrap_or_else(|| "nomic-embed-vision-v1.5".to_string());
+        let provider = self
+            .get_metadata("image_embeddings_provider")
+            .await?
+            .unwrap_or_else(|| "unknown".to_string());
+        let model_version = self
+            .get_metadata("image_embeddings_model_version")
+            .await?
+            .unwrap_or_else(|| "unknown".to_string());
+        let dimension = self
+            .get_metadata("image_embeddings_dimension")
+            .await?
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        let reindex_required = self
+            .get_metadata("image_embeddings_reindex_required")
+            .await?
+            .map(|value| value == "true")
+            .unwrap_or(false);
+        let last_processed_frame_id = self
+            .get_metadata("image_embeddings_last_processed_frame_id")
+            .await?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+
+        let coverage_percent = if total_frames > 0 {
+            (frames_with_embeddings as f32 / total_frames as f32) * 100.0
+        } else {
+            0.0
+        };
+
+        Ok(EmbeddingStatus {
+            enabled,
+            model,
+            provider,
+            model_version,
+            dimension,
+            reindex_required,
+            total_frames,
+            frames_with_embeddings,
+            coverage_percent,
+            last_processed_frame_id,
+        })
+    }
+
+    /// Invalidate the image-embedding index when its model contract changes.
+    pub async fn ensure_image_embedding_model(
+        &self,
+        provider: &str,
+        model: &str,
+        model_version: &str,
+        dimension: usize,
+    ) -> Result<bool> {
+        let current_provider = self.get_metadata("image_embeddings_provider").await?;
+        let current_model = self.get_metadata("image_embeddings_model").await?;
+        let current_version = self.get_metadata("image_embeddings_model_version").await?;
+        let current_dimension = self.get_metadata("image_embeddings_dimension").await?;
+        let expected_dimension = dimension.to_string();
+
+        if current_provider.as_deref() == Some(provider)
+            && current_model.as_deref() == Some(model)
+            && current_version.as_deref() == Some(model_version)
+            && current_dimension.as_deref() == Some(expected_dimension.as_str())
+        {
+            return Ok(false);
+        }
+
+        let mut tx = self.pool().begin().await?;
+        sqlx::query("DELETE FROM image_embedding_vectors")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM image_embeddings")
+            .execute(&mut *tx)
+            .await?;
+        for (key, value) in [
+            ("image_embeddings_provider", provider),
+            ("image_embeddings_model", model),
+            ("image_embeddings_model_version", model_version),
+            ("image_embeddings_dimension", expected_dimension.as_str()),
+            ("image_embeddings_last_processed_frame_id", "0"),
+            ("image_embeddings_reindex_required", "true"),
+        ] {
+            sqlx::query(
+                "INSERT INTO metadata (key, value) VALUES (?, ?) \
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+            )
+            .bind(key)
+            .bind(value)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(true)
+    }
+
     pub async fn get_embedding_status(&self) -> Result<EmbeddingStatus> {
         let total_frames =
             sqlx::query_scalar::<_, i64>("SELECT COUNT(DISTINCT frame_id) FROM ocr_text")
