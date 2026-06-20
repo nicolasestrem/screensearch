@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Investigated (no code change)
+- **POC: `Qwen3-VL-Embedding-2B` for unified text+image retrieval — NO-GO.** Spiked
+  whether the multimodal embedding model could add a visual-recall path (embed
+  screenshots) on the existing pinned llama.cpp `b9728` server. Result: image data is
+  **silently ignored** by `llama-server`'s `/embedding` endpoint — two different
+  images produce byte-identical vectors (`cos = 1.0`), reproducing upstream issue
+  #19525 locally; the feature was never merged upstream (PR #18665 closed). Text
+  embedding works but the 2B model is a net regression for text-only (~5 GB VRAM + GPU
+  contention vs the in-process CPU EmbeddingGemma-300M). Recommendation: keep
+  EmbeddingGemma and instead **embed the existing generative vision `description`**
+  into the current 768-dim pipeline to close the non-OCR recall gap. Full findings +
+  verbatim evidence: `docs/qwen3vl-embedding-poc.md`.
+
 ### Added
 - **Complete frontend rebuild — "Command Deck" UI (greenfield).** The React UI was
   rebuilt from scratch with a new, deliberately non-generic visual identity:
