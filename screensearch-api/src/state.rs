@@ -5,6 +5,7 @@ use screensearch_db::DatabaseManager;
 use screensearch_embeddings::{EmbeddingEngine, EMBEDDING_DIM};
 use screensearch_llm::LlamaServer;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -137,35 +138,61 @@ impl AppState {
         Ok(engine_arc)
     }
 
-    /// Get or initialize the LlamaServer
-    pub async fn get_llama_server(&self) -> Result<Arc<LlamaServer>, String> {
-        use screensearch_llm::{resolve_model_path, LlamaServerConfig};
+    /// Resolve which model (and optional vision projector) the unified
+    /// llama-server should run.
+    ///
+    /// When vision is enabled with the local provider and a vision-capable
+    /// model + projector is available, the single server runs that model with
+    /// its `mmproj` so it serves both text generation and vision (Option B:
+    /// unify on gemma-4). Otherwise it runs the first discovered GGUF text-only.
+    async fn resolve_server_models(&self) -> (PathBuf, Option<PathBuf>) {
+        use screensearch_llm::{resolve_model_path, resolve_vision_model};
 
-        // Check if already initialized
-        {
-            let guard = self.llama_server.read().await;
-            if let Some(server) = guard.as_ref() {
+        if let Ok(settings) = self.db.get_settings().await {
+            if settings.vision_enabled != 0 && settings.vision_provider == "local" {
+                if let Some((model, mmproj)) = resolve_vision_model(&settings.vision_model) {
+                    return (model, Some(mmproj));
+                }
+            }
+        }
+
+        (resolve_model_path(), None)
+    }
+
+    /// Get or initialize the LlamaServer.
+    ///
+    /// The server is (re)built when the desired model/projector differs from
+    /// the cached one — e.g. when vision is toggled, which switches the unified
+    /// server to a gemma-4 model loaded with `--mmproj`. The whole compare/
+    /// rebuild runs under the write lock so concurrent callers (AI reports and
+    /// the vision worker) converge on a single server instance.
+    pub async fn get_llama_server(&self) -> Result<Arc<LlamaServer>, String> {
+        use screensearch_llm::LlamaServerConfig;
+
+        let (model_path, mmproj_path) = self.resolve_server_models().await;
+
+        let mut guard = self.llama_server.write().await;
+
+        // Reuse the cached server when it already targets the same model + projector.
+        if let Some(server) = guard.as_ref() {
+            if server.current_models().await == (model_path.clone(), mmproj_path.clone()) {
                 return Ok(Arc::clone(server));
             }
         }
 
-        // Use the first user-provided GGUF discovered in `.models/` (etc.),
-        // falling back to the downloadable default path.
-        let model_path = resolve_model_path();
+        // Desired model/projector changed: stop the stale server and rebuild.
+        if let Some(previous) = guard.take() {
+            previous.shutdown().await;
+        }
 
         let config = LlamaServerConfig {
             model_path,
+            mmproj_path,
             ..Default::default()
         };
 
-        let server = LlamaServer::new(config);
-        let server_arc = Arc::new(server);
-
-        // Store it
-        {
-            let mut guard = self.llama_server.write().await;
-            *guard = Some(Arc::clone(&server_arc));
-        }
+        let server_arc = Arc::new(LlamaServer::new(config));
+        *guard = Some(Arc::clone(&server_arc));
 
         Ok(server_arc)
     }

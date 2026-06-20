@@ -49,8 +49,20 @@
 | Grounded answer endpoint | `screensearch-api/src/handlers/generate.rs` |
 | Search modes | `screensearch-api/src/handlers/search.rs` |
 | Report generation endpoints | `screensearch-api/src/handlers/ai.rs` |
-| Generation provider client | `screensearch-vision/src/client.rs` |
+| Generation / vision provider client | `screensearch-vision/src/client.rs` |
 | Bundled local generation runtime | `screensearch-llm/` |
+| Unified server selection (text + vision) | `screensearch-api/src/state.rs` (`get_llama_server`) |
+
+## Vision (Screen Understanding)
+
+| Concern | File |
+|---|---|
+| `--mmproj` flag and server config | `screensearch-llm/src/server.rs` |
+| Model/projector discovery | `screensearch-llm/src/download.rs` (`resolve_mmproj_for`, `resolve_vision_model`) |
+| Vision worker (queue consumer) | `screensearch-api/src/workers/vision_worker.rs` |
+| Vision endpoints (analyze, status) | `screensearch-api/src/handlers/vision.rs` |
+| Queue and status queries | `screensearch-db/src/queries.rs` (`enqueue_frame_for_analysis`, `get_unanalyzed_frame_ids`, `get_vision_status`) |
+| `vision_*` settings columns | `screensearch-db/src/migrations.rs` |
 
 ## Frontend
 

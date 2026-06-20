@@ -29,6 +29,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .nest("/ai", ai_routes())
         // Embeddings endpoints (RAG)
         .nest("/embeddings", embeddings_routes())
+        // Vision analysis endpoints
+        .nest("/vision", vision_routes())
         // Download progress endpoints
         .nest("/downloads", downloads_routes())
         // RAG Answer generation
@@ -180,6 +182,13 @@ fn embeddings_routes() -> Router<Arc<AppState>> {
         .route("/models/prepare", post(handlers::prepare_quality_models))
         .route("/generate", post(handlers::generate_embeddings))
         .route("/enable", post(handlers::toggle_embeddings))
+}
+
+/// Vision analysis routes
+fn vision_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/status", get(handlers::get_vision_status))
+        .route("/analyze/:frame_id", post(handlers::analyze_frame))
 }
 
 /// Download progress routes

@@ -362,8 +362,12 @@ OUTPUT FORMAT (Markdown):
 
         // Get the endpoint from the running server (handles port fallback)
         let endpoint = format!("{}/v1", server.endpoint().await);
-        // Report the actual GGUF the server resolved (not a hardcoded name).
-        let model_name = screensearch_llm::resolve_model_path()
+        // Report the actual GGUF the server loaded (the unified server may run a
+        // vision model when vision is enabled), not a hardcoded name.
+        let model_name = server
+            .current_models()
+            .await
+            .0
             .file_stem()
             .and_then(|s| s.to_str())
             .map(|s| s.to_string())

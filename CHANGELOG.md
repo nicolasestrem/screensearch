@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **On-device vision (screen understanding) via the unified local llama-server.**
+  When vision is enabled with the `local` provider, the same auto-managed
+  llama.cpp server that answers AI reports is now launched with `--mmproj` so a
+  single Gemma&nbsp;4 model serves **both** text generation and image analysis
+  (Option B — unify on gemma-4). The vision worker analyzes frames against this
+  local server's OpenAI-compatible `/v1/chat/completions` endpoint (no external
+  Ollama/OpenAI needed) and populates each frame's `description`,
+  `visible_text`, `activity_type`, `app_hint`, and `confidence`.
+  - **Model/projector auto-discovery**: `resolve_mmproj_for()` pairs a model with
+    the correct `*mmproj*.gguf` projector beside it by size signature (e.g. an
+    E4B model gets the E4B projector, a 12B model the 12B projector; a text-only
+    model like Qwen3.5 is never mis-paired). `resolve_vision_model()` picks the
+    unified vision model, preferring a Gemma&nbsp;4 **E4B**. Drop a Gemma&nbsp;4
+    GGUF and its `*mmproj*.gguf` into `.models/`.
+  - **Enqueue is on-demand + throttled**: `POST /api/vision/analyze/:frame_id`
+    queues a single frame at high priority; the worker also trickles in a small
+    batch (4) of recent un-analyzed frames per idle cycle to keep GPU load
+    bounded. `GET /api/vision/status` reports per-status frame counts and queue
+    depth.
+  - The unified server is rebuilt automatically when vision is toggled (it
+    switches the loaded model to the vision model + projector and back).
+  - Files: `screensearch-llm/src/{server.rs,download.rs}`,
+    `screensearch-api/src/{state.rs,server.rs,routes.rs,handlers/vision.rs,
+    workers/vision_worker.rs}`, `screensearch-db/src/{queries.rs,models.rs}`.
 - **Bundled `onnxruntime.dll` (ONNX Runtime 1.24.2, x64) in all Windows
   artifacts**, so a fresh install has working semantic search out of the box. The
   in-process fastembed engine loads ONNX Runtime dynamically and looks for the DLL
@@ -64,6 +88,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and uses the first one found, instead of hardcoding Ministral-3B. The default
   download remains available as a fallback. `GET /api/ai/model/status` now lists
   discovered models via `available_models`.
+
+### Fixed
+- **Vision worker no longer risks a tight infinite loop / CPU pegging on a
+  failing frame.** Previously `fail_analysis_task` unlocked the task
+  (`locked_until = NULL`) without removing it, so the worker re-claimed and
+  re-failed the same task with zero delay — pegging a CPU core and flooding the
+  log. Failures now apply exponential backoff (1→2→4 min) and the task is dropped
+  from the queue after `MAX_ANALYSIS_ATTEMPTS` (3) tries; the frame stays marked
+  `failed` for manual retry.
+- **Frame-load and image-decode errors in the vision worker are now marked
+  failed instead of bubbling up.** A missing frame, corrupt screenshot, or
+  serialization error previously returned early via `?`, skipping
+  `fail_analysis_task` and leaving the task locked for 5 minutes only to fail
+  again. They are now logged, recorded as failed, and the worker continues. The
+  worker also cools down briefly after a failure.
+- **`get_vision_status` now does a single scan of `frames`** via conditional
+  aggregation instead of five sequential `COUNT(*)` round-trips.
 
 ### Removed
 - The Python sidecar (`sidecar/`), its PyInstaller packaging, and all sidecar

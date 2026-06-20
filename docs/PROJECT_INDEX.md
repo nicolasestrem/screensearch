@@ -18,6 +18,7 @@ grounded answers and reports, and exposes Windows automation APIs.
 | Reranking | Optional bge-reranker-v2-m3 (fastembed), off by default |
 | Citations | Stable `[frame:<id>]` identifiers |
 | Optional generation | Auto-discovered local GGUF via llama.cpp, Ollama-compatible, OpenAI-compatible |
+| Optional vision | On-device screen understanding via the unified local llama.cpp server (`--mmproj`, Gemma 4), or an external vision provider |
 
 ## Entry Points
 
@@ -29,6 +30,8 @@ grounded answers and reports, and exposes Windows automation APIs.
 | OCR | `screensearch-capture/src/ocr_provider.rs` |
 | Embeddings | `screensearch-embeddings/src/engine.rs` |
 | Generation runtime | `screensearch-llm/` |
+| Vision worker | `screensearch-api/src/workers/vision_worker.rs` |
+| Vision client | `screensearch-vision/src/client.rs` |
 | Frontend | `screensearch-ui/src/main.tsx` |
 | Installer | `installer/screensearch.iss` |
 
@@ -43,6 +46,7 @@ grounded answers and reports, and exposes Windows automation APIs.
 | `docs/developer-guide.md` | Development, testing, release |
 | `docs/quick-reference.md` | Commands and active contracts |
 | `docs/ai-quality-stack.md` | Model contract and evaluation |
+| `docs/vision.md` | On-device vision (screen understanding) setup and API |
 | `docs/security.md` | Privacy and security boundaries |
 | `docs/CODE_NAVIGATION.md` | File-level routing |
 
@@ -51,9 +55,12 @@ grounded answers and reports, and exposes Windows automation APIs.
 `config.toml` controls startup services such as capture, OCR provider,
 database, retention, and embedding worker defaults.
 
-The SQLite `settings` row controls runtime capture settings and optional
-generation-provider settings. Existing `vision_*` database names configure
-generation only.
+The SQLite `settings` row controls runtime capture settings, the optional
+generation provider, and the optional vision pipeline. The `vision_*` columns
+(`vision_enabled`, `vision_provider`, `vision_model`, `vision_endpoint`,
+`vision_api_key`) now configure on-device (or external) screenshot analysis;
+with `vision_provider = "local"` the unified llama.cpp server is used for both
+generation and vision.
 
 ## Generated And External Data
 

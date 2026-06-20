@@ -41,6 +41,8 @@ pub use config::{
 pub use download::{
     // Model discovery + download
     discover_local_models,
+    // Vision (multimodal projector) discovery
+    discover_vision_models,
     // llama-server download
     download_llama_server,
     download_llama_server_with_progress,
@@ -57,7 +59,9 @@ pub use download::{
     model_search_dirs,
     needs_download,
     needs_llama_server_download,
+    resolve_mmproj_for,
     resolve_model_path,
+    resolve_vision_model,
     DownloadProgress,
     LLAMA_SERVER_FILENAME,
     LLAMA_SERVER_SIZE_BYTES,

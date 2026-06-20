@@ -32,11 +32,19 @@ The application can make outbound requests for:
 
 - first-use Hugging Face model downloads (embedding and optional reranker);
 - bundled generation-model and llama-server downloads;
-- optional remote OpenAI-compatible generation.
+- optional remote OpenAI-compatible generation;
+- optional remote vision analysis (when `vision_provider` is `ollama`/`openai`).
 
 OCR, embeddings, sqlite-vec search, and reranking remain local. When remote
 generation is configured, selected OCR context and frame metadata leave the
 machine.
+
+Vision analysis runs **on-device** with `vision_provider = "local"` (image
+bytes never leave the machine — the bundled llama.cpp server analyzes them). With
+an external vision provider, the **screenshot image** (base64 JPEG), app name,
+and window title for each analyzed frame are sent to the configured endpoint —
+this is the only path that transmits raw pixels off the machine. Vision is off by
+default. See `docs/vision.md`.
 
 ## In-Process Inference
 

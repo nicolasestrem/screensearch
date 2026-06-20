@@ -311,6 +311,168 @@ pub fn resolve_model_path() -> PathBuf {
     get_model_path(&get_models_dir())
 }
 
+// ============================================================
+// Vision (multimodal projector) discovery
+// ============================================================
+
+/// Whether `token` looks like a model size marker such as `4b`, `12b`, `27b`,
+/// or `e4b` / `e2b` (an optional single-letter prefix, one or more digits, then
+/// a trailing `b`). Used to pair a model with the right `mmproj` projector when
+/// several projectors of different sizes sit in the same directory.
+fn is_size_token(token: &str) -> bool {
+    if token.len() < 2 || token.len() > 4 || !token.ends_with('b') {
+        return false;
+    }
+    let core = &token[..token.len() - 1];
+    // Drop an optional single leading letter (e.g. the `e` in `e4b`).
+    let digits = core
+        .strip_prefix(|c: char| c.is_ascii_alphabetic())
+        .unwrap_or(core);
+    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Extract the first size signature (e.g. `e4b`, `12b`) from a (lowercased)
+/// filename stem, if any. Tokens are split on non-alphanumeric characters.
+fn size_signature(stem_lower: &str) -> Option<String> {
+    stem_lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .find(|tok| is_size_token(tok))
+        .map(|tok| tok.to_string())
+}
+
+/// Count of shared tokens between two (lowercased) stems.
+fn token_overlap(a_lower: &str, b_lower: &str) -> usize {
+    let a: std::collections::HashSet<&str> = a_lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    b_lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .filter(|t| a.contains(t))
+        .count()
+}
+
+/// Whether a GGUF filename is a multimodal projector (its name contains
+/// `mmproj`, the llama.cpp convention).
+fn is_mmproj_file(path: &Path) -> bool {
+    let is_gguf = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("gguf"));
+    let named = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.to_ascii_lowercase().contains("mmproj"));
+    path.is_file() && is_gguf && named
+}
+
+/// Find the multimodal projector (`mmproj` GGUF) that pairs with `model_path`,
+/// if one sits beside it.
+///
+/// llama.cpp needs `--mmproj <projector>` to enable vision for models like
+/// Gemma 4. A directory may hold several projectors (e.g. one for E4B and one
+/// for 12B), so we match on the model's size signature; if the model has a
+/// size signature but no projector matches it, we return `None` rather than
+/// guessing (a text-only model like Qwen3.5 must not be paired with a Gemma
+/// projector).
+pub fn resolve_mmproj_for(model_path: &Path) -> Option<PathBuf> {
+    // A projector is never its own projector.
+    if is_mmproj_file(model_path) {
+        return None;
+    }
+    let dir = model_path.parent()?;
+    let model_stem = model_path.file_stem()?.to_str()?.to_ascii_lowercase();
+
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| is_mmproj_file(p))
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates.sort();
+
+    if let Some(model_sig) = size_signature(&model_stem) {
+        // Require the projector to share the model's size signature.
+        return candidates.into_iter().find(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .and_then(|s| size_signature(&s.to_ascii_lowercase()))
+                .as_deref()
+                == Some(model_sig.as_str())
+        });
+    }
+
+    // Model has no size signature: a single generic projector pairs cleanly;
+    // otherwise fall back to the best token overlap.
+    if candidates.len() == 1 {
+        return candidates.into_iter().next();
+    }
+    candidates.into_iter().max_by_key(|p| {
+        p.file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| token_overlap(&model_stem, &s.to_ascii_lowercase()))
+            .unwrap_or(0)
+    })
+}
+
+/// Discover every `(model, mmproj)` pair among the local GGUF models — i.e.
+/// every vision-capable model that has a matching projector beside it.
+///
+/// Ordering follows [`discover_local_models`] (directory priority, then
+/// filename), so it is stable across runs.
+pub fn discover_vision_models() -> Vec<(PathBuf, PathBuf)> {
+    discover_local_models()
+        .into_iter()
+        .filter_map(|model| resolve_mmproj_for(&model).map(|proj| (model, proj)))
+        .collect()
+}
+
+/// Resolve the vision model + projector to run for the unified local server.
+///
+/// Selection order:
+/// 1. A discovered vision model whose filename matches `preferred` (the
+///    `vision_model` setting), in either direction (substring).
+/// 2. A Gemma-4 **E4B** model — the unified default (small + fast).
+/// 3. The first vision-capable model discovered.
+///
+/// Returns `None` when no local model has a projector beside it.
+pub fn resolve_vision_model(preferred: &str) -> Option<(PathBuf, PathBuf)> {
+    let models = discover_vision_models();
+    if models.is_empty() {
+        return None;
+    }
+
+    let pref = preferred.trim().to_ascii_lowercase();
+    if !pref.is_empty() {
+        if let Some(found) = models.iter().find(|(m, _)| {
+            m.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| {
+                    let s = s.to_ascii_lowercase();
+                    s.contains(&pref) || pref.contains(&s)
+                })
+                .unwrap_or(false)
+        }) {
+            return Some(found.clone());
+        }
+    }
+
+    if let Some(found) = models.iter().find(|(m, _)| {
+        m.file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase().contains("e4b"))
+            .unwrap_or(false)
+    }) {
+        return Some(found.clone());
+    }
+
+    models.into_iter().next()
+}
+
 /// Check if the model exists and is valid
 pub fn model_exists(models_dir: &Path) -> bool {
     let model_path = get_model_path(models_dir);
@@ -788,6 +950,57 @@ mod tests {
         let dot = dirs.iter().position(|p| p == &PathBuf::from(".models"));
         let plain = dirs.iter().position(|p| p == &PathBuf::from("models"));
         assert!(dot < plain);
+    }
+
+    #[test]
+    fn test_is_size_token() {
+        assert!(is_size_token("4b"));
+        assert!(is_size_token("12b"));
+        assert!(is_size_token("e4b"));
+        assert!(is_size_token("27b"));
+        assert!(!is_size_token("q4"));
+        assert!(!is_size_token("b"));
+        assert!(!is_size_token("mmproj"));
+        assert!(!is_size_token("gemma"));
+    }
+
+    #[test]
+    fn test_size_signature() {
+        assert_eq!(
+            size_signature("gemma-4-e4b_q4_0-it"),
+            Some("e4b".to_string())
+        );
+        assert_eq!(
+            size_signature("gemma-4-12b-it-qat-q4_0"),
+            Some("12b".to_string())
+        );
+        assert_eq!(size_signature("qwen3.5-4b-q4_k_s"), Some("4b".to_string()));
+        assert_eq!(size_signature("some-model-no-size"), None);
+    }
+
+    #[test]
+    fn test_resolve_mmproj_for_pairs_by_size() {
+        let dir = std::env::temp_dir().join("ss_mmproj_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let e4b = dir.join("gemma-4-E4B_q4_0-it.gguf");
+        let twelveb = dir.join("gemma-4-12b-it-qat-q4_0.gguf");
+        let qwen = dir.join("Qwen3.5-4B-Q4_K_S.gguf");
+        let proj_e4b = dir.join("gemma-4-E4B-it-mmproj.gguf");
+        let proj_12b = dir.join("mmproj-gemma-4-12b-it-qat-q4_0.gguf");
+        for f in [&e4b, &twelveb, &qwen, &proj_e4b, &proj_12b] {
+            std::fs::write(f, b"x").unwrap();
+        }
+
+        assert_eq!(resolve_mmproj_for(&e4b), Some(proj_e4b.clone()));
+        assert_eq!(resolve_mmproj_for(&twelveb), Some(proj_12b.clone()));
+        // Qwen has size sig 4b but no 4b projector → must not be paired.
+        assert_eq!(resolve_mmproj_for(&qwen), None);
+        // A projector is never its own projector.
+        assert_eq!(resolve_mmproj_for(&proj_e4b), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

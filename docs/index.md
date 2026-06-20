@@ -78,9 +78,10 @@ The API build script rebuilds changed frontend sources automatically.
 - `[embeddings]`;
 - `[api]`.
 
-Runtime settings in SQLite control capture state, retention, exclusions, and
-the optional generation provider. The legacy `vision_*` field names refer to
-generation, not OCR or embedding retrieval.
+Runtime settings in SQLite control capture state, retention, exclusions, the
+optional generation provider, and the optional vision pipeline. The `vision_*`
+field names configure generation and on-device/external screenshot analysis (not
+OCR or embedding retrieval). See `docs/vision.md`.
 
 ## Troubleshooting
 

@@ -332,6 +332,29 @@ pub struct AnalysisQueueItem {
     pub last_error: Option<String>,
 }
 
+/// Aggregate status of vision (frame) analysis across the database.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct VisionStatus {
+    /// Whether vision analysis is enabled in settings (0/1).
+    pub enabled: i64,
+    /// The configured vision provider (e.g. "local", "ollama").
+    pub provider: String,
+    /// The configured vision model name.
+    pub model: String,
+    /// Total frames in the database.
+    pub total_frames: i64,
+    /// Frames whose analysis completed.
+    pub completed: i64,
+    /// Frames queued or claimed for analysis.
+    pub pending: i64,
+    /// Frames currently being analyzed.
+    pub processing: i64,
+    /// Frames whose last analysis attempt failed.
+    pub failed: i64,
+    /// Number of items waiting in the analysis queue.
+    pub queue_depth: i64,
+}
+
 /// Request bundle for testing vision connection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestVisionRequest {

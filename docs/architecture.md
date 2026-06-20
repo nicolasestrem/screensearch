@@ -179,6 +179,26 @@ or reranking. Local generation keeps grounded context on-device. Remote
 generation sends the selected context, app names, and window titles to the
 configured provider.
 
+### Unified Local Vision
+
+When vision is enabled with the `local` provider, the same managed
+`llama.cpp` server is launched with `--mmproj` so one Gemma&nbsp;4 model serves
+both text generation and image analysis (one process, one model in VRAM).
+`resolve_vision_model` selects the unified vision model (preferring a
+Gemma&nbsp;4 E4B) and `resolve_mmproj_for` pairs it with the matching
+`*mmproj*.gguf` projector found beside it (matched by size signature, so a
+text-only model such as Qwen3.5 is never mis-paired). `AppState::get_llama_server`
+rebuilds the server when vision is toggled, swapping the loaded model/projector.
+
+The vision worker (`screensearch-api/src/workers/vision_worker.rs`) consumes the
+`analysis_queue` and calls the local server's OpenAI-compatible vision endpoint.
+Frames are enqueued **on demand** (`POST /api/vision/analyze/:frame_id`, high
+priority) and as a **throttled** background trickle of recent un-analyzed frames,
+bounding GPU load. Results are written back to each frame (`description`,
+`visible_text`, `activity_type`, `app_hint`, `confidence`). With external
+providers (Ollama / OpenAI-compatible), the worker targets the configured
+endpoint instead and no local server is started.
+
 ## Runtime Status
 
 `GET /api/embeddings/status` exposes:

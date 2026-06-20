@@ -68,6 +68,10 @@ impl ServerStatus {
 pub struct LlamaServerConfig {
     /// Path to the GGUF model file
     pub model_path: PathBuf,
+    /// Optional multimodal projector (mmproj) GGUF. When set, the server is
+    /// started with `--mmproj`, enabling vision input (image_url) for models
+    /// like Gemma 4. `None` = text-only server.
+    pub mmproj_path: Option<PathBuf>,
     /// Port to listen on
     pub port: u16,
     /// Host to bind to (always 127.0.0.1 for security)
@@ -89,6 +93,7 @@ impl Default for LlamaServerConfig {
     fn default() -> Self {
         Self {
             model_path: PathBuf::new(),
+            mmproj_path: None,
             port: DEFAULT_LLAMA_PORT,
             host: "127.0.0.1".to_string(),
             idle_ttl: Duration::from_secs(DEFAULT_IDLE_TTL_SECS),
@@ -171,6 +176,14 @@ impl LlamaServer {
     /// Update the configuration (requires restart to take effect)
     pub async fn update_config(&self, config: LlamaServerConfig) {
         *self.config.write().await = config;
+    }
+
+    /// The model + optional projector this server is configured to run. Used to
+    /// decide whether a cached server can be reused or must be rebuilt (e.g.
+    /// when vision is toggled and the unified model/projector changes).
+    pub async fn current_models(&self) -> (PathBuf, Option<PathBuf>) {
+        let config = self.config.read().await;
+        (config.model_path.clone(), config.mmproj_path.clone())
     }
 
     /// Update idle TTL
@@ -307,6 +320,14 @@ impl LlamaServer {
             // correct formatting of modern instruct models and to surface
             // reasoning/"thinking" output from models like Qwen3.5 / Gemma 4.
             .arg("--jinja");
+
+        // Load a multimodal projector when configured so the same server can
+        // also answer vision (image_url) requests (Option B: one unified
+        // gemma-4 server serves both text and vision).
+        if let Some(mmproj) = &config.mmproj_path {
+            info!("Enabling vision: loading mmproj projector {:?}", mmproj);
+            cmd.arg("--mmproj").arg(mmproj);
+        }
 
         // Add GPU flag if enabled (use configured number of layers)
         if use_gpu {

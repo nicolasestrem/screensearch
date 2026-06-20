@@ -103,6 +103,26 @@ With a remote provider, the selected OCR passages and frame metadata used for
 generation leave the machine. OCR, embeddings, vector search, and reranking
 remain local.
 
+### Vision (Screen Understanding)
+
+Vision analysis is optional and **off by default**. When enabled, ScreenSearch
+looks at the *image* of each screenshot (not just its OCR text) and records a
+short description, the prominent on-screen text, an activity type, and a
+confidence score for each frame.
+
+- **Bundled local model (on-device)**: drop a **Gemma 4** model **and** its
+  `*mmproj*.gguf` projector into `.models/`, then enable vision with the *local*
+  provider. ScreenSearch reuses the same llama.cpp server as answer generation,
+  loading the projector so one model handles both — image bytes never leave the
+  machine.
+- **Ollama / OpenAI-compatible**: point vision at an external vision model. The
+  screenshot, app name, and window title for each analyzed frame are sent to that
+  provider.
+
+Frames are analyzed on demand and as a throttled background trickle, so enabling
+vision gradually works through your history without flooding the GPU. Turn vision
+off to stop it. See `docs/vision.md` for setup, model selection, and the API.
+
 ## Search Modes
 
 ### Keyword

@@ -60,18 +60,28 @@ curl -X POST "http://127.0.0.1:3131/api/generate" \
 Sources are returned as frame IDs. Context sent to the generation LLM is
 marked with `[frame:<id>]`.
 
-## Generation Provider
+## Generation And Vision Provider
 
-Generation settings are stored through `/api/settings/`. They do not control
-OCR or retrieval.
+Generation and vision settings are stored through `/api/settings/`. They do not
+control OCR or retrieval.
 
-Supported `vision_provider` values:
+Supported `vision_provider` values (shared by generation and vision):
 
 | Value | Runtime |
 |---|---|
-| `local` | Bundled llama.cpp server (auto-discovers `*.gguf`; Ministral-3B default) |
+| `local` | Bundled llama.cpp server (auto-discovers `*.gguf`; Ministral-3B default). For vision it loads a Gemma 4 model + `--mmproj` and serves both text and images. |
 | `ollama` | Ollama-compatible server |
 | `openai` | OpenAI-compatible endpoint |
+
+### Vision endpoints
+
+| Method | Path |
+|---|---|
+| `POST` | `/api/vision/analyze/:frame_id` |
+| `GET`  | `/api/vision/status` |
+
+Vision is off by default; enable via `vision_enabled=1`. On-demand enqueue plus a
+throttled background trickle. See `docs/vision.md`.
 
 ## Configuration
 
