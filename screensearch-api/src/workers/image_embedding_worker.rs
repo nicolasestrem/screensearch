@@ -83,6 +83,14 @@ impl ImageEmbeddingWorker {
                 }
             };
             let Some(embedding) = vectors.into_iter().next() else {
+                // No vector for a valid path: advance the cursor so this frame
+                // isn't re-fetched forever (the query filters on f.id > cursor).
+                self.db
+                    .set_metadata(
+                        "image_embeddings_last_processed_frame_id",
+                        &frame.id.to_string(),
+                    )
+                    .await?;
                 continue;
             };
 
@@ -93,6 +101,10 @@ impl ImageEmbeddingWorker {
                     self.engine.provider(),
                     self.engine.model(),
                     self.engine.model_version(),
+                    // Hashes the file path, not the pixels: identifies which frame
+                    // the vector belongs to, not whether the image bytes changed.
+                    // Re-embedding is driven by model-contract changes
+                    // (ensure_image_embedding_model), not silent file edits.
                     &EmbeddingEngine::content_hash(&frame.file_path),
                 )
                 .await?;

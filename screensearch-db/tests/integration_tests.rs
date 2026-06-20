@@ -1178,3 +1178,40 @@ async fn test_hybrid_search_fuses_image_results() {
 
     db.close().await;
 }
+
+/// The image-embedding cursor (`image_embeddings_last_processed_frame_id`) makes
+/// get_frames_without_image_embeddings skip frames at or below the cursor, so a
+/// frame that failed to embed is not re-fetched forever.
+#[tokio::test]
+async fn test_image_embedding_cursor_skips_processed_frames() {
+    let (db, _path) = create_test_db().await;
+
+    let f1 = db
+        .insert_frame(create_test_frame(Utc::now(), "app", "One"))
+        .await
+        .unwrap();
+    let f2 = db
+        .insert_frame(create_test_frame(Utc::now(), "app", "Two"))
+        .await
+        .unwrap();
+    let f3 = db
+        .insert_frame(create_test_frame(Utc::now(), "app", "Three"))
+        .await
+        .unwrap();
+
+    // No embeddings yet -> all three eligible.
+    let pending = db.get_frames_without_image_embeddings(10).await.unwrap();
+    assert_eq!(pending.len(), 3);
+
+    // Simulate the worker advancing the cursor past f2 (e.g. f1/f2 failed to
+    // embed). Only f3 should remain eligible — f1/f2 are not retried.
+    db.set_metadata("image_embeddings_last_processed_frame_id", &f2.to_string())
+        .await
+        .unwrap();
+    let pending = db.get_frames_without_image_embeddings(10).await.unwrap();
+    let ids: Vec<i64> = pending.iter().map(|f| f.id).collect();
+    assert_eq!(ids, vec![f3]);
+    assert!(!ids.contains(&f1) && !ids.contains(&f2));
+
+    db.close().await;
+}

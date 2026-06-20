@@ -459,8 +459,19 @@ async fn run_image_embedding_job(state: &Arc<AppState>, batch_size: i64) -> i64 
 
     let mut total: i64 = 0;
     loop {
+        // Stop when no eligible frames remain. We gate on remaining frames (not on
+        // the embedded count) so a batch that only contains un-embeddable frames
+        // doesn't end the drain prematurely. The worker advances its cursor on
+        // every frame (success/failure/empty), so this always terminates.
+        match state.db.get_frames_without_image_embeddings(1).await {
+            Ok(pending) if pending.is_empty() => break,
+            Ok(_) => {}
+            Err(error) => {
+                warn!("Failed to check image-embedding backlog: {}", error);
+                break;
+            }
+        }
         match worker.process_batch().await {
-            Ok(0) => break,
             Ok(count) => total += count as i64,
             Err(error) => {
                 warn!("Image embedding batch failed: {}", error);

@@ -188,6 +188,9 @@ stored frames (no OCR requirement).
 
 Enable/disable the image index at runtime (JSON boolean body). The background
 image worker is always running and starts/stops processing accordingly.
+Disabling stops further indexing and search fusion but does not unload the
+already-loaded nomic models from memory until the process restarts (the same
+behaviour as the text embedding engine).
 
 ```bash
 curl -X POST "http://127.0.0.1:3131/api/embeddings/image/enable" \

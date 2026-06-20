@@ -1493,10 +1493,23 @@ impl DatabaseManager {
     /// processing). Unlike text embedding, this has no OCR requirement — image
     /// recall must work for frames with little/no on-screen text — but the frame
     /// must reference a stored screenshot (`file_path`).
+    ///
+    /// Filters on `f.id > image_embeddings_last_processed_frame_id` so the worker
+    /// makes forward progress: a frame that fails to embed (corrupt/missing file)
+    /// is not re-fetched on every batch/tick (the worker advances the cursor past
+    /// it), and the query is a bounded forward scan rather than a full table scan.
+    /// The cursor is reset to 0 by `ensure_image_embedding_model` on a model
+    /// change, which triggers a full re-index.
     pub async fn get_frames_without_image_embeddings(
         &self,
         limit: i64,
     ) -> Result<Vec<FrameRecord>> {
+        let last_id = self
+            .get_metadata("image_embeddings_last_processed_frame_id")
+            .await?
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+
         let frames = sqlx::query_as::<_, FrameRecord>(
             r#"
             SELECT f.id, f.chunk_id, f.timestamp, f.monitor_index, f.device_name,
@@ -1506,13 +1519,15 @@ impl DatabaseManager {
                    f.app_hint, f.confidence, f.analysis_time_ms, f.analysis_error
             FROM frames f
             LEFT JOIN image_embeddings ie ON f.id = ie.frame_id
-            WHERE ie.id IS NULL
+            WHERE f.id > ?
+              AND ie.id IS NULL
               AND f.file_path IS NOT NULL
               AND TRIM(f.file_path) <> ''
             ORDER BY f.id ASC
             LIMIT ?
             "#,
         )
+        .bind(last_id)
         .bind(limit)
         .fetch_all(self.pool())
         .await?;

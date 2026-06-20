@@ -163,12 +163,15 @@ impl AppState {
     /// Return the image-embedding engine only if it is already loaded, without
     /// triggering a (potentially slow first-run) load. Used on the search path so
     /// image fusion never blocks a query on a model download.
+    ///
+    /// Uses `try_read` (not `read().await`): `get_image_embedding_engine` holds the
+    /// write lock for the whole first-run model download, and a search query must
+    /// never block on that — a held write lock simply means "not ready yet".
     pub async fn image_embedding_engine_if_ready(&self) -> Option<Arc<ImageEmbeddingEngine>> {
         self.image_embedding_engine
-            .read()
-            .await
-            .as_ref()
-            .map(Arc::clone)
+            .try_read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(Arc::clone))
     }
 
     /// Get or initialize the image-embedding engine (nomic vision + text).
