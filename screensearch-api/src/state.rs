@@ -376,12 +376,15 @@ async fn embedding_download_watcher(state: AppState, stop: Arc<AtomicBool>) {
         prev_sizes = sizes;
 
         if let Some((size, delta)) = best {
-            let speed = (delta as f64 / dt) as u64;
+            // A published tick always has delta > 0 (best is only set on growth),
+            // so speed is positive; `max(1)` guards the division and avoids a
+            // misleading "0s left" if a tick rounds down to 0 B/s.
+            let speed = ((delta as f64 / dt) as u64).max(1);
             // Keep the estimate as the floor for `total` so the bar never
             // exceeds 100% if the real file is larger than the estimate.
             let total_bytes = total.max(size);
             let remaining = total_bytes.saturating_sub(size);
-            let eta_seconds = remaining.checked_div(speed).unwrap_or(0);
+            let eta_seconds = remaining / speed;
             state
                 .update_download_progress(
                     "embedding_model".to_string(),

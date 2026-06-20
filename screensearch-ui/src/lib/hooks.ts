@@ -111,11 +111,11 @@ export const useValidateAi = () =>
 export function useUpdateSettings() {
   const qc = useQueryClient()
   return useMutation({
+    // No success toast: settings auto-save on a 600 ms debounce, so a toast per
+    // keystroke would be noise. The Settings header shows a live "Saving… /
+    // Saved ✓" indicator instead. Errors still surface as a toast.
     mutationFn: (body: UpdateSettings) => api.updateSettings(body),
-    onSuccess: (s) => {
-      qc.setQueryData(['settings'], s)
-      toast.success('Settings saved')
-    },
+    onSuccess: (s) => qc.setQueryData(['settings'], s),
     onError: (e) => toast.error(`Couldn't save settings: ${errText(e)}`),
   })
 }

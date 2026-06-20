@@ -40,11 +40,13 @@ export default function Recall() {
 
   // AI report provider — now sourced from persisted backend settings (was a
   // browser-only Zustand store). The local engine is always usable; a remote
-  // provider needs both a URL and a model.
+  // provider needs both a URL and a model. Default to '' (not 'local') while
+  // settings are still loading so the Generate button isn't briefly enabled with
+  // an unconfirmed provider. The API key is write-only and never returned, so the
+  // request omits it and the backend falls back to the stored key.
   const settings = useSettings().data
-  const aiProviderUrl = settings?.ai_provider_url ?? 'local'
+  const aiProviderUrl = settings?.ai_provider_url ?? ''
   const aiModel = settings?.ai_model ?? ''
-  const aiApiKey = settings?.ai_api_key ?? ''
 
   // ---- Ask ----
   const [question, setQuestion] = useState('')
@@ -95,7 +97,7 @@ export default function Recall() {
     }
     report.mutate({
       provider_url: aiProviderUrl,
-      api_key: aiApiKey || undefined,
+      api_key: undefined, // write-only; backend uses the stored key
       model: aiModel,
       start_time: start,
       end_time: end,

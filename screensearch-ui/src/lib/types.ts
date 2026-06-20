@@ -172,7 +172,8 @@ export interface Settings {
   // AI report-provider config (persisted as DB metadata, merged in by the API).
   ai_provider_url: string
   ai_model: string
-  ai_api_key?: string | null
+  // The raw key is never returned; only whether one is stored.
+  ai_has_api_key: boolean
 }
 
 export interface UpdateSettings {

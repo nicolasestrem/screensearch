@@ -736,7 +736,12 @@ pub struct SettingsResponse {
     pub base: SettingsRecord,
     pub ai_provider_url: String,
     pub ai_model: String,
-    pub ai_api_key: Option<String>,
+    /// Whether an API key is stored — the raw key is deliberately NOT returned.
+    /// ScreenSearch captures the screen, so echoing the key into every
+    /// `GET /settings` response (and onto the settings page) would risk capturing
+    /// it. The form shows a "saved" placeholder from this flag and only sends a
+    /// new value when the user edits the field.
+    pub ai_has_api_key: bool,
 }
 
 /// Settings update payload: the base settings plus the optional AI provider
@@ -761,7 +766,7 @@ async fn build_settings_response(state: &AppState, base: SettingsRecord) -> Sett
         base,
         ai_provider_url,
         ai_model,
-        ai_api_key,
+        ai_has_api_key: ai_api_key.is_some(),
     }
 }
 

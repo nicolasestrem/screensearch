@@ -18,6 +18,15 @@ use tracing::{debug, error, info, warn};
 /// Local LLM server endpoint (llama.cpp server on port 31130)
 const LOCAL_LLM_ENDPOINT: &str = "http://127.0.0.1:31130/v1";
 
+/// Build an HTTP client with a request timeout so a stalled or unreachable AI
+/// provider can't hold an Axum handler (and its task) open indefinitely.
+fn http_client(timeout: std::time::Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 /// Metadata keys for the persisted AI report-provider config. Stored as
 /// database metadata (like `answer_model` / `embeddings_enabled`) so the
 /// provider survives restarts and is shared by every report request, instead of
@@ -180,17 +189,25 @@ struct OpenAIUsage {
 /// POST /ai/validate
 /// Tests connection to the configured AI provider
 pub async fn validate_connection(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Json(payload): Json<AiConnectionRequest>,
 ) -> Result<Json<AiConnectionResponse>> {
     debug!("Validating AI connection to {}", payload.provider_url);
+
+    // The API key is write-only in the UI (GET /settings never returns it), so a
+    // "Test connection" with the field left blank should still authenticate using
+    // the stored key. Fall back to the persisted key when the request omits it.
+    let api_key = match &payload.api_key {
+        Some(k) if !k.is_empty() => Some(k.clone()),
+        _ => load_ai_provider_config(&state.db).await.2,
+    };
 
     // Handle local provider specially
     if payload.provider_url == "local" {
         let models_dir = get_models_dir();
         if local_model_available() {
             // Check if llama-server is running
-            let client = reqwest::Client::new();
+            let client = http_client(std::time::Duration::from_secs(10));
             match client
                 .get(format!("{}/models", LOCAL_LLM_ENDPOINT))
                 .send()
@@ -233,7 +250,7 @@ pub async fn validate_connection(
         }));
     }
 
-    let client = reqwest::Client::new();
+    let client = http_client(std::time::Duration::from_secs(20));
 
     // We'll try a simple completion or models list request to verify connectivity
     // Using /models for Ollama or OpenAI usually works
@@ -241,7 +258,7 @@ pub async fn validate_connection(
 
     // First try listing models endpoint (works for Ollama and OpenAI)
     let request_builder = client.get(&url);
-    let request_builder = add_auth_header(request_builder, &payload.api_key);
+    let request_builder = add_auth_header(request_builder, &api_key);
 
     match request_builder.send().await {
         Ok(res) => {
@@ -448,7 +465,9 @@ OUTPUT FORMAT (Markdown):
         }
     }
 
-    let client = reqwest::Client::new();
+    // Long-form generation can legitimately take minutes; use a generous timeout
+    // rather than none so a hung provider eventually frees the handler.
+    let client = http_client(std::time::Duration::from_secs(600));
     // Ensure we handle URL construction carefully. Most providers need /chat/completions
     let url = format!("{}/chat/completions", effective_url.trim_end_matches('/'));
 

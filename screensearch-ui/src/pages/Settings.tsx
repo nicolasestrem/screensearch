@@ -123,10 +123,14 @@ export default function Settings() {
   const [visionModel, setVisionModel] = useState('')
   const [visionEndpoint, setVisionEndpoint] = useState('')
   const [visionApiKey, setVisionApiKey] = useState('')
-  // AI report provider (now persisted server-side, not browser-only).
+  // AI report provider (now persisted server-side, not browser-only). The API
+  // key is write-only: GET /settings never returns it (only `ai_has_api_key`), so
+  // the form sends a value ONLY when the user edits the field (`aiApiKeyDirty`).
+  // Untouched → omitted → backend keeps the stored key; edited to "" → clears it.
   const [aiProviderUrl, setAiProviderUrl] = useState('local')
   const [aiModel, setAiModel] = useState('')
   const [aiApiKey, setAiApiKey] = useState('')
+  const [aiApiKeyDirty, setAiApiKeyDirty] = useState(false)
 
   // Populate the form once on first load; later background refetches must not
   // clobber the user's unsaved edits. `lastSaved` holds the serialized body that
@@ -136,8 +140,8 @@ export default function Settings() {
   const lastSaved = useRef('')
 
   const buildBody = useMemo(
-    () =>
-      (): UpdateSettings => ({
+    () => (): UpdateSettings => {
+      const body: UpdateSettings = {
         capture_interval: captureInterval,
         monitors: JSON.stringify(monSel),
         excluded_apps: JSON.stringify(excluded),
@@ -150,8 +154,12 @@ export default function Settings() {
         vision_api_key: visionApiKey || null,
         ai_provider_url: aiProviderUrl,
         ai_model: aiModel,
-        ai_api_key: aiApiKey || null,
-      }),
+      }
+      // Write-only key: include it only after the user edits the field, so an
+      // unrelated edit can't blank a stored key (and "" explicitly clears it).
+      if (aiApiKeyDirty) body.ai_api_key = aiApiKey
+      return body
+    },
     [
       captureInterval,
       monSel,
@@ -166,6 +174,7 @@ export default function Settings() {
       aiProviderUrl,
       aiModel,
       aiApiKey,
+      aiApiKeyDirty,
     ]
   )
 
@@ -184,9 +193,11 @@ export default function Settings() {
     setVisionApiKey(s.vision_api_key || '')
     setAiProviderUrl(s.ai_provider_url || 'local')
     setAiModel(s.ai_model || '')
-    setAiApiKey(s.ai_api_key || '')
+    // ai_api_key is write-only: the backend never returns it, so the field starts
+    // blank and is omitted from the baseline below (matching `buildBody` while
+    // `aiApiKeyDirty` is false).
     // Mark the just-loaded values as the saved baseline so the auto-save effect
-    // doesn't immediately POST them back.
+    // doesn't immediately POST them back. Key order MUST match `buildBody`.
     lastSaved.current = JSON.stringify({
       capture_interval: s.capture_interval,
       monitors: JSON.stringify(parseArr(s.monitors).map(Number).filter((n) => !Number.isNaN(n))),
@@ -200,7 +211,6 @@ export default function Settings() {
       vision_api_key: s.vision_api_key || null,
       ai_provider_url: s.ai_provider_url || 'local',
       ai_model: s.ai_model || '',
-      ai_api_key: s.ai_api_key || null,
     } satisfies UpdateSettings)
     setInitialized(true)
   }, [settingsQ.data, initialized])
@@ -215,8 +225,9 @@ export default function Settings() {
     const snap = JSON.stringify(body)
     if (snap === lastSaved.current) return
     const t = setTimeout(() => {
-      lastSaved.current = snap
-      mutateRef.current(body)
+      // Stamp the baseline only after the save succeeds — otherwise a failed save
+      // would mark the failed values as "in sync" and never retry them.
+      mutateRef.current(body, { onSuccess: () => { lastSaved.current = snap } })
     }, 600)
     return () => clearTimeout(t)
   }, [initialized, buildBody])
@@ -616,12 +627,14 @@ export default function Settings() {
               </p>
 
               <div className="flex flex-wrap gap-2">
-                {!modelStatus?.downloaded && (
+                {/* Guard on the query being loaded so the buttons don't flash on
+                    first paint (when `modelStatus`/`server` are still undefined). */}
+                {modelStatus && !modelStatus.downloaded && (
                   <Button variant="ghost" onClick={() => downloadModel.mutate()} disabled={downloadModel.isPending}>
                     Download default model
                   </Button>
                 )}
-                {!server?.server_binary_available && (
+                {server && !server.server_binary_available && (
                   <Button variant="ghost" onClick={() => serverCtl.downloadServer.mutate()} disabled={serverCtl.downloadServer.isPending}>
                     Download server binary
                   </Button>
@@ -651,7 +664,18 @@ export default function Settings() {
                   <input value={aiModel} onChange={(e) => setAiModel(e.target.value)} placeholder="e.g. llama3.1" className={inputCls} />
                 </Field>
                 <Field label="API key (optional)">
-                  <input value={aiApiKey} onChange={(e) => setAiApiKey(e.target.value)} type="password" placeholder="sk-…" className={inputCls} />
+                  <input
+                    value={aiApiKey}
+                    onChange={(e) => {
+                      setAiApiKey(e.target.value)
+                      setAiApiKeyDirty(true)
+                    }}
+                    type="password"
+                    placeholder={
+                      settingsQ.data?.ai_has_api_key && !aiApiKeyDirty ? '•••••••• saved — type to replace' : 'sk-…'
+                    }
+                    className={inputCls}
+                  />
                 </Field>
               </div>
               <div className="flex flex-wrap items-center gap-3">

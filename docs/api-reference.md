@@ -244,7 +244,11 @@ what is actually captured.
 
 ### `GET /settings`
 
-Returns capture, privacy, retention, and optional generation settings.
+Returns capture, privacy, retention, and optional generation settings. The AI
+report-provider config is included as `ai_provider_url`, `ai_model`, and
+`ai_has_api_key` (a boolean). The **raw API key is never returned** — ScreenSearch
+captures the screen, so echoing the key into the response (and onto the settings
+page) would risk capturing it.
 
 ### `POST /settings`
 
@@ -264,7 +268,7 @@ Example:
   "vision_api_key": null,
   "ai_provider_url": "local",
   "ai_model": "",
-  "ai_api_key": null
+  "ai_api_key": "sk-…"
 }
 ```
 
@@ -273,11 +277,12 @@ array `"[]"` means **all monitors**. Updating it reconfigures the running captur
 engine immediately — no restart required — and the value is restored at startup.
 
 `ai_provider_url` / `ai_model` / `ai_api_key` are the report-generation provider
-config. They are persisted as database metadata (not `SettingsRecord` columns) and
-merged into the `GET/POST /settings` payload, so a configured provider survives a
-reload and is used by `POST /ai/generate` (the request body still overrides them).
-`"local"` routes Reports through the bundled llama-server; the AI fields are optional
-on `POST /settings` — omit them to leave the persisted provider untouched.
+config, persisted as database metadata (not `SettingsRecord` columns) and used by
+`POST /ai/generate` and `POST /ai/validate` when the request omits them (the request
+body still overrides). `"local"` routes Reports through the bundled llama-server.
+All three AI fields are optional on `POST /settings` — **omit a field to leave it
+unchanged**; send `ai_api_key: ""` to clear a stored key. (The UI sends the key only
+when the user edits it, so unrelated edits never overwrite or clear it.)
 
 The `vision_*` names are retained by the database API for compatibility. They
 configure only the optional generation LLM. OCR and retrieval are configured
