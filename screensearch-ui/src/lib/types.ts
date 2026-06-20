@@ -209,6 +209,8 @@ export interface ModelStatus {
   model_size_bytes: number
   model_path?: string | null
   available_models: string[]
+  /** The user's explicit answer-model pin (path/substring), '' when auto. */
+  selected: string
 }
 
 export interface GenerateAnswer {

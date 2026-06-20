@@ -358,6 +358,42 @@ pub fn resolve_model_path() -> PathBuf {
     get_model_path(&get_models_dir())
 }
 
+/// Resolve the answer-generation model honoring a user's explicit choice.
+///
+/// When `preferred` (the persisted `answer_model` setting) names a discovered
+/// GGUF — by full path or any case-insensitive substring of its filename stem,
+/// in either direction — that model is used verbatim, even if it is a
+/// `thinking`/`action` build the auto-scorer would normally avoid: an explicit
+/// choice is an override. When `preferred` is empty or matches nothing on disk,
+/// this falls back to [`resolve_model_path`]'s automatic selection.
+pub fn resolve_answer_model(preferred: &str) -> PathBuf {
+    let pref = preferred.trim().to_ascii_lowercase();
+    if !pref.is_empty() {
+        let found = discover_local_models().into_iter().find(|p| {
+            // Match by full path or by filename-stem substring (either way).
+            if p.to_string_lossy().to_ascii_lowercase() == pref {
+                return true;
+            }
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| {
+                    let s = s.to_ascii_lowercase();
+                    s.contains(&pref) || pref.contains(&s)
+                })
+                .unwrap_or(false)
+        });
+        if let Some(found) = found {
+            debug!("Using user-selected answer model: {:?}", found);
+            return found;
+        }
+        debug!(
+            "Preferred answer model {:?} not found on disk; falling back to auto-select",
+            preferred
+        );
+    }
+    resolve_model_path()
+}
+
 // ============================================================
 // Vision (multimodal projector) discovery
 // ============================================================
@@ -398,6 +434,75 @@ fn token_overlap(a_lower: &str, b_lower: &str) -> usize {
         .filter(|t| !t.is_empty())
         .filter(|t| a.contains(t))
         .count()
+}
+
+/// Whether a token is a quantization marker (e.g. `q4`, `q8`) — a leading `q`
+/// followed by digits. Used, with [`is_size_token`], to strip non-identifying
+/// tokens before comparing model/projector *families*.
+fn is_quant_token(token: &str) -> bool {
+    let b = token.as_bytes();
+    b.len() >= 2 && b[0] == b'q' && b[1..].iter().all(|c| c.is_ascii_digit())
+}
+
+/// Tokens that describe a file's *format/precision* rather than its model family,
+/// so they must not count toward a family match (e.g. an F16 projector and a Q4
+/// model of the same family still pair).
+const FAMILY_NOISE_TOKENS: &[&str] = &[
+    "mmproj", "gguf", "f16", "f32", "fp16", "bf16", "xl", "ud", "gptq", "awq", "gs",
+    // Fine-tuning / variant descriptors shared across unrelated lineages: these
+    // identify a model's *variant*, not its *family*, so they must never make two
+    // different families look related. Without this, `nemotron…-instruct` and
+    // `mmproj-qwen3vl-…-instruct` would intersect on `instruct` and be (wrongly)
+    // paired — the exact crash this guard exists to prevent.
+    "instruct", "it", "chat", "thinking", "action",
+];
+
+/// The set of *family-identifying* tokens in a (lowercased) filename stem: tokens
+/// that name the model lineage (e.g. `gemma`, `qwen3vl`, `nemotron3`), with size
+/// markers (`4b`), quantization markers (`q4`), variant/format noise
+/// ([`FAMILY_NOISE_TOKENS`] — `instruct`, `thinking`, `f16`, …), and single
+/// characters removed. Two files belong to the same family when these sets
+/// intersect — or, to survive hyphenation differences like `qwen3-vl` vs
+/// `qwen3vl`, when a family token of one appears inside the other's
+/// separator-stripped stem (see [`same_model_family`]).
+fn family_tokens(stem_lower: &str) -> std::collections::HashSet<String> {
+    stem_lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| t.len() >= 2)
+        .filter(|t| !is_size_token(t))
+        .filter(|t| !is_quant_token(t))
+        .filter(|t| !FAMILY_NOISE_TOKENS.contains(t))
+        .map(|t| t.to_string())
+        .collect()
+}
+
+/// Whether two (lowercased) filename stems belong to the same model family — the
+/// guard that stops an unrelated text model from being paired with a vision
+/// projector merely because they share a size token (e.g. Nemotron-**4B** vs the
+/// Qwen3-VL-**4B** `mmproj`, whose embedding dims do not match and which crashes
+/// llama.cpp at load). A match requires a shared family token, or one stem's
+/// family token (length ≥ 4) appearing inside the other's separator-stripped
+/// form so that `qwen3-vl-4b-instruct` still pairs with `mmproj-qwen3vl-…`.
+fn same_model_family(a_lower: &str, b_lower: &str) -> bool {
+    let a_tokens = family_tokens(a_lower);
+    let b_tokens = family_tokens(b_lower);
+    if a_tokens.intersection(&b_tokens).next().is_some() {
+        return true;
+    }
+    let a_concat: String = a_lower
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    let b_concat: String = b_lower
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    a_tokens
+        .iter()
+        .any(|t| t.len() >= 4 && b_concat.contains(t.as_str()))
+        || b_tokens
+            .iter()
+            .any(|t| t.len() >= 4 && a_concat.contains(t.as_str()))
 }
 
 /// Minimum size for a file to be treated as a loadable *primary* model. Filters
@@ -533,9 +638,18 @@ pub fn resolve_mmproj_for(model_path: &Path) -> Option<PathBuf> {
     }
     candidates.sort();
 
+    // A projector only pairs with a model of the *same family* — sharing a size
+    // token is not enough (Nemotron-4B must never take the Qwen3-VL-4B mmproj).
+    let same_family = |p: &Path| {
+        p.file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| same_model_family(&model_stem, &s.to_ascii_lowercase()))
+            .unwrap_or(false)
+    };
+
     if let Some(model_sig) = size_signature(&model_stem) {
-        // Require the projector to share the model's size signature.
-        return candidates.into_iter().find(|p| {
+        // Require the projector to share the model's size signature AND family.
+        return candidates.into_iter().filter(|p| same_family(p)).find(|p| {
             p.file_stem()
                 .and_then(|s| s.to_str())
                 .and_then(|s| size_signature(&s.to_ascii_lowercase()))
@@ -544,10 +658,11 @@ pub fn resolve_mmproj_for(model_path: &Path) -> Option<PathBuf> {
         });
     }
 
-    // Model has no size signature: a single generic projector pairs cleanly;
-    // otherwise fall back to the best token overlap.
-    if candidates.len() == 1 {
-        return candidates.into_iter().next();
+    // Model has no size signature: keep only same-family projectors, then a
+    // single one pairs cleanly; otherwise fall back to the best token overlap.
+    let mut candidates: Vec<PathBuf> = candidates.into_iter().filter(|p| same_family(p)).collect();
+    if candidates.len() <= 1 {
+        return candidates.pop();
     }
     candidates.into_iter().max_by_key(|p| {
         p.file_stem()
@@ -591,6 +706,23 @@ pub fn discover_vision_models() -> Vec<(PathBuf, PathBuf)> {
 /// instruct build rather than a slower `*-thinking` model or a third-party
 /// `*-action` fine-tune that merely contains the same substring, while a user
 /// who deliberately sets one of those as their preference still gets it.
+/// Whether `stem_lower` contains `tok` as a whole token (split on
+/// non-alphanumerics), so `thinking` is not matched inside `extraction`.
+fn has_whole_token(stem_lower: &str, tok: &str) -> bool {
+    stem_lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|t| t == tok)
+}
+
+/// Whether a vision model is a "vanilla" build suitable for *automatic* selection:
+/// not a `thinking` (chain-of-thought) or `action`/agent variant. Those emit
+/// reasoning or tool-call prose instead of the strict JSON the vision worker
+/// parses ("Failed to parse VisionAnalysis JSON"), so they are only ever used when
+/// the user names one explicitly via the `vision_model` setting.
+fn is_vanilla_vision_stem(stem_lower: &str) -> bool {
+    !has_whole_token(stem_lower, "thinking") && !has_whole_token(stem_lower, "action")
+}
+
 fn pref_matches_vision_stem(stem_lower: &str, pref: &str) -> bool {
     let hit = stem_lower.contains(pref) || pref.contains(stem_lower);
     // Match `thinking` / `action` only as whole tokens (split on non-alphanumeric)
@@ -608,7 +740,16 @@ fn pref_matches_vision_stem(stem_lower: &str, pref: &str) -> bool {
 
 /// Returns `None` when no local model has a projector beside it.
 pub fn resolve_vision_model(preferred: &str) -> Option<(PathBuf, PathBuf)> {
-    let models = discover_vision_models();
+    select_vision_model(&discover_vision_models(), preferred)
+}
+
+/// Pure selection over already-discovered `(model, mmproj)` pairs (see
+/// [`resolve_vision_model`] for the discovery wrapper). Split out so the tiered
+/// selection is unit-testable without touching the filesystem.
+fn select_vision_model(
+    models: &[(PathBuf, PathBuf)],
+    preferred: &str,
+) -> Option<(PathBuf, PathBuf)> {
     if models.is_empty() {
         return None;
     }
@@ -619,6 +760,8 @@ pub fn resolve_vision_model(preferred: &str) -> Option<(PathBuf, PathBuf)> {
             .map(|s| s.to_ascii_lowercase())
     };
 
+    // Tier 1: an explicit `vision_model` preference (a generic preference still
+    // excludes thinking/action variants — see `pref_matches_vision_stem`).
     let pref = preferred.trim().to_ascii_lowercase();
     if !pref.is_empty() {
         let matches = models.iter().filter(|(m, _)| {
@@ -631,6 +774,7 @@ pub fn resolve_vision_model(preferred: &str) -> Option<(PathBuf, PathBuf)> {
         }
     }
 
+    // Tier 2: Gemma-4 E4B (the previous default), if present.
     let e4b = models
         .iter()
         .filter(|(m, _)| stem_lower(m).map(|s| s.contains("e4b")).unwrap_or(false));
@@ -638,7 +782,23 @@ pub fn resolve_vision_model(preferred: &str) -> Option<(PathBuf, PathBuf)> {
         return Some(found.clone());
     }
 
-    models.into_iter().next()
+    // Tier 3: no preference matched — pick the best *vanilla* vision model,
+    // skipping thinking/action variants. They emit reasoning/tool-call text, not
+    // the strict JSON the vision worker needs, so auto-select must never land on
+    // one (the bug that left "Auto-select" on a `*-thinking` build, failing every
+    // frame with "Failed to parse VisionAnalysis JSON").
+    let vanilla = models.iter().filter(|(m, _)| {
+        stem_lower(m)
+            .map(|s| is_vanilla_vision_stem(&s))
+            .unwrap_or(false)
+    });
+    if let Some(found) = pick_best_quant(vanilla) {
+        return Some(found.clone());
+    }
+
+    // Tier 4: every discovered vision model is a thinking/action build — fall back
+    // to the first so vision still runs (the user can pick a better one).
+    models.first().cloned()
 }
 
 /// Check if the model exists and is valid
@@ -1172,6 +1332,69 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_mmproj_for_rejects_cross_family_same_size() {
+        // Reproduces the real crash: a text-only model (Nemotron-4B) sharing only
+        // the `4b` size token with a Qwen3-VL projector must NOT be paired — their
+        // embedding dims differ and llama.cpp aborts on load.
+        let dir = std::env::temp_dir().join("ss_mmproj_crossfam_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Use the real-world Nemotron filename, which includes "Instruct" — it
+        // shares both the `4b` size and the `instruct` variant token with the
+        // Qwen3-VL projector, yet must still NOT be paired.
+        let nemotron = dir.join("NVIDIA-Nemotron3-Nano-4B-Instruct-Q4_K_M.gguf");
+        let qwen_instruct = dir.join("qwen3-vl-4b-instruct-q4_k_m.gguf");
+        let qwen_thinking = dir.join("Qwen3VL-4B-Thinking-Q4_K_M.gguf");
+        let proj = dir.join("mmproj-Qwen3VL-4B-Instruct-F16.gguf");
+        for f in [&nemotron, &qwen_instruct, &qwen_thinking, &proj] {
+            std::fs::write(f, b"x").unwrap();
+        }
+
+        // Different family → no pairing, even though both are "4b" and "instruct".
+        assert_eq!(resolve_mmproj_for(&nemotron), None);
+        // Real Qwen3-VL models (hyphenated and concatenated names) pair with the
+        // Qwen3-VL projector.
+        assert_eq!(resolve_mmproj_for(&qwen_instruct), Some(proj.clone()));
+        assert_eq!(resolve_mmproj_for(&qwen_thinking), Some(proj.clone()));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_same_model_family() {
+        // Same family across hyphenation differences.
+        assert!(same_model_family(
+            "qwen3-vl-4b-instruct-q4_k_m",
+            "mmproj-qwen3vl-4b-instruct-f16"
+        ));
+        assert!(same_model_family(
+            "qwen3vl-4b-thinking-q4_k_m",
+            "mmproj-qwen3vl-4b-instruct-f16"
+        ));
+        assert!(same_model_family(
+            "gemma-4-e4b_q4_0-it",
+            "gemma-4-e4b-it-mmproj"
+        ));
+        // Different families that merely share a size token.
+        assert!(!same_model_family(
+            "nvidia-nemotron3-nano-4b-q4_k_m",
+            "mmproj-qwen3vl-4b-instruct-f16"
+        ));
+        // ...including when BOTH carry the `instruct` variant descriptor: it names
+        // the variant, not the family, so it must not make them look related (the
+        // real-world filename, which the earlier test sidestepped).
+        assert!(!same_model_family(
+            "nvidia-nemotron3-nano-4b-instruct-q4_k_m",
+            "mmproj-qwen3vl-4b-instruct-f16"
+        ));
+        assert!(!same_model_family(
+            "qwen3.5-4b-q4_k_s",
+            "gemma-4-e4b-it-mmproj"
+        ));
+    }
+
+    #[test]
     fn test_discover_local_models_only_returns_gguf() {
         // Never panics, and only `.gguf` files are reported.
         for path in discover_local_models() {
@@ -1251,6 +1474,44 @@ mod tests {
     }
 
     #[test]
+    fn test_select_vision_model_auto_skips_thinking_and_action() {
+        let mk = |m: &str| {
+            (
+                PathBuf::from(format!("{m}.gguf")),
+                PathBuf::from("mmproj-Qwen3VL-4B-Instruct-F16.gguf"),
+            )
+        };
+        // Discovery order puts a `*-thinking` build first (as on the real box).
+        let thinking = mk("Qwen3VL-4B-Thinking-Q4_K_M");
+        let instruct = mk("qwen3-vl-4b-instruct-q4_k_m");
+        let action = mk("Sber_Qwen3-VL-4B-Instruct-action-Q4_K_M");
+        let models = vec![thinking.clone(), instruct.clone(), action.clone()];
+
+        // Auto-select (empty preference) must pick the vanilla instruct build, NOT
+        // the thinking model that happens to sort first — a thinking model emits
+        // reasoning, not the JSON the vision worker parses.
+        assert_eq!(select_vision_model(&models, ""), Some(instruct.clone()));
+        // An explicit instruct preference also resolves to instruct.
+        assert_eq!(
+            select_vision_model(&models, "qwen3-vl-4b-instruct"),
+            Some(instruct.clone())
+        );
+        // Explicitly naming a thinking model still honors the user override.
+        assert_eq!(
+            select_vision_model(&models, "thinking"),
+            Some(thinking.clone())
+        );
+
+        // If every candidate is a thinking/action build, vision still runs (the
+        // first is returned) rather than silently disabling vision.
+        let only_specialized = vec![thinking.clone(), action.clone()];
+        assert_eq!(
+            select_vision_model(&only_specialized, ""),
+            Some(thinking.clone())
+        );
+    }
+
+    #[test]
     fn test_is_loadable_model_gguf_excludes_helpers() {
         let dir = std::env::temp_dir().join("ss_loadable_test");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1287,8 +1548,14 @@ mod tests {
         .map(PathBuf::from)
         .collect();
         let picked = pick_answer_model(&models).unwrap();
-        assert_eq!(picked.file_name().unwrap(), "qwen3-vl-4b-instruct-q4_k_m.gguf");
+        assert_eq!(
+            picked.file_name().unwrap(),
+            "qwen3-vl-4b-instruct-q4_k_m.gguf"
+        );
         // The vanilla instruct build outscores every penalised variant.
-        assert!(answer_model_score("qwen3-vl-4b-instruct-q4_k_m") > answer_model_score("qwen3vl-4b-thinking-q4_k_m"));
+        assert!(
+            answer_model_score("qwen3-vl-4b-instruct-q4_k_m")
+                > answer_model_score("qwen3vl-4b-thinking-q4_k_m")
+        );
     }
 }

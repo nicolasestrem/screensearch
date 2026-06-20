@@ -161,6 +161,18 @@ export function useDownloadModel() {
   })
 }
 
+export function useSelectModel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (model: string) => api.selectModel(model),
+    onSuccess: (s) => {
+      qc.setQueryData(['ai', 'model', 'status'], s)
+      // The unified server rebuilds onto the new model on next use.
+      qc.invalidateQueries({ queryKey: ['ai', 'server', 'status'] })
+    },
+  })
+}
+
 export function useFrameTagMutations() {
   const qc = useQueryClient()
   const invalidate = (frameId: number) => {

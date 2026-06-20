@@ -167,6 +167,7 @@ fn ai_routes() -> Router<Arc<AppState>> {
         .route("/generate", post(handlers::generate_report))
         // Local model management
         .route("/model/status", get(handlers::get_model_status))
+        .route("/model/select", post(handlers::select_model))
         .route("/model/download", post(handlers::start_model_download))
         // llama-server management
         .route("/server/status", get(handlers::get_server_status))
