@@ -100,8 +100,6 @@ fn is_transitional(state: &str) -> bool {
 /// answer generation (server/model download + load). Designed to be cheap and
 /// non-blocking so it can be polled once a second during warm-up.
 pub async fn get_readiness(State(state): State<Arc<AppState>>) -> Result<Json<ReadinessResponse>> {
-    use screensearch_llm::{get_bin_dir, llama_server_up_to_date, resolve_vision_model};
-
     let mut stages: Vec<ReadinessStage> = Vec::new();
 
     // --- Core (database + API + capture/OCR pipeline) ---
@@ -174,6 +172,23 @@ pub async fn get_readiness(State(state): State<Arc<AppState>>) -> Result<Json<Re
             .map(|s| s.vision_model.clone())
             .unwrap_or_default();
 
+        // The local path needs filesystem checks (binary version marker, scan of
+        // .models/). Run them off the async executor so this frequently-polled
+        // handler never blocks the runtime on blocking syscalls.
+        let (server_ready, vision_present) = if vision_enabled && provider == "local" {
+            let vm = vision_model.clone();
+            tokio::task::spawn_blocking(move || {
+                (
+                    screensearch_llm::llama_server_up_to_date(&screensearch_llm::get_bin_dir()),
+                    screensearch_llm::resolve_vision_model(&vm).is_some(),
+                )
+            })
+            .await
+            .unwrap_or((false, false))
+        } else {
+            (false, false)
+        };
+
         let (st, detail, progress, eta): (String, String, Option<f64>, Option<u64>) =
             if !vision_enabled {
                 (
@@ -203,14 +218,14 @@ pub async fn get_readiness(State(state): State<Arc<AppState>>) -> Result<Json<Re
                     Some(p.percentage()),
                     Some(p.eta_seconds),
                 )
-            } else if !llama_server_up_to_date(&get_bin_dir()) {
+            } else if !server_ready {
                 (
                     "needs_setup".into(),
                     "Download the local AI server in Settings → Data & AI.".into(),
                     None,
                     None,
                 )
-            } else if resolve_vision_model(&vision_model).is_none() {
+            } else if !vision_present {
                 (
                     "needs_setup".into(),
                     "Add a Gemma 4 model and its *mmproj*.gguf to the .models/ folder.".into(),
@@ -219,42 +234,52 @@ pub async fn get_readiness(State(state): State<Arc<AppState>>) -> Result<Json<Re
                 )
             } else {
                 // Binary + model are present: reflect the server's runtime state.
-                let guard = state.llama_server.read().await;
-                match guard.as_ref() {
-                    Some(server) => {
-                        let status = server.status().await;
-                        match status.as_str() {
-                            "running" => {
-                                let accel = match server.gpu_active().await {
-                                    Some(true) => "GPU (Vulkan)",
-                                    Some(false) => "CPU",
-                                    None => "your device",
-                                };
-                                (
+                // `try_read` so a held write lock (server (re)building/shutting
+                // down) reports a transitional state instead of blocking this
+                // frequently-polled handler.
+                match state.llama_server.try_read() {
+                    Ok(guard) => match guard.as_ref() {
+                        Some(server) => {
+                            let status = server.status().await;
+                            match status.as_str() {
+                                "running" => {
+                                    let accel = match server.gpu_active().await {
+                                        Some(true) => "GPU (Vulkan)",
+                                        Some(false) => "CPU",
+                                        None => "your device",
+                                    };
+                                    (
+                                        "ready".into(),
+                                        format!("Local model loaded on {accel}."),
+                                        None,
+                                        None,
+                                    )
+                                }
+                                "starting" => (
+                                    "loading".into(),
+                                    "Loading the model into memory (first request can take a few seconds)…"
+                                        .into(),
+                                    None,
+                                    None,
+                                ),
+                                _ => (
                                     "ready".into(),
-                                    format!("Local model loaded on {accel}."),
+                                    "Ready — the model loads on the first request.".into(),
                                     None,
                                     None,
-                                )
+                                ),
                             }
-                            "starting" => (
-                                "loading".into(),
-                                "Loading the model into memory (first request can take a few seconds)…"
-                                    .into(),
-                                None,
-                                None,
-                            ),
-                            _ => (
-                                "ready".into(),
-                                "Ready — the model loads on the first request.".into(),
-                                None,
-                                None,
-                            ),
                         }
-                    }
-                    None => (
-                        "ready".into(),
-                        "Ready — the model loads on the first request.".into(),
+                        None => (
+                            "ready".into(),
+                            "Ready — the model loads on the first request.".into(),
+                            None,
+                            None,
+                        ),
+                    },
+                    Err(_) => (
+                        "loading".into(),
+                        "Initializing the local AI server…".into(),
                         None,
                         None,
                     ),
@@ -803,6 +828,7 @@ pub async fn list_monitors() -> Result<Json<Vec<MonitorInfoDto>>> {
 
 /// POST /api/test-vision - Test vision configuration
 pub async fn test_vision_config(
+    State(state): State<Arc<AppState>>,
     Json(req): Json<TestVisionRequest>,
 ) -> Result<Json<serde_json::Value>> {
     debug!(
@@ -821,17 +847,30 @@ pub async fn test_vision_config(
             })));
         }
 
-        // Check if llama-server is running by hitting health endpoint
+        // Check if llama-server is running by hitting its health endpoint on the
+        // port it actually bound (it falls back to 31131/31132 if 31130 is busy).
+        let port = match state.llama_server.try_read() {
+            Ok(guard) => match guard.as_ref() {
+                Some(server) => server.active_port().await,
+                None => screensearch_llm::DEFAULT_LLAMA_PORT,
+            },
+            Err(_) => screensearch_llm::DEFAULT_LLAMA_PORT,
+        };
+
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .unwrap_or_default();
 
-        match client.get("http://127.0.0.1:31130/health").send().await {
+        match client
+            .get(format!("http://127.0.0.1:{port}/health"))
+            .send()
+            .await
+        {
             Ok(res) if res.status().is_success() => {
                 return Ok(Json(serde_json::json!({
                     "success": true,
-                    "message": "Local Ministral-3B model ready. llama-server is running."
+                    "message": "Local model ready. llama-server is running."
                 })));
             }
             _ => {

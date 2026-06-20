@@ -138,12 +138,21 @@ pub async fn generate_embeddings(
 
     let job_state = Arc::clone(&state);
     tokio::spawn(async move {
+        // Reset the guard via Drop so the flag is cleared even if the job panics
+        // or the task is cancelled — otherwise it would block all future jobs.
+        struct JobGuard;
+        impl Drop for JobGuard {
+            fn drop(&mut self) {
+                EMBEDDING_JOB_RUNNING.store(false, Ordering::SeqCst);
+            }
+        }
+        let _guard = JobGuard;
+
         let processed = run_embedding_job(&job_state, batch_size).await;
         info!(
             "Background embedding job finished: {} frame(s) processed",
             processed
         );
-        EMBEDDING_JOB_RUNNING.store(false, Ordering::SeqCst);
     });
 
     Ok(Json(GenerateEmbeddingsResponse {

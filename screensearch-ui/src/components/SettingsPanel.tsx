@@ -124,7 +124,7 @@ export function SettingsPanel() {
   const { data: visionModels, refetch: refetchVisionModels } = useQuery<VisionModelsResponse>({
     queryKey: ['vision-models'],
     queryFn: async () => {
-      const res = await fetch('http://localhost:3131/api/vision/models');
+      const res = await fetch('/api/vision/models');
       if (!res.ok) throw new Error('Failed to fetch vision models');
       return res.json();
     },
@@ -676,6 +676,7 @@ export function SettingsPanel() {
                           vision_provider: visionProvider,
                           vision_model: visionModel,
                           vision_endpoint: visionEndpoint,
+                          vision_api_key: visionApiKey,
                         });
                       }}
                       className={cn(

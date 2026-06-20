@@ -78,7 +78,10 @@ export function StartupStatus() {
         enabled: !dismissed,
         // Poll while warming up; stop once everything is ready.
         refetchInterval: (query) => (query.state.data?.all_ready ? false : 1500),
-        retry: true,
+        // Local endpoint: retry quickly during the brief window before the API
+        // binds, rather than the default long exponential backoff.
+        retry: 3,
+        retryDelay: 500,
     });
 
     useEffect(() => {

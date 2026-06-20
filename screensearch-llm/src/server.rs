@@ -373,16 +373,38 @@ impl LlamaServer {
 
         // Capture llama-server's stdout/stderr to a log file so Vulkan init,
         // the GPU layer-offload summary, and any silent GPU→CPU fallback are
-        // observable (previously sent to /dev/null, which hid all of it). Falls
+        // observable (previously sent to /dev/null, which hid all of it).
+        //
+        // Open in *append* mode (not truncate): when GPU mode fails and CPU mode
+        // is retried, this runs twice — truncating would wipe the GPU failure
+        // output that explains the fallback. A header marks each attempt. Falls
         // back to discarding output only if the log file can't be opened.
         let log_path = get_bin_dir().join("llama-server.log");
-        match std::fs::File::create(&log_path) {
-            Ok(out) => {
-                let err = out.try_clone().unwrap_or_else(|_| {
-                    std::fs::File::create(&log_path).expect("re-open llama-server log")
-                });
-                cmd.stdout(Stdio::from(out));
-                cmd.stderr(Stdio::from(err));
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            Ok(mut file) => {
+                use std::io::Write;
+                let _ = writeln!(
+                    file,
+                    "\n=== llama-server start: {} mode (port {}) ===",
+                    if use_gpu { "GPU (Vulkan)" } else { "CPU" },
+                    port
+                );
+                match file.try_clone() {
+                    Ok(err_file) => {
+                        cmd.stdout(Stdio::from(file));
+                        cmd.stderr(Stdio::from(err_file));
+                    }
+                    // Couldn't duplicate the handle: keep stdout on the log,
+                    // discard stderr rather than panicking.
+                    Err(_) => {
+                        cmd.stdout(Stdio::from(file));
+                        cmd.stderr(Stdio::null());
+                    }
+                }
             }
             Err(e) => {
                 warn!(
