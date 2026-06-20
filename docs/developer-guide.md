@@ -22,8 +22,11 @@ Do not install dependencies or write model caches into the repository.
 
 ## Embedded Frontend Build
 
-The dashboard is embedded by `screensearch-api` using `rust-embed`. Install
-frontend dependencies before the first Cargo build:
+The web UI (the "Command Deck" — Vite + React 18 + TypeScript, `react-router-dom`,
+TanStack Query, a typed `fetch` client, Zustand; see
+[Frontend — Command Deck UI](frontend-design-system.md)) is embedded by
+`screensearch-api` using `rust-embed`. Install frontend dependencies before the
+first Cargo build:
 
 ```bash
 cd screensearch-ui
@@ -32,9 +35,22 @@ cd ..
 cargo build
 ```
 
-The API build script watches frontend sources and runs `npm run build`
-automatically before embedding assets. Use `SCREENSEARCH_SKIP_UI_BUILD=1` only
-when a current `screensearch-ui/dist/` already exists.
+The build script (`build.rs`) runs `npm run build` automatically before embedding
+`screensearch-ui/dist/`. Set `SKIP_UI_BUILD=1` to skip the npm step when a current
+`dist/` already exists (the binary then embeds whatever is in `dist/`).
+
+For UI-only work, run the dev server with hot reload; it proxies `/api` to a
+running backend on `127.0.0.1:3131`:
+
+```bash
+cd screensearch-ui
+npm run dev      # http://localhost:5173
+npm run build    # tsc + vite (type-check + production bundle)
+npm run lint     # eslint, zero warnings
+```
+
+Fonts are Windows-native (Bahnschrift / Consolas / Segoe UI), so nothing is
+downloaded at runtime.
 
 ## Running Locally
 

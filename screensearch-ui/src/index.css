@@ -2,167 +2,137 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  :root {
-    /* Light Mode - Brutalist Paper (screensearch.app) */
-    
-    /* Using HSL to be compatible with tailwind mapping */
-    /* 
-      --ink: #0d1320 -> hsl(221, 42%, 9%)
-      --ink-2: #2a3142 -> hsl(223, 22%, 21%)
-      --muted: #5b6273 -> hsl(223, 12%, 40%)
-      --rule: #e6e3dc -> hsl(42, 17%, 88%)
-      --rule-2: #d8d4cb -> hsl(42, 16%, 82%)
-      --paper: #faf8f3 -> hsl(43, 33%, 96%)
-      --paper-2: #f3efe6 -> hsl(42, 33%, 93%)
-      --accent: #1f3a8a -> hsl(225, 63%, 33%)
-      --accent-ink: #122463 -> hsl(227, 69%, 23%)
-      --warn: #8a1c1c -> hsl(0, 66%, 33%)
-      --good: #14532d -> hsl(144, 61%, 20%)
-    */
-    
-    --ink: 221 42% 9%;
-    --ink-2: 223 22% 21%;
-    --muted: 223 12% 40%;
-    --rule: 42 17% 88%;
-    --rule-2: 42 16% 82%;
-    --paper: 43 33% 96%;
-    --paper-2: 42 33% 93%;
-    --accent: 225 63% 33%;
-    --accent-ink: 227 69% 23%;
-    --warn: 0 66% 33%;
-    --good: 144 61% 20%;
-
-    --background: var(--paper);
-    --foreground: var(--ink);
-  }
-
-  .dark {
-    /* Dark Mode - Inverted Brutalist Theme */
-    
-    /*
-      Inverted logic:
-      --ink: Light text (formerly paper)
-      --paper: Dark background (formerly ink)
-    */
-    
-    --ink: 43 33% 96%;        /* #faf8f3 */
-    --ink-2: 42 16% 82%;      /* #d8d4cb */
-    --muted: 223 12% 40%;     /* #5b6273 (keep similar) */
-    --rule: 223 22% 21%;      /* #2a3142 */
-    --rule-2: 221 42% 15%;    /* Slightly lighter than ink */
-    --paper: 221 42% 9%;      /* #0d1320 */
-    --paper-2: 223 22% 15%;   /* Slightly elevated */
-    --accent: 225 63% 53%;    /* Lighter blue */
-    --accent-ink: 227 69% 63%;/* Even lighter blue */
-    --warn: 0 66% 60%;        /* Lighter red */
-    --good: 144 61% 50%;      /* Lighter green */
-
-    --background: var(--paper);
-    --foreground: var(--ink);
-  }
+/* ---- Command Deck design tokens (mirrors tailwind.config.js for raw CSS / canvas) ---- */
+:root {
+  --void: #17171b;
+  --panel: #1f1f25;
+  --panel2: #1a1a1f;
+  --rule: #32323c;
+  --rule2: #3e3e48;
+  --ink: #ece7df;
+  --ink2: #c9c3b8;
+  --muted: #a39e94;
+  --faint: #928c81;
+  --accent: #ff6a3d;
+  --accent2: #c24e2a;
+  --ok: #7fb87a;
+  --warn: #e0a33e;
+  --alert: #e5564c;
+  --act-code: #e8853d;
+  --act-research: #5e8ba8;
+  --act-comms: #c9a24b;
+  --act-media: #9b7cb8;
+  --act-reading: #6fa8a0;
+  --act-idle: #4a4a52;
+  color-scheme: dark;
 }
 
 @layer base {
   * {
-    @apply border-border;
+    border-color: var(--rule);
   }
-
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
   body {
-    @apply bg-paper text-ink font-sans;
-    font-feature-settings: "ss01", "cv11";
+    background: var(--void);
+    color: var(--ink);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
   }
-}
-
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-::-webkit-scrollbar-track {
-  @apply bg-paper-2;
-}
-
-::-webkit-scrollbar-thumb {
-  @apply bg-rule-2 rounded-none;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  @apply bg-muted;
-}
-
-/* Text Selection */
-::selection {
-  @apply bg-accent-ink text-white;
-}
-
-/* Focus Visible */
-*:focus-visible {
-  @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-paper;
-}
-
-/* Mark (highlighted text) */
-mark {
-  @apply bg-yellow-300/50 dark:bg-yellow-800/50 px-1 rounded-sm;
-}
-
-/* Website-matched utilities */
-
-/* hairline rule grid background */
-.paper-grid {
-  background-image:
-    linear-gradient(to right, hsl(var(--ink) / 0.045) 1px, transparent 1px),
-    linear-gradient(to bottom, hsl(var(--ink) / 0.045) 1px, transparent 1px);
-  background-size: 80px 80px;
-}
-
-/* sober link */
-.link-underline {
-  background-image: linear-gradient(currentColor, currentColor);
-  background-size: 100% 1px;
-  background-repeat: no-repeat;
-  background-position: 0 100%;
-}
-
-/* row hover for clean lists */
-.row { 
-  border-top: 1px solid hsl(var(--rule)); 
-}
-.row:last-child { 
-  border-bottom: 1px solid hsl(var(--rule)); 
-}
-
-/* terminal area */
-.terminal {
-  @apply font-mono;
-  background: #0d1320; 
-  color: #d6d3c8;
-}
-
-/* section number marks */
-.section-num {
-  @apply font-mono text-[11px] tracking-[0.08em] text-muted;
-}
-
-/* Loading Skeleton */
-.skeleton {
-  @apply animate-pulse bg-rule-2 rounded-none;
-}
-
-/* Fade in up animation */
-@keyframes fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
+  ::selection {
+    background: rgba(255, 106, 61, 0.3);
+    color: var(--ink);
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+  /* Keyboard focus only — visible accent ring, never a low-contrast default */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+  /* Scrollbars — quiet, instrument-grey */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--rule2) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--rule2);
+    border: 2px solid var(--void);
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--muted);
   }
 }
 
-.animate-fade-in-up {
-  animation: fade-in-up 0.4s ease-out;
+@layer components {
+  /* Small uppercase technical label used across the UI */
+  .eyebrow {
+    font-family: 'Bahnschrift', '"DIN Alternate"', 'Segoe UI', sans-serif;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+}
+
+/* Markdown answers / reports — themed prose */
+.prose-deck {
+  color: var(--ink);
+}
+.prose-deck :where(h1, h2, h3, h4) {
+  font-family: 'Bahnschrift', '"DIN Alternate"', 'Segoe UI', sans-serif;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+.prose-deck :where(a) {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-deck :where(code) {
+  font-family: Consolas, 'Cascadia Mono', ui-monospace, monospace;
+  background: var(--void);
+  border: 1px solid var(--rule);
+  padding: 0.05em 0.35em;
+  font-size: 0.9em;
+}
+.prose-deck :where(pre) {
+  background: var(--void);
+  border: 1px solid var(--rule);
+  padding: 0.9rem;
+  overflow: auto;
+}
+.prose-deck :where(strong) {
+  color: var(--ink);
+}
+.prose-deck :where(blockquote) {
+  border-left: 2px solid var(--accent2);
+  color: var(--ink2);
+  padding-left: 0.9rem;
+}
+.prose-deck :where(hr) {
+  border-color: var(--rule);
+}
+.prose-deck :where(ul) {
+  list-style: square;
+  padding-left: 1.2rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

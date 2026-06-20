@@ -70,22 +70,35 @@
 | Concern | File |
 |---|---|
 | Readiness aggregator endpoint | `screensearch-api/src/handlers/system.rs` (`get_readiness`) |
-| Startup banner | `screensearch-ui/src/components/StartupStatus.tsx` |
+| Startup readiness banner (UI) | `screensearch-ui/src/app/shell/ReadinessBanner.tsx` |
 | Non-blocking engine-ready probe | `screensearch-api/src/state.rs` (`embedding_engine_initialized`) |
 | SQLite `busy_timeout` | `screensearch-db/src/db.rs` |
 
-## Frontend
+## Frontend (Command Deck UI)
+
+The UI was rebuilt greenfield (v0.5.0). It uses `react-router-dom` routing,
+TanStack Query, a typed `fetch` client, and a Warm-Graphite design system with
+Windows-native fonts. Tree under `screensearch-ui/src/`:
 
 | Concern | File |
 |---|---|
-| Settings panel + vision model picker + GPU badge | `screensearch-ui/src/components/SettingsPanel.tsx` |
-| Quality-stack status / "Process frames" | `screensearch-ui/src/components/EmbeddingsStatus.tsx` |
-| Startup readiness banner | `screensearch-ui/src/components/StartupStatus.tsx` |
-| Search mode selection | `screensearch-ui/src/components/SearchBar.tsx` |
-| Search invitation | `screensearch-ui/src/components/search/SearchInvite.tsx` |
-| Generation provider page | `screensearch-ui/src/components/AiSettings.tsx` |
-| API client | `screensearch-ui/src/api/client.ts` |
-| Shared types | `screensearch-ui/src/types/index.ts` |
+| App shell (grid, ⌘K listener) | `src/app/shell/AppShell.tsx` |
+| Status rail / nav rail | `src/app/shell/StatusRail.tsx`, `src/app/shell/NavRail.tsx` |
+| Command palette (⌘K) | `src/app/shell/CommandPalette.tsx` |
+| Router + providers | `src/app/App.tsx` |
+| Signature: Scanline Timeline | `src/components/ScanlineTimeline.tsx` |
+| Panels / primitives | `src/components/Panel.tsx`, `src/components/ui.tsx` |
+| Frame tile/row + image loader | `src/components/FrameTile.tsx`, `src/components/FrameImage.tsx` |
+| Deck (home) | `src/pages/Deck.tsx` |
+| Recall (Ask RAG + Report) | `src/pages/Recall.tsx` |
+| Timeline + Moment detail | `src/pages/Timeline.tsx`, `src/pages/Moment.tsx` |
+| Insights (real analytics) | `src/pages/Insights.tsx` |
+| Settings (capture/vision/AI/models) | `src/pages/Settings.tsx` |
+| Typed API client | `src/lib/api.ts` |
+| Query hooks | `src/lib/hooks.ts` |
+| Shared types | `src/lib/types.ts` |
+| Activity mapping / formatters | `src/lib/activity.ts`, `src/lib/format.ts` |
+| Design tokens | `src/index.css`, `tailwind.config.js` |
 | Embedded production assets | `screensearch-ui/dist/` |
 
 ## Packaging And CI

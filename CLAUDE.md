@@ -11,7 +11,7 @@ ScreenSearch is a Windows-native screen capture and OCR system with a REST API. 
 
 **Platform**: Windows 10/11 only (uses Windows-specific APIs)
 **Language**: Rust 2021 edition
-**Architecture**: Cargo workspace with 5 member crates + main binary + React UI
+**Architecture**: Cargo workspace with 6 member crates + main binary + React UI
 
 ## Build & Development Commands
 
@@ -651,9 +651,48 @@ Maintain these performance characteristics:
 - Format code before committing: `cargo fmt --all`
 - Use clippy before committing: `cargo clippy --workspace -- -D warnings`
 
-## Recent Optimizations (v0.1.0 → v0.4.1)
+## Recent Optimizations (v0.1.0 → v0.5.0)
 
-### Performance & Stability (v0.4.1)
+### Frontend Rebuild — "Command Deck" (v0.5.0)
+
+The web UI was rebuilt from scratch. **The v0.3.0–v0.4.1 UI sections below are
+superseded and their component files no longer exist** — do NOT reference
+`Dashboard.tsx`, `Sidebar.tsx`, `Footer.tsx`, `ui/GlassCard.tsx`,
+`ui/CircularGauge.tsx`, `ui/ComingSoonCard.tsx`, `dashboard/*`,
+`search/SmartAnswerCard.tsx`, `search/ActivityList.tsx`, `search/SearchInvite.tsx`,
+`Timeline.tsx`, `VirtualFrameGrid.tsx`, `FrameModal.tsx`, `SettingsPanel.tsx`,
+`AiSettings.tsx`, `pages/Intelligence.tsx`, the old `hooks/` or `api/client.ts`,
+or the `store/useStore.ts` path. `axios`, `framer-motion`, and `react-window` were
+removed.
+
+- **Identity**: "Command Deck" — instrument/telemetry; warm-graphite + a single
+  signal-orange accent; Windows-native fonts (Bahnschrift / Consolas / Segoe UI,
+  no web-font downloads); WCAG-AA contrast; dark-only.
+- **Stack**: Vite + React 18 + TypeScript, `react-router-dom` (real deep-linkable
+  routes), TanStack Query, a typed `fetch` client, Zustand. `@tailwindcss/typography`
+  kept for markdown answers.
+- **New tree** under `screensearch-ui/src/`:
+  - `app/App.tsx` (router + providers); `app/shell/` — `StatusRail`, `NavRail`,
+    `CommandPalette` (⌘K), `ReadinessBanner`, `AppShell`.
+  - `pages/` — `Deck`, `Recall` (Ask/RAG + Report), `Timeline`, `Moment`
+    (`/timeline/:id`), `Insights`, `Settings`, `NotFound`.
+  - `components/ScanlineTimeline.tsx` (the signature element), `Panel.tsx`,
+    `ui.tsx`, `FrameTile.tsx`, `FrameImage.tsx`.
+  - `lib/` — `api.ts` (typed client), `hooks.ts` (TanStack Query), `types.ts`,
+    `display.ts`, `activity.ts`, `format.ts`, `store.ts`.
+- **No mock data, no "Coming Soon"**: every panel renders real API data or an
+  explicit loading / empty / error state.
+- **API routing gotcha**: collection routes have **no trailing slash**
+  (`/api/frames`, `/api/search`, `/api/tags`, `/api/settings`) — the trailing-slash
+  form 404s; sub-resources use the path form (`/api/frames/:id`).
+- **Backend changes**: `FrameResponse` passes through `activity_type`, `app_hint`,
+  `browser_url`, `monitor_index`. `screensearch-llm` `is_loadable_model_gguf`
+  excludes `embed`-named GGUFs and `resolve_model_path`/`answer_model_score` prefer
+  a vanilla `instruct` answer model over `thinking`/`action` variants.
+- Docs: `docs/frontend-design-system.md` (design + architecture) and
+  `docs/CODE_NAVIGATION.md`.
+
+### Performance & Stability (v0.4.1) — UI portions superseded by v0.5.0
 - **React Error #310 Fix**: Resolved "Rendered fewer hooks than expected" in Timeline component
   - Root cause: `useMemo` called after early returns violated React Rules of Hooks
   - Solution: Move all hooks before conditional rendering, use JSX ternary operators
@@ -690,7 +729,7 @@ function Component() {
 }
 ```
 
-### AI-First UI Redesign (v0.3.0)
+### AI-First UI Redesign (v0.3.0) — superseded by v0.5.0 (files removed)
 - **Dashboard ("Intel Dash")**: New default landing page with AI-powered widgets
 - **Glassmorphism Design System**: Premium UI with backdrop blur, translucent backgrounds, glow effects
 - **Daily Digest**: Auto-generated AI summaries with session storage caching

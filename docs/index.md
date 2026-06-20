@@ -43,7 +43,7 @@ digests, and reports.
 | [Testing](testing.md) | Focused and Windows-native validation |
 | [Cross Compilation](cross-compilation.md) | Linux-to-Windows Rust builds |
 | [Security](security.md) | Data and network boundaries |
-| [Frontend Design System](frontend-design-system.md) | Dashboard visual conventions |
+| [Frontend — Command Deck UI](frontend-design-system.md) | UI design system + architecture (pages, routing, data layer) |
 
 ## Build Reminder
 
@@ -87,7 +87,7 @@ OCR or embedding retrieval). See `docs/vision.md`.
 
 | Problem | Reference |
 |---|---|
-| Old settings UI | [User Guide](user-guide.md#the-settings-panel-still-shows-old-ai-wording) |
+| Old UI / stale data after update | [User Guide](user-guide.md#the-ui-shows-an-old-design-or-stale-data-after-an-update) |
 | Embedding engine unavailable | [User Guide](user-guide.md#embedding-engine-unavailable) |
 | Reindex required | [User Guide](user-guide.md#reindex-required) |
 | Semantic search empty | [User Guide](user-guide.md#semantic-search-returns-few-results) |
@@ -95,11 +95,11 @@ OCR or embedding retrieval). See `docs/vision.md`.
 
 ## Current Version
 
-- Application: `0.4.35`
+- Application: `0.5.0`
 - Platform: Windows 10/11 production, Linux development support
 - Language: Rust 2021
-- UI: React, TypeScript, Vite 8
+- UI: React 18, TypeScript, Vite 8, react-router-dom, TanStack Query ("Command Deck")
 - Database: SQLite, FTS5, sqlite-vec
 - API: Axum
 
-Last updated: June 14, 2026.
+Last updated: June 20, 2026.

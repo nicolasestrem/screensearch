@@ -1,80 +1,137 @@
-# Frontend Design System: Brutalist / Minimalist Paper
+# Frontend — Command Deck UI
 
-**Version:** 2.0 (Brutalist Overhaul)
-**Theme:** "Brutalist / Minimalist Paper" (Light & Dark Variants)
+**Version:** 3.0 (greenfield rebuild, v0.5.0)
+**Identity:** "Command Deck" — an instrument / mission-control surface for your own
+on-device screen memory.
 
-## Core Philosophy
-The UI follows a **Brutalist / Minimalist Paper** design system inspired by physical print media, editorial design, and clean interfaces, matching the design of `screensearch-website`:
-- **Paper & Ink Palette:** Flat warm cream/paper backgrounds and deep charcoal ink text in light mode, with a dedicated dark paper variant in dark mode.
-- **Zero Border-Radius:** Hard, sharp 90-degree edges on all elements (no rounded corners).
-- **Rule Borders:** Fine, solid 1px borders (`border-rule`) separating panels, cards, inputs, and components.
-- **Typographic Hierarchy:** Newspaper-style editorial headings using **Newsreader** (Serif) paired with clean geometric UI text using **Geist** (Sans-serif) and technical labels/ids in **Geist Mono** (Monospace).
-- **Interactive Shift:** Elements react to interactions with physical offsets (e.g. `hover:-translate-y-0.5 active:translate-y-0`) rather than soft diffuse shadows or light glows.
+The web UI was rebuilt from scratch in v0.5.0. This document covers both the
+**design system** (palette, type, components) and the **frontend architecture**
+(stack, routing, data layer, pages). For where a feature lives by file, see
+[Code Navigation](CODE_NAVIGATION.md#frontend-command-deck-ui).
 
 ---
 
-## Global Atmosphere
-Root styles defined in `index.css` and registered in `tailwind.config.js`.
+## 1. Design language
 
-### Color Tokens (HSL)
-We use tailwind color tokens mapping to raw HSL values defined dynamically under light and dark themes:
-- `bg-paper`: Primary paper background.
-- `bg-paper-2`: Secondary background layer for elevated widgets/inputs.
-- `text-ink`: Primary text color representing deep ink print.
-- `text-ink-muted`: Secondary text color for secondary content or helper descriptions.
-- `border-rule`: High-contrast fine border lines defining component boundaries.
-- `border-accent`: Distinctive highlight border for active/focused elements.
+A deliberately non-generic, telemetry-styled dark UI. The personality comes from
+mono-dominant data readouts and a single warm accent, not from glow or gradients.
 
-#### Light Mode Colors
-- `--color-paper`: `40 23% 97%` (warm soft cream/paper)
-- `--color-paper-2`: `40 18% 94%` (slightly darker warm paper for components)
-- `--color-ink`: `240 6% 10%` (deep ink black)
-- `--color-ink-muted`: `240 4% 45%` (muted grey ink)
-- `--color-rule`: `240 6% 15%` (crisp, fine border rules)
-- `--color-accent`: `210 100% 50%` (ink blue accent highlight)
+### Palette (warm graphite + signal orange)
 
-#### Dark Mode (.dark) Colors
-- `--color-paper`: `240 6% 9%` (rich dark background)
-- `--color-paper-2`: `240 6% 13%` (elevated dark paper component layer)
-- `--color-ink`: `40 20% 95%` (warm light ink text)
-- `--color-ink-muted`: `40 10% 65%` (muted warm text)
-- `--color-rule`: `40 20% 25%` (subtle border rules)
-- `--color-accent`: `210 100% 65%` (bright blue highlight)
+Defined once as CSS custom properties in `src/index.css` and mirrored in
+`tailwind.config.js` as Tailwind colors. Dark-only for this release.
+
+| Token | Hex | Use |
+|---|---|---|
+| `void` | `#17171B` | app background (warm near-black, not blue-black) |
+| `panel` | `#1F1F25` | panels / cards |
+| `panel2` | `#1A1A1F` | rails, elevated surfaces |
+| `rule` / `rule2` | `#32323C` / `#3E3E48` | borders, gridlines |
+| `ink` / `ink2` | `#ECE7DF` / `#C9C3B8` | primary / secondary text |
+| `muted` / `faint` | `#A39E94` / `#928C81` | labels, captions (both ≥ 4.5:1) |
+| `accent` / `accent2` | `#FF6A3D` / `#C24E2A` | the single signal colour (playhead, focus, active, links) |
+| `ok` / `warn` / `alert` | `#7FB87A` / `#E0A33E` / `#E5564C` | real system states only |
+| `act.code/research/comms/reading/media/idle` | see config | vision activity-type categories |
+
+Status colours (`ok`/`warn`/`alert`) are reserved for genuine system state, never
+decoration. Accent is used sparingly.
+
+### Typography
+
+Windows-native faces — **no web fonts are downloaded at runtime** (the app is
+local-only). Three roles:
+
+- **Display** — `Bahnschrift` (a DIN-style technical grotesque): headings, big
+  metric numbers, nav, section labels.
+- **Data** — `Consolas` / `Cascadia Mono`: timecodes (`HH:MM:SS`), telemetry rows,
+  metrics, status chips. Mono is the dominant voice.
+- **Prose** — `Segoe UI`: body copy and answer/report text.
+
+The scale spans ~10.5px labels to 40px metric numbers. All text meets WCAG AA
+contrast on its background (verified: small labels 4.9–5.2:1, headers ≥ 9:1).
+
+### Layout & motion
+
+- **0px border radius** on panels (instrument feel); `rounded-full` only for status
+  dots.
+- Panels are framed with thin `rule` borders and a small-caps mono section header.
+- Motion is restrained and respects `prefers-reduced-motion`: the `REC` pulse, a
+  blinking cursor, the timeline playhead, and a subtle row-in.
+
+### Signature element — the Scanline Timeline
+
+`src/components/ScanlineTimeline.tsx`. A 24-hour track with:
+
+- a **frame-density ribbon** (per-15-min-bucket counts);
+- **activity-type colour bands** derived from the vision `activity_type`;
+- a live **"now"** line and a draggable **playhead** (scrub → filter).
+
+It is the through-line of the app: compact on the Deck, full-width and interactive
+on the Timeline.
 
 ---
 
-## Utility Classes & Containers
-The old glassmorphism panels have been completely replaced with paper-based components:
-- `bg-paper` / `bg-paper-2` for flat panels.
-- `border-rule` / `border-accent` for crisp borders.
-- `rounded-none` to guarantee sharp edges.
+## 2. Frontend architecture
 
-**Example:**
-```tsx
-<div className="bg-paper border border-rule p-6 rounded-none">
-  Content
-</div>
-```
+### Stack
+
+| Concern | Choice |
+|---|---|
+| Build / framework | Vite 8 + React 18 + TypeScript |
+| Routing | `react-router-dom` (deep-linkable routes) |
+| Server state | TanStack Query (polling for live status) |
+| HTTP | a typed `fetch` client (`src/lib/api.ts`) — no axios |
+| UI state | Zustand (`src/lib/store.ts`) — palette, view mode, AI provider config |
+| Markdown | `react-markdown` (answers / reports) |
+| Icons | `lucide-react` |
+
+The production bundle is embedded in the Rust binary via `rust-embed`; see the
+[Developer Guide](developer-guide.md#embedded-frontend-build).
+
+### Routes / pages
+
+| Route | Page | Purpose |
+|---|---|---|
+| `/` | Deck | Mission-control overview: status rail, Ask box, index/vision coverage, scanline timeline, activity feed, apps & sites. |
+| `/recall` | Recall | *Ask your screen* (RAG via `POST /api/generate`) with cited frame chips; plus daily/weekly/custom **Report** mode (`POST /api/ai/generate`). |
+| `/timeline` | Timeline | Interactive scanline + searchable, filterable contact sheet (date, app, monitor, activity, fts/semantic/hybrid). |
+| `/timeline/:id` | Moment | Per-frame detail: screenshot, vision panel, OCR, metadata, tags, on-demand analyze. |
+| `/insights` | Insights | Real analytics: activity mix, apps & sites (incl. per-site via `browser_url`), hourly rhythm. |
+| `/settings` | Settings | Capture, monitors, excluded apps, retention; semantic-search, vision model picker, AI provider + test, local answer-engine model/server controls. |
+
+A global **⌘K command palette** (`src/app/shell/CommandPalette.tsx`) offers
+search + ask + navigation. A **readiness banner**
+(`src/app/shell/ReadinessBanner.tsx`) surfaces startup/download progress from
+`GET /api/system/readiness`.
+
+### Data layer
+
+- `src/lib/api.ts` — one typed client per endpoint. **Collection routes have no
+  trailing slash** (`/api/frames`, `/api/tags`, `/api/settings`, `/api/search`);
+  sub-resources use the path form (`/api/frames/:id`). Frame images are fetched as
+  object URLs and cached.
+- `src/lib/hooks.ts` — TanStack Query wrappers (status endpoints poll on an
+  interval; data endpoints are staleness-bounded).
+- `src/lib/types.ts` — TypeScript mirrors of the Rust serde structs.
+- `src/lib/display.ts` — adapters from `Frame` / `SearchResult` to a common
+  display shape used by the contact sheet and feed.
+- `src/lib/activity.ts` — maps free-form vision `activity_type` strings to a small
+  set of canonical, coloured buckets.
+
+### Honest states
+
+There is **no mock data**. Every panel renders real API data or an explicit
+loading / empty / error state (e.g. "Not enough captured yet", "Could not load
+settings", "Enable semantic search"). When a list is capped, the UI says so.
 
 ---
 
-## Typography
-- **Headings & Accents:** Serif (**Newsreader**) for a premium, newspaper editorial feel.
-- **Primary UI Text:** Sans-serif (**Geist**) for readability.
-- **Technical & Stats:** Monospaced (**Geist Mono**) for timestamp data, logs, and parameters.
+## 3. Conventions
 
----
-
-## Components
-
-### 1. Sidebar (`Sidebar.tsx`)
-- Sharp layout with zero border-radius.
-- Highlight border left edge indicates the active navigation state.
-- Sections headers styled using uppercase `font-mono` tracking wide.
-
-### 2. Search Modal (`SearchInvite.tsx`)
-- Detached search panel adopting the flat paper layout.
-- Search inputs use an italicized serif font for a premium look.
-
-### 3. GlassCard (`GlassCard.tsx`)
-- Fully redesigned to serve as the unified component container. It drops glassmorphism shadows and backdrop filters, replacing them with flat `bg-paper` background overlays, `rounded-none` corners, and solid `border-rule` boundaries.
+- Reuse the primitives in `src/components/Panel.tsx` and `src/components/ui.tsx`
+  (`Panel`, `PanelHeader`, `StatusDot`, `CoverageBar`, `ActivityBadge`, `Button`,
+  `Metric`, `Empty`, `Spinner`, `ErrorNote`) rather than re-styling.
+- Reference colours via Tailwind tokens (`text-ink`, `border-rule`, `bg-accent`);
+  use the CSS variables only for inline/SVG styles that Tailwind can't express.
+- Keep the accent rare. If a new element needs colour, ask whether a status colour
+  or a neutral is more honest first.

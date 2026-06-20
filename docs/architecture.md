@@ -257,9 +257,26 @@ search** (embedding model load), and **AI answer generation** (server/model
 download + load, with GPU/CPU) — each as a stage with a `state`
 (`ready`/`initializing`/`loading`/`downloading`/`needs_setup`/`disabled`),
 plain-language `detail`, and `progress`/`eta_seconds` for tracked downloads. The
-frontend's `StartupStatus` banner polls it during warm-up to explain what's
+frontend's `ReadinessBanner` polls it during warm-up to explain what's
 happening and roughly how long remains, auto-hiding once `all_ready`. A
 fully-cached launch reports `all_ready` immediately and shows no banner.
+
+## Frontend
+
+The web UI ("Command Deck", v0.5.0) is a Vite + React 18 + TypeScript single-page
+app embedded into the binary via `rust-embed` and served from `127.0.0.1:3131`. It
+uses `react-router-dom` for deep-linkable routes, TanStack Query for server state
+(polling the status endpoints above), a typed `fetch` client, and Zustand for
+ephemeral UI state.
+
+Routes: Deck (`/`), Recall (`/recall` — Ask/RAG plus Report), Timeline
+(`/timeline`) and Moment (`/timeline/:id`), Insights (`/insights`), Settings
+(`/settings`), plus a ⌘K command palette. The signature Scanline Timeline renders
+frame density and vision activity-type bands across the day.
+
+The UI carries no business logic or data of its own: every panel reads a real API
+endpoint and renders explicit loading / empty / error states (no mock data). See
+[Frontend — Command Deck UI](frontend-design-system.md).
 
 ## Packaging
 
