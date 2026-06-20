@@ -11,7 +11,7 @@ ScreenSearch is a Windows-native screen capture and OCR system with a REST API. 
 
 **Platform**: Windows 10/11 only (uses Windows-specific APIs)
 **Language**: Rust 2021 edition
-**Architecture**: Cargo workspace with 6 member crates + main binary + React UI
+**Architecture**: Cargo workspace with 7 member crates + main binary + React UI
 
 ## Build & Development Commands
 
@@ -30,11 +30,15 @@ cargo build -p screensearch-db
 cargo build -p screensearch-api
 cargo build -p screensearch-automation
 cargo build -p screensearch-embeddings
+cargo build -p screensearch-vision
+cargo build -p screensearch-llm
 
 # Check compilation without building (fast)
 cargo check --workspace
 
 # Skip UI build during development (faster iteration)
+# bash:        SKIP_UI_BUILD=1 cargo build
+# PowerShell:  $env:SKIP_UI_BUILD=1; cargo build   # primary shell on this project
 SKIP_UI_BUILD=1 cargo build
 ```
 
@@ -191,6 +195,7 @@ Main Binary (src/main.rs)
     ├─> screensearch-api (REST API server)
     ├─> screensearch-automation (Windows UI automation)
     ├─> screensearch-embeddings (in-process fastembed embeddings/rerank)
+    ├─> screensearch-vision (in-process screenshot vision: description + activity)
     └─> screensearch-llm (manages external llama.cpp answer-generation server)
 ```
 
@@ -239,7 +244,17 @@ Main Binary (src/main.rs)
    - Text chunking and batch processing for efficiency
    - The model is downloaded/cached from HuggingFace on first use
 
-6. **screensearch-llm** (`screensearch-llm/`)
+6. **screensearch-vision** (`screensearch-vision/`)
+   - Vision analysis of stored screenshots, producing
+     description / visible_text / activity_type / app_hint / confidence
+     (`VisionAnalysis`) for OCR-less visual recall and activity tagging
+   - `VisionModel` trait (`lib.rs`), HTTP client (`client.rs`), local model
+     resolution (`local_model.rs`); runs against the unified local llama-server
+     with `--mmproj` for on-device vision
+   - Runs as a background worker started by `api_server.start_vision_worker()`
+     (`src/main.rs`); default model Qwen3-VL-4B-Instruct
+
+7. **screensearch-llm** (`screensearch-llm/`)
    - Manages an **external** llama.cpp server (Vulkan GPU + CPU fallback) over an
      OpenAI-compatible HTTP API, used only for answer generation (AI reports /
      RAG answers)
@@ -322,17 +337,21 @@ let sanitized = sanitize_fts5_query(&user_input);
 
 ### Vector Search (screensearch-db/src/vector_search.rs)
 
-**In-memory cosine similarity** for semantic search (bypasses SQLite extension limitations on Windows):
+**sqlite-vec KNN** for semantic search over the persistent `embedding_vectors`
+vec0 virtual table (768-dim, cosine):
 
 ```rust
-// IMPORTANT: All embeddings loaded into memory for fast similarity search
-// Trade-off: Fast (<200ms) but O(n) complexity
-// Works well for <100K frames (~38MB memory for 100K embeddings)
-let index = VectorIndex::build(&db).await?;
-let results = index.search(&query_vector, limit).await?;
+// IMPORTANT: Query the persistent sqlite-vec index, not an in-memory copy.
+// Hybrid retrieval fuses FTS5 + vector (+ optional image index) via RRF.
+let results = db
+    .semantic_search(query_embedding, limit, start_time, end_time)
+    .await?;
 ```
 
-**Why**: SQLite vector extensions (vec0, vss) have compilation issues on Windows. In-memory approach is simpler and performant for expected scale (<1M frames).
+**Why**: sqlite-vec persists the index on disk (no full in-memory load on
+startup) and scales past the old O(n) in-memory cosine approach. The bare
+`cosine_similarity()` helper in this file is retained for ad-hoc scoring; KNN
+retrieval goes through `semantic_search` / `search_embeddings_with_time_range`.
 
 ### Storage Optimization (screensearch-capture/src/lib.rs)
 
@@ -795,7 +814,10 @@ function Component() {
 - Compression logic: `screensearch-capture/src/lib.rs` → image resizing/JPEG encoding
 - Cleanup loop: `src/main.rs` → automatic cleanup task with 24h interval
 
-### Hybrid Search (v0.2.0)
+### Hybrid Search (v0.2.0; embedding stack since superseded)
+> NOTE: This shipped with 384-dim ONNX embeddings + an in-memory cosine index.
+> Current behavior is **768-dim EmbeddingGemma-300M (fastembed)** persisted in a
+> **sqlite-vec** KNN index — see "Hybrid Search System" above. Bullets kept for history.
 - **Semantic search**: ONNX-based embeddings (384-dim vectors)
 - **In-memory vector index**: Cosine similarity in Rust (bypasses SQLite extension issues on Windows)
 - **Automatic model download**: First-run downloads from HuggingFace (449MB)
@@ -813,4 +835,4 @@ function Component() {
 - Direct SoftwareBitmap creation (60-93ms savings per frame)
 - FTS5 query sanitization for security
 - Connection pooling for database access
-- In-memory vector search (150ms for 100K embeddings)
+- Persistent sqlite-vec KNN vector search (~150ms; replaced the old in-memory cosine index)
