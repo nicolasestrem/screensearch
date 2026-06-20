@@ -6,7 +6,7 @@ import { toast } from 'react-hot-toast';
 
 // Provider options
 const PROVIDER_OPTIONS = [
-    { value: 'local', label: 'Bundled Ministral-3-3B', description: 'Optional local model for answers and reports; not used for OCR or retrieval' },
+    { value: 'local', label: 'Bundled Gemma 4 E4B (vision)', description: 'Optional on-device model for answers, reports, and screenshot understanding; not used for OCR or retrieval' },
     { value: 'http://localhost:11434/v1', label: 'Ollama-compatible', description: 'Local generation server on port 11434' },
     { value: 'custom', label: 'OpenAI-compatible', description: 'Remote or local generation endpoint' },
 ] as const;
@@ -94,7 +94,7 @@ export function AiSettings() {
                     <div className="flex items-center gap-3 p-4 bg-paper-2 border border-rule rounded-none">
                         <Cpu className="w-8 h-8 text-ink flex-shrink-0" />
                         <div>
-                            <p className="font-serif text-[15px]">Ministral-3-3B (Bundled Generation)</p>
+                            <p className="font-serif text-[15px]">Gemma 4 E4B (Bundled, on-device vision + text)</p>
                             <p className="text-xs font-serif italic text-muted">
                                 GPU-accelerated via Vulkan. Works on NVIDIA, AMD, and Intel GPUs.
                                 Model runs entirely on your machine - no API key required.

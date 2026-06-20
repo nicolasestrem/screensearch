@@ -9,6 +9,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Settings AI card no longer hangs on its loading skeleton.** `GET
+  /embeddings/status`'s cheap `engine_ready` probe used a blocking read lock that
+  stalled for the entire first-run embedding-model download (~450 MB) because
+  `get_embedding_engine` holds the write lock across init. It now uses `try_read`
+  and reports "not ready" while initializing instead of blocking. A defensive 8s
+  fetch timeout in the UI also prevents the card from getting stuck. Files:
+  `screensearch-api/src/state.rs`, `screensearch-ui/src/components/EmbeddingsStatus.tsx`.
+- **`database is locked` errors under concurrent writes.** Added a SQLite
+  `busy_timeout` (10s) so a writer (e.g. the vision worker storing an analysis)
+  waits for the lock instead of erroring when the capture/OCR pipeline is also
+  writing. File: `screensearch-db/src/db.rs`.
+- **Answer Generation no longer spams `image input is not supported`.** The local
+  provider previously defaulted to the **text-only** Ministral-3B (`vision_model =
+  'ministral-3:3b'`), so enabling vision sent images to a server with no
+  multimodal projector and every frame failed. The default is now **Gemma 4 E4B**
+  (multimodal): a new DB migration (`011_gemma4_vision_default`) migrates existing
+  `ministral-3:3b` rows, and the Settings/AI UI defaults and labels were updated
+  off Ministral. Drop your Gemma 4 GGUF(s) + `*mmproj*.gguf` into `.models/` and
+  pick one in Settings → AI.
+
+### Added
+- **Startup readiness banner.** A new non-blocking banner explains, in plain
+  language, what the backend is doing while it warms up and roughly how long is
+  left — core services (DB/capture/OCR/search), the semantic-search model, and
+  local AI answer generation (server/model download + load, with GPU/CPU shown).
+  It only appears when there is actual warm-up to report (a fully-cached launch
+  shows nothing) and auto-dismisses once everything is ready. Backed by a new
+  `GET /api/system/readiness` aggregator. Files:
+  `screensearch-api/src/handlers/system.rs`, `routes.rs`,
+  `screensearch-ui/src/components/StartupStatus.tsx`, `App.tsx`.
+- **Vision model picker** — `GET /api/vision/models` lists the locally discovered
+  `(model, mmproj)` pairs, and Settings → AI shows a dropdown to choose which one
+  the unified local server loads (writes the `vision_model` setting; the server
+  rebuilds on the next request). Files: `screensearch-api/src/handlers/vision.rs`,
+  `routes.rs`, `screensearch-ui/src/components/SettingsPanel.tsx`.
+- **GPU acceleration is now visible.** `GET /api/ai/server/status` returns an
+  `acceleration` field (`gpu` / `cpu` / `unknown`) and Settings → AI shows whether
+  the local server is running on GPU (Vulkan) or fell back to CPU. llama-server's
+  stdout/stderr are captured to `bin/llama-server.log` (previously discarded), so
+  a Vulkan init failure is diagnosable. File: `screensearch-llm/src/server.rs`,
+  `screensearch-api/src/handlers/ai.rs`.
+
+### Changed
+- **Better local model selection.** `resolve_vision_model()` now prefers a
+  higher-quality quantization within a size tier (e.g. Q4 over Q2), and model
+  discovery skips non-loadable GGUFs (multimodal projectors, `mtp-*` helper heads,
+  and files below a size floor) so they're never loaded as the generation/vision
+  model. File: `screensearch-llm/src/download.rs`.
+- **GPU health-check timeout scales with model size** (base + per-GB, capped)
+  instead of a fixed 45 s, so a multi-GB model loading into VRAM is no longer
+  mistaken for a GPU failure and silently bounced to CPU. File:
+  `screensearch-llm/src/server.rs`.
+- **"Process frames" (embeddings indexing) no longer blocks.** `POST
+  /api/embeddings/generate` starts the CPU-bound work on a background task and
+  returns immediately; the UI polls `GET /api/embeddings/status` so the coverage
+  bar climbs live. Chunks are batched across frames (bounded per call) and the
+  fastembed batch size was raised 16 → 32 for better throughput. Files:
+  `screensearch-api/src/handlers/embeddings.rs`,
+  `screensearch-embeddings/src/lib.rs`,
+  `screensearch-ui/src/components/EmbeddingsStatus.tsx`.
+  (Note: embeddings still run on ONNX Runtime CPU; GPU execution providers are
+  future work.)
+- **UI rename:** the "ScreenSearch Intel" / "Intelligence" surfaces are now
+  branded **"Insights"** (dashboard title, reports page/header, search footer,
+  answer card, settings section; report files are saved as `insights-report-*`).
+
 ### Added
 - **On-device vision (screen understanding) via the unified local llama-server.**
   When vision is enabled with the `local` provider, the same auto-managed

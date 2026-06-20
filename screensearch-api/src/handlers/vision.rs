@@ -9,6 +9,7 @@ use crate::error::{AppError, Result};
 use crate::state::AppState;
 use axum::extract::{Path, State};
 use axum::Json;
+use serde::Serialize;
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -53,6 +54,78 @@ pub async fn analyze_frame(
         "queue_id": queue_id,
         "already_queued": queue_id == 0,
     })))
+}
+
+/// A locally discovered vision-capable model (a GGUF with a matching `mmproj`
+/// projector beside it) that the user can select for the local provider.
+#[derive(Debug, Serialize)]
+pub struct VisionModelEntry {
+    /// Filename stem, used as the `vision_model` setting value (drives
+    /// `resolve_vision_model`'s preferred match).
+    pub id: String,
+    /// Model GGUF filename (for display).
+    pub model_file: String,
+    /// Projector GGUF filename (for display).
+    pub mmproj_file: String,
+    /// Whether this is the model the server currently resolves to.
+    pub selected: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VisionModelsResponse {
+    pub models: Vec<VisionModelEntry>,
+    /// The id of the currently resolved model, if any.
+    pub selected: Option<String>,
+}
+
+/// GET /api/vision/models
+///
+/// List the locally discovered vision-capable models (each a GGUF paired with an
+/// `mmproj` projector in `.models/`) so the UI can offer a picker for the local
+/// provider. The entry matching the current `vision_model` setting is flagged
+/// `selected`.
+pub async fn list_vision_models(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<VisionModelsResponse>> {
+    let file_name = |p: &std::path::Path| {
+        p.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let stem = |p: &std::path::Path| {
+        p.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string()
+    };
+
+    // What the server would actually load given the current setting.
+    let preferred = state
+        .db
+        .get_settings()
+        .await
+        .map(|s| s.vision_model)
+        .unwrap_or_default();
+    let selected_model = screensearch_llm::resolve_vision_model(&preferred).map(|(m, _)| stem(&m));
+
+    let models = screensearch_llm::discover_vision_models()
+        .into_iter()
+        .map(|(model, mmproj)| {
+            let id = stem(&model);
+            VisionModelEntry {
+                selected: Some(&id) == selected_model.as_ref(),
+                model_file: file_name(&model),
+                mmproj_file: file_name(&mmproj),
+                id,
+            }
+        })
+        .collect();
+
+    Ok(Json(VisionModelsResponse {
+        models,
+        selected: selected_model,
+    }))
 }
 
 /// GET /api/vision/status

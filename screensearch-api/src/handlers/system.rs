@@ -58,6 +58,228 @@ pub async fn health(State(state): State<Arc<AppState>>) -> Result<Json<HealthRes
     }))
 }
 
+/// One subsystem's startup/readiness state, in plain language for the UI.
+#[derive(Debug, serde::Serialize)]
+pub struct ReadinessStage {
+    /// Stable id: "core" | "search_index" | "answer_generation".
+    pub id: String,
+    /// Short human label.
+    pub label: String,
+    /// State machine value the UI styles on:
+    /// "ready" | "initializing" | "loading" | "downloading" | "needs_setup" | "disabled".
+    /// `initializing`/`loading`/`downloading` are *transitional* — the UI keeps the
+    /// startup banner up while any stage is in one of them.
+    pub state: String,
+    /// One sentence explaining what's happening / what to do.
+    pub detail: String,
+    /// Download progress 0–100 (only for `downloading`).
+    pub progress: Option<f64>,
+    /// Estimated seconds remaining (only for `downloading`).
+    pub eta_seconds: Option<u64>,
+}
+
+/// Aggregated startup readiness across subsystems.
+#[derive(Debug, serde::Serialize)]
+pub struct ReadinessResponse {
+    /// Core (DB + capture/OCR/search) is up — the app is usable for search.
+    pub core_ready: bool,
+    /// No subsystem is still in a transitional (timed) warm-up state.
+    pub all_ready: bool,
+    pub stages: Vec<ReadinessStage>,
+}
+
+fn is_transitional(state: &str) -> bool {
+    matches!(state, "initializing" | "loading" | "downloading")
+}
+
+/// GET /system/readiness
+///
+/// One call the UI polls at startup to explain, in plain language, what the
+/// backend is doing and roughly how long until each capability is usable: core
+/// services (DB/capture/OCR/search), the semantic-search model, and local AI
+/// answer generation (server/model download + load). Designed to be cheap and
+/// non-blocking so it can be polled once a second during warm-up.
+pub async fn get_readiness(State(state): State<Arc<AppState>>) -> Result<Json<ReadinessResponse>> {
+    use screensearch_llm::{get_bin_dir, llama_server_up_to_date, resolve_vision_model};
+
+    let mut stages: Vec<ReadinessStage> = Vec::new();
+
+    // --- Core (database + API + capture/OCR pipeline) ---
+    let core_ready = state.db.get_statistics().await.is_ok();
+    stages.push(ReadinessStage {
+        id: "core".into(),
+        label: "Core services".into(),
+        state: if core_ready { "ready" } else { "initializing" }.into(),
+        detail: if core_ready {
+            "Capture, OCR, and keyword search are running.".into()
+        } else {
+            "Starting the database and capture pipeline…".into()
+        },
+        progress: None,
+        eta_seconds: None,
+    });
+
+    // Tracked downloads (shared by the AI stage's messaging).
+    let downloads = state.get_all_download_progress().await;
+
+    // --- Semantic search (in-process embedding model) ---
+    {
+        let status = state.db.get_embedding_status().await.ok();
+        let indexing_on = status.as_ref().map(|s| s.enabled).unwrap_or(false);
+        let coverage = status.as_ref().map(|s| s.coverage_percent).unwrap_or(0.0);
+        let engine_ready = state.embedding_engine_initialized().await;
+
+        let (st, detail) = if engine_ready {
+            if indexing_on {
+                (
+                    "ready",
+                    format!("Semantic search ready ({coverage:.0}% of frames indexed)."),
+                )
+            } else {
+                (
+                    "ready",
+                    "Search model ready. Enable indexing in Settings → Data & AI for semantic search."
+                        .to_string(),
+                )
+            }
+        } else {
+            (
+                "loading",
+                "Loading the search model — the first run downloads ~450 MB.".to_string(),
+            )
+        };
+        stages.push(ReadinessStage {
+            id: "search_index".into(),
+            label: "Semantic search".into(),
+            state: st.into(),
+            detail,
+            progress: None,
+            eta_seconds: None,
+        });
+    }
+
+    // --- Local AI answer generation (vision + RAG via llama-server) ---
+    {
+        let settings = state.db.get_settings().await.ok();
+        let vision_enabled = settings
+            .as_ref()
+            .map(|s| s.vision_enabled != 0)
+            .unwrap_or(false);
+        let provider = settings
+            .as_ref()
+            .map(|s| s.vision_provider.clone())
+            .unwrap_or_default();
+        let vision_model = settings
+            .as_ref()
+            .map(|s| s.vision_model.clone())
+            .unwrap_or_default();
+
+        let (st, detail, progress, eta): (String, String, Option<f64>, Option<u64>) =
+            if !vision_enabled {
+                (
+                    "disabled".into(),
+                    "Answer Generation is off — turn it on in Settings → Data & AI.".into(),
+                    None,
+                    None,
+                )
+            } else if provider != "local" {
+                (
+                    "ready".into(),
+                    format!("Using your configured provider ({provider})."),
+                    None,
+                    None,
+                )
+            } else if let Some(p) = downloads.get("llama_server") {
+                (
+                    "downloading".into(),
+                    "Downloading the local AI server…".into(),
+                    Some(p.percentage()),
+                    Some(p.eta_seconds),
+                )
+            } else if let Some(p) = downloads.get("llm_model") {
+                (
+                    "downloading".into(),
+                    "Downloading the local AI model…".into(),
+                    Some(p.percentage()),
+                    Some(p.eta_seconds),
+                )
+            } else if !llama_server_up_to_date(&get_bin_dir()) {
+                (
+                    "needs_setup".into(),
+                    "Download the local AI server in Settings → Data & AI.".into(),
+                    None,
+                    None,
+                )
+            } else if resolve_vision_model(&vision_model).is_none() {
+                (
+                    "needs_setup".into(),
+                    "Add a Gemma 4 model and its *mmproj*.gguf to the .models/ folder.".into(),
+                    None,
+                    None,
+                )
+            } else {
+                // Binary + model are present: reflect the server's runtime state.
+                let guard = state.llama_server.read().await;
+                match guard.as_ref() {
+                    Some(server) => {
+                        let status = server.status().await;
+                        match status.as_str() {
+                            "running" => {
+                                let accel = match server.gpu_active().await {
+                                    Some(true) => "GPU (Vulkan)",
+                                    Some(false) => "CPU",
+                                    None => "your device",
+                                };
+                                (
+                                    "ready".into(),
+                                    format!("Local model loaded on {accel}."),
+                                    None,
+                                    None,
+                                )
+                            }
+                            "starting" => (
+                                "loading".into(),
+                                "Loading the model into memory (first request can take a few seconds)…"
+                                    .into(),
+                                None,
+                                None,
+                            ),
+                            _ => (
+                                "ready".into(),
+                                "Ready — the model loads on the first request.".into(),
+                                None,
+                                None,
+                            ),
+                        }
+                    }
+                    None => (
+                        "ready".into(),
+                        "Ready — the model loads on the first request.".into(),
+                        None,
+                        None,
+                    ),
+                }
+            };
+
+        stages.push(ReadinessStage {
+            id: "answer_generation".into(),
+            label: "AI answer generation".into(),
+            state: st,
+            detail,
+            progress,
+            eta_seconds: eta,
+        });
+    }
+
+    let all_ready = core_ready && !stages.iter().any(|s| is_transitional(&s.state));
+
+    Ok(Json(ReadinessResponse {
+        core_ready,
+        all_ready,
+        stages,
+    }))
+}
+
 /// POST /tags - Create a new tag
 ///
 /// Creates a new tag that can be applied to frames.

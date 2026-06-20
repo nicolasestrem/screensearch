@@ -49,7 +49,7 @@ export function AnswerCard() {
                     <div className="flex-1 space-y-4">
                         <div className="flex items-center gap-2 text-primary">
                             <Sparkles className="h-5 w-5" />
-                            <h3 className="font-semibold">AI Intelligence</h3>
+                            <h3 className="font-semibold">AI Insights</h3>
                         </div>
 
                         {!answer && !loading && !error && (

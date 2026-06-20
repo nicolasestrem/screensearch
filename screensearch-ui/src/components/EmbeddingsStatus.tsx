@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Brain, RefreshCw, Check, X, AlertTriangle, Download } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
@@ -24,28 +24,48 @@ export function EmbeddingsStatus() {
     const [generating, setGenerating] = useState(false);
     const [preparingModels, setPreparingModels] = useState(false);
     const [selectedPercentage, setSelectedPercentage] = useState<25 | 50 | 100>(50);
+    // Interval used to poll status while a background indexing job runs.
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    const fetchStatus = async () => {
+    const fetchStatus = async (): Promise<EmbeddingStatus | null> => {
+        // Abort after 8s so a slow/stuck backend never freezes the card on its
+        // loading skeleton — fall through to the error+retry UI instead.
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
         try {
             setLoading(true);
-            const response = await fetch('/api/embeddings/status');
+            const response = await fetch('/api/embeddings/status', { signal: controller.signal });
             if (response.ok) {
                 const data = await response.json();
                 setStatus(data);
                 setLoadError(null);
+                return data as EmbeddingStatus;
             } else {
                 setLoadError(`Status request failed (${response.status})`);
             }
         } catch (error) {
             console.error('Failed to fetch embedding status:', error);
-            setLoadError(error instanceof Error ? error.message : 'Failed to load status');
+            const aborted = error instanceof DOMException && error.name === 'AbortError';
+            setLoadError(
+                aborted
+                    ? 'AI status request timed out'
+                    : error instanceof Error
+                        ? error.message
+                        : 'Failed to load status'
+            );
         } finally {
+            clearTimeout(timer);
             setLoading(false);
         }
+        return null;
     };
 
     useEffect(() => {
         fetchStatus();
+        // Clear any polling interval on unmount.
+        return () => {
+            if (pollRef.current) clearInterval(pollRef.current);
+        };
     }, []);
 
     const toggleEnabled = async () => {
@@ -80,16 +100,36 @@ export function EmbeddingsStatus() {
                 body: JSON.stringify({ batch_size: batchSize }),
             });
             const data = await response.json();
-            if (response.ok && data.success) {
-                await fetchStatus();
-                toast.success(data.message);
-            } else {
+            if (!response.ok || !data.success) {
                 toast.error(data.message || data.error || "Failed to start generation");
+                setGenerating(false);
+                return;
             }
+
+            toast.success(data.message);
+            // The job runs in the background; poll status so the coverage bar
+            // climbs as frames finish. Keep `generating` true (buttons disabled,
+            // spinner shown) until the backlog drains or a safety cap is hit.
+            await fetchStatus();
+            if (pollRef.current) clearInterval(pollRef.current);
+            const startedAt = Date.now();
+            pollRef.current = setInterval(async () => {
+                const latest = await fetchStatus();
+                const remaining = latest
+                    ? latest.total_frames - latest.frames_with_embeddings
+                    : 0;
+                if (!latest || remaining <= 0 || Date.now() - startedAt > 600000) {
+                    if (pollRef.current) {
+                        clearInterval(pollRef.current);
+                        pollRef.current = null;
+                    }
+                    setGenerating(false);
+                    if (latest && remaining <= 0) toast.success('Indexing complete');
+                }
+            }, 3000);
         } catch (error) {
             console.error('Failed to trigger generation:', error);
             toast.error("Failed to trigger generation");
-        } finally {
             setGenerating(false);
         }
     };

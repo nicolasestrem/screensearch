@@ -95,7 +95,9 @@ impl Default for EmbeddingConfig {
         Self {
             model: MODEL_NAME.to_string(),
             model_version: MODEL_VERSION.to_string(),
-            batch_size: 16,
+            // Larger batch = better throughput when indexing a backlog of frames
+            // (the on-demand "Process frames" job batches chunks across frames).
+            batch_size: 32,
             cache_dir: std::env::var_os("SCREENSEARCH_MODEL_CACHE").map(PathBuf::from),
             show_download_progress: true,
             reranker_enabled: false,
@@ -111,7 +113,7 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let config = EmbeddingConfig::default();
-        assert_eq!(config.batch_size, 16);
+        assert_eq!(config.batch_size, 32);
         assert_eq!(config.model, MODEL_NAME);
         assert!(!config.reranker_enabled);
     }

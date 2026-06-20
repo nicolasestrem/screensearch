@@ -43,6 +43,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api",
             api_routes
                 .route("/health", get(handlers::system::health))
+                .route("/system/readiness", get(handlers::system::get_readiness))
                 .route("/test-vision", post(handlers::system::test_vision_config))
                 .route("/monitors", get(handlers::system::list_monitors)),
         )
@@ -188,6 +189,7 @@ fn embeddings_routes() -> Router<Arc<AppState>> {
 fn vision_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/status", get(handlers::get_vision_status))
+        .route("/models", get(handlers::list_vision_models))
         .route("/analyze/:frame_id", post(handlers::analyze_frame))
 }
 

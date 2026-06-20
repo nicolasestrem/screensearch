@@ -14,6 +14,28 @@
 Returns application health, version, uptime, frame count, and recent capture
 information.
 
+### `GET /system/readiness`
+
+Aggregated startup readiness across subsystems, in plain language for the UI's
+startup banner. Cheap and non-blocking, designed to be polled ~once a second
+while the backend warms up.
+
+```bash
+curl "http://127.0.0.1:3131/api/system/readiness"
+# -> {"core_ready":true,"all_ready":false,"stages":[
+#      {"id":"core","label":"Core services","state":"ready",
+#       "detail":"Capture, OCR, and keyword search are running.","progress":null,"eta_seconds":null},
+#      {"id":"search_index","label":"Semantic search","state":"loading",
+#       "detail":"Loading the search model — the first run downloads ~450 MB.",...},
+#      {"id":"answer_generation","label":"AI answer generation","state":"downloading",
+#       "detail":"Downloading the local AI server…","progress":42.5,"eta_seconds":37}]}
+```
+
+`state` is one of `ready`, `initializing`, `loading`, `downloading`,
+`needs_setup`, or `disabled`. `initializing`/`loading`/`downloading` are
+*transitional* (timed warm-up); `all_ready` is `true` when none remain. `progress`
+(0–100) and `eta_seconds` are present only for `downloading`.
+
 ## Search
 
 ### `GET /search/`
@@ -195,7 +217,7 @@ Example:
   "retention_days": 30,
   "vision_enabled": 1,
   "vision_provider": "local",
-  "vision_model": "ministral-3:3b",
+  "vision_model": "gemma-4-E4B",
   "vision_endpoint": "http://127.0.0.1:31130",
   "vision_api_key": null
 }
@@ -247,7 +269,7 @@ Generates a report over a time range:
 |---|---|---|
 | `GET` | `/ai/model/status` | Local model status, including an `available_models` list |
 | `POST` | `/ai/model/download` | Start local model download |
-| `GET` | `/ai/server/status` | llama-server state |
+| `GET` | `/ai/server/status` | llama-server state, incl. `acceleration` (`gpu`/`cpu`/`unknown`) |
 | `POST` | `/ai/server/start` | Start llama-server |
 | `POST` | `/ai/server/stop` | Stop llama-server |
 | `POST` | `/ai/server/ttl` | Set idle shutdown timeout |
@@ -292,6 +314,25 @@ curl "http://127.0.0.1:3131/api/vision/status"
 #     "total_frames":1024,"completed":300,"pending":4,"processing":1,
 #     "failed":0,"queue_depth":5}
 ```
+
+### `GET /vision/models`
+
+List the locally discovered vision-capable models — each a GGUF in `.models/`
+paired with a matching `*mmproj*.gguf` projector — so the UI can offer a picker
+for the local provider. The entry the server currently resolves to (from the
+`vision_model` setting) is flagged `selected`.
+
+```bash
+curl "http://127.0.0.1:3131/api/vision/models"
+# -> {"models":[
+#       {"id":"gemma-4-E4B-it-qat-UD-Q4_K_XL","model_file":"gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
+#        "mmproj_file":"gemma-4-E4B-it-mmproj.gguf","selected":true}],
+#     "selected":"gemma-4-E4B-it-qat-UD-Q4_K_XL"}
+```
+
+Set the `vision_model` setting to a model's `id` (or any substring of it) to
+select it; the unified local server rebuilds with that model + projector on the
+next request.
 
 ## Download Progress
 

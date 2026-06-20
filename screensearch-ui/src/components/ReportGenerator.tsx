@@ -65,11 +65,11 @@ export function ReportGenerator() {
     const handleSave = () => {
         if (!report) return;
 
-        // Format: intelligence-report-{type}-{YYYY-MM-DD}-{HH-MM}.md
+        // Format: insights-report-{type}-{YYYY-MM-DD}-{HH-MM}.md
         const now = new Date();
         const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
         const timeStr = (now.toISOString().split('T')[1] ?? '00:00').substring(0, 5).replace(':', '-'); // HH-MM
-        const filename = `intelligence-report-${generatedReportType}-${dateStr}-${timeStr}.md`;
+        const filename = `insights-report-${generatedReportType}-${dateStr}-${timeStr}.md`;
 
         const blob = new Blob([report], { type: 'text/markdown' });
         const url = URL.createObjectURL(blob);
@@ -88,7 +88,7 @@ export function ReportGenerator() {
             <div className="bg-card border border-border rounded-lg p-6 space-y-6">
                 <div className="flex items-center gap-2 pb-4 border-b border-border">
                     <Sparkles className="w-5 h-5 text-primary" />
-                    <h2 className="text-lg font-semibold">Generate Intelligence Report</h2>
+                    <h2 className="text-lg font-semibold">Generate Insights Report</h2>
                 </div>
 
                 <div className="space-y-4">
@@ -141,7 +141,7 @@ export function ReportGenerator() {
                     <div className="flex items-center justify-between p-4 border-b border-border bg-muted/30">
                         <div className="flex items-center gap-2">
                             <FileText className="w-5 h-5 text-primary" />
-                            <h3 className="text-lg font-semibold">Intelligence Report</h3>
+                            <h3 className="text-lg font-semibold">Insights Report</h3>
                         </div>
                         <div className="flex items-center gap-2">
                             <button

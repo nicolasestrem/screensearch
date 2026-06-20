@@ -96,9 +96,18 @@ impl AppState {
     }
 
     /// Whether the in-process embedding engine has already been loaded.
-    /// Cheap, non-blocking check that never triggers a model download.
+    ///
+    /// Cheap and truly non-blocking: uses `try_read` so it returns immediately
+    /// even while `get_embedding_engine` holds the write lock across a first-run
+    /// model download/load. A held write lock means initialization is in
+    /// progress, so the engine is not yet ready — report `false` rather than
+    /// blocking (which would hang `GET /embeddings/status` for the whole
+    /// download and freeze the Settings card on its loading skeleton).
     pub async fn embedding_engine_initialized(&self) -> bool {
-        self.embedding_engine.read().await.is_some()
+        match self.embedding_engine.try_read() {
+            Ok(guard) => guard.is_some(),
+            Err(_) => false,
+        }
     }
 
     /// Get or initialize the embedding engine
