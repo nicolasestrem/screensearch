@@ -526,8 +526,10 @@ pub struct ModelStatusResponse {
 pub async fn get_model_status(
     State(_state): State<Arc<AppState>>,
 ) -> Result<Json<ModelStatusResponse>> {
-    // Prefer a user-provided GGUF discovered in `.models/` (etc.); fall back to
-    // the downloadable default model.
+    // List all discovered GGUFs for reference, but report the model the server
+    // will actually load — `resolve_model_path` (which prefers a vanilla instruct
+    // build and skips embedding/thinking/action variants) — not merely the first
+    // by sort order.
     let discovered = screensearch_llm::discover_local_models();
     let available_models: Vec<String> = discovered
         .iter()
@@ -535,35 +537,37 @@ pub async fn get_model_status(
         .collect();
 
     let models_dir = get_models_dir();
-    let (downloaded, model_name, model_path) = match discovered.first() {
-        Some(path) => {
-            let name = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "local-gguf".to_string());
-            (true, name, Some(path.to_string_lossy().to_string()))
-        }
-        None => {
-            let downloaded = local_model_available();
-            let model_path = downloaded.then(|| {
-                models_dir
-                    .join(MODEL_FILENAME)
-                    .to_string_lossy()
-                    .to_string()
-            });
-            (
-                downloaded,
-                "Ministral-3B-Instruct-2512-Q4_K_M".to_string(),
-                model_path,
-            )
-        }
+    let resolved = screensearch_llm::resolve_model_path();
+    let (downloaded, model_name, model_path, model_size_bytes) = if resolved.is_file() {
+        let name = resolved
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "local-gguf".to_string());
+        let size = std::fs::metadata(&resolved)
+            .map(|m| m.len())
+            .unwrap_or(MODEL_SIZE_BYTES);
+        (true, name, Some(resolved.to_string_lossy().to_string()), size)
+    } else {
+        let downloaded = local_model_available();
+        let model_path = downloaded.then(|| {
+            models_dir
+                .join(MODEL_FILENAME)
+                .to_string_lossy()
+                .to_string()
+        });
+        (
+            downloaded,
+            "Ministral-3B-Instruct-2512-Q4_K_M".to_string(),
+            model_path,
+            MODEL_SIZE_BYTES,
+        )
     };
 
     Ok(Json(ModelStatusResponse {
         downloaded,
         downloading: false, // TODO: Track download state in AppState
         model_name,
-        model_size_bytes: MODEL_SIZE_BYTES,
+        model_size_bytes,
         model_path,
         available_models,
     }))

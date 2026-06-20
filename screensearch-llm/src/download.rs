@@ -301,11 +301,57 @@ pub fn local_model_available() -> bool {
     !discover_local_models().is_empty() || model_exists(&get_models_dir())
 }
 
-/// The GGUF model the LLM server should use by default: the first discovered
-/// user-provided model, falling back to the downloadable default path (which
-/// may or may not exist yet).
+/// Desirability of a discovered GGUF as the *answer-generation* model. Mirrors
+/// the vision resolver's intent: a vanilla `instruct` build is preferred, while
+/// chain-of-thought (`thinking`) builds and third-party agent (`action`)
+/// fine-tunes are strongly penalised so they are never auto-selected just
+/// because they sort first; quantisation desirability breaks remaining ties.
+/// (`thinking`/`action` are matched as whole tokens to avoid tripping on
+/// substrings such as `extraction`.)
+fn answer_model_score(stem_lower: &str) -> i64 {
+    let has_token = |tok: &str| {
+        stem_lower
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|t| t == tok)
+    };
+    let mut score: i64 = 0;
+    if !has_token("thinking") {
+        score += 1000;
+    }
+    if !has_token("action") {
+        score += 1000;
+    }
+    if stem_lower.contains("instruct") {
+        score += 200;
+    }
+    score += quant_desirability(stem_lower) as i64;
+    score
+}
+
+/// Pick the best answer-generation model from discovered candidates, preferring
+/// the earliest on ties (stable discovery order).
+fn pick_answer_model(models: &[PathBuf]) -> Option<PathBuf> {
+    let mut best: Option<(&PathBuf, i64)> = None;
+    for p in models {
+        let stem = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_default();
+        let score = answer_model_score(&stem);
+        // Strictly-greater so the first candidate on a tie wins.
+        if best.map(|(_, b)| score > b).unwrap_or(true) {
+            best = Some((p, score));
+        }
+    }
+    best.map(|(p, _)| p.clone())
+}
+
+/// The GGUF model the LLM server should use by default: the best-scoring
+/// discovered user-provided model (see [`answer_model_score`]), falling back to
+/// the downloadable default path (which may or may not exist yet).
 pub fn resolve_model_path() -> PathBuf {
-    if let Some(found) = discover_local_models().into_iter().next() {
+    if let Some(found) = pick_answer_model(&discover_local_models()) {
         debug!("Using discovered GGUF model: {:?}", found);
         return found;
     }
@@ -376,6 +422,12 @@ fn is_loadable_model_gguf(path: &Path) -> bool {
     // `mtp-*` is a multi-token-prediction head shipped beside Gemma 4 models,
     // not a model that can be loaded on its own.
     if name.starts_with("mtp-") {
+        return false;
+    }
+    // Embedding models (e.g. `*-Embedding-*`, EmbeddingGemma) produce vectors,
+    // not chat completions. They must never be selected as the answer-generation
+    // model or a vision base, even though they are sizeable standalone GGUFs.
+    if name.contains("embed") {
         return false;
     }
     match std::fs::metadata(path) {
@@ -1206,7 +1258,8 @@ mod tests {
         let mtp = dir.join("mtp-gemma-4-E4B-it.gguf");
         let mmproj = dir.join("gemma-4-E4B-it-mmproj.gguf");
         let partial = dir.join("gemma-4-E4B_q4_0-it.gguf");
-        for f in [&mtp, &mmproj, &partial] {
+        let embedding = dir.join("Qwen.Qwen3-VL-Embedding-2B.f16.gguf");
+        for f in [&mtp, &mmproj, &partial, &embedding] {
             std::fs::write(f, b"x").unwrap();
         }
         // mtp heads and projectors are never primary models.
@@ -1215,6 +1268,27 @@ mod tests {
         // A real model name but below the size floor (e.g. a truncated download)
         // is also rejected.
         assert!(!is_loadable_model_gguf(&partial));
+        // Embedding models produce vectors, not answers — never a primary model.
+        assert!(!is_loadable_model_gguf(&embedding));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_pick_answer_model_prefers_vanilla_instruct() {
+        // The same .models/ mix that previously mis-selected the embedding /
+        // thinking models: the vanilla instruct build must win.
+        let models: Vec<PathBuf> = [
+            "Qwen3VL-4B-Thinking-Q4_K_M.gguf",
+            "Qwen3VL-4B-Thinking-Q8_0.gguf",
+            "Sber_Qwen3-VL-4B-Instruct-action-Q4_K_M.gguf",
+            "qwen3-vl-4b-instruct-q4_k_m.gguf",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+        let picked = pick_answer_model(&models).unwrap();
+        assert_eq!(picked.file_name().unwrap(), "qwen3-vl-4b-instruct-q4_k_m.gguf");
+        // The vanilla instruct build outscores every penalised variant.
+        assert!(answer_model_score("qwen3-vl-4b-instruct-q4_k_m") > answer_model_score("qwen3vl-4b-thinking-q4_k_m"));
     }
 }
