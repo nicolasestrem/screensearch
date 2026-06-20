@@ -148,15 +148,29 @@ impl EmbeddingEngine {
 
     async fn run_embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
         let model = Arc::clone(&self.model);
-        let batch_size = self.config.batch_size;
         let embeddings = tokio::task::spawn_blocking(move || {
             let mut guard = model.lock().map_err(|_| {
                 EmbeddingError::InferenceError("embedding model lock poisoned".into())
             })?;
-            let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-            guard
-                .embed(refs, Some(batch_size))
-                .map_err(|error| EmbeddingError::InferenceError(error.to_string()))
+            // Embed one input at a time. The quantized EmbeddingGemma model
+            // (`EmbeddingGemma300MQ`) errors on any multi-input `embed` call —
+            // "Dynamic quantization cannot be used with batching" — which
+            // previously aborted the whole batch and left long-OCR frames (and
+            // the on-demand /embeddings/generate endpoint) permanently
+            // un-indexed. A batch of one avoids the dynamic-quant batch path; the
+            // model lock is acquired once for the whole loop. (`config.batch_size`
+            // no longer applies to this quantized model.)
+            let mut out: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+            for text in &texts {
+                let mut one = guard
+                    .embed(vec![text.as_str()], Some(1))
+                    .map_err(|error| EmbeddingError::InferenceError(error.to_string()))?;
+                let embedding = one.pop().ok_or_else(|| {
+                    EmbeddingError::InferenceError("model returned no embedding".into())
+                })?;
+                out.push(embedding);
+            }
+            Ok::<Vec<Vec<f32>>, EmbeddingError>(out)
         })
         .await
         .map_err(|error| EmbeddingError::InferenceError(error.to_string()))??;

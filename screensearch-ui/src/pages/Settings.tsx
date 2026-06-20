@@ -11,6 +11,7 @@ import {
   useModelStatus,
   useMonitors,
   usePrepareModels,
+  useSelectModel,
   useServerControl,
   useServerStatus,
   useSettings,
@@ -32,6 +33,11 @@ function parseArr(s: string | undefined): string[] {
   } catch {
     return []
   }
+}
+
+/** Filename (with extension) from an absolute model path, for compact display. */
+function baseName(p: string): string {
+  return p.split(/[\\/]/).pop() || p
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -135,10 +141,12 @@ export default function Settings() {
   const [ai, setAi] = useState(aiConfig)
   useEffect(() => setAi(aiConfig), [aiConfig])
   const validate = useValidateAi()
+  const aiIsLocal = ai.providerUrl === 'local'
 
   // local model + server
   const modelStatus = useModelStatus().data
   const downloadModel = useDownloadModel()
+  const selectModel = useSelectModel()
   const server = useServerStatus().data
   const serverCtl = useServerControl()
   const downloadsActive = (modelStatus?.downloading ?? false) || (server?.status === 'starting')
@@ -340,11 +348,39 @@ export default function Settings() {
                     </option>
                   ))}
                 </select>
+              ) : visionProvider === 'local' ? (
+                <div className="flex items-center gap-2 font-mono text-sm text-muted">
+                  <StatusDot tone="muted" />
+                  <span>no vision model found</span>
+                </div>
               ) : (
                 <input value={visionModel} onChange={(e) => setVisionModel(e.target.value)} placeholder="e.g. qwen2.5vl" className={inputCls} />
               )}
             </Field>
           </div>
+          {visionProvider === 'local' && visionModels.length === 0 && (
+            <p className="font-mono text-xs leading-relaxed text-muted">
+              No vision-capable model detected. Drop a vision GGUF <span className="text-ink2">and</span> its matching{' '}
+              <span className="text-ink2">*mmproj*.gguf</span> projector into <span className="text-ink2">.models/</span> (the
+              two must be the same family — a projector is only paired with its own model).
+            </p>
+          )}
+          {visionProvider === 'local' && (
+            <div className="flex flex-wrap items-center gap-3">
+              {!server?.server_binary_available ? (
+                <>
+                  <Button variant="ghost" onClick={() => serverCtl.downloadServer.mutate()} disabled={serverCtl.downloadServer.isPending}>
+                    {serverCtl.downloadServer.isPending ? 'Downloading…' : 'Download llama-server'}
+                  </Button>
+                  <span className="font-mono text-xs text-faint">Vision shares the local server (section 05).</span>
+                </>
+              ) : (
+                <span className="font-mono text-xs text-faint">
+                  Uses the local llama-server (section 05) · {accel.label}
+                </span>
+              )}
+            </div>
+          )}
           {visionProvider !== 'local' && (
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Endpoint">
@@ -371,27 +407,56 @@ export default function Settings() {
         <PanelHeader num="04" title="AI provider" right="for reports" />
         <PanelBody className="flex flex-col gap-4">
           <p className="font-mono text-xs leading-relaxed text-muted">
-            Used by Recall → Report. The “Ask” answers use your local model below.
+            Used by Recall → Report. Use the local engine below, or point at a remote
+            OpenAI-compatible provider. (“Ask” answers always use the local engine.)
           </p>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Provider URL">
-              <input value={ai.providerUrl} onChange={(e) => setAi({ ...ai, providerUrl: e.target.value })} placeholder="http://localhost:11434/v1" className={inputCls} />
-            </Field>
-            <Field label="Model">
-              <input value={ai.model} onChange={(e) => setAi({ ...ai, model: e.target.value })} placeholder="e.g. llama3.1" className={inputCls} />
-            </Field>
-            <Field label="API key (optional)">
-              <input value={ai.apiKey} onChange={(e) => setAi({ ...ai, apiKey: e.target.value })} type="password" placeholder="sk-…" className={inputCls} />
-            </Field>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setAi({ ...ai, providerUrl: 'local' })}
+              className={clsx(
+                'border px-3 py-1.5 text-xs',
+                aiIsLocal ? 'border-accent bg-accent/15 text-accent' : 'border-rule text-muted hover:text-ink'
+              )}
+            >
+              Local engine
+            </button>
+            <button
+              onClick={() => setAi({ ...ai, providerUrl: ai.providerUrl === 'local' ? '' : ai.providerUrl })}
+              className={clsx(
+                'border px-3 py-1.5 text-xs',
+                !aiIsLocal ? 'border-accent bg-accent/15 text-accent' : 'border-rule text-muted hover:text-ink'
+              )}
+            >
+              Remote
+            </button>
           </div>
+          {aiIsLocal ? (
+            <p className="font-mono text-xs leading-relaxed text-muted">
+              Reports will run on the local answer engine
+              {modelStatus?.model_path ? <> (<span className="text-ink2">{baseName(modelStatus.model_path)}</span>)</> : null}. Choose the
+              model in “Local answer engine” below.
+            </p>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="Provider URL">
+                <input value={ai.providerUrl} onChange={(e) => setAi({ ...ai, providerUrl: e.target.value })} placeholder="http://localhost:11434/v1" className={inputCls} />
+              </Field>
+              <Field label="Model">
+                <input value={ai.model} onChange={(e) => setAi({ ...ai, model: e.target.value })} placeholder="e.g. llama3.1" className={inputCls} />
+              </Field>
+              <Field label="API key (optional)">
+                <input value={ai.apiKey} onChange={(e) => setAi({ ...ai, apiKey: e.target.value })} type="password" placeholder="sk-…" className={inputCls} />
+              </Field>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-3">
             <Button variant="primary" onClick={() => setAiConfig(ai)}>
               Save
             </Button>
             <Button
               variant="ghost"
-              disabled={!ai.providerUrl || !ai.model || validate.isPending}
-              onClick={() => validate.mutate({ provider_url: ai.providerUrl, model: ai.model, api_key: ai.apiKey || undefined })}
+              disabled={(!aiIsLocal && (!ai.providerUrl || !ai.model)) || validate.isPending}
+              onClick={() => validate.mutate({ provider_url: ai.providerUrl, model: aiIsLocal ? 'local' : ai.model, api_key: ai.apiKey || undefined })}
             >
               {validate.isPending ? 'Testing…' : 'Test connection'}
             </Button>
@@ -409,21 +474,34 @@ export default function Settings() {
       <Panel>
         <PanelHeader num="05" title="Local answer engine" />
         <PanelBody className="flex flex-col gap-4">
+          <p className="font-mono text-xs leading-relaxed text-muted">
+            Runs your local GGUF for “Ask” answers (and for Reports when the AI
+            provider above is set to Local). Pick which model to use; when vision is
+            enabled it shares this server, so the vision model answers instead.
+          </p>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-1.5">
-              <span className="eyebrow text-[10.5px] text-faint">Model</span>
-              <div className="flex items-center gap-2 font-mono text-sm text-ink2">
-                <StatusDot tone={modelStatus?.downloaded ? 'ok' : 'muted'} />
-                {modelStatus ? (
-                  <span>
-                    {modelStatus.model_name}
-                    {modelStatus.downloaded ? ` · ${bytes(modelStatus.model_size_bytes)}` : ' · not downloaded'}
-                  </span>
-                ) : (
-                  '—'
-                )}
-              </div>
-            </div>
+            <Field label="Model">
+              {modelStatus && modelStatus.available_models.length > 0 ? (
+                <select
+                  value={modelStatus.selected}
+                  onChange={(e) => selectModel.mutate(e.target.value)}
+                  disabled={selectModel.isPending}
+                  className={clsx(inputCls, '[color-scheme:dark]')}
+                >
+                  <option value="">Auto-select</option>
+                  {modelStatus.available_models.map((m) => (
+                    <option key={m} value={m}>
+                      {baseName(m)}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="flex items-center gap-2 font-mono text-sm text-ink2">
+                  <StatusDot tone={modelStatus?.downloaded ? 'ok' : 'muted'} />
+                  <span>{modelStatus ? `${modelStatus.model_name}${modelStatus.downloaded ? '' : ' · not downloaded'}` : '—'}</span>
+                </div>
+              )}
+            </Field>
             <div className="flex flex-col gap-1.5">
               <span className="eyebrow text-[10.5px] text-faint">Server</span>
               <div className="flex items-center gap-2 font-mono text-sm text-ink2">
@@ -434,6 +512,13 @@ export default function Settings() {
               </div>
             </div>
           </div>
+          {modelStatus?.model_path && (
+            <p className="font-mono text-xs text-faint">
+              active: {baseName(modelStatus.model_path)}
+              {modelStatus.downloaded ? ` · ${bytes(modelStatus.model_size_bytes)}` : ''}
+              {selectModel.isPending ? ' · applying…' : ''}
+            </p>
+          )}
 
           <div className="flex flex-wrap gap-2">
             {!modelStatus?.downloaded && (

@@ -286,9 +286,11 @@ Validates a report-generation provider:
 ```
 
 Use `"provider_url": "local"` for the bundled llama.cpp runtime. The local
-server is model-agnostic: it auto-discovers any `*.gguf` file in `.models/` or
-the app models directory and uses the first one found, falling back to the
-downloadable default (Ministral-3B) when none is present.
+server is model-agnostic: it runs the user-pinned answer model when one is set
+(see `POST /ai/model/select`), otherwise the best-scoring `*.gguf` discovered in
+`.models/` or the app models directory (a vanilla `instruct` build, skipping
+embedding/`thinking`/`action` variants), falling back to the downloadable default
+(Ministral-3B) when none is present.
 
 ### `POST /ai/generate`
 
@@ -308,13 +310,33 @@ Generates a report over a time range:
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/ai/model/status` | Local model status, including an `available_models` list |
+| `GET` | `/ai/model/status` | Local model status: `available_models`, the resolved `model_path`/`model_name`, and the `selected` pin |
+| `POST` | `/ai/model/select` | Pin which local GGUF the answer engine uses (empty string clears the pin) |
 | `POST` | `/ai/model/download` | Start local model download |
 | `GET` | `/ai/server/status` | llama-server state, incl. `acceleration` (`gpu`/`cpu`/`unknown`) |
 | `POST` | `/ai/server/start` | Start llama-server |
 | `POST` | `/ai/server/stop` | Stop llama-server |
 | `POST` | `/ai/server/ttl` | Set idle shutdown timeout |
 | `POST` | `/ai/server/download` | Download llama-server |
+
+#### `POST /ai/model/select`
+
+Pins which discovered local GGUF the unified llama-server runs for answer/report
+generation. `model` may be a discovered GGUF's absolute path or any substring of
+its filename stem; an empty string clears the pin (auto-select). The choice
+persists as the `answer_model` setting and the server rebuilds onto it on next use.
+
+```bash
+curl -X POST "http://127.0.0.1:3131/api/ai/model/select" \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"nemotron\"}"
+# -> ModelStatus with "selected":"nemotron" and the resolved "model_path"
+```
+
+When vision is enabled with the `local` provider, the unified server runs the
+**vision** model (with its `--mmproj`) for both text and image, so this pin applies
+to the text-only (answer/report) server. For Reports, send `"provider_url": "local"`
+to `POST /ai/generate` to run on this local engine instead of a remote provider.
 
 ### `POST /test-vision`
 
@@ -329,7 +351,11 @@ On-device screenshot analysis. When vision is enabled with the `local` provider
 **Qwen3-VL-4B-Instruct**, ~1 s/frame; Gemma&nbsp;4 also works);
 analysis populates each frame's `description`, `visible_text`, `activity_type`,
 `app_hint`, and `confidence`. Drop a vision GGUF **and** its
-`*mmproj*.gguf` projector into `.models/`.
+`*mmproj*.gguf` projector into `.models/`. The model and projector must be the
+**same family** — a projector is only paired with its own model (matching family
+plus size), so an unrelated text model sitting beside a projector is never treated
+as a vision model and `GET /vision/models` lists only genuinely vision-capable
+pairs.
 
 ### `POST /vision/analyze/:frame_id`
 

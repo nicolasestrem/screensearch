@@ -517,27 +517,39 @@ pub struct ModelStatusResponse {
     pub model_size_bytes: u64,
     pub model_path: Option<String>,
     /// All GGUF models discovered locally (e.g. dropped into `.models/`), as
-    /// absolute paths. The first entry is the one the server will use.
+    /// absolute paths.
     pub available_models: Vec<String>,
+    /// The user's explicit answer-model pin (the `answer_model` setting), or an
+    /// empty string when auto-selecting. `model_path` reports what is actually
+    /// resolved (the pin when set and on disk, else the auto-selected model).
+    pub selected: String,
 }
 
 /// GET /ai/model/status
-/// Returns the status of the local Ministral-3B model
+/// Returns the status of the local answer-generation model
 pub async fn get_model_status(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<ModelStatusResponse>> {
     // List all discovered GGUFs for reference, but report the model the server
-    // will actually load — `resolve_model_path` (which prefers a vanilla instruct
-    // build and skips embedding/thinking/action variants) — not merely the first
-    // by sort order.
+    // will actually load — honoring the user's `answer_model` pin when set, else
+    // `resolve_model_path`'s automatic selection (vanilla instruct, skipping
+    // embedding/thinking/action variants) — not merely the first by sort order.
     let discovered = screensearch_llm::discover_local_models();
     let available_models: Vec<String> = discovered
         .iter()
         .map(|p| p.to_string_lossy().to_string())
         .collect();
 
+    let selected = state
+        .db
+        .get_metadata("answer_model")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+
     let models_dir = get_models_dir();
-    let resolved = screensearch_llm::resolve_model_path();
+    let resolved = screensearch_llm::resolve_answer_model(&selected);
     let (downloaded, model_name, model_path, model_size_bytes) = if resolved.is_file() {
         let name = resolved
             .file_stem()
@@ -546,7 +558,12 @@ pub async fn get_model_status(
         let size = std::fs::metadata(&resolved)
             .map(|m| m.len())
             .unwrap_or(MODEL_SIZE_BYTES);
-        (true, name, Some(resolved.to_string_lossy().to_string()), size)
+        (
+            true,
+            name,
+            Some(resolved.to_string_lossy().to_string()),
+            size,
+        )
     } else {
         let downloaded = local_model_available();
         let model_path = downloaded.then(|| {
@@ -570,7 +587,39 @@ pub async fn get_model_status(
         model_size_bytes,
         model_path,
         available_models,
+        selected,
     }))
+}
+
+/// Request to pin which local GGUF the answer-generation server uses.
+#[derive(Debug, Deserialize)]
+pub struct SelectModelRequest {
+    /// The chosen model: a discovered GGUF's absolute path or any substring of
+    /// its filename stem. An empty string clears the pin (auto-select).
+    pub model: String,
+}
+
+/// POST /ai/model/select
+/// Pin (or clear, with an empty string) the local answer-generation model. The
+/// unified llama-server rebuilds onto the new model on its next use (the
+/// compare-and-rebuild in `get_llama_server`). When vision is enabled the
+/// unified server runs the vision model, so this pin takes effect for the
+/// text-only (answer/report) server.
+pub async fn select_model(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SelectModelRequest>,
+) -> Result<Json<ModelStatusResponse>> {
+    let choice = payload.model.trim();
+    info!(
+        "Setting answer model pin to {:?}",
+        if choice.is_empty() { "(auto)" } else { choice }
+    );
+    state
+        .db
+        .set_metadata("answer_model", choice)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to persist answer model: {e}")))?;
+    get_model_status(State(state)).await
 }
 
 #[derive(Debug, Serialize)]

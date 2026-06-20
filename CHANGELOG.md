@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Vision crashed with the local provider when an unrelated text model sat beside
+  the projector (`llama-server exit code 1`).** `resolve_mmproj_for` paired a model
+  to a multimodal projector by size token alone, so a text-only model like
+  `NVIDIA-Nemotron3-Nano-4B` was matched with the Qwen3-VL **4B** `mmproj` —
+  llama.cpp then aborted on the embedding-dim mismatch (`n_embd 3136 ≠ 10240`) in
+  both GPU and CPU modes. Pairing now also requires a **same-family** match (shared
+  family token, robust to `qwen3-vl` vs `qwen3vl` hyphenation), so only a real
+  vision model takes its own projector. This also cleans up `GET /api/vision/models`,
+  which no longer lists non-vision models (Nemotron, etc.) as selectable.
+  File: `screensearch-llm/src/download.rs`.
+- **Semantic indexing never progressed for frames with long OCR (and
+  `POST /api/embeddings/generate` failed outright).** The quantized text embedder
+  (`EmbeddingGemma300MQ`) errors on any multi-input `embed` call — *"Dynamic
+  quantization cannot be used with batching"* — which aborted whole batches and left
+  multi-chunk frames permanently un-indexed. The engine now embeds **one input at a
+  time** under a single model lock, so coverage climbs to 100% regardless of OCR
+  length. File: `screensearch-embeddings/src/engine.rs`.
+
+### Added
+- **Pick the local answer-generation model (and use it for Reports).** A new answer-
+  model pin lets you choose which discovered GGUF the unified llama-server runs for
+  "Ask" answers and local Reports (e.g. a dedicated text model like
+  `NVIDIA-Nemotron3-Nano-4B`) instead of always auto-selecting. New
+  `POST /api/ai/model/select` (and a `selected` field on `GET /api/ai/model/status`)
+  persist the choice as the `answer_model` setting; the server rebuilds onto it on
+  next use. The AI-provider settings panel gains a **Local engine / Remote** choice
+  so Reports can run on the local server, and the "Local answer engine" panel gains
+  a model dropdown. (When vision is enabled the unified server runs the vision model,
+  so the pin applies to the text-only server.) New `resolve_answer_model`. Files:
+  `screensearch-llm/src/{download,lib}.rs`, `screensearch-api/src/state.rs`,
+  `screensearch-api/src/handlers/ai.rs`, `screensearch-api/src/routes.rs`,
+  `screensearch-ui/src/pages/Settings.tsx`,
+  `screensearch-ui/src/lib/{api,hooks,types}.ts`.
+- **Vision settings: clearer local-model guidance + nearer server download.** When
+  the local provider has no vision-capable model, the panel explains that a vision
+  GGUF **and** its matching `*mmproj*.gguf` (same family) must be dropped into
+  `.models/`; the "Download llama-server" action is now also surfaced in the Vision
+  panel (it shares the local server). File: `screensearch-ui/src/pages/Settings.tsx`.
+
 ### Investigated (no code change)
 - **POC: direct screenshot embedding for visual recall — GO (via fastembed), not via
   llama.cpp.** Spiked whether screenshots could be embedded so non-OCR visual content

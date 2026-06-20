@@ -157,6 +157,7 @@ export const api = {
   stopServer: () => jpost<{ success: boolean; message: string; status: string }>('/ai/server/stop', undefined),
   downloadServer: () => jpost<{ success: boolean; message: string }>('/ai/server/download', undefined),
   modelStatus: (s?: AbortSignal) => jget<ModelStatus>('/ai/model/status', s),
+  selectModel: (model: string) => jpost<ModelStatus>('/ai/model/select', { model }),
   downloadModel: () => jpost<{ success: boolean; message: string }>('/ai/model/download', undefined),
 
   downloads: (s?: AbortSignal) => jget<AllDownloads>('/downloads/status', s),

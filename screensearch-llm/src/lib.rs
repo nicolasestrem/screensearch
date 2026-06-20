@@ -59,6 +59,7 @@ pub use download::{
     model_search_dirs,
     needs_download,
     needs_llama_server_download,
+    resolve_answer_model,
     resolve_mmproj_for,
     resolve_model_path,
     resolve_vision_model,

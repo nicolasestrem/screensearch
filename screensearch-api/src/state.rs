@@ -217,7 +217,7 @@ impl AppState {
     /// its `mmproj` so it serves both text generation and vision (Option B:
     /// unify on gemma-4). Otherwise it runs the first discovered GGUF text-only.
     async fn resolve_server_models(&self) -> (PathBuf, Option<PathBuf>) {
-        use screensearch_llm::{resolve_model_path, resolve_vision_model};
+        use screensearch_llm::{resolve_answer_model, resolve_vision_model};
 
         if let Ok(settings) = self.db.get_settings().await {
             if settings.vision_enabled != 0 && settings.vision_provider == "local" {
@@ -227,7 +227,19 @@ impl AppState {
             }
         }
 
-        (resolve_model_path(), None)
+        // Text-only (answer/report) server: honor the user's explicit
+        // `answer_model` pin (e.g. a dedicated text model like Nemotron) when set,
+        // otherwise auto-select. Note: when vision is enabled above, the unified
+        // server runs the vision model for both text and image, so the pin applies
+        // only to the text-only server.
+        let preferred = self
+            .db
+            .get_metadata("answer_model")
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        (resolve_answer_model(&preferred), None)
     }
 
     /// Get or initialize the LlamaServer.
