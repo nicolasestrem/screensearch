@@ -589,52 +589,47 @@ This means users don't need to manually start the server from Settings before ge
 
 ## 8. Frontend Integration
 
-### 8.1 Store Configuration (useStore.ts)
+The Command Deck UI (v0.5.0) surfaces this runtime in two places. See
+[Frontend — Command Deck UI](frontend-design-system.md) for the overall design.
+
+### 8.1 AI provider config (Recall → Report)
+
+The Recall page's **Report** mode calls `POST /api/ai/generate` with a provider
+chosen by the user. That provider config (`providerUrl`, `model`, `apiKey`) lives
+in the Zustand store (`src/lib/store.ts`, persisted to localStorage) and is edited
+in **Settings → AI provider**, with a "Test connection" button that validates via
+`POST /api/ai/validate`.
 
 ```typescript
-interface AppStore {
-  aiConfig: {
-    providerUrl: string;      // Default: 'local'
-    apiKey: string;           // Default: ''
-    model: string;            // Default: 'Qwen3-VL-4B-Instruct' (vision-capable)
-  };
-  setAiConfig: (config: Partial<AiConfig>) => void;
+// src/lib/store.ts
+interface AiConfig {
+  providerUrl: string
+  model: string
+  apiKey: string
 }
 ```
 
-### 8.2 Provider Options (AiSettings.tsx)
+The **Ask** mode (`POST /api/generate`) does not use this client config — it runs
+grounded answers against the local answer engine configured server-side.
 
-```typescript
-const PROVIDER_OPTIONS = [
-  { value: 'local', label: 'Bundled local model (vision)', description: 'Optional on-device model for answers, reports, and screenshot understanding' },
-  { value: 'http://localhost:11434/v1', label: 'Ollama-compatible', description: 'Local generation server' },
-  { value: 'custom', label: 'OpenAI-compatible', description: 'Remote or local generation endpoint' },
-];
-```
+### 8.2 Local answer engine (Settings)
 
-### 8.3 UI Flow
+**Settings → Local answer engine** (`src/pages/Settings.tsx`) shows the resolved
+model and `llama-server` status and provides controls, all wired to the live API:
 
-1. User selects provider from dropdown
-2. For "local" provider:
-   - API key and model fields are hidden
-   - GPU info card is displayed
-   - Button shows "Check Local Model"
-3. Test button validates connection via `/api/ai/validate`
-4. Configuration persisted in localStorage via Zustand
+- **Model**: name + size from `GET /api/ai/model/status`; "Download model"
+  (`POST /api/ai/model/download`).
+- **Server**: status + acceleration (GPU/Vulkan or CPU) from
+  `GET /api/ai/server/status`; Start / Stop (`/api/ai/server/start|stop`);
+  "Download server binary" (`/api/ai/server/download`).
+- **Download progress**: live, from `GET /api/downloads/status`.
 
-### 8.4 SettingsPanel Integration
-
-The SettingsPanel (Data & AI tab) provides additional controls:
-
-- **Answer Generation toggle**: Enable/disable descriptions, answers, digests, and reports
-- **Model download**: Trigger model download with progress
-- **Server management**: Start/stop/TTL controls
-
-This runtime is not used for OCR, embeddings, vector search, or reranking.
-Those functions run in-process in Rust (native Windows OCR for OCR, and the
-`fastembed` EmbeddingGemma-300M engine for embeddings, with optional
-`bge-reranker-v2-m3` reranking over sqlite-vec + RRF results).
-- **Status monitoring**: Real-time server status polling
+The resolved model is chosen by `resolve_model_path` in `screensearch-llm`, which
+prefers a vanilla `instruct` GGUF and **excludes** embedding models and
+`thinking`/`action` variants (see `answer_model_score`). This runtime is not used
+for OCR, embeddings, vector search, or reranking — those run in-process in Rust
+(native Windows OCR; the `fastembed` EmbeddingGemma-300M engine; optional
+`bge-reranker-v2-m3` over sqlite-vec + RRF).
 
 ---
 

@@ -19,9 +19,9 @@
 ## Search
 
 ```bash
-curl "http://127.0.0.1:3131/api/search/?q=meeting&mode=fts"
-curl "http://127.0.0.1:3131/api/search/?q=deployment%20failure&mode=semantic"
-curl "http://127.0.0.1:3131/api/search/?q=deployment%20failure&mode=hybrid"
+curl "http://127.0.0.1:3131/api/search?q=meeting&mode=fts"
+curl "http://127.0.0.1:3131/api/search?q=deployment%20failure&mode=semantic"
+curl "http://127.0.0.1:3131/api/search?q=deployment%20failure&mode=hybrid"
 ```
 
 Use `hybrid` for general search, `fts` for exact text, and `semantic` when only

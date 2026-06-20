@@ -15,14 +15,32 @@ builds a local retrieval index for search, answers, and reports.
 
 1. Install or extract the build.
 2. Start `screensearch.exe`.
-3. Open `http://localhost:3131`.
-4. In Settings, select **Download / verify** to prepare the embedding model.
-5. Open **Settings > Data & AI** to check retrieval-stack readiness.
-6. Enable semantic indexing when you want semantic or hybrid search.
+3. Open `http://localhost:3131` (the tray icon also opens it).
+4. Go to **Settings → Semantic search** and choose **Download model** to prepare
+   the embedding model, then **Enable semantic search** for semantic/hybrid search
+   and grounded "Ask" answers.
+5. Optionally enable **Settings → Vision** for on-device activity descriptions.
 
 The first embedding request can take longer while the model downloads and
-initializes. The settings panel reports engine and index status. Native Windows
-OCR runs in-process and needs no model download.
+initializes. Settings reports engine and index status, and a readiness banner at
+the top of the app shows warm-up/download progress. Native Windows OCR runs
+in-process and needs no model download.
+
+## Navigating The App
+
+The interface ("Command Deck") has a left nav and an always-on status rail
+(capture state, frame count, GPU acceleration, index/vision coverage):
+
+| Section | What it's for |
+|---|---|
+| **Deck** | At-a-glance overview: ask box, index/vision coverage, today's timeline, recent activity, top apps & sites. |
+| **Recall** | **Ask** your screen a question and get a grounded answer with clickable source frames; or generate a daily/weekly/custom **Report**. |
+| **Timeline** | Scrub the day on the scanline timeline and browse the contact sheet of captures; filter by app, monitor, activity, or search (keyword / semantic / hybrid). Click a frame for full detail. |
+| **Insights** | Where your time went — activity mix, top apps & sites, and your hourly rhythm. |
+| **Settings** | Capture, privacy/exclusions, retention, semantic search, vision, AI provider, and the local answer engine. |
+
+Press **⌘K / Ctrl+K** anywhere to open the command palette for quick search, ask,
+or navigation.
 
 ## What Each AI Component Does
 
@@ -199,19 +217,22 @@ be regenerated until the new index is complete.
 
 ## Troubleshooting
 
-### The settings panel still shows old AI wording
+### The UI shows an old design or stale data after an update
 
-The dashboard is embedded into the Rust binary. Install frontend dependencies
-before building the application:
+The web UI is embedded in the binary and served with long-lived asset caching.
+After installing a new build, do a hard refresh (**Ctrl+Shift+R**) to drop any
+cached bundle. If you build from source, ensure the frontend was rebuilt and
+re-embedded:
 
 ```powershell
 cd screensearch-ui
 npm ci
+npm run build
 cd ..
 cargo build --release
 ```
 
-The API build script rebuilds changed frontend sources automatically. For
+`build.rs` runs `npm run build` automatically unless `SKIP_UI_BUILD=1` is set; for
 diagnosis, run `npm run build` directly and confirm it succeeds.
 
 ### Embedding engine unavailable

@@ -44,6 +44,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **⌘K command palette** (search + ask + navigation) and a real **readiness
     banner** driven by `GET /api/system/readiness` (replaces the old startup mock).
 
+### Fixed
+- **Local answer engine no longer mis-selects the wrong GGUF.** With a populated
+  `.models/`, the answer-generation server picked the wrong model: a user-supplied
+  embedding GGUF (e.g. `Qwen.Qwen3-VL-Embedding-2B.f16`) sorted first and was
+  loaded as the answer model (embeddings can't generate text), and after excluding
+  it the alphabetically-first remaining file was a slow `*-thinking` build.
+  `is_loadable_model_gguf` now rejects `embed`-named GGUFs, and `resolve_model_path`
+  scores candidates to prefer a vanilla `instruct` build while penalising
+  `thinking`/`action` variants (mirroring the vision resolver). `get_model_status`
+  also now reports the model the server will actually load (and its real size)
+  rather than the first discovered file. Files: `screensearch-llm/src/download.rs`,
+  `screensearch-api/src/handlers/ai.rs`.
+
 ### Changed
 - **Frontend now surfaces previously-unused backend data.** `FrameResponse`
   (`screensearch-api/src/models.rs`) now passes through `activity_type`, `app_hint`,

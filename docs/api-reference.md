@@ -38,7 +38,7 @@ curl "http://127.0.0.1:3131/api/system/readiness"
 
 ## Search
 
-### `GET /search/`
+### `GET /search`
 
 Query parameters:
 
@@ -68,7 +68,7 @@ Returns keyword suggestions from OCR content.
 
 ## Frames
 
-### `GET /frames/`
+### `GET /frames`
 
 Returns paginated frames with optional time, monitor, application, and tag
 filters.
@@ -105,8 +105,8 @@ Removes a tag from a frame.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/tags/` | List tags |
-| `POST` | `/tags/` | Create a tag |
+| `GET` | `/tags` | List tags |
+| `POST` | `/tags` | Create a tag |
 | `PUT` | `/tags/:id` | Update a tag |
 | `DELETE` | `/tags/:id` | Delete a tag |
 
@@ -208,11 +208,11 @@ what is actually captured.
 ]
 ```
 
-### `GET /settings/`
+### `GET /settings`
 
 Returns capture, privacy, retention, and optional generation settings.
 
-### `POST /settings/`
+### `POST /settings`
 
 Example:
 
