@@ -13,10 +13,19 @@ frames API (`description`, `visible_text`, `activity_type`, `app_hint`,
 
 When vision is enabled with the **local** provider, ScreenSearch does **not**
 start a second model server. Instead it reuses the same auto-managed `llama.cpp`
-server that answers AI reports, launching it with `--mmproj` so a single
-**Gemma 4** model serves *both* text generation and image analysis. This keeps
-one model in VRAM and avoids running two servers (Option B — "unify on
-gemma-4").
+server that answers AI reports, launching it with `--mmproj` so a single model
+serves *both* text generation and image analysis. This keeps one model in VRAM
+and avoids running two servers. The default vision model is
+**Qwen3-VL-4B-Instruct** (a lighter vision encoder and faster decode than the
+previous Gemma 4 E4B default — ~1 s/frame vs 5–10 s on an RTX 5060 Ti); Gemma 4
+still works if you prefer it.
+
+For speed, the server is launched with `--image-max-tokens 1024` and
+`--flash-attn on` when a projector is loaded, and each analysis request caps
+output (`max_tokens` 512, with headroom so the JSON always closes) with a prompt
+that does **not** re-transcribe
+on-screen text — native OCR already captures it — so responses stay compact and
+always close as valid JSON.
 
 ```
 Capture → frames (analysis_status='pending')
@@ -28,7 +37,7 @@ Capture → frames (analysis_status='pending')
                  │                 │
                  │      OpenAI-compatible /v1/chat/completions (image_url)
                  │                 │
-        unified llama.cpp server (gemma-4 + --mmproj)  ◄── also serves AI reports
+     unified llama.cpp server (Qwen3-VL-4B + --mmproj)  ◄── also serves AI reports
                  │
    frame.description / visible_text_json / activity_type / app_hint / confidence
 ```
@@ -40,9 +49,12 @@ back to the first discovered text GGUF.
 ### Model and projector selection (local provider)
 
 - `resolve_vision_model()` chooses the unified model. It first tries to match the
-  `vision_model` setting against a discovered model filename; otherwise it
-  prefers a **Gemma 4 E4B** model; otherwise it uses the first vision-capable
-  model found. **Within each of those tiers it picks the best quantization** —
+  `vision_model` setting against a discovered model filename — but a *generic*
+  preference excludes `*-thinking` (slow, chain-of-thought) and third-party
+  `*-action`/agent fine-tunes unless the preference names them, so the default
+  `Qwen3-VL-4B-Instruct` resolves to the vanilla instruct build. Otherwise it
+  falls back to a **Gemma 4 E4B** model, then to the first vision-capable model
+  found. **Within each of those tiers it picks the best quantization** —
   Q4 is favoured over a lower Q2/Q3 and over heavier Q6/Q8 quants — so dropping
   several quants of the same model into `.models/` selects a sensible default
   automatically (see `quant_desirability`).
@@ -56,18 +68,24 @@ back to the first discovered text GGUF.
   such as Qwen3.5 has no matching projector and is never mis-paired.
 - A model is "vision-capable" only if a matching projector is found next to it.
 
-The default `vision_model` setting is **`gemma-4-E4B`** (migration
-`011_gemma4_vision_default`), which the substring match resolves to whichever
-E4B quant you provide. To pin an exact file, choose it in **Settings → Data & AI
-→ Vision model** (a dropdown populated from `GET /api/vision/models`), or set
-`vision_model` to a substring of the filename (e.g. `Q4_K_XL`).
+The default `vision_model` setting is **`Qwen3-VL-4B-Instruct`** (migration
+`012_qwen3vl_vision_default`), which the substring match resolves to the
+`Qwen3VL-4B-Instruct` GGUF you provide (best quant wins). To pin an exact file,
+choose it in **Settings → Data & AI → Vision model** (a dropdown populated from
+`GET /api/vision/models`), or set `vision_model` to a substring of the filename
+(e.g. `Q4_K_M`). To deliberately use a `*-thinking` or `*-action` build, set
+`vision_model` to include that word.
 
 ## Setup (local, on-device)
 
-1. **Drop a Gemma 4 model and its projector into `.models/`** (repo root, next to
-   the executable, or the app models directory). You need both files:
-   - a model GGUF, e.g. `gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf`;
-   - its projector, e.g. `gemma-4-E4B-it-mmproj.gguf`.
+1. **Drop a vision model and its projector into `.models/`** (repo root, next to
+   the executable, or the app models directory). You need both files. For the
+   default:
+   - a model GGUF, e.g. `Qwen3VL-4B-Instruct-Q4_K_M.gguf`;
+   - its projector, e.g. `mmproj-Qwen3VL-4B-Instruct-F16.gguf`.
+
+   (Gemma 4 still works — e.g. `gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf` +
+   `gemma-4-E4B-it-mmproj.gguf` — if you set `vision_model` back to `gemma-4-E4B`.)
 2. **Download the bundled llama-server** if you have not already (Settings →
    AI → Download Server, or `POST /api/ai/server/download`). Vision requires the
    pinned build; an outdated build is treated as missing.
@@ -80,18 +98,18 @@ E4B quant you provide. To pin an exact file, choose it in **Settings → Data & 
      -d '{"capture_interval":5,"monitors":"[]",
           "excluded_apps":"[]","is_paused":0,"retention_days":30,
           "vision_enabled":1,"vision_provider":"local",
-          "vision_model":"gemma-4-E4B","vision_endpoint":"http://127.0.0.1:31130",
+          "vision_model":"Qwen3-VL-4B-Instruct","vision_endpoint":"http://127.0.0.1:31130",
           "vision_api_key":null}'
    ```
 
 4. The worker starts the unified server (first request loads the model; this can
    take 20–60 s) and begins analyzing frames.
 
-> **Tip — pick the model.** When several Gemma 4 quants sit in `.models/`,
-> selection prefers a **Q4** automatically. To force a specific file, use the
-> **Vision model** dropdown in Settings → Data & AI (or set `vision_model` to a
-> substring such as `Q4_K_XL`). The chosen model also serves AI reports while
-> vision is enabled.
+> **Tip — pick the model.** When several quants sit in `.models/`, selection
+> prefers a **Q4** automatically. To force a specific file, use the **Vision
+> model** dropdown in Settings → Data & AI (or set `vision_model` to a substring
+> such as `Q4_K_M`). The chosen model also serves AI reports while vision is
+> enabled.
 
 ### GPU acceleration (Vulkan) and visibility
 
@@ -171,18 +189,19 @@ window title for each analyzed frame are sent to the configured endpoint. See
 
 - **`image input is not supported … you may need to provide the mmproj`**: the
   loaded model is **text-only** (no projector). This happened when the default
-  `vision_model` was Ministral-3B; the default is now **Gemma 4 E4B**. Ensure a
-  Gemma 4 model **and** its `*mmproj*.gguf` are in `.models/`, then pick it in
-  Settings → Data & AI → Vision model.
+  `vision_model` was Ministral-3B; the default is now **Qwen3-VL-4B-Instruct**.
+  Ensure a vision model **and** its `*mmproj*.gguf` are in `.models/`, then pick
+  it in Settings → Data & AI → Vision model.
 - **Nothing gets analyzed / `queue_depth` stays 0**: confirm `vision_enabled=1`
   and (local) that llama-server is downloaded and current. The worker logs
   `Vision enabled (local) but llama-server is not downloaded/current` when the
   binary is missing/outdated.
 - **`no vision model + mmproj projector was found`**: you have a model but no
   matching `*mmproj*.gguf` beside it (or only a text-only model like Qwen3.5).
-  Add the projector for your Gemma 4 model.
+  Add the projector for your vision model (e.g. `mmproj-Qwen3VL-4B-Instruct-F16.gguf`).
 - **First analysis is slow**: the unified server loads the model on the first
-  request (20–60 s). Subsequent frames are much faster.
+  request (20–60 s) and the first image also triggers one-time Vulkan
+  vision-graph warmup. Subsequent frames are much faster (~1 s on an RTX 5060 Ti).
 - **Server runs on CPU instead of GPU**: check the `acceleration` badge in
   Settings → Data & AI and `bin/llama-server.log` for the Vulkan reason. The
   GPU health-check timeout scales with model size, so large models are given

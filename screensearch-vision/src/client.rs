@@ -7,6 +7,16 @@ use reqwest::Client;
 use serde_json::json;
 use std::io::Cursor;
 
+/// Cap on tokens generated per frame analysis. The response is a small JSON
+/// object, so this bounds worst-case decode time (the model can otherwise spend
+/// its whole budget enumerating on-screen text — which native OCR already
+/// captures — and never close the JSON). Generation normally stops at EOS around
+/// ~100 tokens once the terse JSON closes, so this cap costs nothing in the
+/// common case; it is set with headroom (512) so a model that ignores the "be
+/// brief" instruction still produces a *complete*, parseable object rather than
+/// a truncated one that fails `serde_json::from_str` and drops the frame.
+const MAX_OUTPUT_TOKENS: u32 = 512;
+
 pub struct OllamaClient {
     client: Client,
     base_url: String,
@@ -113,18 +123,16 @@ impl VisionModel for OllamaClient {
         )?;
         let base64_image = BASE64.encode(&buf);
 
-        let system_prompt = r#"You are a visual intelligence engine.
-Analyze the screenshot and extract structured data.
-Output strictly valid JSON matching this schema:
+        let system_prompt = r#"You are a visual intelligence engine for a screen-history tool that ALREADY has full OCR of the screen text. Do NOT transcribe or list large amounts of on-screen text.
+Analyze the screenshot and return ONLY compact, valid JSON in exactly this shape:
 {
-  "description": "Concise summary of visual content and user intent",
-  "visible_text": ["List", "of", "prominent", "text"],
-  "activity_type": "One of: coding, design, verified, browsing, communication, entertainment, other",
-  "application": "Name of the active application inferred from content",
+  "description": "1-2 sentence summary of what the user is doing and the main on-screen content",
+  "visible_text": ["up to 6 of the most prominent titles or labels only"],
+  "activity_type": "one of: coding, design, browsing, communication, entertainment, productivity, other",
+  "app_hint": "best guess at the active application",
   "confidence": 0.0 to 1.0
 }
-Ignore UI chrome (taskbar, window borders) unless relevant to context.
-Prefer intent, names, colors."#;
+Be brief. Ignore the taskbar and window chrome unless relevant."#;
 
         let user_prompt = format!("Context: {}. Analyze this frame.", context);
 
@@ -138,7 +146,8 @@ Prefer intent, names, colors."#;
                     "prompt": user_prompt,
                     "images": [base64_image],
                     "format": "json",
-                    "stream": false
+                    "stream": false,
+                    "options": { "num_predict": MAX_OUTPUT_TOKENS }
                 }));
 
             if let Some(key) = &self.api_key {
@@ -186,6 +195,7 @@ Prefer intent, names, colors."#;
                     }
                 ],
                 "response_format": { "type": "json_object" },
+                "max_tokens": MAX_OUTPUT_TOKENS,
                 "stream": false
             });
 

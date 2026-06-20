@@ -18,7 +18,7 @@ grounded answers and reports, and exposes Windows automation APIs.
 | Reranking | Optional bge-reranker-v2-m3 (fastembed), off by default |
 | Citations | Stable `[frame:<id>]` identifiers |
 | Optional generation | Auto-discovered local GGUF via llama.cpp, Ollama-compatible, OpenAI-compatible |
-| Optional vision | On-device screen understanding via the unified local llama.cpp server (`--mmproj`, Gemma 4), or an external vision provider |
+| Optional vision | On-device screen understanding via the unified local llama.cpp server (`--mmproj`, Qwen3-VL-4B by default), or an external vision provider |
 
 ## Entry Points
 

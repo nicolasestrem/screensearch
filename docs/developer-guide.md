@@ -129,7 +129,7 @@ and shares the `vision_*` settings.
 - **Local provider = unified server.** `AppState::get_llama_server`
   (`screensearch-api/src/state.rs`) is vision-aware: when vision is enabled with
   `vision_provider = "local"`, it runs the single llama.cpp server with
-  `--mmproj` so one Gemma 4 model serves both text and images, and it rebuilds
+  `--mmproj` so one model (Qwen3-VL-4B-Instruct by default) serves both text and images, and it rebuilds
   the server when vision toggles. Model/projector selection lives in
   `screensearch-llm/src/download.rs` (`resolve_vision_model`,
   `resolve_mmproj_for`, `discover_vision_models`); `--mmproj` emission and the

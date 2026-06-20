@@ -66,7 +66,7 @@
 - [*] **Continuous Screen Capture** — Configurable intervals (2-5 seconds) with multi-monitor support
 - [*] **OCR Text Extraction** — Native Windows OCR (WinRT) running in-process with confidence and bounding boxes
 - [*] **AI-Powered Intelligence** — Generate insights from your screen history using local LLMs (Ollama, LM Studio) or cloud providers (OpenAI)
-- [*] **On-Device Vision** — Optional screen understanding: a unified local Gemma 4 model (llama.cpp `--mmproj`) describes each screenshot, reads on-screen text from the image, and classifies activity — entirely on-device (or via an external vision provider). See [docs/vision.md](docs/vision.md)
+- [*] **On-Device Vision** — Optional screen understanding: a unified local vision model (Qwen3-VL-4B-Instruct by default, llama.cpp `--mmproj`, ~1 s/frame) describes each screenshot, reads on-screen text from the image, and classifies activity — entirely on-device (or via an external vision provider). See [docs/vision.md](docs/vision.md)
 - [*] **Hybrid Search** — Fuses FTS5 and sqlite-vec retrieval via Reciprocal Rank Fusion, with optional cross-encoder reranking
 - [*] **Smart Search** — Conversational AI answers with context from your screen history
 - [*] **REST API** — endpoints for search, vision, automation, and tag management on localhost:3131

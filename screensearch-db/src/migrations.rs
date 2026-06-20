@@ -64,6 +64,12 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
         MIGRATION_011_GEMMA4_VISION_DEFAULT,
     )
     .await?;
+    apply_migration(
+        pool,
+        "012_qwen3vl_vision_default",
+        MIGRATION_012_QWEN3VL_VISION_DEFAULT,
+    )
+    .await?;
 
     tracing::info!("All migrations completed successfully");
     Ok(())
@@ -435,6 +441,25 @@ WHERE id = 1;
 const MIGRATION_011_GEMMA4_VISION_DEFAULT: &str = r#"
 UPDATE settings SET vision_model = 'gemma-4-E4B'
 WHERE vision_model = 'ministral-3:3b' OR vision_model IS NULL;
+"#;
+
+/// Migration 012 - Switch the default local vision model from Gemma 4 E4B to
+/// Qwen3-VL-4B-Instruct. Qwen3-VL has a lighter vision encoder and faster decode
+/// for screen understanding — measured ~1s/frame vs 5-10s for Gemma 4 E4B on the
+/// same GPU (RTX 5060 Ti) — and is strong at UI/document content. Only rows still
+/// carrying a prior default (`gemma-4-E4B` or the legacy `ministral-3:3b`) are
+/// migrated, so a user who deliberately picked another model is left untouched.
+/// The value substring-matches the on-disk `Qwen3VL-4B-Instruct` GGUF
+/// (see `resolve_vision_model`), which also excludes `*-thinking`/`*-action`
+/// variants from a generic match.
+///
+/// `ministral-3:3b` / `NULL` are already migrated to `gemma-4-E4B` by migration
+/// 011, so in normal forward order no row still carries them here; they are
+/// included defensively (the UPDATE is idempotent) so a fresh DB or any future
+/// migration-order change still lands on the current default.
+const MIGRATION_012_QWEN3VL_VISION_DEFAULT: &str = r#"
+UPDATE settings SET vision_model = 'Qwen3-VL-4B-Instruct'
+WHERE vision_model = 'gemma-4-E4B' OR vision_model = 'ministral-3:3b' OR vision_model IS NULL;
 "#;
 
 /// Migration 008 - Performance Indexes

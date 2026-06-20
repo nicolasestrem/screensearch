@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **On-device vision is ~6–10× faster: default switched to Qwen3-VL-4B-Instruct
+  and the frame pipeline was tuned.** Per-frame analysis dropped from **5–10 s** to
+  **~1 s** on an RTX 5060 Ti (measured: image encode ~320 ms + generation ~770 ms,
+  valid JSON every frame). The bottleneck was the vision *encoder* re-slicing
+  large ultrawide screenshots (not token generation), so the fix is several small
+  changes that compound:
+  - **Default vision model is now `Qwen3-VL-4B-Instruct`** (was Gemma 4 E4B) — a
+    lighter vision encoder and faster decode, strong at UI/screen content. New DB
+    migration `012_qwen3vl_vision_default` migrates rows still on the `gemma-4-E4B`
+    / legacy `ministral-3:3b` default; a deliberately-chosen model is left
+    untouched. `resolve_vision_model` now prefers the vanilla *Instruct* build and
+    excludes `*-thinking` (slow, chain-of-thought) and third-party `*-action`
+    fine-tunes from a generic match unless explicitly requested. Drop
+    `Qwen3VL-4B-Instruct` GGUF + its `mmproj-Qwen3VL-4B-Instruct-*.gguf` into
+    `.models/` (Gemma 4 still works if you prefer it). File:
+    `screensearch-llm/src/download.rs`, `screensearch-db/src/migrations.rs`.
+  - **Captures are downscaled at the source** — `storage.max_width` default lowered
+    `1920 → 1280`. OCR already runs on the full-resolution frame *before* this
+    resize, so text accuracy is unaffected; the vision worker re-decodes the stored
+    JPEG, so this directly cuts both disk use and the vision encoder's per-frame
+    cost on 3440×1440 ultrawide / multi-monitor captures. File: `src/main.rs`.
+  - **llama-server vision flags:** the unified server now launches with
+    `--image-max-tokens 1024` (bounds vision-encoder cost for dynamic-resolution
+    models) and `--flash-attn on` when a projector is loaded. File:
+    `screensearch-llm/src/server.rs`.
+  - **Bounded, terser vision output:** the analysis request now sends a
+    `max_tokens` cap (512, with headroom so output always closes as valid JSON)
+    and a tightened prompt that no longer asks the model to
+    transcribe on-screen text (native OCR already captures it), so responses stay
+    compact and always close as valid JSON. Also fixes the response key to
+    `app_hint` (was `application`, which silently never populated). File:
+    `screensearch-vision/src/client.rs`.
+
 ### Fixed
 - **Settings AI card no longer hangs on its loading skeleton.** `GET
   /embeddings/status`'s cheap `engine_ready` probe used a blocking read lock that

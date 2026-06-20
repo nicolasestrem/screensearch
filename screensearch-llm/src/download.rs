@@ -522,10 +522,38 @@ pub fn discover_vision_models() -> Vec<(PathBuf, PathBuf)> {
 /// Selection order (within each tier, the best quantization wins — see
 /// [`quant_desirability`] — so a Q4 is chosen over a Q2 sitting beside it):
 /// 1. Discovered vision models whose filename matches `preferred` (the
-///    `vision_model` setting), in either direction (substring).
-/// 2. Gemma-4 **E4B** models — the unified default (small + fast).
+///    `vision_model` setting), in either direction (substring). When `preferred`
+///    does not itself ask for a `thinking` or `action`/agent variant, those are
+///    excluded from a generic match — so the default `Qwen3-VL-4B-Instruct`
+///    resolves to the vanilla instruct model rather than a slow `*-thinking`
+///    build or a third-party `*-action` fine-tune that merely contains the same
+///    substring.
+/// 2. Gemma-4 **E4B** models — the previous default (still valid if present).
 /// 3. The first vision-capable model discovered.
 ///
+/// Whether a vision-model filename `stem_lower` satisfies the `vision_model`
+/// preference `pref` (both already lowercased). The base rule is substring
+/// containment in either direction; additionally, a generic preference does NOT
+/// match `thinking` or `action`/agent variants unless it explicitly names them.
+/// This keeps the default `Qwen3-VL-4B-Instruct` resolving to the vanilla
+/// instruct build rather than a slower `*-thinking` model or a third-party
+/// `*-action` fine-tune that merely contains the same substring, while a user
+/// who deliberately sets one of those as their preference still gets it.
+fn pref_matches_vision_stem(stem_lower: &str, pref: &str) -> bool {
+    let hit = stem_lower.contains(pref) || pref.contains(stem_lower);
+    // Match `thinking` / `action` only as whole tokens (split on non-alphanumeric)
+    // so a generic preference is not tripped by substrings such as `extraction`,
+    // `interaction`, or `transaction` in an unrelated model name.
+    let has_token = |s: &str, tok: &str| {
+        s.split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|t| t == tok)
+    };
+    let allow_thinking = has_token(pref, "thinking");
+    let allow_action = has_token(pref, "action");
+    hit && (allow_thinking || !has_token(stem_lower, "thinking"))
+        && (allow_action || !has_token(stem_lower, "action"))
+}
+
 /// Returns `None` when no local model has a projector beside it.
 pub fn resolve_vision_model(preferred: &str) -> Option<(PathBuf, PathBuf)> {
     let models = discover_vision_models();
@@ -543,7 +571,7 @@ pub fn resolve_vision_model(preferred: &str) -> Option<(PathBuf, PathBuf)> {
     if !pref.is_empty() {
         let matches = models.iter().filter(|(m, _)| {
             stem_lower(m)
-                .map(|s| s.contains(&pref) || pref.contains(&s))
+                .map(|s| pref_matches_vision_stem(&s, &pref))
                 .unwrap_or(false)
         });
         if let Some(found) = pick_best_quant(matches) {
@@ -1129,6 +1157,45 @@ mod tests {
         let cands = vec![q2, q4xl.clone(), q4_0];
         // Q4 beats Q2; on the Q4 tie the earliest (Q4_K_XL) wins.
         assert_eq!(pick_best_quant(cands.iter()), Some(&q4xl));
+    }
+
+    #[test]
+    fn test_pref_matches_vision_stem_excludes_action_thinking() {
+        // The default instruct preference resolves to the vanilla instruct build.
+        assert!(pref_matches_vision_stem(
+            "qwen3-vl-4b-instruct-q4_k_m",
+            "qwen3-vl-4b-instruct"
+        ));
+        // ...but not a `*-action` fine-tune or `*-thinking` build that merely
+        // shares the substring (these would otherwise tie on quant).
+        assert!(!pref_matches_vision_stem(
+            "sber_qwen3-vl-4b-instruct-action-q4_k_m",
+            "qwen3-vl-4b-instruct"
+        ));
+        assert!(!pref_matches_vision_stem(
+            "qwen3vl-4b-thinking-q4_k_m",
+            "qwen3-vl-4b"
+        ));
+        // Explicitly naming the variant re-includes it (user override).
+        assert!(pref_matches_vision_stem(
+            "sber_qwen3-vl-4b-instruct-action-q4_k_m",
+            "qwen3-vl-4b-instruct-action"
+        ));
+        assert!(pref_matches_vision_stem(
+            "qwen3vl-4b-thinking-q4_k_m",
+            "thinking"
+        ));
+        // Back-compat: Gemma still matches its own preference.
+        assert!(pref_matches_vision_stem(
+            "gemma-4-e4b-it-qat-ud-q4_k_xl",
+            "gemma-4-e4b"
+        ));
+        // `action`/`thinking` are matched as whole tokens, not substrings: a model
+        // whose name merely contains `extraction` is not excluded.
+        assert!(pref_matches_vision_stem(
+            "screen-extraction-qwen3-vl-4b-q4_k_m",
+            "qwen3-vl-4b"
+        ));
     }
 
     #[test]

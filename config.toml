@@ -34,8 +34,11 @@ draw_border = false
 format = "jpeg"
 # JPEG quality: 1-100 (default: 80)
 jpeg_quality = 80
-# Max width in pixels (default: 1920). 0 = no resizing
-max_width = 1920
+# Max width in pixels (default: 1280). 0 = no resizing.
+# OCR runs on the full-resolution frame before this resize, so lowering it does
+# not hurt text extraction; the vision model re-decodes this stored JPEG, so a
+# smaller width also cuts the vision encoder's per-frame cost.
+max_width = 1280
 
 [ocr]
 # OCR runs in-process via the native Windows OCR (WinRT) API — fast, no sidecar.

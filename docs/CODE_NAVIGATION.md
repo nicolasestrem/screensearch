@@ -63,7 +63,7 @@
 | Vision endpoints (analyze, status, models) | `screensearch-api/src/handlers/vision.rs` (`list_vision_models`) |
 | Server status incl. `acceleration` | `screensearch-api/src/handlers/ai.rs` (`get_server_status`) |
 | Queue and status queries | `screensearch-db/src/queries.rs` (`enqueue_frame_for_analysis`, `get_unanalyzed_frame_ids`, `get_vision_status`) |
-| `vision_*` settings columns + Gemma 4 default | `screensearch-db/src/migrations.rs` (`011_gemma4_vision_default`) |
+| `vision_*` settings columns + Qwen3-VL default | `screensearch-db/src/migrations.rs` (`012_qwen3vl_vision_default`) |
 
 ## Startup & Readiness
 

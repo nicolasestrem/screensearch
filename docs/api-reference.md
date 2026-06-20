@@ -217,7 +217,7 @@ Example:
   "retention_days": 30,
   "vision_enabled": 1,
   "vision_provider": "local",
-  "vision_model": "gemma-4-E4B",
+  "vision_model": "Qwen3-VL-4B-Instruct",
   "vision_endpoint": "http://127.0.0.1:31130",
   "vision_api_key": null
 }
@@ -284,9 +284,10 @@ generation provider; it does not test OCR or embedding retrieval.
 
 On-device screenshot analysis. When vision is enabled with the `local` provider
 (see `POST /settings/`), the unified auto-managed llama-server is launched with
-`--mmproj` so a single Gemma&nbsp;4 model serves both text and image questions;
+`--mmproj` so a single model serves both text and image questions (default
+**Qwen3-VL-4B-Instruct**, ~1 s/frame; Gemma&nbsp;4 also works);
 analysis populates each frame's `description`, `visible_text`, `activity_type`,
-`app_hint`, and `confidence`. Drop a Gemma&nbsp;4 GGUF **and** its
+`app_hint`, and `confidence`. Drop a vision GGUF **and** its
 `*mmproj*.gguf` projector into `.models/`.
 
 ### `POST /vision/analyze/:frame_id`
@@ -310,7 +311,7 @@ counts and queue depth.
 
 ```bash
 curl "http://127.0.0.1:3131/api/vision/status"
-# -> {"enabled":1,"provider":"local","model":"gemma-4-E4B...",
+# -> {"enabled":1,"provider":"local","model":"Qwen3-VL-4B-Instruct...",
 #     "total_frames":1024,"completed":300,"pending":4,"processing":1,
 #     "failed":0,"queue_depth":5}
 ```
@@ -325,9 +326,9 @@ for the local provider. The entry the server currently resolves to (from the
 ```bash
 curl "http://127.0.0.1:3131/api/vision/models"
 # -> {"models":[
-#       {"id":"gemma-4-E4B-it-qat-UD-Q4_K_XL","model_file":"gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
-#        "mmproj_file":"gemma-4-E4B-it-mmproj.gguf","selected":true}],
-#     "selected":"gemma-4-E4B-it-qat-UD-Q4_K_XL"}
+#       {"id":"qwen3-vl-4b-instruct-q4_k_m","model_file":"qwen3-vl-4b-instruct-q4_k_m.gguf",
+#        "mmproj_file":"mmproj-Qwen3VL-4B-Instruct-F16.gguf","selected":true}],
+#     "selected":"qwen3-vl-4b-instruct-q4_k_m"}
 ```
 
 Set the `vision_model` setting to a model's `id` (or any substring of it) to

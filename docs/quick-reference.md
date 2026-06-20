@@ -69,7 +69,7 @@ Supported `vision_provider` values (shared by generation and vision):
 
 | Value | Runtime |
 |---|---|
-| `local` | Bundled llama.cpp server (auto-discovers `*.gguf`; Ministral-3B default). For vision it loads a Gemma 4 model + `--mmproj` and serves both text and images. |
+| `local` | Bundled llama.cpp server (auto-discovers `*.gguf`; Ministral-3B default). For vision it loads a Qwen3-VL-4B model + `--mmproj` and serves both text and images. |
 | `ollama` | Ollama-compatible server |
 | `openai` | OpenAI-compatible endpoint |
 

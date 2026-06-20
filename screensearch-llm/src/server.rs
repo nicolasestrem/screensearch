@@ -106,6 +106,11 @@ pub struct LlamaServerConfig {
     /// Number of layers to offload to GPU (0 = none, 99 = all)
     /// Systems with limited VRAM may need lower values
     pub gpu_layers: u32,
+    /// Cap on vision tokens per image (`--image-max-tokens`). Only applied when a
+    /// multimodal projector is loaded. Bounds the vision encoder's per-frame cost
+    /// (the dominant latency for large/ultrawide screenshots) for models with
+    /// dynamic image resolution such as Qwen3-VL.
+    pub image_max_tokens: u32,
 }
 
 impl Default for LlamaServerConfig {
@@ -119,7 +124,8 @@ impl Default for LlamaServerConfig {
             threads: 0,
             context_length: 8192,
             use_gpu: true,
-            gpu_layers: 99, // Offload all layers by default
+            gpu_layers: 99,         // Offload all layers by default
+            image_max_tokens: 1024, // Bound vision-encoder cost per frame
         }
     }
 }
@@ -359,6 +365,19 @@ impl LlamaServer {
         if let Some(mmproj) = &config.mmproj_path {
             info!("Enabling vision: loading mmproj projector {:?}", mmproj);
             cmd.arg("--mmproj").arg(mmproj);
+
+            // Bound the vision encoder's per-frame cost. Image slice/encode (not
+            // token generation) dominates vision latency for large screenshots
+            // (see llama.cpp #15387); capping image tokens keeps it in check for
+            // models with dynamic image resolution (Qwen3-VL). NOTE: do NOT pass
+            // --image-min-tokens — it asserts-fails on Gemma 4's non-causal
+            // attention. --flash-attn speeds up attention; `on` is accepted by
+            // the pinned build (b9728).
+            if config.image_max_tokens > 0 {
+                cmd.arg("--image-max-tokens")
+                    .arg(config.image_max_tokens.to_string());
+            }
+            cmd.arg("--flash-attn").arg("on");
         }
 
         // Add GPU flag if enabled (use configured number of layers)
