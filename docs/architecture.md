@@ -182,10 +182,12 @@ configured provider.
 ### Unified Local Vision
 
 When vision is enabled with the `local` provider, the same managed
-`llama.cpp` server is launched with `--mmproj` so one Gemma&nbsp;4 model serves
-both text generation and image analysis (one process, one model in VRAM).
-`resolve_vision_model` selects the unified vision model (preferring a
-Gemma&nbsp;4 E4B) and `resolve_mmproj_for` pairs it with the matching
+`llama.cpp` server is launched with `--mmproj` so one model serves
+both text generation and image analysis (one process, one model in VRAM). For
+speed it adds `--image-max-tokens 1024` and `--flash-attn on` when a projector is
+loaded. `resolve_vision_model` selects the unified vision model (defaulting to
+**Qwen3-VL-4B-Instruct**, excluding `*-thinking`/`*-action` variants from a
+generic match) and `resolve_mmproj_for` pairs it with the matching
 `*mmproj*.gguf` projector found beside it (matched by size signature, so a
 text-only model such as Qwen3.5 is never mis-paired). `AppState::get_llama_server`
 rebuilds the server when vision is toggled, swapping the loaded model/projector.
@@ -201,10 +203,12 @@ endpoint instead and no local server is started.
 
 Selection prefers the **best quantization** within a tier (Q4 over Q2/Q3), and
 discovery ignores non-loadable GGUFs (projectors, `mtp-*` heads, undersized
-files). The default `vision_model` is **Gemma 4 E4B**; `GET /api/vision/models`
-lists discovered `(model, mmproj)` pairs for the Settings picker. The default was
-previously the text-only Ministral-3B, which could not answer image requests —
-see `docs/vision.md`.
+files). The default `vision_model` is **Qwen3-VL-4B-Instruct** (~1 s/frame vs
+5–10 s for the prior Gemma 4 E4B default; Gemma 4 still works);
+`GET /api/vision/models` lists discovered `(model, mmproj)` pairs for the Settings
+picker. Captured frames are also downscaled at the source (`storage.max_width`
+1280) — OCR runs full-res beforehand, so this only cuts disk and vision-encoder
+cost. See `docs/vision.md`.
 
 **GPU visibility.** The server is launched with `-ngl 99` (Vulkan) and falls back
 to CPU only if initialization fails. llama-server's stdout/stderr are captured to

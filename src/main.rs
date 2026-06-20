@@ -232,7 +232,12 @@ impl Default for AppConfig {
             storage: StorageSettings {
                 format: "jpeg".to_string(),
                 jpeg_quality: 80,
-                max_width: 1920,
+                // Captures are read by machines (OCR runs on the full-res frame
+                // *before* this resize; the vision model re-decodes this stored
+                // JPEG). 1280px keeps app/layout legible for vision while cutting
+                // disk use and — crucially — the vision encoder's per-frame cost
+                // on ultrawide (3440-wide) multi-monitor captures.
+                max_width: 1280,
             },
             embeddings: default_embeddings_settings(),
         }

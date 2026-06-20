@@ -340,9 +340,12 @@ let results = index.search(&query_vector, limit).await?;
 
 ```rust
 // IMPORTANT: Images are stored as JPEG with configurable quality
-// Frames are resized to max_width (default 1920px) to reduce storage
+// Frames are resized to max_width (default 1280px) to reduce storage.
+// OCR runs on the FULL-RES frame before this resize, so OCR accuracy is
+// unaffected; the vision worker re-decodes this stored JPEG, so a smaller
+// max_width also cuts the vision encoder's per-frame cost.
 let jpeg_quality = config.jpeg_quality; // Default: 80
-let max_width = config.max_width; // Default: 1920
+let max_width = config.max_width; // Default: 1280
 ```
 
 **Why**: Original PNG storage at full resolution consumed massive disk space. JPEG compression (80% quality) + resizing provides excellent quality at 2% of original size.
@@ -373,7 +376,7 @@ cache_size_kb = -2000           # 2MB cache (negative = KB)
 [storage]
 format = "jpeg"                 # Storage format (jpeg recommended)
 jpeg_quality = 80               # JPEG quality 1-100 (80 = excellent quality, small size)
-max_width = 1920                # Resize frames to max width (maintains aspect ratio)
+max_width = 1280                # Resize frames to max width (maintains aspect ratio); OCR uses full-res before this
 
 [embeddings]
 enabled = false                 # Enable semantic search with embeddings

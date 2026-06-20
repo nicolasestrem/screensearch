@@ -336,7 +336,8 @@ llama-server \
 `LlamaServerConfig.mmproj_path` is `None` for a text-only server. When set (vision
 enabled with the local provider), the server loads the multimodal projector so the
 **same** process serves both text generation and image (`image_url`) requests —
-ScreenSearch runs one unified Gemma 4 model rather than two servers. The API layer
+ScreenSearch runs one unified model (Qwen3-VL-4B-Instruct by default) rather than
+two servers. The API layer
 selects the model/projector and rebuilds the server when vision is toggled; the
 vision worker consumes the analysis queue. See `docs/vision.md`.
 
@@ -595,7 +596,7 @@ interface AppStore {
   aiConfig: {
     providerUrl: string;      // Default: 'local'
     apiKey: string;           // Default: ''
-    model: string;            // Default: 'gemma-4-E4B' (vision-capable)
+    model: string;            // Default: 'Qwen3-VL-4B-Instruct' (vision-capable)
   };
   setAiConfig: (config: Partial<AiConfig>) => void;
 }
@@ -605,7 +606,7 @@ interface AppStore {
 
 ```typescript
 const PROVIDER_OPTIONS = [
-  { value: 'local', label: 'Bundled Gemma 4 E4B (vision)', description: 'Optional on-device model for answers, reports, and screenshot understanding' },
+  { value: 'local', label: 'Bundled local model (vision)', description: 'Optional on-device model for answers, reports, and screenshot understanding' },
   { value: 'http://localhost:11434/v1', label: 'Ollama-compatible', description: 'Local generation server' },
   { value: 'custom', label: 'OpenAI-compatible', description: 'Remote or local generation endpoint' },
 ];

@@ -110,9 +110,9 @@ looks at the *image* of each screenshot (not just its OCR text) and records a
 short description, the prominent on-screen text, an activity type, and a
 confidence score for each frame.
 
-- **Bundled local model (on-device)**: drop a **Gemma 4** model **and** its
-  `*mmproj*.gguf` projector into `.models/`, then enable vision with the *local*
-  provider. ScreenSearch reuses the same llama.cpp server as answer generation,
+- **Bundled local model (on-device)**: drop a vision model **and** its
+  `*mmproj*.gguf` projector into `.models/` (default **Qwen3-VL-4B-Instruct**,
+  ~1 s/frame; Gemma 4 also works), then enable vision with the *local* provider. ScreenSearch reuses the same llama.cpp server as answer generation,
   loading the projector so one model handles both — image bytes never leave the
   machine.
 - **Ollama / OpenAI-compatible**: point vision at an external vision model. The

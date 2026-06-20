@@ -88,7 +88,8 @@ pub fn spawn_vision_worker(state: Arc<AppState>) {
                     if should_warn {
                         warn!(
                             "Vision enabled (local) but no vision model + mmproj projector was \
-                             found in .models/. Drop a gemma-4 model and its *mmproj*.gguf there."
+                             found in .models/. Drop a vision model (e.g. Qwen3-VL-4B-Instruct) \
+                             and its matching *mmproj*.gguf there."
                         );
                         last_missing_warn = Some(Instant::now());
                     }
