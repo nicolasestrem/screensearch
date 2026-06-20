@@ -183,6 +183,14 @@ enabled = false
 # Batch size for background embedding generation
 batch_size = 50
 
+# Enable the optional in-process image-embedding index for visual recall:
+# screenshots are embedded with nomic-embed-vision-v1.5 (768-dim) and fused with
+# the text results at search time, so non-OCR visual content (charts, design
+# canvases, icon-heavy UIs) becomes searchable. Off by default — it downloads the
+# nomic vision/text models on first use and adds per-frame image-embedding CPU.
+# Can also be toggled at runtime via POST /api/embeddings/image/enable.
+image_enabled = false
+
 [llm]
 # Optional local answer-generation model (RAG summaries / Q&A) served by the
 # bundled llama.cpp server. Drop a GGUF file into `.models/` (or the app models

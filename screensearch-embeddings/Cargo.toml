@@ -24,9 +24,15 @@ tracing = { workspace = true }
 # forced static-CRT + lld config (unresolved UCRT symbols), and dynamic loading
 # is the right model for a portable Windows binary that ships the DLL alongside
 # the exe. `hf-hub-native-tls` keeps first-run model download/caching.
+# `image-models` adds the multimodal image-embedding models (nomic-embed-vision)
+# used for the optional visual-recall index. It pulls in the `image` crate and its
+# codec deps (AV1/AVIF/etc.), which lengthen the build; the feature is always
+# compiled but the image engine only loads its model when image embeddings are
+# enabled at runtime.
 fastembed = { version = "5.17", default-features = false, features = [
     "ort-load-dynamic",
     "hf-hub-native-tls",
+    "image-models",
 ] }
 
 # Content hashing for chunk de-duplication

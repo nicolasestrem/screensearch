@@ -183,6 +183,10 @@ fn embeddings_routes() -> Router<Arc<AppState>> {
         .route("/models/prepare", post(handlers::prepare_quality_models))
         .route("/generate", post(handlers::generate_embeddings))
         .route("/enable", post(handlers::toggle_embeddings))
+        // Image-embedding (visual recall) index.
+        .route("/image/status", get(handlers::get_image_embedding_status))
+        .route("/image/generate", post(handlers::generate_image_embeddings))
+        .route("/image/enable", post(handlers::toggle_image_embeddings))
 }
 
 /// Vision analysis routes

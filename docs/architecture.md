@@ -130,17 +130,43 @@ distance_metric=cosine`, and metadata records `embeddings_model =
 "EmbeddingGemma-300M"`, `embeddings_provider = "fastembed"`, and
 `embeddings_dimension = "768"`.
 
+## Image Embeddings (visual recall)
+
+An optional, in-process image-embedding index gives non-OCR visual content
+(charts, design canvases, icon-heavy UIs) a recall path. Screenshots are embedded
+with `nomic-embed-vision-v1.5` and image-search queries with the aligned
+`nomic-embed-text-v1.5` — both 768-dim, run via the same fastembed/ONNX stack as
+the text embedder (`ImageEmbeddingEngine`). It is **off by default**
+(`embeddings.image_enabled`, also toggleable at runtime via
+`POST /api/embeddings/image/enable`); the models download on first use.
+
+Image vectors live in a **separate** `image_embeddings` table and
+`image_embedding_vectors` sqlite-vec index (migration 013), not the text
+`embedding_vectors` table: nomic-vision and EmbeddingGemma occupy different latent
+spaces, so a single KNN across both would be meaningless. The image index is one
+whole-frame vector per frame (no chunking), has its own model-contract metadata
+and invalidation (`ensure_image_embedding_model`), and is filled by a background
+worker (`image_embedding_worker`) that is always spawned but only loads models and
+processes frames while `image_embeddings_enabled` is set. The image-embedding text
+query path uses the nomic-text encoder, never EmbeddingGemma.
+
 ## Retrieval Pipeline
 
 ScreenSearch supports three search modes:
 
 - `fts`: SQLite FTS5 lexical retrieval;
 - `semantic`: sqlite-vec cosine KNN;
-- `hybrid`: FTS5 plus sqlite-vec.
+- `hybrid`: FTS5 plus sqlite-vec (and, when the image index is enabled and warm,
+  image-embedding hits).
 
 Hybrid retrieval uses Reciprocal Rank Fusion with `k = 60`. Rank fusion avoids
 mixing FTS and vector scores that have unrelated scales. The
-`hybrid_search_alpha` setting remains only for configuration compatibility.
+`hybrid_search_alpha` setting remains only for configuration compatibility. When
+image embeddings are enabled, `hybrid_search` queries the image index with the
+nomic-text query vector and folds those hits in as a third RRF list (cross-modal
+cosines are small in magnitude, so rank fusion — not a shared score threshold — is
+what makes them comparable). Image fusion is skipped on the search path unless the
+image engine is already loaded, so a first-run model download never blocks a query.
 
 sqlite-vec applies its KNN limit before timestamps from the joined frame table
 can be filtered. Time-constrained search expands the candidate set from the

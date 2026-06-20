@@ -51,6 +51,7 @@ fn default_embeddings_settings() -> EmbeddingsSettings {
     EmbeddingsSettings {
         enabled: false,
         batch_size: 50,
+        image_enabled: false,
     }
 }
 
@@ -167,6 +168,10 @@ struct LoggingSettings {
 struct EmbeddingsSettings {
     enabled: bool,
     batch_size: i64,
+    /// Enable the optional in-process image-embedding index (visual recall).
+    /// Off by default: loads extra models and adds per-frame image-embedding CPU.
+    #[serde(default)]
+    image_enabled: bool,
 }
 
 impl Default for AppConfig {
@@ -536,6 +541,24 @@ impl App {
         };
         if let Err(e) = api_server.start_embedding_worker(worker_config).await {
             warn!("Embedding worker did not start yet: {}", e);
+        }
+
+        // Optional image-embedding index (visual recall). The worker loop is
+        // always started but stays idle (no models loaded) until enabled via the
+        // `image_embeddings_enabled` flag, which config seeds and the API toggles.
+        api_server
+            .set_image_embeddings_enabled(self.config.embeddings.image_enabled)
+            .await?;
+        let image_worker_config =
+            screensearch_api::workers::image_embedding_worker::ImageEmbeddingWorkerConfig {
+                batch_size: self.config.embeddings.batch_size,
+                interval_secs: 60,
+            };
+        if let Err(e) = api_server
+            .start_image_embedding_worker(image_worker_config)
+            .await
+        {
+            warn!("Image embedding worker did not start yet: {}", e);
         }
 
         // Start vision analysis worker (shares AppState to drive the unified

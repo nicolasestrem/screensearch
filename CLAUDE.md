@@ -381,6 +381,11 @@ max_width = 1280                # Resize frames to max width (maintains aspect r
 [embeddings]
 enabled = false                 # Enable semantic search with embeddings
 batch_size = 50                 # Frames to process per batch
+image_enabled = false           # Optional image-embedding index (visual recall):
+                                # embed screenshots with nomic-embed-vision-v1.5
+                                # (768-dim), fused into hybrid search. Off by
+                                # default; downloads nomic models on first use.
+                                # Runtime toggle: POST /api/embeddings/image/enable
 # Model identity (EmbeddingGemma-300M, 768-dim, fastembed), chunking, and hybrid
 # retrieval (Reciprocal Rank Fusion) are fixed by the in-process embedding engine
 # and are not configurable here. Optional bge-reranker-v2-m3 reranking is off by

@@ -1022,3 +1022,196 @@ async fn test_vision_completion_without_description_keeps_embeddings() {
 
     db.close().await;
 }
+
+/// Image-embedding index: insert, KNN search, eligibility, replace, and
+/// model-contract invalidation.
+#[tokio::test]
+async fn test_image_embedding_insert_search_and_eligibility() {
+    let (db, _path) = create_test_db().await;
+
+    let f1 = db
+        .insert_frame(create_test_frame(Utc::now(), "a", "One"))
+        .await
+        .unwrap();
+    let f2 = db
+        .insert_frame(create_test_frame(Utc::now(), "b", "Two"))
+        .await
+        .unwrap();
+
+    let mut v1 = vec![0.0f32; 768];
+    v1[0] = 1.0;
+    let mut v2 = vec![0.0f32; 768];
+    v2[1] = 1.0;
+    db.insert_image_embedding(
+        f1,
+        v1.clone(),
+        "fastembed",
+        "nomic-embed-vision-v1.5",
+        "1",
+        "h1",
+    )
+    .await
+    .unwrap();
+    db.insert_image_embedding(f2, v2, "fastembed", "nomic-embed-vision-v1.5", "1", "h2")
+        .await
+        .unwrap();
+
+    // A query nearest v1 must rank frame 1 first, tagged as an image hit.
+    let mut q = vec![0.0f32; 768];
+    q[0] = 0.9;
+    q[1] = 0.1;
+    let results = db
+        .search_image_embeddings_with_time_range(q, 5, 0.0, None, None)
+        .await
+        .unwrap();
+    assert!(!results.is_empty());
+    assert_eq!(results[0].frame.id, f1);
+    assert_eq!(results[0].retrieval_source, "image");
+
+    // Both embedded -> not pending; a fresh frame is eligible (no OCR required).
+    let pending = db.get_frames_without_image_embeddings(10).await.unwrap();
+    assert!(!pending.iter().any(|f| f.id == f1 || f.id == f2));
+    let f3 = db
+        .insert_frame(create_test_frame(Utc::now(), "c", "Three"))
+        .await
+        .unwrap();
+    let pending = db.get_frames_without_image_embeddings(10).await.unwrap();
+    assert!(pending.iter().any(|f| f.id == f3));
+
+    // Re-inserting replaces (one image embedding per frame).
+    db.insert_image_embedding(f1, v1, "fastembed", "nomic-embed-vision-v1.5", "1", "h1b")
+        .await
+        .unwrap();
+    let status = db.get_image_embedding_status().await.unwrap();
+    assert_eq!(status.frames_with_embeddings, 2);
+
+    // A model-contract change clears the index and flags a reindex.
+    let changed = db
+        .ensure_image_embedding_model("fastembed", "other-model", "1", 768)
+        .await
+        .unwrap();
+    assert!(changed);
+    let status = db.get_image_embedding_status().await.unwrap();
+    assert_eq!(status.frames_with_embeddings, 0);
+
+    db.close().await;
+}
+
+/// hybrid_search fuses the image-embedding index: a textless frame (image
+/// embedding only) is retrievable when an image-query vector is supplied, and
+/// absent when it is not.
+#[tokio::test]
+async fn test_hybrid_search_fuses_image_results() {
+    let (db, _path) = create_test_db().await;
+
+    let a = db
+        .insert_frame(create_test_frame(Utc::now(), "app", "A"))
+        .await
+        .unwrap();
+    let b = db
+        .insert_frame(create_test_frame(Utc::now(), "app", "B"))
+        .await
+        .unwrap();
+
+    // Frame A: OCR text + a text (EmbeddingGemma-space) embedding.
+    db.insert_ocr_text(create_test_ocr(a, "alpha"))
+        .await
+        .unwrap();
+    let mut ta = vec![0.0f32; 768];
+    ta[0] = 1.0;
+    db.insert_embedding(NewEmbedding {
+        frame_id: a,
+        chunk_text: "alpha".to_string(),
+        chunk_index: 0,
+        embedding: ta.clone(),
+        provider: "fastembed".to_string(),
+        model: "EmbeddingGemma-300M".to_string(),
+        model_version: "1".to_string(),
+        content_hash: "a".to_string(),
+    })
+    .await
+    .unwrap();
+
+    // Frame B: textless — only an image (nomic-space) embedding.
+    let mut ib = vec![0.0f32; 768];
+    ib[5] = 1.0;
+    db.insert_image_embedding(
+        b,
+        ib.clone(),
+        "fastembed",
+        "nomic-embed-vision-v1.5",
+        "1",
+        "b",
+    )
+    .await
+    .unwrap();
+
+    let start = chrono::DateTime::<Utc>::MIN_UTC;
+    // Not MAX_UTC: its leading '+' sign breaks SQLite's lexicographic timestamp
+    // comparison. Production search uses `now()` for the end bound.
+    let end = Utc::now() + chrono::Duration::hours(1);
+
+    // With an image-query vector, the textless frame B is fused in.
+    let results = db
+        .hybrid_search("alpha", ta.clone(), Some(ib), 10, start, end)
+        .await
+        .unwrap();
+    let ids: Vec<i64> = results.iter().map(|r| r.frame.id).collect();
+    assert!(ids.contains(&a), "text-matched frame A should be present");
+    assert!(ids.contains(&b), "image-only frame B should be fused in");
+    let b_res = results.iter().find(|r| r.frame.id == b).unwrap();
+    assert!(
+        b_res.retrieval_source == "image" || b_res.retrieval_source == "hybrid",
+        "frame B should be tagged as an image/hybrid hit, got {}",
+        b_res.retrieval_source
+    );
+
+    // Without an image-query vector, the textless frame B does not appear.
+    let results_no_image = db
+        .hybrid_search("alpha", ta, None, 10, start, end)
+        .await
+        .unwrap();
+    assert!(
+        !results_no_image.iter().any(|r| r.frame.id == b),
+        "frame B must not appear without an image query"
+    );
+
+    db.close().await;
+}
+
+/// The image-embedding cursor (`image_embeddings_last_processed_frame_id`) makes
+/// get_frames_without_image_embeddings skip frames at or below the cursor, so a
+/// frame that failed to embed is not re-fetched forever.
+#[tokio::test]
+async fn test_image_embedding_cursor_skips_processed_frames() {
+    let (db, _path) = create_test_db().await;
+
+    let f1 = db
+        .insert_frame(create_test_frame(Utc::now(), "app", "One"))
+        .await
+        .unwrap();
+    let f2 = db
+        .insert_frame(create_test_frame(Utc::now(), "app", "Two"))
+        .await
+        .unwrap();
+    let f3 = db
+        .insert_frame(create_test_frame(Utc::now(), "app", "Three"))
+        .await
+        .unwrap();
+
+    // No embeddings yet -> all three eligible.
+    let pending = db.get_frames_without_image_embeddings(10).await.unwrap();
+    assert_eq!(pending.len(), 3);
+
+    // Simulate the worker advancing the cursor past f2 (e.g. f1/f2 failed to
+    // embed). Only f3 should remain eligible — f1/f2 are not retried.
+    db.set_metadata("image_embeddings_last_processed_frame_id", &f2.to_string())
+        .await
+        .unwrap();
+    let pending = db.get_frames_without_image_embeddings(10).await.unwrap();
+    let ids: Vec<i64> = pending.iter().map(|f| f.id).collect();
+    assert_eq!(ids, vec![f3]);
+    assert!(!ids.contains(&f1) && !ids.contains(&f2));
+
+    db.close().await;
+}

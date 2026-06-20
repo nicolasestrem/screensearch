@@ -178,6 +178,64 @@ impl ApiServer {
         Ok(())
     }
 
+    /// Start the background image-embedding worker (visual recall).
+    ///
+    /// Always spawns the loop, but only loads the nomic image models and processes
+    /// frames while the `image_embeddings_enabled` runtime flag is set — so the API
+    /// toggle takes effect without a restart and the heavy models stay opt-in. The
+    /// engine is loaded lazily on the first enabled tick (and cached thereafter).
+    pub async fn start_image_embedding_worker(
+        &self,
+        config: crate::workers::image_embedding_worker::ImageEmbeddingWorkerConfig,
+    ) -> anyhow::Result<()> {
+        let state = Arc::clone(&self.state);
+        let interval_secs = config.interval_secs.max(1);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+            let mut worker: Option<crate::workers::image_embedding_worker::ImageEmbeddingWorker> =
+                None;
+            loop {
+                tick.tick().await;
+
+                let enabled = matches!(
+                    state.db.get_metadata("image_embeddings_enabled").await,
+                    Ok(Some(value)) if value == "true"
+                );
+                if !enabled {
+                    continue;
+                }
+
+                // Lazy-load the image engine on first enabled tick.
+                if worker.is_none() {
+                    match state.get_image_embedding_engine().await {
+                        Ok(engine) => {
+                            tracing::info!("Starting background image embedding worker");
+                            worker = Some(
+                                crate::workers::image_embedding_worker::ImageEmbeddingWorker::new(
+                                    Arc::clone(&state.db),
+                                    engine,
+                                    config.clone(),
+                                ),
+                            );
+                        }
+                        Err(error) => {
+                            tracing::warn!("Image embedding engine unavailable: {}", error);
+                            continue;
+                        }
+                    }
+                }
+
+                if let Some(worker) = worker.as_ref() {
+                    if let Err(error) = worker.process_batch().await {
+                        tracing::error!("Image embedding worker error: {}", error);
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
     /// Start the background vision analysis worker.
     ///
     /// The worker shares the API server's `AppState` so it can drive the unified
@@ -193,6 +251,17 @@ impl ApiServer {
             .set_metadata("embeddings_enabled", if enabled { "true" } else { "false" })
             .await
             .map_err(|error| anyhow::anyhow!("Failed to update embedding state: {error}"))
+    }
+
+    pub async fn set_image_embeddings_enabled(&self, enabled: bool) -> anyhow::Result<()> {
+        self.state
+            .db
+            .set_metadata(
+                "image_embeddings_enabled",
+                if enabled { "true" } else { "false" },
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("Failed to update image embedding state: {error}"))
     }
 }
 

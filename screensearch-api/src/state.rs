@@ -2,7 +2,7 @@
 
 use screensearch_automation::AutomationEngine;
 use screensearch_db::DatabaseManager;
-use screensearch_embeddings::{EmbeddingEngine, EMBEDDING_DIM};
+use screensearch_embeddings::{EmbeddingEngine, ImageEmbeddingEngine, EMBEDDING_DIM};
 use screensearch_llm::LlamaServer;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -60,6 +60,10 @@ pub struct AppState {
     /// Embedding engine for semantic search (lazy initialized)
     pub embedding_engine: Arc<RwLock<Option<Arc<EmbeddingEngine>>>>,
 
+    /// Image-embedding engine for visual recall (lazy initialized; only loaded
+    /// when image embeddings are enabled).
+    pub image_embedding_engine: Arc<RwLock<Option<Arc<ImageEmbeddingEngine>>>>,
+
     /// Shared capture interval in milliseconds (atomic for thread safety)
     pub capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
 
@@ -88,6 +92,7 @@ impl AppState {
             db: Arc::new(db),
             automation: Arc::new(automation),
             embedding_engine: Arc::new(RwLock::new(None)),
+            image_embedding_engine: Arc::new(RwLock::new(None)),
             capture_interval_ms,
             monitor_config_tx,
             llama_server: Arc::new(RwLock::new(None)),
@@ -134,6 +139,63 @@ impl AppState {
         let engine = EmbeddingEngine::new().await.map_err(|e| e.to_string())?;
         self.db
             .ensure_embedding_model(
+                engine.provider(),
+                engine.model(),
+                engine.model_version(),
+                EMBEDDING_DIM,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let engine_arc = Arc::new(engine);
+        *guard = Some(Arc::clone(&engine_arc));
+
+        Ok(engine_arc)
+    }
+
+    /// Whether the in-process image-embedding engine has already been loaded.
+    pub async fn image_embedding_engine_initialized(&self) -> bool {
+        match self.image_embedding_engine.try_read() {
+            Ok(guard) => guard.is_some(),
+            Err(_) => false,
+        }
+    }
+
+    /// Return the image-embedding engine only if it is already loaded, without
+    /// triggering a (potentially slow first-run) load. Used on the search path so
+    /// image fusion never blocks a query on a model download.
+    ///
+    /// Uses `try_read` (not `read().await`): `get_image_embedding_engine` holds the
+    /// write lock for the whole first-run model download, and a search query must
+    /// never block on that — a held write lock simply means "not ready yet".
+    pub async fn image_embedding_engine_if_ready(&self) -> Option<Arc<ImageEmbeddingEngine>> {
+        self.image_embedding_engine
+            .try_read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(Arc::clone))
+    }
+
+    /// Get or initialize the image-embedding engine (nomic vision + text).
+    ///
+    /// Mirrors [`Self::get_embedding_engine`]: serialized first-use init behind a
+    /// write lock, and validates the image-vector model contract on first load.
+    pub async fn get_image_embedding_engine(&self) -> Result<Arc<ImageEmbeddingEngine>, String> {
+        {
+            let guard = self.image_embedding_engine.read().await;
+            if let Some(engine) = guard.as_ref() {
+                return Ok(Arc::clone(engine));
+            }
+        }
+
+        let mut guard = self.image_embedding_engine.write().await;
+        if let Some(engine) = guard.as_ref() {
+            return Ok(Arc::clone(engine));
+        }
+
+        let engine = ImageEmbeddingEngine::new()
+            .await
+            .map_err(|e| e.to_string())?;
+        self.db
+            .ensure_image_embedding_model(
                 engine.provider(),
                 engine.model(),
                 engine.model_version(),

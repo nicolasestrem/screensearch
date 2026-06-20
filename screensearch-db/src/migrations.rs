@@ -70,6 +70,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
         MIGRATION_012_QWEN3VL_VISION_DEFAULT,
     )
     .await?;
+    apply_migration(pool, "013_image_embeddings", MIGRATION_013_IMAGE_EMBEDDINGS).await?;
 
     tracing::info!("All migrations completed successfully");
     Ok(())
@@ -331,6 +332,50 @@ INSERT OR REPLACE INTO metadata (key, value) VALUES
     ('embeddings_dimension', '768'),
     ('embeddings_last_processed_frame_id', '0'),
     ('embeddings_reindex_required', 'true');
+"#;
+
+/// In-process image embeddings (nomic-embed-vision-v1.5, 768-dim) for visual recall.
+///
+/// Kept in a SEPARATE table + sqlite-vec index from the text `embeddings`: image
+/// vectors live in a different (nomic) latent space than the EmbeddingGemma text
+/// vectors, so a single KNN across both would be meaningless. The image index is
+/// queried with its own (nomic-text) query encoder and fused with text results by
+/// rank (RRF) at search time. One whole-frame embedding per frame (no chunking).
+const MIGRATION_013_IMAGE_EMBEDDINGS: &str = r#"
+CREATE TABLE IF NOT EXISTS image_embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    frame_id INTEGER NOT NULL,
+    embedding BLOB NOT NULL,
+    embedding_dim INTEGER NOT NULL DEFAULT 768,
+    provider TEXT NOT NULL DEFAULT 'unknown',
+    model TEXT NOT NULL DEFAULT 'unknown',
+    model_version TEXT NOT NULL DEFAULT 'unknown',
+    content_hash TEXT NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (frame_id) REFERENCES frames(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_image_embeddings_frame
+ON image_embeddings(frame_id);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS image_embedding_vectors USING vec0(
+    embedding_id INTEGER PRIMARY KEY,
+    embedding float[768] distance_metric=cosine
+);
+
+CREATE TRIGGER IF NOT EXISTS image_embeddings_vector_delete
+AFTER DELETE ON image_embeddings BEGIN
+    DELETE FROM image_embedding_vectors WHERE embedding_id = old.id;
+END;
+
+INSERT OR REPLACE INTO metadata (key, value) VALUES
+    ('image_embeddings_model', 'nomic-embed-vision-v1.5'),
+    ('image_embeddings_provider', 'fastembed'),
+    ('image_embeddings_model_version', '1'),
+    ('image_embeddings_dimension', '768'),
+    ('image_embeddings_last_processed_frame_id', '0'),
+    ('image_embeddings_reindex_required', 'true'),
+    ('image_embeddings_enabled', 'false');
 "#;
 
 /// Prevent concurrent or repeated indexing from duplicating frame chunks.
