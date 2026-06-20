@@ -1,7 +1,8 @@
 # POC: Can `Qwen3-VL-Embedding-2B` unify ScreenSearch's retrieval layer?
 
-**Status:** Spike complete — **NO-GO** for the primary goal (visual recall via image
-embeddings on the existing llama.cpp server).
+**Status:** Spike complete. **NO-GO** for image embedding *on the llama.cpp server*
+— but the goal itself (direct screenshot embedding for visual recall) is **GO via a
+different, better-fitting path: in-process fastembed image embeddings** (proven below).
 **Date:** 2026-06-20 · **Branch:** `feature/qwen3vl-embedding-poc`
 **Build under test:** pinned `vendor/llama-b9728` — `version: 9728 (fabde3bf5)`,
 built with Clang 20.1.8, Vulkan backend (RTX 5060 Ti).
@@ -19,13 +20,20 @@ visual content becomes searchable — does not work on llama.cpp.** On the pinne
 data**: two completely different images produce byte-identical vectors, and adding an
 image changes nothing versus text-only. This reproduces upstream issue #19525 locally.
 
-- **Image embedding: broken** (verbatim proof below).
-- **Text embedding: works**, but adopting the 2B model for text *only* is a net
+- **Qwen3-VL-Embedding image embedding on llama.cpp: broken** (verbatim proof below).
+- **Text embedding via the 2B: works**, but adopting it for text *only* is a net
   regression (≈5 GB VRAM + GPU contention vs the current in-process CPU embedder,
   for no quality reason and no visual upside).
-- **Recommendation:** keep EmbeddingGemma-300M. Get the visual-recall win a different
-  way — **embed the generative vision `description` that the vision worker already
-  produces** (see "Recommended alternative"). No new model, no GPU, no schema change.
+- **The prize is achievable another way — and it was proven this spike.** An
+  in-process, ONNX, **aligned text↔image pair via fastembed** (`nomic-embed-vision-v1.5`
+  for screenshots + `nomic-embed-text-v1.5` for queries, **both 768-dim**) embeds
+  screenshots directly into one space with text. In the test, **3/3 text queries
+  retrieved the correct screenshot from pixels — including a textless bar chart that
+  has no OCR recall path today.** No Python, no llama.cpp, no GPU; reuses the existing
+  fastembed/ort stack and the existing `float[768]` schema. See "Proven working path."
+- **Recommendation:** keep EmbeddingGemma-300M for OCR text. Add visual recall in two
+  tiers — a zero-new-model quick win (embed the vision `description`) and the real
+  prize (the fastembed image index). See "Recommendation."
 
 No llama.cpp version bump was attempted: the upstream feature was never merged into
 *any* build, and the only working path (Jina's fork) requires a Python image-patch
@@ -199,54 +207,135 @@ schema/metadata migration off the fixed 768 dim.
 
 ---
 
-## Recommended alternative (outline only — not built this session)
+## Proven working path — direct screenshot embedding, in-process
 
-The original need was **a recall path for non-OCR visual content.** We can deliver
-most of that today with components that already exist and already run, sidestepping
-the broken image-embedding path entirely:
+The llama.cpp route is the only thing that's blocked; **embedding screenshots
+directly is not.** `fastembed` (the crate already powering ScreenSearch's text
+embeddings, v5.17.2 / ort 2.0) ships an aligned multimodal pair that runs the same
+way as the current text model — ONNX, in-process, CPU, no Python, no GPU:
 
-> **Embed the generative vision `description` (and `visible_text` labels) into the
-> existing 768-dim pipeline.**
+| Role | Model (fastembed) | Dim |
+|---|---|---|
+| Screenshots | `ImageEmbeddingModel::NomicEmbedVisionV15` (`nomic-ai/nomic-embed-vision-v1.5`) | **768** |
+| Text queries | `EmbeddingModel::NomicEmbedTextV15` (`nomic-ai/nomic-embed-text-v1.5`) | **768** |
 
-The vision worker already produces a 1–2 sentence semantic `description` plus up to 6
-prominent labels per frame (`screensearch-vision/src/lib.rs`,
-`client.rs:126-135`) and stores them on the frame. Today the embedding worker ignores
-them. Feeding them to the embedder turns "a Figma canvas with a blue dashboard
-mockup" or "a bar chart of Q3 revenue" into searchable semantic text — no new model,
-no GPU, no schema change (stays EmbeddingGemma 768-dim / sqlite-vec).
+The two models are designed to share one latent space, and both emit **768 dims —
+exactly the existing `embedding_vectors float[768]` schema.** The only gating
+question — *does a text query actually retrieve the right screenshot from pixels?* —
+was tested directly with three distinct generated screenshots (a dark code editor, a
+white news page, and a **textless bar chart**) and three text queries:
 
-Touch points to scope when implementing:
+```
+image vec dim = 768, text vec dim = 768
 
-1. **`embedding_worker.rs:66-87`** — extend `combined_text` to append the frame's
-   `description` + `visible_text` (alongside the existing OCR text + metadata). This
-   is the core change.
-2. **Ordering / reindex** — vision analysis is asynchronous and may complete *after* a
-   frame is first embedded (OCR is available immediately; the description arrives
-   later). Needs either: (a) gate embedding until `analysis_status = 'completed'`, or
-   (b) re-embed a frame when its description lands. There is already an
-   `embeddings_reindex_required` metadata flag (`migrations.rs:327-333`) and a
-   reindex path to reuse.
-3. **No schema migration** — same dim, same table, same vector index. A one-time
-   backfill/reindex of existing frames is the only data step.
-4. **Optional, later:** zero-shot `activity_type` could still be explored with a small
-   *text* classifier or the existing generative model — independent of this change.
+==== cosine(query, image) matrix ====
+              A_code    B_news   C_chart
+      code    0.0888    0.0313    0.0368   -> best: A_code OK
+      news    0.0426    0.0707    0.0437   -> best: B_news OK
+     chart    0.0481    0.0365    0.0886   -> best: C_chart OK
 
-This is the high-leverage follow-up: it closes most of the visual-recall gap with a
-~single-function change and zero new infrastructure, while the true image-embedding
-approach waits on upstream llama.cpp.
+image-image cos(code,news)=0.8692 cos(code,chart)=0.7605 cos(news,chart)=0.7431
+
+RESULT: 3/3 queries retrieved the correct screenshot by pixels.
+```
+
+**Reading it:** every query's top hit is its matching screenshot; the diagonal beats
+the off-diagonal by ~2–2.5×. The **textless bar chart** — which has zero OCR text and
+therefore *no recall path today* — was retrieved correctly by the text query "a bar
+chart graph of data." That is the prize, working in-process.
+
+Caveats (honest):
+
+- **Absolute cross-modal cosines are small** (~0.07–0.09). This is normal for the
+  nomic vision↔text alignment; what carries signal is the *ranking*, not the raw
+  value. Combine with the OCR-text results by **rank fusion (RRF)** — the project
+  already uses RRF — not by a shared score threshold.
+- The image side aligns with **nomic-text, not EmbeddingGemma.** So an image query
+  must be encoded with nomic-text (see the two integration options below).
+- Imagery here is synthetic; real screenshots should be validated during integration,
+  and per-frame CPU latency measured (small ViT — expected tens-to-low-hundreds of ms;
+  not formally benchmarked this spike).
+- Enabling fastembed's `image-models` feature pulls extra image-codec deps
+  (rav1e/ravif/exr/…) which lengthen the build; weigh that during integration.
+
+---
+
+## Recommendation (outline only — not built this session)
+
+The original need is **a recall path for non-OCR visual content.** Deliver it in two
+tiers, smallest-first:
+
+### Tier 1 — quick win, zero new models: embed the vision `description`
+
+The vision worker already produces a 1–2 sentence `description` + up to 6
+`visible_text` labels per frame (`screensearch-vision/src/lib.rs`,
+`client.rs:126-135`), stored on the frame but **never embedded**. Feed them to the
+existing EmbeddingGemma pipeline and "a Figma canvas with a blue dashboard mockup"
+becomes searchable as text — no new model, no GPU, no schema change.
+
+- **`embedding_worker.rs:66-87`** — append `description` + `visible_text` to
+  `combined_text` (alongside OCR text + metadata).
+- **Ordering / reindex** — vision analysis is async and may finish *after* a frame is
+  first embedded; gate on `analysis_status = 'completed'` or re-embed when the
+  description lands. Reuse the existing `embeddings_reindex_required` flag
+  (`migrations.rs:327-333`).
+
+### Tier 2 — the real prize: an in-process image-embedding index (fastembed nomic)
+
+Embed each stored screenshot with `NomicEmbedVisionV15` (768-dim) into the vector
+store, and encode image-search queries with `NomicEmbedTextV15`. This catches content
+the description misses (icons, dense canvases, charts, sparse-text screens).
+
+Integration shape to scope:
+
+1. **Embedding engine** — add an `ImageEmbedding` alongside the current
+   `TextEmbedding` in `screensearch-embeddings` (the engine has no provider trait yet;
+   this is the moment to introduce a small image-embed entry point). Enable fastembed's
+   `image-models` feature.
+2. **Storage** — reuse the `float[768]` `embedding_vectors` table; tag image rows
+   (e.g. a `kind`/`modality` column or a parallel vec table) so they're queried with
+   the nomic-text query encoder, not the EmbeddingGemma one.
+3. **Query side, two options:**
+   - **(A) Two indexes, fuse by RRF (lower risk):** keep EmbeddingGemma for OCR text;
+     additionally encode the query with nomic-text for the image index; merge both
+     result lists with the existing RRF. Preserves current text quality; adds one
+     extra small query encoding.
+   - **(B) Unify on nomic (simpler space):** move OCR-text embeddings to nomic-text too
+     so a single query encoding searches one space. Requires a full text reindex and a
+     quality check of nomic-text vs EmbeddingGemma on this corpus.
+   Recommend starting with **(A)**.
+4. **Worker** — embed screenshots from `frames.file_path` (re-decode the stored 1280px
+   JPEG, which is already what the vision worker reads) on the existing background
+   worker cadence; backfill existing frames once.
+
+### Optional, later
+Zero-shot `activity_type` could be explored with a small text classifier or the
+existing generative model — independent of the above.
+
+---
+
+## Go / No-Go (revised)
+
+- **Embed screenshots for visual recall — GO**, via the in-process fastembed nomic
+  image index (Tier 2), **not** via Qwen3-VL-Embedding on llama.cpp.
+- **Quick partial win — GO**, via embedding the vision `description` (Tier 1).
+- **Qwen3-VL-Embedding-2B on llama.cpp — NO-GO**, until upstream lands multimodal
+  `/embedding` (watch #19516 / a successor to #18665), at which point re-test.
 
 ---
 
 ## Reproduction
 
-1. Generate two distinct test images (native .NET drawing; see the PowerShell snippet
-   used: a dark code-editor image `A_code.jpg` and a white news-page `B_news.jpg`).
-2. Launch the server with the command in "Decisive test" above.
-3. Run the harness `poc_test.py` (stdlib only): it base64-encodes both images, posts
-   text-only / image-A / image-B / no-image requests to `/embedding` in both request
-   formats, prints vector lengths + leading components, and computes the decisive
-   cosines.
-4. Expect `cos(imgA, imgB) = 1.0` and `cos(imgA, noimg) = 1.0` — the no-go signature.
+**llama.cpp no-go test:** generate two distinct images, launch the server per
+"Decisive test," and POST text-only / image-A / image-B / no-image requests to
+`/embedding` (Format 1: `[img-1]` marker + `image_data`). Expect
+`cos(imgA, imgB) = 1.0` and `cos(imgA, noimg) = 1.0`.
 
-> The throwaway harness (`poc_test.py`) and generated images (`poc_imgs/`) are not
-> committed; the verbatim outputs above are the evidence of record.
+**fastembed go proof:** with fastembed's `image-models` feature enabled and
+`ORT_DYLIB_PATH` pointed at the bundled `onnxruntime.dll`, embed three distinct
+screenshots with `ImageEmbeddingModel::NomicEmbedVisionV15` and three text queries
+(prefixed `search_query:`) with `EmbeddingModel::NomicEmbedTextV15`, then print the
+query×image cosine matrix. Expect each query's top hit to be its matching image.
+
+> The throwaway harnesses and generated images are not committed; the verbatim outputs
+> above are the evidence of record.

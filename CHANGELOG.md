@@ -10,17 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Investigated (no code change)
-- **POC: `Qwen3-VL-Embedding-2B` for unified text+image retrieval — NO-GO.** Spiked
-  whether the multimodal embedding model could add a visual-recall path (embed
-  screenshots) on the existing pinned llama.cpp `b9728` server. Result: image data is
-  **silently ignored** by `llama-server`'s `/embedding` endpoint — two different
-  images produce byte-identical vectors (`cos = 1.0`), reproducing upstream issue
-  #19525 locally; the feature was never merged upstream (PR #18665 closed). Text
-  embedding works but the 2B model is a net regression for text-only (~5 GB VRAM + GPU
-  contention vs the in-process CPU EmbeddingGemma-300M). Recommendation: keep
-  EmbeddingGemma and instead **embed the existing generative vision `description`**
-  into the current 768-dim pipeline to close the non-OCR recall gap. Full findings +
-  verbatim evidence: `docs/qwen3vl-embedding-poc.md`.
+- **POC: direct screenshot embedding for visual recall — GO (via fastembed), not via
+  llama.cpp.** Spiked whether screenshots could be embedded so non-OCR visual content
+  (icons, charts, canvases) becomes searchable.
+  - **Qwen3-VL-Embedding-2B on the pinned llama.cpp `b9728` server: NO-GO.** Image
+    data is **silently ignored** by `llama-server`'s `/embedding` endpoint — two
+    different images produce byte-identical vectors (`cos = 1.0`), reproducing upstream
+    issue #19525; the feature was never merged upstream (PR #18665 closed). Text
+    embedding works but the 2B is a net regression for text-only (~5 GB VRAM + GPU
+    contention vs the in-process CPU EmbeddingGemma-300M).
+  - **In-process fastembed image embeddings: GO (proven).** `nomic-embed-vision-v1.5`
+    (screenshots) + `nomic-embed-text-v1.5` (queries), both **768-dim** (drop-in to the
+    existing schema), ONNX/CPU, no Python/llama.cpp/GPU. Test: **3/3 text queries
+    retrieved the correct screenshot by pixels, including a textless bar chart** with
+    no OCR recall path. Recommended rollout: Tier 1 — embed the existing vision
+    `description` (zero new models); Tier 2 — add the fastembed nomic image index,
+    fused with OCR results via RRF. Full findings + verbatim evidence:
+    `docs/qwen3vl-embedding-poc.md`.
 
 ### Added
 - **Complete frontend rebuild — "Command Deck" UI (greenfield).** The React UI was
