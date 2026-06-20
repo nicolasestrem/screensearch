@@ -206,13 +206,8 @@ async fn run_embedding_job(state: &Arc<AppState>, batch_size: i64) -> i64 {
             .map(|o| o.text.as_str())
             .collect::<Vec<_>>()
             .join(" ");
-        let combined_text = format!(
-            "Timestamp: {}\nApplication: {}\nWindow: {}\nScreen text:\n{}",
-            frame.timestamp,
-            frame.active_process.as_deref().unwrap_or("Unknown"),
-            frame.active_window.as_deref().unwrap_or(""),
-            ocr_text
-        );
+        let combined_text =
+            crate::workers::embedding_worker::build_frame_embedding_text(frame, &ocr_text);
         let chunks = match engine.chunk_text(&combined_text, 512, 64).await {
             Ok(chunks) => chunks,
             Err(error) => {

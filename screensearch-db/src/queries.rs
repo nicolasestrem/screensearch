@@ -1275,6 +1275,13 @@ impl DatabaseManager {
     ) -> Result<()> {
         let mut tx = self.pool().begin().await?;
 
+        // Whether vision produced a non-empty description worth re-embedding for.
+        let has_description = analysis
+            .description
+            .as_deref()
+            .map(|d| !d.trim().is_empty())
+            .unwrap_or(false);
+
         // Update frame with analysis results
         sqlx::query(
             r#"
@@ -1305,6 +1312,19 @@ impl DatabaseManager {
             .bind(queue_id)
             .execute(&mut *tx)
             .await?;
+
+        // Vision analysis adds a semantic `description` + `visible_text` that the
+        // embedding text now includes. A frame embedded earlier (OCR only, before
+        // analysis finished) must be re-embedded to pick these up: deleting its
+        // embeddings here makes the background embedding worker re-select and
+        // re-embed it. The `embeddings_vector_delete` trigger (migration 009)
+        // cascades the deletion into the `embedding_vectors` KNN index.
+        if has_description {
+            sqlx::query("DELETE FROM embeddings WHERE frame_id = ?")
+                .bind(frame_id)
+                .execute(&mut *tx)
+                .await?;
+        }
 
         tx.commit().await?;
         Ok(())

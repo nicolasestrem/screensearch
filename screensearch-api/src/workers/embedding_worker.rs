@@ -2,11 +2,53 @@
 //!
 //! Processes frames without embeddings in the background.
 
-use screensearch_db::DatabaseManager;
+use screensearch_db::{DatabaseManager, FrameRecord};
 use screensearch_embeddings::EmbeddingEngine;
+use std::fmt::Write as _;
 use std::sync::Arc;
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
+
+/// Build the text embedded for a frame: OCR text plus the vision worker's
+/// `description` and `visible_text` labels when present.
+///
+/// Shared by the background worker and the manual generate-embeddings handler so
+/// the two never drift. Including the vision fields gives non-OCR visual content
+/// (charts, canvases, icon-heavy UIs) a recall path it otherwise lacks; the
+/// vision fields are skipped when absent/empty so OCR-only frames are unchanged.
+pub fn build_frame_embedding_text(frame: &FrameRecord, ocr_text: &str) -> String {
+    let mut text = format!(
+        "Timestamp: {}\nApplication: {}\nWindow: {}\nScreen text:\n{}",
+        frame.timestamp,
+        frame.active_process.as_deref().unwrap_or("Unknown"),
+        frame.active_window.as_deref().unwrap_or(""),
+        ocr_text
+    );
+
+    if let Some(desc) = frame.description.as_deref() {
+        let desc = desc.trim();
+        if !desc.is_empty() {
+            let _ = write!(text, "\nVisual summary:\n{desc}");
+        }
+    }
+
+    if let Some(raw) = frame.visible_text_json.as_deref() {
+        let raw = raw.trim();
+        if !raw.is_empty() {
+            // `visible_text_json` is a JSON array of strings; flatten to a
+            // readable line, falling back to the raw value if it isn't that shape.
+            let labels = serde_json::from_str::<Vec<String>>(raw)
+                .map(|v| v.join(", "))
+                .unwrap_or_else(|_| raw.to_string());
+            let labels = labels.trim();
+            if !labels.is_empty() {
+                let _ = write!(text, "\nVisible labels: {labels}");
+            }
+        }
+    }
+
+    text
+}
 
 /// Configuration for the background embedding worker
 #[derive(Debug, Clone)]
@@ -72,19 +114,13 @@ impl EmbeddingWorker {
                 continue;
             }
 
-            // Combine OCR text and chunk it
+            // Combine OCR text + vision fields and chunk it
             let ocr_text: String = ocr_texts
                 .iter()
                 .map(|o| o.text.as_str())
                 .collect::<Vec<_>>()
                 .join(" ");
-            let combined_text = format!(
-                "Timestamp: {}\nApplication: {}\nWindow: {}\nScreen text:\n{}",
-                frame.timestamp,
-                frame.active_process.as_deref().unwrap_or("Unknown"),
-                frame.active_window.as_deref().unwrap_or(""),
-                ocr_text
-            );
+            let combined_text = build_frame_embedding_text(&frame, &ocr_text);
             let chunks = self.engine.chunk_text(&combined_text, 512, 64).await?;
 
             let chunk_refs: Vec<&str> = chunks.iter().map(String::as_str).collect();
@@ -189,4 +225,74 @@ pub fn spawn_embedding_worker(
         let worker = EmbeddingWorker::new(db, engine, config);
         worker.run().await;
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn make_frame(description: Option<&str>, visible_text_json: Option<&str>) -> FrameRecord {
+        FrameRecord {
+            id: 1,
+            chunk_id: None,
+            timestamp: Utc::now(),
+            monitor_index: 0,
+            device_name: "monitor-0".to_string(),
+            file_path: "captures/frame.jpg".to_string(),
+            active_window: Some("Editor".to_string()),
+            active_process: Some("code.exe".to_string()),
+            browser_url: None,
+            width: 1280,
+            height: 720,
+            offset_index: 0,
+            focused: Some(true),
+            created_at: Utc::now(),
+            analysis_status: Some("completed".to_string()),
+            description: description.map(str::to_string),
+            visible_text_json: visible_text_json.map(str::to_string),
+            activity_type: Some("coding".to_string()),
+            app_hint: Some("VS Code".to_string()),
+            confidence: Some(0.9),
+            analysis_time_ms: Some(100),
+            analysis_error: None,
+        }
+    }
+
+    #[test]
+    fn ocr_only_when_no_vision_fields() {
+        let frame = make_frame(None, None);
+        let text = build_frame_embedding_text(&frame, "hello world");
+        assert!(text.contains("Screen text:\nhello world"));
+        assert!(!text.contains("Visual summary"));
+        assert!(!text.contains("Visible labels"));
+    }
+
+    #[test]
+    fn includes_description_and_flattened_visible_labels() {
+        let frame = make_frame(
+            Some("a bar chart of Q3 revenue"),
+            Some(r#"["Q3","Revenue","Sales"]"#),
+        );
+        let text = build_frame_embedding_text(&frame, "ocr text");
+        assert!(text.contains("Screen text:\nocr text"));
+        assert!(text.contains("Visual summary:\na bar chart of Q3 revenue"));
+        assert!(text.contains("Visible labels: Q3, Revenue, Sales"));
+    }
+
+    #[test]
+    fn falls_back_on_non_json_visible_text() {
+        let frame = make_frame(None, Some("just a raw string"));
+        let text = build_frame_embedding_text(&frame, "ocr");
+        assert!(text.contains("Visible labels: just a raw string"));
+    }
+
+    #[test]
+    fn skips_empty_vision_fields() {
+        let frame = make_frame(Some("   "), Some("[]"));
+        let text = build_frame_embedding_text(&frame, "ocr");
+        assert!(!text.contains("Visual summary"));
+        // an empty JSON array flattens to an empty string -> no label line
+        assert!(!text.contains("Visible labels"));
+    }
 }

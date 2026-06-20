@@ -798,3 +798,124 @@ async fn test_vision_status_counts_by_analysis_status() {
 
     db.close().await;
 }
+
+/// When vision analysis completes with a description, a frame that was already
+/// embedded (OCR only, before analysis finished) must have its embeddings cleared
+/// so the background worker re-embeds it with the new description included.
+#[tokio::test]
+async fn test_vision_completion_clears_embeddings_for_reembedding() {
+    use screensearch_db::models::FrameAnalysisUpdate;
+
+    let (db, _path) = create_test_db().await;
+
+    let frame_id = db
+        .insert_frame(create_test_frame(Utc::now(), "design", "Canvas"))
+        .await
+        .unwrap();
+    // OCR text makes the frame eligible for embedding.
+    db.insert_ocr_text(create_test_ocr(frame_id, "some screen text"))
+        .await
+        .unwrap();
+
+    // Embed it OCR-only, as the worker would before vision completes.
+    db.insert_embedding(NewEmbedding {
+        frame_id,
+        chunk_text: "some screen text".to_string(),
+        chunk_index: 0,
+        embedding: vec![0.1; 768],
+        provider: "fastembed".to_string(),
+        model: "EmbeddingGemma-300M".to_string(),
+        model_version: "1".to_string(),
+        content_hash: "hash".to_string(),
+    })
+    .await
+    .unwrap();
+
+    // Embedded -> no longer pending.
+    let pending = db.get_frames_without_embeddings(10).await.unwrap();
+    assert!(
+        !pending.iter().any(|f| f.id == frame_id),
+        "frame should not be pending once embedded"
+    );
+
+    // Vision completes with a non-empty description.
+    db.enqueue_frame_for_analysis(frame_id, 0).await.unwrap();
+    let task = db.claim_analysis_task("w").await.unwrap().unwrap();
+    db.complete_analysis_task(
+        task.id,
+        frame_id,
+        FrameAnalysisUpdate {
+            description: Some("a bar chart of quarterly revenue".to_string()),
+            visible_text_json: Some("[]".to_string()),
+            activity_type: Some("design".to_string()),
+            app_hint: None,
+            confidence: Some(0.8),
+            analysis_time_ms: Some(10),
+        },
+    )
+    .await
+    .unwrap();
+
+    // Embeddings cleared -> frame is re-queued for embedding.
+    let pending = db.get_frames_without_embeddings(10).await.unwrap();
+    assert!(
+        pending.iter().any(|f| f.id == frame_id),
+        "frame should be re-queued for embedding after vision adds a description"
+    );
+
+    db.close().await;
+}
+
+/// A vision completion with no description must NOT wipe existing embeddings.
+#[tokio::test]
+async fn test_vision_completion_without_description_keeps_embeddings() {
+    use screensearch_db::models::FrameAnalysisUpdate;
+
+    let (db, _path) = create_test_db().await;
+
+    let frame_id = db
+        .insert_frame(create_test_frame(Utc::now(), "code", "Doc"))
+        .await
+        .unwrap();
+    db.insert_ocr_text(create_test_ocr(frame_id, "screen text"))
+        .await
+        .unwrap();
+    db.insert_embedding(NewEmbedding {
+        frame_id,
+        chunk_text: "screen text".to_string(),
+        chunk_index: 0,
+        embedding: vec![0.1; 768],
+        provider: "fastembed".to_string(),
+        model: "EmbeddingGemma-300M".to_string(),
+        model_version: "1".to_string(),
+        content_hash: "hash".to_string(),
+    })
+    .await
+    .unwrap();
+
+    db.enqueue_frame_for_analysis(frame_id, 0).await.unwrap();
+    let task = db.claim_analysis_task("w").await.unwrap().unwrap();
+    db.complete_analysis_task(
+        task.id,
+        frame_id,
+        FrameAnalysisUpdate {
+            description: None,
+            visible_text_json: None,
+            activity_type: None,
+            app_hint: None,
+            confidence: None,
+            analysis_time_ms: Some(5),
+        },
+    )
+    .await
+    .unwrap();
+
+    // Still embedded -> not pending.
+    let pending = db.get_frames_without_embeddings(10).await.unwrap();
+    assert!(
+        !pending.iter().any(|f| f.id == frame_id),
+        "embeddings must be preserved when vision adds no description"
+    );
+
+    db.close().await;
+}
