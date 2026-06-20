@@ -421,7 +421,20 @@ export default function Settings() {
               Local engine
             </button>
             <button
-              onClick={() => setAi({ ...ai, providerUrl: ai.providerUrl === 'local' ? '' : ai.providerUrl })}
+              onClick={() =>
+                setAi({
+                  ...ai,
+                  // Switching Local -> Remote: restore the last saved remote URL
+                  // (if any) instead of blanking the field, so toggling Local to
+                  // explore and back doesn't lose an unsaved/typed remote URL.
+                  providerUrl:
+                    ai.providerUrl === 'local'
+                      ? aiConfig.providerUrl !== 'local'
+                        ? aiConfig.providerUrl
+                        : ''
+                      : ai.providerUrl,
+                })
+              }
               className={clsx(
                 'border px-3 py-1.5 text-xs',
                 !aiIsLocal ? 'border-accent bg-accent/15 text-accent' : 'border-rule text-muted hover:text-ink'

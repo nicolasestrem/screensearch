@@ -105,6 +105,15 @@ impl EmbeddingEngine {
             reranker_enabled = config.reranker_enabled,
             "Initialized in-process embedding engine"
         );
+        // The quantized EmbeddingGemma model cannot batch (see `run_embed`): inputs
+        // are embedded one at a time, so `config.batch_size` does NOT speed up
+        // embedding throughput — it only bounds how many frames the worker fetches
+        // per pass. Call this out so a tuned `batch_size` isn't mistaken for an
+        // embedding-throughput knob.
+        info!(
+            configured_batch_size = config.batch_size,
+            "Embeddings run one input at a time (quantized model); batch_size does not affect embedding throughput"
+        );
 
         Ok(Self {
             config,

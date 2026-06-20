@@ -449,16 +449,22 @@ fn is_quant_token(token: &str) -> bool {
 /// model of the same family still pair).
 const FAMILY_NOISE_TOKENS: &[&str] = &[
     "mmproj", "gguf", "f16", "f32", "fp16", "bf16", "xl", "ud", "gptq", "awq", "gs",
+    // Fine-tuning / variant descriptors shared across unrelated lineages: these
+    // identify a model's *variant*, not its *family*, so they must never make two
+    // different families look related. Without this, `nemotron…-instruct` and
+    // `mmproj-qwen3vl-…-instruct` would intersect on `instruct` and be (wrongly)
+    // paired — the exact crash this guard exists to prevent.
+    "instruct", "it", "chat", "thinking", "action",
 ];
 
 /// The set of *family-identifying* tokens in a (lowercased) filename stem: tokens
-/// that name the model lineage (e.g. `gemma`, `qwen3vl`, `nemotron3`, `instruct`,
-/// `thinking`), with size markers (`4b`), quantization markers (`q4`),
-/// format/precision noise ([`FAMILY_NOISE_TOKENS`]), and single characters
-/// removed. Two files belong to the same family when these sets intersect — or,
-/// to survive hyphenation differences like `qwen3-vl` vs `qwen3vl`, when a
-/// family token of one appears inside the other's separator-stripped stem (see
-/// [`same_model_family`]).
+/// that name the model lineage (e.g. `gemma`, `qwen3vl`, `nemotron3`), with size
+/// markers (`4b`), quantization markers (`q4`), variant/format noise
+/// ([`FAMILY_NOISE_TOKENS`] — `instruct`, `thinking`, `f16`, …), and single
+/// characters removed. Two files belong to the same family when these sets
+/// intersect — or, to survive hyphenation differences like `qwen3-vl` vs
+/// `qwen3vl`, when a family token of one appears inside the other's
+/// separator-stripped stem (see [`same_model_family`]).
 fn family_tokens(stem_lower: &str) -> std::collections::HashSet<String> {
     stem_lower
         .split(|c: char| !c.is_ascii_alphanumeric())
@@ -1334,7 +1340,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        let nemotron = dir.join("NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf");
+        // Use the real-world Nemotron filename, which includes "Instruct" — it
+        // shares both the `4b` size and the `instruct` variant token with the
+        // Qwen3-VL projector, yet must still NOT be paired.
+        let nemotron = dir.join("NVIDIA-Nemotron3-Nano-4B-Instruct-Q4_K_M.gguf");
         let qwen_instruct = dir.join("qwen3-vl-4b-instruct-q4_k_m.gguf");
         let qwen_thinking = dir.join("Qwen3VL-4B-Thinking-Q4_K_M.gguf");
         let proj = dir.join("mmproj-Qwen3VL-4B-Instruct-F16.gguf");
@@ -1342,7 +1351,7 @@ mod tests {
             std::fs::write(f, b"x").unwrap();
         }
 
-        // Different family → no pairing, even though both are "4b".
+        // Different family → no pairing, even though both are "4b" and "instruct".
         assert_eq!(resolve_mmproj_for(&nemotron), None);
         // Real Qwen3-VL models (hyphenated and concatenated names) pair with the
         // Qwen3-VL projector.
@@ -1370,6 +1379,13 @@ mod tests {
         // Different families that merely share a size token.
         assert!(!same_model_family(
             "nvidia-nemotron3-nano-4b-q4_k_m",
+            "mmproj-qwen3vl-4b-instruct-f16"
+        ));
+        // ...including when BOTH carry the `instruct` variant descriptor: it names
+        // the variant, not the family, so it must not make them look related (the
+        // real-world filename, which the earlier test sidestepped).
+        assert!(!same_model_family(
+            "nvidia-nemotron3-nano-4b-instruct-q4_k_m",
             "mmproj-qwen3vl-4b-instruct-f16"
         ));
         assert!(!same_model_family(

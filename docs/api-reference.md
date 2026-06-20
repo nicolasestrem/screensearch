@@ -322,9 +322,15 @@ Generates a report over a time range:
 #### `POST /ai/model/select`
 
 Pins which discovered local GGUF the unified llama-server runs for answer/report
-generation. `model` may be a discovered GGUF's absolute path or any substring of
-its filename stem; an empty string clears the pin (auto-select). The choice
-persists as the `answer_model` setting and the server rebuilds onto it on next use.
+generation. `model` may be a discovered GGUF's **absolute path** (exact, preferred —
+this is what the Settings dropdown sends, so selection is unambiguous) or a
+**case-insensitive substring** of a filename stem; an empty string clears the pin
+(auto-select). When matching by substring, the **first** discovered model that
+matches wins (discovery order = directory priority, then filename), so a short
+substring like `gemma` may resolve to whichever `gemma-*` model sorts first —
+prefer the full path to be precise. If `model` matches nothing on disk, the pin is
+still stored but resolution falls back to auto-select. The choice persists as the
+`answer_model` setting and the server rebuilds onto it on next use.
 
 ```bash
 curl -X POST "http://127.0.0.1:3131/api/ai/model/select" \
