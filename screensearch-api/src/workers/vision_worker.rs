@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use screensearch_db::{models::FrameAnalysisUpdate, DatabaseManager};
 use screensearch_vision::{client::OllamaClient, VisionModel};
 use std::sync::Arc;
@@ -145,10 +145,16 @@ pub fn spawn_vision_worker(state: Arc<AppState>) {
 
             if let Some(c) = &client {
                 match process_next_item(&db, c).await {
-                    Ok(true) => {
-                        // Did work; loop immediately to drain the queue.
+                    Ok(WorkOutcome::Completed) => {
+                        // Did useful work; loop immediately to drain the queue.
                     }
-                    Ok(false) => {
+                    Ok(WorkOutcome::Failed) => {
+                        // The task was marked failed (and either dropped or backed
+                        // off in the DB). Cool down briefly so a run of failing
+                        // frames can't peg a CPU core or flood the log.
+                        sleep(Duration::from_secs(2)).await;
+                    }
+                    Ok(WorkOutcome::Idle) => {
                         // Queue empty: throttled trickle of recent un-analyzed frames.
                         match auto_enqueue(&db).await {
                             Ok(n) if n > 0 => {
@@ -192,64 +198,115 @@ async fn auto_enqueue(db: &DatabaseManager) -> Result<usize> {
     Ok(enqueued)
 }
 
-async fn process_next_item(db: &DatabaseManager, client: &Arc<dyn VisionModel>) -> Result<bool> {
+/// Outcome of a single worker iteration, so the loop can pace itself: drain
+/// immediately after useful work, cool down after a failure, and idle when the
+/// queue is empty.
+enum WorkOutcome {
+    /// A task was analyzed successfully.
+    Completed,
+    /// A task was claimed but failed; it has been marked failed in the DB.
+    Failed,
+    /// No task was available to claim.
+    Idle,
+}
+
+async fn process_next_item(
+    db: &DatabaseManager,
+    client: &Arc<dyn VisionModel>,
+) -> Result<WorkOutcome> {
     // 1. Claim task
-    let task = db.claim_analysis_task("worker-1").await?;
+    let task = match db.claim_analysis_task("worker-1").await? {
+        Some(task) => task,
+        None => return Ok(WorkOutcome::Idle),
+    };
 
-    if let Some(task) = task {
-        debug!(
-            "Processing analysis task id: {} for frame: {}",
-            task.id, task.frame_id
-        );
+    debug!(
+        "Processing analysis task id: {} for frame: {}",
+        task.id, task.frame_id
+    );
 
-        // 2. Fetch frame data (image path)
-        let frame = db
-            .get_frame(task.frame_id)
-            .await?
-            .context("Frame not found for analysis task")?;
-
-        // 3. Load image
-        let image = image::open(&frame.file_path)
-            .context(format!("Failed to open image at {}", frame.file_path))?;
-
-        // 4. Analyze
-        let context = format!(
-            "App: {}, Window: {}",
-            frame.active_process.unwrap_or_default(),
-            frame.active_window.unwrap_or_default()
-        );
-
-        let started = Instant::now();
-        match client.analyze(&image, &context).await {
-            Ok(analysis) => {
-                // 5. Update success
-                let update = FrameAnalysisUpdate {
-                    description: Some(analysis.description),
-                    visible_text_json: Some(serde_json::to_string(&analysis.visible_text)?),
-                    activity_type: Some(analysis.activity_type),
-                    app_hint: analysis.app_hint,
-                    confidence: Some(analysis.confidence),
-                    analysis_time_ms: Some(started.elapsed().as_millis() as i64),
-                };
-
-                db.complete_analysis_task(task.id, task.frame_id, update)
-                    .await?;
-                info!(
-                    "Analysis completed for frame {} in {} ms",
-                    task.frame_id,
-                    started.elapsed().as_millis()
-                );
-            }
-            Err(e) => {
-                // 6. Update failure
-                error!("Analysis failed for frame {}: {}", task.frame_id, e);
-                db.fail_analysis_task(task.id, task.frame_id, e.to_string())
-                    .await?;
-            }
+    // 2. Fetch frame data (image path). A missing frame / DB error must NOT
+    //    bubble up with `?`: that would skip `fail_analysis_task`, leaving the
+    //    task locked for 5 minutes only to fail again. Mark it failed instead so
+    //    the queue keeps moving (and the task is eventually dropped after
+    //    MAX_ANALYSIS_ATTEMPTS).
+    let frame = match db.get_frame(task.frame_id).await {
+        Ok(Some(frame)) => frame,
+        Ok(None) => {
+            let msg = "Frame not found for analysis task";
+            warn!("{} (frame {})", msg, task.frame_id);
+            db.fail_analysis_task(task.id, task.frame_id, msg.to_string())
+                .await?;
+            return Ok(WorkOutcome::Failed);
         }
+        Err(e) => {
+            error!("Failed to load frame {}: {}", task.frame_id, e);
+            db.fail_analysis_task(task.id, task.frame_id, e.to_string())
+                .await?;
+            return Ok(WorkOutcome::Failed);
+        }
+    };
 
-        Ok(true)
-    } else {
-        Ok(false)
+    // 3. Load image. Same rule: a missing/corrupt screenshot is marked failed,
+    //    never bubbled up.
+    let image = match image::open(&frame.file_path) {
+        Ok(img) => img,
+        Err(e) => {
+            error!("Failed to open image at {}: {}", frame.file_path, e);
+            db.fail_analysis_task(task.id, task.frame_id, e.to_string())
+                .await?;
+            return Ok(WorkOutcome::Failed);
+        }
+    };
+
+    // 4. Analyze
+    let context = format!(
+        "App: {}, Window: {}",
+        frame.active_process.unwrap_or_default(),
+        frame.active_window.unwrap_or_default()
+    );
+
+    let started = Instant::now();
+    match client.analyze(&image, &context).await {
+        Ok(analysis) => {
+            // 5. Update success
+            let visible_text_json = match serde_json::to_string(&analysis.visible_text) {
+                Ok(json) => Some(json),
+                Err(e) => {
+                    error!(
+                        "Failed to serialize visible_text for frame {}: {}",
+                        task.frame_id, e
+                    );
+                    db.fail_analysis_task(task.id, task.frame_id, e.to_string())
+                        .await?;
+                    return Ok(WorkOutcome::Failed);
+                }
+            };
+
+            let update = FrameAnalysisUpdate {
+                description: Some(analysis.description),
+                visible_text_json,
+                activity_type: Some(analysis.activity_type),
+                app_hint: analysis.app_hint,
+                confidence: Some(analysis.confidence),
+                analysis_time_ms: Some(started.elapsed().as_millis() as i64),
+            };
+
+            db.complete_analysis_task(task.id, task.frame_id, update)
+                .await?;
+            info!(
+                "Analysis completed for frame {} in {} ms",
+                task.frame_id,
+                started.elapsed().as_millis()
+            );
+            Ok(WorkOutcome::Completed)
+        }
+        Err(e) => {
+            // 6. Update failure
+            error!("Analysis failed for frame {}: {}", task.frame_id, e);
+            db.fail_analysis_task(task.id, task.frame_id, e.to_string())
+                .await?;
+            Ok(WorkOutcome::Failed)
+        }
     }
 }

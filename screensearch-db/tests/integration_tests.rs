@@ -694,3 +694,107 @@ async fn test_pagination() {
 
     db.close().await;
 }
+
+/// Regression test for the vision worker infinite-loop bug: a failed analysis
+/// task must NOT be left immediately re-claimable (which would peg a CPU core
+/// and flood the log). After a failure the task is backed off, so the very next
+/// claim returns nothing.
+#[tokio::test]
+async fn test_failed_analysis_task_is_not_immediately_reclaimable() {
+    let (db, _path) = create_test_db().await;
+
+    let frame_id = db
+        .insert_frame(create_test_frame(Utc::now(), "code", "Will fail"))
+        .await
+        .unwrap();
+
+    db.enqueue_frame_for_analysis(frame_id, 0).await.unwrap();
+
+    // Claim and fail the task.
+    let task = db
+        .claim_analysis_task("worker-1")
+        .await
+        .unwrap()
+        .expect("a task should be claimable");
+    assert_eq!(task.frame_id, frame_id);
+
+    db.fail_analysis_task(task.id, frame_id, "boom".to_string())
+        .await
+        .unwrap();
+
+    // The task is backed off, not unlocked: the next claim must return None
+    // instead of the same task. This is the core of the infinite-loop fix.
+    let next = db.claim_analysis_task("worker-1").await.unwrap();
+    assert!(
+        next.is_none(),
+        "a just-failed task must not be immediately re-claimable"
+    );
+
+    // It is still in the queue (one attempt < MAX_ANALYSIS_ATTEMPTS) and the
+    // frame is marked failed.
+    let status = db.get_vision_status().await.unwrap();
+    assert_eq!(status.failed, 1);
+    assert_eq!(status.queue_depth, 1);
+
+    db.close().await;
+}
+
+/// Verify the consolidated conditional-aggregation `get_vision_status` query
+/// reports correct per-status counts.
+#[tokio::test]
+async fn test_vision_status_counts_by_analysis_status() {
+    use screensearch_db::models::FrameAnalysisUpdate;
+
+    let (db, _path) = create_test_db().await;
+
+    // One frame analyzed successfully -> completed.
+    let completed_id = db
+        .insert_frame(create_test_frame(Utc::now(), "code", "Done"))
+        .await
+        .unwrap();
+    db.enqueue_frame_for_analysis(completed_id, 0)
+        .await
+        .unwrap();
+    let task = db.claim_analysis_task("w").await.unwrap().unwrap();
+    db.complete_analysis_task(
+        task.id,
+        completed_id,
+        FrameAnalysisUpdate {
+            description: Some("a window".to_string()),
+            visible_text_json: Some("[]".to_string()),
+            activity_type: Some("coding".to_string()),
+            app_hint: None,
+            confidence: Some(0.9),
+            analysis_time_ms: Some(42),
+        },
+    )
+    .await
+    .unwrap();
+
+    // One frame failed.
+    let failed_id = db
+        .insert_frame(create_test_frame(Utc::now(), "code", "Bad"))
+        .await
+        .unwrap();
+    db.enqueue_frame_for_analysis(failed_id, 0).await.unwrap();
+    let task = db.claim_analysis_task("w").await.unwrap().unwrap();
+    db.fail_analysis_task(task.id, failed_id, "nope".to_string())
+        .await
+        .unwrap();
+
+    // One frame still pending (enqueued, never claimed).
+    let pending_id = db
+        .insert_frame(create_test_frame(Utc::now(), "code", "Later"))
+        .await
+        .unwrap();
+    db.enqueue_frame_for_analysis(pending_id, 0).await.unwrap();
+
+    let status = db.get_vision_status().await.unwrap();
+    assert_eq!(status.total_frames, 3);
+    assert_eq!(status.completed, 1);
+    assert_eq!(status.failed, 1);
+    assert_eq!(status.pending, 1);
+    assert_eq!(status.processing, 0);
+
+    db.close().await;
+}

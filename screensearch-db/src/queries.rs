@@ -8,6 +8,11 @@ use crate::{DatabaseManager, Result, EMBEDDING_DIM};
 use chrono::{DateTime, Utc};
 use sqlx::Row;
 
+/// Maximum number of times a vision analysis task is tried before it is dropped
+/// from the queue. Prevents a permanently-failing frame (e.g. a deleted
+/// screenshot) from being retried forever. See [`DatabaseManager::fail_analysis_task`].
+const MAX_ANALYSIS_ATTEMPTS: i64 = 3;
+
 impl DatabaseManager {
     // ===== Video Chunk Operations =====
 
@@ -1179,20 +1184,27 @@ impl DatabaseManager {
     pub async fn get_vision_status(&self) -> Result<crate::models::VisionStatus> {
         let settings = self.get_settings().await?;
 
-        let total_frames = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM frames")
-            .fetch_one(self.pool())
-            .await?;
+        // Single scan of `frames` via conditional aggregation instead of five
+        // separate COUNT(*) round-trips.
+        let row = sqlx::query(
+            r#"
+            SELECT
+                COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN analysis_status = 'completed' THEN 1 ELSE 0 END), 0) AS completed,
+                COALESCE(SUM(CASE WHEN analysis_status = 'pending' THEN 1 ELSE 0 END), 0) AS pending,
+                COALESCE(SUM(CASE WHEN analysis_status = 'processing' THEN 1 ELSE 0 END), 0) AS processing,
+                COALESCE(SUM(CASE WHEN analysis_status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+            FROM frames
+            "#,
+        )
+        .fetch_one(self.pool())
+        .await?;
 
-        let count_status = |status: &str| {
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM frames WHERE analysis_status = ?")
-                .bind(status.to_string())
-                .fetch_one(self.pool())
-        };
-
-        let completed = count_status("completed").await?;
-        let pending = count_status("pending").await?;
-        let processing = count_status("processing").await?;
-        let failed = count_status("failed").await?;
+        let total_frames: i64 = row.get("total");
+        let completed: i64 = row.get("completed");
+        let pending: i64 = row.get("pending");
+        let processing: i64 = row.get("processing");
+        let failed: i64 = row.get("failed");
 
         let queue_depth = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM analysis_queue")
             .fetch_one(self.pool())
@@ -1298,7 +1310,17 @@ impl DatabaseManager {
         Ok(())
     }
 
-    /// Mark analysis as failed
+    /// Mark analysis as failed.
+    ///
+    /// Critically, this never leaves a claimable task with `locked_until = NULL`:
+    /// doing so would let the worker re-claim the same failing task on the very
+    /// next loop iteration with no delay, pegging a CPU core and flooding the log.
+    /// Instead we either:
+    /// - **give up** and delete the task from the queue once `attempts` reaches
+    ///   [`MAX_ANALYSIS_ATTEMPTS`] (the frame is already marked `'failed'`, so the
+    ///   user can see the error and re-enqueue manually), or
+    /// - **back off** by setting `locked_until` to an exponentially growing delay
+    ///   so a transient failure is retried later instead of in a tight loop.
     pub async fn fail_analysis_task(
         &self,
         queue_id: i64,
@@ -1316,14 +1338,35 @@ impl DatabaseManager {
         .execute(&mut *tx)
         .await?;
 
-        // Update queue item - unlock and record error, or delete if max attempts?
-        // Let's just release lock and let retry handle it, unless max attempts reached
-        // Doing simpler logic: release lock immediately so it can be retried later or inspect manually
-        sqlx::query("UPDATE analysis_queue SET locked_until = NULL, last_error = ? WHERE id = ?")
+        // `attempts` was already incremented when the task was claimed, so it
+        // reflects how many times this task has been tried.
+        let attempts =
+            sqlx::query_scalar::<_, i64>("SELECT attempts FROM analysis_queue WHERE id = ?")
+                .bind(queue_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .unwrap_or(MAX_ANALYSIS_ATTEMPTS);
+
+        if attempts >= MAX_ANALYSIS_ATTEMPTS {
+            // Exhausted retries: drop it so it can never re-clog the queue.
+            sqlx::query("DELETE FROM analysis_queue WHERE id = ?")
+                .bind(queue_id)
+                .execute(&mut *tx)
+                .await?;
+        } else {
+            // Exponential backoff: 1, 2, 4 minutes ... keyed off the attempt count.
+            let backoff_minutes = 1i64 << (attempts.max(1) - 1).min(6);
+            sqlx::query(
+                "UPDATE analysis_queue \
+                 SET locked_until = datetime('now', '+' || ? || ' minutes'), last_error = ? \
+                 WHERE id = ?",
+            )
+            .bind(backoff_minutes)
             .bind(&error)
             .bind(queue_id)
             .execute(&mut *tx)
             .await?;
+        }
 
         tx.commit().await?;
         Ok(())

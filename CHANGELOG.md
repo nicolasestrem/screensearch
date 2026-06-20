@@ -89,6 +89,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   download remains available as a fallback. `GET /api/ai/model/status` now lists
   discovered models via `available_models`.
 
+### Fixed
+- **Vision worker no longer risks a tight infinite loop / CPU pegging on a
+  failing frame.** Previously `fail_analysis_task` unlocked the task
+  (`locked_until = NULL`) without removing it, so the worker re-claimed and
+  re-failed the same task with zero delay — pegging a CPU core and flooding the
+  log. Failures now apply exponential backoff (1→2→4 min) and the task is dropped
+  from the queue after `MAX_ANALYSIS_ATTEMPTS` (3) tries; the frame stays marked
+  `failed` for manual retry.
+- **Frame-load and image-decode errors in the vision worker are now marked
+  failed instead of bubbling up.** A missing frame, corrupt screenshot, or
+  serialization error previously returned early via `?`, skipping
+  `fail_analysis_task` and leaving the task locked for 5 minutes only to fail
+  again. They are now logged, recorded as failed, and the worker continues. The
+  worker also cools down briefly after a failure.
+- **`get_vision_status` now does a single scan of `frames`** via conditional
+  aggregation instead of five sequential `COUNT(*)` round-trips.
+
 ### Removed
 - The Python sidecar (`sidecar/`), its PyInstaller packaging, and all sidecar
   process management, build steps, and bundling from `main.rs`, the build
