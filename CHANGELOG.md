@@ -56,6 +56,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also now reports the model the server will actually load (and its real size)
   rather than the first discovered file. Files: `screensearch-llm/src/download.rs`,
   `screensearch-api/src/handlers/ai.rs`.
+- **Command Deck review fixes (PR #73).** Addressed the automated review feedback:
+  - **Restored a render error boundary.** A new Command-Deck-styled
+    `components/ErrorBoundary.tsx` wraps the routed page outlet in `AppShell.tsx`
+    (keyed by route so navigation clears a faulted page), so a single page error
+    shows a recovery panel instead of a blank screen.
+  - **Bounded the frame-image cache.** `getFrameImage` (`lib/api.ts`) now uses a
+    100-entry LRU and revokes evicted object URLs, preventing unbounded memory
+    growth during long scrubbing sessions.
+  - **Command-palette questions re-fire.** Removed a one-shot `askedOnce` guard in
+    `Recall.tsx` that blocked a second seeded question from the ⌘K palette; the seed
+    is cleared inside the effect so it still runs exactly once per submission.
+  - **Settings no longer lose unsaved edits.** The form populates once via an
+    `initialized` flag so a background settings refetch can't clobber in-progress
+    edits; the shadowing `interval`/`setInterval` state was renamed to
+    `captureInterval`/`setCaptureInterval`.
+  - **Cleanups:** deferred `URL.revokeObjectURL` after report download, and removed
+    all three `react-hooks/exhaustive-deps` suppressions (`Recall`, `Timeline`,
+    `CommandPalette`) in favour of stable refs/`useCallback`/memoised deps.
 
 ### Changed
 - **Frontend now surfaces previously-unused backend data.** `FrameResponse`

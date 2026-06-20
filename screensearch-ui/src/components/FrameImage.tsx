@@ -4,8 +4,9 @@ import { getFrameImage } from '../lib/api'
 
 /**
  * Loads a frame screenshot as an object URL. Object URLs are cached and shared
- * across mounts by the api layer, so we intentionally do not revoke on unmount
- * (the same id is re-requested often as the user scrubs/scrolls).
+ * across mounts by the api layer (a bounded LRU that revokes evicted URLs), so we
+ * intentionally do not revoke on unmount (the same id is re-requested often as the
+ * user scrubs/scrolls).
  */
 export function FrameImage({
   id,

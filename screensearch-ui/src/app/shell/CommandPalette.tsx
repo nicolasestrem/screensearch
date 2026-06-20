@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { Search, MessageSquareText, Film, BarChart3, LayoutGrid, Settings as SettingsIcon } from 'lucide-react'
@@ -22,7 +22,8 @@ export function CommandPalette() {
   const [sel, setSel] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const keywords = useKeywords(q, open && q.trim().length > 0).data ?? []
+  const keywordsQ = useKeywords(q, open && q.trim().length > 0)
+  const keywords = useMemo(() => keywordsQ.data ?? [], [keywordsQ.data])
 
   useEffect(() => {
     if (open) {
@@ -32,7 +33,7 @@ export function CommandPalette() {
     }
   }, [open])
 
-  const close = () => setOpen(false)
+  const close = useCallback(() => setOpen(false), [setOpen])
 
   const actions = useMemo<Action[]>(() => {
     const trimmed = q.trim()
@@ -81,8 +82,7 @@ export function CommandPalette() {
       )
     }
     return list
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, keywords])
+  }, [q, keywords, navigate, setRecallSeed, close])
 
   if (!open) return null
 

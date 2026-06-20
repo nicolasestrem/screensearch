@@ -42,17 +42,21 @@ export default function Recall() {
   // ---- Ask ----
   const [question, setQuestion] = useState('')
   const ask = useGenerateAnswer()
-  const askedOnce = useRef(false)
+  // Keep a stable ref to the latest mutate so the seed effect can depend only on
+  // the seed itself (the mutation object changes identity on every render).
+  const askMutate = useRef(ask.mutate)
+  askMutate.current = ask.mutate
 
+  // Run a seeded question handed off from the command palette. setSeed(null)
+  // clears the seed so re-renders don't re-fire, and a fresh palette submission
+  // sets a new seed that this effect picks up.
   useEffect(() => {
-    if (seed && !askedOnce.current) {
-      askedOnce.current = true
+    if (seed) {
       setQuestion(seed)
       setSeed(null)
-      ask.mutate(seed)
+      askMutate.current(seed)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seed])
+  }, [seed, setSeed])
 
   const runAsk = () => {
     const q = question.trim()
@@ -100,7 +104,10 @@ export default function Recall() {
     a.href = URL.createObjectURL(blob)
     a.download = `screensearch-report-${reportType}.md`
     a.click()
-    URL.revokeObjectURL(a.href)
+    // Defer revocation so the browser has queued the download before the URL is
+    // released (avoids timing issues on slower machines).
+    const url = a.href
+    setTimeout(() => URL.revokeObjectURL(url), 0)
   }
 
   return (

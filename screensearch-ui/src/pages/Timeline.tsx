@@ -30,12 +30,12 @@ export default function Timeline() {
   const [activity, setActivity] = useState<ActivityKey | 'all'>('all')
   const [scrub, setScrub] = useState<number | null>(null)
 
-  // keep the URL q in sync when arriving from the palette
+  // keep the URL q in sync when arriving from the palette. The urlQ !== query
+  // guard makes including `query` safe: once both agree the effect is a no-op.
   useEffect(() => {
     const urlQ = params.get('q')
     if (urlQ !== null && urlQ !== query) setQuery(urlQ)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params])
+  }, [params, query])
 
   const { start, end } = useMemo(() => dayBounds(day), [day])
   const searching = query.trim().length > 0

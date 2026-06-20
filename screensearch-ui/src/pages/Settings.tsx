@@ -74,7 +74,7 @@ export default function Settings() {
   const updateSettings = useUpdateSettings()
 
   // capture + vision form (single backend settings record)
-  const [interval, setInterval] = useState(3)
+  const [captureInterval, setCaptureInterval] = useState(3)
   const [retention, setRetention] = useState(30)
   const [paused, setPaused] = useState(false)
   const [monSel, setMonSel] = useState<number[]>([]) // empty = all
@@ -85,11 +85,14 @@ export default function Settings() {
   const [visionModel, setVisionModel] = useState('')
   const [visionEndpoint, setVisionEndpoint] = useState('')
   const [visionApiKey, setVisionApiKey] = useState('')
+  // Populate the form once on first load; later background refetches must not
+  // clobber the user's unsaved edits.
+  const [initialized, setInitialized] = useState(false)
 
   useEffect(() => {
     const s = settingsQ.data
-    if (!s) return
-    setInterval(s.capture_interval)
+    if (!s || initialized) return
+    setCaptureInterval(s.capture_interval)
     setRetention(s.retention_days)
     setPaused(s.is_paused === 1)
     setMonSel(parseArr(s.monitors).map(Number).filter((n) => !Number.isNaN(n)))
@@ -99,11 +102,12 @@ export default function Settings() {
     setVisionModel(s.vision_model || '')
     setVisionEndpoint(s.vision_endpoint || '')
     setVisionApiKey(s.vision_api_key || '')
-  }, [settingsQ.data])
+    setInitialized(true)
+  }, [settingsQ.data, initialized])
 
   const save = () =>
     updateSettings.mutate({
-      capture_interval: interval,
+      capture_interval: captureInterval,
       monitors: JSON.stringify(monSel),
       excluded_apps: JSON.stringify(excluded),
       is_paused: paused ? 1 : 0,
@@ -167,8 +171,8 @@ export default function Settings() {
               <input
                 type="number"
                 min={1}
-                value={interval}
-                onChange={(e) => setInterval(Math.max(1, Number(e.target.value)))}
+                value={captureInterval}
+                onChange={(e) => setCaptureInterval(Math.max(1, Number(e.target.value)))}
                 className={inputCls}
               />
             </Field>

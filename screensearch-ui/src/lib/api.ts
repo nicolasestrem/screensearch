@@ -71,19 +71,40 @@ const jget = <T>(path: string, signal?: AbortSignal) => req<T>(path, { method: '
 const jpost = <T>(path: string, body?: unknown) =>
   req<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) })
 
-// ---- blob image cache (object URLs), revoked on demand to avoid leaks ----
+// ---- blob image cache (object URLs) ----
+// Bounded LRU: the Map preserves insertion order, so the first key is the least
+// recently used. We cap the cache and revoke evicted object URLs so a long
+// scrubbing session can't leak memory. Touching an entry on read re-inserts it
+// to mark it most-recently-used.
 const blobCache = new Map<number, string>()
+const MAX_CACHED_IMAGES = 100
 
 export async function getFrameImage(id: number): Promise<string> {
   const existing = blobCache.get(id)
-  if (existing) return existing
+  if (existing) {
+    blobCache.delete(id)
+    blobCache.set(id, existing) // mark most-recently-used
+    return existing
+  }
   const res = await fetch(`${BASE}/frames/${id}/image`)
   if (!res.ok) throw new ApiError(res.status, `Failed to load image for frame ${id}`)
   const url = URL.createObjectURL(await res.blob())
+  if (blobCache.size >= MAX_CACHED_IMAGES) {
+    const oldestId = blobCache.keys().next().value
+    if (oldestId !== undefined) {
+      const oldestUrl = blobCache.get(oldestId)
+      if (oldestUrl) URL.revokeObjectURL(oldestUrl)
+      blobCache.delete(oldestId)
+    }
+  }
   blobCache.set(id, url)
   return url
 }
 
+/**
+ * Opt-in eviction for a single cached frame image. The LRU bound above already
+ * caps total memory; callers only need this to drop a specific URL eagerly.
+ */
 export function revokeFrameImage(id: number): void {
   const url = blobCache.get(id)
   if (url) {

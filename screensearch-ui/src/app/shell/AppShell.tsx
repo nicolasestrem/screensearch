@@ -1,14 +1,16 @@
 import { useEffect } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useLocation } from 'react-router-dom'
 import { StatusRail } from './StatusRail'
 import { NavRail } from './NavRail'
 import { CommandPalette } from './CommandPalette'
 import { ReadinessBanner } from './ReadinessBanner'
+import { ErrorBoundary } from '../../components/ErrorBoundary'
 import { useUi } from '../../lib/store'
 
 export function AppShell() {
   const setPaletteOpen = useUi((s) => s.setPaletteOpen)
   const paletteOpen = useUi((s) => s.paletteOpen)
+  const location = useLocation()
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -28,7 +30,9 @@ export function AppShell() {
       <main className="overflow-y-auto px-7 pb-12 pt-6">
         <div className="mx-auto max-w-[1400px]">
           <ReadinessBanner />
-          <Outlet />
+          <ErrorBoundary key={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </div>
       </main>
       {paletteOpen && <CommandPalette />}
