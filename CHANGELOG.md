@@ -15,13 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each frame's text embedding (previously they were stored as metadata and never
   embedded), giving non-OCR visual content — charts, design canvases, icon-heavy UIs —
   a semantic recall path through the existing 768-dim EmbeddingGemma index. No new
-  models, dependencies, or schema changes. Because vision analysis is asynchronous and
-  may finish after a frame was first embedded on OCR alone, `complete_analysis_task`
-  now clears that frame's embeddings when it records a (non-empty) description, so the
-  background worker re-embeds it with the vision fields included. The combined
-  embedding text is now built by a single shared `build_frame_embedding_text` helper
-  used by both the background worker and the manual generate-embeddings handler.
-  Files: `screensearch-api/src/workers/embedding_worker.rs`,
+  models, dependencies, or schema changes. Frames are now embeddable when they have
+  OCR text **or** vision text, so a frame with no OCR at all (a pure chart/canvas) is
+  embedded once vision describes it. Because vision analysis is asynchronous and may
+  finish after a frame was first embedded on OCR alone, `complete_analysis_task` now
+  clears that frame's embeddings when it records vision text (a non-empty `description`
+  or `visible_text` labels), so the background worker re-embeds it with the vision
+  fields included. The combined embedding text is built by a single shared
+  `build_frame_embedding_text` helper used by both the background worker and the manual
+  generate-embeddings handler. Files: `screensearch-api/src/workers/embedding_worker.rs`,
   `screensearch-api/src/handlers/embeddings.rs`, `screensearch-db/src/queries.rs`.
 
 - **Complete frontend rebuild — "Command Deck" UI (greenfield).** The React UI was

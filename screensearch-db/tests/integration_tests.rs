@@ -866,6 +866,109 @@ async fn test_vision_completion_clears_embeddings_for_reembedding() {
     db.close().await;
 }
 
+/// A vision completion with only `visible_text` labels (no description) must
+/// still clear embeddings, since those labels are part of the embedding text.
+#[tokio::test]
+async fn test_vision_completion_with_labels_only_clears_embeddings() {
+    use screensearch_db::models::FrameAnalysisUpdate;
+
+    let (db, _path) = create_test_db().await;
+
+    let frame_id = db
+        .insert_frame(create_test_frame(Utc::now(), "app", "Toolbar"))
+        .await
+        .unwrap();
+    db.insert_ocr_text(create_test_ocr(frame_id, "screen text"))
+        .await
+        .unwrap();
+    db.insert_embedding(NewEmbedding {
+        frame_id,
+        chunk_text: "screen text".to_string(),
+        chunk_index: 0,
+        embedding: vec![0.1; 768],
+        provider: "fastembed".to_string(),
+        model: "EmbeddingGemma-300M".to_string(),
+        model_version: "1".to_string(),
+        content_hash: "hash".to_string(),
+    })
+    .await
+    .unwrap();
+
+    db.enqueue_frame_for_analysis(frame_id, 0).await.unwrap();
+    let task = db.claim_analysis_task("w").await.unwrap().unwrap();
+    db.complete_analysis_task(
+        task.id,
+        frame_id,
+        FrameAnalysisUpdate {
+            description: None,
+            visible_text_json: Some(r#"["Submit","Cancel","Settings"]"#.to_string()),
+            activity_type: Some("productivity".to_string()),
+            app_hint: None,
+            confidence: Some(0.7),
+            analysis_time_ms: Some(8),
+        },
+    )
+    .await
+    .unwrap();
+
+    let pending = db.get_frames_without_embeddings(10).await.unwrap();
+    assert!(
+        pending.iter().any(|f| f.id == frame_id),
+        "labels-only vision completion should re-queue the frame for embedding"
+    );
+
+    db.close().await;
+}
+
+/// A frame with NO OCR text but a vision description must become embeddable
+/// (the "pure chart / canvas" case the feature targets).
+#[tokio::test]
+async fn test_frame_without_ocr_but_with_description_is_embeddable() {
+    use screensearch_db::models::FrameAnalysisUpdate;
+
+    let (db, _path) = create_test_db().await;
+
+    let frame_id = db
+        .insert_frame(create_test_frame(Utc::now(), "figma", "Canvas"))
+        .await
+        .unwrap();
+    // Deliberately no OCR text inserted.
+
+    // Before vision: nothing embeddable -> not pending.
+    let pending = db.get_frames_without_embeddings(10).await.unwrap();
+    assert!(
+        !pending.iter().any(|f| f.id == frame_id),
+        "a frame with neither OCR nor vision text must not be embeddable"
+    );
+
+    // Vision adds a description.
+    db.enqueue_frame_for_analysis(frame_id, 0).await.unwrap();
+    let task = db.claim_analysis_task("w").await.unwrap().unwrap();
+    db.complete_analysis_task(
+        task.id,
+        frame_id,
+        FrameAnalysisUpdate {
+            description: Some("a dashboard mockup with a blue bar chart".to_string()),
+            visible_text_json: Some("[]".to_string()),
+            activity_type: Some("design".to_string()),
+            app_hint: None,
+            confidence: Some(0.8),
+            analysis_time_ms: Some(12),
+        },
+    )
+    .await
+    .unwrap();
+
+    // Now embeddable purely on the vision description.
+    let pending = db.get_frames_without_embeddings(10).await.unwrap();
+    assert!(
+        pending.iter().any(|f| f.id == frame_id),
+        "a frame with a vision description should be embeddable even without OCR"
+    );
+
+    db.close().await;
+}
+
 /// A vision completion with no description must NOT wipe existing embeddings.
 #[tokio::test]
 async fn test_vision_completion_without_description_keeps_embeddings() {

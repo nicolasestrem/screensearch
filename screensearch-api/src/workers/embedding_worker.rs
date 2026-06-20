@@ -50,6 +50,21 @@ pub fn build_frame_embedding_text(frame: &FrameRecord, ocr_text: &str) -> String
     text
 }
 
+/// Whether a frame carries vision-derived text worth embedding: a non-empty
+/// `description` or non-empty `visible_text` labels. Mirrors the fields
+/// [`build_frame_embedding_text`] appends, and is used to decide whether a frame
+/// with no OCR text is still embeddable.
+pub fn frame_has_vision_text(description: Option<&str>, visible_text_json: Option<&str>) -> bool {
+    let has_description = description.map(|d| !d.trim().is_empty()).unwrap_or(false);
+    let has_labels = visible_text_json
+        .map(|v| {
+            let trimmed = v.trim();
+            !trimmed.is_empty() && trimmed != "[]"
+        })
+        .unwrap_or(false);
+    has_description || has_labels
+}
+
 /// Configuration for the background embedding worker
 #[derive(Debug, Clone)]
 pub struct EmbeddingWorkerConfig {
@@ -107,19 +122,25 @@ impl EmbeddingWorker {
         for frame in frames {
             // Get OCR text for the frame
             let ocr_texts = self.db.get_ocr_text_for_frame(frame.id).await?;
-
-            if ocr_texts.is_empty() {
-                // No OCR text, still mark as processed by inserting empty embedding
-                debug!("Frame {} has no OCR text", frame.id);
-                continue;
-            }
-
-            // Combine OCR text + vision fields and chunk it
             let ocr_text: String = ocr_texts
                 .iter()
                 .map(|o| o.text.as_str())
                 .collect::<Vec<_>>()
                 .join(" ");
+
+            // Embed when there's OCR text OR vision-derived text; a frame with
+            // neither has nothing to embed (would be metadata only), so skip it.
+            if ocr_text.trim().is_empty()
+                && !frame_has_vision_text(
+                    frame.description.as_deref(),
+                    frame.visible_text_json.as_deref(),
+                )
+            {
+                debug!("Frame {} has no embeddable text", frame.id);
+                continue;
+            }
+
+            // Combine OCR text + vision fields and chunk it
             let combined_text = build_frame_embedding_text(&frame, &ocr_text);
             let chunks = self.engine.chunk_text(&combined_text, 512, 64).await?;
 
@@ -294,5 +315,15 @@ mod tests {
         assert!(!text.contains("Visual summary"));
         // an empty JSON array flattens to an empty string -> no label line
         assert!(!text.contains("Visible labels"));
+    }
+
+    #[test]
+    fn vision_text_detection() {
+        assert!(!frame_has_vision_text(None, None));
+        assert!(!frame_has_vision_text(Some("   "), Some("[]")));
+        assert!(!frame_has_vision_text(Some(""), Some("")));
+        assert!(frame_has_vision_text(Some("a bar chart"), None));
+        assert!(frame_has_vision_text(None, Some(r#"["Submit","Cancel"]"#)));
+        assert!(frame_has_vision_text(Some("desc"), Some("[]")));
     }
 }
