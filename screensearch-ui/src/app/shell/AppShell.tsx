@@ -5,6 +5,7 @@ import { NavRail } from './NavRail'
 import { CommandPalette } from './CommandPalette'
 import { ReadinessBanner } from './ReadinessBanner'
 import { ErrorBoundary } from '../../components/ErrorBoundary'
+import { ToastHost } from '../../components/Toast'
 import { useUi } from '../../lib/store'
 
 export function AppShell() {
@@ -36,6 +37,7 @@ export function AppShell() {
         </div>
       </main>
       {paletteOpen && <CommandPalette />}
+      <ToastHost />
     </div>
   )
 }

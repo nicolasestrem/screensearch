@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The startup banner showed "Warming up → Semantic search → Loading the search
+  model… ~450 MB" even when semantic search was OFF.** `GET /api/system/readiness`
+  keyed the `search_index` stage on `engine_ready` alone; with embeddings disabled the
+  engine is never initialized, so the stage stayed `loading` (a transitional state)
+  forever and the banner never dismissed. The stage now reports `disabled` when
+  indexing is off (non-transitional → banner hides it), `downloading` with real
+  progress while the model is fetching, and `loading` only during the in-memory load.
+  File: `screensearch-api/src/handlers/system.rs`.
+- **The AI-provider "Save" in Settings only wrote to browser local storage and was
+  never persisted server-side.** Report generation depended entirely on the request
+  body, so a configured remote provider was lost on reload and unavailable to any
+  non-UI caller. The provider URL/model/API key are now persisted as database metadata
+  (`ai_provider_url`, `ai_model`, `ai_api_key`), surfaced on `GET/POST /api/settings`,
+  and used as a fallback by report generation. Files:
+  `screensearch-api/src/handlers/{system.rs,ai.rs}`, `screensearch-ui` Settings/Recall.
+- **"Download model" in Settings → Semantic search appeared to do nothing.** It loaded
+  the model synchronously with no progress and no completion feedback. The endpoint is
+  now non-blocking and a determinate progress bar (MB / % / ETA) tracks the download in
+  both the Settings card and the startup banner; a toast fires when the engine is ready.
+  Files: `screensearch-api/src/handlers/embeddings.rs`, `screensearch-ui` Settings.
 - **Vision "Auto-select" could pick a `thinking` model, so every frame failed with
   "Failed to parse VisionAnalysis JSON".** When `vision_model` was empty/Auto,
   `resolve_vision_model`'s fallback returned the first discovered vision pair, which
@@ -38,6 +58,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   length. File: `screensearch-embeddings/src/engine.rs`.
 
 ### Added
+- **Live download progress for the search model (EmbeddingGemma-300M).** `fastembed`
+  downloads the ONNX model opaquely (no byte-progress callback), so a watcher infers
+  progress from the growing file in the model cache and publishes it under the
+  `embedding_model` key on `GET /api/downloads/status` (now with a stable `key` field).
+  The startup banner and the Settings → Semantic search card render a determinate bar
+  (MB / % / ETA). A warm start (model already cached) shows no bar — the watcher seeds a
+  baseline so only genuine growth counts. New `resolve_cache_root()` and
+  `MODEL_DOWNLOAD_APPROX_BYTES` in `screensearch-embeddings`; watcher in
+  `screensearch-api/src/state.rs`; key in `screensearch-api/src/handlers/downloads.rs`.
+- **Settings now auto-save with toast confirmation.** Editing capture, vision, or AI
+  fields persists automatically (debounced) instead of requiring a "Save" button you
+  could never be sure took effect; a transient "Saving… / Saved ✓" indicator and a
+  bottom-right toast confirm every change (and surface mutation errors). New toast
+  system: `screensearch-ui/src/components/Toast.tsx`, `src/lib/toast.ts`, store slice in
+  `src/lib/store.ts`, host in `src/app/shell/AppShell.tsx`.
+- **Consolidated AI & models settings.** The overlapping "AI provider" and "Local answer
+  engine" panels are merged into one **AI & models** section with a Local/Remote choice
+  and a clear provenance line for the local model (`from .models/ · auto-discovered ·
+  <size>`), answering "where is this model coming from?". File:
+  `screensearch-ui/src/pages/Settings.tsx`.
 - **Pick the local answer-generation model (and use it for Reports).** A new answer-
   model pin lets you choose which discovered GGUF the unified llama-server runs for
   "Ask" answers and local Reports (e.g. a dedicated text model like

@@ -33,6 +33,9 @@ use std::sync::Arc;
 /// Progress information for a single download
 #[derive(Debug, Serialize, Clone)]
 pub struct DownloadProgressInfo {
+    /// Stable progress key (e.g. "llm_model", "embedding_model"). Lets the UI
+    /// match a specific download without depending on the display name.
+    pub key: String,
     /// Human-readable name of the download
     pub name: String,
     /// Bytes downloaded so far
@@ -73,10 +76,12 @@ pub async fn get_all_downloads_status(
             let name = match key.as_str() {
                 "llm_model" => "Ministral-3B Model",
                 "llama_server" => "llama-server Binary",
+                "embedding_model" => "Search Model (EmbeddingGemma-300M)",
                 _ => &key,
             };
 
             DownloadProgressInfo {
+                key: key.clone(),
                 name: name.to_string(),
                 bytes_downloaded: progress.bytes_downloaded,
                 total_bytes: progress.total_bytes,

@@ -25,8 +25,9 @@ curl "http://127.0.0.1:3131/api/system/readiness"
 # -> {"core_ready":true,"all_ready":false,"stages":[
 #      {"id":"core","label":"Core services","state":"ready",
 #       "detail":"Capture, OCR, and keyword search are running.","progress":null,"eta_seconds":null},
-#      {"id":"search_index","label":"Semantic search","state":"loading",
-#       "detail":"Loading the search model — the first run downloads ~450 MB.",...},
+#      {"id":"search_index","label":"Semantic search","state":"downloading",
+#       "detail":"Downloading the search model… (~300 MB, one-time).","progress":61.4,"eta_seconds":18},
+#      // when semantic search is OFF this stage is {"state":"disabled",...} and the banner hides it
 #      {"id":"answer_generation","label":"AI answer generation","state":"downloading",
 #       "detail":"Downloading the local AI server…","progress":42.5,"eta_seconds":37}]}
 ```
@@ -260,13 +261,23 @@ Example:
   "vision_provider": "local",
   "vision_model": "Qwen3-VL-4B-Instruct",
   "vision_endpoint": "http://127.0.0.1:31130",
-  "vision_api_key": null
+  "vision_api_key": null,
+  "ai_provider_url": "local",
+  "ai_model": "",
+  "ai_api_key": null
 }
 ```
 
 `monitors` is a JSON array of monitor indices (see `GET /monitors`); an empty
 array `"[]"` means **all monitors**. Updating it reconfigures the running capture
 engine immediately — no restart required — and the value is restored at startup.
+
+`ai_provider_url` / `ai_model` / `ai_api_key` are the report-generation provider
+config. They are persisted as database metadata (not `SettingsRecord` columns) and
+merged into the `GET/POST /settings` payload, so a configured provider survives a
+reload and is used by `POST /ai/generate` (the request body still overrides them).
+`"local"` routes Reports through the bundled llama-server; the AI fields are optional
+on `POST /settings` — omit them to leave the persisted provider untouched.
 
 The `vision_*` names are retained by the database API for compatibility. They
 configure only the optional generation LLM. OCR and retrieval are configured
@@ -412,10 +423,19 @@ next request.
 
 ### `GET /downloads/status`
 
-Returns progress for managed generation-model and llama-server downloads.
-The in-process embedding model (EmbeddingGemma-300M) downloads to the Hugging
-Face cache on first use; its readiness is reported through `engine_ready` on
-`GET /embeddings/status`, rather than this endpoint.
+Returns progress for active downloads as `{ "downloads": [ { "key", "name",
+"bytes_downloaded", "total_bytes", "speed_bps", "eta_seconds", "percentage",
+"error" }, ... ] }`. The stable `key` identifies each download:
+
+- `llm_model` — the answer-generation GGUF (Ministral-3B).
+- `llama_server` — the llama.cpp server binary.
+- `embedding_model` — the in-process search model (EmbeddingGemma-300M). `fastembed`
+  downloads it opaquely, so progress is inferred by watching the file grow in the
+  Hugging Face cache; the entry appears only while a download is in flight (never on a
+  warm/cached start) and clears once the engine is loaded. Final readiness is still
+  reported by `engine_ready` on `GET /embeddings/status`.
+
+Poll while `downloads` is non-empty; it goes empty when all downloads finish.
 
 ## Automation
 

@@ -18,6 +18,44 @@ use tracing::{debug, error, info, warn};
 /// Local LLM server endpoint (llama.cpp server on port 31130)
 const LOCAL_LLM_ENDPOINT: &str = "http://127.0.0.1:31130/v1";
 
+/// Metadata keys for the persisted AI report-provider config. Stored as
+/// database metadata (like `answer_model` / `embeddings_enabled`) so the
+/// provider survives restarts and is shared by every report request, instead of
+/// living only in the browser's local storage.
+pub(crate) const AI_PROVIDER_URL_KEY: &str = "ai_provider_url";
+pub(crate) const AI_MODEL_KEY: &str = "ai_model";
+pub(crate) const AI_API_KEY_KEY: &str = "ai_api_key";
+
+/// Load the persisted AI report-provider config from database metadata.
+///
+/// Defaults to the local engine (`provider_url = "local"`) when nothing has been
+/// saved, mirroring the UI default. An empty stored API key is treated as
+/// "no key".
+pub(crate) async fn load_ai_provider_config(
+    db: &screensearch_db::DatabaseManager,
+) -> (String, String, Option<String>) {
+    let provider_url = db
+        .get_metadata(AI_PROVIDER_URL_KEY)
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "local".to_string());
+    let model = db
+        .get_metadata(AI_MODEL_KEY)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let api_key = db
+        .get_metadata(AI_API_KEY_KEY)
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty());
+    (provider_url, model, api_key)
+}
+
 // ============================================================
 // Helper Functions
 // ============================================================
@@ -273,6 +311,29 @@ pub async fn generate_report(
 ) -> Result<Json<AiReportResponse>> {
     debug!("Generating AI report with model {}", payload.model);
 
+    // Saved config is authoritative: when the request omits the provider (or
+    // model/key), fall back to the persisted AI provider settings so reports work
+    // from saved config even for direct API callers.
+    let (provider_url, model, api_key) = {
+        let (saved_url, saved_model, saved_key) = load_ai_provider_config(&state.db).await;
+        let provider_url = if payload.provider_url.trim().is_empty() {
+            saved_url
+        } else {
+            payload.provider_url.clone()
+        };
+        let model = if payload.model.trim().is_empty() {
+            saved_model
+        } else {
+            payload.model.clone()
+        };
+        let api_key = payload
+            .api_key
+            .clone()
+            .filter(|s| !s.is_empty())
+            .or(saved_key);
+        (provider_url, model, api_key)
+    };
+
     // 1. Fetch Data Context using RAG
     let end_time = payload.end_time.unwrap_or_else(Utc::now);
     let start_time = payload
@@ -329,7 +390,7 @@ OUTPUT FORMAT (Markdown):
     // 3. Call AI Provider
 
     // Determine effective URL - use local endpoint if provider is "local"
-    let (effective_url, effective_model) = if payload.provider_url == "local" {
+    let (effective_url, effective_model) = if provider_url == "local" {
         // Check if a local model is available
         if !local_model_available() {
             return Err(AppError::InvalidRequest(
@@ -374,11 +435,11 @@ OUTPUT FORMAT (Markdown):
             .unwrap_or_else(|| "local".to_string());
         (endpoint, model_name)
     } else {
-        (payload.provider_url.clone(), payload.model.clone())
+        (provider_url.clone(), model.clone())
     };
 
     // Validate URL format and security (skip for local which we already handle)
-    if payload.provider_url != "local" {
+    if provider_url != "local" {
         if let Err(err_msg) = validate_provider_url(&effective_url) {
             return Err(AppError::InvalidRequest(format!(
                 "Invalid provider URL: {}",
@@ -409,7 +470,7 @@ OUTPUT FORMAT (Markdown):
     };
 
     let request_builder = client.post(&url).json(&request_body);
-    let request_builder = add_auth_header(request_builder, &payload.api_key);
+    let request_builder = add_auth_header(request_builder, &api_key);
 
     info!("Sending request to AI provider at {}...", url);
     let res = request_builder.send().await.map_err(|e| {

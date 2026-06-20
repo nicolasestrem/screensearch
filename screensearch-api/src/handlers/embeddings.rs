@@ -91,13 +91,24 @@ pub async fn get_embedding_status(
 /// POST /embeddings/models/prepare
 /// Load (and, on first run, download + cache) the in-process embedding model so
 /// later search/index requests don't pay the cold-start cost.
+///
+/// Returns immediately and triggers the load on a background task: the first-run
+/// download is multi-minute and must not block the request (which would freeze
+/// the Settings button). Progress is surfaced via `GET /downloads/status` (the
+/// `embedding_model` entry) and completion via `engine_ready` in
+/// `GET /embeddings/status`. The engine's write lock serializes concurrent
+/// triggers, so repeated clicks never start a second download.
 pub async fn prepare_quality_models(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<EmbeddingStatusResponse>> {
-    state
-        .get_embedding_engine()
-        .await
-        .map_err(crate::error::AppError::Internal)?;
+    let bg = Arc::clone(&state);
+    tokio::spawn(async move {
+        if let Err(e) = bg.get_embedding_engine().await {
+            warn!("Embedding model prepare failed: {e}");
+        } else {
+            info!("Embedding model prepared and ready");
+        }
+    });
     get_embedding_status(State(state)).await
 }
 

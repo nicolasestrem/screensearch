@@ -1,6 +1,9 @@
 //! System management endpoint handlers
 
 use crate::error::{AppError, Result};
+use crate::handlers::ai::{
+    load_ai_provider_config, AI_API_KEY_KEY, AI_MODEL_KEY, AI_PROVIDER_URL_KEY,
+};
 use crate::models::{AddTagToFrameRequest, CreateTagRequest, HealthResponse};
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
@@ -9,6 +12,7 @@ use regex::Regex;
 use screensearch_db::models::TestVisionRequest;
 use screensearch_db::{NewTag, Pagination, SettingsRecord, UpdateSettings};
 use screensearch_vision::client::OllamaClient;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::LazyLock;
 use tracing::{debug, error};
@@ -127,23 +131,40 @@ pub async fn get_readiness(State(state): State<Arc<AppState>>) -> Result<Json<Re
         let coverage = status.as_ref().map(|s| s.coverage_percent).unwrap_or(0.0);
         let engine_ready = state.embedding_engine_initialized().await;
 
-        let (st, detail) = if engine_ready {
-            if indexing_on {
-                (
-                    "ready",
-                    format!("Semantic search ready ({coverage:.0}% of frames indexed)."),
-                )
-            } else {
-                (
-                    "ready",
-                    "Search model ready. Enable indexing in Settings → Data & AI for semantic search."
-                        .to_string(),
-                )
-            }
+        // Only treat the search model as "warming up" when indexing is actually
+        // on. With semantic search OFF the engine is never initialized, so
+        // keying the state on `engine_ready` alone would pin the banner to
+        // "Loading the search model…" forever even though nothing is
+        // downloading. Report "disabled" (non-transitional) in that case so the
+        // banner hides it.
+        let (st, detail, progress, eta): (&str, String, Option<f64>, Option<u64>) = if !indexing_on
+        {
+            (
+                "disabled",
+                "Semantic search is off — enable it in Settings → Data & AI.".to_string(),
+                None,
+                None,
+            )
+        } else if engine_ready {
+            (
+                "ready",
+                format!("Semantic search ready ({coverage:.0}% of frames indexed)."),
+                None,
+                None,
+            )
+        } else if let Some(p) = downloads.get("embedding_model") {
+            (
+                "downloading",
+                "Downloading the search model… (~300 MB, one-time).".to_string(),
+                Some(p.percentage()),
+                Some(p.eta_seconds),
+            )
         } else {
             (
                 "loading",
-                "Loading the search model — the first run downloads ~450 MB.".to_string(),
+                "Loading the search model into memory…".to_string(),
+                None,
+                None,
             )
         };
         stages.push(ReadinessStage {
@@ -151,8 +172,8 @@ pub async fn get_readiness(State(state): State<Arc<AppState>>) -> Result<Json<Re
             label: "Semantic search".into(),
             state: st.into(),
             detail,
-            progress: None,
-            eta_seconds: None,
+            progress,
+            eta_seconds: eta,
         });
     }
 
@@ -705,16 +726,55 @@ pub async fn get_frame_tags(
     }
 }
 
+/// Settings as exposed to the UI: the persisted [`SettingsRecord`] plus the AI
+/// report-provider config. The provider config is stored as database metadata
+/// (not `SettingsRecord` columns), so it is merged in here rather than living
+/// only in the browser's local storage.
+#[derive(Debug, Serialize)]
+pub struct SettingsResponse {
+    #[serde(flatten)]
+    pub base: SettingsRecord,
+    pub ai_provider_url: String,
+    pub ai_model: String,
+    pub ai_api_key: Option<String>,
+}
+
+/// Settings update payload: the base settings plus the optional AI provider
+/// config. The AI fields are optional so older clients that omit them leave the
+/// persisted provider untouched.
+#[derive(Debug, Deserialize)]
+pub struct UpdateSettingsRequest {
+    #[serde(flatten)]
+    pub base: UpdateSettings,
+    #[serde(default)]
+    pub ai_provider_url: Option<String>,
+    #[serde(default)]
+    pub ai_model: Option<String>,
+    #[serde(default)]
+    pub ai_api_key: Option<String>,
+}
+
+/// Merge a `SettingsRecord` with the persisted AI provider config.
+async fn build_settings_response(state: &AppState, base: SettingsRecord) -> SettingsResponse {
+    let (ai_provider_url, ai_model, ai_api_key) = load_ai_provider_config(&state.db).await;
+    SettingsResponse {
+        base,
+        ai_provider_url,
+        ai_model,
+        ai_api_key,
+    }
+}
+
 /// GET /settings - Get application settings
 ///
-/// Returns current application settings.
-pub async fn get_settings(State(state): State<Arc<AppState>>) -> Result<Json<SettingsRecord>> {
+/// Returns current application settings (including the persisted AI provider).
+pub async fn get_settings(State(state): State<Arc<AppState>>) -> Result<Json<SettingsResponse>> {
     debug!("Get settings request");
 
     match state.db.get_settings().await {
         Ok(settings) => {
             debug!("Retrieved settings");
-            Ok(Json(settings))
+            Ok(Json(build_settings_response(&state, settings).await))
         }
         Err(e) => {
             error!("Failed to get settings: {}", e);
@@ -735,9 +795,16 @@ pub async fn get_settings(State(state): State<Arc<AppState>>) -> Result<Json<Set
 /// - retention_days: Number of days to retain data
 pub async fn update_settings(
     State(state): State<Arc<AppState>>,
-    Json(settings): Json<UpdateSettings>,
-) -> Result<Json<SettingsRecord>> {
+    Json(req): Json<UpdateSettingsRequest>,
+) -> Result<Json<SettingsResponse>> {
     debug!("Update settings request");
+
+    let UpdateSettingsRequest {
+        base: settings,
+        ai_provider_url,
+        ai_model,
+        ai_api_key,
+    } = req;
 
     // Validate settings
     if settings.capture_interval < 1 {
@@ -765,7 +832,34 @@ pub async fn update_settings(
             let monitors: Vec<usize> =
                 serde_json::from_str(&updated_settings.monitors).unwrap_or_default();
             let _ = state.monitor_config_tx.send(monitors);
-            Ok(Json(updated_settings))
+
+            // Persist the AI report-provider config (metadata, not columns) when
+            // the client supplied it. Empty string clears the value.
+            if let Some(v) = ai_provider_url {
+                state
+                    .db
+                    .set_metadata(AI_PROVIDER_URL_KEY, &v)
+                    .await
+                    .map_err(AppError::Database)?;
+            }
+            if let Some(v) = ai_model {
+                state
+                    .db
+                    .set_metadata(AI_MODEL_KEY, &v)
+                    .await
+                    .map_err(AppError::Database)?;
+            }
+            if let Some(v) = ai_api_key {
+                state
+                    .db
+                    .set_metadata(AI_API_KEY_KEY, &v)
+                    .await
+                    .map_err(AppError::Database)?;
+            }
+
+            Ok(Json(
+                build_settings_response(&state, updated_settings).await,
+            ))
         }
         Err(e) => {
             error!("Failed to update settings: {}", e);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Check, Plus, X } from 'lucide-react'
 import { Panel, PanelBody, PanelHeader } from '../components/Panel'
@@ -21,7 +21,8 @@ import {
   useVisionModels,
   useVisionStatus,
 } from '../lib/hooks'
-import { useUi } from '../lib/store'
+import { toast } from '../lib/toast'
+import type { UpdateSettings } from '../lib/types'
 import { bytes, duration, pct } from '../lib/format'
 import { ApiError } from '../lib/api'
 
@@ -74,12 +75,43 @@ function errMsg(e: unknown): string {
   return 'Request failed.'
 }
 
+/** A download progress row (percentage, speed, ETA) for the active downloads. */
+function DownloadRow({
+  name,
+  percentage,
+  speed_bps,
+  eta_seconds,
+  error,
+}: {
+  name: string
+  percentage: number
+  speed_bps: number
+  eta_seconds: number
+  error?: string | null
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline justify-between font-mono text-xs">
+        <span className="text-ink2">{name}</span>
+        <span className="text-muted">
+          {error ? (
+            <span className="text-alert">{error}</span>
+          ) : (
+            `${Math.round(percentage)}% · ${bytes(speed_bps)}/s · ${duration(eta_seconds)} left`
+          )}
+        </span>
+      </div>
+      <CoverageBar value={percentage} />
+    </div>
+  )
+}
+
 export default function Settings() {
   const settingsQ = useSettings()
   const monitors = useMonitors().data ?? []
   const updateSettings = useUpdateSettings()
 
-  // capture + vision form (single backend settings record)
+  // Persisted settings form (capture + vision + AI provider — one backend record).
   const [captureInterval, setCaptureInterval] = useState(3)
   const [retention, setRetention] = useState(30)
   const [paused, setPaused] = useState(false)
@@ -91,9 +123,51 @@ export default function Settings() {
   const [visionModel, setVisionModel] = useState('')
   const [visionEndpoint, setVisionEndpoint] = useState('')
   const [visionApiKey, setVisionApiKey] = useState('')
+  // AI report provider (now persisted server-side, not browser-only).
+  const [aiProviderUrl, setAiProviderUrl] = useState('local')
+  const [aiModel, setAiModel] = useState('')
+  const [aiApiKey, setAiApiKey] = useState('')
+
   // Populate the form once on first load; later background refetches must not
-  // clobber the user's unsaved edits.
+  // clobber the user's unsaved edits. `lastSaved` holds the serialized body that
+  // is in sync with the backend so the auto-save effect can no-op when nothing
+  // actually changed (including right after the initial populate).
   const [initialized, setInitialized] = useState(false)
+  const lastSaved = useRef('')
+
+  const buildBody = useMemo(
+    () =>
+      (): UpdateSettings => ({
+        capture_interval: captureInterval,
+        monitors: JSON.stringify(monSel),
+        excluded_apps: JSON.stringify(excluded),
+        is_paused: paused ? 1 : 0,
+        retention_days: retention,
+        vision_enabled: visionEnabled ? 1 : 0,
+        vision_provider: visionProvider,
+        vision_model: visionModel,
+        vision_endpoint: visionEndpoint,
+        vision_api_key: visionApiKey || null,
+        ai_provider_url: aiProviderUrl,
+        ai_model: aiModel,
+        ai_api_key: aiApiKey || null,
+      }),
+    [
+      captureInterval,
+      monSel,
+      excluded,
+      paused,
+      retention,
+      visionEnabled,
+      visionProvider,
+      visionModel,
+      visionEndpoint,
+      visionApiKey,
+      aiProviderUrl,
+      aiModel,
+      aiApiKey,
+    ]
+  )
 
   useEffect(() => {
     const s = settingsQ.data
@@ -108,40 +182,70 @@ export default function Settings() {
     setVisionModel(s.vision_model || '')
     setVisionEndpoint(s.vision_endpoint || '')
     setVisionApiKey(s.vision_api_key || '')
+    setAiProviderUrl(s.ai_provider_url || 'local')
+    setAiModel(s.ai_model || '')
+    setAiApiKey(s.ai_api_key || '')
+    // Mark the just-loaded values as the saved baseline so the auto-save effect
+    // doesn't immediately POST them back.
+    lastSaved.current = JSON.stringify({
+      capture_interval: s.capture_interval,
+      monitors: JSON.stringify(parseArr(s.monitors).map(Number).filter((n) => !Number.isNaN(n))),
+      excluded_apps: JSON.stringify(parseArr(s.excluded_apps)),
+      is_paused: s.is_paused === 1 ? 1 : 0,
+      retention_days: s.retention_days,
+      vision_enabled: s.vision_enabled === 1 ? 1 : 0,
+      vision_provider: s.vision_provider || 'local',
+      vision_model: s.vision_model || '',
+      vision_endpoint: s.vision_endpoint || '',
+      vision_api_key: s.vision_api_key || null,
+      ai_provider_url: s.ai_provider_url || 'local',
+      ai_model: s.ai_model || '',
+      ai_api_key: s.ai_api_key || null,
+    } satisfies UpdateSettings)
     setInitialized(true)
   }, [settingsQ.data, initialized])
 
-  const save = () =>
-    updateSettings.mutate({
-      capture_interval: captureInterval,
-      monitors: JSON.stringify(monSel),
-      excluded_apps: JSON.stringify(excluded),
-      is_paused: paused ? 1 : 0,
-      retention_days: retention,
-      vision_enabled: visionEnabled ? 1 : 0,
-      vision_provider: visionProvider,
-      vision_model: visionModel,
-      vision_endpoint: visionEndpoint,
-      vision_api_key: visionApiKey || null,
-    })
+  // Debounced auto-save: whenever the form differs from the last-saved snapshot,
+  // persist it 600 ms after the user stops editing. No explicit Save button.
+  const mutateRef = useRef(updateSettings.mutate)
+  mutateRef.current = updateSettings.mutate
+  useEffect(() => {
+    if (!initialized) return
+    const body = buildBody()
+    const snap = JSON.stringify(body)
+    if (snap === lastSaved.current) return
+    const t = setTimeout(() => {
+      lastSaved.current = snap
+      mutateRef.current(body)
+    }, 600)
+    return () => clearTimeout(t)
+  }, [initialized, buildBody])
 
   // embeddings
   const emb = useEmbeddingStatus().data
   const toggleEmb = useToggleEmbeddings()
   const genEmb = useGenerateEmbeddings()
   const prepEmb = usePrepareModels()
+  // Tracks a user-triggered "Download model" so we can poll progress and toast
+  // on completion even when semantic search is still toggled off.
+  const [preparing, setPreparing] = useState(false)
+  const wasReady = useRef<boolean>(false)
+  useEffect(() => {
+    const ready = emb?.engine_ready ?? false
+    if (ready && !wasReady.current && preparing) {
+      toast.success('Search model ready')
+      setPreparing(false)
+    }
+    wasReady.current = ready
+  }, [emb?.engine_ready, preparing])
 
   // vision status + models
   const vision = useVisionStatus().data
   const visionModels = useVisionModels().data?.models ?? []
 
-  // AI provider (Recall reports) — client-side config
-  const aiConfig = useUi((s) => s.aiConfig)
-  const setAiConfig = useUi((s) => s.setAiConfig)
-  const [ai, setAi] = useState(aiConfig)
-  useEffect(() => setAi(aiConfig), [aiConfig])
+  // AI report provider validation (Test connection)
   const validate = useValidateAi()
-  const aiIsLocal = ai.providerUrl === 'local'
+  const aiIsLocal = aiProviderUrl === 'local'
 
   // local model + server
   const modelStatus = useModelStatus().data
@@ -149,8 +253,15 @@ export default function Settings() {
   const selectModel = useSelectModel()
   const server = useServerStatus().data
   const serverCtl = useServerControl()
-  const downloadsActive = (modelStatus?.downloading ?? false) || (server?.status === 'starting')
+
+  // Poll downloads while anything is actively fetching: the embedding model
+  // (boot auto-load or manual prepare), the answer model, or the server binary.
+  const embModelDownloading = preparing || (!!emb?.enabled && !(emb?.engine_ready ?? false))
+  const downloadsActive =
+    embModelDownloading || (modelStatus?.downloading ?? false) || server?.status === 'starting'
   const downloads = useDownloads(downloadsActive).data?.downloads ?? []
+  const embDownload = downloads.find((d) => d.key === 'embedding_model')
+  const otherDownloads = downloads.filter((d) => d.key !== 'embedding_model')
 
   const monitorsAll = monSel.length === 0
   const toggleMonitor = (idx: number) => {
@@ -168,7 +279,25 @@ export default function Settings() {
 
   return (
     <div className="flex max-w-4xl flex-col gap-5">
-      <h1 className="font-display text-xl font-semibold tracking-wide text-ink">Settings</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="font-display text-xl font-semibold tracking-wide text-ink">Settings</h1>
+        <span className="flex items-center gap-1.5 font-mono text-xs">
+          {updateSettings.isPending ? (
+            <span className="flex items-center gap-1.5 text-muted">
+              <span className="inline-block h-3 w-3 animate-spin border border-rule2 border-t-accent" />
+              Saving…
+            </span>
+          ) : updateSettings.isError ? (
+            <span className="text-alert">Save failed</span>
+          ) : updateSettings.isSuccess ? (
+            <span className="flex items-center gap-1.5 text-ok">
+              <Check size={13} /> Saved
+            </span>
+          ) : (
+            <span className="text-faint">Changes save automatically</span>
+          )}
+        </span>
+      </div>
 
       {/* CAPTURE */}
       <Panel>
@@ -266,18 +395,6 @@ export default function Settings() {
               </Button>
             </div>
           </div>
-
-          <div className="flex items-center gap-3">
-            <Button variant="primary" onClick={save} disabled={updateSettings.isPending}>
-              {updateSettings.isPending ? 'Saving…' : 'Save capture & vision'}
-            </Button>
-            {updateSettings.isSuccess && (
-              <span className="flex items-center gap-1.5 font-mono text-xs text-ok">
-                <Check size={13} /> Saved
-              </span>
-            )}
-            {updateSettings.isError && <span className="font-mono text-xs text-alert">{errMsg(updateSettings.error)}</span>}
-          </div>
         </PanelBody>
       </Panel>
 
@@ -287,7 +404,7 @@ export default function Settings() {
         <PanelBody className="flex flex-col gap-4">
           <p className="font-mono text-xs leading-relaxed text-muted">
             Embeddings power meaning-based search and the “Ask” answers. The {emb?.model ?? 'embedding'} model
-            downloads on first use.
+            (~300 MB) downloads once from HuggingFace on first use and is cached locally.
           </p>
           <Toggle on={emb?.enabled ?? false} onChange={(v) => toggleEmb.mutate(v)} label="Enable semantic search" />
           {emb && (
@@ -299,21 +416,44 @@ export default function Settings() {
                 </span>
                 <span className="flex items-center gap-1.5">
                   <StatusDot tone={emb.engine_ready ? 'ok' : 'muted'} />
-                  {emb.engine_ready ? 'engine ready' : 'engine idle'}
+                  {emb.engine_ready ? 'engine ready' : embModelDownloading ? 'loading…' : 'engine idle'}
                 </span>
               </div>
             </>
           )}
           {emb?.error && <ErrorNote message={emb.error} />}
+
+          {embDownload && (
+            <div className="border-t border-rule pt-4">
+              <DownloadRow
+                name={embDownload.name}
+                percentage={embDownload.percentage}
+                speed_bps={embDownload.speed_bps}
+                eta_seconds={embDownload.eta_seconds}
+                error={embDownload.error}
+              />
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-2">
             <Button variant="ghost" onClick={() => genEmb.mutate(undefined)} disabled={genEmb.isPending || !emb?.enabled}>
               {genEmb.isPending ? 'Indexing…' : 'Index now'}
             </Button>
-            <Button variant="ghost" onClick={() => prepEmb.mutate()} disabled={prepEmb.isPending}>
-              {prepEmb.isPending ? 'Preparing…' : 'Download model'}
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setPreparing(true)
+                prepEmb.mutate()
+              }}
+              disabled={(emb?.engine_ready ?? false) || !!embDownload || preparing}
+            >
+              {emb?.engine_ready
+                ? 'Model ready'
+                : embDownload || preparing
+                  ? 'Downloading…'
+                  : 'Download model'}
             </Button>
           </div>
-          {genEmb.data && <span className="font-mono text-xs text-ok">Processed {genEmb.data.frames_processed} frames.</span>}
         </PanelBody>
       </Panel>
 
@@ -326,8 +466,8 @@ export default function Settings() {
         />
         <PanelBody className="flex flex-col gap-4">
           <p className="font-mono text-xs leading-relaxed text-muted">
-            On-device vision describes each frame and tags its activity. Changes here are saved with the capture
-            settings above.
+            On-device vision describes each frame and tags its activity. Local models are auto-discovered from your{' '}
+            <span className="text-ink2">.models/</span> folder.
           </p>
           <Toggle on={visionEnabled} onChange={setVisionEnabled} label="Enable vision analysis" />
           <div className="grid gap-4 sm:grid-cols-2">
@@ -358,28 +498,18 @@ export default function Settings() {
               )}
             </Field>
           </div>
+          {visionProvider === 'local' && visionModels.length > 0 && (
+            <p className="font-mono text-[11px] leading-relaxed text-faint">
+              {visionModels.length} model{visionModels.length > 1 ? 's' : ''} found in{' '}
+              <span className="text-ink2">.models/</span> · vision shares the local answer engine (section 04).
+            </p>
+          )}
           {visionProvider === 'local' && visionModels.length === 0 && (
             <p className="font-mono text-xs leading-relaxed text-muted">
               No vision-capable model detected. Drop a vision GGUF <span className="text-ink2">and</span> its matching{' '}
               <span className="text-ink2">*mmproj*.gguf</span> projector into <span className="text-ink2">.models/</span> (the
               two must be the same family — a projector is only paired with its own model).
             </p>
-          )}
-          {visionProvider === 'local' && (
-            <div className="flex flex-wrap items-center gap-3">
-              {!server?.server_binary_available ? (
-                <>
-                  <Button variant="ghost" onClick={() => serverCtl.downloadServer.mutate()} disabled={serverCtl.downloadServer.isPending}>
-                    {serverCtl.downloadServer.isPending ? 'Downloading…' : 'Download llama-server'}
-                  </Button>
-                  <span className="font-mono text-xs text-faint">Vision shares the local server (section 05).</span>
-                </>
-              ) : (
-                <span className="font-mono text-xs text-faint">
-                  Uses the local llama-server (section 05) · {accel.label}
-                </span>
-              )}
-            </div>
           )}
           {visionProvider !== 'local' && (
             <div className="grid gap-4 sm:grid-cols-2">
@@ -402,17 +532,19 @@ export default function Settings() {
         </PanelBody>
       </Panel>
 
-      {/* AI PROVIDER (reports) */}
+      {/* AI & MODELS (answer engine + report provider) */}
       <Panel>
-        <PanelHeader num="04" title="AI provider" right="for reports" />
+        <PanelHeader num="04" title="AI & models" right={aiIsLocal ? 'local engine' : 'remote provider'} />
         <PanelBody className="flex flex-col gap-4">
           <p className="font-mono text-xs leading-relaxed text-muted">
-            Used by Recall → Report. Use the local engine below, or point at a remote
-            OpenAI-compatible provider. (“Ask” answers always use the local engine.)
+            Powers “Ask” answers and Reports. “Ask” always uses the local engine; Reports use whichever
+            engine you pick here.
           </p>
+
+          {/* Answer engine: local vs remote */}
           <div className="flex flex-wrap gap-2">
             <button
-              onClick={() => setAi({ ...ai, providerUrl: 'local' })}
+              onClick={() => setAiProviderUrl('local')}
               className={clsx(
                 'border px-3 py-1.5 text-xs',
                 aiIsLocal ? 'border-accent bg-accent/15 text-accent' : 'border-rule text-muted hover:text-ink'
@@ -421,160 +553,136 @@ export default function Settings() {
               Local engine
             </button>
             <button
-              onClick={() =>
-                setAi({
-                  ...ai,
-                  // Switching Local -> Remote: restore the last saved remote URL
-                  // (if any) instead of blanking the field, so toggling Local to
-                  // explore and back doesn't lose an unsaved/typed remote URL.
-                  providerUrl:
-                    ai.providerUrl === 'local'
-                      ? aiConfig.providerUrl !== 'local'
-                        ? aiConfig.providerUrl
-                        : ''
-                      : ai.providerUrl,
-                })
-              }
+              onClick={() => setAiProviderUrl((u) => (u === 'local' ? '' : u))}
               className={clsx(
                 'border px-3 py-1.5 text-xs',
                 !aiIsLocal ? 'border-accent bg-accent/15 text-accent' : 'border-rule text-muted hover:text-ink'
               )}
             >
-              Remote
+              Remote provider
             </button>
           </div>
+
           {aiIsLocal ? (
-            <p className="font-mono text-xs leading-relaxed text-muted">
-              Reports will run on the local answer engine
-              {modelStatus?.model_path ? <> (<span className="text-ink2">{baseName(modelStatus.model_path)}</span>)</> : null}. Choose the
-              model in “Local answer engine” below.
-            </p>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-3">
-              <Field label="Provider URL">
-                <input value={ai.providerUrl} onChange={(e) => setAi({ ...ai, providerUrl: e.target.value })} placeholder="http://localhost:11434/v1" className={inputCls} />
-              </Field>
-              <Field label="Model">
-                <input value={ai.model} onChange={(e) => setAi({ ...ai, model: e.target.value })} placeholder="e.g. llama3.1" className={inputCls} />
-              </Field>
-              <Field label="API key (optional)">
-                <input value={ai.apiKey} onChange={(e) => setAi({ ...ai, apiKey: e.target.value })} type="password" placeholder="sk-…" className={inputCls} />
-              </Field>
-            </div>
-          )}
-          <div className="flex flex-wrap items-center gap-3">
-            <Button variant="primary" onClick={() => setAiConfig(ai)}>
-              Save
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={(!aiIsLocal && (!ai.providerUrl || !ai.model)) || validate.isPending}
-              onClick={() => validate.mutate({ provider_url: ai.providerUrl, model: aiIsLocal ? 'local' : ai.model, api_key: ai.apiKey || undefined })}
-            >
-              {validate.isPending ? 'Testing…' : 'Test connection'}
-            </Button>
-            {validate.data && (
-              <span className={clsx('font-mono text-xs', validate.data.success ? 'text-ok' : 'text-alert')}>
-                {validate.data.message}
-              </span>
-            )}
-            {validate.isError && <span className="font-mono text-xs text-alert">{errMsg(validate.error)}</span>}
-          </div>
-        </PanelBody>
-      </Panel>
-
-      {/* LOCAL MODEL & SERVER */}
-      <Panel>
-        <PanelHeader num="05" title="Local answer engine" />
-        <PanelBody className="flex flex-col gap-4">
-          <p className="font-mono text-xs leading-relaxed text-muted">
-            Runs your local GGUF for “Ask” answers (and for Reports when the AI
-            provider above is set to Local). Pick which model to use; when vision is
-            enabled it shares this server, so the vision model answers instead.
-          </p>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Model">
-              {modelStatus && modelStatus.available_models.length > 0 ? (
-                <select
-                  value={modelStatus.selected}
-                  onChange={(e) => selectModel.mutate(e.target.value)}
-                  disabled={selectModel.isPending}
-                  className={clsx(inputCls, '[color-scheme:dark]')}
-                >
-                  <option value="">Auto-select</option>
-                  {modelStatus.available_models.map((m) => (
-                    <option key={m} value={m}>
-                      {baseName(m)}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div className="flex items-center gap-2 font-mono text-sm text-ink2">
-                  <StatusDot tone={modelStatus?.downloaded ? 'ok' : 'muted'} />
-                  <span>{modelStatus ? `${modelStatus.model_name}${modelStatus.downloaded ? '' : ' · not downloaded'}` : '—'}</span>
-                </div>
-              )}
-            </Field>
-            <div className="flex flex-col gap-1.5">
-              <span className="eyebrow text-[10.5px] text-faint">Server</span>
-              <div className="flex items-center gap-2 font-mono text-sm text-ink2">
-                <StatusDot tone={accel.tone} />
-                <span>
-                  {server?.status ?? '—'} · {accel.label}
-                </span>
-              </div>
-            </div>
-          </div>
-          {modelStatus?.model_path && (
-            <p className="font-mono text-xs text-faint">
-              active: {baseName(modelStatus.model_path)}
-              {modelStatus.downloaded ? ` · ${bytes(modelStatus.model_size_bytes)}` : ''}
-              {selectModel.isPending ? ' · applying…' : ''}
-            </p>
-          )}
-
-          <div className="flex flex-wrap gap-2">
-            {!modelStatus?.downloaded && (
-              <Button variant="ghost" onClick={() => downloadModel.mutate()} disabled={downloadModel.isPending}>
-                Download model
-              </Button>
-            )}
-            {!server?.server_binary_available && (
-              <Button variant="ghost" onClick={() => serverCtl.downloadServer.mutate()} disabled={serverCtl.downloadServer.isPending}>
-                Download server binary
-              </Button>
-            )}
-            {server?.status === 'running' ? (
-              <Button variant="danger" onClick={() => serverCtl.stop.mutate()} disabled={serverCtl.stop.isPending}>
-                Stop server
-              </Button>
-            ) : (
-              <Button
-                variant="ghost"
-                onClick={() => serverCtl.start.mutate()}
-                disabled={serverCtl.start.isPending || !modelStatus?.downloaded || !server?.server_binary_available}
-              >
-                Start server
-              </Button>
-            )}
-          </div>
-
-          {downloads.length > 0 && (
-            <div className="flex flex-col gap-3 border-t border-rule pt-4">
-              {downloads.map((d) => (
-                <div key={d.name} className="flex flex-col gap-1.5">
-                  <div className="flex items-baseline justify-between font-mono text-xs">
-                    <span className="text-ink2">{d.name}</span>
-                    <span className="text-muted">
-                      {d.error ? (
-                        <span className="text-alert">{d.error}</span>
-                      ) : (
-                        `${Math.round(d.percentage)}% · ${bytes(d.speed_bps)}/s · ${duration(d.eta_seconds)} left`
-                      )}
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Local model">
+                  {modelStatus && modelStatus.available_models.length > 0 ? (
+                    <select
+                      value={modelStatus.selected}
+                      onChange={(e) => selectModel.mutate(e.target.value)}
+                      disabled={selectModel.isPending}
+                      className={clsx(inputCls, '[color-scheme:dark]')}
+                    >
+                      <option value="">Auto-select</option>
+                      {modelStatus.available_models.map((m) => (
+                        <option key={m} value={m}>
+                          {baseName(m)}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="flex items-center gap-2 font-mono text-sm text-ink2">
+                      <StatusDot tone={modelStatus?.downloaded ? 'ok' : 'muted'} />
+                      <span>{modelStatus ? `${modelStatus.model_name}${modelStatus.downloaded ? '' : ' · not downloaded'}` : '—'}</span>
+                    </div>
+                  )}
+                </Field>
+                <div className="flex flex-col gap-1.5">
+                  <span className="eyebrow text-[10.5px] text-faint">Server</span>
+                  <div className="flex items-center gap-2 font-mono text-sm text-ink2">
+                    <StatusDot tone={accel.tone} />
+                    <span>
+                      {server?.status ?? '—'} · {accel.label}
                     </span>
                   </div>
-                  <CoverageBar value={d.percentage} />
                 </div>
+              </div>
+
+              {/* Provenance: where the active model comes from. */}
+              <p className="font-mono text-[11px] leading-relaxed text-faint">
+                {modelStatus?.model_path ? (
+                  <>
+                    active: <span className="text-ink2">{baseName(modelStatus.model_path)}</span> · from{' '}
+                    <span className="text-ink2">.models/</span> · auto-discovered
+                    {modelStatus.downloaded ? ` · ${bytes(modelStatus.model_size_bytes)}` : ''}
+                    {selectModel.isPending ? ' · applying…' : ''}
+                  </>
+                ) : modelStatus && !modelStatus.downloaded ? (
+                  <>No local model yet. Download the default below, or drop a GGUF into <span className="text-ink2">.models/</span>.</>
+                ) : (
+                  'Resolving local model…'
+                )}
+              </p>
+
+              <div className="flex flex-wrap gap-2">
+                {!modelStatus?.downloaded && (
+                  <Button variant="ghost" onClick={() => downloadModel.mutate()} disabled={downloadModel.isPending}>
+                    Download default model
+                  </Button>
+                )}
+                {!server?.server_binary_available && (
+                  <Button variant="ghost" onClick={() => serverCtl.downloadServer.mutate()} disabled={serverCtl.downloadServer.isPending}>
+                    Download server binary
+                  </Button>
+                )}
+                {server?.status === 'running' ? (
+                  <Button variant="danger" onClick={() => serverCtl.stop.mutate()} disabled={serverCtl.stop.isPending}>
+                    Stop server
+                  </Button>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    onClick={() => serverCtl.start.mutate()}
+                    disabled={serverCtl.start.isPending || !modelStatus?.downloaded || !server?.server_binary_available}
+                  >
+                    Start server
+                  </Button>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <Field label="Provider URL">
+                  <input value={aiProviderUrl} onChange={(e) => setAiProviderUrl(e.target.value)} placeholder="http://localhost:11434/v1" className={inputCls} />
+                </Field>
+                <Field label="Model">
+                  <input value={aiModel} onChange={(e) => setAiModel(e.target.value)} placeholder="e.g. llama3.1" className={inputCls} />
+                </Field>
+                <Field label="API key (optional)">
+                  <input value={aiApiKey} onChange={(e) => setAiApiKey(e.target.value)} type="password" placeholder="sk-…" className={inputCls} />
+                </Field>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  variant="ghost"
+                  disabled={!aiProviderUrl || !aiModel || validate.isPending}
+                  onClick={() => validate.mutate({ provider_url: aiProviderUrl, model: aiModel, api_key: aiApiKey || undefined })}
+                >
+                  {validate.isPending ? 'Testing…' : 'Test connection'}
+                </Button>
+                {validate.data && (
+                  <span className={clsx('font-mono text-xs', validate.data.success ? 'text-ok' : 'text-alert')}>
+                    {validate.data.message}
+                  </span>
+                )}
+                {validate.isError && <span className="font-mono text-xs text-alert">{errMsg(validate.error)}</span>}
+              </div>
+            </>
+          )}
+
+          {otherDownloads.length > 0 && (
+            <div className="flex flex-col gap-3 border-t border-rule pt-4">
+              {otherDownloads.map((d) => (
+                <DownloadRow
+                  key={d.key}
+                  name={d.name}
+                  percentage={d.percentage}
+                  speed_bps={d.speed_bps}
+                  eta_seconds={d.eta_seconds}
+                  error={d.error}
+                />
               ))}
             </div>
           )}

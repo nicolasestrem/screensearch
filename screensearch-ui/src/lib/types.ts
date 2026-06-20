@@ -141,6 +141,8 @@ export interface Readiness {
 }
 
 export interface DownloadProgress {
+  /** Stable key, e.g. "llm_model", "llama_server", "embedding_model". */
+  key: string
   name: string
   bytes_downloaded: number
   total_bytes: number
@@ -167,6 +169,10 @@ export interface Settings {
   vision_model: string
   vision_endpoint: string
   vision_api_key?: string | null
+  // AI report-provider config (persisted as DB metadata, merged in by the API).
+  ai_provider_url: string
+  ai_model: string
+  ai_api_key?: string | null
 }
 
 export interface UpdateSettings {
@@ -180,6 +186,10 @@ export interface UpdateSettings {
   vision_model: string
   vision_endpoint: string
   vision_api_key?: string | null
+  // Optional: omit to leave the persisted AI provider untouched.
+  ai_provider_url?: string
+  ai_model?: string
+  ai_api_key?: string | null
 }
 
 export interface MonitorInfo {

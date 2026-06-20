@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
+import { toast } from './toast'
 import type { AiReportRequest, FrameQuery, SearchParams, UpdateSettings } from './types'
+
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : 'Request failed.'
+}
 
 // ---- live system status (polled) ----
 export const useHealth = () =>
@@ -107,7 +112,11 @@ export function useUpdateSettings() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: UpdateSettings) => api.updateSettings(body),
-    onSuccess: (s) => qc.setQueryData(['settings'], s),
+    onSuccess: (s) => {
+      qc.setQueryData(['settings'], s)
+      toast.success('Settings saved')
+    },
+    onError: (e) => toast.error(`Couldn't save settings: ${errText(e)}`),
   })
 }
 
@@ -115,7 +124,12 @@ export function useToggleEmbeddings() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (on: boolean) => api.toggleEmbeddings(on),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['embeddings', 'status'] }),
+    onSuccess: (_s, on) => {
+      qc.invalidateQueries({ queryKey: ['embeddings', 'status'] })
+      qc.invalidateQueries({ queryKey: ['readiness'] })
+      toast.success(`Semantic search ${on ? 'enabled' : 'disabled'}`)
+    },
+    onError: (e) => toast.error(errText(e)),
   })
 }
 
@@ -123,7 +137,11 @@ export function useGenerateEmbeddings() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (batch?: number) => api.generateEmbeddings(batch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['embeddings', 'status'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['embeddings', 'status'] })
+      toast.info('Indexing started — coverage will climb as frames finish.')
+    },
+    onError: (e) => toast.error(errText(e)),
   })
 }
 
@@ -131,7 +149,11 @@ export function usePrepareModels() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => api.prepareModels(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['embeddings', 'status'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['embeddings', 'status'] })
+      qc.invalidateQueries({ queryKey: ['downloads'] })
+    },
+    onError: (e) => toast.error(errText(e)),
   })
 }
 
@@ -147,9 +169,30 @@ export function useServerControl() {
   const qc = useQueryClient()
   const invalidate = () => qc.invalidateQueries({ queryKey: ['ai', 'server', 'status'] })
   return {
-    start: useMutation({ mutationFn: () => api.startServer(), onSuccess: invalidate }),
-    stop: useMutation({ mutationFn: () => api.stopServer(), onSuccess: invalidate }),
-    downloadServer: useMutation({ mutationFn: () => api.downloadServer() }),
+    start: useMutation({
+      mutationFn: () => api.startServer(),
+      onSuccess: () => {
+        invalidate()
+        toast.info('Starting the local AI server…')
+      },
+      onError: (e) => toast.error(errText(e)),
+    }),
+    stop: useMutation({
+      mutationFn: () => api.stopServer(),
+      onSuccess: () => {
+        invalidate()
+        toast.success('Local AI server stopped')
+      },
+      onError: (e) => toast.error(errText(e)),
+    }),
+    downloadServer: useMutation({
+      mutationFn: () => api.downloadServer(),
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ['downloads'] })
+        toast.info('Downloading the local AI server…')
+      },
+      onError: (e) => toast.error(errText(e)),
+    }),
   }
 }
 
@@ -157,7 +200,12 @@ export function useDownloadModel() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => api.downloadModel(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai', 'model', 'status'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['ai', 'model', 'status'] })
+      qc.invalidateQueries({ queryKey: ['downloads'] })
+      toast.info('Model download started…')
+    },
+    onError: (e) => toast.error(errText(e)),
   })
 }
 
@@ -169,7 +217,9 @@ export function useSelectModel() {
       qc.setQueryData(['ai', 'model', 'status'], s)
       // The unified server rebuilds onto the new model on next use.
       qc.invalidateQueries({ queryKey: ['ai', 'server', 'status'] })
+      toast.success('Answer model updated')
     },
+    onError: (e) => toast.error(errText(e)),
   })
 }
 
