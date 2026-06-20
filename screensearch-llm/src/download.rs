@@ -700,6 +700,23 @@ pub fn discover_vision_models() -> Vec<(PathBuf, PathBuf)> {
 /// instruct build rather than a slower `*-thinking` model or a third-party
 /// `*-action` fine-tune that merely contains the same substring, while a user
 /// who deliberately sets one of those as their preference still gets it.
+/// Whether `stem_lower` contains `tok` as a whole token (split on
+/// non-alphanumerics), so `thinking` is not matched inside `extraction`.
+fn has_whole_token(stem_lower: &str, tok: &str) -> bool {
+    stem_lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|t| t == tok)
+}
+
+/// Whether a vision model is a "vanilla" build suitable for *automatic* selection:
+/// not a `thinking` (chain-of-thought) or `action`/agent variant. Those emit
+/// reasoning or tool-call prose instead of the strict JSON the vision worker
+/// parses ("Failed to parse VisionAnalysis JSON"), so they are only ever used when
+/// the user names one explicitly via the `vision_model` setting.
+fn is_vanilla_vision_stem(stem_lower: &str) -> bool {
+    !has_whole_token(stem_lower, "thinking") && !has_whole_token(stem_lower, "action")
+}
+
 fn pref_matches_vision_stem(stem_lower: &str, pref: &str) -> bool {
     let hit = stem_lower.contains(pref) || pref.contains(stem_lower);
     // Match `thinking` / `action` only as whole tokens (split on non-alphanumeric)
@@ -717,7 +734,16 @@ fn pref_matches_vision_stem(stem_lower: &str, pref: &str) -> bool {
 
 /// Returns `None` when no local model has a projector beside it.
 pub fn resolve_vision_model(preferred: &str) -> Option<(PathBuf, PathBuf)> {
-    let models = discover_vision_models();
+    select_vision_model(&discover_vision_models(), preferred)
+}
+
+/// Pure selection over already-discovered `(model, mmproj)` pairs (see
+/// [`resolve_vision_model`] for the discovery wrapper). Split out so the tiered
+/// selection is unit-testable without touching the filesystem.
+fn select_vision_model(
+    models: &[(PathBuf, PathBuf)],
+    preferred: &str,
+) -> Option<(PathBuf, PathBuf)> {
     if models.is_empty() {
         return None;
     }
@@ -728,6 +754,8 @@ pub fn resolve_vision_model(preferred: &str) -> Option<(PathBuf, PathBuf)> {
             .map(|s| s.to_ascii_lowercase())
     };
 
+    // Tier 1: an explicit `vision_model` preference (a generic preference still
+    // excludes thinking/action variants — see `pref_matches_vision_stem`).
     let pref = preferred.trim().to_ascii_lowercase();
     if !pref.is_empty() {
         let matches = models.iter().filter(|(m, _)| {
@@ -740,6 +768,7 @@ pub fn resolve_vision_model(preferred: &str) -> Option<(PathBuf, PathBuf)> {
         }
     }
 
+    // Tier 2: Gemma-4 E4B (the previous default), if present.
     let e4b = models
         .iter()
         .filter(|(m, _)| stem_lower(m).map(|s| s.contains("e4b")).unwrap_or(false));
@@ -747,7 +776,23 @@ pub fn resolve_vision_model(preferred: &str) -> Option<(PathBuf, PathBuf)> {
         return Some(found.clone());
     }
 
-    models.into_iter().next()
+    // Tier 3: no preference matched — pick the best *vanilla* vision model,
+    // skipping thinking/action variants. They emit reasoning/tool-call text, not
+    // the strict JSON the vision worker needs, so auto-select must never land on
+    // one (the bug that left "Auto-select" on a `*-thinking` build, failing every
+    // frame with "Failed to parse VisionAnalysis JSON").
+    let vanilla = models.iter().filter(|(m, _)| {
+        stem_lower(m)
+            .map(|s| is_vanilla_vision_stem(&s))
+            .unwrap_or(false)
+    });
+    if let Some(found) = pick_best_quant(vanilla) {
+        return Some(found.clone());
+    }
+
+    // Tier 4: every discovered vision model is a thinking/action build — fall back
+    // to the first so vision still runs (the user can pick a better one).
+    models.first().cloned()
 }
 
 /// Check if the model exists and is valid
@@ -1410,6 +1455,44 @@ mod tests {
             "screen-extraction-qwen3-vl-4b-q4_k_m",
             "qwen3-vl-4b"
         ));
+    }
+
+    #[test]
+    fn test_select_vision_model_auto_skips_thinking_and_action() {
+        let mk = |m: &str| {
+            (
+                PathBuf::from(format!("{m}.gguf")),
+                PathBuf::from("mmproj-Qwen3VL-4B-Instruct-F16.gguf"),
+            )
+        };
+        // Discovery order puts a `*-thinking` build first (as on the real box).
+        let thinking = mk("Qwen3VL-4B-Thinking-Q4_K_M");
+        let instruct = mk("qwen3-vl-4b-instruct-q4_k_m");
+        let action = mk("Sber_Qwen3-VL-4B-Instruct-action-Q4_K_M");
+        let models = vec![thinking.clone(), instruct.clone(), action.clone()];
+
+        // Auto-select (empty preference) must pick the vanilla instruct build, NOT
+        // the thinking model that happens to sort first — a thinking model emits
+        // reasoning, not the JSON the vision worker parses.
+        assert_eq!(select_vision_model(&models, ""), Some(instruct.clone()));
+        // An explicit instruct preference also resolves to instruct.
+        assert_eq!(
+            select_vision_model(&models, "qwen3-vl-4b-instruct"),
+            Some(instruct.clone())
+        );
+        // Explicitly naming a thinking model still honors the user override.
+        assert_eq!(
+            select_vision_model(&models, "thinking"),
+            Some(thinking.clone())
+        );
+
+        // If every candidate is a thinking/action build, vision still runs (the
+        // first is returned) rather than silently disabling vision.
+        let only_specialized = vec![thinking.clone(), action.clone()];
+        assert_eq!(
+            select_vision_model(&only_specialized, ""),
+            Some(thinking.clone())
+        );
     }
 
     #[test]

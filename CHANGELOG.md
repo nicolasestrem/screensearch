@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Vision "Auto-select" could pick a `thinking` model, so every frame failed with
+  "Failed to parse VisionAnalysis JSON".** When `vision_model` was empty/Auto,
+  `resolve_vision_model`'s fallback returned the first discovered vision pair, which
+  on a box with a `*-thinking` build (e.g. `Qwen3VL-4B-Thinking`) sitting first was a
+  reasoning model — it emits chain-of-thought, not the strict JSON the vision worker
+  parses, so analysis failed on every frame. Auto-select now skips `thinking`/`action`
+  variants and prefers a vanilla instruct build (only falling back to a specialized
+  build if that is all that exists); naming one explicitly in `vision_model` still
+  honors the override. File: `screensearch-llm/src/download.rs`.
 - **Vision crashed with the local provider when an unrelated text model sat beside
   the projector (`llama-server exit code 1`).** `resolve_mmproj_for` paired a model
   to a multimodal projector by size token alone, so a text-only model like
