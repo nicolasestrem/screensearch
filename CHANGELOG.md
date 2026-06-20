@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- **CLAUDE.md currency pass.** Documented the `screensearch-vision` workspace crate
+  (it was entirely absent — member count corrected `6 → 7`, added to the dependency
+  diagram, Workspace Members list, and `cargo build -p` examples). Rewrote the stale
+  "Vector Search" performance section from the removed in-memory `VectorIndex` API to
+  the current `sqlite-vec` KNN (`semantic_search`); flagged the superseded 384-dim /
+  in-memory claims in the v0.2.0 history as 768-dim EmbeddingGemma-300M / sqlite-vec;
+  added PowerShell env-var syntax for `SKIP_UI_BUILD`. File: `CLAUDE.md`.
+
 ### Fixed
 - **The startup banner showed "Warming up → Semantic search → Loading the search
   model… ~450 MB" even when semantic search was OFF.** `GET /api/system/readiness`
