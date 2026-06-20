@@ -197,22 +197,25 @@ async fn run_embedding_job(state: &Arc<AppState>, batch_size: i64) -> i64 {
                 continue;
             }
         };
-        if ocr_texts.is_empty() {
-            continue;
-        }
-
         let ocr_text: String = ocr_texts
             .iter()
             .map(|o| o.text.as_str())
             .collect::<Vec<_>>()
             .join(" ");
-        let combined_text = format!(
-            "Timestamp: {}\nApplication: {}\nWindow: {}\nScreen text:\n{}",
-            frame.timestamp,
-            frame.active_process.as_deref().unwrap_or("Unknown"),
-            frame.active_window.as_deref().unwrap_or(""),
-            ocr_text
-        );
+
+        // Embed when there's OCR text OR vision-derived text; skip frames with
+        // neither (nothing but metadata to embed).
+        if ocr_text.trim().is_empty()
+            && !crate::workers::embedding_worker::frame_has_vision_text(
+                frame.description.as_deref(),
+                frame.visible_text_json.as_deref(),
+            )
+        {
+            continue;
+        }
+
+        let combined_text =
+            crate::workers::embedding_worker::build_frame_embedding_text(frame, &ocr_text);
         let chunks = match engine.chunk_text(&combined_text, 512, 64).await {
             Ok(chunks) => chunks,
             Err(error) => {

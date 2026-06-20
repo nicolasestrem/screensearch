@@ -1275,6 +1275,23 @@ impl DatabaseManager {
     ) -> Result<()> {
         let mut tx = self.pool().begin().await?;
 
+        // Whether vision produced text worth re-embedding for. The embedding text
+        // (build_frame_embedding_text) folds in BOTH the description and the
+        // visible_text labels, so either being present should trigger a re-embed.
+        let has_vision_text = analysis
+            .description
+            .as_deref()
+            .map(|d| !d.trim().is_empty())
+            .unwrap_or(false)
+            || analysis
+                .visible_text_json
+                .as_deref()
+                .map(|v| {
+                    let trimmed = v.trim();
+                    !trimmed.is_empty() && trimmed != "[]"
+                })
+                .unwrap_or(false);
+
         // Update frame with analysis results
         sqlx::query(
             r#"
@@ -1305,6 +1322,19 @@ impl DatabaseManager {
             .bind(queue_id)
             .execute(&mut *tx)
             .await?;
+
+        // Vision analysis adds a semantic `description` + `visible_text` that the
+        // embedding text now includes. A frame embedded earlier (OCR only, before
+        // analysis finished) must be re-embedded to pick these up: deleting its
+        // embeddings here makes the background embedding worker re-select and
+        // re-embed it. The `embeddings_vector_delete` trigger (migration 009)
+        // cascades the deletion into the `embedding_vectors` KNN index.
+        if has_vision_text {
+            sqlx::query("DELETE FROM embeddings WHERE frame_id = ?")
+                .bind(frame_id)
+                .execute(&mut *tx)
+                .await?;
+        }
 
         tx.commit().await?;
         Ok(())
@@ -1372,7 +1402,12 @@ impl DatabaseManager {
         Ok(())
     }
 
-    /// Get OCR frames that don't have embeddings yet (for background processing).
+    /// Get frames that don't have embeddings yet (for background processing).
+    ///
+    /// A frame is eligible when it has embeddable text: either OCR text, or
+    /// vision-derived text (a non-empty `description` or `visible_text_json`
+    /// labels). The latter lets frames with little/no on-screen text — charts,
+    /// canvases, icon-heavy UIs — be embedded once vision analysis has run.
     pub async fn get_frames_without_embeddings(&self, limit: i64) -> Result<Vec<FrameRecord>> {
         let frames = sqlx::query_as::<_, FrameRecord>(
             r#"
@@ -1384,7 +1419,13 @@ impl DatabaseManager {
             FROM frames f
             LEFT JOIN embeddings e ON f.id = e.frame_id
             WHERE e.id IS NULL
-              AND EXISTS (SELECT 1 FROM ocr_text o WHERE o.frame_id = f.id)
+              AND (
+                  EXISTS (SELECT 1 FROM ocr_text o WHERE o.frame_id = f.id)
+                  OR (f.description IS NOT NULL AND TRIM(f.description) <> '')
+                  OR (f.visible_text_json IS NOT NULL
+                      AND TRIM(f.visible_text_json) <> ''
+                      AND TRIM(f.visible_text_json) <> '[]')
+              )
             ORDER BY f.id ASC
             LIMIT ?
             "#,

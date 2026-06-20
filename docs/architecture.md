@@ -87,7 +87,18 @@ The current embedding contract is fixed:
 
 The model (fastembed variant `EmbeddingGemma300MQ`) is downloaded and cached
 from Hugging Face on first use. Document chunks include OCR text plus frame
-timestamp, application, and window metadata.
+timestamp, application, and window metadata, and — when vision analysis has run —
+the generated `description` and `visible_text` labels, so non-OCR visual content
+(charts, canvases, icon-heavy UIs) gains a text recall path. A frame is eligible
+for embedding when it has OCR text **or** vision-derived text, so a frame with no
+OCR at all (a pure chart/canvas) is still embedded once vision describes it.
+Because vision analysis is asynchronous and may finish after a frame is first
+embedded (on OCR alone), `complete_analysis_task` clears that frame's embeddings
+when it records vision text (a non-empty `description` or `visible_text` labels),
+and the background worker re-embeds it with the vision fields included. The shared
+`build_frame_embedding_text` helper (`screensearch-api/src/workers/embedding_worker.rs`)
+is used by both the background worker and the manual generate-embeddings handler
+so they never drift.
 
 Each stored embedding records provider, model, revision, dimension, and a
 SHA-256 content hash. ScreenSearch does not generate hash-based placeholder
