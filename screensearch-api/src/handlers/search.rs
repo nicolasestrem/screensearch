@@ -329,6 +329,10 @@ pub async fn get_frames(
                     description: frame.description,
                     confidence: frame.confidence,
                     analysis_status: frame.analysis_status,
+                    activity_type: frame.activity_type,
+                    app_hint: frame.app_hint,
+                    browser_url: frame.browser_url,
+                    monitor_index: frame.monitor_index,
                 });
             }
 
@@ -408,6 +412,10 @@ pub async fn get_frames(
                     description: frame.description,
                     confidence: frame.confidence,
                     analysis_status: frame.analysis_status,
+                    activity_type: frame.activity_type,
+                    app_hint: frame.app_hint,
+                    browser_url: frame.browser_url,
+                    monitor_index: frame.monitor_index,
                 });
             }
 
@@ -481,6 +489,10 @@ pub async fn get_single_frame(
                 description: frame.description,
                 confidence: frame.confidence,
                 analysis_status: frame.analysis_status,
+                activity_type: frame.activity_type,
+                app_hint: frame.app_hint,
+                browser_url: frame.browser_url,
+                monitor_index: frame.monitor_index,
             }))
         }
         Ok(None) => {

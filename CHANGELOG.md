@@ -9,7 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Complete frontend rebuild — "Command Deck" UI (greenfield).** The React UI was
+  rebuilt from scratch with a new, deliberately non-generic visual identity:
+  a warm-graphite + signal-orange instrument/telemetry aesthetic, Windows-native
+  type pairing (Bahnschrift display / Consolas data / Segoe UI prose — no web-font
+  downloads), and a real type/contrast scale (all text ≥ WCAG AA). Stack: Vite +
+  React 18 + TypeScript + Tailwind, now with **real client-side routing**
+  (`react-router-dom`), TanStack Query, a typed `fetch` client (dropped `axios`
+  and `framer-motion`), and Zustand for ephemeral UI state. Files:
+  `screensearch-ui/src/**` (entire tree replaced).
+  - **Signature component — the Scanline Timeline** (`components/ScanlineTimeline.tsx`):
+    a 24-hour track with a frame-density ribbon, vision **activity-type colour
+    bands**, a live "now" line, and a draggable playhead to scrub the day. Compact
+    on the Deck, full-width and interactive on the Timeline.
+  - **Deck** (`/`) — mission-control overview: always-on status rail (capture
+    state, frame count, span, GPU/Vulkan acceleration, index & vision coverage),
+    an Ask box, real index coverage, the timeline, a live activity feed, and a
+    real apps & sites breakdown. Every figure is wired to a live endpoint.
+  - **Recall** (`/recall`) — *Ask your screen* (RAG Q&A) as a first-class feature:
+    grounded answers from `POST /api/generate` with clickable **cited frame
+    chips**; plus a daily/weekly/custom **Report** mode (`POST /api/ai/generate`).
+  - **Timeline** (`/timeline`) + **Moment** (`/timeline/:id`) — interactive
+    scanline + searchable, filterable contact sheet (date, app, monitor, activity,
+    search mode fts/semantic/hybrid); deep-linkable per-frame detail with the full
+    screenshot, vision panel, OCR text, metadata, tags, and on-demand re-analysis.
+  - **Insights** (`/insights`) — real analytics from captured frames: activity
+    mix, top apps & sites (incl. per-site via `browser_url`), and an hourly rhythm
+    chart. Custom SVG/markup, no charting dependency.
+  - **Settings** (`/settings`) — capture interval/retention/pause, monitor & excluded-app
+    selection, semantic-search enable/index/model controls, vision provider/model
+    picker, AI provider config + connection test, and the local answer-engine
+    model/server controls with live download progress.
+  - **⌘K command palette** (search + ask + navigation) and a real **readiness
+    banner** driven by `GET /api/system/readiness` (replaces the old startup mock).
+
 ### Changed
+- **Frontend now surfaces previously-unused backend data.** `FrameResponse`
+  (`screensearch-api/src/models.rs`) now passes through `activity_type`, `app_hint`,
+  `browser_url`, and `monitor_index` from the DB record so the timeline, insights,
+  and moment views can show vision activity, sites, and per-monitor filtering. No
+  new endpoints or migrations.
+- **Removed all placeholder UI.** Every "Coming Soon" card and mock/synthetic data
+  generator (the old daily-digest sample text, the faked memory gauge, the
+  synthetic productivity chart) is gone; all surfaces render real data or honest
+  empty/loading/error states.
 - **On-device vision is ~6–10× faster: default switched to Qwen3-VL-4B-Instruct
   and the frame pipeline was tuned.** Per-frame analysis dropped from **5–10 s** to
   **~1 s** on an RTX 5060 Ti (measured: image encode ~320 ms + generation ~770 ms,

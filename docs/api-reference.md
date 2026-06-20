@@ -73,9 +73,17 @@ Returns keyword suggestions from OCR content.
 Returns paginated frames with optional time, monitor, application, and tag
 filters.
 
+Each frame object includes `id`, `timestamp`, `app_name`, `window_name`,
+`ocr_text`, `tags`, `monitor_index`, and (when available) the vision fields
+`description`, `confidence`, `analysis_status`, `activity_type`, `app_hint`, and
+`browser_url`. The vision/location fields (`activity_type`, `app_hint`,
+`browser_url`, `monitor_index`) let the UI render activity timelines, apps/sites
+insights, and per-monitor filtering.
+
 ### `GET /frames/:id`
 
-Returns one frame and its OCR, tags, and analysis metadata.
+Returns one frame and its OCR, tags, and analysis metadata (same fields as the
+list endpoint above).
 
 ### `GET /frames/:id/image`
 

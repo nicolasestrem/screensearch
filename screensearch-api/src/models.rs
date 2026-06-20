@@ -104,6 +104,17 @@ pub struct FrameResponse {
     pub confidence: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub analysis_status: Option<String>,
+    /// Vision-derived activity category (e.g. "coding", "research", "comms").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity_type: Option<String>,
+    /// Vision-derived app/context hint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_hint: Option<String>,
+    /// Active browser URL at capture time, when the foreground app was a browser.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_url: Option<String>,
+    /// Monitor index the frame was captured from.
+    pub monitor_index: i32,
 }
 
 /// Tag response

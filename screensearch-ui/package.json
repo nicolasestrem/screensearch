@@ -1,7 +1,7 @@
 {
   "name": "screensearch-ui",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,24 +12,19 @@
   "dependencies": {
     "@tailwindcss/typography": "^0.5.19",
     "@tanstack/react-query": "^5.59.20",
-    "axios": "^1.16.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
-    "framer-motion": "^10.18.0",
     "lucide-react": "^0.454.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-hot-toast": "^2.4.1",
     "react-markdown": "^10.1.0",
-    "react-window": "^1.8.10",
-    "tailwindcss-animate": "^1.0.7",
+    "react-router-dom": "^6.28.0",
     "zustand": "^5.0.1"
   },
   "devDependencies": {
     "@types/node": "^25.0.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@types/react-window": "^1.8.8",
     "@typescript-eslint/eslint-plugin": "^8.15.0",
     "@typescript-eslint/parser": "^8.15.0",
     "@vitejs/plugin-react": "^6.0.2",
