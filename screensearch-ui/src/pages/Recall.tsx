@@ -5,7 +5,7 @@ import clsx from 'clsx'
 import { ArrowRight, Copy, Download, FileText, MessageSquareText } from 'lucide-react'
 import { Panel, PanelBody, PanelHeader } from '../components/Panel'
 import { Button, ErrorNote, Spinner } from '../components/ui'
-import { useFrame, useGenerateAnswer, useGenerateReport } from '../lib/hooks'
+import { useFrame, useGenerateAnswer, useGenerateReport, useSettings } from '../lib/hooks'
 import { useUi } from '../lib/store'
 import { appLabel, dayBounds, timecode } from '../lib/format'
 import { ApiError } from '../lib/api'
@@ -37,7 +37,16 @@ export default function Recall() {
   const [mode, setMode] = useState<Mode>('ask')
   const seed = useUi((s) => s.recallSeed)
   const setSeed = useUi((s) => s.setRecallSeed)
-  const aiConfig = useUi((s) => s.aiConfig)
+
+  // AI report provider — now sourced from persisted backend settings (was a
+  // browser-only Zustand store). The local engine is always usable; a remote
+  // provider needs both a URL and a model. Default to '' (not 'local') while
+  // settings are still loading so the Generate button isn't briefly enabled with
+  // an unconfirmed provider. The API key is write-only and never returned, so the
+  // request omits it and the backend falls back to the stored key.
+  const settings = useSettings().data
+  const aiProviderUrl = settings?.ai_provider_url ?? ''
+  const aiModel = settings?.ai_model ?? ''
 
   // ---- Ask ----
   const [question, setQuestion] = useState('')
@@ -69,7 +78,7 @@ export default function Recall() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const report = useGenerateReport()
-  const aiReady = aiConfig.providerUrl.trim() !== '' && aiConfig.model.trim() !== ''
+  const aiReady = aiProviderUrl === 'local' || (aiProviderUrl.trim() !== '' && aiModel.trim() !== '')
 
   const runReport = () => {
     const now = new Date()
@@ -87,9 +96,9 @@ export default function Recall() {
       end = to ? new Date(to).toISOString() : undefined
     }
     report.mutate({
-      provider_url: aiConfig.providerUrl,
-      api_key: aiConfig.apiKey || undefined,
-      model: aiConfig.model,
+      provider_url: aiProviderUrl,
+      api_key: undefined, // write-only; backend uses the stored key
+      model: aiModel,
       start_time: start,
       end_time: end,
       prompt: reportType === 'custom' && customPrompt.trim() ? customPrompt.trim() : undefined,

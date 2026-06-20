@@ -64,6 +64,37 @@ pub const MODEL_VERSION: &str = "1";
 /// Default cross-encoder reranker (only loaded when reranking is enabled).
 pub const RERANKER_MODEL_NAME: &str = "bge-reranker-v2-m3";
 
+/// Approximate size of the first-run EmbeddingGemma-300M (quantized) download.
+///
+/// `fastembed`/ONNX Runtime download the model opaquely (no byte-progress
+/// callback), so a determinate progress bar has to infer progress from the
+/// growing cache file against this estimate. The dominant file is
+/// `model_quantized.onnx_data` (~295 MB); with tokenizer + graph the total is
+/// ~315 MB. The watcher tracks the single largest growing file, so this is set
+/// just above that dominant file: the bar reaches ~100% as it completes, then
+/// the watcher clears its entry and readiness flips to "ready". A slightly-off
+/// estimate only affects the bar's final few percent, never correctness.
+pub const MODEL_DOWNLOAD_APPROX_BYTES: u64 = 300 * 1024 * 1024;
+
+/// Resolve the directory `fastembed`/`hf-hub` use to cache downloaded models.
+///
+/// Mirrors fastembed 5.x precedence (`pull_from_hf` + `get_cache_dir`) so a
+/// progress watcher can locate the file being written on first run:
+/// 1. `HF_HOME` — honored first inside `pull_from_hf`.
+/// 2. `SCREENSEARCH_MODEL_CACHE` — our [`EmbeddingConfig::cache_dir`] override.
+/// 3. `FASTEMBED_CACHE_DIR`, else `.fastembed_cache` (relative to the CWD).
+pub fn resolve_cache_root() -> PathBuf {
+    if let Some(hf_home) = std::env::var_os("HF_HOME") {
+        return PathBuf::from(hf_home);
+    }
+    if let Some(custom) = std::env::var_os("SCREENSEARCH_MODEL_CACHE") {
+        return PathBuf::from(custom);
+    }
+    std::env::var_os("FASTEMBED_CACHE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".fastembed_cache"))
+}
+
 /// Embedding-related errors.
 #[derive(Error, Debug)]
 pub enum EmbeddingError {

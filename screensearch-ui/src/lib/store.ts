@@ -3,11 +3,15 @@ import { persist } from 'zustand/middleware'
 
 export type ViewMode = 'grid' | 'list'
 
-export interface AiConfig {
-  providerUrl: string
-  model: string
-  apiKey: string
+export type ToastKind = 'success' | 'error' | 'info'
+
+export interface Toast {
+  id: number
+  kind: ToastKind
+  message: string
 }
+
+let toastSeq = 0
 
 interface UiState {
   // Command palette (⌘K)
@@ -22,9 +26,10 @@ interface UiState {
   viewMode: ViewMode
   setViewMode: (m: ViewMode) => void
 
-  // AI provider used for the Recall "Report" mode (persisted).
-  aiConfig: AiConfig
-  setAiConfig: (c: AiConfig) => void
+  // Transient toast notifications (not persisted).
+  toasts: Toast[]
+  pushToast: (kind: ToastKind, message: string) => void
+  dismissToast: (id: number) => void
 }
 
 export const useUi = create<UiState>()(
@@ -36,12 +41,15 @@ export const useUi = create<UiState>()(
       setRecallSeed: (q) => set({ recallSeed: q }),
       viewMode: 'grid',
       setViewMode: (m) => set({ viewMode: m }),
-      aiConfig: { providerUrl: '', model: '', apiKey: '' },
-      setAiConfig: (c) => set({ aiConfig: c }),
+      toasts: [],
+      pushToast: (kind, message) =>
+        set((s) => ({ toasts: [...s.toasts, { id: ++toastSeq, kind, message }] })),
+      dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
     }),
     {
       name: 'screensearch-ui',
-      partialize: (s) => ({ viewMode: s.viewMode, aiConfig: s.aiConfig }),
+      // Only the view layout is durable; toasts and palette state are ephemeral.
+      partialize: (s) => ({ viewMode: s.viewMode }),
     }
   )
 )

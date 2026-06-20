@@ -5,8 +5,10 @@ use screensearch_db::DatabaseManager;
 use screensearch_embeddings::{EmbeddingEngine, ImageEmbeddingEngine, EMBEDDING_DIM};
 use screensearch_llm::LlamaServer;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 /// Unified download progress structure
@@ -135,8 +137,19 @@ impl AppState {
         }
 
         // Loads (and, on first run, downloads + caches) the in-process ONNX
-        // embedding model. No network health check is needed any more.
-        let engine = EmbeddingEngine::new().await.map_err(|e| e.to_string())?;
+        // embedding model. `fastembed` downloads opaquely, so we run a watcher
+        // alongside the load that infers download progress from the growing
+        // cache file and publishes it under "embedding_model" (consumed by the
+        // readiness banner and the Settings → Semantic search card). It self-
+        // clears once the load finishes — whether it downloaded or hit the
+        // cache.
+        let stop = Arc::new(AtomicBool::new(false));
+        let watcher = tokio::spawn(embedding_download_watcher(self.clone(), Arc::clone(&stop)));
+        let load_result = EmbeddingEngine::new().await;
+        stop.store(true, Ordering::SeqCst);
+        let _ = watcher.await;
+        self.clear_download_progress("embedding_model").await;
+        let engine = load_result.map_err(|e| e.to_string())?;
         self.db
             .ensure_embedding_model(
                 engine.provider(),
@@ -305,4 +318,116 @@ impl AppState {
         let guard = self.download_progress.read().await;
         guard.clone()
     }
+}
+
+/// Watch the embedding-model cache while it is being loaded and publish
+/// download progress under the `"embedding_model"` key.
+///
+/// `fastembed` exposes no byte-progress callback, so we infer progress from the
+/// file the HuggingFace cache is actively writing: on each tick we snapshot file
+/// sizes under the cache root and pick the file that grew the most since the
+/// previous tick (the in-flight blob, `*.incomplete` or a temp name). On a warm
+/// start nothing grows, so no entry is ever published and the caller clears the
+/// key when the (fast) load completes.
+async fn embedding_download_watcher(state: AppState, stop: Arc<AtomicBool>) {
+    let root = screensearch_embeddings::resolve_cache_root();
+    let total = screensearch_embeddings::MODEL_DOWNLOAD_APPROX_BYTES;
+
+    // Seed a baseline snapshot of existing files so a warm start (model already
+    // cached, nothing growing) never flashes a bogus "downloading" bar — only
+    // files that grow *after* this baseline count as an active download.
+    let baseline_root = root.clone();
+    let mut prev_sizes = tokio::task::spawn_blocking(move || scan_file_sizes(&baseline_root))
+        .await
+        .unwrap_or_default();
+    let mut last_tick = Instant::now();
+
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if stop.load(Ordering::SeqCst) {
+            break;
+        }
+
+        let scan_root = root.clone();
+        let sizes = tokio::task::spawn_blocking(move || scan_file_sizes(&scan_root))
+            .await
+            .unwrap_or_default();
+
+        let now = Instant::now();
+        let dt = now.duration_since(last_tick).as_secs_f64().max(0.001);
+        last_tick = now;
+
+        // The active download is the file whose size increased the most since
+        // the previous snapshot. Ignoring static files keeps the bar locked to
+        // the real download even when the cache holds other models.
+        let mut best: Option<(u64, u64)> = None; // (current_size, delta)
+        for (path, &size) in &sizes {
+            let prev = prev_sizes.get(path).copied().unwrap_or(0);
+            if size > prev {
+                let delta = size - prev;
+                if best.map(|(_, d)| delta > d).unwrap_or(true) {
+                    best = Some((size, delta));
+                }
+            }
+        }
+        prev_sizes = sizes;
+
+        if let Some((size, delta)) = best {
+            // A published tick always has delta > 0 (best is only set on growth),
+            // so speed is positive; `max(1)` guards the division and avoids a
+            // misleading "0s left" if a tick rounds down to 0 B/s.
+            let speed = ((delta as f64 / dt) as u64).max(1);
+            // Keep the estimate as the floor for `total` so the bar never
+            // exceeds 100% if the real file is larger than the estimate.
+            let total_bytes = total.max(size);
+            let remaining = total_bytes.saturating_sub(size);
+            let eta_seconds = remaining / speed;
+            state
+                .update_download_progress(
+                    "embedding_model".to_string(),
+                    DownloadProgress {
+                        bytes_downloaded: size,
+                        total_bytes,
+                        speed_bps: speed,
+                        eta_seconds,
+                        error: None,
+                    },
+                )
+                .await;
+        }
+    }
+}
+
+/// Recursively collect `(path, size)` for every regular file under `root`.
+///
+/// Bounded to a small depth: the HuggingFace cache nests models only a few
+/// levels deep (`models--org--repo/{blobs,snapshots}/…`), so this stays cheap
+/// even when called on a 500 ms tick.
+fn scan_file_sizes(root: &Path) -> HashMap<PathBuf, u64> {
+    let mut out = HashMap::new();
+    let mut stack = vec![(root.to_path_buf(), 0u32)];
+    while let Some((dir, depth)) = stack.pop() {
+        if depth > 6 {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            match entry.file_type() {
+                Ok(ft) if ft.is_dir() => stack.push((path, depth + 1)),
+                Ok(ft) if ft.is_file() => {
+                    if let Ok(meta) = entry.metadata() {
+                        out.insert(path, meta.len());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    out
 }
