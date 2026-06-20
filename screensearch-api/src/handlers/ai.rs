@@ -698,6 +698,10 @@ pub struct ServerStatusResponse {
     pub idle_seconds: u64,
     pub model_loaded: bool,
     pub server_binary_available: bool,
+    /// Which acceleration the running server actually started in:
+    /// `"gpu"` (Vulkan), `"cpu"`, or `"unknown"` when not running. Lets the UI
+    /// surface a silent GPU→CPU fallback.
+    pub acceleration: String,
 }
 
 /// GET /ai/server/status
@@ -718,6 +722,11 @@ pub async fn get_server_status(
         let status = server.status().await;
         let port = server.active_port().await;
         let idle_duration = server.idle_duration().await;
+        let acceleration = match server.gpu_active().await {
+            Some(true) => "gpu",
+            Some(false) => "cpu",
+            None => "unknown",
+        };
 
         Ok(Json(ServerStatusResponse {
             status: status.as_str().to_string(),
@@ -725,6 +734,7 @@ pub async fn get_server_status(
             idle_seconds: idle_duration.as_secs(),
             model_loaded: status == ServerStatus::Running,
             server_binary_available,
+            acceleration: acceleration.to_string(),
         }))
     } else {
         Ok(Json(ServerStatusResponse {
@@ -733,6 +743,7 @@ pub async fn get_server_status(
             idle_seconds: 0,
             model_loaded: false,
             server_binary_available,
+            acceleration: "unknown".to_string(),
         }))
     }
 }

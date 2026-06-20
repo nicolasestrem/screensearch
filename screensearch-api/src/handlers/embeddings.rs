@@ -7,8 +7,16 @@ use crate::error::Result;
 use crate::state::AppState;
 use axum::extract::{Json, State};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
+
+/// Guards against overlapping on-demand embedding jobs: clicking "Process
+/// frames" repeatedly should not spawn several concurrent passes over the same
+/// backlog. The background `embedding_worker` and this on-demand handler both
+/// insert idempotently (unique chunk constraint), so this is purely to avoid
+/// wasted, redundant work.
+static EMBEDDING_JOB_RUNNING: AtomicBool = AtomicBool::new(false);
 
 // ============================================================
 // Models
@@ -94,7 +102,11 @@ pub async fn prepare_quality_models(
 }
 
 /// POST /embeddings/generate
-/// Trigger background embedding generation for frames without embeddings
+/// Kick off embedding generation for frames without embeddings.
+///
+/// This returns immediately and runs the (CPU-bound, potentially multi-minute)
+/// work on a background task so the request — and the UI — never block. Progress
+/// is observed via `GET /embeddings/status` (coverage climbs as frames finish).
 pub async fn generate_embeddings(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<GenerateEmbeddingsRequest>,
@@ -102,12 +114,9 @@ pub async fn generate_embeddings(
     let batch_size = payload.batch_size.unwrap_or(50);
     debug!("Triggering embedding generation for {} frames", batch_size);
 
-    // Get frames without embeddings
-    let frames = state.db.get_frames_without_embeddings(batch_size).await?;
-
-    let frames_count = frames.len() as i64;
-
-    if frames_count == 0 {
+    // Cheap pre-check so the common "nothing to do" case answers instantly.
+    let pending = state.db.get_frames_without_embeddings(1).await?;
+    if pending.is_empty() {
         return Ok(Json(GenerateEmbeddingsResponse {
             success: true,
             message: "All frames already have embeddings".to_string(),
@@ -115,22 +124,72 @@ pub async fn generate_embeddings(
         }));
     }
 
-    // Get or initialize the embedding engine
+    // Refuse to stack overlapping jobs; one is already draining the backlog.
+    if EMBEDDING_JOB_RUNNING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Ok(Json(GenerateEmbeddingsResponse {
+            success: true,
+            message: "Embedding generation is already running in the background".to_string(),
+            frames_processed: 0,
+        }));
+    }
+
+    let job_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        // Reset the guard via Drop so the flag is cleared even if the job panics
+        // or the task is cancelled — otherwise it would block all future jobs.
+        struct JobGuard;
+        impl Drop for JobGuard {
+            fn drop(&mut self) {
+                EMBEDDING_JOB_RUNNING.store(false, Ordering::SeqCst);
+            }
+        }
+        let _guard = JobGuard;
+
+        let processed = run_embedding_job(&job_state, batch_size).await;
+        info!(
+            "Background embedding job finished: {} frame(s) processed",
+            processed
+        );
+    });
+
+    Ok(Json(GenerateEmbeddingsResponse {
+        success: true,
+        message: "Embedding generation started in the background".to_string(),
+        frames_processed: 0,
+    }))
+}
+
+/// Embed up to `batch_size` frames that lack embeddings. Chunks are batched
+/// across frames into a single `embed_batch` call (one model lock / blocking-pool
+/// hop instead of one per frame), then sliced back per frame for atomic storage.
+/// Returns the number of frames stored.
+async fn run_embedding_job(state: &Arc<AppState>, batch_size: i64) -> i64 {
+    let frames = match state.db.get_frames_without_embeddings(batch_size).await {
+        Ok(f) => f,
+        Err(error) => {
+            warn!("Failed to fetch frames for embedding: {}", error);
+            return 0;
+        }
+    };
+    if frames.is_empty() {
+        return 0;
+    }
+
     let engine = match state.get_embedding_engine().await {
         Ok(e) => e,
         Err(e) => {
-            return Ok(Json(GenerateEmbeddingsResponse {
-                success: false,
-                message: format!("Failed to initialize embedding engine: {}", e),
-                frames_processed: 0,
-            }));
+            warn!("Failed to initialize embedding engine: {}", e);
+            return 0;
         }
     };
 
-    let mut processed = 0;
-
-    for frame in frames {
-        // Get OCR text for the frame
+    // 1. Build per-frame chunk lists, dropping empty chunks so the flattened
+    //    order stays aligned with `embed_batch`'s output (which skips blanks).
+    let mut per_frame: Vec<(i64, Vec<String>)> = Vec::new();
+    for frame in &frames {
         let ocr_texts = match state.db.get_ocr_text_for_frame(frame.id).await {
             Ok(texts) => texts,
             Err(error) => {
@@ -138,12 +197,10 @@ pub async fn generate_embeddings(
                 continue;
             }
         };
-
         if ocr_texts.is_empty() {
             continue;
         }
 
-        // Combine OCR text and chunk it
         let ocr_text: String = ocr_texts
             .iter()
             .map(|o| o.text.as_str())
@@ -159,69 +216,123 @@ pub async fn generate_embeddings(
         let chunks = match engine.chunk_text(&combined_text, 512, 64).await {
             Ok(chunks) => chunks,
             Err(error) => {
-                tracing::warn!("Failed to chunk frame {}: {}", frame.id, error);
+                warn!("Failed to chunk frame {}: {}", frame.id, error);
                 continue;
             }
         };
-
-        let chunk_refs: Vec<&str> = chunks.iter().map(String::as_str).collect();
-        let embeddings = match engine.embed_batch(&chunk_refs).await {
-            Ok(embeddings) => embeddings,
-            Err(error) => {
-                tracing::warn!("Failed to embed frame {}: {}", frame.id, error);
-                continue;
-            }
-        };
-
-        let new_embeddings = chunks
-            .iter()
-            .zip(embeddings)
-            .enumerate()
-            .map(
-                |(chunk_index, (chunk_text, embedding))| screensearch_db::NewEmbedding {
-                    frame_id: frame.id,
-                    chunk_text: chunk_text.clone(),
-                    chunk_index: chunk_index as i32,
-                    embedding,
-                    provider: engine.provider().to_string(),
-                    model: engine.model().to_string(),
-                    model_version: engine.model_version().to_string(),
-                    content_hash: screensearch_embeddings::EmbeddingEngine::content_hash(
-                        chunk_text,
-                    ),
-                },
-            )
+        let chunks: Vec<String> = chunks
+            .into_iter()
+            .filter(|c| !c.trim().is_empty())
             .collect();
+        if !chunks.is_empty() {
+            per_frame.push((frame.id, chunks));
+        }
+    }
 
-        if let Err(error) = state.db.insert_embeddings(new_embeddings).await {
+    if per_frame.is_empty() {
+        return 0;
+    }
+
+    // 2. Embed in groups that bound each `embed_batch` to ~MAX_CHUNKS_PER_CALL
+    //    chunks. This batches several small frames per call (fewer model-lock /
+    //    blocking-pool hops than one-frame-at-a-time) without holding the shared
+    //    model lock for the whole backlog, which would starve search-time query
+    //    embedding.
+    const MAX_CHUNKS_PER_CALL: usize = 64;
+    let mut processed = 0;
+    let mut i = 0;
+    while i < per_frame.len() {
+        // Accumulate frames until the chunk budget would be exceeded (always
+        // take at least one frame, even if it alone exceeds the budget).
+        let mut group_end = i;
+        let mut chunk_count = 0;
+        while group_end < per_frame.len()
+            && (group_end == i || chunk_count + per_frame[group_end].1.len() <= MAX_CHUNKS_PER_CALL)
+        {
+            chunk_count += per_frame[group_end].1.len();
+            group_end += 1;
+        }
+        let group = &per_frame[i..group_end];
+        i = group_end;
+
+        let flat: Vec<&str> = group
+            .iter()
+            .flat_map(|(_, chunks)| chunks.iter().map(String::as_str))
+            .collect();
+        let embeddings = match engine.embed_batch(&flat).await {
+            Ok(e) => e,
+            Err(error) => {
+                warn!("Failed to embed batch of {} chunks: {}", flat.len(), error);
+                continue;
+            }
+        };
+        if embeddings.len() != flat.len() {
+            // Defensive: a length mismatch would corrupt the per-frame slicing.
             warn!(
-                "Failed to atomically store embeddings for frame {}: {}",
-                frame.id, error
+                "Embedding count {} != chunk count {}; skipping group",
+                embeddings.len(),
+                flat.len()
             );
             continue;
         }
 
-        processed += 1;
+        // Slice the flat embeddings back per frame and store atomically.
+        let mut cursor = 0usize;
+        for (frame_id, chunks) in group {
+            let slice = &embeddings[cursor..cursor + chunks.len()];
+            cursor += chunks.len();
 
-        // Update last processed frame ID
-        let _ = state
-            .db
-            .set_metadata("embeddings_last_processed_frame_id", &frame.id.to_string())
-            .await;
+            let new_embeddings = chunks
+                .iter()
+                .zip(slice.iter())
+                .enumerate()
+                .map(
+                    |(chunk_index, (chunk_text, embedding))| screensearch_db::NewEmbedding {
+                        frame_id: *frame_id,
+                        chunk_text: chunk_text.clone(),
+                        chunk_index: chunk_index as i32,
+                        embedding: embedding.clone(),
+                        provider: engine.provider().to_string(),
+                        model: engine.model().to_string(),
+                        model_version: engine.model_version().to_string(),
+                        content_hash: screensearch_embeddings::EmbeddingEngine::content_hash(
+                            chunk_text,
+                        ),
+                    },
+                )
+                .collect();
+
+            if let Err(error) = state.db.insert_embeddings(new_embeddings).await {
+                warn!(
+                    "Failed to atomically store embeddings for frame {}: {}",
+                    frame_id, error
+                );
+                continue;
+            }
+
+            processed += 1;
+            let _ = state
+                .db
+                .set_metadata("embeddings_last_processed_frame_id", &frame_id.to_string())
+                .await;
+        }
     }
 
-    if processed > 0 && state.db.get_frames_without_embeddings(1).await?.is_empty() {
+    if processed > 0
+        && state
+            .db
+            .get_frames_without_embeddings(1)
+            .await
+            .map(|f| f.is_empty())
+            .unwrap_or(false)
+    {
         let _ = state
             .db
             .set_metadata("embeddings_reindex_required", "false")
             .await;
     }
 
-    Ok(Json(GenerateEmbeddingsResponse {
-        success: true,
-        message: format!("Processed {} frames with embeddings", processed),
-        frames_processed: processed,
-    }))
+    processed
 }
 
 /// POST /embeddings/enable

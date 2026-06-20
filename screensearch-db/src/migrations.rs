@@ -58,6 +58,12 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
         MIGRATION_010_UNIQUE_EMBEDDING_CHUNKS,
     )
     .await?;
+    apply_migration(
+        pool,
+        "011_gemma4_vision_default",
+        MIGRATION_011_GEMMA4_VISION_DEFAULT,
+    )
+    .await?;
 
     tracing::info!("All migrations completed successfully");
     Ok(())
@@ -418,6 +424,17 @@ UPDATE settings SET
     vision_model = 'ministral-3:3b',
     vision_endpoint = 'http://127.0.0.1:31130'
 WHERE id = 1;
+"#;
+
+/// Migration 011 - Switch the default local generation/vision model from the
+/// text-only Ministral-3B to Gemma 4 E4B (multimodal). The previous default
+/// could not answer vision (image) requests, so enabling Answer Generation
+/// produced "image input is not supported" errors. Only rows still carrying the
+/// old `ministral-3:3b` default are migrated, so a user who deliberately picked
+/// another model is left untouched.
+const MIGRATION_011_GEMMA4_VISION_DEFAULT: &str = r#"
+UPDATE settings SET vision_model = 'gemma-4-E4B'
+WHERE vision_model = 'ministral-3:3b' OR vision_model IS NULL;
 "#;
 
 /// Migration 008 - Performance Indexes

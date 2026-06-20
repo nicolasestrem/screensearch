@@ -10,7 +10,7 @@ export function DashboardPage() {
       {/* Page Header */}
       <div className="space-y-2">
         <h1 className="font-serif text-[34px] lg:text-[42px] leading-[1.08] tracking-[-0.01em] text-ink">
-          ScreenSearch Intel
+          Insights
         </h1>
         <p className="text-ink-2 text-[16px] leading-[1.6]">
           Your AI-powered productivity insights at a glance.

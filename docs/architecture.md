@@ -199,6 +199,19 @@ bounding GPU load. Results are written back to each frame (`description`,
 providers (Ollama / OpenAI-compatible), the worker targets the configured
 endpoint instead and no local server is started.
 
+Selection prefers the **best quantization** within a tier (Q4 over Q2/Q3), and
+discovery ignores non-loadable GGUFs (projectors, `mtp-*` heads, undersized
+files). The default `vision_model` is **Gemma 4 E4B**; `GET /api/vision/models`
+lists discovered `(model, mmproj)` pairs for the Settings picker. The default was
+previously the text-only Ministral-3B, which could not answer image requests —
+see `docs/vision.md`.
+
+**GPU visibility.** The server is launched with `-ngl 99` (Vulkan) and falls back
+to CPU only if initialization fails. llama-server's stdout/stderr are captured to
+`bin/llama-server.log`, the GPU-mode health-check timeout scales with model size
+(so large models aren't bounced to CPU prematurely), and `GET /api/ai/server/status`
+exposes `acceleration` (`gpu`/`cpu`/`unknown`) which the UI surfaces as a badge.
+
 ## Runtime Status
 
 `GET /api/embeddings/status` exposes:
@@ -217,6 +230,32 @@ until the engine is ready or an error is reported.
 The dashboard uses this response to distinguish ready, indexing, degraded, and
 error states. Grounded generation is disabled when required inference is
 unavailable.
+
+The `engine_ready` probe (`AppState::embedding_engine_initialized`) uses a
+non-blocking `try_read`, so it returns immediately even while the engine is being
+loaded under the write lock during the first-run model download — it never stalls
+`GET /embeddings/status`.
+
+### On-demand indexing
+
+`POST /api/embeddings/generate` ("Process frames" in the UI) starts the
+CPU-bound work on a **background task** and returns immediately; the UI polls
+`GET /embeddings/status` so coverage climbs live without blocking the request. A
+process-wide guard prevents overlapping jobs, and chunks are embedded in
+size-bounded cross-frame batches (one model-lock hop per batch instead of per
+frame) so large backlogs don't starve search-time query embedding.
+
+### Startup readiness
+
+`GET /api/system/readiness` aggregates a single, cheap, non-blocking view of
+warm-up across three subsystems — **core** (DB + capture/OCR/search), **semantic
+search** (embedding model load), and **AI answer generation** (server/model
+download + load, with GPU/CPU) — each as a stage with a `state`
+(`ready`/`initializing`/`loading`/`downloading`/`needs_setup`/`disabled`),
+plain-language `detail`, and `progress`/`eta_seconds` for tracked downloads. The
+frontend's `StartupStatus` banner polls it during warm-up to explain what's
+happening and roughly how long remains, auto-hiding once `all_ready`. A
+fully-cached launch reports `all_ready` immediately and shows no banner.
 
 ## Packaging
 

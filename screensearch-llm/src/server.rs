@@ -33,8 +33,27 @@ const MAX_RESTART_ATTEMPTS: u32 = 3;
 /// Health check timeout for CPU mode (model loading can take 60-90s on slower systems)
 const HEALTH_CHECK_TIMEOUT_SECS: u64 = 120;
 
-/// Health check timeout for GPU mode (shorter to allow faster fallback)
-const GPU_HEALTH_CHECK_TIMEOUT_SECS: u64 = 45;
+/// GPU health-check timeout is scaled by model size: loading a multi-GB model
+/// plus a ~1 GB vision projector into VRAM over Vulkan (with first-run shader
+/// compilation) routinely takes longer than a fixed short timeout. A timeout
+/// that is too aggressive caused a silent, false fallback to CPU — the root of
+/// "answer generation does not use the GPU". Base + per-GB, capped.
+const GPU_HEALTH_CHECK_BASE_SECS: u64 = 60;
+const GPU_HEALTH_CHECK_SECS_PER_GB: u64 = 25;
+const GPU_HEALTH_CHECK_MAX_SECS: u64 = 300;
+
+/// Compute the GPU-mode health-check timeout from the on-disk size of the model
+/// (and projector, if any). Falls back to the base timeout when sizes are
+/// unknown.
+fn gpu_health_timeout_secs(config: &LlamaServerConfig) -> u64 {
+    let size_of = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+    let mut bytes = size_of(&config.model_path);
+    if let Some(mmproj) = &config.mmproj_path {
+        bytes += size_of(mmproj);
+    }
+    let gb = bytes / 1_000_000_000;
+    (GPU_HEALTH_CHECK_BASE_SECS + GPU_HEALTH_CHECK_SECS_PER_GB * gb).min(GPU_HEALTH_CHECK_MAX_SECS)
+}
 
 /// Health check poll interval
 const HEALTH_CHECK_POLL_MS: u64 = 1000;
@@ -119,6 +138,10 @@ pub struct LlamaServer {
     last_request: RwLock<Instant>,
     /// Number of restart attempts
     restart_count: RwLock<u32>,
+    /// Which acceleration mode the running server actually started in:
+    /// `Some(true)` = GPU (Vulkan), `Some(false)` = CPU fallback, `None` = not
+    /// running. Surfaced to the UI so a silent CPU fallback is visible.
+    gpu_active: RwLock<Option<bool>>,
     /// Flag to signal shutdown
     shutting_down: AtomicBool,
     /// Lock to serialize start attempts (prevents race condition)
@@ -138,6 +161,7 @@ impl LlamaServer {
             active_port: RwLock::new(port),
             last_request: RwLock::new(Instant::now()),
             restart_count: RwLock::new(0),
+            gpu_active: RwLock::new(None),
             shutting_down: AtomicBool::new(false),
             starting_lock: tokio::sync::Mutex::new(()),
             client: reqwest::Client::builder()
@@ -189,6 +213,12 @@ impl LlamaServer {
     /// Update idle TTL
     pub async fn set_idle_ttl(&self, ttl: Duration) {
         self.config.write().await.idle_ttl = ttl;
+    }
+
+    /// Which acceleration mode the running server started in: `Some(true)` =
+    /// GPU (Vulkan), `Some(false)` = CPU, `None` = not currently running.
+    pub async fn gpu_active(&self) -> Option<bool> {
+        *self.gpu_active.read().await
     }
 
     /// Start the server if not already running.
@@ -263,6 +293,7 @@ impl LlamaServer {
                         "llama-server started successfully with GPU on port {}",
                         port
                     );
+                    *self.gpu_active.write().await = Some(true);
                     return Ok(());
                 }
                 Err(e) => {
@@ -288,6 +319,7 @@ impl LlamaServer {
                     "llama-server started successfully with CPU on port {}",
                     port
                 );
+                *self.gpu_active.write().await = Some(false);
                 Ok(())
             }
             Err(e) => {
@@ -339,9 +371,50 @@ impl LlamaServer {
             cmd.arg("-t").arg(config.threads.to_string());
         }
 
-        // Redirect stdout/stderr to null to avoid blocking
-        cmd.stdout(Stdio::null());
-        cmd.stderr(Stdio::null());
+        // Capture llama-server's stdout/stderr to a log file so Vulkan init,
+        // the GPU layer-offload summary, and any silent GPU→CPU fallback are
+        // observable (previously sent to /dev/null, which hid all of it).
+        //
+        // Open in *append* mode (not truncate): when GPU mode fails and CPU mode
+        // is retried, this runs twice — truncating would wipe the GPU failure
+        // output that explains the fallback. A header marks each attempt. Falls
+        // back to discarding output only if the log file can't be opened.
+        let log_path = get_bin_dir().join("llama-server.log");
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            Ok(mut file) => {
+                use std::io::Write;
+                let _ = writeln!(
+                    file,
+                    "\n=== llama-server start: {} mode (port {}) ===",
+                    if use_gpu { "GPU (Vulkan)" } else { "CPU" },
+                    port
+                );
+                match file.try_clone() {
+                    Ok(err_file) => {
+                        cmd.stdout(Stdio::from(file));
+                        cmd.stderr(Stdio::from(err_file));
+                    }
+                    // Couldn't duplicate the handle: keep stdout on the log,
+                    // discard stderr rather than panicking.
+                    Err(_) => {
+                        cmd.stdout(Stdio::from(file));
+                        cmd.stderr(Stdio::null());
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Could not open llama-server log at {:?} ({}); discarding output",
+                    log_path, e
+                );
+                cmd.stdout(Stdio::null());
+                cmd.stderr(Stdio::null());
+            }
+        }
 
         // Spawn the process
         let child = cmd.spawn().map_err(|e| {
@@ -367,9 +440,10 @@ impl LlamaServer {
 
         *self.child.lock().await = Some(child);
 
-        // Use shorter timeout for GPU mode to allow faster fallback
+        // GPU mode: scale the timeout by model size so a large model loading
+        // into VRAM isn't mistaken for a GPU failure and bounced to CPU.
         let timeout_secs = if use_gpu {
-            GPU_HEALTH_CHECK_TIMEOUT_SECS
+            gpu_health_timeout_secs(config)
         } else {
             HEALTH_CHECK_TIMEOUT_SECS
         };
@@ -442,6 +516,7 @@ impl LlamaServer {
         }
 
         *self.status.write().await = ServerStatus::Stopped;
+        *self.gpu_active.write().await = None;
         info!("llama-server stopped");
         Ok(())
     }
@@ -453,6 +528,7 @@ impl LlamaServer {
             let _ = child.kill().await;
         }
         *self.status.write().await = ServerStatus::Stopped;
+        *self.gpu_active.write().await = None;
     }
 
     /// Shutdown the server and prevent restarts

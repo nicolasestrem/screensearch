@@ -42,6 +42,20 @@ interface ServerStatus {
   idle_seconds: number;
   model_loaded: boolean;
   server_binary_available: boolean;
+  // 'gpu' (Vulkan), 'cpu', or 'unknown' when not running.
+  acceleration?: 'gpu' | 'cpu' | 'unknown';
+}
+
+// A locally discovered vision-capable model (GGUF + mmproj pair) the user can pick.
+interface VisionModelEntry {
+  id: string;
+  model_file: string;
+  mmproj_file: string;
+  selected: boolean;
+}
+interface VisionModelsResponse {
+  models: VisionModelEntry[];
+  selected: string | null;
 }
 
 // Format idle time for display
@@ -104,6 +118,17 @@ export function SettingsPanel() {
       if (status === 'running') return 5000;
       return false;
     },
+  });
+
+  // Locally discovered vision models (GGUF + mmproj pairs) for the picker.
+  const { data: visionModels, refetch: refetchVisionModels } = useQuery<VisionModelsResponse>({
+    queryKey: ['vision-models'],
+    queryFn: async () => {
+      const res = await fetch('/api/vision/models');
+      if (!res.ok) throw new Error('Failed to fetch vision models');
+      return res.json();
+    },
+    enabled: isSettingsPanelOpen,
   });
 
   // Server control mutations
@@ -206,7 +231,7 @@ export function SettingsPanel() {
   const [retentionDays, setRetentionDays] = useState(30);
   const [visionEnabled, setVisionEnabled] = useState(false);
   const [visionProvider, setVisionProvider] = useState('local');
-  const [visionModel, setVisionModel] = useState('ministral-3:3b');
+  const [visionModel, setVisionModel] = useState('gemma-4-E4B');
   const [visionEndpoint, setVisionEndpoint] = useState('http://127.0.0.1:31130');
   const [visionApiKey, setVisionApiKey] = useState('');
   const [newExcludedApp, setNewExcludedApp] = useState('');
@@ -221,7 +246,7 @@ export function SettingsPanel() {
       setRetentionDays(Number(apiSettings.retention_days));
       setVisionEnabled(apiSettings.vision_enabled === 1);
       setVisionProvider(apiSettings.vision_provider || 'local');
-      setVisionModel(apiSettings.vision_model || 'ministral-3:3b');
+      setVisionModel(apiSettings.vision_model || 'gemma-4-E4B');
       setVisionEndpoint(apiSettings.vision_endpoint || 'http://127.0.0.1:31130');
       setVisionApiKey(apiSettings.vision_api_key || '');
     }
@@ -591,7 +616,7 @@ export function SettingsPanel() {
                 </section>
 
                 <section className="space-y-4">
-                  <h3 className="text-lg font-semibold border-b border-border pb-2">AI & Intelligence</h3>
+                  <h3 className="text-lg font-semibold border-b border-border pb-2">AI & Insights</h3>
 
                   <div className="p-4 bg-card rounded-xl border border-border space-y-4">
                     <div>
@@ -651,6 +676,7 @@ export function SettingsPanel() {
                           vision_provider: visionProvider,
                           vision_model: visionModel,
                           vision_endpoint: visionEndpoint,
+                          vision_api_key: visionApiKey,
                         });
                       }}
                       className={cn(
@@ -727,6 +753,52 @@ export function SettingsPanel() {
                               )}
                             </div>
 
+                            {/* Vision Model Picker — discovered (model + mmproj) pairs in .models/ */}
+                            <div className="space-y-2">
+                              <label className="block text-sm font-medium">Vision model</label>
+                              {visionModels && visionModels.models.length > 0 ? (
+                                <>
+                                  <select
+                                    value={visionModels.selected ?? ''}
+                                    onChange={(e) => {
+                                      const id = e.target.value;
+                                      setVisionModel(id);
+                                      updateSettings.mutate(
+                                        {
+                                          capture_interval: captureInterval,
+                                          monitors: JSON.stringify(monitors),
+                                          excluded_apps: JSON.stringify(excludedApps),
+                                          is_paused: isPaused ? 1 : 0,
+                                          retention_days: retentionDays,
+                                          vision_enabled: visionEnabled ? 1 : 0,
+                                          vision_provider: visionProvider,
+                                          vision_model: id,
+                                          vision_endpoint: visionEndpoint,
+                                          vision_api_key: visionApiKey,
+                                        },
+                                        { onSuccess: () => { refetchVisionModels(); refetchServerStatus(); } }
+                                      );
+                                    }}
+                                    className="w-full bg-background border border-input rounded-lg px-3 py-2 font-mono text-sm"
+                                  >
+                                    {visionModels.models.map((m) => (
+                                      <option key={m.id} value={m.id}>{m.model_file}</option>
+                                    ))}
+                                  </select>
+                                  <p className="text-xs text-muted-foreground">
+                                    Paired projector: {visionModels.models.find((m) => m.id === visionModels.selected)?.mmproj_file ?? '—'}.
+                                    Changing the model restarts the local server on the next request.
+                                  </p>
+                                </>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">
+                                  No vision-capable model found. Drop a Gemma&nbsp;4 GGUF and its matching
+                                  <code className="mx-1 px-1 rounded bg-secondary/60">*mmproj*.gguf</code>
+                                  into <code className="px-1 rounded bg-secondary/60">.models/</code>, then reopen settings.
+                                </p>
+                              )}
+                            </div>
+
                             {/* Divider */}
                             <div className="h-px bg-border/50" />
 
@@ -785,7 +857,12 @@ export function SettingsPanel() {
                                   {serverStatus.status === 'running' && (
                                     <div className="text-xs text-muted-foreground space-y-1">
                                       <p>Idle: {formatIdleTime(serverStatus.idle_seconds)}</p>
-                                      {serverStatus.model_loaded && <p className="text-green-500">Model loaded in VRAM</p>}
+                                      {serverStatus.acceleration === 'gpu' && (
+                                        <p className="text-green-500">Running on GPU (Vulkan) — model offloaded to VRAM</p>
+                                      )}
+                                      {serverStatus.acceleration === 'cpu' && (
+                                        <p className="text-yellow-500">Running on CPU — no GPU offload. See bin/llama-server.log for the Vulkan reason.</p>
+                                      )}
                                     </div>
                                   )}
 

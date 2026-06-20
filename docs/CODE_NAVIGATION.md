@@ -57,19 +57,30 @@
 
 | Concern | File |
 |---|---|
-| `--mmproj` flag and server config | `screensearch-llm/src/server.rs` |
-| Model/projector discovery | `screensearch-llm/src/download.rs` (`resolve_mmproj_for`, `resolve_vision_model`) |
+| `--mmproj` flag, GPU mode + log capture | `screensearch-llm/src/server.rs` (`gpu_active`, `gpu_health_timeout_secs`) |
+| Model/projector discovery + quant pick | `screensearch-llm/src/download.rs` (`resolve_mmproj_for`, `resolve_vision_model`, `quant_desirability`, `is_loadable_model_gguf`) |
 | Vision worker (queue consumer) | `screensearch-api/src/workers/vision_worker.rs` |
-| Vision endpoints (analyze, status) | `screensearch-api/src/handlers/vision.rs` |
+| Vision endpoints (analyze, status, models) | `screensearch-api/src/handlers/vision.rs` (`list_vision_models`) |
+| Server status incl. `acceleration` | `screensearch-api/src/handlers/ai.rs` (`get_server_status`) |
 | Queue and status queries | `screensearch-db/src/queries.rs` (`enqueue_frame_for_analysis`, `get_unanalyzed_frame_ids`, `get_vision_status`) |
-| `vision_*` settings columns | `screensearch-db/src/migrations.rs` |
+| `vision_*` settings columns + Gemma 4 default | `screensearch-db/src/migrations.rs` (`011_gemma4_vision_default`) |
+
+## Startup & Readiness
+
+| Concern | File |
+|---|---|
+| Readiness aggregator endpoint | `screensearch-api/src/handlers/system.rs` (`get_readiness`) |
+| Startup banner | `screensearch-ui/src/components/StartupStatus.tsx` |
+| Non-blocking engine-ready probe | `screensearch-api/src/state.rs` (`embedding_engine_initialized`) |
+| SQLite `busy_timeout` | `screensearch-db/src/db.rs` |
 
 ## Frontend
 
 | Concern | File |
 |---|---|
-| Settings panel | `screensearch-ui/src/components/SettingsPanel.tsx` |
-| Quality-stack status | `screensearch-ui/src/components/EmbeddingsStatus.tsx` |
+| Settings panel + vision model picker + GPU badge | `screensearch-ui/src/components/SettingsPanel.tsx` |
+| Quality-stack status / "Process frames" | `screensearch-ui/src/components/EmbeddingsStatus.tsx` |
+| Startup readiness banner | `screensearch-ui/src/components/StartupStatus.tsx` |
 | Search mode selection | `screensearch-ui/src/components/SearchBar.tsx` |
 | Search invitation | `screensearch-ui/src/components/search/SearchInvite.tsx` |
 | Generation provider page | `screensearch-ui/src/components/AiSettings.tsx` |

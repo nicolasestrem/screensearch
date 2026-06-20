@@ -277,6 +277,7 @@ pub fn discover_local_models() -> Vec<PathBuf> {
                         .extension()
                         .and_then(|ext| ext.to_str())
                         .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
+                    && is_loadable_model_gguf(path)
             })
             // Canonicalize so the same physical file reached via different
             // search dirs (e.g. relative `.models` and an absolute exe-dir
@@ -351,6 +352,91 @@ fn token_overlap(a_lower: &str, b_lower: &str) -> usize {
         .filter(|t| !t.is_empty())
         .filter(|t| a.contains(t))
         .count()
+}
+
+/// Minimum size for a file to be treated as a loadable *primary* model. Filters
+/// out helper GGUFs that live beside real models (e.g. a ~59 MB multi-token
+/// prediction head, `mtp-*.gguf`) so they are never loaded as the generation or
+/// vision model.
+const MODEL_MIN_SIZE_BYTES: u64 = 500_000_000;
+
+/// Whether a GGUF path is a loadable *primary* model — not a multimodal
+/// projector, not a non-standalone helper head (`mtp-*`), and large enough to be
+/// a real model. Projectors are discovered and paired separately via
+/// [`resolve_mmproj_for`].
+fn is_loadable_model_gguf(path: &Path) -> bool {
+    if is_mmproj_file(path) {
+        return false;
+    }
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.to_ascii_lowercase())
+        .unwrap_or_default();
+    // `mtp-*` is a multi-token-prediction head shipped beside Gemma 4 models,
+    // not a model that can be loaded on its own.
+    if name.starts_with("mtp-") {
+        return false;
+    }
+    match std::fs::metadata(path) {
+        Ok(meta) => meta.len() >= MODEL_MIN_SIZE_BYTES,
+        Err(_) => false,
+    }
+}
+
+/// The quantization level (the digit in a `q2`..`q8` token) of a lowercased
+/// filename stem, if present. E.g. `...-q4_k_xl` and `...q4_0...` both → 4.
+fn quant_level(stem_lower: &str) -> Option<u8> {
+    stem_lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .find_map(|tok| {
+            let b = tok.as_bytes();
+            if b.len() == 2 && b[0] == b'q' && b[1].is_ascii_digit() {
+                Some(b[1] - b'0')
+            } else {
+                None
+            }
+        })
+}
+
+/// Desirability score for a model's quantization for continuous on-device use:
+/// Q4 is the sweet spot (quality vs. speed/VRAM); higher quants trade speed for
+/// marginal quality; Q2/Q3 are penalised so a low-quality quant is only picked
+/// when nothing better sits beside it. Unknown/unquantized → neutral.
+fn quant_desirability(stem_lower: &str) -> u32 {
+    match quant_level(stem_lower) {
+        Some(4) => 100,
+        Some(5) => 90,
+        Some(6) => 80,
+        Some(8) => 70,
+        Some(7) => 60,
+        Some(3) => 40,
+        Some(2) => 30,
+        Some(0 | 1) => 25,
+        Some(_) => 50,
+        None => 50,
+    }
+}
+
+/// From vision-model candidates (in stable discovery order), pick the one with
+/// the best quantization, preferring the earliest on ties.
+fn pick_best_quant<'a>(
+    candidates: impl Iterator<Item = &'a (PathBuf, PathBuf)>,
+) -> Option<&'a (PathBuf, PathBuf)> {
+    let mut best: Option<(&'a (PathBuf, PathBuf), u32)> = None;
+    for cand in candidates {
+        let score = cand
+            .0
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| quant_desirability(&s.to_ascii_lowercase()))
+            .unwrap_or(50);
+        // Strictly-greater so the first candidate on a tie wins (stable order).
+        if best.map(|(_, b)| score > b).unwrap_or(true) {
+            best = Some((cand, score));
+        }
+    }
+    best.map(|(c, _)| c)
 }
 
 /// Whether a GGUF filename is a multimodal projector (its name contains
@@ -433,10 +519,11 @@ pub fn discover_vision_models() -> Vec<(PathBuf, PathBuf)> {
 
 /// Resolve the vision model + projector to run for the unified local server.
 ///
-/// Selection order:
-/// 1. A discovered vision model whose filename matches `preferred` (the
+/// Selection order (within each tier, the best quantization wins — see
+/// [`quant_desirability`] — so a Q4 is chosen over a Q2 sitting beside it):
+/// 1. Discovered vision models whose filename matches `preferred` (the
 ///    `vision_model` setting), in either direction (substring).
-/// 2. A Gemma-4 **E4B** model — the unified default (small + fast).
+/// 2. Gemma-4 **E4B** models — the unified default (small + fast).
 /// 3. The first vision-capable model discovered.
 ///
 /// Returns `None` when no local model has a projector beside it.
@@ -446,27 +533,28 @@ pub fn resolve_vision_model(preferred: &str) -> Option<(PathBuf, PathBuf)> {
         return None;
     }
 
+    let stem_lower = |m: &Path| {
+        m.file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase())
+    };
+
     let pref = preferred.trim().to_ascii_lowercase();
     if !pref.is_empty() {
-        if let Some(found) = models.iter().find(|(m, _)| {
-            m.file_stem()
-                .and_then(|s| s.to_str())
-                .map(|s| {
-                    let s = s.to_ascii_lowercase();
-                    s.contains(&pref) || pref.contains(&s)
-                })
+        let matches = models.iter().filter(|(m, _)| {
+            stem_lower(m)
+                .map(|s| s.contains(&pref) || pref.contains(&s))
                 .unwrap_or(false)
-        }) {
+        });
+        if let Some(found) = pick_best_quant(matches) {
             return Some(found.clone());
         }
     }
 
-    if let Some(found) = models.iter().find(|(m, _)| {
-        m.file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_ascii_lowercase().contains("e4b"))
-            .unwrap_or(false)
-    }) {
+    let e4b = models
+        .iter()
+        .filter(|(m, _)| stem_lower(m).map(|s| s.contains("e4b")).unwrap_or(false));
+    if let Some(found) = pick_best_quant(e4b) {
         return Some(found.clone());
     }
 
@@ -1014,5 +1102,52 @@ mod tests {
                 Some("gguf".to_string())
             );
         }
+    }
+
+    #[test]
+    fn test_quant_level_and_desirability() {
+        assert_eq!(quant_level("gemma-4-e4b-it-qat-ud-q4_k_xl"), Some(4));
+        assert_eq!(quant_level("gemma-4-e4b_q4_0-it"), Some(4));
+        assert_eq!(quant_level("gemma-4-e4b-it-qat-ud-q2_k_xl"), Some(2));
+        assert_eq!(quant_level("some-model-no-quant"), None);
+        // Q4 is the sweet spot: preferred over a low quant and over a heavier one.
+        assert!(quant_desirability("m-q4_k_xl") > quant_desirability("m-q2_k_xl"));
+        assert!(quant_desirability("m-q4_k_xl") > quant_desirability("m-q8_0"));
+    }
+
+    #[test]
+    fn test_pick_best_quant_prefers_q4_first_on_tie() {
+        let mk = |m: &str| {
+            (
+                PathBuf::from(format!("{m}.gguf")),
+                PathBuf::from("mmproj.gguf"),
+            )
+        };
+        let q2 = mk("gemma-4-E4B-it-qat-UD-Q2_K_XL");
+        let q4xl = mk("gemma-4-E4B-it-qat-UD-Q4_K_XL");
+        let q4_0 = mk("gemma-4-E4B_q4_0-it");
+        let cands = vec![q2, q4xl.clone(), q4_0];
+        // Q4 beats Q2; on the Q4 tie the earliest (Q4_K_XL) wins.
+        assert_eq!(pick_best_quant(cands.iter()), Some(&q4xl));
+    }
+
+    #[test]
+    fn test_is_loadable_model_gguf_excludes_helpers() {
+        let dir = std::env::temp_dir().join("ss_loadable_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mtp = dir.join("mtp-gemma-4-E4B-it.gguf");
+        let mmproj = dir.join("gemma-4-E4B-it-mmproj.gguf");
+        let partial = dir.join("gemma-4-E4B_q4_0-it.gguf");
+        for f in [&mtp, &mmproj, &partial] {
+            std::fs::write(f, b"x").unwrap();
+        }
+        // mtp heads and projectors are never primary models.
+        assert!(!is_loadable_model_gguf(&mtp));
+        assert!(!is_loadable_model_gguf(&mmproj));
+        // A real model name but below the size floor (e.g. a truncated download)
+        // is also rejected.
+        assert!(!is_loadable_model_gguf(&partial));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

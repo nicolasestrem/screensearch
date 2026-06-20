@@ -595,7 +595,7 @@ interface AppStore {
   aiConfig: {
     providerUrl: string;      // Default: 'local'
     apiKey: string;           // Default: ''
-    model: string;            // Default: 'ministral-3b'
+    model: string;            // Default: 'gemma-4-E4B' (vision-capable)
   };
   setAiConfig: (config: Partial<AiConfig>) => void;
 }
@@ -605,7 +605,7 @@ interface AppStore {
 
 ```typescript
 const PROVIDER_OPTIONS = [
-  { value: 'local', label: 'Bundled Ministral-3-3B', description: 'Optional local answer-generation model' },
+  { value: 'local', label: 'Bundled Gemma 4 E4B (vision)', description: 'Optional on-device model for answers, reports, and screenshot understanding' },
   { value: 'http://localhost:11434/v1', label: 'Ollama-compatible', description: 'Local generation server' },
   { value: 'custom', label: 'OpenAI-compatible', description: 'Remote or local generation endpoint' },
 ];
@@ -662,7 +662,8 @@ if config.use_gpu {
 
 ### 9.3 Expected GPU Output
 
-When llama-server starts with GPU acceleration:
+llama-server's stdout/stderr are captured to **`bin/llama-server.log`** (next to
+the binary), so the Vulkan device and offloaded-layer summary are visible:
 ```
 ggml_vulkan: Using AMD Radeon RX 7900 XTX (RADV)
 ggml_vulkan: Device memory: 24576 MB
@@ -674,9 +675,20 @@ ggml_vulkan: Using NVIDIA GeForce RTX 4090
 ggml_vulkan: Device memory: 24564 MB
 ```
 
-### 9.4 CPU Fallback
+### 9.4 CPU Fallback and acceleration status
 
-If no Vulkan-compatible GPU is found, llama-server automatically falls back to CPU inference. Performance will be slower but functional.
+If no Vulkan-compatible GPU is found (or initialization fails), llama-server
+automatically falls back to CPU inference — slower but functional. Two signals
+make the active mode observable rather than silent:
+
+- **`GET /api/ai/server/status`** returns an `acceleration` field
+  (`"gpu"` / `"cpu"` / `"unknown"`), surfaced in Settings → Data & AI as a
+  **"Running on GPU (Vulkan)"** / **"Running on CPU"** badge.
+- The **GPU-mode health-check timeout scales with model size** (base + per-GB,
+  capped) instead of a fixed short value, so a multi-GB model loading into VRAM
+  on first use is given enough time and is not mistaken for a GPU failure and
+  bounced to CPU. If the badge unexpectedly says CPU, `bin/llama-server.log`
+  shows the Vulkan reason.
 
 ---
 

@@ -263,7 +263,7 @@ export function SearchInvite({ isOpen, onClose }: SearchInviteProps) {
                     <span>to close</span>
                   </span>
                 </div>
-                <span className="text-primary/70">ScreenSearch Intel</span>
+                <span className="text-primary/70">Insights</span>
               </div>
             </div>
           </motion.div>

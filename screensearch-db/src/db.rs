@@ -57,7 +57,13 @@ impl DatabaseManager {
             config.min_connections
         );
 
-        // Create SQLite connection options
+        // Create SQLite connection options.
+        //
+        // `busy_timeout` is essential: in WAL mode writers still serialize, so a
+        // concurrent write (e.g. the vision worker storing an analysis result
+        // while the capture/OCR pipeline inserts a frame) would otherwise return
+        // `SQLITE_BUSY` ("database is locked") immediately. With a busy timeout
+        // the writer waits for the lock instead of erroring.
         let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", config.path))
             .map_err(|e| {
                 crate::DatabaseError::InitializationError(format!(
@@ -65,7 +71,8 @@ impl DatabaseManager {
                     e
                 ))
             })?
-            .create_if_missing(true);
+            .create_if_missing(true)
+            .busy_timeout(Duration::from_secs(10));
 
         // Create connection pool with configured limits
         let pool = SqlitePoolOptions::new()

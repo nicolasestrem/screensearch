@@ -6,7 +6,7 @@ export function IntelligencePage() {
         <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500">
             <div className="space-y-2">
                 <h1 className="font-serif text-[34px] lg:text-[42px] leading-[1.08] tracking-[-0.01em] text-ink">
-                    Intelligence
+                    Insights
                 </h1>
                 <p className="text-ink-2 text-[16px] leading-[1.6]">
                     Generate insights and summaries from your ScreenSearch data using AI.
