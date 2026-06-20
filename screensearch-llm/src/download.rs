@@ -541,10 +541,17 @@ pub fn discover_vision_models() -> Vec<(PathBuf, PathBuf)> {
 /// who deliberately sets one of those as their preference still gets it.
 fn pref_matches_vision_stem(stem_lower: &str, pref: &str) -> bool {
     let hit = stem_lower.contains(pref) || pref.contains(stem_lower);
-    let allow_thinking = pref.contains("thinking");
-    let allow_action = pref.contains("action");
-    hit && (allow_thinking || !stem_lower.contains("thinking"))
-        && (allow_action || !stem_lower.contains("action"))
+    // Match `thinking` / `action` only as whole tokens (split on non-alphanumeric)
+    // so a generic preference is not tripped by substrings such as `extraction`,
+    // `interaction`, or `transaction` in an unrelated model name.
+    let has_token = |s: &str, tok: &str| {
+        s.split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|t| t == tok)
+    };
+    let allow_thinking = has_token(pref, "thinking");
+    let allow_action = has_token(pref, "action");
+    hit && (allow_thinking || !has_token(stem_lower, "thinking"))
+        && (allow_action || !has_token(stem_lower, "action"))
 }
 
 /// Returns `None` when no local model has a projector beside it.
@@ -1182,6 +1189,12 @@ mod tests {
         assert!(pref_matches_vision_stem(
             "gemma-4-e4b-it-qat-ud-q4_k_xl",
             "gemma-4-e4b"
+        ));
+        // `action`/`thinking` are matched as whole tokens, not substrings: a model
+        // whose name merely contains `extraction` is not excluded.
+        assert!(pref_matches_vision_stem(
+            "screen-extraction-qwen3-vl-4b-q4_k_m",
+            "qwen3-vl-4b"
         ));
     }
 

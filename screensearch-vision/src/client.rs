@@ -8,11 +8,14 @@ use serde_json::json;
 use std::io::Cursor;
 
 /// Cap on tokens generated per frame analysis. The response is a small JSON
-/// object, so a tight bound keeps worst-case decode time low (the model can
-/// otherwise spend its whole budget enumerating on-screen text — which native
-/// OCR already captures — and never close the JSON). ~320 leaves ample headroom
-/// for the terse schema below while keeping warm latency near ~1s.
-const MAX_OUTPUT_TOKENS: u32 = 320;
+/// object, so this bounds worst-case decode time (the model can otherwise spend
+/// its whole budget enumerating on-screen text — which native OCR already
+/// captures — and never close the JSON). Generation normally stops at EOS around
+/// ~100 tokens once the terse JSON closes, so this cap costs nothing in the
+/// common case; it is set with headroom (512) so a model that ignores the "be
+/// brief" instruction still produces a *complete*, parseable object rather than
+/// a truncated one that fails `serde_json::from_str` and drops the frame.
+const MAX_OUTPUT_TOKENS: u32 = 512;
 
 pub struct OllamaClient {
     client: Client,

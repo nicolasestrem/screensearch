@@ -36,7 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     models) and `--flash-attn on` when a projector is loaded. File:
     `screensearch-llm/src/server.rs`.
   - **Bounded, terser vision output:** the analysis request now sends a
-    `max_tokens` cap (320) and a tightened prompt that no longer asks the model to
+    `max_tokens` cap (512, with headroom so output always closes as valid JSON)
+    and a tightened prompt that no longer asks the model to
     transcribe on-screen text (native OCR already captures it), so responses stay
     compact and always close as valid JSON. Also fixes the response key to
     `app_hint` (was `application`, which silently never populated). File:

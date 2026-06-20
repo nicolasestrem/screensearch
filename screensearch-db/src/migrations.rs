@@ -452,6 +452,11 @@ WHERE vision_model = 'ministral-3:3b' OR vision_model IS NULL;
 /// The value substring-matches the on-disk `Qwen3VL-4B-Instruct` GGUF
 /// (see `resolve_vision_model`), which also excludes `*-thinking`/`*-action`
 /// variants from a generic match.
+///
+/// `ministral-3:3b` / `NULL` are already migrated to `gemma-4-E4B` by migration
+/// 011, so in normal forward order no row still carries them here; they are
+/// included defensively (the UPDATE is idempotent) so a fresh DB or any future
+/// migration-order change still lands on the current default.
 const MIGRATION_012_QWEN3VL_VISION_DEFAULT: &str = r#"
 UPDATE settings SET vision_model = 'Qwen3-VL-4B-Instruct'
 WHERE vision_model = 'gemma-4-E4B' OR vision_model = 'ministral-3:3b' OR vision_model IS NULL;

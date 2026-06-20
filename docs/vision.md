@@ -22,7 +22,8 @@ still works if you prefer it.
 
 For speed, the server is launched with `--image-max-tokens 1024` and
 `--flash-attn on` when a projector is loaded, and each analysis request caps
-output (`max_tokens` ≈ 320) with a prompt that does **not** re-transcribe
+output (`max_tokens` 512, with headroom so the JSON always closes) with a prompt
+that does **not** re-transcribe
 on-screen text — native OCR already captures it — so responses stay compact and
 always close as valid JSON.
 

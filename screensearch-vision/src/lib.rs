@@ -1,6 +1,5 @@
 pub mod client;
 pub mod local_model;
-pub mod models;
 
 use anyhow::Result;
 use async_trait::async_trait;
