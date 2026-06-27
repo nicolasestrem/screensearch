@@ -7,9 +7,29 @@
   \___ \ / __| '__/ _ \/ _ \ '_ \ \___ \ / _ \/ _` | '__/ __| '_ \ 
   ____) | (__| | |  __/  __/ | | |____) |  __/ (_| | | | (__| | | |
  |_____/ \___|_|  \___|\___|_| |_|_____/ \___|\__,_|_|  \___|_| |_|
-                                                                   
+
+                                                  
                                                                    
 ```
+
+
+
+
+### Check out my new version repo for a faster lighter and better experience!
+[**https://github.com/nicolasestrem/screensearch-v2c**](https://github.com/nicolasestrem/screensearch-v2c)                
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #### Ever wish you could Ctrl+F your entire digital life?
 
