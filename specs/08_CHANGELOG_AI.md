@@ -85,3 +85,7 @@ PASS: tracked repository diff unchanged by packaging
 - Synced the PR with main through a regular merge; no force-push or history rewrite.
 - Initial guard verification accepted 0.11.16 and rejected main's actual 0.11.14
   lockfile. Full verification and alert closure are recorded in Build Review.
+
+- Follow-up Windows verification on Rust 1.95 exposed two existing UIA
+  manual_is_multiple_of lint errors. Replaced only those warning-counter
+  predicates with Clippy's equivalent u64 method; kept the warnings-as-errors gate.

@@ -176,7 +176,11 @@ pub(crate) fn worker_main(
         // Surface it — rate-limited — so sustained pressure is visible in the log without
         // per-frame spam. (Hoisted here from `read_foreground` so it also covers over-budget
         // *error* walks, not just successful ones.)
-        if over_budget && OVER_BUDGET_WARNS.fetch_add(1, Ordering::Relaxed) % WARN_EVERY == 0 {
+        if over_budget
+            && OVER_BUDGET_WARNS
+                .fetch_add(1, Ordering::Relaxed)
+                .is_multiple_of(WARN_EVERY)
+        {
             tracing::warn!(
                 elapsed_ms,
                 budget_ms = budget.latency_ms,

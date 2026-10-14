@@ -248,3 +248,15 @@ The generated-trait Clippy check also passes on the corrected minimum:
     Checking traits v0.4.0 (/workspace/screensearch-v2c/crates/traits)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.73s
 ```
+
+### Rust 1.95 Windows lint remediation
+
+The full Windows check passed SQLite compilation and then flagged two UIA warning
+counters with the newly active manual_is_multiple_of lint. Applied Clippy's
+exact equivalent u64 is_multiple_of(64) expressions, preserving fetch_add order,
+short-circuiting, and warning frequency. No lint suppression or behavior change.
+
+```text
+2026-10-14T21:30:55.6090700Z error: manual implementation of `.is_multiple_of()`
+2026-10-14T21:30:55.6449686Z error: manual implementation of `.is_multiple_of()`
+```
