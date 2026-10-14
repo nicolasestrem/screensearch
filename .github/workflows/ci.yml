@@ -39,8 +39,11 @@ jobs:
       # --- Rust workspace ---
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.95.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Reject vulnerable quinn-proto lockfile entries
+        run: node scripts/check-quinn-security.mjs
       # src-tauri declares the MCP binary as a bundle.externalBin; tauri-build resolves it on
       # EVERY compile of the app crate (not just at bundle time), so it must be staged before
       # any `cargo` step touches the workspace, or the build fails (0.3.0 PR8).
@@ -49,11 +52,11 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all -- --check
       - name: clippy (-D warnings)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: build
-        run: cargo build --workspace
+        run: cargo build --locked --workspace
       - name: test
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
 
       # --- Typed-IPC contract guard: cargo test regenerates the ts-rs bindings;
       #     if they differ from what's committed, the contract drifted. ---
@@ -62,7 +65,7 @@ jobs:
         run: git diff --exit-code -- ui/src/bindings
 
       - name: environment doctor (informational)
-        run: cargo run -p doctor
+        run: cargo run --locked -p doctor
 
 # NOTE: the NSIS installer ships via `tauri build` (`bundle.targets=["nsis"]`, v0.1.0; Inno/MSI/
 # portable ZIP dropped — see specs/07 #26). A CI artifact + code-signing job is still TODO. CI gates

@@ -1008,6 +1008,13 @@ transitions, and model load/evict are logged at info. No screen content or OCR t
   ask streams an answer.
 
 ## 11. CI/CD
+The workspace MSRV is **Rust 1.95**; local rustup, CI, and release builds pin
+**1.95.0**. The committed `libsqlite3-sys` 0.38.1 build script uses `cfg_select!`,
+stabilized in 1.95 (despite omitting rust-version in its own manifest). The `quinn-proto` security update (PR #112, GHSA-4w2j-m93h-cj5j) requires at
+least 1.85 and is retained at 0.11.16. CI and release builds reject affected
+`quinn-proto` lockfile entries with `scripts/check-quinn-security.mjs`; Cargo CI
+and MCP staging use `--locked` so verification cannot silently resolve another graph.
+
 GitHub Actions on `windows-latest`: `cargo fmt --check`, `cargo clippy --workspace -D warnings`,
 `cargo build`, `cargo test` (GPU/WinRT tests `#[ignore]`d), `ui` `npm ci && npm run build`, and a
 `tauri build` artifact job. Release workflow (later): **NSIS** installer (shipped v0.1.0; code-signing pending). Inno/MSI/portable ZIP dropped — `07` #26.

@@ -129,3 +129,12 @@ Manual steps still required (e.g. signing certs, first-run model download, CI se
   remote CI, interactive app-wide QA, GPU/model smoke, installer or release check
   was performed. Existing hardware/manual gates above remain open.
 
+
+
+## 2026-10-14 — PR #112 verification boundary
+
+The task's executor is Linux; the Windows-only application cannot be launched
+here. Windows build/clippy/tests and binding freshness are verified by GitHub CI
+on Rust 1.95.0. Dependabot alert #4 (quinn-proto, GHSA-4w2j-m93h-cj5j) must move
+to fixed after merge; do not dismiss or suppress it. This update does not itself
+publish a new installer or update existing installations.

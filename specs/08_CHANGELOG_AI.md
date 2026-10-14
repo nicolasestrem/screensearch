@@ -71,3 +71,24 @@ PASS: tracked repository diff unchanged by packaging
   existing application identity/version; it is unsigned and is not a published
   updater artifact. Existing local regression and static-review evidence remains
   separate from any subsequent remote CI or PR-review result.
+
+
+## 2026-10-14 — Remediate PR #112 and guard the Quinn advisory
+
+- Kept quinn-proto 0.11.16 to fix remote memory exhaustion
+  (GHSA-4w2j-m93h-cj5j; first patched version 0.11.15).
+- Addressed both Claude and Codex's MSRV finding: documented MSRV 1.95 (required
+  by the locked libsqlite3-sys build script), pinned local/CI/release toolchains to 1.95.0,
+  and made Cargo CI and MCP staging use the committed lockfile.
+- Added an advisory-specific gate to CI and release to prevent vulnerable Quinn
+  versions from returning, without disabling Dependabot alerts or lint gates.
+- Synced the PR with main through a regular merge; no force-push or history rewrite.
+- Initial guard verification accepted 0.11.16 and rejected main's actual 0.11.14
+  lockfile. Full verification and alert closure are recorded in Build Review.
+
+- Follow-up Windows verification on Rust 1.95 exposed two existing UIA
+  manual_is_multiple_of lint errors. Replaced only those warning-counter
+  predicates with Clippy's equivalent u64 method; kept the warnings-as-errors gate.
+
+- Applied the same unsigned is_multiple_of predicate to the store perf fixture
+  while auditing the remaining modulo checks under the new compiler.

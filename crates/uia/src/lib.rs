@@ -159,7 +159,7 @@ impl UiaTextProvider {
         // worker, so the target app was hammered continuously and never recovered.
         if self.in_flight.load(Ordering::Acquire) {
             let n = self.skipped.fetch_add(1, Ordering::Relaxed) + 1;
-            if n % SKIP_WARN_EVERY == 0 {
+            if n.is_multiple_of(SKIP_WARN_EVERY) {
                 tracing::warn!(
                     skipped = n,
                     "UIA busy; frames falling back to OCR (target app under load, rate-limited)"

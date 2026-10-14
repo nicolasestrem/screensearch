@@ -197,7 +197,7 @@ async fn hybrid_search_under_200ms_on_realistic_db() {
     .map(|(n, t)| SearchQuery {
         text: (*t).to_string(),
         limit: 20,
-        time_range: (n % 3 == 0).then_some(mid),
+        time_range: n.is_multiple_of(3).then_some(mid),
         include_chrome: false,
     })
     .collect();

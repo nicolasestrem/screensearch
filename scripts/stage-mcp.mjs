@@ -27,7 +27,7 @@ function hostTriple() {
 
 function main() {
   console.log("[stage-mcp] building screensearch-mcp (release)...");
-  execFileSync("cargo", ["build", "--release", "-p", "mcp"], {
+  execFileSync("cargo", ["build", "--locked", "--release", "-p", "mcp"], {
     cwd: repoRoot,
     stdio: "inherit",
   });
