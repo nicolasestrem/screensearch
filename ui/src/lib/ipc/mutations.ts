@@ -123,18 +123,6 @@ export function useResolveMark() {
   });
 }
 
-/** Attach the optional one-line note to a mark after the fact (`03 §7`). */
-export function useSetMarkNote() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ markId, note }: { markId: number; note: string }) =>
-      cmd.setMarkNote(markId, note),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.marks });
-    },
-  });
-}
-
 /**
  * Enable/disable the local HTTP API (and set the port). Returns the new `ApiStatus`;
  * the panel reads `enabled && !running && last_error` to show the loud port-in-use

@@ -506,6 +506,10 @@ pub trait Store: Send + Sync {
         Ok(false)
     }
 
+    async fn clear_session_title_summary(&self, _id: i64) -> Result<bool> {
+        Ok(false)
+    }
+
     /// Injects (or replaces) the query-embedding provider that lights up the vector
     /// arm of [`Self::hybrid_search`]. Set once the model has finished loading off
     /// the launch thread (`03 §5`). Default is a no-op for stores that never embed.

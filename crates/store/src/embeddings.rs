@@ -13,6 +13,11 @@ use traits::{ChunkSource, Embedding, Result};
 
 use crate::{SqliteStore, EMBEDDING_DIM};
 
+/// sqlite-vec's hard upper bound for `k` in a KNN query. This is an external engine
+/// constraint, not a ScreenSearch tuning knob; every SQL boundary must clamp to it
+/// (`k value in knn query too large`, usage review 2026-08-01 §7.4).
+pub(crate) const SQLITE_VEC_MAX_K: u32 = 4_096;
+
 /// Packs an f32 vector into the little-endian byte blob `vec0` stores/queries.
 pub(crate) fn f32_blob(v: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(v.len() * 4);
@@ -123,7 +128,8 @@ impl SqliteStore {
 
     /// Frame ids of the text chunks nearest `query` by cosine distance,
     /// nearest-first and de-duplicated by frame. Building block for the vector
-    /// arm of hybrid search.
+    /// arm of hybrid search. `k` is capped at sqlite-vec's [`SQLITE_VEC_MAX_K`]
+    /// engine limit (usage review 2026-08-01 §7.4).
     pub async fn nearest_text_frames(&self, query: &Embedding, k: u32) -> Result<Vec<i64>> {
         self.knn_frames("embedding_vectors", "embeddings", "embedding_id", query, k)
             .await
@@ -145,6 +151,10 @@ impl SqliteStore {
                 query.len()
             );
         }
+        // Clamp at the SQL boundary: `nearest_text_frames` is public and its caller-provided
+        // `k` must never reach sqlite-vec above the engine's hard limit (usage review
+        // 2026-08-01 §7.4).
+        let k = k.min(SQLITE_VEC_MAX_K);
         let blob = f32_blob(&query.0);
         self.with_conn(move |conn| {
             // KNN runs in a subquery (the `k = ?` constraint must stand alone),

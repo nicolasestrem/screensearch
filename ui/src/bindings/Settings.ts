@@ -223,8 +223,9 @@ resume_min_dwell_secs: number,
  */
 sessions_min_len_secs: number, 
 /**
- * Pass-1 micro gap close (`sessions.gap_close_secs`, 0.4.0 PR4). Final clamp
- * 60..=3600 seconds; macro grouping parameters remain named constants, not settings.
+ * Pass-1 micro gap close (`sessions.gap_close_secs`, 0.4.0 PR4). Default 120 seconds:
+ * the 11-day sweep improved F1, positive F1, and tool accuracy versus 300 seconds
+ * (usage review 2026-08-01 §6.7). Final clamp 60..=3600 seconds.
  */
 sessions_gap_close_secs: number, 
 /**

@@ -65,8 +65,8 @@ All paths are under `http://127.0.0.1:<port>`.
 ### `GET /v1/search`
 
 Query params: `q` (required), `from`, `to` (unix ms, half-open `[from, to)` — provide both
-or neither), `limit` (default 20, clamped `1..=100`), `include_chrome` (default = your
-`text.include_chrome_default`).
+or neither), `limit` (default 20, clamped `1..=100`), `include_chrome` (`1`/`0` or
+`true`/`false`, case-insensitive; default = your `text.include_chrome_default`).
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \

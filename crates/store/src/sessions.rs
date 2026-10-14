@@ -555,6 +555,17 @@ impl SqliteStore {
         })
         .await
     }
+
+    pub async fn clear_session_title_summary(&self, id: i64) -> Result<bool> {
+        self.with_conn(move |conn| {
+            Ok(conn.execute(
+                "UPDATE sessions SET title=NULL, summary=NULL, summary_model=NULL,
+                 updated_at=unixepoch()*1000 WHERE id=?1",
+                [id],
+            )? > 0)
+        })
+        .await
+    }
 }
 
 #[cfg(test)]

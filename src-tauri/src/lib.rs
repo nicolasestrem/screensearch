@@ -116,6 +116,31 @@ async fn load_session_detail(
     else {
         return Ok(None);
     };
+    // Redact a legacy invalid cache from every in-app detail response. The base detail request
+    // races summary generation in the Session route, so exposing `"User"` here would keep it
+    // visible while generation runs — or forever when inference is unavailable. For an
+    // `include_summary` request, clear the durable cache before checking provider readiness:
+    // otherwise non-UI callers can continue reading the poisoned row after the unavailable-sidecar
+    // error (usage review 2026-08-01 §7.4).
+    let invalid_cached_summary = session
+        .summary
+        .as_deref()
+        .is_some_and(|summary| !kernel::sessions_intel::is_useful_session_summary(summary));
+    if invalid_cached_summary {
+        session.title = None;
+        session.summary = None;
+        session.summary_model = None;
+        if include_summary
+            && !store
+                .clear_session_title_summary(session_id)
+                .await
+                .map_err(|error| error.to_string())?
+        {
+            return Err(format!(
+                "session {session_id} disappeared before its invalid summary cache could be cleared"
+            ));
+        }
+    }
     let fully_cached =
         session.title.is_some() && session.summary.is_some() && session.summary_model.is_some();
     if include_summary && !fully_cached {
@@ -388,8 +413,9 @@ async fn search(query: SearchQuery, state: State<'_, AppState>) -> Result<Vec<Se
     store.hybrid_search(&query).await.map_err(|e| e.to_string())
 }
 
-/// Start/stop the always-on capture loop (`capture_control`, `03 §7`). Capture is
-/// off until the user starts it (privacy-first, `07`).
+/// Starts or stops capture explicitly. Capture starts once backend boot wires a usable kernel
+/// (the 2026-08-01 production-usage hardening decision); Stop remains an immediate session-local
+/// privacy control (`capture_control`, `03 §7`).
 #[tauri::command]
 async fn capture_control(
     control: CaptureControl,
@@ -1590,6 +1616,26 @@ pub fn run() {
                 &tray_readiness,
                 tray_vision_active,
             );
+
+            // Capture is a backend lifecycle invariant, not a WebView mount side effect: 8 of
+            // 75 measured launches never reached the frontend start command and captured
+            // nothing (usage review 2026-08-01 §3.4). Start synchronously after the kernel,
+            // managed state, and tray are wired: a detached task could first run after
+            // `graceful_shutdown` stops capture during an immediate quit. `start_capture` is
+            // idempotent, so the frontend's later Start command remains a harmless no-op.
+            // OCR/source failures are loud but non-fatal; re-syncing from the resulting readiness
+            // snapshot also closes the startup event-subscription race for the tray without a
+            // poller.
+            if let Some(kernel) = app.state::<AppState>().kernel.clone() {
+                let handle = app.handle().clone();
+                if let Err(e) = tauri::async_runtime::block_on(kernel.start_capture()) {
+                    tracing::warn!(
+                        error = %e,
+                        "capture autostart failed; app will continue without capture"
+                    );
+                }
+                tray::on_readiness(&handle, &kernel.readiness());
+            }
 
             // Start the local API if it was left enabled (loud on a bind failure, D6).
             local_api::autostart(app.handle());
@@ -2934,6 +2980,51 @@ mod tests {
         assert_eq!(
             detail.exchanges[0].kind,
             traits::SessionArtifactKind::Exchange
+        );
+    }
+
+    #[tokio::test]
+    async fn session_detail_redacts_invalid_cached_summary_before_regeneration() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let session_id = store
+            .insert_session(traits::NewSession {
+                started_at: 0,
+                ended_at: Some(1),
+                kind: traits::SessionKind::Ai,
+                tool: Some("codex".to_string()),
+                host: Some(traits::SessionHost::Desktop),
+                context_key: "ai:codex".to_string(),
+                confidence: 0.9,
+                frozen: false,
+            })
+            .await
+            .unwrap();
+        store
+            .set_session_title_summary(session_id, "Speaker", "User", "bad-model.gguf")
+            .await
+            .unwrap();
+
+        let base = load_session_detail(store.clone(), session_id, false, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            base.session.title.is_none()
+                && base.session.summary.is_none()
+                && base.session.summary_model.is_none(),
+            "base detail responses must redact the invalid cache while summary generation runs"
+        );
+
+        let error = load_session_detail(store.clone(), session_id, true, None)
+            .await
+            .expect_err("the invalid summary must reach the generator, not the cached response");
+        assert_eq!(error, "inference sidecar not ready yet");
+        let persisted = store.get_session(session_id).await.unwrap().unwrap();
+        assert!(
+            persisted.title.is_none()
+                && persisted.summary.is_none()
+                && persisted.summary_model.is_none(),
+            "an include-summary request must durably clear an invalid cache before provider readiness"
         );
     }
 

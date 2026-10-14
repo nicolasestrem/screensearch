@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - README "Inspirations & prior art" section crediting screenpipe, Rewind.ai, Rem, and OpenRecall.
+- Cleanup regression evidence and a reproducible local unsigned Windows installer
+  build record in `specs/05_BUILD_REVIEW.md`.
+
+### Removed
+- Unused UI scaffold, search-icon alias, local-day helper, and mark-note mutation hook;
+  active UI and mark-note commands are unchanged.
+- Unused `thiserror` workspace declaration and the OCR crate's unused direct `tracing`
+  dependency; no dependency versions changed.
 
 ## Older versions
 

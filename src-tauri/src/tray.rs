@@ -60,10 +60,10 @@ enum TrayVisual {
     Error,
 }
 
-/// Maps capture readiness → the tray visual (`03 §7d`). `Ready` = capturing;
-/// `Unavailable`/`Error` = a capture problem; everything else (not-yet-probed, stopped,
-/// coming up) reads as paused — capture is user-triggered, so "paused" is the honest
-/// resting state.
+/// Maps capture readiness → the tray visual (`03 §7d`, usage review 2026-08-01 §3.4).
+/// `Ready` = capturing; `Unavailable`/`Error` = a capture problem; everything else
+/// (not-yet-probed, stopped, coming up) reads as paused. Backend boot normally crosses
+/// this state only briefly, while an explicit stop remains visible until capture resumes.
 fn tray_visual(status: ComponentStatus) -> TrayVisual {
     match status {
         ComponentStatus::Ready => TrayVisual::Capturing,
@@ -268,10 +268,10 @@ fn compose_rgba(base: &image::RgbaImage, dot: [u8; 4]) -> Vec<u8> {
     img.into_raw()
 }
 
-// ── State feed (called from `forward_events`; no poller) ────────────────────────────
+// ── State feed (called from `forward_events` and boot sync; no poller) ─────────────────
 
 /// Re-syncs the icon, tooltip, pause/resume label and the authoritative `capture_running`
-/// flag from a readiness snapshot (`03 §7d`).
+/// flag from a readiness snapshot (`03 §7d`, usage review 2026-08-01 §3.4).
 pub fn on_readiness(app: &AppHandle, readiness: &Readiness) {
     let Some(state) = app.try_state::<TrayState>() else {
         return;

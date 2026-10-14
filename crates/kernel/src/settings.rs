@@ -187,7 +187,7 @@ pub async fn load_settings(store: &dyn Store) -> Settings {
         overlay_max_results: num(store, "overlay.max_results", d.overlay_max_results).await,
         resume_min_dwell_secs: num(store, "resume.min_dwell_secs", d.resume_min_dwell_secs).await,
         sessions_min_len_secs: num(store, "sessions.min_len_secs", d.sessions_min_len_secs).await,
-        sessions_gap_close_secs: num(store, "sessions.gap_close_secs", d.sessions_gap_close_secs)
+        sessions_gap_close_secs: load_sessions_gap_close_secs(store, d.sessions_gap_close_secs)
             .await,
         marks_hotkey: json(store, "marks.hotkey", d.marks_hotkey).await,
         throttle_enabled: boolean(store, "throttle.enabled", d.throttle_enabled).await,
@@ -225,7 +225,10 @@ pub async fn load_settings(store: &dyn Store) -> Settings {
 /// removed the image-embedding lane toggle (`enrich.image_embeddings`); 0.3.2 PR5 retired
 /// the two provably-inert knobs — `storage.jpeg_quality` (inert since the lossless-WebP
 /// storage path) and `capture.uia_run_on_interactive` (its only firing triggers were
-/// removed by the 0.3.0 trigger trim, `07` #83) — per the D8 removal mechanics.
+/// removed by the 0.3.0 trigger trim, `07` #83) — per the D8 removal mechanics. The
+/// 2026-08-01 usage review demoted the flat `sessions.focus_min_len_secs` sweep parameter
+/// to a named constant; the already-constant density parameter is listed too so either
+/// historical orphan is removed rather than silently retained (usage review 2026-08-01 §6.7).
 pub const RETIRED_SETTINGS_KEYS: &[&str] = &[
     "capture.event_on_clipboard",
     "capture.event_on_typing_pause",
@@ -235,6 +238,8 @@ pub const RETIRED_SETTINGS_KEYS: &[&str] = &[
     "enrich.image_embeddings",
     "storage.jpeg_quality",
     "capture.uia_run_on_interactive",
+    "sessions.focus_min_len_secs",
+    "sessions.focus_min_density_fph",
 ];
 
 /// Deletes any [`RETIRED_SETTINGS_KEYS`] left in the `settings` table by an older
@@ -688,6 +693,103 @@ async fn num<T: FromStr>(store: &dyn Store, key: &str, default: T) -> T {
             tracing::warn!(key, error = %e, "settings: read failed; using default");
             default
         }
+    }
+}
+/// The pre-retune micro-gap default selected from the original two-day sample.
+const LEGACY_SESSIONS_GAP_CLOSE_SECS: u32 = 300;
+
+/// One-shot marker for the 300 → 120 default migration. It is deliberately outside [`Settings`]
+/// so ordinary saves neither expose nor reset migration state.
+const SESSIONS_GAP_CLOSE_MIGRATED_KEY: &str = "sessions.gap_close_secs_migrated";
+
+/// Loads `sessions.gap_close_secs`, remapping only the retired 300-second default to the 11-day
+/// sweep's 120-second winner (usage review 2026-08-01 §6.7).
+///
+/// The marker makes this a true one-shot: a user who deliberately chooses 300 after upgrade keeps
+/// it. A fresh install latches the default and marker together; custom stored values latch without
+/// rewriting. The value and marker commit atomically, so a failed migration has no partial state
+/// and the next load retries; this load still returns the safe new default.
+async fn load_sessions_gap_close_secs(store: &dyn Store, default: u32) -> u32 {
+    let migrated = matches!(
+        store.get_setting(SESSIONS_GAP_CLOSE_MIGRATED_KEY).await,
+        Ok(Some(_))
+    );
+    let raw = match store.get_setting("sessions.gap_close_secs").await {
+        Ok(Some(raw)) => raw,
+        Ok(None) => {
+            if !migrated {
+                persist_sessions_gap_close_migration(store, default).await;
+            }
+            return default;
+        }
+        Err(e) => {
+            tracing::warn!(
+                key = "sessions.gap_close_secs",
+                error = %e,
+                "settings: read failed; using default"
+            );
+            return default;
+        }
+    };
+    let stored = match raw.parse::<u32>() {
+        Ok(value) => value,
+        Err(_) => {
+            tracing::warn!(
+                key = "sessions.gap_close_secs",
+                raw = %raw,
+                "settings: unparsable number; using default"
+            );
+            if !migrated {
+                mark_sessions_gap_close_migrated(store).await;
+            }
+            return default;
+        }
+    };
+    if migrated {
+        return stored;
+    }
+    if stored == LEGACY_SESSIONS_GAP_CLOSE_SECS {
+        tracing::warn!(
+            old = LEGACY_SESSIONS_GAP_CLOSE_SECS,
+            new = default,
+            "settings: retired session gap-close default remapped"
+        );
+        persist_sessions_gap_close_migration(store, default).await;
+        default
+    } else {
+        // The custom value is already durable. Do not rewrite a stale read with the marker:
+        // a concurrent explicit change must win rather than be clobbered by this load.
+        mark_sessions_gap_close_migrated(store).await;
+        stored
+    }
+}
+
+/// Atomically persists the effective gap-close value and one-shot migration marker.
+async fn persist_sessions_gap_close_migration(store: &dyn Store, value: u32) {
+    if let Err(e) = store
+        .set_settings_batch(&[
+            ("sessions.gap_close_secs".to_string(), value.to_string()),
+            (SESSIONS_GAP_CLOSE_MIGRATED_KEY.to_string(), "1".to_string()),
+        ])
+        .await
+    {
+        tracing::warn!(
+            error = %e,
+            "settings: failed to atomically persist session gap-close migration; retrying next load"
+        );
+    }
+}
+
+/// Best-effort latch for [`load_sessions_gap_close_secs`] (`04 §4`: load never errors).
+async fn mark_sessions_gap_close_migrated(store: &dyn Store) {
+    if let Err(e) = store
+        .set_setting(SESSIONS_GAP_CLOSE_MIGRATED_KEY, "1")
+        .await
+    {
+        tracing::warn!(
+            error = %e,
+            "settings: failed to persist session gap-close migration marker"
+        );
     }
 }
 

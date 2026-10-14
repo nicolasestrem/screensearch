@@ -11,7 +11,7 @@ use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter};
 use traits::{Result, SearchHit, SearchQuery};
 
-use crate::embeddings::{dedup_keep_order, f32_blob};
+use crate::embeddings::{dedup_keep_order, f32_blob, SQLITE_VEC_MAX_K};
 use crate::SqliteStore;
 
 /// RRF damping constant (the conventional value). A larger `k` flattens the
@@ -32,11 +32,11 @@ const MAX_CANDIDATE_POOL: usize = 2_000;
 /// post-filter under-fills the pool, we re-run the KNN with a geometrically larger `k` until
 /// the pool fills, the vector table is exhausted, or `k` hits [`MAX_TIME_RANGE_KNN`].
 const KNN_ESCALATION_FACTOR: u32 = 8;
-/// Hard ceiling on the escalated KNN `k` (see [`KNN_ESCALATION_FACTOR`]). Bounds worst-case
-/// work for a pathologically tight window on a very large vector table; past it recall can
-/// still under-count (documented residual, `07` #8). Well above `MAX_CANDIDATE_POOL` so the
-/// escalation has real room to dig past a buried in-range match.
-const MAX_TIME_RANGE_KNN: u32 = 20_000;
+/// Hard ceiling on the escalated KNN `k` (see [`KNN_ESCALATION_FACTOR`]). sqlite-vec
+/// rejects `k` above [`SQLITE_VEC_MAX_K`], so this ceiling is pinned to that external
+/// constraint. Past it recall can still under-count, but bounded/session-scoped retrieval
+/// degrades to fewer candidates rather than an SQL error (usage review 2026-08-01 §7.4).
+const MAX_TIME_RANGE_KNN: u32 = SQLITE_VEC_MAX_K;
 /// Upper bound on frames the sparse-window pre-count ([`count_embedded_frames_in_range`]) will
 /// examine. The count exists only to detect a *sparse* window (fewer embedded frames than `pool`)
 /// so the KNN escalation doesn't climb to [`MAX_TIME_RANGE_KNN`] needlessly. But with sparse
@@ -45,8 +45,10 @@ const MAX_TIME_RANGE_KNN: u32 = 20_000;
 /// range) would make the count walk the whole frame range: O(frames-in-window), not O(cap)
 /// (`07` #8 review, P2). Capping the frames scanned keeps it O(cap): past this budget we can't
 /// prove the window is sparse, so we assume it is dense (target = `pool`) — which can only
-/// *raise* the escalation target, never drop an in-range match. Matched to the KNN ceiling so the
-/// pre-count never costs more than a single ceiling pass would.
+/// *raise* the escalation target, never drop an in-range match. This remains deliberately linked
+/// to the KNN ceiling: the pre-count never costs more than one ceiling pass, and lowering the
+/// scan budget to sqlite-vec's limit only makes sparse detection give up sooner and choose that
+/// safe, higher target (usage review 2026-08-01 §7.4).
 const COUNT_SCAN_CAP: usize = MAX_TIME_RANGE_KNN as usize;
 
 fn normalized_limit(limit: u32) -> usize {
@@ -68,7 +70,9 @@ fn escalate_in_range_knn(
     target: usize,
     mut fetch: impl FnMut(u32) -> rusqlite::Result<(usize, Vec<i64>)>,
 ) -> rusqlite::Result<Vec<i64>> {
-    let mut k = pool;
+    // A caller-provided pool can exceed the engine limit; clamp the very first pass as well as
+    // every geometric step (usage review 2026-08-01 §7.4).
+    let mut k = pool.min(MAX_TIME_RANGE_KNN);
     loop {
         let (raw, in_range) = fetch(k)?;
         let mut ids = dedup_keep_order(in_range);
@@ -416,6 +420,9 @@ impl SqliteStore {
             };
             let mut stmt = conn.prepare(sql)?;
             let mut fetch = |k: u32| -> rusqlite::Result<(usize, Vec<i64>)> {
+                // Defense in depth at the SQL boundary also covers the unbounded single-pass
+                // path, which does not use the escalation ladder.
+                let k = k.min(SQLITE_VEC_MAX_K);
                 let mut raw = 0_usize;
                 let mut in_range: Vec<i64> = Vec::new();
                 let rows = stmt.query_map(params![blob, k as i64], |r| {
@@ -598,8 +605,8 @@ mod tests {
     /// `07` #8 review (P2): a *sparse* window — fewer distinct embedded frames than `pool` —
     /// must stop as soon as it has gathered all of them, not climb to the k ceiling. Here the
     /// mock KNN never exhausts (`raw == k` every pass) and never fills the pool, so only the
-    /// count-derived `target` can stop it. Without the target cap this ran a full 20k pass on
-    /// every sparse-window query/report.
+    /// count-derived `target` can stop it. Without the target cap this ran a full ceiling pass
+    /// on every sparse-window query/report.
     #[test]
     fn escalating_knn_stops_at_window_count_not_ceiling() {
         let mut calls = 0;
@@ -648,7 +655,7 @@ mod tests {
     }
 
     /// Pathological: never exhausts, never reaches `target`. Escalation must terminate at
-    /// [`MAX_TIME_RANGE_KNN`] (50 → 400 → 3200 → 20000), never loop forever.
+    /// [`MAX_TIME_RANGE_KNN`] (50 → 400 → 3200 → 4096), never loop forever.
     #[test]
     fn escalating_knn_caps_at_the_k_ceiling() {
         let mut ks = Vec::new();
@@ -663,6 +670,20 @@ mod tests {
             vec![50, 400, 3_200, MAX_TIME_RANGE_KNN],
             "geometric climb, capped"
         );
+    }
+
+    /// A caller-controlled initial pool above sqlite-vec's limit is clamped before the first
+    /// fetch, not only when the geometric ladder advances (usage review 2026-08-01 §7.4).
+    #[test]
+    fn escalating_knn_clamps_initial_pool_to_the_k_ceiling() {
+        let mut ks = Vec::new();
+        let ids = escalate_in_range_knn(u32::MAX, usize::MAX, |k| {
+            ks.push(k);
+            Ok((k as usize, vec![]))
+        })
+        .unwrap();
+        assert!(ids.is_empty());
+        assert_eq!(ks, vec![MAX_TIME_RANGE_KNN]);
     }
 
     /// The returned list is truncated to `pool`, nearest-first, even when the window holds

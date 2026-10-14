@@ -3397,7 +3397,6 @@ dependencies = [
  "async-trait",
  "image",
  "tokio",
- "tracing",
  "traits",
  "windows 0.62.2",
 ]

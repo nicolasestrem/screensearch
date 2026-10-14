@@ -4,13 +4,6 @@
 // values across renders, so they don't thrash TanStack Query's structural keys.
 import type { TimeRange } from "../bindings/TimeRange";
 
-/** Local midnight (ms) of the day containing `at` (defaults to now). */
-export function startOfLocalDay(at: number = Date.now()): number {
-  const d = new Date(at);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
 function localDayOffset(at: number, offsetDays: number): number {
   const d = new Date(at);
   return new Date(

@@ -450,6 +450,9 @@ impl Store for SqliteStore {
     ) -> Result<bool> {
         SqliteStore::set_session_title_summary(self, id, title, summary, model).await
     }
+    async fn clear_session_title_summary(&self, id: i64) -> Result<bool> {
+        SqliteStore::clear_session_title_summary(self, id).await
+    }
     fn set_embedder(&self, embedder: Arc<dyn EmbeddingProvider>) {
         SqliteStore::set_embedder(self, embedder);
     }

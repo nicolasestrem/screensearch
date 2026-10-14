@@ -75,9 +75,6 @@ export const IconSettings = (p: IconProps) => (
   </Svg>
 );
 
-/** Search — used by the command palette. */
-export const IconSearch = IconRecall;
-
 /** Close / dismiss. */
 export const IconClose = (p: IconProps) => (
   <Svg {...p}>

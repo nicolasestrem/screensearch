@@ -10,11 +10,17 @@ use crate::FrameMeta;
 pub const SESSION_MERGE_GAP_MS: i64 = 2_700_000;
 pub const SESSION_ABSORB_MAX_MS: i64 = 1_800_000;
 pub const SESSION_MEETING_GAP_MS: i64 = 480_000;
+/// Anchorless-focus minimum extent: a named constant after the 11-day sweep reclassified this
+/// parameter SENSITIVE → FLAT; 600 seconds preserves the shipped behavior
+/// (usage review 2026-08-01 §6.7).
 pub const SESSION_FOCUS_MIN_LEN_MS: i64 = 600_000;
-pub const SESSION_FOCUS_MIN_DENSITY_FPH: i64 = 90;
+/// Anchorless-focus density floor retuned from 90 to 30 frames/hour by the 11-day sweep
+/// (usage review 2026-08-01 §6.7).
+pub const SESSION_FOCUS_MIN_DENSITY_FPH: i64 = 30;
 pub const SESSION_IDENTITY_QUALIFY_MS: i64 = 120_000;
-/// Stable-id freeze lookback W: 24 hours. Correctness parameter, never a setting.
-pub const SESSION_FREEZE_LOOKBACK_MS: i64 = 86_400_000;
+/// Stable-id freeze lookback W: 6 hours, the smallest window with zero boundary drift across
+/// 25 exported days; a correctness constant, never a setting (usage review 2026-08-01 §6.8).
+pub const SESSION_FREEZE_LOOKBACK_MS: i64 = 21_600_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]

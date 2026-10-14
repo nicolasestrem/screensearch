@@ -775,20 +775,21 @@ notification/toast semantics (`§7`).
   (`0` disables it). Anchorless focus confidence is always below anchored AI/meeting confidence.
   `kind`, `tool`, and `context_key` freeze at the same instant as boundaries.
 - **Frozen shipped parameters.** `merge_gap = 2_700_000 ms`; `absorb_max = 1_800_000 ms`;
-  `meeting_gap = 480_000 ms`; `focus_min_len = 600_000 ms`; `focus_min_density = 90 fph`;
-  `IDENTITY_QUALIFY_MS = 120_000 ms`; micro defaults `gap_close = 300_000 ms` and
-  `min_len = 120_000 ms`; freeze lookback **W = 86_400_000 ms (24 h)**. Only `gap_close` and
-  `min_len` are settings (`§8`); every other value is a named correctness constant, never a hidden
-  knob. These are the PR2b/D9-approved production values (`06` #26/#28), not the harness model's
-  old `1_500_000`/`1_200_000` defaults.
+  `meeting_gap = 480_000 ms`; `focus_min_len = 600_000 ms` (a named constant after the 11-day
+  sweep reclassified it FLAT); `focus_min_density = 30 fph`; `IDENTITY_QUALIFY_MS = 120_000 ms`;
+  micro defaults `gap_close = 120_000 ms` and `min_len = 120_000 ms`; freeze lookback
+  **W = 21_600_000 ms (6 h)**. Only `gap_close` and `min_len` are settings (`§8`); every other
+  value is a named correctness constant, never a hidden knob. The retunes are grounded in the
+  11-day sweep and 25-day stability sample (usage review 2026-08-01 §6.7–§6.8).
 - **Freeze rule (D2).** A closed session, once older than the **freeze lookback window**, has its
   `id` and boundaries **frozen** (immutable; `sessions.frozen = 1`). Resegmentation only ever touches
   **unfrozen** (open/recent) sessions. This is what makes a session `id` safe to hand to MCP
   consumers — history keeps its identities; heuristic improvements apply going forward only. (A
   deliberate "resegment history" feature would be its own explicitly-versioned arc item.)
-  - **The lookback window is the named constant W = 24 h (86 400 000 ms).** PR2b confirmed the
-    tuning-day boundaries were stable by 6 h, so 24 h holds with wide margin (`06` #26). It is
-    deliberately **not** a user setting (ID stability is a correctness property, not a tuning knob).
+  - **The lookback window is the named constant W = 6 h (21 600 000 ms).** The 25-day
+    stability sample measured zero boundary drift at 6 h, 12 h, 24 h, and 48 h, making 6 h the
+    smallest evidenced stable window (usage review 2026-08-01 §6.8). It is deliberately **not**
+    a user setting (ID stability is a correctness property, not a tuning knob).
 
 **Taxonomy (D6/D7).** Recognition is driven by a **versioned data file in the repo** (a `version`
 field; proposed TOML), compiled/shipped with the app (parsed at startup) — **not** schema and **not**
@@ -951,8 +952,8 @@ PR names them, `docs/0.4.0.md`). The two names, defaults, and clamp ranges are f
 their Settings-UI placement:
 `sessions.min_len_secs` (120 — minimum session length; mirrors `resume.min_dwell_secs`, `§7e`;
 clamp `30..=3600`) ·
-`sessions.gap_close_secs` (300 — pass-1 micro gap close, `§7e`; clamp
-`60..=3600`).
+`sessions.gap_close_secs` (120 — pass-1 micro gap close, retuned by the 11-day sweep;
+usage review 2026-08-01 §6.7; clamp `60..=3600`).
 Proposed Settings home: a new **Advanced** expander ("Sessions") under the 0.3.2 two-tier IA
 (`UI_REFERENCE §3`) — PR5's call, not settled here.
 
@@ -1007,6 +1008,13 @@ transitions, and model load/evict are logged at info. No screen content or OCR t
   ask streams an answer.
 
 ## 11. CI/CD
+The workspace MSRV is **Rust 1.88**; local rustup, CI, and release builds pin
+**1.88.0**. The committed `image`, `time`, and `serde_with` versions already require
+1.88. The `quinn-proto` security update (PR #112, GHSA-4w2j-m93h-cj5j) requires at
+least 1.85 and is retained at 0.11.16. CI and release builds reject affected
+`quinn-proto` lockfile entries with `scripts/check-quinn-security.mjs`; Cargo CI
+and MCP staging use `--locked` so verification cannot silently resolve another graph.
+
 GitHub Actions on `windows-latest`: `cargo fmt --check`, `cargo clippy --workspace -D warnings`,
 `cargo build`, `cargo test` (GPU/WinRT tests `#[ignore]`d), `ui` `npm ci && npm run build`, and a
 `tauri build` artifact job. Release workflow (later): **NSIS** installer (shipped v0.1.0; code-signing pending). Inno/MSI/portable ZIP dropped — `07` #26.

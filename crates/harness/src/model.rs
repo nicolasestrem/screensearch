@@ -81,7 +81,7 @@ pub struct DayHeader {
 /// rather than inventing a second knob").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SegParams {
-    /// `sessions.gap_close_secs` × 1000 (default 300_000). Idle-gap / context-switch close.
+    /// `sessions.gap_close_secs` × 1000 (default 120_000). Idle-gap / context-switch close.
     pub gap_close_ms: i64,
     /// `sessions.min_len_secs` × 1000 (default 120_000). Floor + sustained-interrupter dwell.
     pub min_len_ms: i64,
@@ -90,7 +90,7 @@ pub struct SegParams {
 impl Default for SegParams {
     fn default() -> Self {
         Self {
-            gap_close_ms: 300_000,
+            gap_close_ms: 120_000,
             min_len_ms: 120_000,
         }
     }
@@ -117,7 +117,7 @@ pub struct GroupParams {
     /// `sessions.focus_min_len_secs` × 1000 (default 600_000). Floor for anchorless focus sessions
     /// AND the qualification extent for meeting bands (a sub-floor meeting chain never anchors).
     pub focus_min_len_ms: i64,
-    /// `sessions.focus_min_density_fph` (default 90; 0 disables). Minimum frames/hour for an
+    /// `sessions.focus_min_density_fph` (default 30; 0 disables). Minimum frames/hour for an
     /// **anchorless** focus session; AI/meeting sessions are exempt. Suppresses fragmented
     /// low-density blocks that the maintainer labels no-session (gap #113).
     pub focus_min_density_fph: i64,
@@ -130,7 +130,7 @@ impl Default for GroupParams {
             absorb_max_ms: 1_200_000,
             meeting_gap_ms: 480_000,
             focus_min_len_ms: 600_000,
-            focus_min_density_fph: 90,
+            focus_min_density_fph: 30,
         }
     }
 }

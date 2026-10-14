@@ -41,7 +41,7 @@ fn flag_i64(args: &[String], name: &str, default: i64) -> Result<i64> {
 
 fn seg_params(args: &[String]) -> Result<SegParams> {
     Ok(SegParams {
-        gap_close_ms: flag_i64(args, "--gap-close", 300)? * 1000,
+        gap_close_ms: flag_i64(args, "--gap-close", 120)? * 1000,
         min_len_ms: flag_i64(args, "--min-len", 120)? * 1000,
     })
 }
@@ -53,7 +53,7 @@ fn group_params(args: &[String]) -> Result<GroupParams> {
         absorb_max_ms: flag_i64(args, "--absorb-max", 1200)? * 1000,
         meeting_gap_ms: flag_i64(args, "--meeting-gap", 480)? * 1000,
         focus_min_len_ms: flag_i64(args, "--focus-min-len", 600)? * 1000,
-        focus_min_density_fph: flag_i64(args, "--focus-density", 90)?,
+        focus_min_density_fph: flag_i64(args, "--focus-density", 30)?,
     })
 }
 
@@ -621,7 +621,7 @@ fn cmd_stability(args: &[String]) -> Result<()> {
     }
     match pts.iter().find(|p| p.stable) {
         Some(p) => md.push_str(&format!(
-            "\nSmallest stable lookback on this sample: {}h (proposed default 24h).\n",
+            "\nSmallest stable lookback on this sample: {}h (production default 6h).\n",
             p.lookback_secs / 3600
         )),
         None => md.push_str(

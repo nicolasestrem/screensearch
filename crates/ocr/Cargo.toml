@@ -13,7 +13,6 @@ traits.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
-tracing.workspace = true
 
 # Windows-only by design (04 guardrails). WinRT Media.Ocr + the imaging/buffer
 # interop needed to feed it a SoftwareBitmap, on a COM STA thread.

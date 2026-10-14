@@ -104,7 +104,8 @@ mod sessions_scheduler_contract_tests {
         const HOUR: i64 = 3_600_000;
         let mut inserted = Vec::new();
         let mut index = 0_i64;
-        for at in (0..=6 * HOUR + 30 * 60_000).step_by(4 * 60_000) {
+        // Keep this scheduler fixture continuous under the shipped 120-second micro-gap.
+        for at in (0..=6 * HOUR + 30 * 60_000).step_by(60_000) {
             let id = store
                 .insert_frame(traits::NewFrame {
                     captured_at: at,

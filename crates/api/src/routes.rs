@@ -48,7 +48,27 @@ pub struct SearchParams {
     from: Option<i64>,
     to: Option<i64>,
     limit: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_optional_bool")]
     include_chrome: Option<bool>,
+}
+
+/// Accepts the API's numeric and textual query-string boolean literals while rejecting
+/// everything else, preserving malformed params as `400 bad_request` (usage review 2026-08-01 §7.2).
+fn deserialize_optional_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    match value.as_deref() {
+        None => Ok(None),
+        Some("1") => Ok(Some(true)),
+        Some("0") => Ok(Some(false)),
+        Some(value) if value.eq_ignore_ascii_case("true") => Ok(Some(true)),
+        Some(value) if value.eq_ignore_ascii_case("false") => Ok(Some(false)),
+        Some(_) => Err(serde::de::Error::custom(
+            "expected one of `1`, `0`, `true`, or `false`",
+        )),
+    }
 }
 
 pub async fn search(
@@ -304,4 +324,42 @@ pub async fn ask(
     });
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::extract::Query;
+    use axum::http::Uri;
+
+    use super::SearchParams;
+
+    fn parse_include_chrome(value: Option<&str>) -> Result<Option<bool>, String> {
+        let suffix = value
+            .map(|value| format!("&include_chrome={value}"))
+            .unwrap_or_default();
+        let uri: Uri = format!("/v1/search?q=test{suffix}").parse().unwrap();
+        Query::<SearchParams>::try_from_uri(&uri)
+            .map(|Query(params)| params.include_chrome)
+            .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn include_chrome_accepts_numeric_and_textual_booleans() {
+        assert_eq!(parse_include_chrome(Some("1")).unwrap(), Some(true));
+        assert_eq!(parse_include_chrome(Some("0")).unwrap(), Some(false));
+        assert_eq!(parse_include_chrome(Some("true")).unwrap(), Some(true));
+        assert_eq!(parse_include_chrome(Some("false")).unwrap(), Some(false));
+        assert_eq!(parse_include_chrome(Some("TrUe")).unwrap(), Some(true));
+        assert_eq!(parse_include_chrome(Some("FaLsE")).unwrap(), Some(false));
+    }
+
+    #[test]
+    fn include_chrome_absent_is_none() {
+        assert_eq!(parse_include_chrome(None).unwrap(), None);
+    }
+
+    #[test]
+    fn include_chrome_rejects_other_literals() {
+        assert!(parse_include_chrome(Some("yes")).is_err());
+    }
 }

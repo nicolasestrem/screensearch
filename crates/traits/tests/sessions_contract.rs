@@ -8,7 +8,7 @@ use traits::{
 use ts_rs::TS;
 
 #[test]
-fn shipped_segmentation_params_pin_the_pr2_gate_values() {
+fn shipped_segmentation_params_pin_the_production_values() {
     let params = SegmentationParams::shipped(9_000_000, 321_000, 123_000);
 
     assert_eq!(params.now_ms, 9_000_000);
@@ -21,6 +21,9 @@ fn shipped_segmentation_params_pin_the_pr2_gate_values() {
     assert_eq!(params.focus_min_density_fph, SESSION_FOCUS_MIN_DENSITY_FPH);
     assert_eq!(params.identity_qualify_ms, SESSION_IDENTITY_QUALIFY_MS);
     assert_eq!(params.freeze_lookback_ms, SESSION_FREEZE_LOOKBACK_MS);
+    assert_eq!(SESSION_FOCUS_MIN_LEN_MS, 600_000);
+    assert_eq!(SESSION_FOCUS_MIN_DENSITY_FPH, 30);
+    assert_eq!(SESSION_FREEZE_LOOKBACK_MS, 21_600_000);
 }
 
 #[test]

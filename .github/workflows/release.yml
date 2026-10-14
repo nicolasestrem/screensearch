@@ -49,7 +49,11 @@ jobs:
         run: npm ci
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
       - uses: Swatinem/rust-cache@v2
+      - name: Reject vulnerable quinn-proto lockfile entries
+        run: node scripts/check-quinn-security.mjs
 
       # Fail fast if the tag and the four hand-synced version fields disagree (only on a
       # tag push; a manual dispatch has no tag to compare).
