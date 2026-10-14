@@ -50,7 +50,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88.0
+          toolchain: 1.95.0
       - uses: Swatinem/rust-cache@v2
       - name: Reject vulnerable quinn-proto lockfile entries
         run: node scripts/check-quinn-security.mjs

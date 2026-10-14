@@ -190,7 +190,7 @@ PASS: tracked repository diff unchanged by packaging
   Confirmed from crates.io metadata that 0.11.15 and 0.11.16 require Rust 1.85.
   Main already locks image 0.25.10, time 0.3.49, serde_with 3.21.0 and darling
   0.23.0 requiring Rust 1.88, so the old 1.82 declaration was already inaccurate.
-- Reconciled Cargo, README, AGENTS, CLAUDE and the production spec at MSRV 1.88;
+- Initially reconciled Cargo, README, AGENTS, CLAUDE and the production spec at 1.88;
   pinned local rustup, CI and release jobs to 1.88.0 so CI verifies that minimum.
   The prior failed Windows run used moving stable 1.99.0 and hit 57 Clippy
   double-must-use errors in async-trait-generated code.
@@ -225,4 +225,26 @@ pinned minimum, confirming that the generated-code failure is absent on 1.88.0:
 ```text
     Checking traits v0.4.0 (/workspace/screensearch-v2c/crates/traits)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 35.03s
+```
+
+### Full Windows verification exposed an undeclared upstream MSRV
+
+The pinned-1.88 Windows run failed in libsqlite3-sys 0.38.1's build script,
+which omits rust-version but uses the std cfg_select! macro stabilized in 1.95.
+Crate metadata alone did not establish the full workspace minimum. Verbatim CI:
+
+```text
+2026-10-14T21:21:01.6806612Z error: cannot find macro `cfg_select` in this scope
+```
+
+Corrected the final Cargo/local/CI/release/documentation contract to Rust 1.95.0.
+The Quinn patch and all verification/security gates are retained. The earlier
+1.88 trait and MCP checks remain accurate partial results, not full-workspace
+verification. Source: https://doc.rust-lang.org/std/macro.cfg_select.html.
+
+The generated-trait Clippy check also passes on the corrected minimum:
+
+```text
+    Checking traits v0.4.0 (/workspace/screensearch-v2c/crates/traits)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.73s
 ```

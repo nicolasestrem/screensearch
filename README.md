@@ -186,7 +186,7 @@ specs/             spec-engineering pipeline (00 intake → 04 build prompt → 
 
 ## Build & run
 
-Prerequisites: **Windows 10/11**, Rust **1.88** or newer (the repo pins **1.88.0** via rustup), Node.js 22 +
+Prerequisites: **Windows 10/11**, Rust **1.95** or newer (the repo pins **1.95.0** via rustup), Node.js 22 +
 npm, and WebView2 (preinstalled on current Windows). First run downloads the embedding model
 (~hundreds of MB) and an ONNX Runtime build at compile time.
 

@@ -135,6 +135,6 @@ Manual steps still required (e.g. signing certs, first-run model download, CI se
 
 The task's executor is Linux; the Windows-only application cannot be launched
 here. Windows build/clippy/tests and binding freshness are verified by GitHub CI
-on Rust 1.88.0. Dependabot alert #4 (quinn-proto, GHSA-4w2j-m93h-cj5j) must move
+on Rust 1.95.0. Dependabot alert #4 (quinn-proto, GHSA-4w2j-m93h-cj5j) must move
 to fixed after merge; do not dismiss or suppress it. This update does not itself
 publish a new installer or update existing installations.

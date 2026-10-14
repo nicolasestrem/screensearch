@@ -38,7 +38,7 @@ audit findings (`07`) require a separately accepted scope, not opportunistic edi
 
 The maintainer requested that PR #112 get through and that this specific security
 alert be resolved, including Claude/Codex feedback. Keep the patched Quinn version
-and reconcile the toolchain contract: 1.88 is the minimum already required by the
-committed dependency graph. Verify the full Windows suite on pinned 1.88.0 before
-merging; never restore vulnerable 0.11.14 to preserve the obsolete 1.82 declaration.
+and reconcile the toolchain contract: 1.95 is required by the
+committed libsqlite3-sys 0.38.1 build script (cfg_select!, omitted MSRV metadata).
+Verify the full Windows suite on pinned 1.95.0 before merging; never restore vulnerable 0.11.14 to preserve the obsolete 1.82 declaration.
 CI and release reject versions affected by GHSA-4w2j-m93h-cj5j.

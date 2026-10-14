@@ -115,7 +115,7 @@ so cargo fails if the UI hasn't been built.
    `git diff --exit-code -- ui/src/bindings` must be clean (commit regenerated bindings, or CI fails).
 - Run the app: `npm run dev` (NOT a direct executable and NOT `cargo tauri dev`).
   Package: `npm run build`.
-- Toolchain: Rust 1.88.0 (pinned in `rust-toolchain.toml` and CI), Node 22. Paste verbatim output when reporting status.
+- Toolchain: Rust 1.95.0 (pinned in `rust-toolchain.toml` and CI), Node 22. Paste verbatim output when reporting status.
 
 ## Build-loop notes (keep current)
 Append your work record to `specs/05_BUILD_REVIEW.md`, `06_PATCH_PLAN.md`, `07_KNOWN_GAPS.md`,

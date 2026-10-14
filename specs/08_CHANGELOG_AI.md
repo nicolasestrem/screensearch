@@ -77,8 +77,8 @@ PASS: tracked repository diff unchanged by packaging
 
 - Kept quinn-proto 0.11.16 to fix remote memory exhaustion
   (GHSA-4w2j-m93h-cj5j; first patched version 0.11.15).
-- Addressed both Claude and Codex's MSRV finding: documented MSRV 1.88 (required
-  by existing locked dependencies), pinned local/CI/release toolchains to 1.88.0,
+- Addressed both Claude and Codex's MSRV finding: documented MSRV 1.95 (required
+  by the locked libsqlite3-sys build script), pinned local/CI/release toolchains to 1.95.0,
   and made Cargo CI and MCP staging use the committed lockfile.
 - Added an advisory-specific gate to CI and release to prevent vulnerable Quinn
   versions from returning, without disabling Dependabot alerts or lint gates.

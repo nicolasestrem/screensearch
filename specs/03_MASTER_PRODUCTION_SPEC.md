@@ -1008,9 +1008,9 @@ transitions, and model load/evict are logged at info. No screen content or OCR t
   ask streams an answer.
 
 ## 11. CI/CD
-The workspace MSRV is **Rust 1.88**; local rustup, CI, and release builds pin
-**1.88.0**. The committed `image`, `time`, and `serde_with` versions already require
-1.88. The `quinn-proto` security update (PR #112, GHSA-4w2j-m93h-cj5j) requires at
+The workspace MSRV is **Rust 1.95**; local rustup, CI, and release builds pin
+**1.95.0**. The committed `libsqlite3-sys` 0.38.1 build script uses `cfg_select!`,
+stabilized in 1.95 (despite omitting rust-version in its own manifest). The `quinn-proto` security update (PR #112, GHSA-4w2j-m93h-cj5j) requires at
 least 1.85 and is retained at 0.11.16. CI and release builds reject affected
 `quinn-proto` lockfile entries with `scripts/check-quinn-security.mjs`; Cargo CI
 and MCP staging use `--locked` so verification cannot silently resolve another graph.
