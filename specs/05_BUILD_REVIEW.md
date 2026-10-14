@@ -260,3 +260,7 @@ short-circuiting, and warning frequency. No lint suppression or behavior change.
 2026-10-14T21:30:55.6090700Z error: manual implementation of `.is_multiple_of()`
 2026-10-14T21:30:55.6449686Z error: manual implementation of `.is_multiple_of()`
 ```
+
+Applied the same equivalent predicate to the store perf fixture's unsigned
+enumeration index so the all-targets Clippy gate cannot hit the same lint next.
+The signed-integer remainder expressions elsewhere remain valid and unchanged.

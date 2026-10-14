@@ -89,3 +89,6 @@ PASS: tracked repository diff unchanged by packaging
 - Follow-up Windows verification on Rust 1.95 exposed two existing UIA
   manual_is_multiple_of lint errors. Replaced only those warning-counter
   predicates with Clippy's equivalent u64 method; kept the warnings-as-errors gate.
+
+- Applied the same unsigned is_multiple_of predicate to the store perf fixture
+  while auditing the remaining modulo checks under the new compiler.
