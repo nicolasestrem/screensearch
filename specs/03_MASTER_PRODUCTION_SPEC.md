@@ -43,7 +43,7 @@ screensearch-v2c/
 │   ├── textfilter/            # attention-first span classifier → filtered content_text (0.2.x, §3b)
 │   ├── sysmon/                # PressureProbe (CPU GetSystemTimes + GPU PDH) for the enrichment throttle
 │   ├── doctor/                # environment smoke-check: WebView2 / Vulkan / llama-server
-│   ├── api/                   # opt-in local HTTP API (axum, 127.0.0.1-only, bearer token) + export (0.3.0, §7c)
+│   ├── api/                   # opt-in HTTP API (axum, all IPv4, bearer token; Gate A contract) + export (0.3.0, §7c)
 │   └── mcp/                   # → screensearch-mcp.exe: stdio MCP wrapper over the HTTP API (0.3.0, D13)
 ├── ui/                        # React 18 + TS + Vite ("Command Deck")
 ├── specs/
@@ -519,6 +519,7 @@ duplicates). **Commands** (UI → core):
 | `set_api_config` | `{ enabled, port? }` → `ApiStatus` (0.3.0; enable/disable + port; bind failure is loud + guided-change — `§7c`) |
 | `get_api_status` | `()` → `ApiStatus` (0.3.0; enabled, bound port, token-present — `§7c`) |
 | `regenerate_api_token` | `()` → `ApiStatus` (0.3.0; new bearer token — `§7c`) |
+| `acknowledge_api_network_notice` | `()` → `ApiStatus` (Gate A; explicit visible main-window acknowledgement only — `§8`) |
 | `list_sessions` | `SessionQuery` → `Session[]` (0.4.0 PR5; filters kind/tool/`TimeRange`/limit; also the Timeline session-bands data source — `§7e`, `UI_REFERENCE §3`) |
 | `get_session` | `session_id` → `SessionDetail` (0.4.0 PR5; span + tool/host + exchanges; `include_summary` triggers lazy generation — `§7e`) |
 | `session_recap` | `session_id` → report (0.4.0 PR5; the existing **§8b report engine** scoped to the session's time range + frames — no new summarization machinery, D3) |
@@ -603,22 +604,53 @@ registration failure (conflict with another app) is a **visible Settings warning
 silent no-op (D6). Exclusive-fullscreen apps may suppress the overlay (accepted; documented) — the
 overlay never steals focus without the hotkey.
 
-## 7c. Local HTTP API + export (0.3.0, opt-in — a separate external surface, NOT a Tauri IPC surface)
+## 7c. HTTP API + export (0.3.0 origin; Gate A network amendment 2026-10-15)
 
 A new crate `crates/api` (axum; behind a trait, wired in the composition root, **not constructed at
-all** unless enabled) exposes the same core queries over HTTP for local scripts/agents. It reuses
+all** unless enabled) exposes the same core queries over HTTP for scripts/agents on reachable hosts. It reuses
 `hybrid_search`, the ask pipeline, the where-was-i heuristic (§7b), and marks — no new retrieval code.
 
-**Posture (D11).** Default **OFF** (`api.enabled` = false). When enabled it binds **`127.0.0.1` only,
-hard-coded** (not a setting — a `0.0.0.0` bind must be impossible by construction: shown in code review,
-asserted in a test). Every request requires a **bearer token**, generated on first enable, stored in
+**Posture (Gate A API amendment; supersedes only D11’s loopback binding rule).** Default **OFF**
+(`api.enabled` = false). When enabled it binds **`0.0.0.0`, all IPv4 interfaces, hard-coded**
+(not a setting or a private-interface restriction). Clients connect to the computer’s actual
+address; local clients use `127.0.0.1`, never `0.0.0.0` as a destination. Every request, including
+health and unknown routes, requires a **bearer token**, generated on first enable, stored in
 settings, shown/copyable/regenerable in Settings; a request without or with a wrong token gets **401**.
 Default port **43210** (`api.port`, configurable). **Port-bind failure = loud + guided change:** if the
 port is already in use on enable, the API does **not** start, a visible Settings warning + toast fire,
 and the Settings API panel offers an inline "port in use — pick another" retry (mirrors the D6 hotkey
 pattern; never a silent no-op — resolved gap, `07`). Threat model stated plainly in the spec, the
-Settings UI, and docs: *any local process holding the token can read your entire screen history —
-enabling this is an explicit trust decision.*
+Settings UI, and docs: *this API uses plain HTTP, without transport encryption. Any token holder
+on a host that can reach this computer can read your entire screen history; tokens and responses
+can be intercepted on the network. Enabling it is an explicit trust decision.* No wildcard CORS,
+cookie authentication or token-bearing URLs. An unauthenticated unknown path returns 401; the same
+path with a valid token returns 404. Existing tokens, rotation, port selection, disable/re-enable
+and bind-failure behavior are preserved.
+
+**Upgrade and visibility.** An existing profile with `api.enabled=true` keeps it enabled and
+acquires the broader bind on upgrade. Display a **one-time visible in-app notice**, including the
+all-interface/plain-HTTP/history-access consequences and the Settings disable control. Do not
+consume the notice while the app is hidden in the tray: persist completion only after the user
+explicitly acknowledges it in the visible main window. Fresh profiles remain off and see the same threat model before enabling. Settings
+and release notes explain the change. Notice persistence uses the existing settings store, no
+schema migration; the internal marker and acknowledgement contract are defined in §8.
+
+**Network boundary.** This is not public hosting. No automatic firewall changes, router port
+forwarding or inference exposure. Document a user-managed Windows inbound-allow step and explain
+that 200/401 is an HTTP result while a timeout can indicate routing/firewall failure. An all-IPv4
+bind itself does not guarantee LAN-only reachability. MCP’s loopback-only destination validation
+and default URL stay unchanged; remote MCP needs its own amendment. Scheduled reports, vault
+writes, report endpoints and Telegram are outside this increment.
+
+**Acceptance for the network increment.** Assert the actual bound socket is IPv4 unspecified;
+connect via `127.0.0.1` plus its port in API/MCP fixtures. Prove disabled means no listener,
+authentication covers all routes, enabled upgrades show the notice once, token rotation takes
+effect without restart, bind errors remain visible and status reports the listen address honestly.
+Run the native Windows build and app; from a separate machine verify `/v1/health` returns 200
+with the actual version for a valid token and 401 for missing/wrong tokens. Verify local MCP,
+disable/enable, app restart and Ask stream disconnect, and confirm the inference sidecar remains
+loopback-only. Record any manual test-machine firewall action separately; missing remote evidence
+is a blocked acceptance gate, never a substituted loopback success.
 
 **Endpoints (v1):**
 - `GET /v1/health` — version, uptime, capture state.
@@ -931,10 +963,26 @@ warning + toast**, never silent — D6) · `overlay.max_results` (8, clamped `1.
 `marks.hotkey` (`Ctrl+Alt+M` — mark-this-moment; same loud registration-failure handling as
 `overlay.hotkey` — D6) ·
 `api.enabled` (false — master switch; the API crate is **not constructed** unless on — D11) ·
-`api.port` (43210, clamp 1024..=65535 — the bind is `127.0.0.1` only, **hard-coded, not a setting**; a
+`api.port` (43210, clamp 1024..=65535 — Gate A bind is `0.0.0.0`, all IPv4, **hard-coded, not a setting**; a
 bind failure is **loud + guided-change**, `§7c`) ·
 `api.token` (generated on first enable; the bearer token, regenerable in Settings — never blank while
 enabled).
+
+**Gate A API upgrade marker (internal KV, not a user-editable preference).**
+`api.network_notice_state` has values `pending` or `acknowledged`; absence identifies a profile
+not yet processed by this upgrade. On startup, atomically persist the initial state: absent plus
+`api.enabled=true` becomes `pending`; absent plus disabled becomes `acknowledged` (the current
+Settings threat model covers a subsequent first enable). Existing values are preserved across
+restart. `pending` stays pending even if the API is later disabled: the notice explains the prior
+broader bind, reports the current API state honestly, and offers the Settings disable control when
+applicable. A hidden/tray startup, rendering the notice, dismissing the window, or disabling the
+API must never consume it. Only explicit user acknowledgement in the visible main window changes
+`pending` to `acknowledged`. A persistence failure leaves the notice pending and surfaces an error.
+`ApiStatus.network_notice_pending: bool` exposes this state through generated bindings. The typed
+`acknowledge_api_network_notice` IPC command persists acknowledgement only for the visible
+main-window user action and returns the updated `ApiStatus`; no background acknowledgement or
+remote HTTP acknowledgement route. This uses the existing settings KV table, with no schema
+migration and no new API mode.
 
 **0.3.2 lifecycle keys** (`§7d`; the only new settings surface this arc — new keys exist only where a
 PR names them, `docs/0.3.2.md`). PR3 shipped these two names as proposed; they are **contract** now (D7).
@@ -1097,7 +1145,9 @@ Each item is demonstrated with verbatim command output or a described-and-perfor
    live (work app → browser detour → hotkey → the work app's context offered); a mark from a fullscreen
    third-party app lands a frame captured at press time even on a static screen (diff-gate bypass shown
    — D8); the Intentions strip is live-verified. Forward-only schema bump +1 with a migration test.
-6. **Local API + export (PR7).** API off by default (fresh profile: nothing listens); with it on, a
+6. **Local API + export (PR7; historical 0.3.0 acceptance).** The loopback-only assertion below
+   describes the shipped release; the Gate A network increment supersedes that assertion with
+   `§7c` acceptance. API off by default (fresh profile: nothing listens); with it on, a
    request without / with a wrong token gets 401; a `0.0.0.0` bind is impossible by construction
    (asserted in a test); a port-bind conflict surfaces **loud + guided-change**; every endpoint is
    exercised against a fixture DB; Settings "Export…" produces a valid JSON file with the API disabled.

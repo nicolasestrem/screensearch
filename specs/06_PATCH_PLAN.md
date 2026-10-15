@@ -1,5 +1,14 @@
 # 06 — Patch Plan
 
+## 2026-10-15 — Memory/API contract contradiction
+
+The execution request conflicts with the former all-interface prohibition in `03 §7c`
+and the localhost-only rule in `04`/AGENTS. Gate A resolves the API portion in a separate
+reviewed contract commit before code. Telegram outbound permission and scheduled delivery
+need their separate amendments; this API amendment does not grant either. Implement B,
+verify the full native build, then retain B6 cross-machine/runtime acceptance as open until
+observed. Do not merge, release or replace an everyday installation.
+
 > **Ordered fixes required before shipping**, plus any **spec contradictions** found during the
 > build (`04 §5`). Empty until the build surfaces something.
 

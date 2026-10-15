@@ -24,7 +24,14 @@ it proved which engines are reliable and which approaches failed (see §5).
   makes it searchable by **text and meaning**, and answers questions about what was seen.
 - **Distribution intent:** unsigned NSIS installer (signing pending), website **screensearch.app**.
 - **Primary users:** privacy-conscious Windows power users.
-- **Privacy stance (non-negotiable):** all data local; no cloud upload; no telemetry by default.
+- **Privacy stance:** storage and inference stay on-device; no cloud upload or telemetry.
+  **Gate A API exception (2026-10-15):** users may enable authenticated HTTP API serving on
+  `0.0.0.0` (all IPv4 interfaces), default-off for new profiles. This permits requested history
+  responses to reachable token holders on other devices; plain HTTP does not encrypt tokens or
+  responses. Existing enabled profiles keep their setting and receive a one-time visible upgrade
+  notice (`03 §7c`). This is a product-wide configurable feature, not a personal deployment.
+  Public hosting, automatic firewall/router changes, remote MCP and remote inference remain out
+  of scope. Scheduled delivery and Telegram are not authorized by this API-only amendment.
 
 ## 3. Target environment
 

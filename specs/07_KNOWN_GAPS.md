@@ -1,5 +1,16 @@
 # 07 — Known Gaps
 
+## 2026-10-15 — Memory/API execution gates (owner: maintainer + agent)
+
+- Before C–E: resolve the proposed schedule/rerun/delivery/source-identity policies in
+  `docs/memory-report-contract-proposal.md` and freeze them in `03`. Product acceptance
+  must cover diverse supported user setups, not a personal usefulness score.
+- Before network release: real separate-machine HTTP authentication, local MCP, native
+  visible upgrade notice, restart, disable/enable, Ask cancellation and inference bind evidence.
+- Before automation acceptance: user-selected test folder, installed model, and explicitly
+  approved Telegram test destination; no fabricated receipts or private-history defaults.
+- Website source is not present in this repository; external privacy-copy review remains open.
+
 > Where the **spec is silent** and a decision was needed, plus **manual interventions** still
 > required (with owner + deadline). The agent appends here instead of guessing (`04 §5`). Empty
 > until the build hits a gap.

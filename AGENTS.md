@@ -65,7 +65,7 @@ Re-read each session — the files are the source of truth, not your memory.
   source (OCR fallback) · `crates/embeddings` — fastembed (in-process ONNX) · `crates/inference` —
   llama.cpp sidecar client + Job-Object supervisor · `crates/textfilter` — attention-first span
   classifier · `crates/sysmon` — CPU/GPU pressure probe · `crates/doctor` — env smoke-check ·
-  `crates/api` — opt-in localhost HTTP API + export · `crates/mcp` — `screensearch-mcp.exe` stdio
+  `crates/api` — opt-in authenticated HTTP API + export (`03 §7c`, all-IPv4 contract) · `crates/mcp` — `screensearch-mcp.exe` stdio
   MCP wrapper over that API · `crates/sessions` — 0.4.0 pure heuristic session segmentation + tool
   recognition (no model calls) · `crates/harness` — 0.4.0 dev-only, read-only segmentation
   validation harness (not shipped in the app).
@@ -86,7 +86,11 @@ Re-read each session — the files are the source of truth, not your memory.
 - **Rust-only ML runtime.** The shipped app's ML is Rust-only — embeddings via fastembed,
   inference via the local llama.cpp sidecar; no Python *ML sidecar* in the runtime (the V1 approach
   that failed). Python is fine for build/dev tooling (model prep, the `hf` CLI, CI scripts).
-  No cloud calls (localhost + model downloads + the signed GitHub-Releases update check, `03 §11b`, only).
+  No cloud calls. Network exceptions: localhost, model downloads, the signed GitHub-Releases
+  update check (`03 §11b`), and user-enabled authenticated HTTP API serving on all IPv4 interfaces
+  (`03 §7c`, Gate A API amendment). That API is plain HTTP: any reachable token holder can read
+  history. No public hosting, automatic firewall/router changes, remote MCP, or exposed inference.
+  Scheduled reports and Telegram require their own separately reviewed contract amendments.
 - **No real-time vision** — vision runs on-demand / timer / idle only (`03 §5`).
 - **Sidecar must never orphan** — implement the Job-Object lifecycle exactly (`03 §6`); do not ship
   P4 until the no-orphan test passes.

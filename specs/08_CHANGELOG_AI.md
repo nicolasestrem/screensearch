@@ -1,5 +1,15 @@
 # 08 — AI Changelog
 
+## 2026-10-15 — Separate API contract amendment
+
+- Updated active network rules in AGENTS/CLAUDE and specs 01–04/UI_REFERENCE before code.
+  Preserved historical release assertions as history and the MCP/inference loopback boundaries.
+- Defined persisted, explicit visible-window acknowledgement for enabled-install upgrades.
+- Added the report-contract proposal and product-wide pilot direction; open decisions are
+  not represented as implementation or measured acceptance.
+- Independent review found the missing notice marker contract; it was added and re-reviewed.
+- Verification: `git diff --check` returned exit 0 with empty raw output.
+
 > Append-only record of what the agent changed during the build, **with reasons**. One entry per
 > meaningful change set. Empty until P0 begins. (This tracks build work; the design-phase history
 > lives in git.)

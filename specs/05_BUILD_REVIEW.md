@@ -1,5 +1,19 @@
 # 05 — Build Review
 
+## 2026-10-15 — Memory/API Gate A
+
+- Maintainer authorized execution of the desktop direction plan and clarified that this is
+  a public product, not a personal integration. API contract reviewed independently by a
+  second agent before implementation. Existing checkout: `ab6c702`, clean on main.
+- API-only amendment preserves MCP/inference loopback, default-off, authentication and
+  token lifecycle; defines the enabled-install notice and all-interface HTTP threat model.
+- C–E product semantics remain in `docs/memory-report-contract-proposal.md` for resolution.
+  No private history, vault or Telegram destination has been accessed.
+- Contract verification: `git diff --check`, exit 0, raw stdout/stderr empty.
+- Environment: system Node 26 differs from CI; official Node 22.23.3 portable archive
+  downloaded to temporary build tooling and SHA-256 checked against Node's published manifest.
+  Rustup's inventory command auto-installed missing pinned Rust 1.95.0.
+
 > **Populated during the build**, after each meaningful pass (`04 §7`). Record what actually
 > happened — honestly. Empty until P0 begins.
 

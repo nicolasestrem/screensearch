@@ -16,7 +16,8 @@ the prior attempt.
 - *Recall:* find any moment by **text or meaning** (hybrid search).
 - *Answers:* ask questions about what you saw and get **grounded, reasoned** answers.
 - *Control:* heavy AI work runs **when you choose** (on-demand / timed / idle), not constantly.
-- *Trust:* everything is **local**; no cloud, no default telemetry.
+- *Trust:* storage and inference stay **local**; no cloud upload or telemetry. User-enabled
+  authenticated network API access is the narrow exception (`§5e`, `03 §7c`).
 
 ## 2. The core strategic change (the "why")
 
@@ -183,6 +184,28 @@ The 0.3.x line is shipped (0.3.0 through the 0.3.3 hotfix), and **0.4.0 (P8)** s
   kind is the reserved extension point, `07` #75); and monitor hot-unplug hardening (`07` #91 —
   sessions make its silent stalls *visible*, raising it to a first-line 0.4.1 candidate).
 
+## 5e. Network API increment — Gate A contract (2026-10-15)
+
+Make the existing API available to users’ other devices while preserving local storage and
+inference. This is a product feature for all installations, configured through the existing API
+master switch and port, with no personal host, account, path or credential baked into the app.
+
+- **Sequence:** review and commit this API-only contract amendment before implementing the
+  listener, notice, tests and accompanying active privacy/documentation copy. Historical shipped
+  localhost descriptions in §5c remain historical; this section supersedes their binding rule
+  for the next API increment. A contract change is not evidence that runtime behavior shipped.
+- **Boundary:** default-off, authenticated plain HTTP on `0.0.0.0` (all IPv4 interfaces). Existing
+  enabled installations acquire the broader listener and a one-time visible in-app notice; no
+  new loopback mode. A token holder on any reachable host can read history. MCP destination
+  validation/default URL and the inference sidecar remain loopback-only.
+- **Scope:** listener, existing auth/configuration lifecycle, upgrade notice and accurate copy.
+  No scheduler, vault writer, schema migration, report endpoints, Telegram, firewall automation,
+  public hosting or remote MCP. Scheduled delivery and outbound Telegram need separate reviewed
+  amendments before their implementations.
+- **Acceptance:** native Windows verification plus real cross-machine authenticated health
+  (200 with actual version; 401 without/wrong token), local MCP, disable/enable, restart, Ask
+  disconnect and loopback inference checks (`03 §7c`). Remote HTTP evidence is mandatory.
+
 ## 6. Risks & mitigations
 
 | Risk | Mitigation |
@@ -192,7 +215,7 @@ The 0.3.x line is shipped (0.3.0 through the 0.3.3 hotfix), and **0.4.0 (P8)** s
 | Sidecar orphan/hang | Job Object KILL_ON_JOB_CLOSE + startup reap + heartbeat/restart (hard requirement). |
 | Resource spikes surprising users | On-demand/timed by default; explicit schedule UI; idle-only option; per-job budgets. |
 | Global hotkey conflicts (PowerToys, IMEs, games) — 0.3.0 | Non-default combos (`Ctrl+Alt+Z` / `Ctrl+Alt+M`), both configurable; a failed registration is a **visible Settings warning + toast**, never a silent no-op (`§5c`; `03 §7b`/§8). |
-| API token leakage → full-history read by local malware — 0.3.0 | API **off by default**, binds `127.0.0.1` only (hard-coded, not a setting); plain-language threat model in Settings + docs; a regenerate-token button (`03 §7c`). |
+| API token leakage or plain-HTTP interception → full-history read from any reachable host | API **off by default**; bearer auth on every route; explicit all-IPv4/plain-HTTP threat model and one-time notice for enabled upgrades; regenerate-token control; user-managed network/firewall boundary, no public hosting (`03 §7c`). |
 | Scope creep | Automation + nice-to-haves are explicitly **out of v1.0**. |
 
 ## 7. Non-goals (reaffirmed)
