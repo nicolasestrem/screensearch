@@ -43,7 +43,7 @@ screensearch-v2c/
 │   ├── textfilter/            # attention-first span classifier → filtered content_text (0.2.x, §3b)
 │   ├── sysmon/                # PressureProbe (CPU GetSystemTimes + GPU PDH) for the enrichment throttle
 │   ├── doctor/                # environment smoke-check: WebView2 / Vulkan / llama-server
-│   ├── api/                   # opt-in HTTP API (axum, all IPv4, bearer token; Gate A contract) + export (0.3.0, §7c)
+│   ├── api/                   # opt-in HTTP API (axum, configurable IPv4/IPv6, default loopback, bearer token) + export (0.3.0, §7c)
 │   └── mcp/                   # → screensearch-mcp.exe: stdio MCP wrapper over the HTTP API (0.3.0, D13)
 ├── ui/                        # React 18 + TS + Vite ("Command Deck")
 ├── specs/
@@ -516,10 +516,9 @@ duplicates). **Commands** (UI → core):
 | `resolve_mark` | `mark_id` → `()` (0.3.0; resolve = done, dismiss = resolve-no-action — `§7b`) |
 | `set_mark_note` | `{ mark_id, note }` → `()` (0.3.0; attaches the optional toast note **after the fact** — the mark row is inserted at hotkey-press time and the note arrives seconds later from the confirmation toast — `§7b`) |
 | `export_data` | `ExportRequest` → `ExportResult` (0.3.0; Settings "Export…"; same code path as `GET /v1/export`, works with the API off — `§7c`/D12) |
-| `set_api_config` | `{ enabled, port? }` → `ApiStatus` (0.3.0; enable/disable + port; bind failure is loud + guided-change — `§7c`) |
+| `set_api_config` | `{ enabled, port?, bind_address? }` → `ApiStatus` (enable/disable + IP literal + port; bind failure is loud + guided-change — `§7c`) |
 | `get_api_status` | `()` → `ApiStatus` (0.3.0; enabled, bound port, token-present — `§7c`) |
 | `regenerate_api_token` | `()` → `ApiStatus` (0.3.0; new bearer token — `§7c`) |
-| `acknowledge_api_network_notice` | `()` → `ApiStatus` (Gate A; explicit visible main-window acknowledgement only — `§8`) |
 | `list_sessions` | `SessionQuery` → `Session[]` (0.4.0 PR5; filters kind/tool/`TimeRange`/limit; also the Timeline session-bands data source — `§7e`, `UI_REFERENCE §3`) |
 | `get_session` | `session_id` → `SessionDetail` (0.4.0 PR5; span + tool/host + exchanges; `include_summary` triggers lazy generation — `§7e`) |
 | `session_recap` | `session_id` → report (0.4.0 PR5; the existing **§8b report engine** scoped to the session's time range + frames — no new summarization machinery, D3) |
@@ -610,41 +609,38 @@ A new crate `crates/api` (axum; behind a trait, wired in the composition root, *
 all** unless enabled) exposes the same core queries over HTTP for scripts/agents on reachable hosts. It reuses
 `hybrid_search`, the ask pipeline, the where-was-i heuristic (§7b), and marks — no new retrieval code.
 
-**Posture (Gate A API amendment; supersedes only D11’s loopback binding rule).** Default **OFF**
-(`api.enabled` = false). When enabled it binds **`0.0.0.0`, all IPv4 interfaces, hard-coded**
-(not a setting or a private-interface restriction). Clients connect to the computer’s actual
-address; local clients use `127.0.0.1`, never `0.0.0.0` as a destination. Every request, including
-health and unknown routes, requires a **bearer token**, generated on first enable, stored in
-settings, shown/copyable/regenerable in Settings; a request without or with a wrong token gets **401**.
-Default port **43210** (`api.port`, configurable). **Port-bind failure = loud + guided change:** if the
-port is already in use on enable, the API does **not** start, a visible Settings warning + toast fire,
-and the Settings API panel offers an inline "port in use — pick another" retry (mirrors the D6 hotkey
-pattern; never a silent no-op — resolved gap, `07`). Threat model stated plainly in the spec, the
-Settings UI, and docs: *this API uses plain HTTP, without transport encryption. Any token holder
-on a host that can reach this computer can read your entire screen history; tokens and responses
-can be intercepted on the network. Enabling it is an explicit trust decision.* No wildcard CORS,
-cookie authentication or token-bearing URLs. An unauthenticated unknown path returns 401; the same
-path with a valid token returns 404. Existing tokens, rotation, port selection, disable/re-enable
-and bind-failure behavior are preserved.
+**Posture (configurable-bind correction; supersedes the earlier Gate A wildcard default).**
+Default **OFF** (`api.enabled=false`). `api.bind_address` accepts any IPv4 or IPv6 address
+literal, including loopback, a specific interface, or a wildcard (`0.0.0.0` / `::`). Missing
+values default to **`127.0.0.1`**, including existing enabled profiles; an upgrade must never
+broaden access automatically. Reject hostnames, URLs, ports and invalid literals visibly.
+Address and port changes persist and apply immediately; preserve enabled intent and surface
+bind failures with guided correction. Clients use an actual reachable address, never a wildcard
+listen address. IPv6 URLs bracket the address, for example `http://[::1]:43210`.
+Every request, including health and unknown routes, requires a bearer token. Tokens are generated
+on first enable and remain revealable, copyable and regenerable in Settings. Missing/wrong tokens
+return 401; authenticated unknown routes return 404. Default port is 43210. Rotation takes effect
+without restart. Preserve disable/re-enable behavior and Windows exclusive socket ownership.
+Settings reports the configured address and actual listening/error state honestly.
 
-**Upgrade and visibility.** An existing profile with `api.enabled=true` keeps it enabled and
-acquires the broader bind on upgrade. Display a **one-time visible in-app notice**, including the
-all-interface/plain-HTTP/history-access consequences and the Settings disable control. Do not
-consume the notice while the app is hidden in the tray: persist completion only after the user
-explicitly acknowledges it in the visible main window. Fresh profiles remain off and see the same threat model before enabling. Settings
-and release notes explain the change. Notice persistence uses the existing settings store, no
-schema migration; the internal marker and acknowledgement contract are defined in §8.
+The API uses plain HTTP without transport encryption. With a non-loopback bind, any token holder
+on a reachable host can read the entire screen history, and network observers may intercept tokens
+and responses. Network binding is an explicit user configuration decision. No wildcard CORS,
+cookie authentication or token-bearing URLs. No upgrade notice or acknowledgement is necessary:
+profiles lacking the new key retain loopback exposure; the earlier automatic-broadening notice
+contract is superseded and its internal marker is no longer used.
 
 **Network boundary.** This is not public hosting. No automatic firewall changes, router port
 forwarding or inference exposure. Document a user-managed Windows inbound-allow step and explain
-that 200/401 is an HTTP result while a timeout can indicate routing/firewall failure. An all-IPv4
+that 200/401 is an HTTP result while a timeout can indicate routing/firewall failure. A wildcard
 bind itself does not guarantee LAN-only reachability. MCP’s loopback-only destination validation
 and default URL stay unchanged; remote MCP needs its own amendment. Scheduled reports, vault
 writes, report endpoints and Telegram are outside this increment.
 
-**Acceptance for the network increment.** Assert the actual bound socket is IPv4 unspecified;
-connect via `127.0.0.1` plus its port in API/MCP fixtures. Prove disabled means no listener,
-authentication covers all routes, enabled upgrades show the notice once, token rotation takes
+**Acceptance for the network increment.** Assert actual bound sockets for IPv4/IPv6 loopback,
+specific-interface and wildcard configurations; connect to usable addresses in API/MCP fixtures.
+Prove missing-key enabled upgrades remain on `127.0.0.1`, invalid addresses fail visibly, disabled
+means no listener, authentication covers all routes, address changes apply immediately, and token rotation takes
 effect without restart, bind errors remain visible and status reports the listen address honestly.
 On Windows claim the API port with `SO_EXCLUSIVEADDRUSE` before bind: a wildcard listener
 must reject an existing loopback/interface-specific listener as well as another wildcard
@@ -966,26 +962,19 @@ warning + toast**, never silent — D6) · `overlay.max_results` (8, clamped `1.
 `marks.hotkey` (`Ctrl+Alt+M` — mark-this-moment; same loud registration-failure handling as
 `overlay.hotkey` — D6) ·
 `api.enabled` (false — master switch; the API crate is **not constructed** unless on — D11) ·
-`api.port` (43210, clamp 1024..=65535 — Gate A bind is `0.0.0.0`, all IPv4, **hard-coded, not a setting**; a
-bind failure is **loud + guided-change**, `§7c`) ·
+`api.bind_address` (`127.0.0.1` when missing — any IPv4/IPv6 literal, immediate apply, `§7c`) ·
+`api.port` (43210, clamp 1024..=65535; a bind failure is **loud + guided-change**, `§7c`) ·
 `api.token` (generated on first enable; the bearer token, regenerable in Settings — never blank while
 enabled).
 
-**Gate A API upgrade marker (internal KV, not a user-editable preference).**
-`api.network_notice_state` has values `pending` or `acknowledged`; absence identifies a profile
-not yet processed by this upgrade. On startup, atomically persist the initial state: absent plus
-`api.enabled=true` becomes `pending`; absent plus disabled becomes `acknowledged` (the current
-Settings threat model covers a subsequent first enable). Existing values are preserved across
-restart. `pending` stays pending even if the API is later disabled: the notice explains the prior
-broader bind, reports the current API state honestly, and offers the Settings disable control when
-applicable. A hidden/tray startup, rendering the notice, dismissing the window, or disabling the
-API must never consume it. Only explicit user acknowledgement in the visible main window changes
-`pending` to `acknowledged`. A persistence failure leaves the notice pending and surfaces an error.
-`ApiStatus.network_notice_pending: bool` exposes this state through generated bindings. The typed
-`acknowledge_api_network_notice` IPC command persists acknowledgement only for the visible
-main-window user action and returns the updated `ApiStatus`; no background acknowledgement or
-remote HTTP acknowledgement route. This uses the existing settings KV table, with no schema
-migration and no new API mode.
+`ApiStatus.bind_address: String` reports the canonical configured IP literal. The optional
+`set_api_config.bind_address` preserves the current value when omitted; supplied values are
+validated before mutation.
+
+**API bind compatibility.** Missing `api.bind_address` defaults to `127.0.0.1` for both
+fresh and existing profiles. Preserve enabled state, token and port. The superseded
+`api.network_notice_state` key is ignored; no acknowledgement command or notice status remains.
+This preference uses the existing settings KV table and needs no schema migration.
 
 Startup completion emits `api_status_changed` with a null/unit payload so the main UI
 invalidates its status query even if the first read preceded startup binding. The event never
@@ -1028,7 +1017,9 @@ the app's own overlay must never appear in its own capture history; asserted by 
 
 `generate_report(ReportRequest) -> ReportResponse` (`§7`) summarizes work/content over a time range
 from **`frame_text.content_text`** (never raw full-screen text) and **cites the frames** it used.
-There is **no saved-report table** — scheduled/saved reports are deferred (`07`).
+The original 0.2.x command remains supported. The approved memory-report increment adds durable
+runs and opt-in local schedules under `§8c`; the original no-saved-table rule is superseded only
+for that increment.
 
 - **Ranges.** Daily = local "today"; Weekly = trailing 7 local days; Custom = a selected range +
   optional user prompt.
@@ -1046,6 +1037,294 @@ There is **no saved-report table** — scheduled/saved reports are deferred (`07
 - **Honest framing:** "retrieve up to N, summarize what fits" — not a guarantee that all N frames
   are read. Empty / no-evidence ranges produce honest output (no fabrication), consistent with the
   Ask no-evidence behavior.
+
+## 8c. Durable reports and local daily memory (approved 2026-10-15)
+
+The maintainer approved execution and the report policies. This separately reviewed amendment
+permits default-off scheduled **local** reports and user-selected folder writes, an explicit
+exception to earlier pull-only behavior. No scoring, nags, cloud inference, automatic model
+downloads or report HTTP/MCP endpoints. Telegram's outbound exception is the separately reviewed `§8d` amendment.
+
+### Shared execution and lifecycle
+
+Kernel orchestration owns one report execution service over `Store`/`AnswerProvider`; Tauri and
+scheduling adapt it, preserving existing manual Recall and session evidence scope. Scheduling
+serializes automatic inference through the existing model supervisor. An automatic provider
+must resolve and use installed model files without calling the downloader: a preflight check
+followed by the existing lazy-download provider is insufficient (tier/file races). Snapshot
+configuration and selected model identity before execution; failure to load is visible BLOCKED.
+Inspect empty windows before acquiring a model. Store errors are FAILED, never NO_DATA.
+After a positive usable-content probe, coverage generation returning empty or blank prose is
+GENERATION_FAILED, never a successful empty note/NO_DATA. Prompt-based manual Recall may still
+return no-match output for a query with no relevant hits; blank model prose remains a failure.
+
+Shutdown stops enqueue, sets cancellation, joins the report worker before sidecar shutdown and
+preserves recoverable durable state. Existing model-pass cancellation remains cooperative;
+the worker may abort awaiting work within a bounded shutdown timeout, then the supervisor kills
+the sidecar. Never claim immediate in-flight report cancellation. Capture/OCR never waits on
+the schedule. Kernel/runtime implementation chooses the bounded timeout and tests it explicitly.
+
+### Typed contracts (traits; generated IPC types)
+
+UUIDs are opaque strings; timestamps are UTC Unix milliseconds (`i64`); counts are `u32`.
+Local dates are `YYYY-MM-DD`; zones are validated IANA identifiers, never an implicit moving
+system-local zone. Optional values serialize as null, not invented placeholders.
+
+- `ReportError { code: String, message: String }`: codes `INVALID_CONFIG`, `NOT_FOUND`,
+  `BUSY`, `SOURCE_UNAVAILABLE`, `MODEL_UNAVAILABLE`, `STORE_ERROR`, `GENERATION_FAILED`,
+  `FILE_CONFLICT`, `WRITE_FAILED`, `CREDENTIAL_UNAVAILABLE`, `DELIVERY_FAILED` identify failures
+  without private content or credentials. IPC returns structured errors; existing legacy report
+  commands may retain their string-error adapter. No report HTTP error surface is added.
+- `ReportScheduleConfig { enabled: bool, local_time: Option<String>, timezone: Option<String>,
+  output_folder: Option<String> }`. Defaults false/null/null/null. Local time is strict `HH:mm` (hour/minute precision only; no seconds input);
+  output folder is absolute. Enable requires valid time/zone/folder; save failure preserves the
+  previous configuration. Manual Run now requires selected zone/folder but not an enabled schedule.
+- `SavedReport { markdown: String, model: Option<String>, frame_ids: Vec<i64>,
+  session_ids: Vec<i64>, cited_frame_ids: Vec<i64>, frames_sampled: u32,
+  frames_summarized: u32, periods_total: u32, periods_covered: u32, passes: u32,
+  truncated: bool }`. Frame IDs are the full distinct actually summarized union; citation IDs
+  may keep the existing 200-item display cap. Session IDs snapshot known ownership at generation.
+- `ReportRun { run_id: String, source_id: String, schedule_id: Option<String>,
+  revision_of: Option<String>, window_start: i64, window_end: i64, timezone: String,
+  local_date: String, phase: ReportRunPhase, outcome: Option<ReportOutcome>,
+  error: Option<ReportError>, result: Option<SavedReport>, config_snapshot: String,
+  created_at: i64, updated_at: i64 }`. `config_snapshot` is immutable nonsecret JSON containing
+  report settings, model identity/version and configuration version; it is provenance, not a
+  deduplication dimension. `ReportRunPhase` serializes `queued|running|blocked|finished`;
+  outcomes serialize `OK|PARTIAL|NO_DATA|BLOCKED|FAILED`.
+- `ReportDelivery { id: String, run_id: String, destination: ReportDestination,
+  state: ReportDeliveryState, revision_of: Option<String>, destination_snapshot: String,
+  path: Option<String>, hash: Option<String>, recovery_path: Option<String>, chunk_index: Option<u32>,
+  chunk_count: Option<u32>, message_id: Option<i64>, error: Option<ReportError>,
+  next_attempt_at: Option<i64>, attempt: u32, created_at: i64, updated_at: i64 }`.
+  Destination is `vault|index|telegram`; Telegram is governed by the separate `§8d` amendment. State is `pending|sending|succeeded|conflict|failed|skipped|unknown_delivery|reviewed`.
+  Delivery updates use expected-state compare-and-swap. Each attempt has its own ID; `revision_of` links a prior attempt. Destination snapshots are
+  immutable and never contain tokens. Receipts are separate from generation.
+- `MemorySettings { enabled: bool, local_time: Option<String>, timezone: Option<String>,
+  output_folder: Option<String>, telegram_enabled: bool, telegram_chat_id: Option<String> }`
+  (flat public fields; Telegram fields added by the separate §8d amendment) and
+  `MemoryStatus { settings: MemorySettings, source_id: String, latest_run: Option<ReportRun>,
+  missed_windows: Vec<TimeRange>, worker_running: bool, worker_error: Option<ReportError>,
+  telegram_credential_available: bool }`.
+  Worker errors remain visible alongside settings so a failed background attempt cannot hide
+  the controls needed to disable or fix automation. No credential value is returned.
+
+`MemorySchedulePreview { local_date: String, window_start: i64, window_end: i64,
+due_at: i64 }` describes the first eligible scheduled window and firing time. The read-only
+`preview_memory_schedule(settings) -> Option<MemorySchedulePreview>` computes it from the shared
+calendar policy before saving; incomplete time/zone returns null, invalid supplied values return
+INVALID_CONFIG. It never enqueues, writes settings or requires a model. UI never duplicates DST
+policy in JavaScript.
+
+IPC: `get_memory_status() -> MemoryStatus`; `set_memory_settings(settings) -> MemoryStatus`;
+`run_memory_report(range?: MemoryReportRange) -> ReportRun` enqueues the selected dates or,
+when omitted, the previous completed calendar day in the selected zone, even before automatic activation; `retry_memory_report(run_id) -> ReportRun`;
+`regenerate_memory_report(run_id) -> ReportRun`; `list_memory_runs(limit) -> Vec<ReportRun>`
+(newest first, default 20, clamp 1–100);
+`get_memory_run(run_id) -> ReportRun`; `get_memory_deliveries(run_id) -> Vec<ReportDelivery>`;
+`reset_memory_source_identity() -> MemoryStatus` requires schedules/delivery disabled and no
+active run. `memory_status_changed: null` invalidates mounted status/run queries; it contains
+no report text or tokens and produces no notification.
+
+### Durable state and transitions
+
+Current schema inventory is 11. The next migration, **12**, adds report runs, destination
+attempts, scheduling activation/cursor/gap state and generated-file ownership. Forward-only;
+populated-schema-11 migration tests must preserve existing frames/sessions/settings. Exact DDL
+belongs in the store module; these invariants are binding:
+
+- Base scheduled runs have a partial unique key `(schedule_id, window_start, window_end)` where
+  `revision_of IS NULL`; regeneration creates a linked child, not another base run. Persist idempotent enqueue before advancing the schedule cursor; replay after a crash reuses
+  the unique base run. Internal `ReportScheduleState { schedule_id: String, activated_at: i64,
+  last_window_end: Option<i64>, gap_start: Option<i64>, gap_end: Option<i64> }` is separate KV JSON. Concurrent manual previous-day requests reuse a pending
+  matching manual base run; deliberate regeneration is explicit.
+- New runs: queued/null → running/null → finished/OK, PARTIAL, NO_DATA or FAILED; a missing
+  prerequisite yields blocked/BLOCKED. Retry clears the failure and requeues the **same run**
+  when no result exists. Saved results remain immutable: retry resumes pending/failed delivery
+  without another generation. A failed vault write never discards a successful saved report.
+- Restart changes interrupted running generation to queued, preserving identity/config/window.
+  Interrupted file writes reconcile durable file/hash intent before retry; the old valid file
+  is preserved. Delivery recovery never invents success from generation success.
+- Regenerate creates a new UUID with `revision_of` pointing to the prior run and a fresh config
+  snapshot, preserving the original window/source and prior result. Replace the daily note only
+  if unchanged and owned; no automatic repeat of a confirmed Telegram delivery in the revision
+  chain (enforced by the later adapter). Already-active same-run actions return BUSY.
+- Run history expires after 90 days from last terminal update. Never prune queued/running/blocked
+  runs or runs with active pending/sending/unknown/conflict delivery or failed delivery with
+  nonnull next_attempt_at. Failed delivery without a pending retry is terminal and stays visible. Pruning does not delete
+  exported notes. Ownership records `(path, source_id, run_id, last_hash)` outlive run pruning;
+  they have no cascading run FK. Evidence IDs have no cascading frame/session FK.
+
+### Calendar schedule and profile identity
+
+First enable records activation now. The first eligible window is the first **full calendar
+day starting at or after activation**; no partial activation day or earlier history is scheduled.
+Fire at the selected local time on the following day, reporting `[day_start,next_day_start)` in
+UTC. DST gap: first valid instant after the requested wall time; overlap: earlier instant once.
+Persist the selected zone: machine timezone changes do not move it. Config time/zone edits and
+re-enable create a future activation period; retain old UTC windows/results and do not backfill
+disabled periods. Output-folder changes affect future requests, not saved destination snapshots.
+
+On restart process eligible missed windows oldest-first, at most seven daily windows; persist
+and expose older omitted gaps so later ticks do not silently catch them up or claim coverage.
+No duplicate finalized UTC window for the same schedule. Activation/config changes never mutate
+old deduplication keys. Settings previews the first eligible report date before enabling.
+
+Create and persist a random profile UUID once. Moves/restores preserve it; it contains no user,
+host or path. Independently active clones must explicitly reset identity before enabling their
+schedule/delivery; document that byte copies retain identity and cannot be detected reliably.
+Reset affects future runs only and requires disabled schedules/delivery with no active worker.
+It does not transfer ownership of prior notes or rewrite historical provenance.
+
+### Local output and honest coverage
+
+OK and PARTIAL write saved content; PARTIAL prominently explains incomplete coverage. NO_DATA
+writes a factual no-data note without a model. BLOCKED/FAILED write no daily note and remain
+visible in app status. Empty evidence is only a successful inspection; sampling never implies
+exhaustive capture. Missing later evidence is disclosed, not silently treated as still available.
+
+Path: `<selected folder>/ScreenSearch/Daily/YYYY-MM-DD.md`; index:
+`<selected folder>/ScreenSearch/Index.md`. Atomic same-directory temporary write/replace with
+persisted SHA-256 ownership independent of run retention. Precheck edited/unrelated files
+and preserve them untouched. Use Windows ReplaceFileW with a unique backup for replacement;
+compare the displaced backup hash with the expected ownership hash. On a concurrent swap,
+preserve displaced bytes in the recovery backup, expose its recovery_path in a conflict receipt,
+and never delete an unmatched backup. Reject symlinks/reparse points within the generated subtree. Index follows the same rules and links only successfully written notes,
+without duplicates, with date/status/brief source-backed topic labels. No tokens or invented
+desktop deep links. Rollback removes only run-owned temporary files, never user content.
+
+Frontmatter schema 1 keys: `schema` integer 1; `run_id`, `source_id`, `timezone`, `status`
+strings; `window_start`, `window_end` RFC3339 UTC strings; `model` nullable string;
+`frames_sampled`, `frames_summarized`, `periods_total`, `periods_covered` integers;
+`truncated` boolean; `frame_ids`, `session_ids` integer arrays. Full frame-ID count equals
+frames_summarized; NO_DATA uses empty arrays and null model. Encode scalar strings as JSON-compatible YAML scalars; typed roundtrip tests required.
+Body headings cover activity, explicitly evidenced decisions, open questions and next steps;
+tentative screen text is never promoted into a commitment. Existing manual report prose stays
+compatible; the daily-memory output framing uses the actual dated window, never hardcoded today.
+
+### Settings, upgrade and acceptance
+
+Persist `memory.schedule.enabled=false`, `memory.schedule.local_time=null`,
+`memory.schedule.timezone=null`, `memory.schedule.output_folder=null` with internal profile UUID,
+activation/cursor/gaps in durable storage. Existing installations remain off; do not infer a
+folder or timezone. Model/config provenance is snapshotted per run. Native acceptance requires
+a real installed-model report, inspected coverage, a real note visible in the selected folder/
+Obsidian, preserved edited notes, DST/restart tests and bounded worker shutdown evidence.
+Unit fixtures do not certify live inference or output usefulness. No release/merge is implied.
+
+### Manual date and date-range reports (requested 2026-10-15)
+
+The maintainer requested choosing a date or range for the same durable local/Telegram report.
+`MemoryReportRange { start_date: String, end_date: String }` is a generated typed request of
+inclusive, strict `YYYY-MM-DD` dates interpreted in the saved Memory timezone. Equal endpoints
+select a single day. `run_memory_report(range: Option<MemoryReportRange>)` retains the previous
+completed-day shortcut when omitted. Selecting dates alone never enqueues or sends anything.
+Validate both dates and their order before enqueue; reject future dates in the selected timezone.
+Resolve local midnight with the existing DST/calendar rules; the exclusive UTC end is midnight
+after the selected inclusive end date. If that date is today, freeze the end at enqueue time.
+Expose that this is an in-progress report: real-evidence output is PARTIAL with its exact as-of
+time, never a claim to cover the rest of today. Genuine empty evidence remains NO_DATA and does
+not send Telegram. Retry and Regenerate preserve the frozen original window.
+
+`ReportRun.requested_range: Option<MemoryReportRange>` defaults to null when reading legacy JSON
+and is immutable. Scheduled/legacy runs retain null and their current behavior. This adds an
+optional backward-compatible field to existing JSON payloads, with no SQL DDL change or schema
+version bump (schema remains 12). Calendar-grid coverage and existing bounded inference apply to
+longer windows; neither screenshots nor raw OCR enter the Telegram digest.
+
+Explicit manual requests have independent run UUIDs, including repeated selections of the same
+dates. Store active-window deduplication remains only for legacy previous-day requests and must
+not reuse an explicit range run. The source/UTC-window/requested dates cannot mutate on update.
+No change to daily scheduling activation, its catch-up cursor or configured send time.
+
+An explicit selection writes `ScreenSearch/Reports/<start>_to_<end>_<base-run-UUID>.md` under the
+saved output folder, including for a single date. Regenerated revisions reuse the root ancestor's
+file identity. This avoids overwriting scheduled Daily notes or unrelated manual runs. Existing
+ownership/hash/reparse/recovery rules apply. Frontmatter adds optional `requested_range` and
+`base_run_id` with defaults for old notes, so generated filenames and index provenance remain
+verifiable after run-history pruning. The index includes owned Daily and Reports notes with
+single-date/range labels. Telegram digests and run history label the selected date range and
+in-progress/partial coverage, using the same saved result and independent receipts.
+
+Verify strict dates/order/future rejection, single-day and multi-day UTC bounds, today cutoff,
+DST transitions, legacy JSON compatibility, immutable request metadata, distinct manual runs,
+revision filename reuse, index links and existing scheduled behavior. No test changes the live
+profile, rewrites the reported notes, restarts the running app or sends a real Telegram message.
+
+## 8d. Telegram text digest (separate approved exception, 2026-10-15)
+
+This amendment permits **explicitly enabled** outbound HTTPS calls to Telegram's Bot API for
+text-only digests of saved reports to the user-configured destination. It is a narrow exception
+to the no-cloud-upload/network rules and to pull-only delivery; storage and inference remain
+local. Opt-in copy states that selected digest content leaves the device and reaches Telegram
+and the selected conversation. No screenshots, raw OCR, arbitrary export, cloud inference,
+two-way commands, inferred recipient or telemetry. Disable stops new sends; an already accepted
+message cannot be recalled by disabling. Existing profiles upgrade with Telegram off.
+
+### Settings and credentials
+
+Flat `MemorySettings` extends §8c with `telegram_enabled: bool` (default false) and
+`telegram_chat_id: Option<String>` (default null). Persist nonsecret configuration under
+`memory.telegram.enabled` and `memory.telegram.chat_id`. Enable requires a nonempty explicitly
+selected chat ID and available credential. Destination snapshots capture that chat ID for each
+delivery; changing settings does not redirect old attempts. Disable suppresses dispatch of
+pending attempts until re-enabled; do not send to a changed recipient without a new explicit
+attempt targeting that recipient.
+
+Store the bot token only in Windows Credential Manager, scoped to the profile identity. It
+never enters ordinary settings, IPC responses, status/events, prompts, exports, notes or logs.
+`set_telegram_token(token) -> MemoryStatus` and `clear_telegram_token() -> MemoryStatus` are
+write-only credential actions; `telegram_credential_available` reports only availability.
+Credential access failure is visible CREDENTIAL_UNAVAILABLE, never a successful save/send.
+Identity reset does not copy credentials into the new identity or erase historical provenance;
+the user must explicitly configure the new profile credential. Existing API-token storage is
+unchanged. Redact Bot API request URLs, including token-bearing path segments, from all errors.
+
+### Digest and receipts
+
+Derive a concise digest from `SavedReport.markdown` and its window/status/coverage; never invoke
+a second model. OK sends; PARTIAL sends with a prominent limitation. NO_DATA/BLOCKED/FAILED do
+not send; persist skipped delivery with the precise reason. Mask supported patterns for API
+keys/bearer tokens/password assignments before output. State that masking is not comprehensive
+PII detection; existing capture exclusions remain relevant. Do not claim arbitrary secrets are
+removed. Send plain text without parse-mode markup; bound digest length before splitting.
+Each chunk must fit Telegram's 4096-character limit, including labels; use conservative UTF-16
+unit accounting and never split a Unicode scalar. Preserve the saved original report locally.
+
+Persist a separate delivery intent **before** the network call, with stable attempt ID, run,
+destination snapshot, chunk index/count, and pending→sending compare-and-swap. Process chunks
+in order; persist each returned `message_id` immediately as succeeded before the next chunk.
+Retries skip confirmed chunks. Store the rendered chunk text or immutable digest snapshot with
+the intent so retries use the same saved content; no credentials in that payload.
+
+Explicit rejection known not to have accepted a message may retry only when transient. Bound
+automatic retries to **three after the first attempt**, with delays 30 s, 120 s, 600 s; honor a
+larger valid Telegram `retry_after`. Authentication/invalid-destination errors are permanent and
+visible. An HTTP 429 structured rejection is transient; transport timeout/disconnect after
+dispatch, malformed acceptance or a crash after sending but before durable receipt is
+UNKNOWN_DELIVERY. Ambiguous errors are never classified as explicit transient rejection.
+On startup, Telegram attempts left sending become unknown_delivery, never pending.
+
+`resolve_telegram_delivery(attempt_id, resolution) -> ReportRun`, with resolution
+`reviewed|resend`, requires an explicit user action. Reviewed changes the original attempt to
+reviewed while retaining uncertainty/error and any known receipts; it never invents a message
+ID or changes it to succeeded. Resend atomically marks the original reviewed and creates a new
+linked attempt (`revision_of`) after a duplicate-risk explanation. If the compare-and-swap
+loses, do not enqueue another resend. Unresolved unknown attempts block pruning; resolved
+reviewed history can expire under §8c. Confirmed delivery is never repeated automatically,
+including for regenerated revisions. A regenerated report records skipped/already-confirmed if
+any ancestor was confirmed; unknown ancestors require review before any new send. Vault/index
+failure never triggers report regeneration and does not erase Telegram acceptance receipts.
+
+### Acceptance
+
+Test credential unavailability, token exclusion from prompts/errors/settings, Unicode chunk
+bounds, saved-report reuse, retry bounds, unknown recovery, concurrent resolution, confirmed
+chunk suppression, regeneration suppression and disabled dispatch. Real acceptance additionally
+requires a user-approved recipient/send and visual inspection in Telegram. A returned message
+ID proves service acceptance, never that a person read the message. No test credentials,
+hardcoded destinations, synthetic receipts or undocumented sends. Rollback disables delivery
+independently of local schedules and preserves reports, notes and receipts.
 
 ## 9. Logging & observability
 `tracing` + daily-rotating file (`tracing-appender`) and console. Job-queue depth, sidecar state
@@ -1216,3 +1495,11 @@ Each item is demonstrated with verbatim command output or a described-and-perfor
 
 *Next layer:* `04_CLAUDE_CODE_BUILD_PROMPT.md` — how the agent operates against `00`–`03`
 (reading order, source-of-truth, build order, guardrails, stop-at-ambiguity).
+
+
+### Memory path normalization correction (2026-10-15)
+
+New memory settings, delivery destination snapshots and receipt/recovery paths use forward
+slashes. Read legacy backslash ownership paths compatibly and persist canonical ownership keys
+transactionally to avoid duplicate ownership/conflict records. This is Windows-only path
+normalization; preserve native atomic file operations. No schema migration is required.

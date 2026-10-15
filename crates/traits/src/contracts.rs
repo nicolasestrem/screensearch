@@ -168,6 +168,115 @@ pub trait SessionSegmenter: Send + Sync {
 /// (SQLite + sqlite-vec + FTS5 impl in `store`, `03 §3/§4/§5`).
 #[async_trait]
 pub trait Store: Send + Sync {
+    /// All revision-family receipts; missing ancestors fail closed.
+    async fn list_report_family_deliveries(
+        &self,
+        _run_id: &str,
+    ) -> Result<Vec<crate::ReportDelivery>> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+
+    /// Atomically persist every chunk intent before dispatch.
+    async fn create_report_deliveries(
+        &self,
+        _deliveries: Vec<crate::ReportDelivery>,
+    ) -> Result<Vec<crate::ReportDelivery>> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    async fn get_report_delivery(&self, _id: &str) -> Result<Option<crate::ReportDelivery>> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+
+    /// Fallible content-only evidence probe; no model needed for empty windows.
+    async fn report_has_usable_content(&self, _start: i64, _end: i64) -> Result<bool> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+
+    /// Recovery work is unbounded by the paginated presentation history.
+    async fn list_pending_report_runs(&self) -> Result<Vec<crate::ReportRun>> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+
+    /// Generated-file ownership survives report retention.
+    async fn list_report_files(&self) -> Result<Vec<crate::ReportFileOwnership>> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn ensure_report_source_id(&self, _candidate: &str) -> Result<String> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn reset_report_source_id(&self, _new_id: &str) -> Result<()> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn create_report_run(&self, _run: crate::ReportRun) -> Result<crate::ReportRun> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn get_report_run(&self, _id: &str) -> Result<Option<crate::ReportRun>> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn list_report_runs(&self, _limit: u32) -> Result<Vec<crate::ReportRun>> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn update_report_run(&self, _run: crate::ReportRun) -> Result<()> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn claim_report_run(&self, _id: &str, _now: i64) -> Result<bool> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn recover_report_work(&self, _now: i64) -> Result<()> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn create_report_delivery(
+        &self,
+        _delivery: crate::ReportDelivery,
+    ) -> Result<crate::ReportDelivery> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn update_report_delivery(
+        &self,
+        _delivery: crate::ReportDelivery,
+        _expected_state: crate::ReportDeliveryState,
+    ) -> Result<bool> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn resolve_report_delivery(
+        &self,
+        _previous: crate::ReportDelivery,
+        _replacement: Option<crate::ReportDelivery>,
+    ) -> Result<bool> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn list_report_deliveries(&self, _run_id: &str) -> Result<Vec<crate::ReportDelivery>> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn get_report_file(&self, _path: &str) -> Result<Option<crate::ReportFileOwnership>> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn save_report_file(&self, _ownership: crate::ReportFileOwnership) -> Result<()> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn report_evidence(&self, _frame_ids: Vec<i64>) -> Result<crate::ReportEvidence> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
+    async fn prune_report_runs(&self, _before: i64) -> Result<u64> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
     // frames + ocr + vision
     async fn insert_frame(&self, f: NewFrame) -> Result<i64>;
     async fn insert_ocr(&self, frame_id: i64, ocr: OcrResult) -> Result<()>;

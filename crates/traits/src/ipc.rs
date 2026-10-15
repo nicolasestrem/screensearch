@@ -1169,13 +1169,13 @@ pub struct ThrottleStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 pub struct ApiStatus {
-    /// Pending upgrade notice; only explicit visible main-window acknowledgement clears it.
-    pub network_notice_pending: bool,
+    /// Configured IPv4 or IPv6 literal; missing configuration defaults to 127.0.0.1.
+    pub bind_address: String,
     /// Persisted intent — the master toggle.
     pub enabled: bool,
     /// Whether the HTTP server is currently bound and serving.
     pub running: bool,
-    /// The configured port (default 43210); listens on `0.0.0.0` (all IPv4 interfaces).
+    /// The configured port (default 43210).
     pub port: u16,
     /// The bearer token (revealed/copied in Settings); `None` before first enable.
     pub token: Option<String>,

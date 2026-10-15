@@ -34,6 +34,8 @@ pub struct AnswerSidecar {
     models_root: PathBuf,
     tier: RwLock<ModelTier>,
     launch: RwLock<SidecarParams>,
+    /// Automatic reports pin an installed spec and can never reach the downloader.
+    fixed_spec: Option<ModelSpec>,
 }
 
 impl AnswerSidecar {
@@ -50,6 +52,7 @@ impl AnswerSidecar {
             models_root,
             tier: RwLock::new(tier),
             launch: RwLock::new(params),
+            fixed_spec: None,
         }
     }
 
@@ -65,7 +68,30 @@ impl AnswerSidecar {
         *self.launch.write().expect("answer launch lock") = params;
     }
 
+    /// Snapshot an installed model for automatic reports. Subsequent tier changes
+    /// cannot redirect this provider; missing/deleted files fail locally without a
+    /// download. The normal supervisor still owns loading, leases and shutdown.
+    pub fn installed_provider_for(
+        &self,
+        tier: ModelTier,
+        params: SidecarParams,
+    ) -> Result<Arc<dyn AnswerProvider>> {
+        let spec = models::resolve_spec(&self.models_root, ModelLane::Answer, tier, params.clone())
+            .context("selected answer model is not installed")?;
+        Ok(Arc::new(Self {
+            supervisor: self.supervisor.clone(),
+            downloader: self.downloader.clone(),
+            models_root: self.models_root.clone(),
+            tier: RwLock::new(tier),
+            launch: RwLock::new(params),
+            fixed_spec: Some(spec),
+        }))
+    }
+
     async fn ensure_spec(&self) -> Result<ModelSpec> {
+        if let Some(spec) = &self.fixed_spec {
+            return Ok(spec.clone());
+        }
         let tier = *self.tier.read().expect("answer tier lock");
         let params = self.launch.read().expect("answer launch lock").clone();
         if let Some(spec) =
@@ -288,6 +314,9 @@ impl AnswerProvider for AnswerSidecar {
     /// The active answer model's GGUF filename for the report footer — resolved
     /// without downloading (`None` if the files aren't present yet).
     async fn answer_model_label(&self) -> Option<String> {
+        if let Some(spec) = &self.fixed_spec {
+            return Some(report_model_label(&spec.gguf_path));
+        }
         let tier = *self.tier.read().expect("answer tier lock");
         let params = self.launch.read().expect("answer launch lock").clone();
         models::resolve_spec(&self.models_root, ModelLane::Answer, tier, params)

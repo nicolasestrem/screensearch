@@ -35,6 +35,7 @@ mod frames;
 mod insights;
 mod jobs;
 mod marks;
+mod memory;
 mod records;
 mod schema;
 mod search;
@@ -233,6 +234,94 @@ impl SqliteStore {
 /// `SqliteStore::…` calls are non-recursive.
 #[async_trait]
 impl Store for SqliteStore {
+    async fn list_report_family_deliveries(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<traits::ReportDelivery>> {
+        SqliteStore::list_report_family_deliveries(self, run_id).await
+    }
+
+    async fn create_report_deliveries(
+        &self,
+        deliveries: Vec<traits::ReportDelivery>,
+    ) -> Result<Vec<traits::ReportDelivery>> {
+        SqliteStore::create_report_deliveries(self, deliveries).await
+    }
+    async fn get_report_delivery(&self, id: &str) -> Result<Option<traits::ReportDelivery>> {
+        SqliteStore::get_report_delivery(self, id).await
+    }
+
+    async fn report_has_usable_content(&self, start: i64, end: i64) -> Result<bool> {
+        SqliteStore::report_has_usable_content(self, start, end).await
+    }
+
+    async fn list_pending_report_runs(&self) -> Result<Vec<traits::ReportRun>> {
+        SqliteStore::list_pending_report_runs(self).await
+    }
+
+    async fn list_report_files(&self) -> Result<Vec<traits::ReportFileOwnership>> {
+        SqliteStore::list_report_files(self).await
+    }
+
+    async fn ensure_report_source_id(&self, candidate: &str) -> Result<String> {
+        SqliteStore::ensure_report_source_id(self, candidate).await
+    }
+    async fn reset_report_source_id(&self, new_id: &str) -> Result<()> {
+        SqliteStore::reset_report_source_id(self, new_id).await
+    }
+    async fn create_report_run(&self, run: traits::ReportRun) -> Result<traits::ReportRun> {
+        SqliteStore::create_report_run(self, run).await
+    }
+    async fn get_report_run(&self, id: &str) -> Result<Option<traits::ReportRun>> {
+        SqliteStore::get_report_run(self, id).await
+    }
+    async fn list_report_runs(&self, limit: u32) -> Result<Vec<traits::ReportRun>> {
+        SqliteStore::list_report_runs(self, limit).await
+    }
+    async fn update_report_run(&self, run: traits::ReportRun) -> Result<()> {
+        SqliteStore::update_report_run(self, run).await
+    }
+    async fn claim_report_run(&self, id: &str, now: i64) -> Result<bool> {
+        SqliteStore::claim_report_run(self, id, now).await
+    }
+    async fn recover_report_work(&self, now: i64) -> Result<()> {
+        SqliteStore::recover_report_work(self, now).await
+    }
+    async fn create_report_delivery(
+        &self,
+        delivery: traits::ReportDelivery,
+    ) -> Result<traits::ReportDelivery> {
+        SqliteStore::create_report_delivery(self, delivery).await
+    }
+    async fn update_report_delivery(
+        &self,
+        delivery: traits::ReportDelivery,
+        expected_state: traits::ReportDeliveryState,
+    ) -> Result<bool> {
+        SqliteStore::update_report_delivery(self, delivery, expected_state).await
+    }
+    async fn resolve_report_delivery(
+        &self,
+        previous: traits::ReportDelivery,
+        replacement: Option<traits::ReportDelivery>,
+    ) -> Result<bool> {
+        SqliteStore::resolve_report_delivery(self, previous, replacement).await
+    }
+    async fn list_report_deliveries(&self, run_id: &str) -> Result<Vec<traits::ReportDelivery>> {
+        SqliteStore::list_report_deliveries(self, run_id).await
+    }
+    async fn get_report_file(&self, path: &str) -> Result<Option<traits::ReportFileOwnership>> {
+        SqliteStore::get_report_file(self, path).await
+    }
+    async fn save_report_file(&self, ownership: traits::ReportFileOwnership) -> Result<()> {
+        SqliteStore::save_report_file(self, ownership).await
+    }
+    async fn report_evidence(&self, frame_ids: Vec<i64>) -> Result<traits::ReportEvidence> {
+        SqliteStore::report_evidence(self, frame_ids).await
+    }
+    async fn prune_report_runs(&self, before: i64) -> Result<u64> {
+        SqliteStore::prune_report_runs(self, before).await
+    }
     async fn insert_frame(&self, f: NewFrame) -> Result<i64> {
         SqliteStore::insert_frame(self, f).await
     }
@@ -488,6 +577,47 @@ mod migration_tests {
         conn
     }
 
+    #[test]
+    fn migration_12_preserves_populated_11_history() {
+        let mut conn = open_at_version(11);
+        conn.execute("INSERT INTO frames(id,captured_at,monitor_index,width,height,image_path,content_hash) VALUES(1,1000,0,10,10,'fixture.webp','hash')", []).unwrap();
+        conn.execute("INSERT INTO sessions(id,started_at,kind,context_key,confidence) VALUES(1,1000,'focus','focus',1.0)", []).unwrap();
+        conn.execute("UPDATE frames SET session_id=1 WHERE id=1", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('fixture','preserve')",
+            [],
+        )
+        .unwrap();
+        bootstrap_and_migrate(&mut conn).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT version FROM schema_version", [], |r| r
+                .get::<_, i32>(0))
+                .unwrap(),
+            12
+        );
+        assert_eq!(
+            conn.query_row("SELECT session_id FROM frames WHERE id=1", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row("SELECT value FROM settings WHERE key='fixture'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            "preserve"
+        );
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM report_runs", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(fk_violation_count(&conn), 0);
+    }
+
     fn fk_violation_count(conn: &Connection) -> i64 {
         let mut stmt = conn
             .prepare("PRAGMA foreign_key_check")
@@ -531,7 +661,8 @@ mod migration_tests {
             .expect("read version");
         assert_eq!(version, schema::LATEST_SCHEMA_VERSION);
         assert_eq!(
-            version, 11,
+            version,
+            crate::LATEST_SCHEMA_VERSION,
             "latest schema is v11 (0.4.0 PR3 added the sessions tables)"
         );
 
@@ -733,7 +864,8 @@ mod migration_tests {
             .expect("read version");
         assert_eq!(version, schema::LATEST_SCHEMA_VERSION);
         assert_eq!(
-            version, 11,
+            version,
+            crate::LATEST_SCHEMA_VERSION,
             "latest schema is v11 (0.4.0 PR3 added the sessions tables)"
         );
 
@@ -815,7 +947,8 @@ mod migration_tests {
             .expect("read version");
         assert_eq!(version, schema::LATEST_SCHEMA_VERSION);
         assert_eq!(
-            version, 11,
+            version,
+            crate::LATEST_SCHEMA_VERSION,
             "latest schema is v11 (0.4.0 PR3 added the sessions tables)"
         );
 
@@ -969,7 +1102,8 @@ mod migration_tests {
             .expect("read version");
         assert_eq!(version, schema::LATEST_SCHEMA_VERSION);
         assert_eq!(
-            version, 11,
+            version,
+            crate::LATEST_SCHEMA_VERSION,
             "latest schema is v11 (0.4.0 PR3 added the sessions tables)"
         );
 

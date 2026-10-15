@@ -2,15 +2,17 @@
 
 A local-first **Windows** desktop app that continuously captures your screen, makes it
 searchable by **text and meaning**, and answers questions about what you've seen — fully
-on-device, no cloud.
+on-device. Optional Telegram digests send selected report text to a configured conversation;
+capture storage and inference remain local.
 
 **It's also memory your agents can query.** Where most screen-recall tools stop at a search box for
 you, ScreenSearch exposes your screen history through an opt-in local **MCP server**
 (`screensearch-mcp`) — so Claude Desktop, Claude Code, or any MCP client can search your captures,
 ask grounded questions with cited frames, and, as of v0.4.0, reason over automatically segmented
 **work sessions** (`list_sessions`, `get_session`, `ask_session`). Every answer is drawn from the
-local database; the MCP wrapper connects over `127.0.0.1`. Enabling the HTTP API allows
-authenticated devices that can reach this computer to read history. Inference stays on-device.
+local database; the MCP wrapper uses loopback. The HTTP API defaults to `127.0.0.1`;
+explicit network binding lets authenticated devices that can reach this computer read history.
+Inference stays on-device.
 
 > **Status — v0.4.0 shipped (2026-07-11).** The full app is live: capture → OCR/UIA text →
 > deferred enrichment → **hybrid search**, a supervised out-of-process **llama.cpp inference
@@ -25,6 +27,35 @@ authenticated devices that can reach this computer to read history. Inference st
 > design lives in [`specs/`](./specs) and the as-built architecture in
 > [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md). A standalone, clean-slate project — it
 > shares no code or data with any prior version.
+
+## New in development — from screen history to memory reports
+
+Turn captured activity into notes you can revisit in **Obsidian**, with an optional digest in
+**Telegram**. Generate a report when you need it, or set a daily schedule. Capture storage and
+AI inference stay on your Windows computer.
+
+These additions are implemented and packaged in the current development branch, **not yet in
+the public release**. The latest released version remains v0.4.0.
+
+| Addition | What you can do |
+|---|---|
+| **Pick a date or range** | Report on one day or an inclusive range of dates. Include today for an explicitly partial report up to the time you start it. |
+| **Schedule daily reports** | Choose a time in hours and minutes and a fixed timezone. The scheduler handles daylight-saving changes and catches up on up to seven missed days. |
+| **Keep notes in Obsidian** | Choose a folder for Markdown notes and a linked index. Selected-date reports stay separate from scheduled daily notes; edited or unrelated files are preserved. |
+| **Receive Telegram digests** | Opt in to a text digest of the saved report, sent to your chosen conversation. Bot tokens stay in Windows Credential Manager; selected digest text leaves the device. |
+| **See coverage and delivery status** | Inspect the captured sources, partial coverage and separate note/Telegram receipts. Retry delivery without regenerating, or create a new report revision. Empty windows are labeled `NO_DATA` and skip Telegram. |
+| **Choose the API bind address** | Keep the default `127.0.0.1`, choose another IPv4/IPv6 address, or explicitly select a wildcard for network access. Existing enabled installations retain loopback when no address is configured. |
+
+To get started in a development build, open **Settings → Memory reports**, choose a timezone
+and output folder, then select dates under **Run a report**. Daily scheduling and Telegram are
+independent options and both start **off**. Reports use an already installed local answer model;
+they do not download one automatically.
+
+Scheduled notes live in `ScreenSearch/Daily/`; selected-date reports live in `ScreenSearch/Reports/`.
+Both are linked from `ScreenSearch/Index.md` inside your chosen folder.
+
+See the [Memory reports guide](docs/MEMORY.md) for setup, scheduling and recovery, or the
+[HTTP API guide](docs/API.md) for binding, authentication and the plain-HTTP network boundary.
 
 ## Screenshots
 
@@ -81,13 +112,17 @@ HTTP API exposes history to authenticated clients; see its [network boundary](do
   sidecar**: streaming answers with cited frames, and Daily / Weekly / Custom **Recall reports**
   that cite the frames they used. Vision tagging emits structured output with an honest confidence,
   never a fabricated score.
+- **Memory reports (unreleased).** Save reports for selected dates or on a daily schedule,
+  browse them as Markdown notes in Obsidian, and optionally receive Telegram digests.
+  Coverage and delivery receipts make empty windows, partial reports and failed attempts visible.
 - **Sessions.** A pure on-device heuristic groups frames into focus, meeting, and concurrent
   AI-tool sessions — additively, with no model calls and no change to frame-level behavior.
   Sessions surface in the Timeline, the local API, and MCP.
 - **Fast recall overlay.** `Ctrl+Alt+Z` opens the **Flow overlay** — a second, capture-protected
   Tauri window for quick Search/Ask without leaving your foreground app. `Esc` hides it; `Enter`
   opens the selected Moment in the main Command Deck. `Ctrl+Alt+M` marks the current moment.
-- **HTTP API + local MCP.** An opt-in HTTP API (off by default, all IPv4 interfaces + bearer token)
+- **HTTP API + local MCP.** An opt-in HTTP API (off by default, bearer authenticated) with
+  configurable IPv4/IPv6 binding in the development branch and a loopback default
   exposes search / ask / frames / marks / sessions and JSON export to reachable scripts and agents.
   Plain HTTP is not encrypted; enable only with appropriate network access restrictions.
   `screensearch-mcp.exe` — bundled in the installer — wraps it as a stdio **MCP server** for
@@ -175,7 +210,7 @@ crates/            15-crate Rust workspace (module crates depend on `traits` onl
   inference/       VisionProvider + AnswerProvider + llama.cpp supervisor (Job-Object lifecycle)
   sysmon/          CPU/GPU pressure probe driving the enrichment throttle
   doctor/          WebView2 / Vulkan / llama-server environment smoke-check
-  api/             opt-in HTTP API + JSON export (axum, all IPv4 + bearer token)
+  api/             opt-in HTTP API + JSON export (axum, configurable IP bind + bearer token)
   mcp/             screensearch-mcp.exe — stdio MCP wrapper over the local API
   sessions/        pure heuristic session segmentation + tool recognition (no model calls)
   harness/         dev-only, read-only segmentation validation harness (not shipped in the app)

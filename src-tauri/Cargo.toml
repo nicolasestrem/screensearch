@@ -49,6 +49,14 @@ anyhow.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+uuid.workspace = true
+sha2.workspace = true
+reqwest.workspace = true
+regex = "1"
+
 traits.workspace = true
 store.workspace = true
 kernel.workspace = true
@@ -62,3 +70,6 @@ sysmon.workspace = true
 # The opt-in local HTTP API (0.3.0 PR7, `03 §7c`). Off by default; the server is
 # constructed only when enabled. axum compiles into the app here (and in `crates/api`).
 api.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Security_Credentials", "Win32_Storage_FileSystem"] }

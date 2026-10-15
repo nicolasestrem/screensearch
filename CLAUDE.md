@@ -1,6 +1,7 @@
 # CLAUDE.md — ScreenSearch V2c
 
-Guidance for any AI agent (Claude Code) working in this repository.
+Shared repository guidance for Claude Code, Codex and other coding agents.
+`AGENTS.md` points here; maintain the instructions in this file.
 
 ## What this is
 A standalone, **Windows-only**, local-first desktop app (Rust + Tauri 2) that captures the screen,
@@ -65,7 +66,7 @@ Re-read each session — the files are the source of truth, not your memory.
   source (OCR fallback) · `crates/embeddings` — fastembed (in-process ONNX) · `crates/inference` —
   llama.cpp sidecar client + Job-Object supervisor · `crates/textfilter` — attention-first span
   classifier · `crates/sysmon` — CPU/GPU pressure probe · `crates/doctor` — env smoke-check ·
-  `crates/api` — opt-in authenticated HTTP API + export (`03 §7c`, all-IPv4 contract) · `crates/mcp` — `screensearch-mcp.exe` stdio
+  `crates/api` — opt-in authenticated HTTP API + export (`03 §7c`, configurable-bind contract) · `crates/mcp` — `screensearch-mcp.exe` stdio
   MCP wrapper over that API · `crates/sessions` — 0.4.0 pure heuristic session segmentation + tool
   recognition (no model calls) · `crates/harness` — 0.4.0 dev-only, read-only segmentation
   validation harness (not shipped in the app).
@@ -83,14 +84,19 @@ Re-read each session — the files are the source of truth, not your memory.
   If blocked, stop and ask.
 - **Windows-only by design** — use Windows-native APIs (WGC, WinRT OCR, WebView2); do not add
   cross-platform abstractions or stub them away.
+- **Path spelling:** use forward slashes in documented, persisted and displayed paths. Restore
+  native verbatim/device prefix syntax only at the Windows filesystem boundary.
 - **Rust-only ML runtime.** The shipped app's ML is Rust-only — embeddings via fastembed,
   inference via the local llama.cpp sidecar; no Python *ML sidecar* in the runtime (the V1 approach
   that failed). Python is fine for build/dev tooling (model prep, the `hf` CLI, CI scripts).
-  No cloud calls. Network exceptions: localhost, model downloads, the signed GitHub-Releases
-  update check (`03 §11b`), and user-enabled authenticated HTTP API serving on all IPv4 interfaces
+  No cloud inference or arbitrary cloud uploads. Network exceptions: localhost, model downloads, the signed GitHub-Releases
+  update check (`03 §11b`), and user-enabled authenticated HTTP API serving on a user-selected IPv4/IPv6 literal (default loopback)
   (`03 §7c`, Gate A API amendment). That API is plain HTTP: any reachable token holder can read
   history. No public hosting, automatic firewall/router changes, remote MCP, or exposed inference.
-  Scheduled reports and Telegram require their own separately reviewed contract amendments.
+  The approved local-memory amendment permits default-off scheduled local reports and user-selected
+  folder writes (`03 §8c`), without nags or scoring. The separately approved Telegram exception
+  (`03 §8d`) permits opt-in text digests of saved reports to a user-selected Bot API destination;
+  never raw OCR/screenshots, automatic recipient selection, remote commands or cloud inference.
 - **No real-time vision** — vision runs on-demand / timer / idle only (`03 §5`).
 - **Sidecar must never orphan** — implement the Job-Object lifecycle exactly (`03 §6`); do not ship
   P4 until the no-orphan test passes.

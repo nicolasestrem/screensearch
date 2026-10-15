@@ -1,9 +1,11 @@
 # ScreenSearch: useful memory, scheduled reports, and a network-accessible API
 
 Status (2026-10-15): **Execution authorized. Gate A API contract reviewed and committed;
-increment B implementation verification ongoing. C–E await the specifically unresolved A3
-product decisions and corresponding scheduling/delivery contracts, not another blanket plan
-approval. Native acceptance remains open.**
+increment B implementation verification recorded separately. C–E report policies approved by
+the maintainer ("Sure GO"); local schedule/durable contract in `03 §8c`, Telegram permission
+frozen separately in `03 §8d` before code. C–E implementation passes the local Windows
+automated suite; receipts are in `specs/05_BUILD_REVIEW.md`. No blanket plan approval is
+outstanding. Native acceptance and F1/F2 pilot/release review remain open.**
 
 This is the canonical repository execution plan, adapted from the original desktop planning
 artifact; that external file is preserved unchanged. The product serves approximately 15,000
@@ -14,7 +16,7 @@ environments rather than use one person's workflow as the acceptance standard.
 
 Make ScreenSearch useful without requiring the user to open its search UI: turn captured work into source-backed memory in Obsidian and useful scheduled reports delivered through Telegram. Keep search as the evidence-retrieval foundation.
 
-Change the application HTTP API listener from `127.0.0.1` to **`0.0.0.0`**. This means all IPv4 interfaces, not just a private-network interface. Clients use the computer's actual address, never `0.0.0.0` as a destination. Ideally make the API available to other devices on the same network, but do not expose it to the public Internet. Keep the existing loopback-only MCP destination validation and default URL; remote MCP is a separate candidate increment.
+Make the application HTTP API bind address configurable as any IPv4/IPv6 literal, persisted as `api.bind_address`. Missing values default to `127.0.0.1`, including existing enabled installations; upgrades must never broaden access automatically. Apply address/port edits immediately. Preserve authentication, exclusive socket ownership and loopback-only MCP destination validation/default URL. Wildcards are listen addresses, never client destinations.
 
 Execute the authorized increments with their separate contract, implementation and evidence gates. Do not mark an increment accepted until its verification output has been inspected and native acceptance observed. Firewall changes, private-history generation, an everyday installation replacement and Telegram test sends remain separately scoped actions; do not infer a destination or permission from implementation authorization.
 
@@ -81,13 +83,13 @@ First useful release: **scheduled daily memory in an Obsidian-compatible folder,
 
 Authoritative documents: `AGENTS.md`, `specs/01_PROJECT_CONTEXT.md`, `specs/02_STRATEGIC_PLAN.md`, `specs/03_MASTER_PRODUCTION_SPEC.md`, `specs/UI_REFERENCE.md`, and `specs/04_CLAUDE_CODE_BUILD_PROMPT.md`.
 
-At the original planning baseline, the requested network listener directly conflicted with `03 §7c`: “a 0.0.0.0 bind must be impossible by construction.” The API contradiction has since been resolved by reviewed contract commit `4fd037d`. Telegram delivery still requires a narrow amendment to the no-cloud-upload/network rules; scheduled delivery requires an explicit exception to pull-only behavior. This plan does not silently reinterpret those rules.
+At the original planning baseline, the requested network listener directly conflicted with `03 §7c`: “a 0.0.0.0 bind must be impossible by construction.” The original API contradiction was resolved by reviewed contract commit `4fd037d`; the later maintainer correction supersedes its hard-coded wildcard with configurable IPv4/IPv6 binding and a missing-key loopback default. Scheduled local delivery and Telegram's outbound-content exception were separately approved and committed as `4e0df3a` and `217f9ef` before their implementation. These are explicit feature exceptions; the original project-context privacy paragraph is retained at the maintainer's request.
 
 **Gate A:** separate reviewed contract-amendment commits must precede their respective implementation increments; then re-check against the amended contract. Split API binding, scheduled delivery and Telegram outbound permission so each can be reviewed and reverted independently. These are major boundary changes, not wording fixes. Remote MCP permission is a separate deferred proposal.
 
 | Existing principle | Proposed resolution / conformance |
 |---|---|
-| API loopback-only; MCP loopback-only | Amend for all-IPv4 API serving; preserve API default-off and bearer auth. Keep MCP loopback-only in the first increment; remote MCP needs a separate later amendment. Existing code conformed to the old rules. |
+| API loopback-only; MCP loopback-only | Amend for configurable IPv4/IPv6 API serving with a loopback default; preserve API default-off and bearer auth. Keep MCP loopback-only in the first increment; remote MCP needs a separate later amendment. Existing code conformed to the old rules. |
 | All data local; no cloud uploads; network exceptions only | Amend narrowly for user-enabled API access and opt-in Telegram digest delivery. Raw frames are not automatically uploaded. Inference remains local. Existing code conformed to the old rule. |
 | Pull-only/non-shaming | Allow explicitly configured report schedules and selected delivery; retain no scoring, nags, or unsolicited automation. |
 | Windows-native; Rust-only runtime | Satisfied: no capture port, extraction, or Python runtime. |
@@ -112,11 +114,11 @@ Test names below originated as **proposals unless expressly marked existing**. E
 
 ### B — Network-accessible API (first shippable increment)
 
-- **B1:** change only the application API listener constant to IPv4 unspecified (`0.0.0.0`) in `crates/api/src/lib.rs`. `binds_all_ipv4_interfaces` checks the actual socket address; `loopback_client_still_connects` connects to `127.0.0.1` using that socket's port. Replace the existing `binds_loopback_only` assertion in `crates/api/tests/http_api.rs:254–261`. Update both API and MCP integration-test helpers that construct URLs from `server.local_addr()` (`crates/api/tests/http_api.rs:229–235`; `crates/mcp/tests/stdio_mcp.rs:207–213`, plus the session fixture). Use `127.0.0.1` plus the bound port as the destination, never `0.0.0.0`. Update now-false loopback-only source comments without changing the inference bind.
-- **B2:** preserve `api.enabled`, port selection, current tokens, rotation, disable/re-enable, and bind-error behavior in `src-tauri/src/local_api.rs`. Add `disabled_api_has_no_listener`; retain and run existing `token_swap_takes_effect_without_restart` (`crates/api/tests/http_api.rs:309`), `fresh_profile_defaults_off` and `bind_failure_keeps_enabled_with_error` (`src-tauri/src/local_api.rs:519,582`) rather than duplicating them. Existing enabled installations will acquire the broader bind after upgrading as requested. Show a one-time visible in-app notice on that upgrade as well as updated Settings and release notes; do not silently change behavior or introduce an unrequested loopback mode. `enabled_upgrade_shows_bind_change_notice_once` covers the notice. The API remains default-off for new profiles.
-- **B3 (deferred, not required for B):** remote MCP support is a separate candidate increment, not implied by changing the server bind. Keep existing MCP destination validation and default URL for B; local MCP works against the all-interface listener. If later accepted, specify remote URL validation, compatibility and the existing `.no_proxy()` policy before changing the client.
+- **B1:** support configurable IPv4/IPv6 literal binding with actual socket tests for loopback, specific interfaces and wildcards. Reject invalid literals before mutation; preserve inference loopback. Fixture clients connect to usable addresses rather than wildcard listen addresses.
+- **B2:** preserve enabled intent, tokens, port, rotation and bind-error behavior. Persist `api.bind_address`; missing values default to `127.0.0.1` for fresh and upgraded enabled profiles. Apply changes immediately. Remove the superseded automatic-broadening upgrade notice and acknowledgement flow.
+- **B3 (deferred, not required for B):** remote MCP support is a separate candidate increment, not implied by changing the server bind. Keep existing MCP destination validation and default URL for B; local MCP works when the selected listener accepts loopback connections. If later accepted, specify remote URL validation, compatibility and the existing `.no_proxy()` policy before changing the client.
 - **B4:** retain bearer auth on every route, including health and unknown paths. `all_routes_require_bearer` proves 401 for an unauthenticated unknown path versus 404 with a valid token. Do not add wildcard CORS, cookie auth, or token-bearing URLs. In the deferred B3 client increment, explicitly add redirect refusal to `crates/mcp/src/client.rs:85–89` (none currently configured), verified by `redirect_does_not_forward_token`.
-- **B5:** update active API/MCP descriptions, `ApiPanel`, `ApiStatus` documentation and generated bindings as needed. `api_status_displays_all_interface_bind` covers the status; copy distinguishes the listen address from a client destination. Local MCP examples remain valid; remote HTTP examples use a configurable host. Document the Windows inbound-allow step and distinguish 200/401 from connection timeout; no automatic firewall changes. State the actual network contract briefly: this listener is plain HTTP and a token holder can read history from any reachable host, rather than only a local process.
+- **B5:** update active docs, Settings address input, `ApiStatus.bind_address` and generated bindings. Verify displayed configured address and actual socket status. Keep local MCP examples; explain IPv6 URL brackets, manual firewall access and plain-HTTP/history exposure for network binding.
 - **B6:** run a native Windows build and real cross-machine checks. From a separate machine, valid-token `/v1/health` returns 200 and actual version; missing/wrong token returns 401. Verify local MCP, disable/enable, app restart, and Ask stream disconnect as a regression check. Remote HTTP is mandatory; remote MCP is not in this increment. Confirm the inference sidecar is still loopback-only. Any firewall adjustment is a separately recorded test-machine action, not application feature scope.
 
 No report scheduler, vault writer, schema migration, remote-MCP validator change or Telegram code belongs in increment B. The loopback-only MCP guard remains intentional until B3 is separately accepted.
@@ -210,19 +212,18 @@ Inputs requiring explicit implementation tests (not yet implemented):
 
 ## 9. Decisions and handoff state
 
-**User requirements:** execute the memory/reporting direction using subagents and the repository methodology; serve the application API on `0.0.0.0`; design for the application’s wider user base.
+**User requirements:** execute the memory/reporting direction using subagents and the repository methodology; make the application API bind address configurable with a safe loopback default; design for the application’s wider user base.
 
 **Authorized direction:** retain the Windows app; native scheduled reports and folder integration; opt-in outbound Telegram; stage B independently before C–E; evaluate durable project memory only after daily use has been validated. This is not waiting for blanket plan approval again.
 
 **Rejected for this iteration:** speculative cross-platform rewrite, Screenpipe schema compatibility by assumption, and building a pipes marketplace.
 
-**Remaining contract decisions:** A3 must freeze DST/nonexistent/repeated firing times and
-schedule time/timezone changes; Retry versus Regenerate identity and delivery behavior; and the
-proposed activation, status/delivery, unknown-delivery resolution, source-identity and provenance
-policies in [memory-report-contract-proposal.md](memory-report-contract-proposal.md). That document
-separates proposed resolutions from unanswered questions. C–E must not silently choose these
-product behaviors. Scheduling and Telegram amendments remain separate from the reviewed API
-amendment.
+**Resolved report decisions:** the maintainer approved activation, DST/timezone changes,
+Retry/Regenerate, destination statuses, unknown-delivery handling, profile identity and full
+provenance policies. `03 §8c` is the local durable-report contract and
+[memory-report-contract-proposal.md](memory-report-contract-proposal.md) records the accepted
+policy history. Telegram outbound permission is recorded in the separately reviewed `03 §8d` amendment.
+Implementation is authorized; actual acceptance evidence remains required.
 
 **Native acceptance and setup:** cross-machine HTTP, local MCP, lifecycle/disconnect and rendered
 UI evidence remain acceptance gates for B. Later stages need a selected vault, installed local

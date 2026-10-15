@@ -1,10 +1,13 @@
-# Memory reports: proposed execution and delivery contract
+# Memory reports: accepted policy record
 
-Status: **Proposal for review, not an approved implementation contract.**
+Status (2026-10-15): **Report policies approved by the maintainer ("Sure GO"). Local schedule
+and durable-report contract frozen in `specs/03_MASTER_PRODUCTION_SPEC.md` §8c. Telegram
+outbound permission is frozen separately in `03 §8d`. Implementation passes the local Windows
+automated suite (`05`); native acceptance and pilot/release review remain open.**
 
 This document resolves the remaining A3 design questions in
-[memory-api-direction-plan.md](memory-api-direction-plan.md). It is a review artifact for increments
-C–E, not permission to implement them. Approved decisions must be recorded in
+[memory-api-direction-plan.md](memory-api-direction-plan.md). It records the approved policies for increments
+C–E. Execution is authorized; authoritative implementation contracts are recorded in
 `specs/03_MASTER_PRODUCTION_SPEC.md` before implementation, with the separate scheduling and
 Telegram boundary amendments required by Gate A. The application serves approximately 15,000
 people, as clarified by the maintainer; an individual setup is one validation environment, not
@@ -22,7 +25,7 @@ ownership-checked Markdown writes; and separate generation, vault and Telegram o
 Those decisions remain the baseline. Report HTTP/MCP enqueue and status endpoints are deferred
 under C3; this proposal does not add them or define a premature HTTP error contract.
 
-## Proposed policies requiring review
+## Accepted report policies
 
 ### First enable and resume
 
@@ -47,7 +50,7 @@ timezone, destination folder or Telegram recipient on a user's behalf.
 Generation outcome and destination outcome are separate fields. A saved report remains saved
 when a destination fails; delivery retry must not regenerate it.
 
-| Generation outcome | Proposed vault behavior | Proposed Telegram behavior |
+| Generation outcome | Vault behavior | Telegram behavior |
 |---|---|---|
 | `OK` | Write the saved report with measured coverage and provenance. | Send a digest derived from that saved report when enabled. |
 | `PARTIAL` | Write the usable saved report with a prominent partial-coverage explanation. | Send its digest with the same prominent limitation; never imply a complete day. |
@@ -104,7 +107,7 @@ Freeze schema-v1 frontmatter keys from D2 exactly: `schema`, `run_id`, `source_i
 `frames_summarized`, `periods_total`, `periods_covered`, `truncated`, `frame_ids`, and
 `session_ids`.
 
-Proposed meaning: `frame_ids` contains the full distinct set of frames actually summarized,
+Approved meaning: `frame_ids` contains the full distinct set of frames actually summarized,
 not merely the capped citation list used by the existing UI. `session_ids` contains the
 distinct known session IDs associated with those frames at generation time; no session is
 invented for an unassigned frame. Persist these IDs with the saved result so later retention
@@ -120,23 +123,15 @@ IDs identify historical evidence; they do not guarantee that frames or images re
 Expose later missing evidence honestly. Do not invent desktop deep links or imply images were
 uploaded to Telegram.
 
-## Pending maintainer questions
+## Resolved maintainer questions (2026-10-15)
 
-The following questions have already been raised with the maintainer and remain unanswered in
-this proposal. None of the alternatives below is approved.
-
-1. **DST and timezone/time changes:** how should nonexistent or repeated scheduled local times
-   fire, and should changing the configured timezone or local time apply only to future windows
-   while preserving previously finalized UTC windows? The contract must specify the effective
-   boundary, preserve existing run identities, and prevent automatic duplicate finalized days.
-2. **Retry versus regenerate:** should Retry reuse an existing run and saved output/destination
-   receipts, while Regenerate creates a new linked result? For regeneration, explicitly decide
-   whether to replace an unchanged owned daily note and whether another Telegram digest is sent.
-   Edited or unrelated notes remain protected under every answer.
-
-These decisions affect persistence and visible behavior and must be resolved before C–E
-implementation. Choosing a UUID library, SQL indexes or an atomic-write primitive does not
-itself require a separate product decision.
+The maintainer approved fixed selected timezone; DST gaps fire at the first valid instant and
+overlaps fire once at the earlier instant. Time/timezone edits create future activation periods;
+old UTC windows and identities remain unchanged. Retry reuses the same run and saved output,
+resuming delivery without regeneration. Regenerate creates a linked revision, replacing only an
+unchanged owned daily note, and never automatically repeats confirmed Telegram delivery.
+These are recorded with durable DTO/state/retention rules in `03 §8c`; no blanket approval is
+outstanding. Runtime setup and observed acceptance are still required.
 
 ## Proposed replacement for F1/F2 validation
 
@@ -179,7 +174,7 @@ separate planning gates after pilot review; this document does not authorize the
 
 ## Evidence and approval boundary
 
-This is a documentation proposal. No C–E behavior, migrations, native runtime checks, private
+This is an accepted policy record, not implementation evidence. No C–E behavior, migrations, native runtime checks, private
 history analysis, file integration, or Telegram delivery has been performed by drafting it.
 The user-selected vault and approved Telegram test destination remain setup inputs for later
 acceptance testing, not defaults to infer. Implementation and validation status must remain

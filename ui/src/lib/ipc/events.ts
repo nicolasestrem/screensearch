@@ -47,6 +47,7 @@ export interface AppEvents {
   sessions_changed: null;
   // API startup completed; invalidate status without broadcasting its bearer token.
   api_status_changed: null;
+  memory_status_changed: null;
 }
 
 /**
