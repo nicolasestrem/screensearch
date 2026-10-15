@@ -623,6 +623,16 @@ return 401; authenticated unknown routes return 404. Default port is 43210. Rota
 without restart. Preserve disable/re-enable behavior and Windows exclusive socket ownership.
 Settings reports the configured address and actual listening/error state honestly.
 
+**Connection bounds (PR #122 review amendment, maintainer-approved).** Every enabled listener,
+including loopback, admits at most **64 active connections**, before authentication. Accept and
+immediately close excess sockets rather than queueing application tasks. Require each request's
+headers within **30 seconds**, using an installed runtime timer; idle keep-alive connections are
+subject to the same next-header deadline. This is not a response/body deadline: long Ask SSE and
+export responses must remain usable. These are fixed implementation constants, not new settings.
+Shutdown stops accepting, drains for the existing bounded grace period, then cancels every owned
+connection task; no connection may survive server shutdown. Verify raw-socket cap/recovery,
+incomplete-header expiry, streaming beyond the header deadline, and shutdown on Windows.
+
 The API uses plain HTTP without transport encryption. With a non-loopback bind, any token holder
 on a reachable host can read the entire screen history, and network observers may intercept tokens
 and responses. Network binding is an explicit user configuration decision. No wildcard CORS,

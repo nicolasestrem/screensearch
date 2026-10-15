@@ -94,7 +94,7 @@ export function ApiPanel() {
           if (!next) {
             toast.info("HTTP API disabled.");
           } else if (result.running) {
-            toast.success(`HTTP API listening on ${socketAddress(result.bind_address, result.port)}.`);
+            toast.success(`HTTP API listening on port ${result.port}. See the panel for client connection details.`);
           }
           // A bind failure (enabled but not running) already surfaced a warning toast
           // from the backend; the inline warning below carries the guided retry.
@@ -111,7 +111,7 @@ export function ApiPanel() {
       {
         onSuccess: (result) => {
           if (result.running) {
-            toast.success(`HTTP API listening on ${socketAddress(result.bind_address, result.port)}.`);
+            toast.success(`HTTP API listening on port ${result.port}. See the panel for client connection details.`);
           } else if (!result.enabled) {
             toast.success("API address and port saved; the API remains disabled.");
           }

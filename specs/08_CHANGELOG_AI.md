@@ -1,5 +1,20 @@
 # 08 — AI Changelog
 
+## 2026-10-15 — PR #122 review corrections
+
+- Explicit Telegram retargeting reconstructs the complete digest for a new chat while preserving
+  successful old receipts, suppressing destination-confirmed chunks and leaving uncertain attempts
+  untouched. Three native regression tests cover partial success, round-trip retarget and uncertainty.
+- Both HTTP API success toasts report the port and direct users to connection guidance rather
+  than presenting wildcard bind literals as client destinations. Verified by real Windows
+  WebView2/IPC enable/apply interactions; scoped memory tests pass (raw output in `05`).
+- Maintainer approved a fixed 64-connection cap and 30-second request-header deadline. Contract
+  amendment in `03 §7c` precedes implementation. Owned connection tasks drain then cancel on
+  shutdown; SSE responses survive the header deadline. Windows format/Clippy/build/workspace
+  tests and binding guard passed: 854 passed, 0 failed, 15 existing ignored (evidence in `05`).
+- Older notice-state comments are superseded by notice removal. Plain HTTP remains the approved
+  explicit-bind contract; a review suggestion does not authorize adding TLS or changing that policy.
+
 ## 2026-10-15 — Address applicable PR #123 review feedback
 
 - Corrected inference startup claim ordering, previous-day blocked-run deduplication, explicit

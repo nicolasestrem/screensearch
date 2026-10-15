@@ -64,6 +64,18 @@ axum = { version = "0.8", default-features = false, features = [
     "query",
     "tokio",
 ] }
+# hyper 1.x server plumbing for the API's bounded accept loop + request-header deadline
+# (PR #122 review amendment, `03 §7c`): the HTTP/1 connection builder, TokioIo/
+# TokioExecutor/TokioTimer, and the tower→hyper service bridge. Every feature listed is
+# already enabled transitively by axum's server path for this workspace, so no new crate
+# compiles; `http2`/`server-auto` stay off — the listener is HTTP/1 across the board, so
+# the header deadline covers every request.
+hyper-util = { version = "0.1.20", default-features = false, features = [
+    "http1",
+    "server",
+    "service",
+    "tokio",
+] }
 # CSPRNG for the API bearer token; already in the tree (rustls), so no new compilation.
 getrandom = "0.3"
 # stream combinators for the SSE `/v1/ask` bridge + the streamed `/v1/export`; already

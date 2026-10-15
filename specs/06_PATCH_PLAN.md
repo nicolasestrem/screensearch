@@ -142,3 +142,20 @@ acceptance boundaries are in `05_BUILD_REVIEW.md`; packaging follows separately.
 Unsigned date-range NSIS packaging passed; release profile completed in 3m 09s and the executable
 returned `ScreenSearch 0.4.0` with exit 0. Artifact hash/size/raw output are in `05`. The running
 installation, selected vault, settings, credentials and Telegram conversation were not changed.
+
+## PR #122 comment reconciliation — inspected 34590d0
+
+Read the current AGENTS/CLAUDE instructions and complete required 01 → 02 → 03 →
+UI_REFERENCE → 04 specification sequence, plus the memory execution plan. PR #123 is
+already merged into this head; older reviews of dda1c60 must be checked against the
+configurable-bind/no-notice correction rather than applied literally. Preserve the
+approved plain-HTTP contract; TLS is not an authorized review-driven policy change.
+Independent workers own Telegram retarget regression repair and read-only API triage.
+No new PR, remote branch, merge, thread resolution or third review solicitation.
+
+Maintainer approved the remaining connection-bound plan with GO: 64 active pre-authentication
+connections on every bind, immediate close at capacity, and a timed 30-second request-header
+deadline that does not terminate SSE/export bodies. Preserve bounded shutdown with ownership of
+all child tasks. Verify cap/recovery, incomplete headers, long streaming and shutdown on Windows
+SSH (`tbx`) only. Rollback is one revert; no schema or settings changes. This exception resolves
+the numeric-policy silence in `03 §7c` and revisits gap #89(b) without adding rate limiting.

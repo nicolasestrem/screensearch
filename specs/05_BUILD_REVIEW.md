@@ -685,3 +685,110 @@ prior rule bodies matched and were preserved. Both files are ordinary files; no 
 global tool setting was changed. Local preservation/target checks and whitespace verification
 passed; no application code or installer changed. A fresh read-only agent followed the pointer
 and returned the canonical file and existing spec, Windows/path and review rules.
+
+## 2026-10-15 — PR #122 comment reconciliation
+
+Intake: inspected pushed HEAD `34590d086155e652fe8192294ab44f2705fa1e73`, base
+`ab6c70288e835364c349cef8981fc88ca7a8d6e5`; followed AGENTS.md → CLAUDE.md and the
+complete mandatory 01 → 02 → 03 → UI_REFERENCE → 04 reading sequence. PR #123's
+merged corrections supersede the original wildcard-default/upgrade-notice implementation.
+Seven threads consolidate into five findings: TLS-policy suggestion disputed by the approved
+plain-HTTP/configurable-bind contract; two invalid-notice-status comments already superseded by
+notice removal; two wildcard-toast comments corrected in both success paths; connection/header
+bounds approved separately; incomplete Telegram recipient retargeting corrected with regressions.
+
+The Telegram fix reconstructs every chunk for a new explicit recipient, preserves old confirmed
+receipts, suppresses chunks already confirmed to the selected chat, and leaves uncertain outcomes
+for explicit review. Both API success toasts report the port and refer to the panel's connection
+guidance instead of presenting wildcard bind literals as client destinations.
+
+Native checks ran via `ssh tbx` in an isolated worktree, Windows/Rust 1.95.0/Node 22.23.3.
+UI install/lint/build and MCP staging exited 0. The first format check found two assertion wraps;
+native `cargo fmt` corrected them. Scoped memory verification exited 0:
+
+```text
+test memory::tests::retarget_never_touches_unknown_delivery_attempts ... ok
+test memory::tests::retargeting_back_to_a_settled_chat_never_repeats_confirmed_chunks ... ok
+test memory::tests::retarget_after_confirmed_chunk_recreates_the_complete_digest_for_the_new_chat ... ok
+test memory::tests::retry_redirects_stale_telegram_attempts_to_the_selected_chat ... ok
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 44 filtered out; finished in 0.10s
+PR122_MEMORY_VERIFICATION_PASS
+```
+
+Connection-bound implementation, combined native gates and rendered UI verification are pending
+at this checkpoint. Earlier Linux UI/MCP preparation completed before the maintainer's explicit
+Windows-only execution correction; the ongoing Linux API build was stopped, not counted as a
+pass. No subsequent project code executes on Linux. No installation replacement, live Telegram
+send, third review solicitation, merge or release is authorized by this correction.
+
+Rendered UI follow-up: the patched branch ran through `npm run dev` in Windows interactive
+session 1, using a temporary isolated QA app identifier, real WebView2/IPC and real sockets.
+Enable and Apply both displayed the exact amended toast; the listener returned authenticated
+middleware's 401 for missing-token health and unknown-path probes. At 1280×900 the toast fits
+and document width stays 1280. A 375×812 stress check also rendered the toasts, but the desktop
+shell overflows to 758 px; this is below the configured 960 px minimum width, not supported
+mobile acceptance. Verified-run console recorded zero errors/exceptions and existing hydration
+warnings. Parent inspected the desktop screenshot and read back QA cleanup on Windows:
+
+```text
+PASS: original app alive; QA listeners and scheduled tasks absent
+```
+
+Evidence is kept outside Git: `pr122-visual-qa/out/{report,console}.json` and six screenshots
+on the coordinator; Windows copies are under `%TEMP%/pr122qa/out`. The existing installed
+app stayed running and its settings/history were not exercised. This proves the toast change,
+not the pending connection-bound patch or real-model/native-capture acceptance.
+
+Final inventory refresh at unchanged remote HEAD `34590d0`: eight threads / six distinct
+findings (one additional CodeQL thread, `discussion_r4287266772`). CodeQL's
+`rust/access-invalid-pointer` trace starts at `memory_telegram.rs:20`'s null initializer and
+flags line 29, but omits `CredReadW`'s successful out-pointer allocation. The code dereferences
+only in `Ok(())`, after a null check, and frees the allocation with `CredFree` after copying
+the blob. Microsoft's [CredReadW contract](https://learn.microsoft.com/en-us/windows/win32/api/wincred/nf-wincred-credreadw#parameters)
+guarantees a single allocated credential block with interior pointers, released via `CredFree`.
+Disposition: evidence-backed false positive; no unsafe-code rewrite or broad suppression added.
+The CodeQL check remains red until a maintainer dismisses the alert or the model is corrected;
+it is not claimed green. Claude's review job separately hit `error_max_turns` (35), while the
+existing Windows CI passed on the old head. Neither establishes new-patch verification.
+
+### Combined edited revision — Windows SSH verification
+
+All source fixes were integrated in the isolated Windows worktree. `cargo test --offline -p api`
+updated only the API package's direct `hyper-util` lockfile edge; no package versions changed.
+The first native compile exposed a non-`Send` watch guard crossing an await. Both stop futures
+now return unit after dropping the guard; the final cancellation fallback also awaits its abort.
+No generated bindings were edited. Native Rust 1.95.0 / Node 22.23.3 observed output:
+
+```text
+STEP_EXIT ui-lint 0
+STEP_EXIT ui-build 0
+# tests 2
+# pass 2
+# fail 0
+STEP_EXIT ui-test 0
+STEP_EXIT fmt 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.43s
+STEP_EXIT clippy 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 35.13s
+STEP_EXIT build 0
+test connection_tests::excess_connections_are_closed_and_capacity_recovers ... ok
+test connection_tests::partial_request_headers_expire_at_the_header_deadline ... ok
+test connection_tests::idle_keep_alive_connection_expires_at_the_next_header_deadline ... ok
+test connection_tests::shutdown_cancels_a_stream_that_outlasts_the_grace ... ok
+test connection_tests::streaming_response_outlives_the_header_deadline ... ok
+test incomplete_headers_are_closed_at_the_production_header_deadline ... ok
+STEP_EXIT tests 0
+STEP_EXIT bindings 0
+STEP_EXIT whitespace 0
+PR122_COMBINED_WINDOWS_VERIFICATION_PASS
+```
+
+Workspace result lines parsed from the actual saved output total **854 passed, 0 failed,
+15 existing ignored**. This includes the production 64-socket cap/recovery, real 30-second
+incomplete-header deadline, bounded shutdown and fast streaming-beyond-deadline tests;
+all 13 memory-worker tests pass. Commands were `cargo clippy --locked --workspace --all-targets
+-- -D warnings`, `cargo build --locked --workspace`, `cargo test --locked --workspace`,
+`cargo fmt --all -- --check`, the binding diff guard and `git diff --check`. UI gates ran once
+on the unchanged toast source; the native suite ran on the integrated Rust fixes. Complete
+per-command logs remain outside Git in the Windows user's `pr122-verification` directory.
+No real Telegram send or real-model Ask acceptance is implied; no merge/release performed.

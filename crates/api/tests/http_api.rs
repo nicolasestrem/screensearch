@@ -10,6 +10,7 @@ use std::sync::Arc;
 use api::{ApiHost, ApiServer, FrameImage, SharedToken};
 use async_trait::async_trait;
 use store::SqliteStore;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::Sender;
 use traits::{
     AnswerDelta, AnswerOpts, AnswerProvider, ExportFrameRow, FrameDetail, NewFrame, NewSession,
@@ -1239,4 +1240,307 @@ async fn explicit_ipv4_and_ipv6_listeners_require_authentication() {
         );
         server.stop().await;
     }
+}
+
+// ============================================================================================
+// PR #122 connection bounds (`03 §7c` review amendment): raw-socket cap/recovery, the
+// production header deadline, and shutdown of held connections.
+// ============================================================================================
+
+/// Streams `deltas` token events `tick` apart, then `Done`; exits early when the receiver
+/// goes away — exactly what a shutdown-cancelled stream looks like. Holds `/v1/ask` open
+/// across the shutdown grace.
+struct SlowAnswer {
+    tick: std::time::Duration,
+    deltas: usize,
+}
+
+#[async_trait]
+impl AnswerProvider for SlowAnswer {
+    async fn answer(
+        &self,
+        _query: &str,
+        _context: &[RetrievedChunk],
+        _opts: AnswerOpts,
+        tx: Sender<AnswerDelta>,
+    ) -> anyhow::Result<()> {
+        for index in 0..self.deltas {
+            tokio::time::sleep(self.tick).await;
+            let delta = AnswerDelta::Token {
+                text: format!("chunk-{index}"),
+            };
+            if tx.send(delta).await.is_err() {
+                return Ok(());
+            }
+        }
+        let _ = tx.send(AnswerDelta::Done).await;
+        Ok(())
+    }
+}
+
+/// The fixture host with a slow streaming answer provider (~15 s if never cancelled).
+async fn fixture_host_with_slow_answer() -> Arc<TestHost> {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
+    seed_frame(&store, 1_000, "quarterly invoice total").await;
+    Arc::new(TestHost {
+        store,
+        answer: Some(Arc::new(SlowAnswer {
+            tick: std::time::Duration::from_millis(200),
+            deltas: 75,
+        })),
+        started_at_ms: 500,
+    })
+}
+
+/// A complete `GET /v1/health` request with the bearer token, for the raw-socket tests.
+fn health_request() -> Vec<u8> {
+    format!(
+        "GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TEST_TOKEN}\r\n\r\n"
+    )
+    .into_bytes()
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+/// One read into `buf`; `None` on a read error or when the 5 s guard trips.
+async fn read_chunk(stream: &mut tokio::net::TcpStream, buf: &mut Vec<u8>) -> Option<usize> {
+    let mut chunk = [0u8; 4096];
+    match tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut chunk)).await {
+        Ok(Ok(n)) => {
+            buf.extend_from_slice(&chunk[..n]);
+            Some(n)
+        }
+        Ok(Err(_)) => None,
+        Err(_) => None,
+    }
+}
+
+/// Reads one complete HTTP/1.1 response from a keep-alive connection and returns its body;
+/// `None` when the server closed the connection first (the over-capacity case).
+async fn read_one_response(stream: &mut tokio::net::TcpStream) -> Option<String> {
+    let mut buf = Vec::new();
+    loop {
+        if let Some(head_end) = find_subslice(&buf, b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+            assert!(
+                head.starts_with("HTTP/1.1 200"),
+                "unexpected response: {head}"
+            );
+            let len = head
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.eq_ignore_ascii_case("content-length") {
+                        value.trim().parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                })
+                .expect("content-length header");
+            let body_start = head_end + 4;
+            while buf.len() < body_start + len {
+                match read_chunk(stream, &mut buf).await {
+                    Some(0) | None => return None,
+                    Some(_) => {}
+                }
+            }
+            return Some(String::from_utf8_lossy(&buf[body_start..body_start + len]).to_string());
+        }
+        match read_chunk(stream, &mut buf).await {
+            Some(0) | None => return None,
+            Some(_) => {}
+        }
+    }
+}
+
+/// The raw `127.0.0.1:port` socket address behind the `start_server` base URL.
+fn socket_addr(base: &str) -> std::net::SocketAddr {
+    base.strip_prefix("http://")
+        .expect("base URL carries a scheme")
+        .parse()
+        .expect("socket address")
+}
+
+/// Raw-socket capacity: `MAX_ACTIVE_CONNECTIONS` established connections exhaust the
+/// listener; the first connection beyond the cap is closed immediately (never served),
+/// and closing an admitted connection frees its slot so the listener recovers
+/// (`03 §7c`: "admits at most 64 active connections … Accept and immediately close excess
+/// sockets").
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn connection_cap_closes_excess_sockets_and_recovers() {
+    let (base, server, _t) = start_server(fixture_host(false).await).await;
+    let addr = socket_addr(&base);
+
+    // Fill the cap with *established keep-alive* connections: each completes one
+    // request, so it is provably admitted and holding a slot.
+    let mut held = Vec::new();
+    for slot in 0..api::MAX_ACTIVE_CONNECTIONS {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        stream
+            .write_all(&health_request())
+            .await
+            .unwrap_or_else(|error| panic!("slot {slot}: {error}"));
+        stream.flush().await.expect("flush");
+        let body = read_one_response(&mut stream)
+            .await
+            .unwrap_or_else(|| panic!("slot {slot} was not served"));
+        assert!(body.contains("\"capturing\""), "slot {slot} body: {body}");
+        held.push(stream);
+    }
+
+    // The first connection beyond the cap is accepted and closed immediately — no
+    // response, no queued task.
+    let mut excess = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    // Writing first is fine: a socket already closed by the server resets the write,
+    // which is just another way of observing "closed".
+    let _ = excess.write_all(&health_request()).await;
+    let mut buf = [0u8; 64];
+    match tokio::time::timeout(std::time::Duration::from_secs(10), excess.read(&mut buf)).await {
+        Ok(Ok(0)) | Ok(Err(_)) => {}
+        Ok(Ok(n)) => panic!("the excess connection was served {n} byte(s) instead of closed"),
+        Err(_) => panic!("the excess connection was neither closed nor served"),
+    }
+
+    // Closing one admitted connection frees its slot: the listener recovers.
+    drop(held.pop());
+    let mut recovered = false;
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        if stream.write_all(&health_request()).await.is_err() {
+            continue;
+        }
+        let _ = stream.flush().await;
+        if let Some(body) = read_one_response(&mut stream).await {
+            assert!(body.contains("\"capturing\""), "recovered body: {body}");
+            recovered = true;
+            break;
+        }
+    }
+    assert!(
+        recovered,
+        "the listener did not recover after an admitted connection closed"
+    );
+    server.stop().await;
+}
+
+/// Production header deadline: a raw socket that sends partial request headers — and then
+/// nothing — is closed at the 30 s deadline (`03 §7c`: "Require each request's headers
+/// within 30 seconds"), not earlier. This is the one real-time-long regression; the fast
+/// semantics live in the crate's unit tests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn incomplete_headers_are_closed_at_the_production_header_deadline() {
+    let (base, server, _t) = start_server(fixture_host(false).await).await;
+    let addr = socket_addr(&base);
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    // A header block that never terminates.
+    stream
+        .write_all(b"GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Partial: ")
+        .await
+        .expect("write partial headers");
+    stream.flush().await.expect("flush");
+
+    let started = std::time::Instant::now();
+    let mut buf = [0u8; 64];
+    let read = tokio::time::timeout(
+        api::REQUEST_HEADER_DEADLINE + std::time::Duration::from_secs(10),
+        stream.read(&mut buf),
+    )
+    .await;
+    let elapsed = started.elapsed();
+    assert!(
+        read.is_ok(),
+        "the connection outlived the header deadline by more than 10 s: {elapsed:?}"
+    );
+    assert!(
+        elapsed >= api::REQUEST_HEADER_DEADLINE - std::time::Duration::from_secs(3),
+        "closed before the production header deadline: {elapsed:?}"
+    );
+    server.stop().await;
+}
+
+/// Shutdown (`03 §7c`: "no connection may survive server shutdown"): idle held sockets
+/// close at once, an in-flight SSE stream is cancelled at the bounded grace (cut, never
+/// completed), the port is released, and `stop` stays bounded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shutdown_closes_held_sockets_and_cuts_streaming_after_the_grace() {
+    let (base, server, _t) = start_server(fixture_host_with_slow_answer().await).await;
+    let addr = socket_addr(&base);
+
+    // Four held idle sockets: connected, nothing sent.
+    let mut idle = Vec::new();
+    for _ in 0..4 {
+        idle.push(tokio::net::TcpStream::connect(addr).await.expect("connect"));
+    }
+
+    // One in-flight SSE stream (~15 s untouched), so the drain must cancel it.
+    let mut sse = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    let payload = r#"{"query":"invoice"}"#;
+    let request = format!(
+        "POST /v1/ask HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TEST_TOKEN}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{payload}",
+        payload.len()
+    );
+    sse.write_all(request.as_bytes()).await.expect("write ask");
+    sse.flush().await.expect("flush");
+    // Wait for the stream to start, proving the connection is genuinely in flight.
+    let mut started_bytes = Vec::new();
+    while find_subslice(&started_bytes, b"chunk-0").is_none() {
+        match read_chunk(&mut sse, &mut started_bytes).await {
+            Some(0) | None => panic!("the SSE stream closed before it started"),
+            Some(_) => {}
+        }
+    }
+
+    // Keep draining the SSE socket in the background: record the bytes and the close.
+    let drain = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        let _ = sse.read_to_end(&mut buf).await;
+        buf
+    });
+
+    let started = std::time::Instant::now();
+    server.stop().await;
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= api::SHUTDOWN_GRACE - std::time::Duration::from_millis(300),
+        "the drain must honour the grace before cutting the stream: {elapsed:?}"
+    );
+    assert!(
+        elapsed <= api::SHUTDOWN_GRACE + std::time::Duration::from_secs(2),
+        "shutdown must stay bounded: {elapsed:?}"
+    );
+
+    // Held idle sockets are closed — nothing survives shutdown.
+    for (index, mut stream) in idle.into_iter().enumerate() {
+        let mut buf = [0u8; 16];
+        match tokio::time::timeout(std::time::Duration::from_secs(3), stream.read(&mut buf)).await {
+            Ok(Ok(0)) | Ok(Err(_)) => {}
+            Ok(Ok(n)) => {
+                panic!("idle socket {index} was served {n} byte(s) instead of closed")
+            }
+            Err(_) => panic!("idle socket {index} was still open after shutdown"),
+        }
+    }
+
+    // The in-flight stream was cancelled at the grace, before the provider could finish.
+    let streamed = tokio::time::timeout(std::time::Duration::from_secs(5), drain)
+        .await
+        .expect("the SSE socket did not close after shutdown")
+        .expect("drain task");
+    let text = String::from_utf8_lossy(&streamed).to_string();
+    assert!(
+        !text.contains("\"type\":\"done\""),
+        "the stream should be cut by shutdown, not completed: {text}"
+    );
+
+    // New connections are refused once shutdown completed.
+    assert!(
+        tokio::net::TcpStream::connect(addr).await.is_err(),
+        "the listener should be closed after shutdown"
+    );
 }

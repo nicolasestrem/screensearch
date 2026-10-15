@@ -470,6 +470,16 @@ pub async fn get_memory_deliveries(
 /// retry is the user action that links a fresh attempt targeting the currently
 /// selected chat while preserving the old attempt as reviewed. Creation happens
 /// before the review so a crash between the two steps re-runs without loss.
+///
+/// The linked replacement set must cover the **complete** digest: cloning only
+/// the unfinished chunks after an earlier chunk was confirmed would send the
+/// new chat a broken `[i/N]` sequence missing its earlier parts. A chunk
+/// confirmed to the old chat keeps its `Succeeded` receipt and is never re-sent
+/// there, while its linked replacement delivers that chunk to the new chat for
+/// the first time; a chunk already confirmed to the selected chat is skipped so
+/// an explicit retry never repeats a confirmed delivery. `UnknownDelivery`
+/// attempts are never auto-retargeted — `03 §8d` requires the user to review
+/// them first, and they keep blocking dispatch until resolved.
 async fn redirect_stale_telegram_deliveries(
     store: &dyn Store,
     run_id: &str,
@@ -488,7 +498,9 @@ async fn redirect_stale_telegram_deliveries(
             d.destination == ReportDestination::Telegram
                 && matches!(
                     d.state,
-                    ReportDeliveryState::Pending | ReportDeliveryState::Failed
+                    ReportDeliveryState::Pending
+                        | ReportDeliveryState::Failed
+                        | ReportDeliveryState::Succeeded
                 )
         })
         .cloned()
@@ -501,6 +513,14 @@ async fn redirect_stale_telegram_deliveries(
         if snapshot.chat_id == target {
             continue;
         }
+        let target_confirmed = item.chunk_index.is_some()
+            && receipts.iter().any(|d| {
+                d.destination == ReportDestination::Telegram
+                    && d.state == ReportDeliveryState::Succeeded
+                    && d.chunk_index == item.chunk_index
+                    && serde_json::from_str::<TelegramSnapshot>(&d.destination_snapshot)
+                        .is_ok_and(|other| other.chat_id == target)
+            });
         let replacement_live = receipts.iter().any(|d| {
             d.revision_of.as_deref() == Some(item.id.as_str())
                 && d.destination == ReportDestination::Telegram
@@ -509,7 +529,7 @@ async fn redirect_stale_telegram_deliveries(
                     ReportDeliveryState::Reviewed | ReportDeliveryState::Skipped
                 )
         });
-        if !replacement_live {
+        if !replacement_live && !target_confirmed {
             let mut replacement = item.clone();
             replacement.id = uuid();
             replacement.revision_of = Some(item.id.clone());
@@ -531,9 +551,11 @@ async fn redirect_stale_telegram_deliveries(
                 .map_err(storage)?;
             tracing::info!(run_id=%run_id, attempt_id=%item.id, "stale telegram destination redirected to the currently selected chat");
         }
-        let prior = item.state;
-        item.state = ReportDeliveryState::Reviewed;
-        update_delivery(store, &mut item, prior).await?;
+        if item.state != ReportDeliveryState::Succeeded {
+            let prior = item.state;
+            item.state = ReportDeliveryState::Reviewed;
+            update_delivery(store, &mut item, prior).await?;
+        }
     }
     Ok(())
 }
@@ -1921,6 +1943,222 @@ mod tests {
                 .len(),
             7
         );
+    }
+    #[tokio::test]
+    async fn retarget_after_confirmed_chunk_recreates_the_complete_digest_for_the_new_chat() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let run = run_fixture();
+        store.create_report_run(run.clone()).await.unwrap();
+        let snapshot = |chat: &str, text: &str| {
+            serde_json::to_string(&TelegramSnapshot {
+                chat_id: chat.into(),
+                text: text.into(),
+            })
+            .unwrap()
+        };
+        let mut confirmed = delivery(
+            &run,
+            ReportDestination::Telegram,
+            snapshot("old-chat", "[1/3] chunk one"),
+        );
+        confirmed.chunk_index = Some(0);
+        confirmed.chunk_count = Some(3);
+        confirmed.state = ReportDeliveryState::Succeeded;
+        confirmed.message_id = Some(41);
+        confirmed.attempt = 1;
+        let mut failed = delivery(
+            &run,
+            ReportDestination::Telegram,
+            snapshot("old-chat", "[2/3] chunk two"),
+        );
+        failed.chunk_index = Some(1);
+        failed.chunk_count = Some(3);
+        failed.state = ReportDeliveryState::Failed;
+        failed.attempt = 1;
+        failed.error = Some(fail("DELIVERY_FAILED", "explicit rejection"));
+        let mut leftover = delivery(
+            &run,
+            ReportDestination::Telegram,
+            snapshot("old-chat", "[3/3] chunk three"),
+        );
+        leftover.chunk_index = Some(2);
+        leftover.chunk_count = Some(3);
+        store
+            .create_report_deliveries(vec![confirmed.clone(), failed.clone(), leftover.clone()])
+            .await
+            .unwrap();
+        redirect_stale_telegram_deliveries(&store, &run.run_id, Some("new-chat"))
+            .await
+            .unwrap();
+        let items = store.list_report_deliveries(&run.run_id).await.unwrap();
+        let stored = items.iter().find(|d| d.id == confirmed.id).unwrap();
+        assert_eq!(
+            stored.state,
+            ReportDeliveryState::Succeeded,
+            "a confirmed chunk keeps its receipt instead of being flagged reviewed"
+        );
+        assert_eq!(stored.message_id, Some(41));
+        assert_eq!(stored.destination_snapshot, confirmed.destination_snapshot);
+        for old in [&failed, &leftover] {
+            assert_eq!(
+                items.iter().find(|d| d.id == old.id).unwrap().state,
+                ReportDeliveryState::Reviewed
+            );
+        }
+        let texts = ["[1/3] chunk one", "[2/3] chunk two", "[3/3] chunk three"];
+        let linked: Vec<_> = items
+            .iter()
+            .filter(|d| d.state == ReportDeliveryState::Pending)
+            .collect();
+        assert_eq!(
+            linked.len(),
+            3,
+            "the new recipient must receive every digest chunk, including the confirmed one"
+        );
+        for d in &linked {
+            let snap: TelegramSnapshot = serde_json::from_str(&d.destination_snapshot).unwrap();
+            assert_eq!(snap.chat_id, "new-chat");
+            assert_eq!(snap.text, texts[d.chunk_index.unwrap() as usize]);
+            assert_eq!(d.chunk_count, Some(3));
+            assert_eq!(d.attempt, 0);
+            assert!(d.revision_of.is_some());
+        }
+        let first = linked
+            .iter()
+            .find(|d| d.chunk_index == Some(0))
+            .expect("the confirmed chunk has a linked replacement");
+        assert_eq!(first.revision_of.as_deref(), Some(confirmed.id.as_str()));
+        redirect_stale_telegram_deliveries(&store, &run.run_id, Some("new-chat"))
+            .await
+            .unwrap();
+        let items = store.list_report_deliveries(&run.run_id).await.unwrap();
+        assert_eq!(
+            items.len(),
+            6,
+            "a repeated explicit retry adds no further replacements"
+        );
+        assert_eq!(
+            items.iter().find(|d| d.id == confirmed.id).unwrap().state,
+            ReportDeliveryState::Succeeded
+        );
+    }
+    #[tokio::test]
+    async fn retargeting_back_to_a_settled_chat_never_repeats_confirmed_chunks() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let run = run_fixture();
+        store.create_report_run(run.clone()).await.unwrap();
+        let snapshot = |chat: &str, text: &str| {
+            serde_json::to_string(&TelegramSnapshot {
+                chat_id: chat.into(),
+                text: text.into(),
+            })
+            .unwrap()
+        };
+        let mut settled = Vec::new();
+        for index in 0..2u32 {
+            let mut item = delivery(
+                &run,
+                ReportDestination::Telegram,
+                snapshot("chat-a", &format!("chunk {index}")),
+            );
+            item.chunk_index = Some(index);
+            item.chunk_count = Some(2);
+            item.state = ReportDeliveryState::Succeeded;
+            item.message_id = Some(i64::from(index) + 1);
+            settled.push(item);
+        }
+        store
+            .create_report_deliveries(settled.clone())
+            .await
+            .unwrap();
+        redirect_stale_telegram_deliveries(&store, &run.run_id, Some("chat-b"))
+            .await
+            .unwrap();
+        let items = store.list_report_deliveries(&run.run_id).await.unwrap();
+        for mut item in items
+            .iter()
+            .filter(|d| d.state == ReportDeliveryState::Pending)
+            .cloned()
+        {
+            let prior = item.state;
+            item.state = ReportDeliveryState::Succeeded;
+            update_delivery(&store, &mut item, prior).await.unwrap();
+        }
+        redirect_stale_telegram_deliveries(&store, &run.run_id, Some("chat-a"))
+            .await
+            .unwrap();
+        let items = store.list_report_deliveries(&run.run_id).await.unwrap();
+        assert_eq!(
+            items.len(),
+            4,
+            "a settled chat must not receive a second copy of its confirmed chunks"
+        );
+        assert!(items
+            .iter()
+            .all(|d| d.state == ReportDeliveryState::Succeeded));
+        for item in &settled {
+            let stored = items.iter().find(|d| d.id == item.id).unwrap();
+            assert_eq!(stored.state, ReportDeliveryState::Succeeded);
+            assert_eq!(stored.message_id, item.message_id);
+        }
+    }
+    #[tokio::test]
+    async fn retarget_never_touches_unknown_delivery_attempts() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let run = run_fixture();
+        store.create_report_run(run.clone()).await.unwrap();
+        let snapshot = |chat: &str, text: &str| {
+            serde_json::to_string(&TelegramSnapshot {
+                chat_id: chat.into(),
+                text: text.into(),
+            })
+            .unwrap()
+        };
+        let mut unknown = delivery(
+            &run,
+            ReportDestination::Telegram,
+            snapshot("old-chat", "[1/2] chunk one"),
+        );
+        unknown.chunk_index = Some(0);
+        unknown.chunk_count = Some(2);
+        unknown.state = ReportDeliveryState::UnknownDelivery;
+        unknown.attempt = 1;
+        unknown.error = Some(fail("DELIVERY_FAILED", "acceptance unknown"));
+        let mut failed = delivery(
+            &run,
+            ReportDestination::Telegram,
+            snapshot("old-chat", "[2/2] chunk two"),
+        );
+        failed.chunk_index = Some(1);
+        failed.chunk_count = Some(2);
+        failed.state = ReportDeliveryState::Failed;
+        store
+            .create_report_deliveries(vec![unknown.clone(), failed.clone()])
+            .await
+            .unwrap();
+        redirect_stale_telegram_deliveries(&store, &run.run_id, Some("new-chat"))
+            .await
+            .unwrap();
+        let items = store.list_report_deliveries(&run.run_id).await.unwrap();
+        let stored = items.iter().find(|d| d.id == unknown.id).unwrap();
+        assert_eq!(stored.state, ReportDeliveryState::UnknownDelivery);
+        assert_eq!(stored.destination_snapshot, unknown.destination_snapshot);
+        assert!(
+            items
+                .iter()
+                .all(|d| d.revision_of.as_deref() != Some(unknown.id.as_str())),
+            "an unknown delivery is resolved by the user, never auto-retargeted"
+        );
+        assert_eq!(
+            items.iter().find(|d| d.id == failed.id).unwrap().state,
+            ReportDeliveryState::Reviewed
+        );
+        let retargeted: Vec<_> = items
+            .iter()
+            .filter(|d| d.state == ReportDeliveryState::Pending)
+            .collect();
+        assert_eq!(retargeted.len(), 1);
+        assert_eq!(retargeted[0].chunk_index, Some(1));
     }
     #[tokio::test]
     async fn shutdown_cancels_active_report_and_joins_worker() {

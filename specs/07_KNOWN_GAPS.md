@@ -1,5 +1,16 @@
 # 07 — Known Gaps
 
+## PR #122 — connection-bound decision and verification boundary
+
+Gap #89(b) is revisited because configurable binding widens the surface. Maintainer approved
+64 active connections and a timed 30-second request-header deadline on all listeners, with
+immediate close at capacity, no SSE/body deadline, and owned bounded shutdown (`03 §7c`).
+Connection-bound implementation passed native Windows regression/build/Clippy gates (`05`);
+the connection-cap part of #89(b) is addressed, while rate limiting remains deferred.
+The amended API toast passed actual Windows WebView2/IPC interaction at 1280×900. Narrow
+375×812 stress still overflows the desktop shell; it is below the 960 px minimum and does not
+change the Windows desktop contract. No mobile support or real-model/Telegram acceptance inferred.
+
 ## 2026-10-15 — PR #123 review verification boundary
 
 Linux kernel/store tests and targeted clippy do not establish native memory-worker, credential,

@@ -46,6 +46,14 @@ Do not expose this plain-HTTP endpoint to the public Internet.
 credentials. A timeout is not an authentication failure: check the app, address, routing and
 firewall. Connection refusal can mean the API is disabled or listening on another port.
 
+## Connection bounds
+
+All listeners, including loopback, allow at most **64 active connections**. Excess sockets close
+immediately, before HTTP authentication, rather than receiving an HTTP error response. Clients
+may retry after another connection closes. Each request has **30 seconds to send its headers**;
+idle keep-alive connections close on the same next-header deadline. This does not limit the
+duration of an active Ask SSE or export response. These limits are fixed, not configurable.
+
 ## Authentication
 
 Every request to every route (health included) must send:
