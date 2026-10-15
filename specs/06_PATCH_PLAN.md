@@ -1,5 +1,12 @@
 # 06 — Patch Plan
 
+## 2026-10-15 — Approved report direction resolves C–E policy gate
+
+The maintainer's explicit report-policy approval resolves the prior A3 decision blocker.
+Replace the former saved-report deferral and pull-only rule narrowly via `03 §8c`: opt-in
+local schedules/folder output, no telemetry or scoring. Telegram permission remains a
+separate contract commit. Implementations must preserve failed/unknown outcomes and human files.
+
 ## 2026-10-15 — B review fixes and remaining release gates
 
 Resolved before build handoff: fallible startup intent read, post-startup query invalidation,

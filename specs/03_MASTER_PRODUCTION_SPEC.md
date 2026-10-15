@@ -1028,7 +1028,9 @@ the app's own overlay must never appear in its own capture history; asserted by 
 
 `generate_report(ReportRequest) -> ReportResponse` (`§7`) summarizes work/content over a time range
 from **`frame_text.content_text`** (never raw full-screen text) and **cites the frames** it used.
-There is **no saved-report table** — scheduled/saved reports are deferred (`07`).
+The original 0.2.x command remains supported. The approved memory-report increment adds durable
+runs and opt-in local schedules under `§8c`; the original no-saved-table rule is superseded only
+for that increment.
 
 - **Ranges.** Daily = local "today"; Weekly = trailing 7 local days; Custom = a selected range +
   optional user prompt.
@@ -1046,6 +1048,168 @@ There is **no saved-report table** — scheduled/saved reports are deferred (`07
 - **Honest framing:** "retrieve up to N, summarize what fits" — not a guarantee that all N frames
   are read. Empty / no-evidence ranges produce honest output (no fabrication), consistent with the
   Ask no-evidence behavior.
+
+## 8c. Durable reports and local daily memory (approved 2026-10-15)
+
+The maintainer approved execution and the report policies. This separately reviewed amendment
+permits default-off scheduled **local** reports and user-selected folder writes, an explicit
+exception to earlier pull-only behavior. No scoring, nags, cloud inference, automatic model
+downloads or report HTTP/MCP endpoints. Telegram's outbound exception is a separate amendment.
+
+### Shared execution and lifecycle
+
+Kernel orchestration owns one report execution service over `Store`/`AnswerProvider`; Tauri and
+scheduling adapt it, preserving existing manual Recall and session evidence scope. Scheduling
+serializes automatic inference through the existing model supervisor. An automatic provider
+must resolve and use installed model files without calling the downloader: a preflight check
+followed by the existing lazy-download provider is insufficient (tier/file races). Snapshot
+configuration and selected model identity before execution; failure to load is visible BLOCKED.
+Inspect empty windows before acquiring a model. Store errors are FAILED, never NO_DATA.
+
+Shutdown stops enqueue, sets cancellation, joins the report worker before sidecar shutdown and
+preserves recoverable durable state. Existing model-pass cancellation remains cooperative;
+the worker may abort awaiting work within a bounded shutdown timeout, then the supervisor kills
+the sidecar. Never claim immediate in-flight report cancellation. Capture/OCR never waits on
+the schedule. Kernel/runtime implementation chooses the bounded timeout and tests it explicitly.
+
+### Typed contracts (traits; generated IPC types)
+
+UUIDs are opaque strings; timestamps are UTC Unix milliseconds (`i64`); counts are `u32`.
+Local dates are `YYYY-MM-DD`; zones are validated IANA identifiers, never an implicit moving
+system-local zone. Optional values serialize as null, not invented placeholders.
+
+- `ReportError { code: String, message: String }`: codes `INVALID_CONFIG`, `NOT_FOUND`,
+  `BUSY`, `SOURCE_UNAVAILABLE`, `MODEL_UNAVAILABLE`, `STORE_ERROR`, `GENERATION_FAILED`,
+  `FILE_CONFLICT`, `WRITE_FAILED`, `CREDENTIAL_UNAVAILABLE`, `DELIVERY_FAILED` identify failures
+  without private content or credentials. IPC returns structured errors; existing legacy report
+  commands may retain their string-error adapter. No report HTTP error surface is added.
+- `ReportScheduleConfig { enabled: bool, local_time: Option<String>, timezone: Option<String>,
+  output_folder: Option<String> }`. Defaults false/null/null/null. Local time is strict `HH:mm`;
+  output folder is absolute. Enable requires valid time/zone/folder; save failure preserves the
+  previous configuration. Manual Run now requires selected zone/folder but not an enabled schedule.
+- `SavedReport { markdown: String, model: Option<String>, frame_ids: Vec<i64>,
+  session_ids: Vec<i64>, cited_frame_ids: Vec<i64>, frames_sampled: u32,
+  frames_summarized: u32, periods_total: u32, periods_covered: u32, passes: u32,
+  truncated: bool }`. Frame IDs are the full distinct actually summarized union; citation IDs
+  may keep the existing 200-item display cap. Session IDs snapshot known ownership at generation.
+- `ReportRun { run_id: String, source_id: String, schedule_id: Option<String>,
+  revision_of: Option<String>, window_start: i64, window_end: i64, timezone: String,
+  local_date: String, phase: ReportRunPhase, outcome: Option<ReportOutcome>,
+  error: Option<ReportError>, result: Option<SavedReport>, config_snapshot: String,
+  created_at: i64, updated_at: i64 }`. `config_snapshot` is immutable nonsecret JSON containing
+  report settings, model identity/version and configuration version; it is provenance, not a
+  deduplication dimension. `ReportRunPhase` serializes `queued|running|blocked|finished`;
+  outcomes serialize `OK|PARTIAL|NO_DATA|BLOCKED|FAILED`.
+- `ReportDelivery { id: String, run_id: String, destination: ReportDestination,
+  state: ReportDeliveryState, revision_of: Option<String>, destination_snapshot: String,
+  path: Option<String>, hash: Option<String>, recovery_path: Option<String>, chunk_index: Option<u32>,
+  chunk_count: Option<u32>, message_id: Option<i64>, error: Option<ReportError>,
+  next_attempt_at: Option<i64>, attempt: u32, created_at: i64, updated_at: i64 }`.
+  Destination is `vault|index|telegram`; Telegram is a reserved adapter until its separate
+  amendment. State is `pending|sending|succeeded|conflict|failed|skipped|unknown_delivery|reviewed`.
+  Delivery updates use expected-state compare-and-swap. Each attempt has its own ID; `revision_of` links a prior attempt. Destination snapshots are
+  immutable and never contain tokens. Receipts are separate from generation.
+- `MemorySettings { enabled: bool, local_time: Option<String>, timezone: Option<String>,
+  output_folder: Option<String> }` (flat public fields matching ReportScheduleConfig) and
+  `MemoryStatus { settings: MemorySettings, source_id: String, latest_run: Option<ReportRun>,
+  missed_windows: Vec<TimeRange>, worker_running: bool }`. The separate Telegram amendment may
+  extend these objects; no credential value is ever returned in them.
+
+IPC: `get_memory_status() -> MemoryStatus`; `set_memory_settings(settings) -> MemoryStatus`;
+`run_memory_report() -> ReportRun` enqueues the previous completed calendar day in the selected
+zone, even before automatic activation; `retry_memory_report(run_id) -> ReportRun`;
+`regenerate_memory_report(run_id) -> ReportRun`; `list_memory_runs(limit) -> Vec<ReportRun>`
+(newest first, default 20, clamp 1–100);
+`get_memory_run(run_id) -> ReportRun`; `get_memory_deliveries(run_id) -> Vec<ReportDelivery>`;
+`reset_memory_source_identity() -> MemoryStatus` requires schedules/delivery disabled and no
+active run. `memory_status_changed: null` invalidates mounted status/run queries; it contains
+no report text or tokens and produces no notification.
+
+### Durable state and transitions
+
+Current schema inventory is 11. The next migration, **12**, adds report runs, destination
+attempts, scheduling activation/cursor/gap state and generated-file ownership. Forward-only;
+populated-schema-11 migration tests must preserve existing frames/sessions/settings. Exact DDL
+belongs in the store module; these invariants are binding:
+
+- Base scheduled runs have a partial unique key `(schedule_id, window_start, window_end)` where
+  `revision_of IS NULL`; regeneration creates a linked child, not another base run. Persist idempotent enqueue before advancing the schedule cursor; replay after a crash reuses
+  the unique base run. Internal `ReportScheduleState { schedule_id: String, activated_at: i64,
+  last_window_end: Option<i64>, gap_start: Option<i64>, gap_end: Option<i64> }` is separate KV JSON. Concurrent manual previous-day requests reuse a pending
+  matching manual base run; deliberate regeneration is explicit.
+- New runs: queued/null → running/null → finished/OK, PARTIAL, NO_DATA or FAILED; a missing
+  prerequisite yields blocked/BLOCKED. Retry clears the failure and requeues the **same run**
+  when no result exists. Saved results remain immutable: retry resumes pending/failed delivery
+  without another generation. A failed vault write never discards a successful saved report.
+- Restart changes interrupted running generation to queued, preserving identity/config/window.
+  Interrupted file writes reconcile durable file/hash intent before retry; the old valid file
+  is preserved. Delivery recovery never invents success from generation success.
+- Regenerate creates a new UUID with `revision_of` pointing to the prior run and a fresh config
+  snapshot, preserving the original window/source and prior result. Replace the daily note only
+  if unchanged and owned; no automatic repeat of a confirmed Telegram delivery in the revision
+  chain (enforced by the later adapter). Already-active same-run actions return BUSY.
+- Run history expires after 90 days from last terminal update. Never prune queued/running/blocked
+  runs or runs with active pending/sending/unknown/conflict delivery or failed delivery with
+  nonnull next_attempt_at. Failed delivery without a pending retry is terminal and stays visible. Pruning does not delete
+  exported notes. Ownership records `(path, source_id, run_id, last_hash)` outlive run pruning;
+  they have no cascading run FK. Evidence IDs have no cascading frame/session FK.
+
+### Calendar schedule and profile identity
+
+First enable records activation now. The first eligible window is the first **full calendar
+day starting at or after activation**; no partial activation day or earlier history is scheduled.
+Fire at the selected local time on the following day, reporting `[day_start,next_day_start)` in
+UTC. DST gap: first valid instant after the requested wall time; overlap: earlier instant once.
+Persist the selected zone: machine timezone changes do not move it. Config time/zone edits and
+re-enable create a future activation period; retain old UTC windows/results and do not backfill
+disabled periods. Output-folder changes affect future requests, not saved destination snapshots.
+
+On restart process eligible missed windows oldest-first, at most seven daily windows; persist
+and expose older omitted gaps so later ticks do not silently catch them up or claim coverage.
+No duplicate finalized UTC window for the same schedule. Activation/config changes never mutate
+old deduplication keys. Settings previews the first eligible report date before enabling.
+
+Create and persist a random profile UUID once. Moves/restores preserve it; it contains no user,
+host or path. Independently active clones must explicitly reset identity before enabling their
+schedule/delivery; document that byte copies retain identity and cannot be detected reliably.
+Reset affects future runs only and requires disabled schedules/delivery with no active worker.
+It does not transfer ownership of prior notes or rewrite historical provenance.
+
+### Local output and honest coverage
+
+OK and PARTIAL write saved content; PARTIAL prominently explains incomplete coverage. NO_DATA
+writes a factual no-data note without a model. BLOCKED/FAILED write no daily note and remain
+visible in app status. Empty evidence is only a successful inspection; sampling never implies
+exhaustive capture. Missing later evidence is disclosed, not silently treated as still available.
+
+Path: `<selected folder>/ScreenSearch/Daily/YYYY-MM-DD.md`; index:
+`<selected folder>/ScreenSearch/Index.md`. Atomic same-directory temporary write/replace with
+persisted SHA-256 ownership independent of run retention. Precheck edited/unrelated files
+and preserve them untouched. Use Windows ReplaceFileW with a unique backup for replacement;
+compare the displaced backup hash with the expected ownership hash. On a concurrent swap,
+preserve displaced bytes in the recovery backup, expose its recovery_path in a conflict receipt,
+and never delete an unmatched backup. Reject symlinks/reparse points within the generated subtree. Index follows the same rules and links only successfully written notes,
+without duplicates, with date/status/brief source-backed topic labels. No tokens or invented
+desktop deep links. Rollback removes only run-owned temporary files, never user content.
+
+Frontmatter schema 1 keys: `schema` integer 1; `run_id`, `source_id`, `timezone`, `status`
+strings; `window_start`, `window_end` RFC3339 UTC strings; `model` nullable string;
+`frames_sampled`, `frames_summarized`, `periods_total`, `periods_covered` integers;
+`truncated` boolean; `frame_ids`, `session_ids` integer arrays. Full frame-ID count equals
+frames_summarized; NO_DATA uses empty arrays and null model. Encode scalar strings as JSON-compatible YAML scalars; typed roundtrip tests required.
+Body headings cover activity, explicitly evidenced decisions, open questions and next steps;
+tentative screen text is never promoted into a commitment. Existing manual report prose stays
+compatible; the daily-memory output framing uses the actual dated window, never hardcoded today.
+
+### Settings, upgrade and acceptance
+
+Persist `memory.schedule.enabled=false`, `memory.schedule.local_time=null`,
+`memory.schedule.timezone=null`, `memory.schedule.output_folder=null` with internal profile UUID,
+activation/cursor/gaps in durable storage. Existing installations remain off; do not infer a
+folder or timezone. Model/config provenance is snapshotted per run. Native acceptance requires
+a real installed-model report, inspected coverage, a real note visible in the selected folder/
+Obsidian, preserved edited notes, DST/restart tests and bounded worker shutdown evidence.
+Unit fixtures do not certify live inference or output usefulness. No release/merge is implied.
 
 ## 9. Logging & observability
 `tracing` + daily-rotating file (`tracing-appender`) and console. Job-queue depth, sidecar state

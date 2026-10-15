@@ -1,5 +1,12 @@
 # 08 — AI Changelog
 
+## 2026-10-15 — Local report contract before code
+
+Recorded maintainer approval, froze daily windows/DST/activation, durable run/destination
+states, file ownership, complete evidence IDs, clone identity reset and retention rules.
+Reviewed the contract independently before implementation; Telegram exception follows in
+its own amendment. No runtime changes in this commit. `git diff --check`: exit 0.
+
 ## 2026-10-15 — Network API implementation and product-wide plan
 
 - Implemented all-IPv4 API with native Windows exclusive port ownership; kept auth on all

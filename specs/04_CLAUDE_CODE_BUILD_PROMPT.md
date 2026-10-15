@@ -52,6 +52,13 @@ Update active user-facing privacy copy with the implementation, not before the b
 
 **Do not** hold the spec in your head from a prior session — re-read; the files evolve.
 
+**For memory reports (2026-10-15):** read `docs/memory-api-direction-plan.md`, `02 §5f`,
+`03 §8c` and the memory-report UI contract. The maintainer approved execution and the frozen
+report policies; do not ask for blanket plan approval again. Keep local-schedule and Telegram
+contract commits separate and independently reviewed before implementing their behavior. Build
+the durable state and installed-only model path before scheduling or destination side effects.
+Native acceptance and pilot evidence remain open until observed; no fake success receipts.
+
 ## 2. Source of truth (which doc answers which question)
 | Question | Authority |
 |---|---|
@@ -145,7 +152,8 @@ If the answer is in a doc, **use it verbatim** — do not invent alternatives.
   signed GitHub-Releases update check (`03 §11b`), plus user-enabled authenticated HTTP API
   serving on all IPv4 interfaces (`03 §7c`, Gate A). Plain HTTP exposes history to reachable
   token holders; no public hosting or automatic firewall/router changes. MCP destinations and
-  inference stay loopback-only. No scheduled-delivery or Telegram exception is granted here.
+  inference stay loopback-only. Approved local schedules and user-selected folder writes are
+  permitted by `03 §8c`; Telegram outbound permission is a separate amendment.
 - **No real-time vision.** Vision runs only on-demand/timer/idle (`03 §5`).
 - **Sidecar must never orphan.** Implement the Job-Object lifecycle exactly (`03 §6`); do not ship
   P4 until the no-orphan test passes.

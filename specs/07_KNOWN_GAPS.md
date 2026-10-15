@@ -1,5 +1,13 @@
 # 07 — Known Gaps
 
+## 2026-10-15 — Report policies approved
+
+The previously recorded C–E policy questions are resolved by the explicit "Sure GO" approval;
+`03 §8c` is the implementation contract. Live installed-model/folder/Telegram acceptance still
+requires actual test inputs and observed results. Firewall access for this work was approved;
+the app does not automatically alter firewall rules. Do not infer Telegram credentials or
+recipient from this permission.
+
 ## 2026-10-15 — Memory/API execution gates (owner: maintainer + agent)
 
 - Before C–E: resolve the proposed schedule/rerun/delivery/source-identity policies in

@@ -356,3 +356,23 @@ no filler. Timestamps human-relative with absolute on hover.
 
 *Companion to `00`–`04`. Aesthetic direction is intentional and subject-grounded; if a future change
 makes the UI read as a templated dark dashboard, that's a regression against §1.*
+
+## 11. Memory reports (approved 2026-10-15)
+
+Settings adds a Memory reports section using generated `MemorySettings`/`MemoryStatus` and
+TanStack Query. Default-off toggle, local time, explicit IANA timezone and selected output folder;
+preview first eligible report date before enablement. Run now targets the previous completed
+day. Show last-run date/window/status, sampled coverage, saved output and destination outcomes
+separately. History exposes Retry (same run/resume delivery) and Regenerate (linked revision;
+replace unchanged owned note only; no repeat confirmed Telegram). Errors preserve form/output.
+
+States: loading reserves final geometry; off explains setup; missing model/source/folder is
+blocked with actionable explanation; running shows measured progress; partial is explicitly
+labeled; NO_DATA is honest empty output; failed write retains generated report; edited-file
+conflict preserves user content and exposes recovery path if present. Older missed gaps remain
+visible. No success without a persisted receipt. Explicit source-identity reset explains clone
+behavior and requires schedules/delivery disabled with no active run. No inferred personal path.
+Use existing tokens/primitives, keyboard navigation, route error boundaries and one-scroll/no-CLS
+contract. No new NavRail route, productivity notifications or scores. Telegram controls and
+outbound permission are specified in their separate amendment; this section enables local
+scheduling/folder output only. Native verification remains required.

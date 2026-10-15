@@ -206,6 +206,23 @@ master switch and port, with no personal host, account, path or credential baked
   (200 with actual version; 401 without/wrong token), local MCP, disable/enable, restart, Ask
   disconnect and loopback inference checks (`03 §7c`). Remote HTTP evidence is mandatory.
 
+## 5f. Scheduled local memory — approved contract (2026-10-15)
+
+The maintainer approved the report policies and execution ("Sure GO"). Build one shared durable
+report service, default-off daily scheduling and user-selected Obsidian-compatible folder export
+before optional Telegram delivery. This is a product-wide feature, not a personal automation.
+The local schedule is an explicit exception to historical pull-only behavior; no productivity
+scores, nudges, cloud inference or automatic model downloads are permitted. Existing manual
+Recall/session reports retain their behavior while sharing execution and evidence collection.
+
+Contract order: reviewed schedule/local-report amendment → separate outbound Telegram amendment
+→ implementation C–E. The API increment remains independently reviewable; report HTTP/MCP
+endpoints and deeper weekly/project memory remain deferred. `03 §8c` freezes the approved
+activation, DST, retry/regenerate, provenance, retention, ownership and error rules. Explicitly
+selected folders/timezones/credentials are runtime setup, not another plan-approval gate.
+Pilot/release validation remains evidence-based across supported user environments; no completion
+or usefulness metrics are inferred from contract approval.
+
 ## 6. Risks & mitigations
 
 | Risk | Mitigation |

@@ -90,7 +90,8 @@ Re-read each session — the files are the source of truth, not your memory.
   update check (`03 §11b`), and user-enabled authenticated HTTP API serving on all IPv4 interfaces
   (`03 §7c`, Gate A API amendment). That API is plain HTTP: any reachable token holder can read
   history. No public hosting, automatic firewall/router changes, remote MCP, or exposed inference.
-  Scheduled reports and Telegram require their own separately reviewed contract amendments.
+  The approved local-memory amendment permits default-off scheduled local reports and user-selected
+  folder writes (`03 §8c`), without nags or scoring. Telegram permission remains a separate amendment.
 - **No real-time vision** — vision runs on-demand / timer / idle only (`03 §5`).
 - **Sidecar must never orphan** — implement the Job-Object lifecycle exactly (`03 §6`); do not ship
   P4 until the no-orphan test passes.

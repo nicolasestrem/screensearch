@@ -1,9 +1,10 @@
 # ScreenSearch: useful memory, scheduled reports, and a network-accessible API
 
 Status (2026-10-15): **Execution authorized. Gate A API contract reviewed and committed;
-increment B implementation verification ongoing. C–E await the specifically unresolved A3
-product decisions and corresponding scheduling/delivery contracts, not another blanket plan
-approval. Native acceptance remains open.**
+increment B implementation verification recorded separately. C–E report policies approved by
+the maintainer ("Sure GO"); local schedule/durable contract in `03 §8c`, Telegram permission
+in a separate contract commit before code. No blanket plan approval is outstanding. Native
+acceptance remains open.**
 
 This is the canonical repository execution plan, adapted from the original desktop planning
 artifact; that external file is preserved unchanged. The product serves approximately 15,000
@@ -216,13 +217,12 @@ Inputs requiring explicit implementation tests (not yet implemented):
 
 **Rejected for this iteration:** speculative cross-platform rewrite, Screenpipe schema compatibility by assumption, and building a pipes marketplace.
 
-**Remaining contract decisions:** A3 must freeze DST/nonexistent/repeated firing times and
-schedule time/timezone changes; Retry versus Regenerate identity and delivery behavior; and the
-proposed activation, status/delivery, unknown-delivery resolution, source-identity and provenance
-policies in [memory-report-contract-proposal.md](memory-report-contract-proposal.md). That document
-separates proposed resolutions from unanswered questions. C–E must not silently choose these
-product behaviors. Scheduling and Telegram amendments remain separate from the reviewed API
-amendment.
+**Resolved report decisions:** the maintainer approved activation, DST/timezone changes,
+Retry/Regenerate, destination statuses, unknown-delivery handling, profile identity and full
+provenance policies. `03 §8c` is the local durable-report contract and
+[memory-report-contract-proposal.md](memory-report-contract-proposal.md) records the accepted
+policy history. Keep Telegram outbound permission in a separately reviewed contract commit.
+Implementation is authorized; actual acceptance evidence remains required.
 
 **Native acceptance and setup:** cross-machine HTTP, local MCP, lifecycle/disconnect and rendered
 UI evidence remain acceptance gates for B. Later stages need a selected vault, installed local

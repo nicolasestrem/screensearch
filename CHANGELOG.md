@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Approved contract for durable daily memory reports and user-selected local Markdown output;
+  implementation and native acceptance are tracked separately from the network API build.
 - Reviewed contract for an opt-in network HTTP API, including an upgrade notice for
   existing enabled installations. Implementation and native acceptance are tracked separately.
 - Persistent upgrade notice for existing enabled API profiles, with explicit acknowledgement

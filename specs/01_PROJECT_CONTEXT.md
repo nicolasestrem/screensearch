@@ -31,7 +31,9 @@ it proved which engines are reliable and which approaches failed (see §5).
   responses. Existing enabled profiles keep their setting and receive a one-time visible upgrade
   notice (`03 §7c`). This is a product-wide configurable feature, not a personal deployment.
   Public hosting, automatic firewall/router changes, remote MCP and remote inference remain out
-  of scope. Scheduled delivery and Telegram are not authorized by this API-only amendment.
+  of scope. The separately approved local-memory amendment permits default-off scheduled local
+  reports and user-selected folder writes (`03 §8c`); no cloud upload is introduced. Telegram
+  outbound permission is recorded separately.
 
 ## 3. Target environment
 

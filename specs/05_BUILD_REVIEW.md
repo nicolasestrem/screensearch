@@ -1,5 +1,14 @@
 # 05 — Build Review
 
+## 2026-10-15 — Report policy approval and local scheduling contract
+
+The maintainer explicitly approved the proposed report policies with "Sure GO" after the
+scope clarification. Local schedules, durable runs, source identity, retry/regenerate, DST,
+file ownership, coverage and product-wide validation policies are frozen in `03 §8c` before
+implementation. A second agent reviewed persistence/provenance; parent reviewed lifecycle,
+calendar and output rules. Telegram outbound permission is a separate following amendment.
+Documentation check: `git diff --check` returned no errors (line-ending normalization warnings).
+
 ## 2026-10-15 — Network API increment B implementation verification
 
 ### Local installer result
