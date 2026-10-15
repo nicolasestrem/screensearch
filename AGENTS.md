@@ -86,12 +86,14 @@ Re-read each session — the files are the source of truth, not your memory.
 - **Rust-only ML runtime.** The shipped app's ML is Rust-only — embeddings via fastembed,
   inference via the local llama.cpp sidecar; no Python *ML sidecar* in the runtime (the V1 approach
   that failed). Python is fine for build/dev tooling (model prep, the `hf` CLI, CI scripts).
-  No cloud calls. Network exceptions: localhost, model downloads, the signed GitHub-Releases
+  No cloud inference or arbitrary cloud uploads. Network exceptions: localhost, model downloads, the signed GitHub-Releases
   update check (`03 §11b`), and user-enabled authenticated HTTP API serving on all IPv4 interfaces
   (`03 §7c`, Gate A API amendment). That API is plain HTTP: any reachable token holder can read
   history. No public hosting, automatic firewall/router changes, remote MCP, or exposed inference.
   The approved local-memory amendment permits default-off scheduled local reports and user-selected
-  folder writes (`03 §8c`), without nags or scoring. Telegram permission remains a separate amendment.
+  folder writes (`03 §8c`), without nags or scoring. The separately approved Telegram exception
+  (`03 §8d`) permits opt-in text digests of saved reports to a user-selected Bot API destination;
+  never raw OCR/screenshots, automatic recipient selection, remote commands or cloud inference.
 - **No real-time vision** — vision runs on-demand / timer / idle only (`03 §5`).
 - **Sidecar must never orphan** — implement the Job-Object lifecycle exactly (`03 §6`); do not ship
   P4 until the no-orphan test passes.

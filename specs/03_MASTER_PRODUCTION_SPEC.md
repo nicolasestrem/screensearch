@@ -1054,7 +1054,7 @@ for that increment.
 The maintainer approved execution and the report policies. This separately reviewed amendment
 permits default-off scheduled **local** reports and user-selected folder writes, an explicit
 exception to earlier pull-only behavior. No scoring, nags, cloud inference, automatic model
-downloads or report HTTP/MCP endpoints. Telegram's outbound exception is a separate amendment.
+downloads or report HTTP/MCP endpoints. Telegram's outbound exception is the separately reviewed `§8d` amendment.
 
 ### Shared execution and lifecycle
 
@@ -1105,15 +1105,22 @@ system-local zone. Optional values serialize as null, not invented placeholders.
   path: Option<String>, hash: Option<String>, recovery_path: Option<String>, chunk_index: Option<u32>,
   chunk_count: Option<u32>, message_id: Option<i64>, error: Option<ReportError>,
   next_attempt_at: Option<i64>, attempt: u32, created_at: i64, updated_at: i64 }`.
-  Destination is `vault|index|telegram`; Telegram is a reserved adapter until its separate
-  amendment. State is `pending|sending|succeeded|conflict|failed|skipped|unknown_delivery|reviewed`.
+  Destination is `vault|index|telegram`; Telegram is governed by the separate `§8d` amendment. State is `pending|sending|succeeded|conflict|failed|skipped|unknown_delivery|reviewed`.
   Delivery updates use expected-state compare-and-swap. Each attempt has its own ID; `revision_of` links a prior attempt. Destination snapshots are
   immutable and never contain tokens. Receipts are separate from generation.
 - `MemorySettings { enabled: bool, local_time: Option<String>, timezone: Option<String>,
-  output_folder: Option<String> }` (flat public fields matching ReportScheduleConfig) and
+  output_folder: Option<String>, telegram_enabled: bool, telegram_chat_id: Option<String> }`
+  (flat public fields; Telegram fields added by the separate §8d amendment) and
   `MemoryStatus { settings: MemorySettings, source_id: String, latest_run: Option<ReportRun>,
-  missed_windows: Vec<TimeRange>, worker_running: bool }`. The separate Telegram amendment may
-  extend these objects; no credential value is ever returned in them.
+  missed_windows: Vec<TimeRange>, worker_running: bool, telegram_credential_available: bool }`.
+  No credential value is ever returned in these objects.
+
+`MemorySchedulePreview { local_date: String, window_start: i64, window_end: i64,
+due_at: i64 }` describes the first eligible scheduled window and firing time. The read-only
+`preview_memory_schedule(settings) -> Option<MemorySchedulePreview>` computes it from the shared
+calendar policy before saving; incomplete time/zone returns null, invalid supplied values return
+INVALID_CONFIG. It never enqueues, writes settings or requires a model. UI never duplicates DST
+policy in JavaScript.
 
 IPC: `get_memory_status() -> MemoryStatus`; `set_memory_settings(settings) -> MemoryStatus`;
 `run_memory_report() -> ReportRun` enqueues the previous completed calendar day in the selected
@@ -1210,6 +1217,81 @@ folder or timezone. Model/config provenance is snapshotted per run. Native accep
 a real installed-model report, inspected coverage, a real note visible in the selected folder/
 Obsidian, preserved edited notes, DST/restart tests and bounded worker shutdown evidence.
 Unit fixtures do not certify live inference or output usefulness. No release/merge is implied.
+
+## 8d. Telegram text digest (separate approved exception, 2026-10-15)
+
+This amendment permits **explicitly enabled** outbound HTTPS calls to Telegram's Bot API for
+text-only digests of saved reports to the user-configured destination. It is a narrow exception
+to the no-cloud-upload/network rules and to pull-only delivery; storage and inference remain
+local. Opt-in copy states that selected digest content leaves the device and reaches Telegram
+and the selected conversation. No screenshots, raw OCR, arbitrary export, cloud inference,
+two-way commands, inferred recipient or telemetry. Disable stops new sends; an already accepted
+message cannot be recalled by disabling. Existing profiles upgrade with Telegram off.
+
+### Settings and credentials
+
+Flat `MemorySettings` extends §8c with `telegram_enabled: bool` (default false) and
+`telegram_chat_id: Option<String>` (default null). Persist nonsecret configuration under
+`memory.telegram.enabled` and `memory.telegram.chat_id`. Enable requires a nonempty explicitly
+selected chat ID and available credential. Destination snapshots capture that chat ID for each
+delivery; changing settings does not redirect old attempts. Disable suppresses dispatch of
+pending attempts until re-enabled; do not send to a changed recipient without a new explicit
+attempt targeting that recipient.
+
+Store the bot token only in Windows Credential Manager, scoped to the profile identity. It
+never enters ordinary settings, IPC responses, status/events, prompts, exports, notes or logs.
+`set_telegram_token(token) -> MemoryStatus` and `clear_telegram_token() -> MemoryStatus` are
+write-only credential actions; `telegram_credential_available` reports only availability.
+Credential access failure is visible CREDENTIAL_UNAVAILABLE, never a successful save/send.
+Identity reset does not copy credentials into the new identity or erase historical provenance;
+the user must explicitly configure the new profile credential. Existing API-token storage is
+unchanged. Redact Bot API request URLs, including token-bearing path segments, from all errors.
+
+### Digest and receipts
+
+Derive a concise digest from `SavedReport.markdown` and its window/status/coverage; never invoke
+a second model. OK sends; PARTIAL sends with a prominent limitation. NO_DATA/BLOCKED/FAILED do
+not send; persist skipped delivery with the precise reason. Mask supported patterns for API
+keys/bearer tokens/password assignments before output. State that masking is not comprehensive
+PII detection; existing capture exclusions remain relevant. Do not claim arbitrary secrets are
+removed. Send plain text without parse-mode markup; bound digest length before splitting.
+Each chunk must fit Telegram's 4096-character limit, including labels; use conservative UTF-16
+unit accounting and never split a Unicode scalar. Preserve the saved original report locally.
+
+Persist a separate delivery intent **before** the network call, with stable attempt ID, run,
+destination snapshot, chunk index/count, and pending→sending compare-and-swap. Process chunks
+in order; persist each returned `message_id` immediately as succeeded before the next chunk.
+Retries skip confirmed chunks. Store the rendered chunk text or immutable digest snapshot with
+the intent so retries use the same saved content; no credentials in that payload.
+
+Explicit rejection known not to have accepted a message may retry only when transient. Bound
+automatic retries to **three after the first attempt**, with delays 30 s, 120 s, 600 s; honor a
+larger valid Telegram `retry_after`. Authentication/invalid-destination errors are permanent and
+visible. An HTTP 429 structured rejection is transient; transport timeout/disconnect after
+dispatch, malformed acceptance or a crash after sending but before durable receipt is
+UNKNOWN_DELIVERY. Ambiguous errors are never classified as explicit transient rejection.
+On startup, Telegram attempts left sending become unknown_delivery, never pending.
+
+`resolve_telegram_delivery(attempt_id, resolution) -> ReportRun`, with resolution
+`reviewed|resend`, requires an explicit user action. Reviewed changes the original attempt to
+reviewed while retaining uncertainty/error and any known receipts; it never invents a message
+ID or changes it to succeeded. Resend atomically marks the original reviewed and creates a new
+linked attempt (`revision_of`) after a duplicate-risk explanation. If the compare-and-swap
+loses, do not enqueue another resend. Unresolved unknown attempts block pruning; resolved
+reviewed history can expire under §8c. Confirmed delivery is never repeated automatically,
+including for regenerated revisions. A regenerated report records skipped/already-confirmed if
+any ancestor was confirmed; unknown ancestors require review before any new send. Vault/index
+failure never triggers report regeneration and does not erase Telegram acceptance receipts.
+
+### Acceptance
+
+Test credential unavailability, token exclusion from prompts/errors/settings, Unicode chunk
+bounds, saved-report reuse, retry bounds, unknown recovery, concurrent resolution, confirmed
+chunk suppression, regeneration suppression and disabled dispatch. Real acceptance additionally
+requires a user-approved recipient/send and visual inspection in Telegram. A returned message
+ID proves service acceptance, never that a person read the message. No test credentials,
+hardcoded destinations, synthetic receipts or undocumented sends. Rollback disables delivery
+independently of local schedules and preserves reports, notes and receipts.
 
 ## 9. Logging & observability
 `tracing` + daily-rotating file (`tracing-appender`) and console. Job-queue depth, sidecar state

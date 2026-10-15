@@ -223,6 +223,17 @@ selected folders/timezones/credentials are runtime setup, not another plan-appro
 Pilot/release validation remains evidence-based across supported user environments; no completion
 or usefulness metrics are inferred from contract approval.
 
+## 5g. Optional Telegram digest — separate approved exception (2026-10-15)
+
+The maintainer approved default-off delivery of a concise text digest derived from the saved
+report, to a user-selected Telegram destination. This narrow outbound-content exception is
+independent of the API listener and the local schedule contract (`03 §8d`). Users explicitly
+opt in to selected report content leaving the device. No raw OCR, screenshots, two-way commands,
+cloud inference, implicit recipient or telemetry. Credentials live only in Windows Credential
+Manager. Generation, vault writing and Telegram acceptance have separate durable receipts;
+unknown acceptance never triggers automatic resend. Actual Bot API delivery requires an
+explicitly approved test recipient/send and inspection, not a fabricated acknowledgement.
+
 ## 6. Risks & mitigations
 
 | Risk | Mitigation |

@@ -374,5 +374,15 @@ visible. No success without a persisted receipt. Explicit source-identity reset 
 behavior and requires schedules/delivery disabled with no active run. No inferred personal path.
 Use existing tokens/primitives, keyboard navigation, route error boundaries and one-scroll/no-CLS
 contract. No new NavRail route, productivity notifications or scores. Telegram controls and
-outbound permission are specified in their separate amendment; this section enables local
-scheduling/folder output only. Native verification remains required.
+outbound permission are specified in their separate amendment (`03 §8d`). Native verification remains required.
+
+**Telegram controls (separate §8d amendment).** Memory reports includes a default-off Telegram
+toggle, explicit chat ID, write-only password token field, save/clear credential actions and
+availability status. Explain before enablement that saved-report digest content leaves the
+device for Telegram/the selected conversation; no screenshots/raw OCR, and masking is not
+comprehensive PII detection. Never prefill a saved token. Clear the input after successful save.
+Display per-destination/chunk outcomes separately from generation/vault success. Unknown delivery
+requires inspect-conversation guidance and explicit Mark reviewed or Resend intentionally; the
+latter explains duplicate risk. No automatic resend, fake read receipt or implicit test send.
+Disabled, loading, credential unavailable, pending, partial, failed, confirmed and unknown states
+use existing tokens/accessible primitives without route layout shift; failures keep the form.

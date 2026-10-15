@@ -3,7 +3,7 @@
 Status (2026-10-15): **Execution authorized. Gate A API contract reviewed and committed;
 increment B implementation verification recorded separately. C–E report policies approved by
 the maintainer ("Sure GO"); local schedule/durable contract in `03 §8c`, Telegram permission
-in a separate contract commit before code. No blanket plan approval is outstanding. Native
+frozen separately in `03 §8d` before code. No blanket plan approval is outstanding. Native
 acceptance remains open.**
 
 This is the canonical repository execution plan, adapted from the original desktop planning
@@ -221,7 +221,7 @@ Inputs requiring explicit implementation tests (not yet implemented):
 Retry/Regenerate, destination statuses, unknown-delivery handling, profile identity and full
 provenance policies. `03 §8c` is the local durable-report contract and
 [memory-report-contract-proposal.md](memory-report-contract-proposal.md) records the accepted
-policy history. Keep Telegram outbound permission in a separately reviewed contract commit.
+policy history. Telegram outbound permission is recorded in the separately reviewed `03 §8d` amendment.
 Implementation is authorized; actual acceptance evidence remains required.
 
 **Native acceptance and setup:** cross-machine HTTP, local MCP, lifecycle/disconnect and rendered

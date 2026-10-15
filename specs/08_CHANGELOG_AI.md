@@ -1,5 +1,13 @@
 # 08 — AI Changelog
 
+## 2026-10-15 — Separate Telegram permission amendment
+
+Approved report policies now explicitly permit opt-in saved-report digests via Telegram HTTPS.
+Parent reviewed network/credential/privacy rules; independent persistence review found no
+blockers. `03 §8d` freezes receipt/retry/unknown-delivery semantics before outbound code.
+No real credential or destination has been accessed and no send performed. Documentation
+`git diff --check` passed; implementation verification follows separately.
+
 ## 2026-10-15 — Local report contract before code
 
 Recorded maintainer approval, froze daily windows/DST/activation, durable run/destination

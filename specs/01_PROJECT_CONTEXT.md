@@ -24,7 +24,8 @@ it proved which engines are reliable and which approaches failed (see §5).
   makes it searchable by **text and meaning**, and answers questions about what was seen.
 - **Distribution intent:** unsigned NSIS installer (signing pending), website **screensearch.app**.
 - **Primary users:** privacy-conscious Windows power users.
-- **Privacy stance:** storage and inference stay on-device; no cloud upload or telemetry.
+- **Privacy stance:** primary storage and inference stay on-device; no telemetry or arbitrary
+  cloud upload. Only explicitly enabled delivery exceptions below may send selected content.
   **Gate A API exception (2026-10-15):** users may enable authenticated HTTP API serving on
   `0.0.0.0` (all IPv4 interfaces), default-off for new profiles. This permits requested history
   responses to reachable token holders on other devices; plain HTTP does not encrypt tokens or
@@ -32,8 +33,10 @@ it proved which engines are reliable and which approaches failed (see §5).
   notice (`03 §7c`). This is a product-wide configurable feature, not a personal deployment.
   Public hosting, automatic firewall/router changes, remote MCP and remote inference remain out
   of scope. The separately approved local-memory amendment permits default-off scheduled local
-  reports and user-selected folder writes (`03 §8c`); no cloud upload is introduced. Telegram
-  outbound permission is recorded separately.
+  reports and user-selected folder writes (`03 §8c`). The separately approved Telegram exception
+  (`03 §8d`) sends only a selected saved-report text digest to the user-configured destination;
+  opt-in expressly permits that content to leave the device. No screenshots/raw OCR, cloud
+  inference, two-way commands or telemetry are authorized.
 
 ## 3. Target environment
 
