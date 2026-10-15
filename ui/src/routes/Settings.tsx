@@ -58,6 +58,7 @@ import { useUiStore } from "../state/uiStore";
 import type { Settings } from "../bindings/Settings";
 import type { ModelLane } from "../bindings/ModelLane";
 import type { ModelTier } from "../bindings/ModelTier";
+import { MemoryPanel } from "../components/domain/MemoryPanel";
 
 const TIER_LABEL: Record<ModelTier, string> = {
   default: "Default",
@@ -797,6 +798,7 @@ export function Component() {
           The export stays its own panel so it reads as independent of the API —
           it works with the API off (UI_REFERENCE §5). */}
       <ApiPanel />
+      <MemoryPanel />
 
       <Panel group title="Data export">
         <div className="flex flex-col gap-3">

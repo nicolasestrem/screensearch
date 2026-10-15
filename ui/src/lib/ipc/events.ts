@@ -45,6 +45,9 @@ export interface AppEvents {
   // Pull-based cache invalidation after the independent sessions scheduler commits.
   // Null payload and no toast: mounted views simply refetch their typed queries.
   sessions_changed: null;
+  // API startup completed; invalidate status without broadcasting its bearer token.
+  api_status_changed: null;
+  memory_status_changed: null;
 }
 
 /**

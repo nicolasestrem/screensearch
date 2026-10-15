@@ -130,7 +130,7 @@ export function useResolveMark() {
  */
 export function useSetApiConfig() {
   const qc = useQueryClient();
-  return useMutation<ApiStatus, unknown, { enabled: boolean; port?: number | null }>(
+  return useMutation<ApiStatus, unknown, { enabled: boolean; port?: number | null; bindAddress?: string | null }>(
     {
       mutationFn: (args) => cmd.setApiConfig(args),
       onSettled: () => {

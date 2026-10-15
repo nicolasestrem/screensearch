@@ -128,7 +128,7 @@ The rest of #57 — load/unload-model and start/stop-vision quick actions — do
 chord, mark chord, overlay results, dwell — plus the inline **cross-chord conflict warning**, gap
 `07` #100: fires live when `overlay.hotkey` and `marks.hotkey` are set to the same chord and clears
 when they differ) · Privacy (excluded apps, pause on lock) · Models (vision/answer pickers, show
-thinking, load/unload) · Storage (retention days, max width) · **App** (below) · Data (local API
+thinking, load/unload) · Storage (retention days, max width) · **App** (below) · Data (HTTP API
 toggle/port/token, export). **Advanced (collapsed, one expander per group):** Capture tuning · Text
 source / UIA · Enrichment & scheduling · Performance throttle (+ live readout) · Text filtering ·
 Reports & retrieval · Inference engine (sidecar). Tier membership is **settled**; within-tier
@@ -209,10 +209,19 @@ ships with only the happy path; no mock data; no "Coming Soon."
 | Settings | — | save failed → keep form, explain | model downloading (progress) | optimistic + reconcile |
 | Settings · Performance throttle (0.2.1) | toggle OFF → readout collapsed to "Throttle disabled" (empty-off) | status probe failed → "Pressure unavailable", keep toggle + fields | partial: GPU unmonitored → CPU% shown + honest "GPU not monitored" | master toggle + live CPU/GPU + level readout + 8 threshold fields; loading = skeleton readout; populated = live CPU/GPU% + level (Normal/High/Sustained) |
 | Flow overlay (0.3.0) | empty query → where-was-i strip ("Jump back: *repo* — VS Code, until 14:32") or honest "Nothing to resume yet" | search/ask cmd failed → inline retry, overlay stays open | results streaming / Ask tokens arriving | frameless always-on-top; loading = skeleton rows; populated = top-N results with thumbnails; `Esc`/blur dismiss; five states like every view |
-| Settings · Local API (0.3.0) | toggle OFF → "API disabled" (empty-off); nothing listens | port in use on enable → **loud warning + toast + inline "pick another port"**; save failed → keep form | enabling → binding | master toggle + port field + token reveal/copy/regenerate + threat-model copy; populated = "listening on 127.0.0.1:<port>" |
+| Settings · HTTP API (Gate A network contract) | toggle OFF → "API disabled" (empty-off); nothing listens | port in use on enable → **loud warning + toast + inline "pick another port"**; save failed → keep form | enabling → binding | master toggle + IPv4/IPv6 literal address field (default 127.0.0.1) + port field + token reveal/copy/regenerate + threat-model copy; populated = actual listen address/port; changes apply immediately; distinguish wildcard listen addresses from usable client destinations |
 | Tray (0.3.2) | — (icon present whenever the app runs) | capture error → error glyph/tint; menu still operates | paused → paused glyph/tint | passive state only — no notifications, no counts (`03 §7d`); menu actions round-trip through existing commands |
 | Updater indicator (0.3.2) | no update → **zero presence** (nothing rendered) | check/download failed → quiet App-section line ("couldn't check for updates" + retry), never a modal | downloading → indicator present, App line reflects it | presence, never a count; install only on user-initiated restart (`03 §11b`) |
 | Settings · App (0.3.2) | — | startup-registration or update-check failure → inline explain + retry, form kept | update downloading → status line reflects it | run-at-startup + close-to-tray apply optimistic + reconcile, like the rest of Settings |
+
+**API address and threat model (configurable-bind correction).** Default off, with missing
+bind address defaulting to `127.0.0.1` even for existing enabled installations. Allow any IPv4/IPv6
+literal, including specific interfaces and wildcards; reject invalid input visibly. Address and
+port changes persist and apply immediately. Display the actual listener or bind error honestly.
+Explain plain HTTP, reachable token holders' full-history access, token regeneration, and
+user-managed firewall access. A wildcard does not enforce LAN-only access. IPv6 client URLs use
+brackets. Preserve accessible controls, loading/error/off/listening states and token privacy.
+The earlier automatic-broadening upgrade notice and acknowledgement flow are removed.
 
 Loading uses skeletons that match final layout (no spinner-only screens). Empty states are
 **invitations to act**, not mood.
@@ -342,3 +351,39 @@ no filler. Timestamps human-relative with absolute on hover.
 
 *Companion to `00`–`04`. Aesthetic direction is intentional and subject-grounded; if a future change
 makes the UI read as a templated dark dashboard, that's a regression against §1.*
+
+## 11. Memory reports (approved 2026-10-15)
+
+Settings adds a Memory reports section using generated `MemorySettings`/`MemoryStatus` and
+TanStack Query. Default-off toggle, local time, explicit IANA timezone and selected output folder;
+preview first eligible report date before enablement. Keep the previous completed-day shortcut
+and add manual date/range controls using generated `MemoryReportRange`. Equal start/end selects
+one day; both endpoints are inclusive in the saved timezone. Explain the selected dates before
+running and show validation errors without clearing inputs. Today is an in-progress report up
+to enqueue time, explicitly partial when evidence exists; future dates are rejected. Selecting
+dates does not change the daily schedule or send anything until Run is pressed. History/details
+and Telegram label the selected range; display actual saved UTC-window timestamps in its timezone.
+Show last-run date/window/status, sampled coverage, saved output and destination outcomes
+separately. History exposes Retry (same run/resume delivery) and Regenerate (linked revision;
+replace unchanged owned note only; no repeat confirmed Telegram). Errors preserve form/output.
+
+States: loading reserves final geometry; off explains setup; missing model/source/folder is
+blocked with actionable explanation; running shows measured progress; partial is explicitly
+labeled; NO_DATA is honest empty output; failed write retains generated report; edited-file
+conflict preserves user content and exposes recovery path if present. Older missed gaps remain
+visible. No success without a persisted receipt. Explicit source-identity reset explains clone
+behavior and requires schedules/delivery disabled with no active run. No inferred personal path.
+Use existing tokens/primitives, keyboard navigation, route error boundaries and one-scroll/no-CLS
+contract. No new NavRail route, productivity notifications or scores. Telegram controls and
+outbound permission are specified in their separate amendment (`03 §8d`). Native verification remains required.
+
+**Telegram controls (separate §8d amendment).** Memory reports includes a default-off Telegram
+toggle, explicit chat ID, write-only password token field, save/clear credential actions and
+availability status. Explain before enablement that saved-report digest content leaves the
+device for Telegram/the selected conversation; no screenshots/raw OCR, and masking is not
+comprehensive PII detection. Never prefill a saved token. Clear the input after successful save.
+Display per-destination/chunk outcomes separately from generation/vault success. Unknown delivery
+requires inspect-conversation guidance and explicit Mark reviewed or Resend intentionally; the
+latter explains duplicate risk. No automatic resend, fake read receipt or implicit test send.
+Disabled, loading, credential unavailable, pending, partial, failed, confirmed and unknown states
+use existing tokens/accessible primitives without route layout shift; failures keep the form.

@@ -203,13 +203,13 @@ async fn fixture_host(with_answer: bool) -> Arc<TestHost> {
     })
 }
 
-/// Starts the real API server over the fixture host on an ephemeral loopback port.
+/// Starts the real API server over the fixture host on an ephemeral all-IPv4 port.
 async fn start_api(with_answer: bool) -> (String, ApiServer, String) {
     let token: SharedToken = Arc::new(std::sync::RwLock::new(TEST_TOKEN.to_string()));
     let server = ApiServer::start(fixture_host(with_answer).await, token, 0)
         .await
-        .expect("bind ephemeral loopback");
-    let base = format!("http://{}", server.local_addr());
+        .expect("bind ephemeral all-IPv4");
+    let base = format!("http://127.0.0.1:{}", server.local_addr().port());
     (base, server, TEST_TOKEN.to_string())
 }
 
@@ -295,13 +295,13 @@ async fn sessions_fixture_host(with_answer: bool) -> Arc<TestHost> {
     })
 }
 
-/// Starts the real API server over the sessions fixture on an ephemeral loopback port.
+/// Starts the real API server over the sessions fixture on an ephemeral all-IPv4 port.
 async fn start_api_sessions(with_answer: bool) -> (String, ApiServer, String) {
     let token: SharedToken = Arc::new(std::sync::RwLock::new(TEST_TOKEN.to_string()));
     let server = ApiServer::start(sessions_fixture_host(with_answer).await, token, 0)
         .await
-        .expect("bind ephemeral loopback");
-    let base = format!("http://{}", server.local_addr());
+        .expect("bind ephemeral all-IPv4");
+    let base = format!("http://127.0.0.1:{}", server.local_addr().port());
     (base, server, TEST_TOKEN.to_string())
 }
 

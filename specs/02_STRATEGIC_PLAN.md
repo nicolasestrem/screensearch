@@ -16,7 +16,9 @@ the prior attempt.
 - *Recall:* find any moment by **text or meaning** (hybrid search).
 - *Answers:* ask questions about what you saw and get **grounded, reasoned** answers.
 - *Control:* heavy AI work runs **when you choose** (on-demand / timed / idle), not constantly.
-- *Trust:* everything is **local**; no cloud, no default telemetry.
+- *Trust:* storage and inference stay **local**, with no telemetry. Content leaves the device
+  only through explicitly enabled network API access (`§5e`, `03 §7c`) or optional saved-report
+  Telegram digests to a selected destination (`§5g`, `03 §8d`).
 
 ## 2. The core strategic change (the "why")
 
@@ -183,6 +185,59 @@ The 0.3.x line is shipped (0.3.0 through the 0.3.3 hotfix), and **0.4.0 (P8)** s
   kind is the reserved extension point, `07` #75); and monitor hot-unplug hardening (`07` #91 —
   sessions make its silent stalls *visible*, raising it to a first-line 0.4.1 candidate).
 
+## 5e. Network API increment — Gate A contract (2026-10-15)
+
+Make the existing API available to users’ other devices while preserving local storage and
+inference. This is a product feature for all installations, configured through the existing API
+master switch and port, with no personal host, account, path or credential baked into the app.
+
+- **Sequence:** review and commit this API-only contract amendment before implementing the
+  listener, configuration, tests and accompanying active privacy/documentation copy. Historical shipped
+  localhost descriptions in §5c remain historical; this section supersedes their binding rule
+  for the next API increment. A contract change is not evidence that runtime behavior shipped.
+- **Boundary:** default-off, authenticated plain HTTP on a configurable IPv4/IPv6 literal.
+  Missing `api.bind_address` defaults to `127.0.0.1`, including existing enabled installations;
+  upgrades never broaden access automatically. A token holder on any reachable host can read history. MCP destination
+  validation/default URL and the inference sidecar remain loopback-only.
+- **Scope:** listener, existing auth/configuration lifecycle, bind-address configuration and accurate copy.
+  No scheduler, vault writer, schema migration, report endpoints, Telegram, firewall automation,
+  public hosting or remote MCP. Scheduled delivery and outbound Telegram need separate reviewed
+  amendments before their implementations.
+- **Acceptance:** native Windows verification plus real cross-machine authenticated health
+  (200 with actual version; 401 without/wrong token), local MCP, disable/enable, restart, Ask
+  disconnect and loopback inference checks (`03 §7c`). Remote HTTP evidence is mandatory.
+
+## 5f. Scheduled local memory — approved contract (2026-10-15)
+
+The maintainer approved the report policies and execution ("Sure GO"). Build one shared durable
+report service, default-off daily scheduling and user-selected Obsidian-compatible folder export
+before optional Telegram delivery. This is a product-wide feature, not a personal automation.
+The local schedule is an explicit exception to historical pull-only behavior; no productivity
+scores, nudges, cloud inference or automatic model downloads are permitted. Existing manual
+Recall/session reports retain their behavior while sharing execution and evidence collection.
+
+Contract order: reviewed schedule/local-report amendment → separate outbound Telegram amendment
+→ implementation C–E. The API increment remains independently reviewable; report HTTP/MCP
+endpoints and deeper weekly/project memory remain deferred. `03 §8c` freezes the approved
+activation, DST, retry/regenerate, provenance, retention, ownership and error rules. Explicitly
+selected folders/timezones/credentials are runtime setup, not another plan-approval gate.
+Manual execution also supports a selected calendar date or inclusive date range, including
+explicit partial-day reports for today. It uses the same local report/destination pipeline and
+preserves daily scheduling semantics; manually selected output stays separate from daily notes.
+Pilot/release validation remains evidence-based across supported user environments; no completion
+or usefulness metrics are inferred from contract approval.
+
+## 5g. Optional Telegram digest — separate approved exception (2026-10-15)
+
+The maintainer approved default-off delivery of a concise text digest derived from the saved
+report, to a user-selected Telegram destination. This narrow outbound-content exception is
+independent of the API listener and the local schedule contract (`03 §8d`). Users explicitly
+opt in to selected report content leaving the device. No raw OCR, screenshots, two-way commands,
+cloud inference, implicit recipient or telemetry. Credentials live only in Windows Credential
+Manager. Generation, vault writing and Telegram acceptance have separate durable receipts;
+unknown acceptance never triggers automatic resend. Actual Bot API delivery requires an
+explicitly approved test recipient/send and inspection, not a fabricated acknowledgement.
+
 ## 6. Risks & mitigations
 
 | Risk | Mitigation |
@@ -192,7 +247,7 @@ The 0.3.x line is shipped (0.3.0 through the 0.3.3 hotfix), and **0.4.0 (P8)** s
 | Sidecar orphan/hang | Job Object KILL_ON_JOB_CLOSE + startup reap + heartbeat/restart (hard requirement). |
 | Resource spikes surprising users | On-demand/timed by default; explicit schedule UI; idle-only option; per-job budgets. |
 | Global hotkey conflicts (PowerToys, IMEs, games) — 0.3.0 | Non-default combos (`Ctrl+Alt+Z` / `Ctrl+Alt+M`), both configurable; a failed registration is a **visible Settings warning + toast**, never a silent no-op (`§5c`; `03 §7b`/§8). |
-| API token leakage → full-history read by local malware — 0.3.0 | API **off by default**, binds `127.0.0.1` only (hard-coded, not a setting); plain-language threat model in Settings + docs; a regenerate-token button (`03 §7c`). |
+| API token leakage or plain-HTTP interception → full-history read from any reachable host | API **off by default**; bearer auth on every route; explicit configurable-IP/plain-HTTP threat model and loopback default for missing address; regenerate-token control; user-managed network/firewall boundary, no public hosting (`03 §7c`). |
 | Scope creep | Automation + nice-to-haves are explicitly **out of v1.0**. |
 
 ## 7. Non-goals (reaffirmed)

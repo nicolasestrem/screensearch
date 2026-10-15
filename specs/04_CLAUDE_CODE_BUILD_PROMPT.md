@@ -43,7 +43,21 @@ zero frame-level behavior change); **no audio** (D14); **no new NavRail route** 
 non-shaming** (D11 — nothing notifies, nudges, streaks, or scores). The **specs are the contract**
 (this arc's PR1 normalized decisions D1–D16 into the specs); the roadmap is context.
 
+**For the network API increment (Gate A, 2026-10-15):** read `02 §5e`, amended `03 §7c`
+and `UI_REFERENCE` API/bind-address contract. Review and commit the API-only amendment before
+implementation; keep scheduled delivery and Telegram permissions in separate later amendments.
+This is a configurable product feature for all installations. Preserve MCP/inference loopback
+boundaries; require native Windows and separate-machine HTTP evidence before claiming acceptance.
+Update active user-facing privacy copy with the implementation, not before the behavior exists.
+
 **Do not** hold the spec in your head from a prior session — re-read; the files evolve.
+
+**For memory reports (2026-10-15):** read `docs/memory-api-direction-plan.md`, `02 §5f`,
+`03 §8c` and the memory-report UI contract. The maintainer approved execution and the frozen
+report policies; do not ask for blanket plan approval again. Keep local-schedule and Telegram
+contract commits separate and independently reviewed before implementing their behavior. Build
+the durable state and installed-only model path before scheduling or destination side effects.
+Native acceptance and pilot evidence remain open until observed; no fake success receipts.
 
 ## 2. Source of truth (which doc answers which question)
 | Question | Authority |
@@ -132,10 +146,16 @@ If the answer is in a doc, **use it verbatim** — do not invent alternatives.
   commit to `main` without the work being reviewed. New work starts on a new branch.
 - **No schema drift without a migration.** Every schema change is a forward-only migration with a
   `schema_version` bump (`03 §4/§12`).
-- **No Python in the shipped runtime. No cloud calls.** Runtime ML is Rust-only (fastembed) + the
+- **No Python in the shipped runtime. No cloud inference or arbitrary uploads.** Runtime ML is Rust-only (fastembed) + the
   local llama.cpp sidecar (`01 §5`); a Python *ML* sidecar is the V1 approach we don't repeat. Python
   is allowed for build/dev tooling (e.g. the `hf` CLI). Network = localhost + model downloads + the
-  signed GitHub-Releases update check (`03 §11b`) only.
+  signed GitHub-Releases update check (`03 §11b`), plus user-enabled authenticated HTTP API
+  serving on a configurable IPv4/IPv6 literal (default loopback) (`03 §7c`, Gate A). Plain HTTP exposes history to reachable
+  token holders; no public hosting or automatic firewall/router changes. MCP destinations and
+  inference stay loopback-only. Approved local schedules and user-selected folder writes are
+  permitted by `03 §8c`; the separate `03 §8d` exception permits explicitly enabled saved-report
+  text digests to the user-configured Telegram destination. No screenshots/raw OCR or arbitrary
+  outbound processing; tokens remain in Windows Credential Manager.
 - **No real-time vision.** Vision runs only on-demand/timer/idle (`03 §5`).
 - **Sidecar must never orphan.** Implement the Job-Object lifecycle exactly (`03 §6`); do not ship
   P4 until the no-orphan test passes.

@@ -27,6 +27,8 @@ use traits::{
 
 mod capture_loop;
 mod events;
+pub mod memory_schedule;
+pub mod report_service;
 pub mod reports;
 pub mod resume;
 pub mod sessions_intel;

@@ -316,9 +316,8 @@ export function useMarks(enabled = true) {
   return useMaybeOverride(q, queryKeys.marks);
 }
 
-/** Local-API status for the Settings panel (`03 §7c`). No live event drives it — it
- *  changes only via our own mutations (enable/disable, regenerate token) or at boot —
- *  so it is a plain fetch that our mutations invalidate. */
+/** API status for Settings (`03 §7c`). Mutations and the
+ *  startup `api_status_changed` event refresh this shared cache. */
 export function useApiStatus() {
   const q = useQuery<ApiStatus>({
     queryKey: queryKeys.apiStatus,

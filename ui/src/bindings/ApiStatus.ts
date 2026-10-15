@@ -15,6 +15,10 @@
  */
 export type ApiStatus = { 
 /**
+ * Configured IPv4 or IPv6 literal; missing configuration defaults to 127.0.0.1.
+ */
+bind_address: string, 
+/**
  * Persisted intent — the master toggle.
  */
 enabled: boolean, 
@@ -23,7 +27,7 @@ enabled: boolean,
  */
 running: boolean, 
 /**
- * The configured port (default 43210); the bind is always `127.0.0.1`.
+ * The configured port (default 43210).
  */
 port: number, 
 /**

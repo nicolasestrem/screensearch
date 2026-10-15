@@ -96,9 +96,9 @@ pub fn parse(args: &[String], env: impl Fn(&str) -> Option<String>) -> Cli {
         .unwrap_or_else(|| DEFAULT_URL.to_string());
     // Trim a trailing slash so `{url}/v1/...` never doubles up.
     let url = url.trim_end_matches('/').to_string();
-    // The local API only ever binds 127.0.0.1 (PR7 hard-codes it), so a non-loopback URL can
-    // never reach it — it can only leak the bearer token to a wrong host after a typo or a
-    // bad copied config. Reject anything but loopback up front (`03 §7c`, D13).
+    // MCP intentionally remains a local client even though the application API serves
+    // all IPv4 interfaces. Reject remote destinations to avoid leaking the token through
+    // a typo or copied config; remote MCP needs a separate contract amendment (`03 §7c`).
     if !is_loopback_url(&url) {
         return Cli::BadUsage(format!(
             "--url must be a loopback address (127.0.0.1 / localhost / [::1]); got `{url}`"

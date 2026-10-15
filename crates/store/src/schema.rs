@@ -7,7 +7,7 @@
 //! edit a shipped one (no schema drift).
 
 /// The highest migration version this build knows how to reach.
-pub const LATEST_SCHEMA_VERSION: i32 = 11;
+pub const LATEST_SCHEMA_VERSION: i32 = 12;
 
 /// Vector dimensionality for every embedding lane (`03 §3/§4`,
 /// [`traits::EmbeddingProvider::dim`]).
@@ -43,6 +43,7 @@ pub const MIGRATIONS: &[(i32, &str)] = &[
     (9, MIGRATION_V9),
     (10, MIGRATION_V10),
     (11, MIGRATION_V11),
+    (12, MIGRATION_V12),
 ];
 
 /// v1 — the full data spine (`03 §4`, transcribed verbatim, plus the FTS5 and
@@ -448,4 +449,34 @@ CREATE INDEX idx_artifacts_session ON session_artifacts(session_id, created_at);
 -- index the `frame_id` FK: SQLite does not auto-index FKs, and `frame_id` is ON DELETE SET NULL,
 -- so a frame retention delete would otherwise full-scan session_artifacts to null matching rows.
 CREATE INDEX idx_artifacts_frame ON session_artifacts(frame_id);
+"#;
+
+/// Durable report snapshots deliberately retain evidence IDs without evidence FKs.
+const MIGRATION_V12: &str = r#"
+CREATE TABLE report_runs (
+ run_id TEXT PRIMARY KEY NOT NULL,
+ schedule_id TEXT,
+ revision_of TEXT,
+ window_start INTEGER NOT NULL,
+ window_end INTEGER NOT NULL CHECK(window_end > window_start),
+ phase TEXT NOT NULL CHECK(phase IN ('queued','running','blocked','finished')),
+ created_at INTEGER NOT NULL,
+ updated_at INTEGER NOT NULL,
+ payload TEXT NOT NULL
+);
+CREATE UNIQUE INDEX idx_report_schedule_window ON report_runs(schedule_id, window_start, window_end)
+ WHERE schedule_id IS NOT NULL AND revision_of IS NULL;
+CREATE INDEX idx_report_runs_created ON report_runs(created_at DESC);
+CREATE TABLE report_deliveries (
+ id TEXT PRIMARY KEY NOT NULL,
+ run_id TEXT NOT NULL REFERENCES report_runs(run_id) ON DELETE CASCADE,
+ state TEXT NOT NULL,
+ next_attempt_at INTEGER,
+ payload TEXT NOT NULL
+);
+CREATE INDEX idx_report_deliveries_run ON report_deliveries(run_id);
+CREATE TABLE report_files (
+ path TEXT PRIMARY KEY NOT NULL,
+ payload TEXT NOT NULL
+);
 "#;

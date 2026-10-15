@@ -1,5 +1,28 @@
 # Architecture (as-built)
 
+## Unreleased daily memory increment (2026-10-15)
+
+`kernel::report_service` shares evidence inspection and execution between Recall and durable
+memory runs. The automatic provider snapshots an installed model and cannot invoke downloads.
+`kernel::memory_schedule` performs pure fixed-IANA calendar calculations. The composition root
+in `src-tauri/src/memory.rs` wires one serial worker, typed IPC and persisted activation/cursors.
+`traits::memory` defines generated DTOs; store migration 12 adds transactional run, delivery and
+file-ownership records. Saved results and destination snapshots are immutable.
+
+`memory_files` writes owned notes with native atomic Windows operations and recovery backups;
+`memory_telegram` holds tokens in Credential Manager, derives masked text from saved output,
+and classifies accepted, rejected and uncertain transport results. Intents precede effects;
+each chunk receipt is saved before the next dispatch. Settings exposes independent outcomes.
+
+Shutdown joins the asynchronous worker within its timeout before the model supervisor stops.
+An already-started blocking Windows file operation is not cancellable through Tokio abort and
+may finish after that await is cancelled. It owns only file inputs, no model or database handle;
+the persisted intent allows restart reconciliation. The timeout is not a claim that a hung
+filesystem call has been joined. Native slow/unavailable-folder acceptance remains open.
+
+See [configuration and recovery](MEMORY.md) and `03 §8c/§8d` for the full contract. The following
+sections retain the shipped 0.4.0 architecture history.
+
 How ScreenSearch V2c is actually put together **as of 2026-07-11** — reflecting the complete 0.3.0
 arc (PR1–PR8: surface reduction, Flow overlay, where-was-i + marks, local HTTP API + export, MCP
 server), the shipped **0.3.1 patch** (P7.1 triage: the #64 vision-throughput fix —
@@ -40,8 +63,9 @@ Where they ever disagree, the specs win — open an issue.
   configurable hotkey/status controls (PR2–PR5); **where-was-i + mark-this-moment** — the
   `kernel::resume` last-sustained-context heuristic, the schema-v10 `marks` table, the
   `capture_now` diff-gate-bypass path, and a second global hotkey with a non-focus-stealing toast
-  (PR6); the **opt-in localhost HTTP API + JSON export** (`crates/api`, axum, 127.0.0.1-only,
-  bearer token — PR7); and the **`screensearch-mcp.exe` stdio MCP server** wrapping that API,
+  (PR6); the **opt-in localhost HTTP API + JSON export** (`crates/api`, axum, originally
+  loopback-only with bearer auth — PR7; the current network increment broadens the listener
+  to configurable IPv4/IPv6 binding with a loopback default); and the **`screensearch-mcp.exe` stdio MCP server** wrapping that API,
   bundled via NSIS `externalBin` (PR8).
 - Implemented for 0.3.2: **auto-update** — `src-tauri/src/update.rs` (single-flight check →
   background download → signature-verify → install only on user-initiated restart; launch check
@@ -100,7 +124,7 @@ resume heuristic);
 the module crates — `capture` (WGC + triggers + privacy), `ocr` (WinRT), `uia` (UI-Automation text),
 `store` (SQLite + sqlite-vec + FTS5), `embeddings` (fastembed), `inference` (Job-Object-bound
 `llama-server` sidecar), `textfilter` (attention-first span classifier), `sysmon` (pressure probe),
-`doctor` (env smoke-check), `api` (opt-in localhost HTTP API + export), `mcp` (the
+`doctor` (env smoke-check), `api` (opt-in HTTP API + export), `mcp` (the
 `screensearch-mcp.exe` stdio wrapper over that API), `sessions` (0.4.0 — the pure heuristic
 segmentation + tool-recognition engine), and `harness` (0.4.0 — a dev-only, read-only segmentation
 validation harness, not shipped in the app) — each
@@ -449,14 +473,18 @@ request id, and the UI ignores stale deltas.
   A quiet overlay toast confirms without stealing focus; the Deck **Intentions** strip lists
   unresolved marks (open / resolve / dismiss — no badge counts, D14). Marked frames follow normal
   retention: the image may expire, the mark keeps the text reconstruction reachable (D10).
-- **Local HTTP API + export** (`crates/api` + `src-tauri::local_api`, PR7): default **off**; when
-  enabled the axum server binds **`127.0.0.1` only (hard-coded)** on `api.port` and every request
+- **HTTP API + export** (`crates/api` + `src-tauri::local_api`, PR7): default **off**; when
+  enabled the axum server binds the configured **`api.bind_address` (IPv4/IPv6 literal; missing defaults to `127.0.0.1`)** on `api.port` and every request
   needs the `api.token` bearer (constant-time compare, 401 otherwise; D11). Endpoints: `/v1/health`,
   `/v1/search`, `POST /v1/ask` (SSE; consumer disconnect aborts sidecar generation), `/v1/frames/{id}`
   (`?image=1` → WebP), `/v1/context/where-was-i`, marks list/create/resolve (the only write surface),
   and `/v1/export` (JSON, frames + content text + marks, **no images** — D12). The host is a seam
   behind a trait, **not constructed at all** while disabled; the Settings "Export…" button calls the
   same export code path directly, so export works with the API off. Reference: `docs/API.md`.
+  The listener uses plain HTTP; reachable token holders can read history. MCP remains a
+  loopback-only client and the inference listener stays loopback-only. Existing enabled profiles
+  without a bind address retain loopback exposure; address/port edits apply immediately. Startup emits a payload-free `api_status_changed` invalidation event;
+  tokens are never broadcast through this event. No schema migration is needed.
 - **MCP server** (`crates/mcp` → `screensearch-mcp.exe`, PR8): a dependency-thin **stdio** JSON-RPC
   binary that never links the store (D13) — purely an HTTP client of the local API using
   `SCREENSEARCH_API_URL` / `SCREENSEARCH_API_TOKEN`. Nine tools (`search_screen_history`,
@@ -520,8 +548,9 @@ request id, and the UI ignores stale deltas.
   `SearchQuery.limit` clamp. PR5 adds a Tauri config guard proving the overlay window is pre-created,
   hidden by default, and `contentProtected`. PR6 adds the `kernel::resume` heuristic unit suite, the
   v10 marks migration test, and `capture_now` pipeline tests (diff-gate bypass, capture-off denial).
-  PR7 adds `crates/api/tests/http_api.rs` (fixture-DB integration: loopback-only bind assertion,
-  401s, every endpoint, SSE ask, export). PR8 adds `crates/mcp/tests/stdio_mcp.rs`, which spawns the
+  PR7 adds `crates/api/tests/http_api.rs` (fixture-DB integration: originally a loopback-only
+  bind assertion, 401s, every endpoint, SSE ask, export). The current network increment replaces
+  that bind assertion with configurable IPv4/IPv6 binding, safe upgrade defaults and loopback-client checks, and extends route-auth coverage. PR8 adds `crates/mcp/tests/stdio_mcp.rs`, which spawns the
   real compiled binary over stdio (handshake, nine tools, guided API-off/wrong-token errors).
 - **Inference, deterministic (run in CI, no GPU/network):** the **no-orphan gate**
   (`tests/no_orphan.rs` — kill a parent, assert the Job-Object child dies), startup **reap**
