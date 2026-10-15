@@ -208,3 +208,23 @@ acceptance boundaries are in `05_BUILD_REVIEW.md`; packaging follows separately.
 Unsigned date-range NSIS packaging passed; release profile completed in 3m 09s and the executable
 returned `ScreenSearch 0.4.0` with exit 0. Artifact hash/size/raw output are in `05`. The running
 installation, selected vault, settings, credentials and Telegram conversation were not changed.
+
+
+## 2026-10-15 — README showcase for PR #123
+
+Expanded the README's development-feature overview into a user-facing showcase of scheduled
+memory, selected dates/ranges, Obsidian Markdown/index output, opt-in Telegram digests, coverage/
+recovery and configurable API binding. Added setup links and clarified the loopback default.
+The maintainer plans release tonight and requested this documentation in PR #123; the README
+continues to identify the additions as unreleased until publication. CHANGELOG updated.
+
+Documentation-only verification: relative README link/image check and `git diff --check` exited 0.
+Raw link-check output:
+
+```text
+README local links/images checked: 21
+PASS: all relative README link/image targets exist
+```
+
+No runtime changes or repeated build/test suite; the current installer verification above remains
+unchanged. This documentation update does not merge PR #123, create a tag or publish a release.

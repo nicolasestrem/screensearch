@@ -632,3 +632,12 @@ and `range-version-error.log`. The canonical NSIS output remains
 `target/release/bundle/nsis/ScreenSearch_0.4.0_x64-setup.exe`.
 This proves the current installer build and CLI version response, not native UI/model quality
 or live Telegram acceptance. The reported running app was not restarted or replaced.
+
+
+### README showcase follow-up for PR #123
+
+Documentation-only changes highlight today's memory/reporting and API additions for users, with
+an explicit unreleased label and setup links. All 21 relative README link/image targets exist;
+`git diff --check` exited 0 with empty output. Runtime code and installer are unchanged from the
+832-test/package verification above. The maintainer's planned release tonight is not publication
+or merge authorization; this update is included in the open PR.

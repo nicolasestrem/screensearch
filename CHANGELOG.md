@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build record in `specs/05_BUILD_REVIEW.md`.
 
 ### Changed
+- README showcases the unreleased memory reports, date/range selection, Obsidian notes,
+  optional Telegram digests and configurable API binding, with setup links and release status.
 - Coverage reports with captured evidence reject blank model output as generation failure,
   preserving genuine empty-window NO_DATA behavior and prompt-based no-match results.
 - Memory status explains why NO_DATA reports do not send Telegram digests.
