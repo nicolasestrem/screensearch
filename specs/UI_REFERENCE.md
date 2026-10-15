@@ -356,8 +356,14 @@ makes the UI read as a templated dark dashboard, that's a regression against §1
 
 Settings adds a Memory reports section using generated `MemorySettings`/`MemoryStatus` and
 TanStack Query. Default-off toggle, local time, explicit IANA timezone and selected output folder;
-preview first eligible report date before enablement. Run now targets the previous completed
-day. Show last-run date/window/status, sampled coverage, saved output and destination outcomes
+preview first eligible report date before enablement. Keep the previous completed-day shortcut
+and add manual date/range controls using generated `MemoryReportRange`. Equal start/end selects
+one day; both endpoints are inclusive in the saved timezone. Explain the selected dates before
+running and show validation errors without clearing inputs. Today is an in-progress report up
+to enqueue time, explicitly partial when evidence exists; future dates are rejected. Selecting
+dates does not change the daily schedule or send anything until Run is pressed. History/details
+and Telegram label the selected range; display actual saved UTC-window timestamps in its timezone.
+Show last-run date/window/status, sampled coverage, saved output and destination outcomes
 separately. History exposes Retry (same run/resume delivery) and Regenerate (linked revision;
 replace unchanged owned note only; no repeat confirmed Telegram). Errors preserve form/output.
 

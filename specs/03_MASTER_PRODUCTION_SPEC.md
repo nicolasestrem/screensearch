@@ -1209,6 +1209,45 @@ a real installed-model report, inspected coverage, a real note visible in the se
 Obsidian, preserved edited notes, DST/restart tests and bounded worker shutdown evidence.
 Unit fixtures do not certify live inference or output usefulness. No release/merge is implied.
 
+### Manual date and date-range reports (requested 2026-10-15)
+
+The maintainer requested choosing a date or range for the same durable local/Telegram report.
+`MemoryReportRange { start_date: String, end_date: String }` is a generated typed request of
+inclusive, strict `YYYY-MM-DD` dates interpreted in the saved Memory timezone. Equal endpoints
+select a single day. `run_memory_report(range: Option<MemoryReportRange>)` retains the previous
+completed-day shortcut when omitted. Selecting dates alone never enqueues or sends anything.
+Validate both dates and their order before enqueue; reject future dates in the selected timezone.
+Resolve local midnight with the existing DST/calendar rules; the exclusive UTC end is midnight
+after the selected inclusive end date. If that date is today, freeze the end at enqueue time.
+Expose that this is an in-progress report: real-evidence output is PARTIAL with its exact as-of
+time, never a claim to cover the rest of today. Genuine empty evidence remains NO_DATA and does
+not send Telegram. Retry and Regenerate preserve the frozen original window.
+
+`ReportRun.requested_range: Option<MemoryReportRange>` defaults to null when reading legacy JSON
+and is immutable. Scheduled/legacy runs retain null and their current behavior. This adds an
+optional backward-compatible field to existing JSON payloads, with no SQL DDL change or schema
+version bump (schema remains 12). Calendar-grid coverage and existing bounded inference apply to
+longer windows; neither screenshots nor raw OCR enter the Telegram digest.
+
+Explicit manual requests have independent run UUIDs, including repeated selections of the same
+dates. Store active-window deduplication remains only for legacy previous-day requests and must
+not reuse an explicit range run. The source/UTC-window/requested dates cannot mutate on update.
+No change to daily scheduling activation, its catch-up cursor or configured send time.
+
+An explicit selection writes `ScreenSearch/Reports/<start>_to_<end>_<base-run-UUID>.md` under the
+saved output folder, including for a single date. Regenerated revisions reuse the root ancestor's
+file identity. This avoids overwriting scheduled Daily notes or unrelated manual runs. Existing
+ownership/hash/reparse/recovery rules apply. Frontmatter adds optional `requested_range` and
+`base_run_id` with defaults for old notes, so generated filenames and index provenance remain
+verifiable after run-history pruning. The index includes owned Daily and Reports notes with
+single-date/range labels. Telegram digests and run history label the selected date range and
+in-progress/partial coverage, using the same saved result and independent receipts.
+
+Verify strict dates/order/future rejection, single-day and multi-day UTC bounds, today cutoff,
+DST transitions, legacy JSON compatibility, immutable request metadata, distinct manual runs,
+revision filename reuse, index links and existing scheduled behavior. No test changes the live
+profile, rewrites the reported notes, restarts the running app or sends a real Telegram message.
+
 ## 8d. Telegram text digest (separate approved exception, 2026-10-15)
 
 This amendment permits **explicitly enabled** outbound HTTPS calls to Telegram's Bot API for
