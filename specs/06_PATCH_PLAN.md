@@ -66,3 +66,16 @@ and reconcile the toolchain contract: 1.95 is required by the
 committed libsqlite3-sys 0.38.1 build script (cfg_select!, omitted MSRV metadata).
 Verify the full Windows suite on pinned 1.95.0 before merging; never restore vulnerable 0.11.14 to preserve the obsolete 1.82 declaration.
 CI and release reject versions affected by GHSA-4w2j-m93h-cj5j.
+
+## 2026-10-15 — C–E implementation integration
+
+Approved contracts landed separately as 4e0df3a (local reporting/scheduling) and 217f9ef
+(outbound Telegram). Implementation uses default-off per-profile configuration, a shared
+coverage report service, schema 12 durable runs/receipts, one serialized worker, installed-only
+model resolution, owned atomic files, and write-only Windows credentials. Settings exposes
+errors without hiding recovery controls. No release, install replacement or real send is implied.
+
+Review corrections: propagate evidence-read failures rather than treating them as empty;
+recover saved runs interrupted before delivery-intent creation; preserve unresolved attempts
+and file ownership through retention; guard reparse paths before recovery reads as well as
+writes. Verification results follow after the complete workspace gates.

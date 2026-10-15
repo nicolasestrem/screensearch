@@ -8,11 +8,17 @@ requires actual test inputs and observed results. Firewall access for this work 
 the app does not automatically alter firewall rules. Do not infer Telegram credentials or
 recipient from this permission.
 
+Implementation C–E has passed the local Windows automated suite (817 passed, 15 existing
+hardware/manual tests ignored); native quality and product-wide pilot gates remain open. OS
+file operations may continue after the bounded async worker is cancelled; persisted intents
+recover the outcome. Slow/unavailable-folder native acceptance must check this behavior.
+The current Node 22 UI install reports 10 development-tree advisories (3 moderate, 7 high);
+`npm audit --omit=dev` reports zero. No unrelated lockfile remediation was applied.
+
 ## 2026-10-15 — Memory/API execution gates (owner: maintainer + agent)
 
-- Before C–E: resolve the proposed schedule/rerun/delivery/source-identity policies in
-  `docs/memory-report-contract-proposal.md` and freeze them in `03`. Product acceptance
-  must cover diverse supported user setups, not a personal usefulness score.
+- C–E policies are approved in `03 §8c/§8d`; implementation verification is tracked in `05`.
+  Product acceptance must cover diverse supported user setups, not a personal usefulness score.
 - Before network release: real separate-machine HTTP authentication, local MCP, native
   visible upgrade notice, restart, disable/enable, Ask cancellation and inference bind evidence.
 - Before automation acceptance: user-selected test folder, installed model, and explicitly

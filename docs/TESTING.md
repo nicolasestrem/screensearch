@@ -517,3 +517,32 @@ Record in the build log (`specs/05`): timestamps, verbatim query outputs, verbat
 the installer byte-count match. After the gate and the remaining live acceptance, delete the temp
 release (`gh release delete pre-0.4.0 --yes --cleanup-tag`) and confirm the endpoint reverts to
 `0.3.3`.
+
+## Daily memory C–E: native acceptance (not yet certified)
+
+Use a separate, explicitly selected test profile/folder and an installed local answer model.
+Preserve the ordinary installation and take a dated database backup before the schema 11 → 12
+upgrade. Do not enable Telegram or use private history merely to satisfy a test command.
+
+1. Inspect defaults after migration: schedules and Telegram off; no timezone, folder or recipient
+   inferred; existing frame/session/settings counts preserved. Open Settings → Memory reports
+   and verify loading, empty, error and populated states without additional scroll containers.
+2. Configure a test folder and IANA zone, inspect backend schedule preview, run a previous-day
+   report over approved evidence. Compare saved frame IDs/counts with the actual summarization
+   inputs, inspect model label and coverage, and distinguish sample coverage from total capture.
+3. Verify successful empty inspection gives NO_DATA without loading a model. Missing installed
+   model must block with a retry action; a read/inference failure must not produce NO_DATA.
+4. Open the real Markdown note and index in the selected folder/Obsidian. Inspect typed
+   frontmatter and dated headings. Edit the note, retry/regenerate, and confirm conflict plus
+   byte preservation. Exercise unavailable folder, junction/reparse path and interrupted write.
+5. Restart around enqueue/result-save/file-write boundaries; saved output must be reused and
+   attempts reconciled. Verify the seven-day catch-up cap, visible older gap, DST overlap/gap,
+   timezone/time changes, disabled-period exclusion and shutdown before sidecar destruction.
+6. Only with an approved destination and explicit test-send authorization, save a Telegram
+   token using the write-only field. Inspect the actual received message and recorded message
+   IDs, partial label, Unicode chunk boundaries and masking limits. Never paste tokens or raw
+   private report content into verification logs. Confirm disable/config-change suppression,
+   confirmed ancestor suppression, and explicit reviewed/resend actions for uncertain attempts.
+7. Record source commit, model, environment, commands/raw output and the checks actually observed.
+   A service acknowledgement proves acceptance only. Keep unperformed checks open; the F1 pilot
+   and F2 release decision require varied supported setups and consenting participants.

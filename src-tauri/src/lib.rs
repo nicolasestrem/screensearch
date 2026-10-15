@@ -35,6 +35,9 @@ use store::SqliteStore;
 use tokio::task::JoinHandle;
 
 mod local_api;
+mod memory;
+mod memory_files;
+mod memory_telegram;
 mod overlay;
 mod tray;
 mod update;
@@ -229,6 +232,7 @@ struct AppState {
     /// The opt-in local HTTP API runtime (0.3.0 PR7). Holds the server slot + live token;
     /// the server is constructed only when `api.enabled` (`03 §7c`).
     api_runtime: Arc<local_api::ApiRuntime>,
+    memory_runtime: Arc<memory::MemoryRuntime>,
     /// The `ApiHost` adapter the API/export commands run against; `None` only when the DB
     /// failed to open (no store/kernel to adapt). It holds the app-start instant for the
     /// `/v1/health` uptime anchor.
@@ -731,25 +735,6 @@ async fn generate_report(
         ReportKind::Custom => "the selected range".to_string(),
     };
 
-    // An honest no-evidence report must not depend on the answer sidecar (which may still
-    // be downloading/resolving right after first launch): a range with no captured frames
-    // never calls the model, so short-circuit it here without acquiring the provider. A
-    // probe error falls through to the normal path so the real error still surfaces.
-    // (Codex review, PR #33.)
-    let has_frames = store
-        .frames_in_range(request.time_range.start, request.time_range.end, 1)
-        .await
-        .map(|f| !f.is_empty())
-        .unwrap_or(true);
-    if !has_frames {
-        return Ok(empty_report_response(range_label));
-    }
-
-    let answer = kernel
-        .answer_provider()
-        .await
-        .ok_or_else(|| "inference sidecar not ready yet".to_string())?;
-
     // Register a cancel flag so `cancel_report` can stop the orchestrator between passes.
     let cancel = Arc::new(AtomicBool::new(false));
     state
@@ -773,27 +758,32 @@ async fn generate_report(
         );
     };
 
-    let result = kernel::reports::generate_report(
+    let result = kernel::report_service::execute(
         store.as_ref(),
-        answer.as_ref(),
-        range,
-        request.time_range.start,
-        request.time_range.end,
-        request.prompt.as_deref(),
-        cfg,
+        kernel::report_service::ReportExecutionRequest {
+            range,
+            start: request.time_range.start,
+            end: request.time_range.end,
+            prompt: request.prompt.as_deref(),
+            config: cfg,
+        },
+        || async {
+            kernel
+                .answer_provider()
+                .await
+                .ok_or_else(|| traits::ReportError {
+                    code: "MODEL_UNAVAILABLE".into(),
+                    message: "Inference sidecar not ready yet.".into(),
+                })
+        },
         Some(&progress),
         &cancel,
     )
     .await;
-
     state.report_tasks.lock().await.remove(&request_id);
-    let out = result.map_err(|e| e.to_string())?;
-    // The footer's model provenance — only when a model actually ran.
-    let model = if out.mode == ReportMode::Empty {
-        None
-    } else {
-        answer.answer_model_label().await
-    };
+    let execution = result.map_err(|e| e.message)?;
+    let out = execution.output;
+    let model = execution.model;
     Ok(ReportResponse {
         markdown: out.markdown,
         cited_frame_ids: out.cited_frame_ids,
@@ -1587,6 +1577,7 @@ pub fn run() {
                 db_path,
                 frames_dir,
                 api_runtime: Arc::new(local_api::ApiRuntime::new()),
+                memory_runtime: Arc::new(memory::MemoryRuntime::new()),
                 api_host,
             });
 
@@ -1639,6 +1630,7 @@ pub fn run() {
 
             // Start the local API if it was left enabled (loud on a bind failure, D6).
             local_api::autostart(app.handle());
+            memory::start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1690,6 +1682,19 @@ pub fn run() {
             local_api::regenerate_api_token,
             local_api::acknowledge_api_network_notice,
             local_api::export_data,
+            memory::get_memory_status,
+            memory::set_memory_settings,
+            memory::preview_memory_schedule,
+            memory::run_memory_report,
+            memory::retry_memory_report,
+            memory::regenerate_memory_report,
+            memory::list_memory_runs,
+            memory::get_memory_run,
+            memory::get_memory_deliveries,
+            memory::reset_memory_source_identity,
+            memory::set_telegram_token,
+            memory::clear_telegram_token,
+            memory::resolve_telegram_delivery,
             update::get_update_status,
             update::check_for_updates,
             update::restart_to_apply_update
@@ -1761,6 +1766,7 @@ pub(crate) async fn graceful_shutdown(app: &tauri::AppHandle) {
     if let Some(kernel) = &kernel {
         kernel.stop_capture().await;
     }
+    memory::stop(&state.memory_runtime).await;
     let api_runtime = state.api_runtime.clone();
     local_api::stop_server(&api_runtime).await;
     if let Some(kernel) = kernel {

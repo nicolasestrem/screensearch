@@ -192,6 +192,11 @@ async fn generate_report_scoped(
     cancel: &AtomicBool,
     scope: CoverageScope,
 ) -> Result<ReportOutput> {
+    let prompt = if range == ReportRange::MemoryDaily {
+        None
+    } else {
+        prompt
+    };
     let prompt = prompt.map(str::trim).filter(|p| !p.is_empty());
     let opts = AnswerOpts {
         thinking: false,
@@ -264,7 +269,7 @@ async fn generate_report_scoped(
             .flatten()
             .map(|f| f.frame_id)
             .collect();
-        let texts = store.ocr_texts(&all_ids).await.unwrap_or_default();
+        let texts = store.ocr_texts(&all_ids).await?;
         let mut groups = Vec::new();
         for (b, frames) in buckets.iter().zip(periods_frames) {
             let day = ((b.start - start) / DAY_MS + 1).max(1);
@@ -308,7 +313,6 @@ async fn generate_report_scoped(
     } else {
         (frames_sampled as u64) < total_in_range
     };
-    let periods_covered = groups.len() as u32;
 
     // Bound every group to a single map pass. The map step summarizes each group in exactly
     // one pass, and a dense period — or a whole single-period Daily range, which is one
@@ -317,8 +321,17 @@ async fn generate_report_scoped(
     // coverage guarantee (the daily-report "more was captured than summarized" bug). Splitting
     // an over-large group into pass-sized sub-batches lets the map fan out *within* the period
     // and the reduce fold the parts back, so coverage is complete, not merely per-period.
-    // `periods_covered` is captured above (the active-period count), so sub-splitting a period
-    // never inflates it.
+    // Preserve period membership before splitting; count only periods with actually read frames.
+    let period_frames: Vec<std::collections::HashSet<i64>> = groups
+        .iter()
+        .map(|group| group.chunks.iter().map(|chunk| chunk.frame_id).collect())
+        .collect();
+    let covered_periods = |ids: &[i64]| {
+        period_frames
+            .iter()
+            .filter(|period| ids.iter().any(|id| period.contains(id)))
+            .count() as u32
+    };
     let groups = split_groups_to_fit(groups, cfg.reply_budget, ctx_tokens);
 
     // --- Single-pass fast path (small ranges that fit one window) ---
@@ -339,15 +352,19 @@ async fn generate_report_scoped(
         let (markdown, cited) = answer
             .summarize(
                 FINAL_SYSTEM_PROMPT,
-                &final_instruction(range, prompt),
+                &final_instruction(range, prompt, start, end),
                 &all,
                 opts,
             )
             .await?;
-        let (cited, summarized) = cap_citations(cited);
+        let (cited, frame_ids) = report_citations(cited);
+        let summarized = frame_ids.len() as u32;
+        let periods_covered = covered_periods(&frame_ids);
+        let truncated = truncated || summarized < frames_sampled as u32;
         return Ok(ReportOutput {
             markdown,
             cited_frame_ids: cited,
+            frame_ids,
             mode: ReportMode::SinglePass,
             periods_total,
             periods_covered,
@@ -436,17 +453,21 @@ async fn generate_report_scoped(
     let (markdown, _) = answer
         .summarize(
             FINAL_SYSTEM_PROMPT,
-            &final_instruction(range, prompt),
+            &final_instruction(range, prompt, start, end),
             &nodes_as_chunks(&nodes),
             opts,
         )
         .await?;
     passes += 1;
 
-    let (cited, summarized) = cap_citations(union);
+    let (cited, frame_ids) = report_citations(union);
+    let summarized = frame_ids.len() as u32;
+    let periods_covered = covered_periods(&frame_ids);
+    let truncated = truncated || summarized < frames_sampled as u32;
     Ok(ReportOutput {
         markdown,
         cited_frame_ids: cited,
+        frame_ids,
         mode: ReportMode::MapReduce,
         periods_total,
         periods_covered,
@@ -462,7 +483,7 @@ async fn generate_report_scoped(
 /// text is unavailable; relevance order (best-first) is preserved.
 async fn hydrate_hits(store: &dyn Store, hits: Vec<SearchHit>) -> Result<Vec<RetrievedChunk>> {
     let ids: Vec<i64> = hits.iter().map(|h| h.frame_id).collect();
-    let texts = store.ocr_texts(&ids).await.unwrap_or_default();
+    let texts = store.ocr_texts(&ids).await?;
     Ok(hits
         .into_iter()
         .filter_map(|h| {
@@ -687,19 +708,42 @@ fn nodes_as_chunks(nodes: &[String]) -> Vec<RetrievedChunk> {
         .collect()
 }
 
-/// Caps the cited list for the wire, returning `(capped, true_count)` so the honest
-/// `frames_summarized` reflects the full union even when the list is truncated.
-fn cap_citations(mut union: Vec<i64>) -> (Vec<i64>, u32) {
-    let total = union.len() as u32;
-    union.truncate(MAX_REPORT_CITATIONS);
-    (union, total)
+/// Preserve full distinct provenance independently of the presentation citation cap.
+fn report_citations(union: Vec<i64>) -> (Vec<i64>, Vec<i64>) {
+    let mut seen = std::collections::HashSet::new();
+    let full: Vec<_> = union.into_iter().filter(|id| seen.insert(*id)).collect();
+    let cited = full.iter().take(MAX_REPORT_CITATIONS).copied().collect();
+    (cited, full)
 }
 
-fn final_instruction(range: ReportRange, prompt: Option<&str>) -> String {
+#[cfg(test)]
+mod provenance_tests {
+    #[test]
+    fn full_provenance_survives_citation_cap_and_deduplicates() {
+        let mut ids: Vec<i64> = (1..=350).collect();
+        ids.push(1);
+        let (cited, full) = super::report_citations(ids);
+        assert_eq!(cited.len(), 200);
+        assert_eq!(full.len(), 350);
+        assert_eq!(full.last(), Some(&350));
+    }
+}
+
+fn final_instruction(range: ReportRange, prompt: Option<&str>, start: i64, end: i64) -> String {
+    if range == ReportRange::MemoryDaily {
+        let timestamp = |value| {
+            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(value)
+                .map(|date| date.to_rfc3339())
+                .unwrap_or_else(|| value.to_string())
+        };
+        return format!("Write daily memory for the selected window [{} inclusive, {} exclusive]. Use the headings Activity, Explicitly evidenced decisions, Open questions, and Next steps. Include only supported facts; distinguish tentative screen text from commitments. If a section has no evidence, say so. Do not describe this selected historical window as today.", timestamp(start), timestamp(end));
+    }
     let base = match range {
         ReportRange::Daily => "Write the recall report for today.",
         ReportRange::Weekly => "Write the recall report for the last 7 days.",
-        ReportRange::Custom => "Write the recall report for the selected range.",
+        ReportRange::Custom | ReportRange::MemoryDaily => {
+            "Write the recall report for the selected range."
+        }
     };
     match prompt {
         Some(p) => format!("{base} Focus on: {p}"),
@@ -712,6 +756,7 @@ fn empty_output(periods_total: u32) -> ReportOutput {
         markdown: "No screen activity was captured for this range — there is nothing to summarize."
             .to_string(),
         cited_frame_ids: Vec::new(),
+        frame_ids: Vec::new(),
         mode: ReportMode::Empty,
         periods_total,
         periods_covered: 0,
@@ -974,6 +1019,131 @@ mod tests {
             0,
             "no model call on empty range"
         );
+    }
+
+    struct FirstFrameOnly(FakeAnswer);
+    #[async_trait]
+    impl AnswerProvider for FirstFrameOnly {
+        async fn answer(
+            &self,
+            query: &str,
+            context: &[RetrievedChunk],
+            opts: AnswerOpts,
+            tx: tokio::sync::mpsc::Sender<AnswerDelta>,
+        ) -> Result<()> {
+            self.0.answer(query, context, opts, tx).await
+        }
+        async fn summarize(
+            &self,
+            system: &str,
+            instruction: &str,
+            context: &[RetrievedChunk],
+            opts: AnswerOpts,
+        ) -> Result<(String, Vec<i64>)> {
+            self.0
+                .summarize(system, instruction, &context[..context.len().min(1)], opts)
+                .await
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_context_loss_is_partial_and_provenance_matches_read_frames() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let expected = seed_day(&store, 0, 5).await;
+        let answer = FirstFrameOnly(FakeAnswer {
+            calls: Arc::new(AtomicUsize::new(0)),
+            big: false,
+        });
+        let output = generate_report(
+            &store,
+            &answer,
+            ReportRange::MemoryDaily,
+            0,
+            DAY_MS,
+            Some("framing must never turn this into a relevance query"),
+            cfg(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .await
+        .unwrap();
+        assert_eq!(output.frames_sampled, 5);
+        assert_eq!(output.frame_ids, vec![expected[0]]);
+        assert_eq!(output.frames_summarized, 1);
+        assert_eq!(output.periods_covered, 1);
+        assert!(output.truncated);
+    }
+
+    #[tokio::test]
+    async fn memory_daily_preserves_coverage_and_uses_selected_window_framing() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let expected = seed_day(&store, DAY_MS, 5).await;
+        let answer = FakeAnswer {
+            calls: Arc::new(AtomicUsize::new(0)),
+            big: false,
+        };
+        let cancel = AtomicBool::new(false);
+        let manual = generate_report(
+            &store,
+            &answer,
+            ReportRange::Custom,
+            DAY_MS,
+            2 * DAY_MS,
+            None,
+            cfg(),
+            None,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        let memory = generate_report(
+            &store,
+            &answer,
+            ReportRange::MemoryDaily,
+            DAY_MS,
+            2 * DAY_MS,
+            None,
+            cfg(),
+            None,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        assert_eq!(memory.frame_ids, expected);
+        assert_eq!(memory.frame_ids, manual.frame_ids);
+        assert_eq!(memory.frames_sampled, manual.frames_sampled);
+        assert_eq!(memory.periods_covered, manual.periods_covered);
+        assert!(memory.markdown.contains("1970-01-02T00:00:00+00:00"));
+        assert!(memory.markdown.contains("Explicitly evidenced decisions"));
+    }
+
+    #[tokio::test]
+    async fn report_retains_full_evidence_beyond_display_cap() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let ids = seed_day(&store, 0, 350).await;
+        let answer = FakeAnswer {
+            calls: Arc::new(AtomicUsize::new(0)),
+            big: false,
+        };
+        let mut config = cfg();
+        config.daily_top_k = 350;
+        config.weekly_top_k = 350;
+        let output = generate_report(
+            &store,
+            &answer,
+            ReportRange::Daily,
+            0,
+            DAY_MS,
+            None,
+            config,
+            None,
+            &AtomicBool::new(false),
+        )
+        .await
+        .unwrap();
+        assert_eq!(output.frame_ids, ids);
+        assert_eq!(output.frames_summarized, 350);
+        assert_eq!(output.cited_frame_ids.len(), MAX_REPORT_CITATIONS);
     }
 
     #[tokio::test]

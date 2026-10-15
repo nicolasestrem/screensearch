@@ -2,7 +2,8 @@
 
 A local-first **Windows** desktop app that continuously captures your screen, makes it
 searchable by **text and meaning**, and answers questions about what you've seen — fully
-on-device, no cloud.
+on-device. Optional Telegram digests send selected report text to a configured conversation;
+capture storage and inference remain local.
 
 **It's also memory your agents can query.** Where most screen-recall tools stop at a search box for
 you, ScreenSearch exposes your screen history through an opt-in local **MCP server**
@@ -25,6 +26,11 @@ authenticated devices that can reach this computer to read history. Inference st
 > design lives in [`specs/`](./specs) and the as-built architecture in
 > [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md). A standalone, clean-slate project — it
 > shares no code or data with any prior version.
+
+The unreleased daily-memory workflow adds saved reports and an optional fixed-time schedule
+under **Settings → Memory**. Select an IANA timezone and an output folder; notes use
+`ScreenSearch/Daily/YYYY-MM-DD.md` with a generated index. Scheduling and Telegram start off.
+See [daily memory](docs/MEMORY.md) for configuration, coverage, safe retries and file ownership.
 
 ## Screenshots
 

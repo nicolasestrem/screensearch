@@ -359,3 +359,117 @@ short-circuiting, and warning frequency. No lint suppression or behavior change.
 Applied the same equivalent predicate to the store perf fixture's unsigned
 enumeration index so the all-targets Clippy gate cannot hit the same lint next.
 The signed-integer remainder expressions elsewhere remain valid and unchanged.
+
+## 2026-10-15 — C–E implementation verification
+
+Three agents implemented/reviewed persistence and provenance, runtime/service integration, and
+UI/file/Telegram adapters. Parent integrated the pure calendar helper, documentation and full
+verification. The scope is configurable product behavior for supported Windows installations;
+there are no personal paths, recipient defaults or usage scoring. Contracts preceded code in
+4e0df3a and 217f9ef. Schema changes are one forward-only 11 → 12 migration.
+
+Initial `cargo check --locked -p screensearch --all-targets` passed with one unused-frontmatter
+parser warning; index recovery integration will consume that parser before the warnings-as-errors
+gate. UI install/lint/build/tests passed on Node 22.23.3. npm install reports 10 development-tree
+advisories (3 moderate, 7 high); production-only audit output is `found 0 vulnerabilities`.
+No dependency remediation outside the approved feature scope was applied.
+
+Reviews corrected swallowed evidence-read errors, incomplete delivery-intent recovery,
+write-only credential handling, reparse-point recovery reads, immutable saved provenance,
+retry versus regenerate behavior and uncertain delivery suppression. Native filesystem tests
+use actual temporary files; transport response fixtures do not certify live Telegram delivery.
+
+Final full-suite and package output is recorded below. Raw local logs use
+`target/verification/memory-*.log`; no private history or credentials are written to them.
+
+### Native writer finding from the full suite
+
+The first C–E full suite failed a real Windows parent-directory rename check. The initial
+FILE_READ_ATTRIBUTES-only handle did not prevent `std::fs::rename` despite omitting share-delete.
+The invariant was retained; the native desired-access mask is being corrected and re-tested.
+Initial raw output is retained in `target/verification/memory-tests-initial.log`:
+
+```text
+---- memory_files::tests::protected_parent_cannot_be_swapped_during_write stdout ----
+assertion failed: fs::rename(&parent, dir.path().join("displaced")).is_err()
+test result: FAILED. 42 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+```
+
+The native writer correction uses FILE_LIST_DIRECTORY together with FILE_READ_ATTRIBUTES so
+Windows enforces sharing denial on the held directory handles. The original rename assertion
+is unchanged. Scoped verification:
+
+```text
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 28.12s
+running 6 tests
+test memory_files::tests::protected_parent_cannot_be_swapped_during_write ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 37 filtered out; finished in 0.01s
+```
+
+Blocking recovery/index reads also run outside the async worker; a stalled OS file call cannot
+prevent abort/join of that worker. This preserves the documented distinction between bounded
+async shutdown and non-cancellable operating-system file I/O.
+
+### Final automated verification
+
+Windows; Rust 1.95.0; official portable Node 22.23.3. All commands exited 0:
+UI `npm ci`, `npm run lint`, `npm run build`, `npm test`; MCP staging; `cargo fmt --all -- --check`;
+`cargo clippy --locked --workspace --all-targets -- -D warnings`; `cargo build --locked --workspace`;
+`cargo test --locked --workspace`; generated binding diff guard; Quinn security guard.
+Full Rust result totals: 817 passed, zero failed, 15 existing hardware/manual tests ignored.
+The UI suite contains two existing tests; it is not native MemoryPanel interaction acceptance.
+
+Raw output excerpts (kernel, application, store and traits respectively):
+
+```text
+test result: ok. 71 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 52 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+test result: ok. 93 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+```
+
+Clippy and workspace build final lines:
+
+```text
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.78s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 25.26s
+PASS: generated bindings unchanged after cargo test
+PASS: GHSA-4w2j-m93h-cj5j — quinn-proto 0.11.16
+```
+
+Full raw output is retained in `target/verification/memory-tests.log`, `memory-clippy.log`,
+`memory-build.log`, `memory-ui-lint.log`, `memory-ui-build.log`, `memory-ui-test.log`,
+`memory-stage.log` and `memory-package.log`. The initial failing native-writer run remains
+`memory-tests-initial.log`; the invariant was corrected rather than removed.
+
+### Local unsigned installer
+
+`npm run build -- --ci --no-sign --config <temporary-config>` exited 0. The temporary config
+only disables updater-artifact creation; checked-in signing/updater configuration and version
+are unchanged. Raw final output:
+
+```text
+    Finished `release` profile [optimized] target(s) in 3m 10s
+       Built application at: C:\Users\nicol\Documents\GitHub\screensearch-v2c\target\release\screensearch.exe
+        Info Patching C:\Users\nicol\Documents\GitHub\screensearch-v2c\target\release\screensearch.exe with bundle type information: nsis
+        Info Target: x64
+     Running makensis to produce C:\Users\nicol\Documents\GitHub\screensearch-v2c\target\release\bundle\nsis\ScreenSearch_0.4.0_x64-setup.exe
+    Finished 1 bundle at:
+        C:\Users\nicol\Documents\GitHub\screensearch-v2c\target\release\bundle\nsis\ScreenSearch_0.4.0_x64-setup.exe
+```
+
+Preserved copy: `target/verification/artifacts/ScreenSearch_daily-memory_0.4.0_x64-setup.exe`.
+Size: 14,257,182 bytes. SHA256:
+`8C632174FC3D25A6C43E0D53F91E738833FF22F5E25EEEEACA29CF29A60E536A`.
+The older API-only installer remains separately preserved as
+`target/verification/artifacts/ScreenSearch_network-api_0.4.0_x64-setup.exe`.
+The packaged application version probe exits before Tauri/profile initialization:
+
+```text
+ScreenSearch 0.4.0
+Version probe exit: 0
+```
+
+This proves a local installer build and executable version response, not interactive GUI,
+model-quality, Obsidian or Telegram acceptance. The ordinary installation was not replaced;
+no real Telegram send, merge, release tag or updater publication was performed.

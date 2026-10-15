@@ -1112,8 +1112,10 @@ system-local zone. Optional values serialize as null, not invented placeholders.
   output_folder: Option<String>, telegram_enabled: bool, telegram_chat_id: Option<String> }`
   (flat public fields; Telegram fields added by the separate §8d amendment) and
   `MemoryStatus { settings: MemorySettings, source_id: String, latest_run: Option<ReportRun>,
-  missed_windows: Vec<TimeRange>, worker_running: bool, telegram_credential_available: bool }`.
-  No credential value is ever returned in these objects.
+  missed_windows: Vec<TimeRange>, worker_running: bool, worker_error: Option<ReportError>,
+  telegram_credential_available: bool }`.
+  Worker errors remain visible alongside settings so a failed background attempt cannot hide
+  the controls needed to disable or fix automation. No credential value is returned.
 
 `MemorySchedulePreview { local_date: String, window_start: i64, window_end: i64,
 due_at: i64 }` describes the first eligible scheduled window and firing time. The read-only

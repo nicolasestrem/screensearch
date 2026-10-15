@@ -3,8 +3,9 @@
 Status (2026-10-15): **Execution authorized. Gate A API contract reviewed and committed;
 increment B implementation verification recorded separately. C–E report policies approved by
 the maintainer ("Sure GO"); local schedule/durable contract in `03 §8c`, Telegram permission
-frozen separately in `03 §8d` before code. No blanket plan approval is outstanding. Native
-acceptance remains open.**
+frozen separately in `03 §8d` before code. C–E implementation passes the local Windows
+automated suite; receipts are in `specs/05_BUILD_REVIEW.md`. No blanket plan approval is
+outstanding. Native acceptance and F1/F2 pilot/release review remain open.**
 
 This is the canonical repository execution plan, adapted from the original desktop planning
 artifact; that external file is preserved unchanged. The product serves approximately 15,000
@@ -82,7 +83,7 @@ First useful release: **scheduled daily memory in an Obsidian-compatible folder,
 
 Authoritative documents: `AGENTS.md`, `specs/01_PROJECT_CONTEXT.md`, `specs/02_STRATEGIC_PLAN.md`, `specs/03_MASTER_PRODUCTION_SPEC.md`, `specs/UI_REFERENCE.md`, and `specs/04_CLAUDE_CODE_BUILD_PROMPT.md`.
 
-At the original planning baseline, the requested network listener directly conflicted with `03 §7c`: “a 0.0.0.0 bind must be impossible by construction.” The API contradiction has since been resolved by reviewed contract commit `4fd037d`. Telegram delivery still requires a narrow amendment to the no-cloud-upload/network rules; scheduled delivery requires an explicit exception to pull-only behavior. This plan does not silently reinterpret those rules.
+At the original planning baseline, the requested network listener directly conflicted with `03 §7c`: “a 0.0.0.0 bind must be impossible by construction.” The API contradiction was resolved by reviewed contract commit `4fd037d`. Scheduled local delivery and Telegram's outbound-content exception were separately approved and committed as `4e0df3a` and `217f9ef` before their implementation. These are explicit feature exceptions; the original project-context privacy paragraph is retained at the maintainer's request.
 
 **Gate A:** separate reviewed contract-amendment commits must precede their respective implementation increments; then re-check against the amended contract. Split API binding, scheduled delivery and Telegram outbound permission so each can be reviewed and reverted independently. These are major boundary changes, not wording fixes. Remote MCP permission is a separate deferred proposal.
 

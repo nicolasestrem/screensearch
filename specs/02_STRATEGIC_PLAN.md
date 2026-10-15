@@ -16,8 +16,9 @@ the prior attempt.
 - *Recall:* find any moment by **text or meaning** (hybrid search).
 - *Answers:* ask questions about what you saw and get **grounded, reasoned** answers.
 - *Control:* heavy AI work runs **when you choose** (on-demand / timed / idle), not constantly.
-- *Trust:* storage and inference stay **local**; no cloud upload or telemetry. User-enabled
-  authenticated network API access is the narrow exception (`§5e`, `03 §7c`).
+- *Trust:* storage and inference stay **local**, with no telemetry. Content leaves the device
+  only through explicitly enabled network API access (`§5e`, `03 §7c`) or optional saved-report
+  Telegram digests to a selected destination (`§5g`, `03 §8d`).
 
 ## 2. The core strategic change (the "why")
 

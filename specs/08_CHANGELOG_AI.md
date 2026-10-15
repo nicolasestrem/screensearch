@@ -1,5 +1,17 @@
 # 08 — AI Changelog
 
+## 2026-10-15 — Restore project-context privacy statement
+
+Maintainer explicitly scoped this correction to `specs/01_PROJECT_CONTEXT.md`.
+Restored its original privacy statement verbatim from `main` and removed the API/delivery
+additions from that paragraph. Feature contracts and runtime behavior are unchanged.
+Verification output:
+
+```text
+PASS: privacy statement matches main verbatim
+PASS: API and delivery additions removed from the privacy paragraph
+```
+
 ## 2026-10-15 — Separate Telegram permission amendment
 
 Approved report policies now explicitly permit opt-in saved-report digests via Telegram HTTPS.
@@ -128,3 +140,14 @@ PASS: tracked repository diff unchanged by packaging
 
 - Applied the same unsigned is_multiple_of predicate to the store perf fixture
   while auditing the remaining modulo checks under the new compiler.
+
+## 2026-10-15 — Daily memory implementation
+
+Added shared report execution, complete summarized frame provenance, durable schema-12 run and
+receipt persistence, fixed-IANA calendar scheduling, installed-only automatic inference, safe
+owned Markdown output/index and opt-in Telegram digests. Settings exposes preview, history,
+coverage, independent delivery outcomes, retry/regenerate and reviewed/intentional-resend actions.
+Documentation: docs/MEMORY.md, architecture, native testing checklist, strategic trust exception,
+CHANGELOG and build-loop records. The requested original specs/01 privacy paragraph is preserved.
+Full verification/package receipts are recorded in 05; no merge, tag, installation replacement,
+private-history acceptance or real Telegram send is claimed.

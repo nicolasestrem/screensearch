@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Durable daily memory reports with exact evidence provenance, separate file/delivery receipts,
+  retry versus regenerate actions, and a forward-only schema 11 → 12 migration.
+- Default-off schedules with an explicit IANA timezone, DST handling and bounded restart catch-up;
+  owned Markdown notes and an index preserve user edits and report file conflicts.
+- Default-off Telegram text digests with Windows Credential Manager storage, bounded rejection
+  retries, per-chunk receipts and explicit review of uncertain delivery.
 - Approved, separately reviewed opt-in Telegram digest contract: Windows credential storage,
   saved-report rendering, durable per-chunk receipts and explicit ambiguous-delivery handling.
 - Approved contract for durable daily memory reports and user-selected local Markdown output;
@@ -23,12 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build record in `specs/05_BUILD_REVIEW.md`.
 
 ### Changed
+- Restored the original privacy statement in `specs/01_PROJECT_CONTEXT.md` at the
+  maintainer's request; API and delivery details remain in their feature documentation.
 - The opt-in HTTP API now listens on all IPv4 interfaces (`0.0.0.0`). It remains off by
   default, requires bearer authentication, and uses plain HTTP. Existing enabled installations
   retain their enabled state and token; reachable token holders can read history. MCP and
   inference still use loopback. No firewall or router settings are changed automatically.
 - The memory/reporting execution plan now targets configurable product behavior and validation
-  across supported user environments. Scheduled reports and Telegram are not in this build.
+  across supported user environments. Native acceptance remains separate from build verification.
 
 ### Removed
 - Unused UI scaffold, search-icon alias, local-day helper, and mark-note mutation hook;

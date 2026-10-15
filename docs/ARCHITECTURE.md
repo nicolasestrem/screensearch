@@ -1,5 +1,28 @@
 # Architecture (as-built)
 
+## Unreleased daily memory increment (2026-10-15)
+
+`kernel::report_service` shares evidence inspection and execution between Recall and durable
+memory runs. The automatic provider snapshots an installed model and cannot invoke downloads.
+`kernel::memory_schedule` performs pure fixed-IANA calendar calculations. The composition root
+in `src-tauri/src/memory.rs` wires one serial worker, typed IPC and persisted activation/cursors.
+`traits::memory` defines generated DTOs; store migration 12 adds transactional run, delivery and
+file-ownership records. Saved results and destination snapshots are immutable.
+
+`memory_files` writes owned notes with native atomic Windows operations and recovery backups;
+`memory_telegram` holds tokens in Credential Manager, derives masked text from saved output,
+and classifies accepted, rejected and uncertain transport results. Intents precede effects;
+each chunk receipt is saved before the next dispatch. Settings exposes independent outcomes.
+
+Shutdown joins the asynchronous worker within its timeout before the model supervisor stops.
+An already-started blocking Windows file operation is not cancellable through Tokio abort and
+may finish after that await is cancelled. It owns only file inputs, no model or database handle;
+the persisted intent allows restart reconciliation. The timeout is not a claim that a hung
+filesystem call has been joined. Native slow/unavailable-folder acceptance remains open.
+
+See [configuration and recovery](MEMORY.md) and `03 §8c/§8d` for the full contract. The following
+sections retain the shipped 0.4.0 architecture history.
+
 How ScreenSearch V2c is actually put together **as of 2026-07-11** — reflecting the complete 0.3.0
 arc (PR1–PR8: surface reduction, Flow overlay, where-was-i + marks, local HTTP API + export, MCP
 server), the shipped **0.3.1 patch** (P7.1 triage: the #64 vision-throughput fix —

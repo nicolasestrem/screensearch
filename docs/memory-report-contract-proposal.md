@@ -2,7 +2,8 @@
 
 Status (2026-10-15): **Report policies approved by the maintainer ("Sure GO"). Local schedule
 and durable-report contract frozen in `specs/03_MASTER_PRODUCTION_SPEC.md` §8c. Telegram
-outbound permission is frozen separately in `03 §8d`; implementation/native acceptance are open.**
+outbound permission is frozen separately in `03 §8d`. Implementation passes the local Windows
+automated suite (`05`); native acceptance and pilot/release review remain open.**
 
 This document resolves the remaining A3 design questions in
 [memory-api-direction-plan.md](memory-api-direction-plan.md). It records the approved policies for increments
