@@ -1,6 +1,7 @@
 # CLAUDE.md — ScreenSearch V2c
 
-Guidance for any AI agent (Claude Code) working in this repository.
+Shared repository guidance for Claude Code, Codex and other coding agents.
+`AGENTS.md` points here; maintain the instructions in this file.
 
 ## What this is
 A standalone, **Windows-only**, local-first desktop app (Rust + Tauri 2) that captures the screen,

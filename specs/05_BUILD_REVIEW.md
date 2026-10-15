@@ -641,3 +641,12 @@ an explicit unreleased label and setup links. All 21 relative README link/image 
 `git diff --check` exited 0 with empty output. Runtime code and installer are unchanged from the
 832-test/package verification above. The maintainer's planned release tonight is not publication
 or merge authorization; this update is included in the open PR.
+
+
+### Shared agent instructions
+
+AGENTS.md now directs agents to CLAUDE.md, the single full repository instruction source. The
+prior rule bodies matched and were preserved. Both files are ordinary files; no symlink or
+global tool setting was changed. Local preservation/target checks and whitespace verification
+passed; no application code or installer changed. A fresh read-only agent followed the pointer
+and returned the canonical file and existing spec, Windows/path and review rules.

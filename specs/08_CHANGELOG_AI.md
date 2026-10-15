@@ -228,3 +228,31 @@ PASS: all relative README link/image targets exist
 
 No runtime changes or repeated build/test suite; the current installer verification above remains
 unchanged. This documentation update does not merge PR #123, create a tag or publish a release.
+
+
+## 2026-10-15 — one shared agent instruction source
+
+Compared AGENTS.md and CLAUDE.md: their repository-rule bodies were identical; only their
+headings/agent labels differed. At the maintainer's request, AGENTS.md is now a plain sentence
+requiring agents to read and follow CLAUDE.md before working. CLAUDE.md remains the full shared
+guidance, with its introductory label updated for all coding agents; all existing rules are
+preserved. No symlink or Codex global configuration change was made. The checkout has
+core.symlinks=false, so a committed symlink would not reliably materialize as a link.
+
+Official OpenAI documentation confirms Codex discovers AGENTS.md at repository scope:
+https://developers.openai.com/codex/agent-configuration/agents-md . The sentence is an instruction
+to read the target, not a special automatic-import syntax. The reference must be followed by
+agents; no universal third-party auto-include behavior is assumed.
+
+Raw local verification:
+
+```text
+PASS: existing instruction bodies matched before consolidation
+PASS: all existing repository rules preserved in CLAUDE.md
+PASS: AGENTS.md points to the existing canonical CLAUDE.md
+```
+
+`git diff --check` exited 0 with empty output. A fresh read-only agent began at AGENTS.md,
+followed the pointer and identified CLAUDE.md as canonical. It returned the existing mandatory
+spec reading order, Windows/path rules and branch/review rules. This verifies the ordinary
+instruction-following workflow without claiming an automatic file-import mechanism.
