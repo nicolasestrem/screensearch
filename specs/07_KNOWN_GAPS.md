@@ -1,47 +1,25 @@
 # 07 — Known Gaps
 
-## PR #122 — connection-bound decision and verification boundary
-
-Gap #89(b) is revisited because configurable binding widens the surface. Maintainer approved
-64 active connections and a timed 30-second request-header deadline on all listeners, with
-immediate close at capacity, no SSE/body deadline, and owned bounded shutdown (`03 §7c`).
-Connection-bound implementation passed native Windows regression/build/Clippy gates (`05`);
-the connection-cap part of #89(b) is addressed, while rate limiting remains deferred.
-The amended API toast passed actual Windows WebView2/IPC interaction at 1280×900. Narrow
-375×812 stress still overflows the desktop shell; it is below the 960 px minimum and does not
-change the Windows desktop contract. No mobile support or real-model/Telegram acceptance inferred.
-
-## 2026-10-15 — PR #123 review verification boundary
-
-Linux kernel/store tests and targeted clippy do not establish native memory-worker, credential,
-atomic-file or startup behavior. The new src-tauri regressions need Windows CI; real installed-model,
-recipient-change delivery and rendered UI acceptance remain manual gates. No live Telegram send
-was authorized or attempted for review fixes. Existing npm development advisories remain unchanged.
-
-## 2026-10-15 — Report policies approved
-
-The previously recorded C–E policy questions are resolved by the explicit "Sure GO" approval;
-`03 §8c` is the implementation contract. Live installed-model/folder/Telegram acceptance still
-requires actual test inputs and observed results. Firewall access for this work was approved;
-the app does not automatically alter firewall rules. Do not infer Telegram credentials or
-recipient from this permission.
-
-Implementation C–E has passed the local Windows automated suite (817 passed, 15 existing
-hardware/manual tests ignored); native quality and product-wide pilot gates remain open. OS
-file operations may continue after the bounded async worker is cancelled; persisted intents
-recover the outcome. Slow/unavailable-folder native acceptance must check this behavior.
-The current Node 22 UI install reports 10 development-tree advisories (3 moderate, 7 high);
-`npm audit --omit=dev` reports zero. No unrelated lockfile remediation was applied.
-
 ## 2026-10-15 — Memory/API execution gates (owner: maintainer + agent)
 
 - C–E policies are approved in `03 §8c/§8d`; implementation verification is tracked in `05`.
   Product acceptance must cover diverse supported user setups, not a personal usefulness score.
-- Before network release: real separate-machine HTTP authentication, local MCP, native
-  visible upgrade notice, restart, disable/enable, Ask cancellation and inference bind evidence.
+- Before network release: real separate-machine HTTP authentication, local MCP,
+  restart, disable/enable, Ask cancellation and inference bind evidence.
 - Before automation acceptance: user-selected test folder, installed model, and explicitly
   approved Telegram test destination; no fabricated receipts or private-history defaults.
 - Website source is not present in this repository; external privacy-copy review remains open.
+- **Carried forward from the 0.4.1 arc** (resolved decisions and verification detail:
+  `specs/archive/07_KNOWN_GAPS.v0.4.1.md`; owner: maintainer unless stated). Still open:
+  separate-machine HTTP authentication and interactive Settings acceptance for the configurable
+  bind; real installed-model report quality; an explicitly authorized live Telegram send;
+  slow/unavailable-folder behaviour (OS file operations can finish after async cancellation, durable
+  intents recover the outcome); rate limiting remains deferred (#89(b) — the 64-connection cap and
+  30 s header deadline shipped); sparse-content sampling can need a larger frame budget and must never
+  be read as proof of no data; the Windows credential read CodeQL alert awaits dismissal as a false
+  positive; the dev-tree npm advisories remain (`npm audit --omit=dev` is clean).
+- Schema 11 → 12 (0.4.1) is forward-only and there is no automatic pre-migration backup in the app;
+  the 0.4.1 release notes tell users to back up the data folder first.
 
 > Where the **spec is silent** and a decision was needed, plus **manual interventions** still
 > required (with owner + deadline). The agent appends here instead of guessing (`04 §5`). Empty
@@ -82,6 +60,8 @@ The current Node 22 UI install reports 10 development-tree advisories (3 moderat
 > Resolved + shipped 0.3.2-arc rows (#83/#96/#97/#100/#105) and the resolved 0.1.1 TODO block → `specs/archive/07_KNOWN_GAPS.v0.3.2.md` (ids preserved). The live table holds only still-open rows and standing deferrals.
 > Resolved 0.3.3 row (#93 — first-UIA-walk-hangs-Chromium, reversed → window-class skip) → `specs/archive/07_KNOWN_GAPS.v0.3.3.md` (id preserved). Standing deferrals #92/#95 carry a 0.3.3 update note but stay live.
 > Resolved 0.4.0-arc rows (#98/#102/#110/#111/#114/#118/#119) → `specs/archive/07_KNOWN_GAPS.v0.4.0.md` (ids preserved). #102 closed GitHub issue #88 at the v0.4.0 release. The live table holds only still-open rows and standing deferrals.
+> Shipped 0.4.1 history (opt-in network API #122, durable memory reports #123, maintenance) →
+> `specs/archive/07_KNOWN_GAPS.v0.4.1.md` (resolved decisions; open gates carried forward above).
 
 Manual steps still required (e.g. signing certs, first-run model download, CI secrets):
 - **First-run model download** — embedding models (P3) auto-download via fastembed into
@@ -171,43 +151,3 @@ Manual steps still required (e.g. signing certs, first-run model download, CI se
 - **Verification remains local:** Node 26.8.1 was used instead of CI's Node 22; no
   remote CI, interactive app-wide QA, GPU/model smoke, installer or release check
   was performed. Existing hardware/manual gates above remain open.
-
-
-
-## 2026-10-14 — PR #112 verification boundary
-
-The task's executor is Linux; the Windows-only application cannot be launched
-here. Windows build/clippy/tests and binding freshness are verified by GitHub CI
-on Rust 1.95.0. Dependabot alert #4 (quinn-proto, GHSA-4w2j-m93h-cj5j) must move
-to fixed after merge; do not dismiss or suppress it. This update does not itself
-publish a new installer or update existing installations.
-
-## 2026-10-15 — configurable API and minute-only schedule correction
-
-The earlier automatic all-interface upgrade behavior is superseded: missing
-`api.bind_address` stays `127.0.0.1`, including enabled installations. Users select a literal
-IPv4/IPv6 address explicitly. Native HTTP tests cover loopback and selected wildcard/IPv6
-listeners; separate-machine and interactive Settings acceptance remain open (owner: maintainer,
-before release). Schedule controls and displayed report times use hour/minute precision.
-
-New settings and delivery paths use forward slashes. Native filesystem boundaries restore
-Windows verbatim/device prefix syntax so normalization does not reinterpret extended paths.
-Real Windows tests cover ordinary and verbatim atomic create/replace/read, plus legacy file
-ownership lookup and transactional separator normalization. The app remains Windows-only.
-
-
-## 2026-10-15 — selected-date Memory reports and diagnostic boundary
-
-The reported empty note was a genuine previous-day NO_DATA window with zero frames; its Telegram
-receipt was skipped before transport. The new manual date/range controls address choosing the
-intended capture dates, including partial today. They preserve the configured daily schedule.
-Native Settings interaction, real installed-model quality and approved live Telegram delivery
-remain acceptance gates (owner: maintainer, before release); the running installation was left
-untouched during diagnosis and development.
-
-Source review additionally found that empty model responses and sampling without usable chunks
-could become empty coverage output after a positive usable-content probe. Shared execution now
-fails those cases explicitly; true empty windows and prompt-based no-match output retain their
-meaning. Sparse-content sampling can still require a larger frame budget to obtain useful output;
-it must never be represented as proof that the window had no data. Privacy-safe run/delivery
-status logs complement durable receipts without screen text, credentials, recipients or paths.
