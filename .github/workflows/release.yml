@@ -3,13 +3,16 @@ name: Release
 # Tag-triggered signed release (0.3.2 PR2, #69; `03 §11b`). On a `v*` tag this builds the
 # NSIS installer on windows-latest, signs it with the updater (minisign) key from secrets,
 # generates `latest.json`, and attaches the installer + its `.sig` + `latest.json` to a
-# DRAFT GitHub Release. The maintainer writes the notes and publishes — this preserves the
-# repo's manual-publish culture and the "no auto-merge/auto-release" rule.
+# PUBLISHED GitHub Release (v0.4.1+; v0.3.2–v0.4.0 were drafts the maintainer published by
+# hand). The release body is `docs/release-notes/<tag>.md` (add one per tag — it is
+# the hand-written highlights) followed by GitHub's auto-generated changelog.
 #
 # IMPORTANT (endpoint reachability): the updater endpoint is
 # `releases/latest/download/latest.json`, which GitHub resolves ONLY for a PUBLISHED,
 # non-prerelease release. Every historical release (v0.1.0..v0.3.1) was a prerelease; from
 # v0.3.2 on, releases MUST be published as full releases or the updater never sees them.
+# Publishing is immediate, so every `v*` tag is delivered to installed copies as soon as
+# the run succeeds — validate with a `workflow_dispatch` dry run before tagging.
 #
 # `workflow_dispatch` runs the same build+sign+manifest and uploads them as workflow
 # artifacts (no release) — a pre-tag validation of the whole pipeline.
@@ -110,16 +113,21 @@ jobs:
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
           ls -la "$dir"
 
-      # Tag push → DRAFT release with the installer, its .sig, and latest.json. Maintainer
-      # writes notes + publishes manually (must publish as a FULL release, not prerelease,
-      # for the updater endpoint to resolve).
-      - name: Draft GitHub Release
+      # Tag push → PUBLISHED full release (v0.4.1+) with the installer, its .sig, and
+      # latest.json. This step only runs after the build, sign and manifest steps above
+      # succeeded, and `fail_on_unmatched_files` refuses to publish if any asset is missing,
+      # so an unsigned or incomplete build can never reach the updater endpoint. The body is
+      # the hand-written highlights file for the tag (docs/release-notes/<tag>.md) followed
+      # by GitHub's auto-generated changelog.
+      - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          draft: false
           prerelease: false
           name: ${{ github.ref_name }}
+          body_path: docs/release-notes/${{ github.ref_name }}.md
+          generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
             ${{ steps.assets.outputs.dir }}/*-setup.exe
