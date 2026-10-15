@@ -45,7 +45,7 @@ These additions shipped in v0.4.1 and reach existing installs through auto-updat
 | **See coverage and delivery status** | Inspect the captured sources, partial coverage and separate note/Telegram receipts. Retry delivery without regenerating, or create a new report revision. Empty windows are labeled `NO_DATA` and skip Telegram. |
 | **Choose the API bind address** | Keep the default `127.0.0.1`, choose another IPv4/IPv6 address, or explicitly select a wildcard for network access. Existing enabled installations retain loopback when no address is configured. |
 
-To get started in a development build, open **Settings → Memory reports**, choose a timezone
+To get started, open **Settings → Memory reports**, choose a timezone
 and output folder, then select dates under **Run a report**. Daily scheduling and Telegram are
 independent options and both start **off**. Reports use an already installed local answer model;
 they do not download one automatically.
@@ -121,7 +121,7 @@ HTTP API exposes history to authenticated clients; see its [network boundary](do
   Tauri window for quick Search/Ask without leaving your foreground app. `Esc` hides it; `Enter`
   opens the selected Moment in the main Command Deck. `Ctrl+Alt+M` marks the current moment.
 - **HTTP API + local MCP.** An opt-in HTTP API (off by default, bearer authenticated) with
-  configurable IPv4/IPv6 binding in the development branch and a loopback default
+  configurable IPv4/IPv6 binding (loopback by default)
   exposes search / ask / frames / marks / sessions and JSON export to reachable scripts and agents.
   Plain HTTP is not encrypted; enable only with appropriate network access restrictions.
   `screensearch-mcp.exe` — bundled in the installer — wraps it as a stdio **MCP server** for
