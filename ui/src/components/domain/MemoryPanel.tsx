@@ -4,6 +4,7 @@ import { handleExternalLinkClick } from "../../lib/openExternal";
 import { Button, Chip, Field, Panel, Toggle } from "../primitives";
 import type { MemorySettings } from "../../bindings/MemorySettings";
 import type { ReportDelivery } from "../../bindings/ReportDelivery";
+import type { ReportRun } from "../../bindings/ReportRun";
 import * as cmd from "../../lib/ipc/commands";
 import {
   memoryError, useMemoryDeliveries, useMemoryMutation, useMemoryRun,
@@ -20,6 +21,29 @@ function timestamp(value: number, timeZone?: string) {
   return new Date(value).toLocaleString(undefined, {
     year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZone,
   });
+}
+
+function reportDates(run: ReportRun) {
+  const range = run.requested_range;
+  return range ? range.start_date === range.end_date ? range.start_date : `${range.start_date} – ${range.end_date}` : run.local_date;
+}
+
+function todayInZone(timeZone?: string | null) {
+  if (!timeZone) return null;
+  try {
+    const parts = new Intl.DateTimeFormat("en", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+    const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((value) => value.type === type)?.value;
+    return `${part("year")}-${part("month")}-${part("day")}`;
+  } catch {
+    return null;
+  }
+}
+
+function previousDate(today: string | null) {
+  if (!today) return null;
+  const date = new Date(`${today}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
 }
 
 function DeliveryReceipt({ receipt }: { receipt: ReportDelivery }) {
@@ -82,7 +106,7 @@ function RunDetails({ runId }: { runId: string }) {
       {!run && <p>{detail.isError ? memoryError(detail.error) : "Loading report…"}</p>}
       {detail.isError && <Button onClick={() => detail.refetch()}>Reload report</Button>}
       {run && <>
-        <h3 className="font-display text-subtitle">{run.local_date} · {run.outcome ?? run.phase}</h3>
+        <h3 className="font-display text-subtitle">{reportDates(run)} · {run.outcome ?? run.phase}</h3>
         <p className="text-caption text-ink-muted">{timestamp(run.window_start, run.timezone)} – {timestamp(run.window_end, run.timezone)} · {run.timezone}</p>
         <p className="text-caption font-mono break-all">Run {run.run_id} · source {run.source_id}</p>
         {run.revision_of && <p className="text-caption break-all">Revision of {run.revision_of}</p>}
@@ -140,6 +164,8 @@ export function MemoryPanel() {
   const [token, setToken] = useState("");
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const save = useMemoryMutation(cmd.setMemorySettings);
   const runNow = useMemoryMutation(cmd.runMemoryReport);
   const saveToken = useMemoryMutation(cmd.setTelegramToken);
@@ -159,11 +185,19 @@ export function MemoryPanel() {
   const active = status.data?.worker_running || status.data?.latest_run?.phase === "queued" || status.data?.latest_run?.phase === "running";
   const selected = selectedRun ?? status.data?.latest_run?.run_id ?? null;
   const actionError = save.error ?? runNow.error ?? saveToken.error ?? clearToken.error ?? reset.error;
+  const reportTimezone = status.data?.settings.timezone;
+  const today = todayInZone(reportTimezone);
+  const yesterday = previousDate(today);
+  const selectedEnd = endDate || startDate;
+  const dateError = startDate && selectedEnd < startDate
+    ? "End date must be on or after the start date."
+    : today && (startDate > today || selectedEnd > today) ? "Choose today or an earlier date." : null;
+  const canRun = loaded && !dirty && !busy && !active && !runNow.isPending && Boolean(reportTimezone && status.data?.settings.output_folder);
 
   return (
     <Panel group title="Memory reports" action={<Chip tone={active ? "accent" : "neutral"}>{active ? "working" : status.data?.settings.enabled ? "scheduled" : "off"}</Chip>}>
       <div className="flex flex-col gap-4">
-        <p className="text-caption text-ink-muted">Generate source-backed daily notes in a selected folder, with optional Telegram digests. Inference stays on this computer; schedules do not download missing models.</p>
+        <p className="text-caption text-ink-muted">Generate source-backed reports for a day or date range in a selected folder, with optional Telegram digests. Inference stays on this computer; schedules do not download missing models.</p>
         <div className="min-h-12" aria-live="polite">
           {status.isLoading && <p>Loading memory settings…</p>}
           {status.isError && <div><p role="alert" className="text-warn">Could not load memory status: {memoryError(status.error)}</p><Button onClick={() => status.refetch()}>Retry status</Button></div>}
@@ -174,7 +208,8 @@ export function MemoryPanel() {
         <div className="min-h-12 text-caption" aria-live="polite">
           {status.data?.latest_run ? (
             <p>
-              Last run: {status.data.latest_run.local_date} · {status.data.latest_run.outcome ?? status.data.latest_run.phase}.
+              Last run: {reportDates(status.data.latest_run)} · {status.data.latest_run.outcome ?? status.data.latest_run.phase}.
+              {status.data.latest_run.outcome === "NO_DATA" && " No usable report evidence was available for this window, so no Telegram digest was sent."}
               {status.data.latest_run.error && ` ${status.data.latest_run.error.message}`}
               {" "}Open report history below for coverage and separate delivery receipts.
             </p>
@@ -185,7 +220,7 @@ export function MemoryPanel() {
           <Field label="Local report time" type="time" step={60} value={draft?.local_time ?? ""} disabled={!loaded || busy} onChange={(e) => set("local_time", e.currentTarget.value.slice(0, 5) || null)} />
           <Field label="Timezone (IANA)" value={draft?.timezone ?? ""} placeholder="Europe/Paris" disabled={!loaded || busy} onChange={(e) => set("timezone", e.currentTarget.value || null)} hint="Fixed to your selection, even if the computer timezone changes." />
         </div>
-        <Field label="Output folder (absolute path)" placeholder="C:/Users/YourName/Documents/Notes" value={draft?.output_folder ?? ""} disabled={!loaded || busy} onChange={(e) => set("output_folder", forwardPath(e.currentTarget.value) || null)} hint="Notes go into ScreenSearch/Daily; ScreenSearch/Index.md links them. Edited or unrelated files are preserved." />
+        <Field label="Output folder (absolute path)" placeholder="C:/Users/YourName/Documents/Notes" value={draft?.output_folder ?? ""} disabled={!loaded || busy} onChange={(e) => set("output_folder", forwardPath(e.currentTarget.value) || null)} hint="Daily notes go into ScreenSearch/Daily; selected-date reports go into ScreenSearch/Reports. ScreenSearch/Index.md links them. Edited or unrelated files are preserved." />
         <div className="min-h-12 text-caption text-ink-muted" aria-live="polite">
           {!draft?.timezone || !draft.local_time ? <p>Select time and timezone to preview the first report.</p> : preview.isError ? <p className="text-warn">{memoryError(preview.error)}</p> : preview.isFetching ? <p>Calculating first eligible report…</p> : preview.data ? <p>First eligible day for a new activation: {preview.data.local_date}. Due {new Date(preview.data.due_at).toLocaleString(undefined, { timeZone: draft.timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} ({draft.timezone}). Saving unchanged scheduling settings preserves the existing activation.</p> : <p>Complete the schedule to preview its first report.</p>}
         </div>
@@ -201,9 +236,26 @@ export function MemoryPanel() {
         <div className="flex flex-wrap gap-2">
           <Button disabled={!draft || !dirty || busy || (draft.enabled && (!preview.data || preview.isFetching || preview.isError))} onClick={() => draft && save.mutate(draft, { onSuccess: (result) => setDraft(displaySettings(result.settings)) })}>{save.isPending ? "Saving…" : "Save memory settings"}</Button>
           <Button disabled={!loaded || busy || !dirty} onClick={() => status.data && setDraft(displaySettings(status.data.settings))}>Discard unsaved changes</Button>
-          <Button disabled={!loaded || dirty || busy || active || runNow.isPending || !status.data?.settings.timezone || !status.data.settings.output_folder} onClick={() => runNow.mutate(undefined, { onSuccess: (run) => setSelectedRun(run.run_id) })}>Run previous day now</Button>
         </div>
         {dirty && <p className="text-caption text-ink-muted">Unsaved changes. Save before running a report.</p>}
+        <section aria-label="Run a memory report" className="flex flex-col gap-3 border border-line rounded-panel p-4">
+          <h3 className="font-display text-subtitle">Run a report</h3>
+          <p className="text-caption text-ink-muted">Uses the saved timezone, output folder and Telegram settings. Choosing dates does not generate or send anything.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Field label="Report date / start date" type="date" value={startDate} max={today ?? undefined} disabled={!loaded || runNow.isPending} onChange={(e) => setStartDate(e.currentTarget.value)} />
+            <Field label="End date (optional)" type="date" value={endDate} min={startDate || undefined} max={today ?? undefined} disabled={!loaded || runNow.isPending} onChange={(e) => setEndDate(e.currentTarget.value)} hint="Leave empty for a single day. Both dates are included." error={dateError} />
+          </div>
+          <div className="min-h-12 text-caption" aria-live="polite">
+            {!reportTimezone ? <p>Select and save a timezone and output folder before running.</p> : startDate ? <>
+              <p>Selected: {startDate === selectedEnd ? startDate : `${startDate} through ${selectedEnd} (inclusive)`} · {reportTimezone}.</p>
+              {selectedEnd === today && <p className="text-warn">Today is still in progress. This report ends when you start it and is labeled PARTIAL when evidence is available. It does not cover the full day.</p>}
+            </> : <p>Choose a report date, or run the previous completed day{yesterday ? ` (${yesterday}, ${reportTimezone})` : ""}.</p>}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={!canRun || !startDate || Boolean(dateError)} onClick={() => runNow.mutate({ start_date: startDate, end_date: selectedEnd }, { onSuccess: (run) => setSelectedRun(run.run_id) })}>{runNow.isPending ? "Starting report…" : "Run selected dates"}</Button>
+            <Button disabled={!canRun} onClick={() => runNow.mutate(undefined, { onSuccess: (run) => setSelectedRun(run.run_id) })}>Run previous day{yesterday ? ` (${yesterday})` : ""}</Button>
+          </div>
+        </section>
         {actionError !== null && <p role="alert" className="text-warn">{memoryError(actionError)}</p>}
         {status.data?.missed_windows.length ? <div><h3 className="font-display text-subtitle">Older missed windows</h3><p>These windows were outside the automatic backfill cap and are not reported as covered.</p><ul>{status.data.missed_windows.map((window) => <li key={`${window.start}-${window.end}`}>{timestamp(window.start)} – {timestamp(window.end)}</li>)}</ul></div> : null}
         <details>
@@ -211,8 +263,8 @@ export function MemoryPanel() {
           <section aria-label="Report history" className="flex flex-col gap-3">
           {runs.isLoading && <p>Loading report history…</p>}
           {runs.isError && <div><p role="alert">{memoryError(runs.error)}</p><Button onClick={() => runs.refetch()}>Reload history</Button></div>}
-          {runs.data?.length === 0 && <p className="text-ink-muted">No reports yet. Run the previous day manually or enable a schedule.</p>}
-          <div className="flex flex-wrap gap-2">{runs.data?.map((run) => <Button key={run.run_id} aria-pressed={selected === run.run_id} onClick={() => setSelectedRun(run.run_id)}>{run.local_date} · {run.outcome ?? run.phase}{run.revision_of ? " · revision" : ""}</Button>)}</div>
+          {runs.data?.length === 0 && <p className="text-ink-muted">No reports yet. Choose dates to run a report or enable a daily schedule.</p>}
+          <div className="flex flex-wrap gap-2">{runs.data?.map((run) => <Button key={run.run_id} aria-pressed={selected === run.run_id} onClick={() => setSelectedRun(run.run_id)}>{reportDates(run)} · {run.outcome ?? run.phase}{run.revision_of ? " · revision" : ""}</Button>)}</div>
           {runs.data?.length === 100 && <p className="text-caption text-ink-muted">Showing the 100 most recent runs.</p>}
           {selected && <RunDetails key={selected} runId={selected} />}
           </section>

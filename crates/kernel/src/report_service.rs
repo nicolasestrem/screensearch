@@ -75,6 +75,12 @@ where
         });
     }
     let answer = resolve().await?;
+    let coverage_requested = request.range == ReportRange::MemoryDaily
+        || request
+            .prompt
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .is_none();
     let output = crate::reports::generate_report(
         store,
         answer.as_ref(),
@@ -93,6 +99,15 @@ where
             "Report generation failed or was cancelled; retry after checking the local model.",
         )
     })?;
+    // The probe already found usable evidence. An empty generation result cannot
+    // truthfully claim NO_DATA, and blank model prose must not become a successful note.
+    if (coverage_requested && output.mode == ReportMode::Empty) || output.markdown.trim().is_empty()
+    {
+        return Err(error(
+            "GENERATION_FAILED",
+            "Report generation produced no usable text despite captured evidence; check the local model or retry.",
+        ));
+    }
     let model = if output.mode == ReportMode::Empty {
         None
     } else {
@@ -104,6 +119,117 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ReasoningOnlyAnswer;
+
+    #[async_trait::async_trait]
+    impl AnswerProvider for ReasoningOnlyAnswer {
+        async fn answer(
+            &self,
+            _: &str,
+            context: &[traits::RetrievedChunk],
+            _: traits::AnswerOpts,
+            tx: tokio::sync::mpsc::Sender<traits::AnswerDelta>,
+        ) -> anyhow::Result<()> {
+            tx.send(traits::AnswerDelta::Thinking {
+                text: "Reasoning without final report text".into(),
+            })
+            .await?;
+            tx.send(traits::AnswerDelta::Token { text: " \n".into() })
+                .await?;
+            for chunk in context {
+                tx.send(traits::AnswerDelta::Citation {
+                    frame_id: chunk.frame_id,
+                })
+                .await?;
+            }
+            tx.send(traits::AnswerDelta::Done).await?;
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn blank_model_output_is_failure_for_single_pass_and_map_reduce() {
+        let store = store::SqliteStore::open_in_memory().unwrap();
+        const DAY: i64 = 86_400_000;
+        for captured_at in [1, DAY + 1] {
+            let frame = store
+                .insert_frame(traits::NewFrame {
+                    captured_at,
+                    monitor_index: 0,
+                    width: 1,
+                    height: 1,
+                    image_path: "unused.jpg".into(),
+                    content_hash: captured_at.to_string(),
+                    app_hint: None,
+                    window_title: None,
+                    browser_url: None,
+                    capture_trigger: None,
+                })
+                .await
+                .unwrap();
+            store
+                .insert_ocr(
+                    frame,
+                    traits::OcrResult {
+                        text: "Captured content must not become a successful empty report".into(),
+                        mean_confidence: -1.0,
+                        engine: "test".into(),
+                        spans: Vec::new(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        for (range, prompt, end) in [
+            (ReportRange::MemoryDaily, None, DAY),
+            (ReportRange::MemoryDaily, None, 2 * DAY),
+            (ReportRange::Custom, Some(" \n"), 2 * DAY),
+        ] {
+            let result = execute(
+                &store,
+                ReportExecutionRequest {
+                    range,
+                    start: 0,
+                    end,
+                    prompt,
+                    config: ReportConfig {
+                        daily_top_k: 20,
+                        weekly_top_k: 100,
+                        map_reduce_min_frames: 0,
+                        reply_budget: 2048,
+                    },
+                },
+                || async { Ok(Arc::new(ReasoningOnlyAnswer) as Arc<dyn AnswerProvider>) },
+                None,
+                &AtomicBool::new(false),
+            )
+            .await;
+            assert!(matches!(result, Err(ReportError { code, .. }) if code == "GENERATION_FAILED"));
+        }
+        let no_match = execute(
+            &store,
+            ReportExecutionRequest {
+                range: ReportRange::Custom,
+                start: 0,
+                end: 2 * DAY,
+                prompt: Some("uniquelyunmatchedquery"),
+                config: ReportConfig {
+                    daily_top_k: 20,
+                    weekly_top_k: 100,
+                    map_reduce_min_frames: 0,
+                    reply_budget: 2048,
+                },
+            },
+            || async { Ok(Arc::new(ReasoningOnlyAnswer) as Arc<dyn AnswerProvider>) },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await
+        .unwrap();
+        assert_eq!(no_match.output.mode, ReportMode::Empty);
+        assert!(no_match.model.is_none());
+    }
 
     #[tokio::test]
     async fn empty_window_needs_no_model() {

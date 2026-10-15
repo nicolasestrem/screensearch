@@ -91,6 +91,47 @@ pub fn previous_day(timezone: &str, now: i64) -> Result<DailyWindow> {
     }
 }
 
+/// Strict canonical dates keep IPC, filenames and provenance unambiguous.
+pub fn parse_date(value: &str) -> Result<NaiveDate> {
+    let date = NaiveDate::parse_from_str(value, "%Y-%m-%d").context("date must be YYYY-MM-DD")?;
+    if value.len() != 10 || date.format("%Y-%m-%d").to_string() != value {
+        bail!("date must be YYYY-MM-DD");
+    }
+    Ok(date)
+}
+
+/// Inclusive civil dates become a half-open UTC window; today stops at enqueue time.
+pub fn selected_range(timezone: &str, start: &str, end: &str, now: i64) -> Result<DailyWindow> {
+    let zone = timezone.parse::<Tz>().context("unknown IANA time zone")?;
+    let first = parse_date(start)?;
+    let last = parse_date(end)?;
+    if first > last {
+        bail!("start date must not follow end date");
+    }
+    let today = utc(now)?.with_timezone(&zone).date_naive();
+    if last > today {
+        bail!("future report dates are not allowed");
+    }
+    let start_ms = resolve(zone, first.and_time(NaiveTime::MIN))?;
+    let end_ms = resolve(zone, next(last)?.and_time(NaiveTime::MIN))?.min(now);
+    if end_ms <= start_ms {
+        bail!("selected dates contain no elapsed time");
+    }
+    Ok(DailyWindow {
+        start: start_ms,
+        end: end_ms,
+        local_date: start.into(),
+        due_at: now,
+    })
+}
+
+/// Uses the saved cutoff, never today's date, so regenerated ranges retain their as-of scope.
+pub fn range_is_in_progress(timezone: &str, end_date: &str, window_end: i64) -> Result<bool> {
+    let zone = timezone.parse::<Tz>().context("unknown IANA time zone")?;
+    let end = resolve(zone, next(parse_date(end_date)?)?.and_time(NaiveTime::MIN))?;
+    Ok(window_end < end)
+}
+
 /// Return the seven most recent eligible overdue windows oldest first, exposing older gaps.
 /// Caller durably enqueues each unique window before advancing its persisted cursor.
 pub fn due_windows(
@@ -199,5 +240,40 @@ mod tests {
                 .len(),
             1
         );
+    }
+    #[test]
+    fn selected_dates_are_inclusive_dst_aware_and_today_is_capped() {
+        let now = stamp("2026-03-30T10:15:00Z");
+        let range = selected_range("Europe/Paris", "2026-03-28", "2026-03-29", now).unwrap();
+        assert_eq!(range.start, stamp("2026-03-27T23:00:00Z"));
+        assert_eq!(range.end, stamp("2026-03-29T22:00:00Z"));
+        assert_eq!(range.end - range.start, 47 * 3_600_000);
+        let today = selected_range("Europe/Paris", "2026-03-30", "2026-03-30", now).unwrap();
+        assert_eq!(today.end, now);
+        assert!(range_is_in_progress("Europe/Paris", "2026-03-30", today.end).unwrap());
+        assert!(!range_is_in_progress("Europe/Paris", "2026-03-29", range.end).unwrap());
+        let long = selected_range(
+            "Europe/Paris",
+            "2026-10-25",
+            "2026-10-25",
+            stamp("2026-10-26T12:00:00Z"),
+        )
+        .unwrap();
+        assert_eq!(long.end - long.start, 25 * 3_600_000);
+    }
+
+    #[test]
+    fn selected_dates_reject_invalid_future_reversed_and_skipped_days() {
+        let now = stamp("2026-01-02T00:30:00Z");
+        for (start, end) in [
+            ("2026-1-01", "2026-01-01"),
+            ("2026-02-30", "2026-02-30"),
+            ("2026-01-02", "2026-01-01"),
+            ("2026-01-03", "2026-01-03"),
+        ] {
+            assert!(selected_range("UTC", start, end, now).is_err());
+        }
+        assert!(selected_range("America/Los_Angeles", "2026-01-02", "2026-01-02", now).is_err());
+        assert!(selected_range("Pacific/Apia", "2011-12-30", "2011-12-30", now).is_err());
     }
 }

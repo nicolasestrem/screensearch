@@ -221,6 +221,9 @@ Contract order: reviewed schedule/local-report amendment → separate outbound T
 endpoints and deeper weekly/project memory remain deferred. `03 §8c` freezes the approved
 activation, DST, retry/regenerate, provenance, retention, ownership and error rules. Explicitly
 selected folders/timezones/credentials are runtime setup, not another plan-approval gate.
+Manual execution also supports a selected calendar date or inclusive date range, including
+explicit partial-day reports for today. It uses the same local report/destination pipeline and
+preserves daily scheduling semantics; manually selected output stays separate from daily notes.
 Pilot/release validation remains evidence-based across supported user environments; no completion
 or usefulness metrics are inferred from contract approval.
 

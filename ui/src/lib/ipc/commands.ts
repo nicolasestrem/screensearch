@@ -41,6 +41,7 @@ import type { MemorySettings } from "../../bindings/MemorySettings";
 import type { MemoryStatus } from "../../bindings/MemoryStatus";
 import type { MemorySchedulePreview } from "../../bindings/MemorySchedulePreview";
 import type { ReportRun } from "../../bindings/ReportRun";
+import type { MemoryReportRange } from "../../bindings/MemoryReportRange";
 import type { ReportDelivery } from "../../bindings/ReportDelivery";
 import type { TelegramDeliveryResolution } from "../../bindings/TelegramDeliveryResolution";
 
@@ -307,7 +308,8 @@ export const setMemorySettings = (settings: MemorySettings): Promise<MemoryStatu
   invoke("set_memory_settings", { settings });
 export const previewMemorySchedule = (settings: MemorySettings): Promise<MemorySchedulePreview | null> =>
   invoke("preview_memory_schedule", { settings });
-export const runMemoryReport = (): Promise<ReportRun> => invoke("run_memory_report");
+export const runMemoryReport = (range?: MemoryReportRange | null): Promise<ReportRun> =>
+  invoke("run_memory_report", { range: range ?? null });
 export const retryMemoryReport = (runId: string): Promise<ReportRun> =>
   invoke("retry_memory_report", { runId });
 export const regenerateMemoryReport = (runId: string): Promise<ReportRun> =>

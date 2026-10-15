@@ -28,8 +28,10 @@ authenticated devices that can reach this computer to read history. Inference st
 > shares no code or data with any prior version.
 
 The unreleased daily-memory workflow adds saved reports and an optional fixed-time schedule
-under **Settings → Memory**. Select an IANA timezone and an output folder; notes use
-`ScreenSearch/Daily/YYYY-MM-DD.md` with a generated index. Scheduling and Telegram start off.
+under **Settings → Memory**. Select an IANA timezone and an output folder; choose one date or
+an inclusive date range for a manual report, including today with partial/as-of coverage.
+Scheduled notes use `ScreenSearch/Daily/YYYY-MM-DD.md`; explicit selections use separate
+`ScreenSearch/Reports/` files, linked from the same index. Scheduling and Telegram start off.
 See [daily memory](docs/MEMORY.md) for configuration, coverage, safe retries and file ownership.
 
 ## Screenshots

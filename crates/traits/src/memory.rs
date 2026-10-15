@@ -97,9 +97,19 @@ pub struct SavedReport {
     pub truncated: bool,
 }
 
+/// Inclusive local calendar dates in the report's selected IANA time zone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct MemoryReportRange {
+    pub start_date: String,
+    pub end_date: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 pub struct ReportRun {
+    #[serde(default)]
+    pub requested_range: Option<MemoryReportRange>,
     pub run_id: String,
     pub source_id: String,
     pub schedule_id: Option<String>,

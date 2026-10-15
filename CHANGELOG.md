@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Manual memory report date/range selection, including today's in-progress evidence, with
+  inclusive dates in the selected timezone and separate owned report files/index links.
+- Payload-free memory run and delivery diagnostics record status/coverage without report text,
+  credentials, recipients or output paths.
 - Durable daily memory reports with exact evidence provenance, separate file/delivery receipts,
   retry versus regenerate actions, and a forward-only schema 11 → 12 migration.
 - Default-off schedules with an explicit IANA timezone, DST handling and bounded restart catch-up;
@@ -25,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build record in `specs/05_BUILD_REVIEW.md`.
 
 ### Changed
+- Coverage reports with captured evidence reject blank model output as generation failure,
+  preserving genuine empty-window NO_DATA behavior and prompt-based no-match results.
+- Memory status explains why NO_DATA reports do not send Telegram digests.
 - Restored the original privacy statement in `specs/01_PROJECT_CONTEXT.md` at the
   maintainer's request; API and delivery details remain in their feature documentation.
 - The opt-in HTTP API accepts a configurable IPv4/IPv6 literal bind address. Missing addresses

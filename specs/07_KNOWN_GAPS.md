@@ -176,3 +176,20 @@ New settings and delivery paths use forward slashes. Native filesystem boundarie
 Windows verbatim/device prefix syntax so normalization does not reinterpret extended paths.
 Real Windows tests cover ordinary and verbatim atomic create/replace/read, plus legacy file
 ownership lookup and transactional separator normalization. The app remains Windows-only.
+
+
+## 2026-10-15 — selected-date Memory reports and diagnostic boundary
+
+The reported empty note was a genuine previous-day NO_DATA window with zero frames; its Telegram
+receipt was skipped before transport. The new manual date/range controls address choosing the
+intended capture dates, including partial today. They preserve the configured daily schedule.
+Native Settings interaction, real installed-model quality and approved live Telegram delivery
+remain acceptance gates (owner: maintainer, before release); the running installation was left
+untouched during diagnosis and development.
+
+Source review additionally found that empty model responses and sampling without usable chunks
+could become empty coverage output after a positive usable-content probe. Shared execution now
+fails those cases explicitly; true empty windows and prompt-based no-match output retain their
+meaning. Sparse-content sampling can still require a larger frame budget to obtain useful output;
+it must never be represented as proof that the window had no data. Privacy-safe run/delivery
+status logs complement durable receipts without screen text, credentials, recipients or paths.

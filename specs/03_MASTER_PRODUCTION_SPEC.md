@@ -1054,6 +1054,9 @@ must resolve and use installed model files without calling the downloader: a pre
 followed by the existing lazy-download provider is insufficient (tier/file races). Snapshot
 configuration and selected model identity before execution; failure to load is visible BLOCKED.
 Inspect empty windows before acquiring a model. Store errors are FAILED, never NO_DATA.
+After a positive usable-content probe, coverage generation returning empty or blank prose is
+GENERATION_FAILED, never a successful empty note/NO_DATA. Prompt-based manual Recall may still
+return no-match output for a query with no relevant hits; blank model prose remains a failure.
 
 Shutdown stops enqueue, sets cancellation, joins the report worker before sidecar shutdown and
 preserves recoverable durable state. Existing model-pass cancellation remains cooperative;
@@ -1114,8 +1117,8 @@ INVALID_CONFIG. It never enqueues, writes settings or requires a model. UI never
 policy in JavaScript.
 
 IPC: `get_memory_status() -> MemoryStatus`; `set_memory_settings(settings) -> MemoryStatus`;
-`run_memory_report() -> ReportRun` enqueues the previous completed calendar day in the selected
-zone, even before automatic activation; `retry_memory_report(run_id) -> ReportRun`;
+`run_memory_report(range?: MemoryReportRange) -> ReportRun` enqueues the selected dates or,
+when omitted, the previous completed calendar day in the selected zone, even before automatic activation; `retry_memory_report(run_id) -> ReportRun`;
 `regenerate_memory_report(run_id) -> ReportRun`; `list_memory_runs(limit) -> Vec<ReportRun>`
 (newest first, default 20, clamp 1–100);
 `get_memory_run(run_id) -> ReportRun`; `get_memory_deliveries(run_id) -> Vec<ReportDelivery>`;

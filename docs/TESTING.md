@@ -549,3 +549,24 @@ upgrade. Do not enable Telegram or use private history merely to satisfy a test 
 7. Record source commit, model, environment, commands/raw output and the checks actually observed.
    A service acknowledgement proves acceptance only. Keep unperformed checks open; the F1 pilot
    and F2 release decision require varied supported setups and consenting participants.
+
+
+## Manual Memory report dates and ranges (2026-10-15)
+
+Use a consented test profile and selected folder. Verify a single date and an inclusive multi-day
+range in the saved timezone, invalid/reversed/future date errors, and a today-ending range with
+its frozen enqueue-time cutoff and explicit PARTIAL/as-of description. The previous-day shortcut
+must display its target date and retain its original behavior; selecting dates alone enqueues nothing.
+Daily scheduling activation/catch-up remains unchanged. Genuine empty windows need no model,
+write NO_DATA notes and skip Telegram with attempt 0. A positive evidence probe followed by blank
+model output must fail generation instead of claiming NO_DATA or writing a header-only report.
+
+Inspect separate Reports files for independent selected-date runs, regenerated revision reuse
+of the original unchanged owned filename, preserved edited content and Daily notes, and correct
+range links in the common index. Old schema-1 frontmatter without requested_range/base_run_id and
+old run JSON without requested_range must still load. Persistence tests cover immutable UTC
+windows/request metadata and legacy previous-day deduplication. No SQL migration is required.
+
+With an explicitly authorized test recipient/send, inspect the Telegram date-range/PARTIAL text
+and per-chunk receipts. Automated digest-rendering tests do not prove a live message arrived.
+Do not reset live schedules or directly edit durable run/delivery rows to manufacture acceptance.

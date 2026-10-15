@@ -551,3 +551,84 @@ Full raw output: `target/verification/correction-package.log`; version stdout/st
 The hidden executable `--version` command exited 0 before application/profile startup;
 this is a CLI smoke check, not interactive GUI acceptance. The unsigned 0.4.0 test installer
 supersedes earlier test artifacts for the current behavior; no installed profile was replaced.
+
+
+## 2026-10-15 — live NO_DATA investigation and manual date/range selection
+
+Read-only inspection of the reported running Windows installation found two finished previous-day
+runs with zero frames in the requested window, NO_DATA output, successful vault/index receipts
+and Telegram skipped with attempt 0. No model or transport request had run. Captures existed for
+the following day, so retrying the previous-day window could not include them. Schedule activation
+starts with a full subsequent calendar day and fires after that day finishes; selecting a near-future
+clock time on the activation day does not bypass that contract. No live configuration, credentials,
+notes or run records were changed, and the running app was not stopped.
+
+The maintainer then requested choosing a date or date range. Contract commit `eb5f16d` adds an
+optional typed inclusive calendar request, today's frozen in-progress window/PARTIAL framing,
+independent explicit-run identities and Reports files, range labels in the shared index/history/
+digest, and legacy previous-day/schedule compatibility. Optional backward-compatible JSON fields
+require no SQL schema change. Native profile replacement and an actual Telegram send remain
+outside this implementation/verification run. Current build/test evidence follows after checks.
+
+
+### Date-range implementation verification
+
+Observed exit 0: Node 22 `npm ci`, UI lint/build/two existing tests; MCP staging; Rust 1.95
+fmt, workspace Clippy with `-D warnings`, workspace build/test and generated binding guard.
+Full Rust suite: 832 passed, zero failed, 15 existing hardware/manual tests ignored. No dependency
+version changes; npm install reports the existing ten development-tree advisories. Automated
+UI tests do not establish native interaction or actual Telegram acceptance.
+
+Raw current output excerpts:
+
+```text
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.57s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 30.63s
+test memory_schedule::tests::selected_dates_are_inclusive_dst_aware_and_today_is_capped ... ok
+test memory_schedule::tests::selected_dates_reject_invalid_future_reversed_and_skipped_days ... ok
+test report_service::tests::blank_model_output_is_failure_for_single_pass_and_map_reduce ... ok
+test result: ok. 74 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+test memory::tests::current_day_real_evidence_is_partial_but_empty_is_still_no_data ... ok
+test memory_telegram::tests::digest_labels_requested_dates_without_sending ... ok
+test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test memory::tests::explicit_ranges_are_independent_and_immutable_with_legacy_compatibility ... ok
+test result: ok. 54 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+```
+
+Native filesystem tests create real temporary Daily and Reports notes, preserve independent
+same-date files, reuse the base UUID filename for regeneration, and keep valid index links after
+run retention. They do not touch the reported Obsidian folder. Calendar tests cover inclusive
+single/multi-day bounds, spring/autumn DST, skipped civil dates, future dates in the selected
+zone and today's saved cutoff. Real-store tests cover legacy JSON missing the optional field,
+immutable requested ranges and preserved legacy deduplication.
+
+The empty-generation regression uses a real SQLite evidence store with a deliberately
+reasoning/whitespace-only test provider. Single-pass and all-empty map generation fail visibly;
+whitespace prompts use coverage rules, while a genuinely unmatched Custom query still returns
+honest no-match output. This is fault-injection coverage, not a real-model acceptance claim.
+
+Logs: `target/verification/range-{ui-install,ui-lint,ui-build,ui-test,stage,fmt,clippy,build,tests,empty-generation}.log`.
+No live destination send, live run rewrite, ordinary-install replacement or app restart occurred.
+
+
+### Date-range Windows installer
+
+`npm run build -- --ci --no-sign --config <local no-updater-artifacts config>` exited 0.
+The packaged executable's hidden `--version` command exited 0 before Tauri/profile initialization.
+Raw output excerpts:
+
+```text
+    Finished `release` profile [optimized] target(s) in 3m 09s
+    Finished 1 bundle at:
+ScreenSearch 0.4.0
+```
+
+Preserved unsigned test artifact:
+`target/verification/artifacts/ScreenSearch_memory-date-ranges_0.4.0_x64-setup.exe`.
+Size: 14,270,046 bytes. SHA-256:
+`253E143F4C58A3913DCA38A63E094C235720886C42CA50F9D82C73A30306F98E`.
+Full packaging/version output: `target/verification/range-package.log`, `range-version.log`
+and `range-version-error.log`. The canonical NSIS output remains
+`target/release/bundle/nsis/ScreenSearch_0.4.0_x64-setup.exe`.
+This proves the current installer build and CLI version response, not native UI/model quality
+or live Telegram acceptance. The reported running app was not restarted or replaced.

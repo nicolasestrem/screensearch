@@ -177,3 +177,34 @@ Rust 1.95 fmt, Clippy with warnings denied, workspace build and 823 tests (15 ex
 generated binding guard and unsigned NSIS package. Native prefix preservation was corrected during
 review and covered by real atomic create/replace/read tests. The rebuilt CLI returned version
 0.4.0 with exit 0; hash, size, raw excerpts and acceptance boundaries are recorded in `05`.
+
+
+## 2026-10-15 — live NO_DATA investigation and manual date/range selection
+
+Read-only inspection of the reported running Windows installation found two finished previous-day
+runs with zero frames in the requested window, NO_DATA output, successful vault/index receipts
+and Telegram skipped with attempt 0. No model or transport request had run. Captures existed for
+the following day, so retrying the previous-day window could not include them. Schedule activation
+starts with a full subsequent calendar day and fires after that day finishes; selecting a near-future
+clock time on the activation day does not bypass that contract. No live configuration, credentials,
+notes or run records were changed, and the running app was not stopped.
+
+The maintainer then requested choosing a date or date range. Contract commit `eb5f16d` adds an
+optional typed inclusive calendar request, today's frozen in-progress window/PARTIAL framing,
+independent explicit-run identities and Reports files, range labels in the shared index/history/
+digest, and legacy previous-day/schedule compatibility. Optional backward-compatible JSON fields
+require no SQL schema change. Native profile replacement and an actual Telegram send remain
+outside this implementation/verification run. Current build/test evidence follows after checks.
+
+
+Current date-range UI/Rust gates pass: 832 Rust tests, zero failed, 15 existing ignored;
+UI install/lint/build/two existing tests, MCP stage, fmt, Clippy and binding guard. Source review
+also corrected empty coverage generation after a positive evidence probe: report text must be
+nonblank, and all-empty map output cannot become NO_DATA. Prompt-based no-match behavior stays
+supported, including normalization of empty/whitespace prompts. Raw evidence and native
+acceptance boundaries are in `05_BUILD_REVIEW.md`; packaging follows separately.
+
+
+Unsigned date-range NSIS packaging passed; release profile completed in 3m 09s and the executable
+returned `ScreenSearch 0.4.0` with exit 0. Artifact hash/size/raw output are in `05`. The running
+installation, selected vault, settings, credentials and Telegram conversation were not changed.

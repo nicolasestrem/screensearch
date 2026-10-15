@@ -122,7 +122,7 @@ pub fn digest_chunks(run: &ReportRun) -> Result<Vec<String>, String> {
     let shortened = bounded(&body, 10_000);
     let text = format!(
         "ScreenSearch {}\n{}\n{} frames summarized; {} periods covered\n\n{}{}",
-        run.local_date,
+        crate::memory_files::report_label(run),
         status,
         r.frames_summarized,
         r.periods_covered,
@@ -218,6 +218,7 @@ mod tests {
             source_id: "source-fixture".into(),
             schedule_id: None,
             revision_of: None,
+            requested_range: None,
             window_start: 0,
             window_end: 86_400_000,
             timezone: "UTC".into(),
@@ -324,5 +325,16 @@ mod tests {
         let short = bounded(&text, 3501);
         assert_eq!(short.encode_utf16().count(), 3500);
         assert_eq!(short.chars().count(), 1750);
+    }
+    #[test]
+    fn digest_labels_requested_dates_without_sending() {
+        let mut run = saved_run("Observed activity".into());
+        run.requested_range = Some(traits::MemoryReportRange {
+            start_date: "2026-10-01".into(),
+            end_date: "2026-10-15".into(),
+        });
+        let digest = digest_chunks(&run).unwrap().join("");
+        assert!(digest.contains("2026-10-01 to 2026-10-15"));
+        assert!(!digest.contains("1970-01-01"));
     }
 }

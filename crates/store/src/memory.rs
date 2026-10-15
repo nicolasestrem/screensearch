@@ -52,6 +52,10 @@ fn validate_run(run: &ReportRun) -> Result<()> {
         "missing report identity"
     );
     ensure!(run.window_start < run.window_end, "invalid report window");
+    ensure!(
+        run.schedule_id.is_none() || run.requested_range.is_none(),
+        "scheduled reports cannot carry a manual requested range"
+    );
     if let Some(result) = &run.result {
         let unique: std::collections::BTreeSet<_> = result.frame_ids.iter().collect();
         ensure!(
@@ -224,9 +228,9 @@ impl SqliteStore {
             if run.revision_of.is_none() {
                 let existing: Option<String> = if let Some(schedule)=&run.schedule_id {
                     tx.query_row("SELECT payload FROM report_runs WHERE schedule_id=?1 AND window_start=?2 AND window_end=?3 AND revision_of IS NULL",params![schedule,run.window_start,run.window_end],|r|r.get(0)).optional()?
-                } else {
-                    tx.query_row("SELECT payload FROM report_runs WHERE schedule_id IS NULL AND revision_of IS NULL AND window_start=?1 AND window_end=?2 AND phase IN ('queued','running','blocked') AND json_extract(payload,'$.source_id')=?3 ORDER BY created_at DESC",params![run.window_start,run.window_end,run.source_id],|r|r.get(0)).optional()?
-                };
+                } else if run.requested_range.is_none() {
+                    tx.query_row("SELECT payload FROM report_runs WHERE schedule_id IS NULL AND revision_of IS NULL AND window_start=?1 AND window_end=?2 AND phase IN ('queued','running','blocked') AND json_extract(payload,'$.source_id')=?3 AND json_extract(payload,'$.requested_range') IS NULL ORDER BY created_at DESC",params![run.window_start,run.window_end,run.source_id],|r|r.get(0)).optional()?
+                } else { None };
                 if let Some(json)=existing {return Ok(serde_json::from_str(&json)?);}
             }
             tx.execute("INSERT INTO report_runs(run_id,schedule_id,revision_of,window_start,window_end,phase,created_at,updated_at,payload) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![run.run_id,run.schedule_id,run.revision_of,run.window_start,run.window_end,phase(run.phase),run.created_at,run.updated_at,serde_json::to_string(&run)?])?;
@@ -256,6 +260,7 @@ impl SqliteStore {
                 old.source_id == run.source_id
                     && old.schedule_id == run.schedule_id
                     && old.revision_of == run.revision_of
+                    && old.requested_range == run.requested_range
                     && old.window_start == run.window_start
                     && old.window_end == run.window_end
                     && old.timezone == run.timezone
@@ -505,6 +510,7 @@ mod tests {
             source_id: "profile".into(),
             schedule_id: Some("schedule".into()),
             revision_of: None,
+            requested_range: None,
             window_start: 0,
             window_end: 86400000,
             timezone: "UTC".into(),
@@ -699,6 +705,81 @@ mod tests {
             .iter()
             .any(|item| item.run_id == "run-0"));
         assert_eq!(store.prune_report_runs(100).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn explicit_ranges_are_independent_and_immutable_with_legacy_compatibility() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let mut explicit = run("explicit-first");
+        explicit.schedule_id = None;
+        explicit.requested_range = Some(traits::MemoryReportRange {
+            start_date: "1970-01-01".into(),
+            end_date: "1970-01-01".into(),
+        });
+        let mut invalid_scheduled = explicit.clone();
+        invalid_scheduled.schedule_id = Some("schedule".into());
+        assert!(store.create_report_run(invalid_scheduled).await.is_err());
+        store.create_report_run(explicit.clone()).await.unwrap();
+        let mut second = explicit.clone();
+        second.run_id = "explicit-second".into();
+        assert_eq!(
+            store.create_report_run(second).await.unwrap().run_id,
+            "explicit-second"
+        );
+
+        let mut legacy = run("legacy");
+        legacy.schedule_id = None;
+        assert_eq!(
+            store
+                .create_report_run(legacy.clone())
+                .await
+                .unwrap()
+                .run_id,
+            "legacy"
+        );
+        // Exercise genuine old persisted JSON, rather than only serializing the new None field.
+        store.with_conn(|conn| {
+            conn.execute("UPDATE report_runs SET payload=json_remove(payload,'$.requested_range') WHERE run_id='legacy'", [])?;
+            Ok(())
+        }).await.unwrap();
+        assert!(store
+            .get_report_run("legacy")
+            .await
+            .unwrap()
+            .unwrap()
+            .requested_range
+            .is_none());
+        legacy.phase = ReportRunPhase::Blocked;
+        store.update_report_run(legacy.clone()).await.unwrap();
+        legacy.run_id = "legacy-duplicate".into();
+        assert_eq!(
+            store.create_report_run(legacy).await.unwrap().run_id,
+            "legacy"
+        );
+        let mut third = explicit.clone();
+        third.run_id = "explicit-after-legacy".into();
+        assert_eq!(
+            store.create_report_run(third).await.unwrap().run_id,
+            "explicit-after-legacy"
+        );
+        assert_eq!(store.list_report_runs(10).await.unwrap().len(), 4);
+
+        let mut changed = explicit.clone();
+        changed.requested_range.as_mut().unwrap().end_date = "1970-01-02".into();
+        assert!(store.update_report_run(changed).await.is_err());
+        explicit.requested_range = None;
+        assert!(store.update_report_run(explicit).await.is_err());
+        assert_eq!(
+            store
+                .get_report_run("explicit-first")
+                .await
+                .unwrap()
+                .unwrap()
+                .requested_range
+                .unwrap()
+                .end_date,
+            "1970-01-01"
+        );
     }
 
     #[tokio::test]

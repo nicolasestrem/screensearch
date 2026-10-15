@@ -736,7 +736,7 @@ fn final_instruction(range: ReportRange, prompt: Option<&str>, start: i64, end: 
                 .map(|date| date.to_rfc3339())
                 .unwrap_or_else(|| value.to_string())
         };
-        return format!("Write daily memory for the selected window [{} inclusive, {} exclusive]. Use the headings Activity, Explicitly evidenced decisions, Open questions, and Next steps. Include only supported facts; distinguish tentative screen text from commitments. If a section has no evidence, say so. Do not describe this selected historical window as today.", timestamp(start), timestamp(end));
+        return format!("Write memory for the selected window [{} inclusive, {} exclusive]. Use the headings Activity, Explicitly evidenced decisions, Open questions, and Next steps. Include only supported facts; distinguish tentative screen text from commitments. If a section has no evidence, say so. Use the exact selected bounds rather than relative claims about today.", timestamp(start), timestamp(end));
     }
     let base = match range {
         ReportRange::Daily => "Write the recall report for today.",

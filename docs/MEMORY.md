@@ -12,6 +12,18 @@ full calendar day and when its report becomes due. A manual run covers the prece
 day in the selected timezone. Reports use an already installed answer model; install missing
 models explicitly in Models and retry the blocked run.
 
+For an immediate manual report, use **Run a report** to select a start date and an optional
+end date. Leaving the end date blank selects a single day; otherwise both dates are included.
+Dates use the saved timezone. Future dates are rejected. Selecting today stops the report window
+at the instant you press Run; evidence-based output is labeled PARTIAL with its as-of time.
+The previous-day shortcut remains available and shows the date it will cover. A report with no
+captured evidence is NO_DATA and Telegram is skipped, even when its delivery toggle is enabled.
+
+For example, enabling a schedule on 15 October during the day starts its first full reporting
+day on 16 October; that report is due on 17 October at the configured time. Running the
+previous-day shortcut on 15 October instead covers 14 October. This distinction matters when
+only today's capture history exists.
+
 The daily schedule starts with the first complete day after activation. Changing its time or
 timezone starts a new activation period; disabled periods are not backfilled. The selected
 timezone remains fixed when travelling. At DST transitions a missing local time moves to the
@@ -32,7 +44,11 @@ produce a visible failure, missing models block the run, and incomplete generati
 `PARTIAL` with its limitations. Deleted source frames do not silently rewrite a saved report.
 
 Notes are written to `<folder>/ScreenSearch/Daily/YYYY-MM-DD.md`; the generated navigation file
-is `<folder>/ScreenSearch/Index.md`. Open that folder in Obsidian or any Markdown editor. Typed
+is `<folder>/ScreenSearch/Index.md`. Explicit selected-date reports use
+`<folder>/ScreenSearch/Reports/<start>_to_<end>_<base-run-UUID>.md`. Each independent selection gets
+its own file, while Regenerate updates only its unchanged owned base file. These reports appear
+in the same index with their date-range labels and never replace scheduled daily notes.
+Open that folder in Obsidian or any Markdown editor. Typed
 frontmatter contains schema version 1, run/source IDs, window and coverage metadata. Generated
 files use recorded content hashes: an edited or unrelated file produces a conflict instead of
 being overwritten. A detected concurrent replacement preserves a recovery file whose path is

@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
-use traits::{ReportOutcome, ReportRun};
+use traits::{MemoryReportRange, ReportOutcome, ReportRun};
 
 #[derive(Debug)]
 pub struct WriteReceipt {
@@ -61,6 +61,10 @@ impl Drop for TemporaryNote {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Frontmatter {
+    #[serde(default)]
+    pub requested_range: Option<MemoryReportRange>,
+    #[serde(default)]
+    pub base_run_id: Option<String>,
     pub schema: u32,
     pub run_id: String,
     pub source_id: String,
@@ -78,7 +82,45 @@ pub struct Frontmatter {
     pub session_ids: Vec<i64>,
 }
 
-pub fn daily_note(run: &ReportRun) -> anyhow::Result<String> {
+pub fn report_label(run: &ReportRun) -> String {
+    match &run.requested_range {
+        Some(range) if range.start_date != range.end_date => {
+            format!("{} to {}", range.start_date, range.end_date)
+        }
+        Some(range) => range.start_date.clone(),
+        None => run.local_date.clone(),
+    }
+}
+
+pub fn note_relative_path(
+    local_date: &str,
+    range: Option<&MemoryReportRange>,
+    base_run_id: Option<&str>,
+) -> anyhow::Result<PathBuf> {
+    match range {
+        Some(range) => {
+            let start = kernel::memory_schedule::parse_date(&range.start_date)?;
+            let end = kernel::memory_schedule::parse_date(&range.end_date)?;
+            anyhow::ensure!(start <= end, "invalid requested date range");
+            let base = base_run_id.ok_or_else(|| anyhow::anyhow!("missing base run identity"))?;
+            anyhow::ensure!(
+                uuid::Uuid::parse_str(base)?.to_string() == base,
+                "invalid base run identity"
+            );
+            Ok(PathBuf::from("Reports").join(format!(
+                "{}_to_{}_{}.md",
+                range.start_date, range.end_date, base
+            )))
+        }
+        None => {
+            kernel::memory_schedule::parse_date(local_date)?;
+            Ok(PathBuf::from("Daily").join(format!("{local_date}.md")))
+        }
+    }
+}
+
+pub fn daily_note(run: &ReportRun, base_run_id: Option<&str>) -> anyhow::Result<String> {
+    note_relative_path(&run.local_date, run.requested_range.as_ref(), base_run_id)?;
     let r = run
         .result
         .as_ref()
@@ -115,6 +157,8 @@ pub fn daily_note(run: &ReportRun) -> anyhow::Result<String> {
             .ok_or_else(|| anyhow::anyhow!("invalid report timestamp"))
     };
     let metadata = Frontmatter {
+        requested_range: run.requested_range.clone(),
+        base_run_id: base_run_id.map(str::to_owned),
         schema: 1,
         run_id: run.run_id.clone(),
         source_id: run.source_id.clone(),
@@ -135,7 +179,7 @@ pub fn daily_note(run: &ReportRun) -> anyhow::Result<String> {
     let mut text = format!(
         "---\n{}\n---\n\n# {}\n\n",
         serde_json::to_string_pretty(&metadata)?,
-        run.local_date
+        report_label(run)
     );
     if status == ReportOutcome::Partial {
         text.push_str("> PARTIAL — coverage is incomplete; this is not an exhaustive account.\n\n");
@@ -498,6 +542,8 @@ mod tests {
     #[test]
     fn frontmatter_roundtrips_with_unicode_and_quotes() {
         let m = Frontmatter {
+            requested_range: None,
+            base_run_id: None,
             schema: 1,
             run_id: "r".into(),
             source_id: "s".into(),
@@ -519,5 +565,20 @@ mod tests {
             serde_json::to_string_pretty(&m).unwrap()
         );
         assert_eq!(parse_frontmatter(&text).unwrap(), m);
+    }
+    #[test]
+    fn range_filenames_validate_dates_and_base_identity() {
+        let range = MemoryReportRange {
+            start_date: "2026-10-01".into(),
+            end_date: "2026-10-15".into(),
+        };
+        let base = uuid::Uuid::new_v4().to_string();
+        assert_eq!(
+            path_string(&note_relative_path("2026-10-01", Some(&range), Some(&base)).unwrap()),
+            format!("Reports/2026-10-01_to_2026-10-15_{base}.md")
+        );
+        assert!(note_relative_path("2026-10-01", Some(&range), Some("../bad")).is_err());
+        assert!(note_relative_path("2026-10-01", Some(&range), None).is_err());
+        assert!(note_relative_path("../bad", None, None).is_err());
     }
 }

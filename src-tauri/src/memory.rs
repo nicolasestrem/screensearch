@@ -316,10 +316,12 @@ async fn enqueue(
     window: kernel::memory_schedule::DailyWindow,
     schedule_id: Option<String>,
     prior: Option<&ReportRun>,
+    requested_range: Option<MemoryReportRange>,
 ) -> Result<ReportRun, ReportError> {
     let store = db(state)?;
     let now = now_ms();
     let run = ReportRun {
+        requested_range,
         run_id: uuid(),
         source_id: match prior {
             Some(p) => p.source_id.clone(),
@@ -342,11 +344,14 @@ async fn enqueue(
         created_at: now,
         updated_at: now,
     };
-    store.create_report_run(run).await.map_err(storage)
+    let run = store.create_report_run(run).await.map_err(storage)?;
+    tracing::info!(run_id=%run.run_id, window_start=run.window_start, window_end=run.window_end, explicit_range=run.requested_range.is_some(), "memory report enqueued");
+    Ok(run)
 }
 
 #[tauri::command]
 pub async fn run_memory_report(
+    range: Option<MemoryReportRange>,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<ReportRun, ReportError> {
@@ -356,18 +361,24 @@ pub async fn run_memory_report(
     check_open(runtime)?;
     let config = settings(store.as_ref()).await?;
     validate(&config, true)?;
-    let window =
-        kernel::memory_schedule::previous_day(config.timezone.as_deref().unwrap(), now_ms())
-            .map_err(|_| {
-                fail(
-                    "INVALID_CONFIG",
-                    "The previous calendar day could not be resolved.",
-                )
-            })?;
+    let timezone = config.timezone.as_deref().unwrap();
+    let now = now_ms();
+    let window = match &range {
+        Some(range) => kernel::memory_schedule::selected_range(
+            timezone,
+            &range.start_date,
+            &range.end_date,
+            now,
+        ),
+        None => kernel::memory_schedule::previous_day(timezone, now),
+    }
+    .map_err(|error| fail("INVALID_CONFIG", &error.to_string()))?;
     // Durable store uniqueness handles scheduled requests; manual base requests reuse
     // an already-active identical window under this enqueue lock.
     for run in store.list_pending_report_runs().await.map_err(storage)? {
-        if run.schedule_id.is_none()
+        if range.is_none()
+            && run.requested_range.is_none()
+            && run.schedule_id.is_none()
             && run.revision_of.is_none()
             && run.window_start == window.start
             && run.window_end == window.end
@@ -376,7 +387,7 @@ pub async fn run_memory_report(
             return Ok(run);
         }
     }
-    let run = enqueue(&state, config, window, None, None).await?;
+    let run = enqueue(&state, config, window, None, None, range).await?;
     runtime.wake.notify_one();
     notify(&app);
     Ok(run)
@@ -524,6 +535,7 @@ pub async fn regenerate_memory_report(
         window,
         prior.schedule_id.clone(),
         Some(&prior),
+        prior.requested_range.clone(),
     )
     .await?;
     runtime.wake.notify_one();
@@ -607,6 +619,7 @@ async fn schedule_due(state: &AppState) -> Result<(), ReportError> {
             window,
             Some(schedule.schedule_id.clone()),
             None,
+            None,
         )
         .await?;
         schedule.last_window_end = Some(end);
@@ -628,6 +641,21 @@ async fn schedule_due(state: &AppState) -> Result<(), ReportError> {
     Ok(())
 }
 
+fn requested_range_in_progress(run: &ReportRun) -> Result<bool, ReportError> {
+    run.requested_range
+        .as_ref()
+        .map(|range| {
+            kernel::memory_schedule::range_is_in_progress(
+                &run.timezone,
+                &range.end_date,
+                run.window_end,
+            )
+            .map_err(|_| fail("INVALID_CONFIG", "Invalid saved report range."))
+        })
+        .transpose()
+        .map(|value| value.unwrap_or(false))
+}
+
 async fn generate(state: &AppState, run: &mut ReportRun) -> Result<(), ReportError> {
     if run.result.is_some() {
         return Ok(());
@@ -644,12 +672,28 @@ async fn generate(state: &AppState, run: &mut ReportRun) -> Result<(), ReportErr
             .installed_provider_for(settings.models_answer_tier,SidecarParams::from(settings))
             .map_err(|_|fail("MODEL_UNAVAILABLE","The selected answer model is not installed. Download it explicitly in Models, then retry."))
     },None,&state.memory_runtime.cancel).await?;
-    let out = execution.output;
     let evidence = store
-        .report_evidence(out.frame_ids.clone())
+        .report_evidence(execution.output.frame_ids.clone())
         .await
         .map_err(storage)?;
-    let partial = out.truncated || !evidence.missing_frame_ids.is_empty();
+    save_execution(run, execution, evidence)
+}
+
+fn save_execution(
+    run: &mut ReportRun,
+    execution: kernel::report_service::ReportExecution,
+    evidence: ReportEvidence,
+) -> Result<(), ReportError> {
+    let out = execution.output;
+    let in_progress = requested_range_in_progress(run)?;
+    let partial = out.truncated
+        || !evidence.missing_frame_ids.is_empty()
+        || (in_progress && out.mode != ReportMode::Empty);
+    let as_of = if in_progress {
+        format!("**In-progress coverage:** Selected dates are covered only as of {} (UTC); the final selected day was still in progress at enqueue time.\n\n", chrono::DateTime::<chrono::Utc>::from_timestamp_millis(run.window_end).ok_or_else(||fail("INVALID_CONFIG","Invalid saved cutoff."))?.to_rfc3339())
+    } else {
+        String::new()
+    };
     run.outcome = Some(if out.mode == ReportMode::Empty {
         ReportOutcome::NoData
     } else if partial {
@@ -659,9 +703,9 @@ async fn generate(state: &AppState, run: &mut ReportRun) -> Result<(), ReportErr
     });
     run.result = Some(SavedReport {
         markdown: if partial {
-            format!("**Partial coverage:** This report uses sampled evidence and some requested or original evidence was unavailable.\n\n{}",out.markdown)
+            format!("{as_of}**Partial coverage:** This report uses sampled evidence and does not cover all requested activity.\n\n{}",out.markdown)
         } else {
-            out.markdown
+            format!("{as_of}{}", out.markdown)
         },
         model: execution.model,
         frame_ids: out.frame_ids,
@@ -716,6 +760,7 @@ async fn update_delivery(
             "The delivery state changed; refresh before retrying.",
         ));
     }
+    tracing::info!(run_id=%item.run_id, destination=?item.destination, state=?item.state, error_code=item.error.as_ref().map(|e|e.code.as_str()), "memory delivery transitioned");
     Ok(())
 }
 
@@ -928,6 +973,43 @@ fn index_topic(bytes: &[u8]) -> String {
     .unwrap_or_default()
 }
 
+async fn base_report_id(store: &dyn Store, run: &ReportRun) -> Result<Option<String>, ReportError> {
+    if run.requested_range.is_none() {
+        return Ok(None);
+    }
+    let mut current = run.clone();
+    let mut seen = std::collections::HashSet::new();
+    while let Some(parent_id) = current.revision_of.clone() {
+        if !seen.insert(parent_id.clone()) {
+            return Err(fail(
+                "SOURCE_UNAVAILABLE",
+                "Report revision chain is invalid.",
+            ));
+        }
+        current = store
+            .get_report_run(&parent_id)
+            .await
+            .map_err(storage)?
+            .ok_or_else(|| {
+                fail(
+                    "SOURCE_UNAVAILABLE",
+                    "The original range report is unavailable.",
+                )
+            })?;
+        if current.source_id != run.source_id
+            || current.requested_range != run.requested_range
+            || current.window_start != run.window_start
+            || current.window_end != run.window_end
+        {
+            return Err(fail(
+                "SOURCE_UNAVAILABLE",
+                "The original range report does not match this revision.",
+            ));
+        }
+    }
+    Ok(Some(current.run_id))
+}
+
 async fn write_files(
     store: &dyn Store,
     run: &ReportRun,
@@ -960,13 +1042,20 @@ async fn write_files(
         }
         return Ok(());
     }
-    let note = crate::memory_files::daily_note(run)
+    let base_id = base_report_id(store, run).await?;
+    let relative = crate::memory_files::note_relative_path(
+        &run.local_date,
+        run.requested_range.as_ref(),
+        base_id.as_deref(),
+    )
+    .map_err(|_| fail("WRITE_FAILED", "The saved report filename is invalid."))?;
+    let note = crate::memory_files::daily_note(run, base_id.as_deref())
         .map_err(|_| fail("WRITE_FAILED", "Could not render the saved report note."))?;
     let receipt = file_delivery(
         store,
         run,
         ReportDestination::Vault,
-        root.join("Daily").join(format!("{}.md", run.local_date)),
+        root.join(relative),
         note,
     )
     .await?;
@@ -996,7 +1085,11 @@ async fn write_files(
     for owned in store.list_report_files().await.map_err(storage)? {
         let native = native_path(Path::new(&owned.path));
         let path = native.as_path();
-        if path.parent() != Some(root.join("Daily").as_path()) || owned.source_id != run.source_id {
+        if ![root.join("Daily"), root.join("Reports")]
+            .iter()
+            .any(|folder| path.parent() == Some(folder.as_path()))
+            || owned.source_id != run.source_id
+        {
             continue;
         }
         let Some(bytes) = read_owned(path).await.map_err(|_| {
@@ -1014,12 +1107,6 @@ async fn write_files(
         let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
             continue;
         };
-        let Some(date) = name.strip_suffix(".md") else {
-            continue;
-        };
-        if chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err() {
-            continue;
-        }
         let note_text = String::from_utf8_lossy(&bytes);
         let metadata = crate::memory_files::parse_frontmatter(&note_text).map_err(|_| {
             fail(
@@ -1033,20 +1120,47 @@ async fn write_files(
                 "An owned note does not match its saved provenance.",
             ));
         }
+        let label_date = match &metadata.requested_range {
+            Some(range) if range.start_date != range.end_date => {
+                format!("{} to {}", range.start_date, range.end_date)
+            }
+            Some(range) => range.start_date.clone(),
+            None => name.strip_suffix(".md").unwrap_or_default().to_owned(),
+        };
+        let expected = crate::memory_files::note_relative_path(
+            &label_date,
+            metadata.requested_range.as_ref(),
+            metadata.base_run_id.as_deref(),
+        )
+        .map_err(|_| {
+            fail(
+                "FILE_CONFLICT",
+                "An owned note has invalid date or filename metadata.",
+            )
+        })?;
+        if root.join(&expected) != path {
+            return Err(fail(
+                "FILE_CONFLICT",
+                "An owned note filename does not match its provenance.",
+            ));
+        }
         let label = serde_json::to_string(&metadata.status)
             .map_err(storage)?
             .trim_matches('"')
             .to_string();
         let topic = index_topic(&bytes);
         entries.push((
-            date.to_owned(),
-            format!("- [{date}](Daily/{name}) — {label}{topic}\n"),
+            format!("{label_date}/{}", path_string(&expected)),
+            format!(
+                "- [{label_date}]({}) — {label}{topic}\n",
+                path_string(&expected)
+            ),
         ));
     }
     entries.sort_by(|a, b| b.0.cmp(&a.0));
     entries.dedup_by(|a, b| a.0 == b.0);
     let content = format!(
-        "# ScreenSearch daily memory\n\n{}",
+        "# ScreenSearch memory\n\n{}",
         entries
             .into_iter()
             .map(|(_, line)| line)
@@ -1088,6 +1202,7 @@ async fn process_run(state: &AppState, mut run: ReportRun) -> Result<(), ReportE
         .update_report_run(run.clone())
         .await
         .map_err(storage)?;
+    tracing::info!(run_id=%run.run_id, outcome=?run.outcome, frames_summarized=run.result.as_ref().map(|r|r.frames_summarized), error_code=run.error.as_ref().map(|e|e.code.as_str()), "memory report generation finished");
     let file_result = write_files(store.as_ref(), &run, &config).await;
     let telegram_result = deliver_telegram(state, &run, &config).await;
     file_result?;
@@ -1302,6 +1417,7 @@ async fn deliver_telegram(
             item.state = ReportDeliveryState::Skipped;
             item.error = Some(fail("DELIVERY_FAILED", reason));
             store.create_report_delivery(item).await.map_err(storage)?;
+            tracing::info!(run_id=%run.run_id, destination="telegram", state="skipped", outcome=?run.outcome, "memory delivery skipped");
             return Ok(());
         }
         let chat_id = config
@@ -1589,6 +1705,7 @@ mod tests {
     }
     fn run_fixture() -> ReportRun {
         ReportRun {
+            requested_range: None,
             run_id: "report-fixture".into(),
             source_id: "source-fixture".into(),
             schedule_id: None,
@@ -1670,5 +1787,119 @@ mod tests {
         assert!(family_delivery_block(&[receipt.clone()], "other-revision").is_some());
         receipt.state = ReportDeliveryState::Reviewed;
         assert!(family_delivery_block(&[receipt], "other-revision").is_none());
+    }
+    #[test]
+    fn current_day_real_evidence_is_partial_but_empty_is_still_no_data() {
+        let mut run = run_fixture();
+        run.requested_range = Some(MemoryReportRange {
+            start_date: "1970-01-01".into(),
+            end_date: "1970-01-01".into(),
+        });
+        run.window_end = 43_200_000;
+        let output = |mode| kernel::report_service::ReportExecution {
+            output: ReportOutput {
+                markdown: "Observed activity".into(),
+                frame_ids: vec![1],
+                cited_frame_ids: vec![1],
+                mode,
+                periods_total: 1,
+                periods_covered: 1,
+                frames_sampled: 1,
+                frames_summarized: 1,
+                passes: 1,
+                truncated: false,
+            },
+            model: Some("local-model".into()),
+        };
+        save_execution(
+            &mut run,
+            output(ReportMode::SinglePass),
+            ReportEvidence {
+                session_ids: vec![],
+                missing_frame_ids: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(run.outcome, Some(ReportOutcome::Partial));
+        let saved = run.result.as_ref().unwrap();
+        assert!(saved.truncated);
+        assert!(saved.markdown.contains("1970-01-01T12:00:00+00:00"));
+        assert!(saved.markdown.contains("In-progress coverage"));
+        let mut empty = output(ReportMode::Empty);
+        empty.output.frame_ids.clear();
+        empty.output.cited_frame_ids.clear();
+        empty.output.frames_summarized = 0;
+        empty.output.frames_sampled = 0;
+        empty.model = None;
+        save_execution(
+            &mut run,
+            empty,
+            ReportEvidence {
+                session_ids: vec![],
+                missing_frame_ids: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(run.outcome, Some(ReportOutcome::NoData));
+        assert!(!run.result.as_ref().unwrap().truncated);
+        assert_eq!(run.window_end, 43_200_000);
+    }
+
+    #[tokio::test]
+    async fn selected_notes_are_isolated_and_revisions_reuse_original_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteStore::open_in_memory().unwrap();
+        let config = RunSnapshot {
+            version: 1,
+            memory: MemorySettings {
+                output_folder: Some(path_string(dir.path())),
+                ..Default::default()
+            },
+            report_settings: Settings::default(),
+            model_at_enqueue: None,
+        };
+        let mut first = run_fixture();
+        first.run_id = uuid();
+        first.requested_range = Some(MemoryReportRange {
+            start_date: "1970-01-01".into(),
+            end_date: "1970-01-01".into(),
+        });
+        let mut second = first.clone();
+        second.run_id = uuid();
+        let mut daily = run_fixture();
+        daily.run_id = uuid();
+        for run in [&first, &second, &daily] {
+            store.create_report_run(run.clone()).await.unwrap();
+            write_files(&store, run, &config).await.unwrap();
+        }
+        let relative = crate::memory_files::note_relative_path(
+            &first.local_date,
+            first.requested_range.as_ref(),
+            Some(&first.run_id),
+        )
+        .unwrap();
+        let path = dir.path().join("ScreenSearch").join(relative);
+        let original = std::fs::read_to_string(&path).unwrap();
+        let mut revision = first.clone();
+        revision.run_id = uuid();
+        revision.revision_of = Some(first.run_id.clone());
+        store.create_report_run(revision.clone()).await.unwrap();
+        assert_eq!(
+            base_report_id(&store, &revision).await.unwrap(),
+            Some(first.run_id.clone())
+        );
+        write_files(&store, &revision, &config).await.unwrap();
+        let revised = std::fs::read_to_string(&path).unwrap();
+        assert_ne!(original, revised);
+        let metadata = crate::memory_files::parse_frontmatter(&revised).unwrap();
+        assert_eq!(metadata.run_id, revision.run_id);
+        assert_eq!(metadata.base_run_id, Some(first.run_id.clone()));
+        assert_eq!(metadata.requested_range, first.requested_range);
+        let index = std::fs::read_to_string(dir.path().join("ScreenSearch/Index.md")).unwrap();
+        assert!(index.contains("Daily/1970-01-01.md"));
+        assert_eq!(index.matches("](Reports/").count(), 2);
+        assert_eq!(store.list_report_files().await.unwrap().len(), 4);
+        revision.revision_of = Some(uuid());
+        assert!(base_report_id(&store, &revision).await.is_err());
     }
 }
