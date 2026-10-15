@@ -79,3 +79,27 @@ Review corrections: propagate evidence-read failures rather than treating them a
 recover saved runs interrupted before delivery-intent creation; preserve unresolved attempts
 and file ownership through retention; guard reparse paths before recovery reads as well as
 writes. Verification results follow after the complete workspace gates.
+
+
+## 2026-10-15 — configurable bind and input corrections (supersedes earlier Gate A defaults)
+
+The maintainer requested configurable IPv4/IPv6 literal binding, persisted as `api.bind_address`.
+Missing values default to `127.0.0.1` for fresh and existing enabled profiles; no automatic
+broadening occurs. Address/port edits apply immediately, with validation before mutation.
+The earlier hard-coded wildcard and automatic-broadening notice contracts above are historical
+build evidence, superseded by this correction. Bearer authentication, exclusive Windows binding,
+visible bind errors and MCP/inference loopback restrictions remain.
+
+Schedule input uses `HH:mm` hour/minute precision with no seconds field. New memory settings,
+delivery destination snapshots and receipt/recovery paths use forward slashes. Legacy ownership
+lookup accepts earlier separators; canonical ownership keys are saved transactionally to avoid
+duplicates/conflicts. This is path normalization within the Windows-only app, with no schema
+migration or cross-platform expansion. Native atomic file operations remain Windows operations.
+
+Contract and implementation corrected. Current verification is recorded below/in
+`05_BUILD_REVIEW.md`; earlier raw results remain evidence of their original revisions.
+
+
+Correction verification passed and an unsigned NSIS installer was produced (`05`). This resolves
+the automatic-broadening, seconds-display and path-separator defects in the test build. Native
+UI/model/Obsidian, separate-machine API and approved live delivery/pilot gates remain before release.

@@ -192,14 +192,14 @@ inference. This is a product feature for all installations, configured through t
 master switch and port, with no personal host, account, path or credential baked into the app.
 
 - **Sequence:** review and commit this API-only contract amendment before implementing the
-  listener, notice, tests and accompanying active privacy/documentation copy. Historical shipped
+  listener, configuration, tests and accompanying active privacy/documentation copy. Historical shipped
   localhost descriptions in §5c remain historical; this section supersedes their binding rule
   for the next API increment. A contract change is not evidence that runtime behavior shipped.
-- **Boundary:** default-off, authenticated plain HTTP on `0.0.0.0` (all IPv4 interfaces). Existing
-  enabled installations acquire the broader listener and a one-time visible in-app notice; no
-  new loopback mode. A token holder on any reachable host can read history. MCP destination
+- **Boundary:** default-off, authenticated plain HTTP on a configurable IPv4/IPv6 literal.
+  Missing `api.bind_address` defaults to `127.0.0.1`, including existing enabled installations;
+  upgrades never broaden access automatically. A token holder on any reachable host can read history. MCP destination
   validation/default URL and the inference sidecar remain loopback-only.
-- **Scope:** listener, existing auth/configuration lifecycle, upgrade notice and accurate copy.
+- **Scope:** listener, existing auth/configuration lifecycle, bind-address configuration and accurate copy.
   No scheduler, vault writer, schema migration, report endpoints, Telegram, firewall automation,
   public hosting or remote MCP. Scheduled delivery and outbound Telegram need separate reviewed
   amendments before their implementations.
@@ -244,7 +244,7 @@ explicitly approved test recipient/send and inspection, not a fabricated acknowl
 | Sidecar orphan/hang | Job Object KILL_ON_JOB_CLOSE + startup reap + heartbeat/restart (hard requirement). |
 | Resource spikes surprising users | On-demand/timed by default; explicit schedule UI; idle-only option; per-job budgets. |
 | Global hotkey conflicts (PowerToys, IMEs, games) — 0.3.0 | Non-default combos (`Ctrl+Alt+Z` / `Ctrl+Alt+M`), both configurable; a failed registration is a **visible Settings warning + toast**, never a silent no-op (`§5c`; `03 §7b`/§8). |
-| API token leakage or plain-HTTP interception → full-history read from any reachable host | API **off by default**; bearer auth on every route; explicit all-IPv4/plain-HTTP threat model and one-time notice for enabled upgrades; regenerate-token control; user-managed network/firewall boundary, no public hosting (`03 §7c`). |
+| API token leakage or plain-HTTP interception → full-history read from any reachable host | API **off by default**; bearer auth on every route; explicit configurable-IP/plain-HTTP threat model and loopback default for missing address; regenerate-token control; user-managed network/firewall boundary, no public hosting (`03 §7c`). |
 | Scope creep | Automation + nice-to-haves are explicitly **out of v1.0**. |
 
 ## 7. Non-goals (reaffirmed)

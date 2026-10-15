@@ -59,7 +59,7 @@ export const queryKeys = {
   // each summon (it depends on the live foreground context, not a data-change event).
   whereWasI: ["whereWasI"] as const,
   marks: ["marks"] as const,
-  // Shared API panel/upgrade notice status; mutations and api_status_changed
+  // API panel status; mutations and api_status_changed
   // refresh it, including completion of asynchronous startup.
   apiStatus: ["apiStatus"] as const,
   // 0.3.2 auto-update (PR2, #69): the updater snapshot behind the NavRail presence

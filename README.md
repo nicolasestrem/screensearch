@@ -93,7 +93,7 @@ HTTP API exposes history to authenticated clients; see its [network boundary](do
 - **Fast recall overlay.** `Ctrl+Alt+Z` opens the **Flow overlay** — a second, capture-protected
   Tauri window for quick Search/Ask without leaving your foreground app. `Esc` hides it; `Enter`
   opens the selected Moment in the main Command Deck. `Ctrl+Alt+M` marks the current moment.
-- **HTTP API + local MCP.** An opt-in HTTP API (off by default, all IPv4 interfaces + bearer token)
+- **HTTP API + local MCP.** An opt-in HTTP API (off by default, configurable IPv4/IPv6 bind (default loopback) + bearer token)
   exposes search / ask / frames / marks / sessions and JSON export to reachable scripts and agents.
   Plain HTTP is not encrypted; enable only with appropriate network access restrictions.
   `screensearch-mcp.exe` — bundled in the installer — wraps it as a stdio **MCP server** for
@@ -181,7 +181,7 @@ crates/            15-crate Rust workspace (module crates depend on `traits` onl
   inference/       VisionProvider + AnswerProvider + llama.cpp supervisor (Job-Object lifecycle)
   sysmon/          CPU/GPU pressure probe driving the enrichment throttle
   doctor/          WebView2 / Vulkan / llama-server environment smoke-check
-  api/             opt-in HTTP API + JSON export (axum, all IPv4 + bearer token)
+  api/             opt-in HTTP API + JSON export (axum, configurable IP bind + bearer token)
   mcp/             screensearch-mcp.exe — stdio MCP wrapper over the local API
   sessions/        pure heuristic session segmentation + tool recognition (no model calls)
   harness/         dev-only, read-only segmentation validation harness (not shipped in the app)

@@ -10,7 +10,6 @@ import { NavRail } from "./NavRail";
 import { ReadinessBanner } from "./ReadinessBanner";
 import { CommandPalette } from "./CommandPalette";
 import { DevStateBadge } from "./DevStateBadge";
-import { ApiNetworkNotice } from "./ApiNetworkNotice";
 import { ScrollContainerProvider } from "./ScrollContainerContext";
 import { ToastViewport } from "../primitives";
 import { useLiveEvents } from "../../lib/ipc/useLiveEvents";
@@ -76,7 +75,6 @@ export function AppShell() {
           </ScrollContainerProvider>
         </main>
       </div>
-      <ApiNetworkNotice />
       <CommandPalette />
       <ToastViewport />
       {import.meta.env.DEV && <DevStateBadge />}

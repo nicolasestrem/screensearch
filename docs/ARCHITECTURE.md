@@ -65,7 +65,7 @@ Where they ever disagree, the specs win — open an issue.
   `capture_now` diff-gate-bypass path, and a second global hotkey with a non-focus-stealing toast
   (PR6); the **opt-in localhost HTTP API + JSON export** (`crates/api`, axum, originally
   loopback-only with bearer auth — PR7; the current network increment broadens the listener
-  to all IPv4 interfaces); and the **`screensearch-mcp.exe` stdio MCP server** wrapping that API,
+  to configurable IPv4/IPv6 binding with a loopback default); and the **`screensearch-mcp.exe` stdio MCP server** wrapping that API,
   bundled via NSIS `externalBin` (PR8).
 - Implemented for 0.3.2: **auto-update** — `src-tauri/src/update.rs` (single-flight check →
   background download → signature-verify → install only on user-initiated restart; launch check
@@ -474,7 +474,7 @@ request id, and the UI ignores stale deltas.
   unresolved marks (open / resolve / dismiss — no badge counts, D14). Marked frames follow normal
   retention: the image may expire, the mark keeps the text reconstruction reachable (D10).
 - **HTTP API + export** (`crates/api` + `src-tauri::local_api`, PR7): default **off**; when
-  enabled the axum server binds **`0.0.0.0` (all IPv4 interfaces, hard-coded)** on `api.port` and every request
+  enabled the axum server binds the configured **`api.bind_address` (IPv4/IPv6 literal; missing defaults to `127.0.0.1`)** on `api.port` and every request
   needs the `api.token` bearer (constant-time compare, 401 otherwise; D11). Endpoints: `/v1/health`,
   `/v1/search`, `POST /v1/ask` (SSE; consumer disconnect aborts sidecar generation), `/v1/frames/{id}`
   (`?image=1` → WebP), `/v1/context/where-was-i`, marks list/create/resolve (the only write surface),
@@ -482,9 +482,8 @@ request id, and the UI ignores stale deltas.
   behind a trait, **not constructed at all** while disabled; the Settings "Export…" button calls the
   same export code path directly, so export works with the API off. Reference: `docs/API.md`.
   The listener uses plain HTTP; reachable token holders can read history. MCP remains a
-  loopback-only client and the inference listener stays loopback-only. Upgraded enabled
-  profiles persist `api.network_notice_state=pending` until explicit acknowledgement in the
-  visible main window. Startup emits a payload-free `api_status_changed` invalidation event;
+  loopback-only client and the inference listener stays loopback-only. Existing enabled profiles
+  without a bind address retain loopback exposure; address/port edits apply immediately. Startup emits a payload-free `api_status_changed` invalidation event;
   tokens are never broadcast through this event. No schema migration is needed.
 - **MCP server** (`crates/mcp` → `screensearch-mcp.exe`, PR8): a dependency-thin **stdio** JSON-RPC
   binary that never links the store (D13) — purely an HTTP client of the local API using
@@ -551,7 +550,7 @@ request id, and the UI ignores stale deltas.
   v10 marks migration test, and `capture_now` pipeline tests (diff-gate bypass, capture-off denial).
   PR7 adds `crates/api/tests/http_api.rs` (fixture-DB integration: originally a loopback-only
   bind assertion, 401s, every endpoint, SSE ask, export). The current network increment replaces
-  that bind assertion with all-IPv4 binding and loopback-client checks, and extends route-auth coverage. PR8 adds `crates/mcp/tests/stdio_mcp.rs`, which spawns the
+  that bind assertion with configurable IPv4/IPv6 binding, safe upgrade defaults and loopback-client checks, and extends route-auth coverage. PR8 adds `crates/mcp/tests/stdio_mcp.rs`, which spawns the
   real compiled binary over stdio (handshake, nine tools, guided API-off/wrong-token errors).
 - **Inference, deterministic (run in CI, no GPU/network):** the **no-orphan gate**
   (`tests/no_orphan.rs` — kill a parent, assert the Job-Object child dies), startup **reap**

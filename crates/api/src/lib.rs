@@ -2,8 +2,8 @@
 //!
 //! A small [`axum`] server that exposes the same core queries the UI uses — search,
 //! ask, frames, where-was-i, marks — plus a streamed JSON export, over
-//! all IPv4 interfaces for scripts and agents. It is **off by default** and, when
-//! enabled, binds `0.0.0.0:<port>` and requires a **bearer token** on every request.
+//! a configurable IPv4 or IPv6 address for scripts and agents. It is **off by default**;
+//! the default address is `127.0.0.1`. Every request requires a **bearer token**.
 //! This is plain HTTP: any reachable token holder can read history (`03 §7c`).
 //! Clients use the computer's address, or `127.0.0.1` locally, as their destination.
 //!
@@ -20,7 +20,7 @@ pub mod extract;
 pub mod routes;
 pub mod sessions;
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -37,9 +37,8 @@ use traits::{
 /// The default port for the local API (`api.port`, configurable; `03 §8`, D11).
 pub const DEFAULT_PORT: u16 = 43210;
 
-/// The application API binds all IPv4 interfaces (`03 §7c`, Gate A amendment).
-/// This is not configurable and does not change the inference or MCP destination boundary.
-const BIND_IP: Ipv4Addr = Ipv4Addr::UNSPECIFIED;
+/// Missing configuration remains loopback, including on existing enabled installs.
+pub const DEFAULT_BIND_ADDRESS: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
 /// The live bearer token, shared with the auth middleware. Held behind an `RwLock` and
 /// read per request, so regenerating the token takes effect immediately without
@@ -142,16 +141,26 @@ pub struct ApiServer {
 }
 
 impl ApiServer {
-    /// Binds `0.0.0.0:<port>` **before** spawning the serve task, so a port conflict is
-    /// a synchronous `Err` the caller can surface loudly (`ApiStatus.last_error`,
-    /// port-in-use guided change — `03 §7c`). The bind IP is [`BIND_IP`], never a
-    /// parameter — all IPv4 interfaces are served when enabled.
+    /// Starts on the default loopback address. Explicit network access uses `start_on`.
     pub async fn start(
         host: Arc<dyn ApiHost>,
         token: SharedToken,
         port: u16,
     ) -> std::io::Result<ApiServer> {
-        let socket = tokio::net::TcpSocket::new_v4()?;
+        Self::start_on(host, token, DEFAULT_BIND_ADDRESS, port).await
+    }
+
+    /// Binds the selected literal address before spawning, surfacing any bind error.
+    pub async fn start_on(
+        host: Arc<dyn ApiHost>,
+        token: SharedToken,
+        bind_address: IpAddr,
+        port: u16,
+    ) -> std::io::Result<ApiServer> {
+        let socket = match bind_address {
+            IpAddr::V4(_) => tokio::net::TcpSocket::new_v4()?,
+            IpAddr::V6(_) => tokio::net::TcpSocket::new_v6()?,
+        };
         // Windows otherwise permits wildcard and interface-specific listeners to
         // share a port. Local MCP could reach the other service despite a successful
         // API bind. Claim the port exclusively before binding any interface.
@@ -179,7 +188,7 @@ impl ApiServer {
                 }));
             }
         }
-        socket.bind(SocketAddr::from((BIND_IP, port)))?;
+        socket.bind(SocketAddr::from((bind_address, port)))?;
         let listener = socket.listen(128)?;
         let local_addr = listener.local_addr()?;
         let router = build_router(ApiState { host, token });
@@ -204,7 +213,7 @@ impl ApiServer {
         })
     }
 
-    /// The bound socket address (IPv4 unspecified). Used to report the live port;
+    /// The actual bound IPv4 or IPv6 socket address. Used to report the live port;
     /// clients must use a reachable host address rather than this listen address.
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr

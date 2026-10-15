@@ -473,3 +473,81 @@ Version probe exit: 0
 This proves a local installer build and executable version response, not interactive GUI,
 model-quality, Obsidian or Telegram acceptance. The ordinary installation was not replaced;
 no real Telegram send, merge, release tag or updater publication was performed.
+
+
+## 2026-10-15 — configurable bind and input corrections (supersedes earlier Gate A defaults)
+
+The maintainer requested configurable IPv4/IPv6 literal binding, persisted as `api.bind_address`.
+Missing values default to `127.0.0.1` for fresh and existing enabled profiles; no automatic
+broadening occurs. Address/port edits apply immediately, with validation before mutation.
+The earlier hard-coded wildcard and automatic-broadening notice contracts above are historical
+build evidence, superseded by this correction. Bearer authentication, exclusive Windows binding,
+visible bind errors and MCP/inference loopback restrictions remain.
+
+Schedule input uses `HH:mm` hour/minute precision with no seconds field. New memory settings,
+delivery destination snapshots and receipt/recovery paths use forward slashes. Legacy ownership
+lookup accepts earlier separators; canonical ownership keys are saved transactionally to avoid
+duplicates/conflicts. This is path normalization within the Windows-only app, with no schema
+migration or cross-platform expansion. Native atomic file operations remain Windows operations.
+
+Contract and implementation corrected. Current verification is recorded below/in
+`05_BUILD_REVIEW.md`; earlier raw results remain evidence of their original revisions.
+
+
+### Current correction verification (Rust 1.95.0 / Node 22.23.3)
+
+Commands observed exit 0: UI `npm ci`, `npm run lint`, `npm run build`, `npm test`;
+MCP staging; `cargo fmt --all -- --check`; `cargo clippy --locked --workspace --all-targets -- -D warnings`;
+`cargo build --locked --workspace`; `cargo test --locked --workspace`; generated binding guard.
+The final workspace log totals 823 passed, zero failed, 15 existing hardware/manual ignored.
+The UI's two existing tests passed; they are not interactive Settings tests.
+Production-only npm audit reports zero vulnerabilities; install still reports ten development-tree
+advisories (three moderate, seven high), with no dependency version changes in this correction.
+
+Raw observed output excerpts:
+
+```text
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.03s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 24.69s
+test explicit_ipv4_and_ipv6_listeners_require_authentication ... ok
+test result: ok. 26 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.26s
+test memory_files::tests::displayed_verbatim_paths_preserve_native_atomic_operations ... ok
+test local_api::tests::invalid_saved_address_can_be_disabled_without_broadening ... ok
+test local_api::tests::existing_enabled_install_stays_loopback_and_explicit_address_survives_restart ... ok
+test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test memory::tests::normalized_paths_preserve_existing_file_ownership_without_duplicate_entries ... ok
+test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+found 0 vulnerabilities
+```
+
+The original path guards and edited-file preservation tests remain unchanged and passing.
+A separate native test also passed all eight file-writer tests, including forward-slash ordinary
+and verbatim atomic create/replace/read. Runtime/display paths normalize separators while native
+Windows prefix syntax is restored at filesystem boundaries. Legacy ownership aliases are updated
+transactionally without losing the prior hash or producing duplicate index entries.
+
+Logs: `target/verification/correction-{ui-install,ui-lint,ui-build,ui-test,stage,fmt,clippy,build,tests,native-path,production-audit}.log`.
+Native UI/model quality, Obsidian inspection, separate-machine API, live Telegram send and the
+consented multi-configuration pilot remain open. This correction does not certify those gates.
+
+
+### Corrected unsigned Windows installer
+
+`npm run build -- --ci --no-sign --config <local no-updater-artifacts config>` exited 0.
+Raw packaging/version output excerpts:
+
+```text
+    Finished `release` profile [optimized] target(s) in 3m 23s
+    Finished 1 bundle at:
+ScreenSearch 0.4.0
+```
+
+Preserved artifact: `target/verification/artifacts/ScreenSearch_configurable-api_memory_0.4.0_x64-setup.exe`.
+Size: 14,252,824 bytes. SHA-256:
+`4950FEECC39EA80D4A6BB826FB4F480C22AA859A48DED6C48FE0DD922CA152FC`.
+Canonical bundle output remains `target/release/bundle/nsis/ScreenSearch_0.4.0_x64-setup.exe`.
+Full raw output: `target/verification/correction-package.log`; version stdout/stderr:
+`correction-version.log` / `correction-version-error.log` in the same directory.
+The hidden executable `--version` command exited 0 before application/profile startup;
+this is a CLI smoke check, not interactive GUI acceptance. The unsigned 0.4.0 test installer
+supersedes earlier test artifacts for the current behavior; no installed profile was replaced.

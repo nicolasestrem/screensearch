@@ -186,7 +186,12 @@ impl SqliteStore {
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare("SELECT payload FROM report_files ORDER BY path")?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-            rows.map(|s| Ok(serde_json::from_str(&s?)?)).collect()
+            rows.map(|s| {
+                let mut ownership: ReportFileOwnership = serde_json::from_str(&s?)?;
+                ownership.path = ownership.path.replace('\\', "/");
+                Ok(ownership)
+            })
+            .collect()
         })
         .await
     }
@@ -389,22 +394,33 @@ impl SqliteStore {
         .await
     }
     pub async fn get_report_file(&self, path: &str) -> Result<Option<ReportFileOwnership>> {
-        let path = path.to_owned();
+        let path = path.replace('\\', "/");
         self.with_conn(move |conn| {
             let json: Option<String> = conn
                 .query_row(
-                    "SELECT payload FROM report_files WHERE path=?1",
+                    "SELECT payload FROM report_files WHERE path=?1 OR replace(path,char(92),'/')=?1 ORDER BY path=?1 DESC LIMIT 1",
                     [path],
                     |r| r.get(0),
                 )
                 .optional()?;
-            json.map(|s| serde_json::from_str(&s).map_err(Into::into))
-                .transpose()
+            json.map(|s| {
+                let mut ownership: ReportFileOwnership = serde_json::from_str(&s)?;
+                ownership.path = ownership.path.replace('\\', "/");
+                Ok(ownership)
+            }).transpose()
         })
         .await
     }
-    pub async fn save_report_file(&self, ownership: ReportFileOwnership) -> Result<()> {
-        self.with_conn(move|conn|{conn.execute("INSERT INTO report_files(path,payload) VALUES(?1,?2) ON CONFLICT(path) DO UPDATE SET payload=excluded.payload",params![ownership.path,serde_json::to_string(&ownership)?])?;Ok(())}).await
+    pub async fn save_report_file(&self, mut ownership: ReportFileOwnership) -> Result<()> {
+        ownership.path = ownership.path.replace('\\', "/");
+        self.with_conn(move |conn| {
+            let tx = conn.unchecked_transaction()?;
+            // Preserve ownership across the separator change without duplicate index entries.
+            tx.execute("DELETE FROM report_files WHERE path<>?1 AND replace(path,char(92),'/')=?1", [&ownership.path])?;
+            tx.execute("INSERT INTO report_files(path,payload) VALUES(?1,?2) ON CONFLICT(path) DO UPDATE SET payload=excluded.payload",params![ownership.path,serde_json::to_string(&ownership)?])?;
+            tx.commit()?;
+            Ok(())
+        }).await
     }
     pub async fn report_evidence(&self, frame_ids: Vec<i64>) -> Result<ReportEvidence> {
         self.with_conn(move |conn| {
@@ -436,6 +452,53 @@ impl SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn normalized_paths_preserve_existing_file_ownership_without_duplicate_entries() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let legacy = ReportFileOwnership {
+            path: "C:/Notes/ScreenSearch/Daily/2026-10-15.md".replace('/', "\\"),
+            source_id: "profile".into(),
+            run_id: "original".into(),
+            hash: "original-hash".into(),
+            updated_at: 1,
+        };
+        store
+            .with_conn(move |conn| {
+                conn.execute(
+                    "INSERT INTO report_files(path,payload) VALUES(?1,?2)",
+                    params![legacy.path, serde_json::to_string(&legacy)?],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let normalized = "C:/Notes/ScreenSearch/Daily/2026-10-15.md";
+        let mut owner = store.get_report_file(normalized).await.unwrap().unwrap();
+        assert_eq!(owner.path, normalized);
+        assert_eq!(owner.run_id, "original");
+        assert_eq!(owner.hash, "original-hash");
+        assert_eq!(
+            store.list_report_files().await.unwrap(),
+            vec![owner.clone()]
+        );
+        owner.run_id = "replacement".into();
+        owner.hash = "replacement-hash".into();
+        store.save_report_file(owner.clone()).await.unwrap();
+        assert_eq!(
+            store.get_report_file(normalized).await.unwrap(),
+            Some(owner)
+        );
+        store
+            .with_conn(|conn| {
+                let count: i64 =
+                    conn.query_row("SELECT count(*) FROM report_files", [], |r| r.get(0))?;
+                assert_eq!(count, 1);
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+
     fn run(id: &str) -> ReportRun {
         ReportRun {
             run_id: id.into(),

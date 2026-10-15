@@ -7,23 +7,26 @@ and fixture history; never serve personal history with a fixture token. Record r
 without tokens or screen content. Preserve the everyday installation.
 
 1. Fresh profile: API disabled, no listener. Enable in Settings; inspect the real socket
-   (`Get-NetTCPConnection`) and confirm `0.0.0.0:<configured-port>`.
-2. From a separate computer use the Windows host's actual address: authenticated `/v1/health`
-   returns 200 and the build version, missing/wrong token returns 401. Unknown path returns
-   401 without a token and 404 with a valid token. Record any manual firewall change separately.
-3. Existing enabled profile without `api.network_notice_state`: restart and observe the main
-   window notice. Hide/reopen, navigate and restart: notice stays. Disable API: notice stays
-   and reports disabled. Acknowledge visibly: restart confirms it no longer appears.
-4. Rotate token while running: old token rejected, new token accepted. Disable/re-enable and
-   restart preserve token/port. Port conflict retains enabled intent with a visible error.
-5. Local MCP still handshakes and queries via `127.0.0.1`; remote URLs are rejected. Cancel
-   an Ask stream during real model generation and observe worker cancellation. Confirm the
-   inference socket remains `127.0.0.1`, independent of the application API listener.
-6. Check notice keyboard focus, acknowledgement save error, hidden startup, Settings loading/
-   error/off/listening states, and listen-address/client-address distinction in the native UI.
+   (`Get-NetTCPConnection`) and confirm default `127.0.0.1:<configured-port>`.
+2. Configure IPv4/IPv6 loopback, a specific interface and wildcard addresses. Verify actual
+   sockets, immediate address/port apply and restart persistence. Invalid literals must leave
+   prior configuration unchanged. On a network bind, a separate computer's authenticated
+   `/v1/health` returns 200/version; missing/wrong token returns 401. Unknown paths return 401
+   unauthenticated and 404 authenticated. Record manual firewall changes separately.
+3. Existing enabled profile missing `api.bind_address`: restart and confirm loopback exposure,
+   with token, enabled state and port preserved; no automatic broadening or upgrade notice.
+4. Rotate token: old rejected, new accepted. Disable/re-enable preserves configuration.
+   Port conflicts, including wildcard/specific listeners, retain enabled intent with visible error.
+5. Local MCP handshakes via loopback when the selected bind accepts it; remote URLs remain
+   rejected. Cancel a real Ask stream and observe cancellation. Inference remains loopback-only.
+6. Check address field validation, keyboard access and loading/error/off/listening states;
+   distinguish wildcard listen addresses from client URLs and bracket IPv6 client addresses.
+7. Schedule input exposes hours/minutes only. New memory path settings, snapshots and receipts
+   use forward slashes; legacy backslash ownership records remain recognized. Verify native
+   Windows atomic file creation/replacement and preservation of edited-file conflicts.
 
 Unit/integration fixtures and a successful installer build do not replace these observations.
-Rollback: disable the API; use the previous build to restore loopback-only serving. No schema
+Rollback: disable the API or select `127.0.0.1` to restore loopback-only serving. No schema
 migration or token reset is part of this increment. Schedules and Telegram are separate work.
 
 Run from the repo root. Each command stands alone. Green = good.
@@ -125,7 +128,7 @@ tests against synthetic fixtures + a tempfile SQLite DB. No test touches `%APPDA
 
 **Manual end-to-end (Phase A/B/C, maintainer-in-the-loop).**
 1. **D5 backup FIRST** (release-blocker-class; before any other live-DB command):
-   `cargo run -p harness -- backup --to <a dir OUTSIDE the repo and OUTSIDE %APPDATA%\app.screensearchv2c.desktop\>`.
+   `cargo run -p harness -- backup --to <a dir OUTSIDE the repo and OUTSIDE %APPDATA%/app.screensearchv2c.desktop/>`.
    It writes `screensearch-YYYY-MM-DD.db`, refuses to overwrite, refuses a destination inside the
    repo tree or the app data dir, and prints `PRAGMA integrity_check` + source/copy row counts as
    the attestation. WAL note: if the app was force-killed and left an unrecovered `-wal`, a
@@ -316,7 +319,7 @@ tagged. Evidence:
   and Close gap 300 (min 60 / max 3600), with labels explaining the next session pass.
 - The only console/network noise was the existing `favicon.ico` 404 and an informational WebView
   lazy-image intervention; no app runtime errors were observed. The screenshot remains outside the
-  repo at `%TEMP%\screensearch-pr5-timeline.png` and is not committed.
+  repo at `%TEMP%/screensearch-pr5-timeline.png` and is not committed.
 
 **Observed 2026-07-11 — final review-fix acceptance at code `02e5cad` / docs `67b76ce`.** The real
 `npm run dev` process was again this worktree's `target/debug/screensearch.exe`, with
@@ -403,7 +406,7 @@ invariant confirmed against the live database.
    the model panel, **load an answer model** (`ask_session` needs it ready).
 2. Run the staged binary against the live API, passing both values by environment:
    `SCREENSEARCH_API_URL=http://127.0.0.1:43210` and `SCREENSEARCH_API_TOKEN=<copied token>`, then
-   launch `target\debug\screensearch-mcp.exe`.
+   launch `target/debug/screensearch-mcp.exe`.
 3. Drive `tools/list` and confirm it lists **nine** tools (the six prior tools plus `list_sessions`,
    `get_session`, `ask_session`).
 4. Call `list_sessions` with `kind=ai`, `tool=claude-code`; confirm the returned sessions are
@@ -441,11 +444,11 @@ directory during this gate.** A dev build shares the Roaming data dir and would 
 DB to schema 11 out of band, destroying the test bed. Every DB read below is `sqlite3 -readonly`,
 which is safe against the running app.
 
-Paths on the maintainer machine: live DB `%APPDATA%\app.screensearchv2c.desktop\screensearch.db`;
-logs `%APPDATA%\app.screensearchv2c.desktop\logs\screensearch.log.YYYY-MM-DD` (daily-rolling, the
+Paths on the maintainer machine: live DB `%APPDATA%/app.screensearchv2c.desktop/screensearch.db`;
+logs `%APPDATA%/app.screensearchv2c.desktop/logs/screensearch.log.YYYY-MM-DD` (daily-rolling, the
 suffix date is UTC, so an evening run can span two files; tail with
 `Get-Content <file> -Wait -Tail 50`); installed exe
-`%LOCALAPPDATA%\ScreenSearch\ScreenSearch.exe`.
+`%LOCALAPPDATA%/ScreenSearch/ScreenSearch.exe`.
 
 ### Precondition — D5 backup verified present
 
@@ -466,7 +469,7 @@ schema). Take one more fresh dated backup of the actual bed with
 
 Capture the baseline so the after-state is comparable:
 
-1. Version: `(Get-Item "$env:LOCALAPPDATA\ScreenSearch\ScreenSearch.exe").VersionInfo.ProductVersion`
+1. Version: `(Get-Item "$env:LOCALAPPDATA/ScreenSearch/ScreenSearch.exe").VersionInfo.ProductVersion`
    is `0.3.3`.
 2. Schema: `SELECT version FROM schema_version;` is `10`; `SELECT COUNT(*) FROM sqlite_master WHERE
    name IN ('sessions','session_artifacts');` is `0`.

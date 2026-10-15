@@ -2,7 +2,7 @@
 //!
 //! A `TestHost` implements [`api::ApiHost`] over a real in-memory `SqliteStore` (plus a
 //! scripted answer provider), so every endpoint is exercised against a populated DB. The
-//! server binds an ephemeral all-IPv4 port; requests go out over `reqwest` with a bearer
+//! server binds an ephemeral loopback port; requests go out over `reqwest` with a bearer
 //! token, exactly as a real client would.
 
 use std::sync::Arc;
@@ -214,13 +214,13 @@ async fn fixture_host(with_answer: bool) -> Arc<TestHost> {
     })
 }
 
-/// Starts a server over the fixture host on an ephemeral all-IPv4 port; returns the base
+/// Starts a server over the fixture host on an ephemeral loopback port; returns the base
 /// URL and the running server (kept alive by the caller).
 async fn start_server(host: Arc<TestHost>) -> (String, ApiServer, SharedToken) {
     let token: SharedToken = Arc::new(std::sync::RwLock::new(TEST_TOKEN.to_string()));
     let server = ApiServer::start(host, token.clone(), 0)
         .await
-        .expect("bind ephemeral all-IPv4");
+        .expect("bind ephemeral loopback");
     let base = format!("http://127.0.0.1:{}", server.local_addr().port());
     (base, server, token)
 }
@@ -238,14 +238,14 @@ fn bearer(token: &str) -> reqwest::header::HeaderMap {
     h
 }
 
-// ---- Gate A: application API binds all IPv4 interfaces; local clients still work ----
+// ---- Configurable binding retains loopback by default ----
 
 #[tokio::test]
-async fn binds_all_ipv4_interfaces() {
+async fn default_binds_only_loopback() {
     let (_base, server, _t) = start_server(fixture_host(false).await).await;
     assert_eq!(
         server.local_addr().ip(),
-        std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
     );
     server.stop().await;
 }
@@ -1210,4 +1210,33 @@ async fn ask_unknown_session_is_404_before_stream() {
         .unwrap();
     assert_eq!(r.status(), 503);
     server.stop().await;
+}
+
+#[tokio::test]
+async fn explicit_ipv4_and_ipv6_listeners_require_authentication() {
+    for (bind, destination) in [("0.0.0.0", "127.0.0.1"), ("::1", "[::1]"), ("::", "[::1]")] {
+        let token = Arc::new(std::sync::RwLock::new(TEST_TOKEN.to_string()));
+        let server =
+            ApiServer::start_on(fixture_host(false).await, token, bind.parse().unwrap(), 0)
+                .await
+                .unwrap();
+        assert_eq!(server.local_addr().ip().to_string(), bind);
+        let url = format!(
+            "http://{destination}:{}/v1/health",
+            server.local_addr().port()
+        );
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        assert_eq!(client.get(&url).send().await.unwrap().status(), 401);
+        assert_eq!(
+            client
+                .get(&url)
+                .headers(bearer(TEST_TOKEN))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+        server.stop().await;
+    }
 }

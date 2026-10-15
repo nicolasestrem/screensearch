@@ -1680,7 +1680,6 @@ pub fn run() {
             local_api::set_api_config,
             local_api::get_api_status,
             local_api::regenerate_api_token,
-            local_api::acknowledge_api_network_notice,
             local_api::export_data,
             memory::get_memory_status,
             memory::set_memory_settings,

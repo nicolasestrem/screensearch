@@ -266,19 +266,17 @@ export const dismissMarkToast = (): Promise<void> =>
 export const setApiConfig = (args: {
   enabled: boolean;
   port?: number | null;
+  bindAddress?: string | null;
 }): Promise<ApiStatus> =>
   invoke<ApiStatus>("set_api_config", {
     enabled: args.enabled,
     port: args.port ?? null,
+    bindAddress: args.bindAddress ?? null,
   });
 
 /** The current local-API status (enabled, running, port, token, last error). */
 export const getApiStatus = (): Promise<ApiStatus> =>
   invoke<ApiStatus>("get_api_status");
-
-/** Explicit visible-main-window acknowledgement; persistence failure preserves pending state. */
-export const acknowledgeApiNetworkNotice = (): Promise<ApiStatus> =>
-  invoke<ApiStatus>("acknowledge_api_network_notice");
 
 /** Regenerate the bearer token (no server restart — the middleware reads it live). */
 export const regenerateApiToken = (): Promise<ApiStatus> =>

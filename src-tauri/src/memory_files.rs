@@ -34,6 +34,22 @@ pub fn content_hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+/// Windows accepts forward slashes; keep all persisted and displayed paths consistent.
+pub fn path_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// Restore Windows verbatim/device syntax only at the native I/O boundary.
+/// Ordinary drive and UNC paths keep their forward-slash spelling.
+pub fn native_path(path: &Path) -> PathBuf {
+    let value = path.to_string_lossy();
+    if value.starts_with("//?/") || value.starts_with("//./") {
+        PathBuf::from(value.replace('/', "\\"))
+    } else {
+        path.to_owned()
+    }
+}
+
 /// Construct only after create_new succeeds: cleanup must never remove a file we
 /// failed to create. The guard also covers validation failures after writing.
 struct TemporaryNote(PathBuf);
@@ -205,6 +221,8 @@ fn safe_parent(path: &Path, create: bool) -> Result<Option<Vec<fs::File>>, Write
 /// reparse point. Callers still verify the returned bytes against their ownership hash.
 pub fn safe_read_owned(path: &Path) -> Result<Option<Vec<u8>>, WriteFailure> {
     use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+    let native = native_path(path);
+    let path = native.as_path();
     let Some(_parent_guards) = safe_parent(path, false)? else {
         return Ok(None);
     };
@@ -246,6 +264,8 @@ pub fn write_owned(
     use windows::Win32::Storage::FileSystem::{
         MoveFileExW, ReplaceFileW, MOVEFILE_WRITE_THROUGH, REPLACE_FILE_FLAGS,
     };
+    let native = native_path(path);
+    let path = native.as_path();
     let _parent_guards = safe_parent(path, true)?;
     let hash = content_hash(content.as_bytes());
     let mut existing = None;
@@ -337,7 +357,7 @@ pub fn write_owned(
     drop(existing);
     if moved.is_err() {
         return Err(WriteFailure{message:"atomic note replacement failed; inspect the destination and any retained recovery copy".into(),conflict:true,
-        recovery_path:backup.exists().then(||backup.to_string_lossy().into_owned())});
+        recovery_path:backup.exists().then(||path_string(&backup))});
     }
     // Verify the installed leaf before discarding the displaced copy: another
     // process can replace a leaf between name-based Win32 operations.
@@ -346,7 +366,7 @@ pub fn write_owned(
         return Err(WriteFailure {
             message: "note changed during installation; inspect the destination and retained recovery copy".into(),
             conflict: true,
-            recovery_path: backup.exists().then(|| backup.to_string_lossy().into_owned()),
+            recovery_path: backup.exists().then(|| path_string(&backup)),
         });
     }
     if backup.exists() {
@@ -356,14 +376,14 @@ pub fn write_owned(
             .ok_or_else(|| WriteFailure {
                 message: "cannot verify displaced note; recovery copy retained".into(),
                 conflict: true,
-                recovery_path: Some(backup.to_string_lossy().into_owned()),
+                recovery_path: Some(path_string(&backup)),
             })?;
         if expected_hash != Some(content_hash(&displaced).as_str()) {
             return Err(WriteFailure {
                 message: "note changed during replacement; original retained in recovery copy"
                     .into(),
                 conflict: true,
-                recovery_path: Some(backup.to_string_lossy().into_owned()),
+                recovery_path: Some(path_string(&backup)),
             });
         }
         let _ = fs::remove_file(&backup);
@@ -374,6 +394,34 @@ pub fn write_owned(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn forward_slash_paths_support_native_atomic_create_and_replace() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = path_string(&dir.path().join("Daily/note.md"));
+        assert!(!text.contains('\\'));
+        let path = Path::new(&text);
+        let original = write_owned(path, "original note", None).unwrap();
+        write_owned(path, "updated note", Some(&original.hash)).unwrap();
+        assert_eq!(safe_read_owned(path).unwrap().unwrap(), b"updated note");
+    }
+
+    #[test]
+    fn displayed_verbatim_paths_preserve_native_atomic_operations() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = fs::canonicalize(dir.path())
+            .unwrap()
+            .join("Daily")
+            .join("note.md");
+        let display = path_string(&original);
+        assert!(display.starts_with("//?/"));
+        assert!(!display.contains('\\'));
+        assert_eq!(native_path(Path::new(&display)), original);
+        let path = Path::new(&display);
+        let receipt = write_owned(path, "original note", None).unwrap();
+        write_owned(path, "updated note", Some(&receipt.hash)).unwrap();
+        assert_eq!(safe_read_owned(path).unwrap().unwrap(), b"updated note");
+    }
+
     #[test]
     fn safe_read_does_not_create_missing_directories() {
         let dir = tempfile::tempdir().unwrap();

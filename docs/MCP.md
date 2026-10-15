@@ -6,7 +6,7 @@ ask about, and mark your ScreenSearch history. It is a thin **stdio** wrapper ov
 [HTTP API](API.md): it holds no data of its own and talks only to
 `127.0.0.1:<port>` with your bearer token (0.3.0 PR8; spec `03 §7c`).
 
-> **Threat model — read this before enabling.** The application API binds all IPv4 interfaces
+> **Threat model — read this before enabling.** The application API defaults to loopback and accepts a configured IPv4/IPv6 bind address
 > using plain HTTP: any reachable token holder can read your history, and network traffic is
 > not encrypted. The MCP wrapper still validates loopback-only destinations and uses stdio;
 > changing the application listener does not enable remote MCP. Protect MCP client configuration
@@ -15,8 +15,8 @@ ask about, and mark your ScreenSearch history. It is a thin **stdio** wrapper ov
 ## Prerequisites
 
 1. **Enable the HTTP API.** In ScreenSearch: **Settings → HTTP API → toggle on.** It is
-   **off by default**. Enabling it binds `0.0.0.0:43210` (default port, configurable) and
-   mints a bearer token.
+   **off by default**. Enabling it binds `127.0.0.1:43210` by default (address and port configurable) and
+   mints a bearer token. Keep a listener reachable on loopback to use this MCP wrapper.
 2. **Copy the token** from that same Settings panel (reveal / copy).
 
 The MCP server does nothing until the API is on: with the API off, every tool call returns a
@@ -26,9 +26,9 @@ clear *"enable the API in ScreenSearch Settings"* message rather than failing si
 
 | Install kind | Path |
 |---|---|
-| Installed (per-user, the default) | `%LOCALAPPDATA%\ScreenSearch\screensearch-mcp.exe` |
-| Installed (per-machine) | `C:\Program Files\ScreenSearch\screensearch-mcp.exe` |
-| From a source build | `target\release\screensearch-mcp.exe` |
+| Installed (per-user, the default) | `%LOCALAPPDATA%/ScreenSearch/screensearch-mcp.exe` |
+| Installed (per-machine) | `C:/Program Files/ScreenSearch/screensearch-mcp.exe` |
+| From a source build | `target/release/screensearch-mcp.exe` |
 
 It ships **inside the ScreenSearch installer**, next to `ScreenSearch.exe` — no separate
 download.
@@ -52,7 +52,7 @@ Edit `claude_desktop_config.json` (Claude Desktop → **Settings → Developer �
 {
   "mcpServers": {
     "screensearch": {
-      "command": "C:\\Users\\<you>\\AppData\\Local\\ScreenSearch\\screensearch-mcp.exe",
+      "command": "C:/Users/<you>/AppData/Local/ScreenSearch/screensearch-mcp.exe",
       "env": {
         "SCREENSEARCH_API_TOKEN": "<token from Settings → HTTP API>"
       }
@@ -69,7 +69,7 @@ Restart Claude Desktop. If you changed the port, add
 ```sh
 claude mcp add screensearch \
   --env SCREENSEARCH_API_TOKEN=<token from Settings → HTTP API> \
-  -- "C:\\Users\\<you>\\AppData\\Local\\ScreenSearch\\screensearch-mcp.exe"
+  -- "C:/Users/<you>/AppData/Local/ScreenSearch/screensearch-mcp.exe"
 ```
 
 Then, in a session: *"search my screen history for the invoice I saw"*, *"what was I doing

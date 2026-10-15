@@ -44,7 +44,7 @@ non-shaming** (D11 — nothing notifies, nudges, streaks, or scores). The **spec
 (this arc's PR1 normalized decisions D1–D16 into the specs); the roadmap is context.
 
 **For the network API increment (Gate A, 2026-10-15):** read `02 §5e`, amended `03 §7c`
-and `UI_REFERENCE` API/upgrade-notice contract. Review and commit the API-only amendment before
+and `UI_REFERENCE` API/bind-address contract. Review and commit the API-only amendment before
 implementation; keep scheduled delivery and Telegram permissions in separate later amendments.
 This is a configurable product feature for all installations. Preserve MCP/inference loopback
 boundaries; require native Windows and separate-machine HTTP evidence before claiming acceptance.
@@ -150,7 +150,7 @@ If the answer is in a doc, **use it verbatim** — do not invent alternatives.
   local llama.cpp sidecar (`01 §5`); a Python *ML* sidecar is the V1 approach we don't repeat. Python
   is allowed for build/dev tooling (e.g. the `hf` CLI). Network = localhost + model downloads + the
   signed GitHub-Releases update check (`03 §11b`), plus user-enabled authenticated HTTP API
-  serving on all IPv4 interfaces (`03 §7c`, Gate A). Plain HTTP exposes history to reachable
+  serving on a configurable IPv4/IPv6 literal (default loopback) (`03 §7c`, Gate A). Plain HTTP exposes history to reachable
   token holders; no public hosting or automatic firewall/router changes. MCP destinations and
   inference stay loopback-only. Approved local schedules and user-selected folder writes are
   permitted by `03 §8c`; the separate `03 §8d` exception permits explicitly enabled saved-report

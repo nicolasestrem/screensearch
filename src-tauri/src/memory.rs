@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
+use crate::memory_files::{native_path, path_string};
 use crate::{now_ms, AppState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -84,7 +85,9 @@ async fn settings(store: &dyn Store) -> Result<MemorySettings, ReportError> {
         enabled: setting(store, "memory.schedule.enabled").await?,
         local_time: setting(store, "memory.schedule.local_time").await?,
         timezone: setting(store, "memory.schedule.timezone").await?,
-        output_folder: setting(store, "memory.schedule.output_folder").await?,
+        output_folder: setting::<Option<String>>(store, "memory.schedule.output_folder")
+            .await?
+            .map(|folder| path_string(Path::new(&folder))),
         telegram_enabled: setting(store, "memory.telegram.enabled").await?,
         telegram_chat_id: setting(store, "memory.telegram.chat_id").await?,
     })
@@ -105,7 +108,7 @@ fn validate(config: &MemorySettings, manual: bool) -> Result<(), ReportError> {
             })?;
     }
     if let Some(folder) = &config.output_folder {
-        if !Path::new(folder).is_absolute() {
+        if !native_path(Path::new(folder)).is_absolute() {
             return Err(fail("INVALID_CONFIG", "Select an absolute output folder."));
         }
     }
@@ -204,10 +207,13 @@ pub async fn preview_memory_schedule(
 
 #[tauri::command]
 pub async fn set_memory_settings(
-    settings: MemorySettings,
+    mut settings: MemorySettings,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<MemoryStatus, ReportError> {
+    settings.output_folder = settings
+        .output_folder
+        .map(|folder| path_string(Path::new(&folder)));
     validate(&settings, false)?;
     let store = db(&state)?;
     let runtime = &state.memory_runtime;
@@ -417,10 +423,14 @@ pub async fn get_memory_deliveries(
     run_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<ReportDelivery>, ReportError> {
-    db(&state)?
+    let mut items = db(&state)?
         .list_report_deliveries(&run_id)
         .await
-        .map_err(storage)
+        .map_err(storage)?;
+    for item in &mut items {
+        normalize_delivery_paths(item);
+    }
+    Ok(items)
 }
 #[tauri::command]
 pub async fn retry_memory_report(
@@ -694,6 +704,7 @@ async fn update_delivery(
     item: &mut ReportDelivery,
     expected: ReportDeliveryState,
 ) -> Result<(), ReportError> {
+    normalize_delivery_paths(item);
     item.updated_at = now_ms();
     if !store
         .update_report_delivery(item.clone(), expected)
@@ -706,6 +717,15 @@ async fn update_delivery(
         ));
     }
     Ok(())
+}
+
+fn normalize_delivery_paths(item: &mut ReportDelivery) {
+    for value in [&mut item.path, &mut item.recovery_path]
+        .into_iter()
+        .flatten()
+    {
+        *value = path_string(Path::new(value));
+    }
 }
 /// Keep potentially blocking native reads off the cancellable report worker.
 /// The closure owns only a path; cancelling its await cannot retain DB/model state.
@@ -762,17 +782,17 @@ async fn file_delivery(
             let mut item = delivery(
                 run,
                 destination,
-                serde_json::to_string(&path).map_err(storage)?,
+                serde_json::to_string(&path_string(&path)).map_err(storage)?,
             );
             item.revision_of = previous.map(|p| p.id);
-            item.path = Some(path.to_string_lossy().into_owned());
+            item.path = Some(path_string(&path));
             item.hash = Some(format!("{:x}", Sha256::digest(content.as_bytes())));
             store.create_report_delivery(item).await.map_err(storage)?
         }
     };
     let prior = item.state;
     let ownership = store
-        .get_report_file(path.to_string_lossy().as_ref())
+        .get_report_file(&path_string(&path))
         .await
         .map_err(storage)?;
     if ownership
@@ -815,7 +835,7 @@ async fn file_delivery(
             if Some(format!("{:x}", Sha256::digest(&bytes))) == item.hash {
                 store
                     .save_report_file(ReportFileOwnership {
-                        path: path.to_string_lossy().into_owned(),
+                        path: path_string(&path),
                         source_id: run.source_id.clone(),
                         run_id: run.run_id.clone(),
                         hash: item.hash.clone().unwrap(),
@@ -851,7 +871,7 @@ async fn file_delivery(
         Ok(receipt) => {
             store
                 .save_report_file(ReportFileOwnership {
-                    path: path.to_string_lossy().into_owned(),
+                    path: path_string(&path),
                     source_id: run.source_id.clone(),
                     run_id: run.run_id.clone(),
                     hash: receipt.hash.clone(),
@@ -918,7 +938,7 @@ async fn write_files(
         .output_folder
         .as_deref()
         .ok_or_else(|| fail("INVALID_CONFIG", "The saved output folder is unavailable."))?;
-    let root = Path::new(folder).join("ScreenSearch");
+    let root = native_path(Path::new(folder)).join("ScreenSearch");
     if run.result.is_none() {
         for dest in [ReportDestination::Vault, ReportDestination::Index] {
             if !store
@@ -928,7 +948,11 @@ async fn write_files(
                 .iter()
                 .any(|d| d.destination == dest)
             {
-                let mut item = delivery(run, dest, serde_json::to_string(&root).map_err(storage)?);
+                let mut item = delivery(
+                    run,
+                    dest,
+                    serde_json::to_string(&path_string(&root)).map_err(storage)?,
+                );
                 item.state = ReportDeliveryState::Skipped;
                 item.error = run.error.clone();
                 store.create_report_delivery(item).await.map_err(storage)?;
@@ -957,7 +981,7 @@ async fn write_files(
             let mut item = delivery(
                 run,
                 ReportDestination::Index,
-                serde_json::to_string(&root.join("Index.md")).map_err(storage)?,
+                serde_json::to_string(&path_string(&root.join("Index.md"))).map_err(storage)?,
             );
             item.state = ReportDeliveryState::Skipped;
             item.error = Some(fail(
@@ -970,7 +994,8 @@ async fn write_files(
     }
     let mut entries = Vec::new();
     for owned in store.list_report_files().await.map_err(storage)? {
-        let path = Path::new(&owned.path);
+        let native = native_path(Path::new(&owned.path));
+        let path = native.as_path();
         if path.parent() != Some(root.join("Daily").as_path()) || owned.source_id != run.source_id {
             continue;
         }
@@ -1604,9 +1629,9 @@ mod tests {
         let mut item = delivery(
             &run,
             ReportDestination::Vault,
-            serde_json::to_string(&path).unwrap(),
+            serde_json::to_string(&path_string(&path)).unwrap(),
         );
-        item.path = Some(path.to_string_lossy().into_owned());
+        item.path = Some(path_string(&path));
         item.hash = Some(format!("{:x}", Sha256::digest(content.as_bytes())));
         item.state = ReportDeliveryState::Sending;
         item.attempt = 1;

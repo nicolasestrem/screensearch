@@ -151,3 +151,29 @@ Documentation: docs/MEMORY.md, architecture, native testing checklist, strategic
 CHANGELOG and build-loop records. The requested original specs/01 privacy paragraph is preserved.
 Full verification/package receipts are recorded in 05; no merge, tag, installation replacement,
 private-history acceptance or real Telegram send is claimed.
+
+
+## 2026-10-15 — configurable bind and input corrections (supersedes earlier Gate A defaults)
+
+The maintainer requested configurable IPv4/IPv6 literal binding, persisted as `api.bind_address`.
+Missing values default to `127.0.0.1` for fresh and existing enabled profiles; no automatic
+broadening occurs. Address/port edits apply immediately, with validation before mutation.
+The earlier hard-coded wildcard and automatic-broadening notice contracts above are historical
+build evidence, superseded by this correction. Bearer authentication, exclusive Windows binding,
+visible bind errors and MCP/inference loopback restrictions remain.
+
+Schedule input uses `HH:mm` hour/minute precision with no seconds field. New memory settings,
+delivery destination snapshots and receipt/recovery paths use forward slashes. Legacy ownership
+lookup accepts earlier separators; canonical ownership keys are saved transactionally to avoid
+duplicates/conflicts. This is path normalization within the Windows-only app, with no schema
+migration or cross-platform expansion. Native atomic file operations remain Windows operations.
+
+Contract and implementation corrected. Current verification is recorded below/in
+`05_BUILD_REVIEW.md`; earlier raw results remain evidence of their original revisions.
+
+
+Current correction checks passed: Node 22 UI install/lint/build/two existing tests; MCP staging;
+Rust 1.95 fmt, Clippy with warnings denied, workspace build and 823 tests (15 existing ignored);
+generated binding guard and unsigned NSIS package. Native prefix preservation was corrected during
+review and covered by real atomic create/replace/read tests. The rebuilt CLI returned version
+0.4.0 with exit 0; hash, size, raw excerpts and acceptance boundaries are recorded in `05`.

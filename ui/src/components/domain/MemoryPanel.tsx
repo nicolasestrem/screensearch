@@ -10,8 +10,16 @@ import {
   useMemoryRuns, useMemorySchedulePreview, useMemoryStatus,
 } from "../../lib/ipc/memory";
 
-function timestamp(value: number) {
-  return new Date(value).toLocaleString();
+const forwardPath = (value: string) => value.replaceAll("\\", "/");
+const displaySettings = (settings: MemorySettings): MemorySettings => ({
+  ...settings,
+  output_folder: settings.output_folder === null ? null : forwardPath(settings.output_folder),
+});
+
+function timestamp(value: number, timeZone?: string) {
+  return new Date(value).toLocaleString(undefined, {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZone,
+  });
 }
 
 function DeliveryReceipt({ receipt }: { receipt: ReportDelivery }) {
@@ -23,10 +31,10 @@ function DeliveryReceipt({ receipt }: { receipt: ReportDelivery }) {
         {receipt.destination} · {receipt.state.replaceAll("_", " ")}
         {receipt.chunk_index !== null && ` · chunk ${receipt.chunk_index + 1}/${receipt.chunk_count}`}
       </p>
-      {receipt.path && <p className="break-all font-mono text-data">{receipt.path}</p>}
+      {receipt.path && <p className="break-all font-mono text-data">{forwardPath(receipt.path)}</p>}
       {receipt.error && <p className="text-warn">{receipt.error.message}</p>}
       {receipt.recovery_path && (
-        <p className="break-all">Preserved recovery file: {receipt.recovery_path}</p>
+        <p className="break-all">Preserved recovery file: {forwardPath(receipt.recovery_path)}</p>
       )}
       {receipt.message_id !== null && (
         <p className="text-caption text-ink-muted">Telegram accepted message {receipt.message_id}; this is not a read receipt.</p>
@@ -75,7 +83,7 @@ function RunDetails({ runId }: { runId: string }) {
       {detail.isError && <Button onClick={() => detail.refetch()}>Reload report</Button>}
       {run && <>
         <h3 className="font-display text-subtitle">{run.local_date} · {run.outcome ?? run.phase}</h3>
-        <p className="text-caption text-ink-muted">{timestamp(run.window_start)} – {timestamp(run.window_end)} · {run.timezone}</p>
+        <p className="text-caption text-ink-muted">{timestamp(run.window_start, run.timezone)} – {timestamp(run.window_end, run.timezone)} · {run.timezone}</p>
         <p className="text-caption font-mono break-all">Run {run.run_id} · source {run.source_id}</p>
         {run.revision_of && <p className="text-caption break-all">Revision of {run.revision_of}</p>}
         {run.error && <p role="status" className="text-warn">{run.error.message}</p>}
@@ -140,14 +148,14 @@ export function MemoryPanel() {
   const preview = useMemorySchedulePreview(draft);
 
   useEffect(() => {
-    if (status.data) setDraft((previous) => previous ?? status.data.settings);
+    if (status.data) setDraft((previous) => previous ?? displaySettings(status.data.settings));
   }, [status.data]);
 
   const set = <K extends keyof MemorySettings>(key: K, value: MemorySettings[K]) =>
     setDraft((previous) => previous ? { ...previous, [key]: value } : previous);
   const busy = save.isPending || saveToken.isPending || clearToken.isPending || reset.isPending;
   const loaded = Boolean(draft && status.data);
-  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(status.data?.settings);
+  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(status.data ? displaySettings(status.data.settings) : undefined);
   const active = status.data?.worker_running || status.data?.latest_run?.phase === "queued" || status.data?.latest_run?.phase === "running";
   const selected = selectedRun ?? status.data?.latest_run?.run_id ?? null;
   const actionError = save.error ?? runNow.error ?? saveToken.error ?? clearToken.error ?? reset.error;
@@ -174,12 +182,12 @@ export function MemoryPanel() {
         </div>
         <Toggle label="Schedule daily memory" checked={draft?.enabled ?? false} disabled={!loaded || busy} onChange={(v) => set("enabled", v)} hint="Starts with the first full day after activation; changes apply when you save. Disabled periods are not backfilled." />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label="Local report time" type="time" value={draft?.local_time ?? ""} disabled={!loaded || busy} onChange={(e) => set("local_time", e.currentTarget.value || null)} />
+          <Field label="Local report time" type="time" step={60} value={draft?.local_time ?? ""} disabled={!loaded || busy} onChange={(e) => set("local_time", e.currentTarget.value.slice(0, 5) || null)} />
           <Field label="Timezone (IANA)" value={draft?.timezone ?? ""} placeholder="Europe/Paris" disabled={!loaded || busy} onChange={(e) => set("timezone", e.currentTarget.value || null)} hint="Fixed to your selection, even if the computer timezone changes." />
         </div>
-        <Field label="Output folder (absolute path)" value={draft?.output_folder ?? ""} disabled={!loaded || busy} onChange={(e) => set("output_folder", e.currentTarget.value || null)} hint="Notes go into ScreenSearch/Daily; ScreenSearch/Index.md links them. Edited or unrelated files are preserved." />
+        <Field label="Output folder (absolute path)" placeholder="C:/Users/YourName/Documents/Notes" value={draft?.output_folder ?? ""} disabled={!loaded || busy} onChange={(e) => set("output_folder", forwardPath(e.currentTarget.value) || null)} hint="Notes go into ScreenSearch/Daily; ScreenSearch/Index.md links them. Edited or unrelated files are preserved." />
         <div className="min-h-12 text-caption text-ink-muted" aria-live="polite">
-          {!draft?.timezone || !draft.local_time ? <p>Select time and timezone to preview the first report.</p> : preview.isError ? <p className="text-warn">{memoryError(preview.error)}</p> : preview.isFetching ? <p>Calculating first eligible report…</p> : preview.data ? <p>First eligible day for a new activation: {preview.data.local_date}. Due {new Date(preview.data.due_at).toLocaleString(undefined, { timeZone: draft.timezone })} ({draft.timezone}). Saving unchanged scheduling settings preserves the existing activation.</p> : <p>Complete the schedule to preview its first report.</p>}
+          {!draft?.timezone || !draft.local_time ? <p>Select time and timezone to preview the first report.</p> : preview.isError ? <p className="text-warn">{memoryError(preview.error)}</p> : preview.isFetching ? <p>Calculating first eligible report…</p> : preview.data ? <p>First eligible day for a new activation: {preview.data.local_date}. Due {new Date(preview.data.due_at).toLocaleString(undefined, { timeZone: draft.timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} ({draft.timezone}). Saving unchanged scheduling settings preserves the existing activation.</p> : <p>Complete the schedule to preview its first report.</p>}
         </div>
         <Toggle label="Send Telegram digests" checked={draft?.telegram_enabled ?? false} disabled={!loaded || busy} onChange={(v) => set("telegram_enabled", v)} hint="Explicitly permits saved-report digest content to leave this device for Telegram and the selected conversation. Off by default." />
         <p className="text-caption text-ink-muted">Text digests contain no screenshots or raw OCR. Credential-pattern masking is not comprehensive PII detection. No-data, blocked and failed reports are not sent.</p>
@@ -191,8 +199,8 @@ export function MemoryPanel() {
           <span className="text-caption text-ink-muted">{!status.data ? "Credential status unavailable" : status.data.telegram_credential_available ? "Saved credential available" : "No saved credential available"}</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button disabled={!draft || !dirty || busy || (draft.enabled && (!preview.data || preview.isFetching || preview.isError))} onClick={() => draft && save.mutate(draft, { onSuccess: (result) => setDraft(result.settings) })}>{save.isPending ? "Saving…" : "Save memory settings"}</Button>
-          <Button disabled={!loaded || busy || !dirty} onClick={() => status.data && setDraft(status.data.settings)}>Discard unsaved changes</Button>
+          <Button disabled={!draft || !dirty || busy || (draft.enabled && (!preview.data || preview.isFetching || preview.isError))} onClick={() => draft && save.mutate(draft, { onSuccess: (result) => setDraft(displaySettings(result.settings)) })}>{save.isPending ? "Saving…" : "Save memory settings"}</Button>
+          <Button disabled={!loaded || busy || !dirty} onClick={() => status.data && setDraft(displaySettings(status.data.settings))}>Discard unsaved changes</Button>
           <Button disabled={!loaded || dirty || busy || active || runNow.isPending || !status.data?.settings.timezone || !status.data.settings.output_folder} onClick={() => runNow.mutate(undefined, { onSuccess: (run) => setSelectedRun(run.run_id) })}>Run previous day now</Button>
         </div>
         {dirty && <p className="text-caption text-ink-muted">Unsaved changes. Save before running a report.</p>}

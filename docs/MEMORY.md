@@ -7,7 +7,7 @@ by default; no folder, timezone, model download or recipient is selected automat
 ## Configure local reports
 
 Choose an absolute output folder and an IANA timezone such as `Europe/Paris`. For scheduled
-reports, also choose a local `HH:mm` time and enable the schedule. The preview shows the first
+reports, also choose a local `HH:mm` time (hours and minutes, with no seconds field) and enable the schedule. The preview shows the first
 full calendar day and when its report becomes due. A manual run covers the preceding calendar
 day in the selected timezone. Reports use an already installed answer model; install missing
 models explicitly in Models and retry the blocked run.
@@ -72,3 +72,7 @@ quality, Obsidian inspection, separate-machine network access and an explicitly 
 Telegram test send are separate acceptance checks in `docs/TESTING.md`. This branch is not an
 updater release. The first rollout must cover varied supported machines, history density,
 timezones, folder permissions and optional Telegram usage.
+
+Paths shown and saved by Memory use forward slashes. Windows extended-path prefixes retain
+their identity and are restored to native spelling only during filesystem operations; legacy
+file-ownership records remain recognized.

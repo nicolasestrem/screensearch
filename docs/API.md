@@ -4,31 +4,33 @@ The **HTTP API** exposes ScreenSearch's search, ask, frames, sessions, where-was
 marks to scripts and agents. It is **opt-in and off by default** (0.3.0
 PR7; the sessions surface added in 0.4.0 PR6, specs `03 §7c` / `§7e`).
 
-> **Threat model — read this before enabling.** The API binds `0.0.0.0` (all IPv4 interfaces)
-> and uses plain HTTP without transport encryption. Any token holder on a reachable host can
-> read your entire screen history. Network observers may intercept tokens and responses.
-> Use a trusted network and restrict inbound access; all-interface binding does not enforce
-> LAN-only access. ScreenSearch does not configure your firewall or router or provide public hosting.
+> **Threat model — read this before enabling.** The API uses plain HTTP without transport
+> encryption. The default bind is `127.0.0.1` (local access). If you choose a network address,
+> any token holder on a reachable host can read your entire screen history. Network observers
+> may intercept tokens and responses. Wildcard binding does not enforce LAN-only access.
+> ScreenSearch does not configure your firewall or router or provide public hosting.
 
 ## Enabling
 
-Settings → **HTTP API** → toggle on. This:
+Settings → **HTTP API** → choose a bind address and port, then toggle on.
 
-- binds `0.0.0.0:<port>` (default **43210**, configurable; the bind address is not);
-- generates a **bearer token** on first enable (shown in Settings — reveal / copy /
-  regenerate; regenerating takes effect immediately, no restart);
-- if the port is already in use, does **not** start — Settings shows a warning + an inline
-  "pick another port" retry.
+- Bind address accepts any IPv4/IPv6 literal: `127.0.0.1`, `::1`, a specific interface address,
+  or `0.0.0.0` / `::`. Hostnames, URLs and embedded ports are rejected.
+- Missing address defaults to `127.0.0.1`, including existing enabled installations. Upgrading
+  never broadens access automatically. Enabled state, token and port are preserved.
+- Port defaults to **43210**. Address/port changes persist and apply immediately.
+- A bearer token is generated on first enable; reveal, copy or regenerate it in Settings.
+  Rotation takes effect immediately without restart.
+- A bind failure is visible in Settings with guidance to correct the address/port.
 
-Existing enabled installations keep their token and enabled state on upgrade and receive a
-persistent in-app notice about the broader listener. Acknowledge it in the main window after
-reading it; hiding the app or disabling the API does not discard the pending explanation.
-Fresh installations remain disabled. Inference and the MCP client's destination stay loopback-only.
+Inference and the MCP client's destination remain loopback-only. A bind that excludes loopback
+may make local MCP unavailable; configure an appropriate loopback or wildcard listener to use MCP.
 
 ### Connecting from another computer
 
-Use the Windows computer's actual IPv4 address as `SCREENSEARCH_HOST`; `0.0.0.0` is a listen
-address, never a client destination. Local examples below continue to use `127.0.0.1`.
+First select a network-capable bind address. Use the Windows computer's actual reachable address
+as `SCREENSEARCH_HOST`; wildcard addresses are never client destinations. For IPv6, bracket the
+address in URLs, for example `http://[::1]:43210/v1/health`. Local examples below use `127.0.0.1`.
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "http://$SCREENSEARCH_HOST:43210/v1/health"

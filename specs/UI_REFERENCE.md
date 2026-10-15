@@ -209,24 +209,19 @@ ships with only the happy path; no mock data; no "Coming Soon."
 | Settings | — | save failed → keep form, explain | model downloading (progress) | optimistic + reconcile |
 | Settings · Performance throttle (0.2.1) | toggle OFF → readout collapsed to "Throttle disabled" (empty-off) | status probe failed → "Pressure unavailable", keep toggle + fields | partial: GPU unmonitored → CPU% shown + honest "GPU not monitored" | master toggle + live CPU/GPU + level readout + 8 threshold fields; loading = skeleton readout; populated = live CPU/GPU% + level (Normal/High/Sustained) |
 | Flow overlay (0.3.0) | empty query → where-was-i strip ("Jump back: *repo* — VS Code, until 14:32") or honest "Nothing to resume yet" | search/ask cmd failed → inline retry, overlay stays open | results streaming / Ask tokens arriving | frameless always-on-top; loading = skeleton rows; populated = top-N results with thumbnails; `Esc`/blur dismiss; five states like every view |
-| Settings · HTTP API (Gate A network contract) | toggle OFF → "API disabled" (empty-off); nothing listens | port in use on enable → **loud warning + toast + inline "pick another port"**; save failed → keep form | enabling → binding | master toggle + port field + token reveal/copy/regenerate + threat-model copy; populated = "listening on 0.0.0.0:<port> (all IPv4 interfaces)"; explain that clients use the computer’s actual address; local clients use 127.0.0.1 |
+| Settings · HTTP API (Gate A network contract) | toggle OFF → "API disabled" (empty-off); nothing listens | port in use on enable → **loud warning + toast + inline "pick another port"**; save failed → keep form | enabling → binding | master toggle + IPv4/IPv6 literal address field (default 127.0.0.1) + port field + token reveal/copy/regenerate + threat-model copy; populated = actual listen address/port; changes apply immediately; distinguish wildcard listen addresses from usable client destinations |
 | Tray (0.3.2) | — (icon present whenever the app runs) | capture error → error glyph/tint; menu still operates | paused → paused glyph/tint | passive state only — no notifications, no counts (`03 §7d`); menu actions round-trip through existing commands |
 | Updater indicator (0.3.2) | no update → **zero presence** (nothing rendered) | check/download failed → quiet App-section line ("couldn't check for updates" + retry), never a modal | downloading → indicator present, App line reflects it | presence, never a count; install only on user-initiated restart (`03 §11b`) |
 | Settings · App (0.3.2) | — | startup-registration or update-check failure → inline explain + retry, form kept | update downloading → status line reflects it | run-at-startup + close-to-tray apply optimistic + reconcile, like the rest of Settings |
 
-**API threat model and enabled-upgrade notice (Gate A, 2026-10-15).** Settings states that
-the API is plain HTTP without transport encryption and any reachable token holder can read the
-user’s history. Explain default-off, token regeneration, user-managed firewall access, and no
-public hosting; do not imply all-interface means LAN-only. Keep the listen address separate from
-a usable client URL. Existing enabled profiles retain their choice and get a one-time visible
-in-app notice on upgrade with the same consequences and a path to disable in Settings. Present
-it when the main window is visible, not invisibly during tray startup; persist completion only
-after explicit user acknowledgement in the visible main window. A pending notice survives restart
-and API disable; if already disabled, explain the prior broader bind and current disabled state
-honestly. Rendering, closing the window or hiding in the tray never acknowledges it. An
-acknowledgement save failure keeps the notice pending and shows an error (`03 §8`). Use existing accessible primitives/tokens and overlay layering (no CLS).
-This is a security-boundary explanation, not a productivity nudge or an authorization for scheduled
-notifications. Verify visibility, restart persistence and Settings state in the running Windows app.
+**API address and threat model (configurable-bind correction).** Default off, with missing
+bind address defaulting to `127.0.0.1` even for existing enabled installations. Allow any IPv4/IPv6
+literal, including specific interfaces and wildcards; reject invalid input visibly. Address and
+port changes persist and apply immediately. Display the actual listener or bind error honestly.
+Explain plain HTTP, reachable token holders' full-history access, token regeneration, and
+user-managed firewall access. A wildcard does not enforce LAN-only access. IPv6 client URLs use
+brackets. Preserve accessible controls, loading/error/off/listening states and token privacy.
+The earlier automatic-broadening upgrade notice and acknowledgement flow are removed.
 
 Loading uses skeletons that match final layout (no spinner-only screens). Empty states are
 **invitations to act**, not mood.

@@ -20,10 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   saved-report rendering, durable per-chunk receipts and explicit ambiguous-delivery handling.
 - Approved contract for durable daily memory reports and user-selected local Markdown output;
   implementation and native acceptance are tracked separately from the network API build.
-- Reviewed contract for an opt-in network HTTP API, including an upgrade notice for
-  existing enabled installations. Implementation and native acceptance are tracked separately.
-- Persistent upgrade notice for existing enabled API profiles, with explicit acknowledgement
-  in the visible main window and guidance for disabling access.
 - README "Inspirations & prior art" section crediting screenpipe, Rewind.ai, Rem, and OpenRecall.
 - Cleanup regression evidence and a reproducible local unsigned Windows installer
   build record in `specs/05_BUILD_REVIEW.md`.
@@ -31,10 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Restored the original privacy statement in `specs/01_PROJECT_CONTEXT.md` at the
   maintainer's request; API and delivery details remain in their feature documentation.
-- The opt-in HTTP API now listens on all IPv4 interfaces (`0.0.0.0`). It remains off by
-  default, requires bearer authentication, and uses plain HTTP. Existing enabled installations
-  retain their enabled state and token; reachable token holders can read history. MCP and
-  inference still use loopback. No firewall or router settings are changed automatically.
+- The opt-in HTTP API accepts a configurable IPv4/IPv6 literal bind address. Missing addresses
+  default to `127.0.0.1`, including existing enabled installations, so upgrades do not broaden
+  access automatically. Address/port edits apply immediately; bearer authentication, plain HTTP,
+  Windows exclusive binding and MCP/inference loopback restrictions remain.
+- Daily schedule input uses hour/minute precision (`HH:mm`), with no seconds field.
+- New memory settings and delivery paths use forward slashes; legacy file-ownership paths
+  remain recognized. Windows-only file operations and the database schema are unchanged.
 - The memory/reporting execution plan now targets configurable product behavior and validation
   across supported user environments. Native acceptance remains separate from build verification.
 

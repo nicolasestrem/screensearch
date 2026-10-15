@@ -316,7 +316,7 @@ export function useMarks(enabled = true) {
   return useMaybeOverride(q, queryKeys.marks);
 }
 
-/** API status for Settings and the upgrade notice (`03 §7c`). Mutations and the
+/** API status for Settings (`03 §7c`). Mutations and the
  *  startup `api_status_changed` event refresh this shared cache. */
 export function useApiStatus() {
   const q = useQuery<ApiStatus>({

@@ -163,3 +163,16 @@ here. Windows build/clippy/tests and binding freshness are verified by GitHub CI
 on Rust 1.95.0. Dependabot alert #4 (quinn-proto, GHSA-4w2j-m93h-cj5j) must move
 to fixed after merge; do not dismiss or suppress it. This update does not itself
 publish a new installer or update existing installations.
+
+## 2026-10-15 — configurable API and minute-only schedule correction
+
+The earlier automatic all-interface upgrade behavior is superseded: missing
+`api.bind_address` stays `127.0.0.1`, including enabled installations. Users select a literal
+IPv4/IPv6 address explicitly. Native HTTP tests cover loopback and selected wildcard/IPv6
+listeners; separate-machine and interactive Settings acceptance remain open (owner: maintainer,
+before release). Schedule controls and displayed report times use hour/minute precision.
+
+New settings and delivery paths use forward slashes. Native filesystem boundaries restore
+Windows verbatim/device prefix syntax so normalization does not reinterpret extended paths.
+Real Windows tests cover ordinary and verbatim atomic create/replace/read, plus legacy file
+ownership lookup and transactional separator normalization. The app remains Windows-only.

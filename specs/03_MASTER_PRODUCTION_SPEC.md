@@ -43,7 +43,7 @@ screensearch-v2c/
 │   ├── textfilter/            # attention-first span classifier → filtered content_text (0.2.x, §3b)
 │   ├── sysmon/                # PressureProbe (CPU GetSystemTimes + GPU PDH) for the enrichment throttle
 │   ├── doctor/                # environment smoke-check: WebView2 / Vulkan / llama-server
-│   ├── api/                   # opt-in HTTP API (axum, all IPv4, bearer token; Gate A contract) + export (0.3.0, §7c)
+│   ├── api/                   # opt-in HTTP API (axum, configurable IPv4/IPv6, default loopback, bearer token) + export (0.3.0, §7c)
 │   └── mcp/                   # → screensearch-mcp.exe: stdio MCP wrapper over the HTTP API (0.3.0, D13)
 ├── ui/                        # React 18 + TS + Vite ("Command Deck")
 ├── specs/
@@ -516,10 +516,9 @@ duplicates). **Commands** (UI → core):
 | `resolve_mark` | `mark_id` → `()` (0.3.0; resolve = done, dismiss = resolve-no-action — `§7b`) |
 | `set_mark_note` | `{ mark_id, note }` → `()` (0.3.0; attaches the optional toast note **after the fact** — the mark row is inserted at hotkey-press time and the note arrives seconds later from the confirmation toast — `§7b`) |
 | `export_data` | `ExportRequest` → `ExportResult` (0.3.0; Settings "Export…"; same code path as `GET /v1/export`, works with the API off — `§7c`/D12) |
-| `set_api_config` | `{ enabled, port? }` → `ApiStatus` (0.3.0; enable/disable + port; bind failure is loud + guided-change — `§7c`) |
+| `set_api_config` | `{ enabled, port?, bind_address? }` → `ApiStatus` (enable/disable + IP literal + port; bind failure is loud + guided-change — `§7c`) |
 | `get_api_status` | `()` → `ApiStatus` (0.3.0; enabled, bound port, token-present — `§7c`) |
 | `regenerate_api_token` | `()` → `ApiStatus` (0.3.0; new bearer token — `§7c`) |
-| `acknowledge_api_network_notice` | `()` → `ApiStatus` (Gate A; explicit visible main-window acknowledgement only — `§8`) |
 | `list_sessions` | `SessionQuery` → `Session[]` (0.4.0 PR5; filters kind/tool/`TimeRange`/limit; also the Timeline session-bands data source — `§7e`, `UI_REFERENCE §3`) |
 | `get_session` | `session_id` → `SessionDetail` (0.4.0 PR5; span + tool/host + exchanges; `include_summary` triggers lazy generation — `§7e`) |
 | `session_recap` | `session_id` → report (0.4.0 PR5; the existing **§8b report engine** scoped to the session's time range + frames — no new summarization machinery, D3) |
@@ -610,41 +609,38 @@ A new crate `crates/api` (axum; behind a trait, wired in the composition root, *
 all** unless enabled) exposes the same core queries over HTTP for scripts/agents on reachable hosts. It reuses
 `hybrid_search`, the ask pipeline, the where-was-i heuristic (§7b), and marks — no new retrieval code.
 
-**Posture (Gate A API amendment; supersedes only D11’s loopback binding rule).** Default **OFF**
-(`api.enabled` = false). When enabled it binds **`0.0.0.0`, all IPv4 interfaces, hard-coded**
-(not a setting or a private-interface restriction). Clients connect to the computer’s actual
-address; local clients use `127.0.0.1`, never `0.0.0.0` as a destination. Every request, including
-health and unknown routes, requires a **bearer token**, generated on first enable, stored in
-settings, shown/copyable/regenerable in Settings; a request without or with a wrong token gets **401**.
-Default port **43210** (`api.port`, configurable). **Port-bind failure = loud + guided change:** if the
-port is already in use on enable, the API does **not** start, a visible Settings warning + toast fire,
-and the Settings API panel offers an inline "port in use — pick another" retry (mirrors the D6 hotkey
-pattern; never a silent no-op — resolved gap, `07`). Threat model stated plainly in the spec, the
-Settings UI, and docs: *this API uses plain HTTP, without transport encryption. Any token holder
-on a host that can reach this computer can read your entire screen history; tokens and responses
-can be intercepted on the network. Enabling it is an explicit trust decision.* No wildcard CORS,
-cookie authentication or token-bearing URLs. An unauthenticated unknown path returns 401; the same
-path with a valid token returns 404. Existing tokens, rotation, port selection, disable/re-enable
-and bind-failure behavior are preserved.
+**Posture (configurable-bind correction; supersedes the earlier Gate A wildcard default).**
+Default **OFF** (`api.enabled=false`). `api.bind_address` accepts any IPv4 or IPv6 address
+literal, including loopback, a specific interface, or a wildcard (`0.0.0.0` / `::`). Missing
+values default to **`127.0.0.1`**, including existing enabled profiles; an upgrade must never
+broaden access automatically. Reject hostnames, URLs, ports and invalid literals visibly.
+Address and port changes persist and apply immediately; preserve enabled intent and surface
+bind failures with guided correction. Clients use an actual reachable address, never a wildcard
+listen address. IPv6 URLs bracket the address, for example `http://[::1]:43210`.
+Every request, including health and unknown routes, requires a bearer token. Tokens are generated
+on first enable and remain revealable, copyable and regenerable in Settings. Missing/wrong tokens
+return 401; authenticated unknown routes return 404. Default port is 43210. Rotation takes effect
+without restart. Preserve disable/re-enable behavior and Windows exclusive socket ownership.
+Settings reports the configured address and actual listening/error state honestly.
 
-**Upgrade and visibility.** An existing profile with `api.enabled=true` keeps it enabled and
-acquires the broader bind on upgrade. Display a **one-time visible in-app notice**, including the
-all-interface/plain-HTTP/history-access consequences and the Settings disable control. Do not
-consume the notice while the app is hidden in the tray: persist completion only after the user
-explicitly acknowledges it in the visible main window. Fresh profiles remain off and see the same threat model before enabling. Settings
-and release notes explain the change. Notice persistence uses the existing settings store, no
-schema migration; the internal marker and acknowledgement contract are defined in §8.
+The API uses plain HTTP without transport encryption. With a non-loopback bind, any token holder
+on a reachable host can read the entire screen history, and network observers may intercept tokens
+and responses. Network binding is an explicit user configuration decision. No wildcard CORS,
+cookie authentication or token-bearing URLs. No upgrade notice or acknowledgement is necessary:
+profiles lacking the new key retain loopback exposure; the earlier automatic-broadening notice
+contract is superseded and its internal marker is no longer used.
 
 **Network boundary.** This is not public hosting. No automatic firewall changes, router port
 forwarding or inference exposure. Document a user-managed Windows inbound-allow step and explain
-that 200/401 is an HTTP result while a timeout can indicate routing/firewall failure. An all-IPv4
+that 200/401 is an HTTP result while a timeout can indicate routing/firewall failure. A wildcard
 bind itself does not guarantee LAN-only reachability. MCP’s loopback-only destination validation
 and default URL stay unchanged; remote MCP needs its own amendment. Scheduled reports, vault
 writes, report endpoints and Telegram are outside this increment.
 
-**Acceptance for the network increment.** Assert the actual bound socket is IPv4 unspecified;
-connect via `127.0.0.1` plus its port in API/MCP fixtures. Prove disabled means no listener,
-authentication covers all routes, enabled upgrades show the notice once, token rotation takes
+**Acceptance for the network increment.** Assert actual bound sockets for IPv4/IPv6 loopback,
+specific-interface and wildcard configurations; connect to usable addresses in API/MCP fixtures.
+Prove missing-key enabled upgrades remain on `127.0.0.1`, invalid addresses fail visibly, disabled
+means no listener, authentication covers all routes, address changes apply immediately, and token rotation takes
 effect without restart, bind errors remain visible and status reports the listen address honestly.
 On Windows claim the API port with `SO_EXCLUSIVEADDRUSE` before bind: a wildcard listener
 must reject an existing loopback/interface-specific listener as well as another wildcard
@@ -966,26 +962,19 @@ warning + toast**, never silent — D6) · `overlay.max_results` (8, clamped `1.
 `marks.hotkey` (`Ctrl+Alt+M` — mark-this-moment; same loud registration-failure handling as
 `overlay.hotkey` — D6) ·
 `api.enabled` (false — master switch; the API crate is **not constructed** unless on — D11) ·
-`api.port` (43210, clamp 1024..=65535 — Gate A bind is `0.0.0.0`, all IPv4, **hard-coded, not a setting**; a
-bind failure is **loud + guided-change**, `§7c`) ·
+`api.bind_address` (`127.0.0.1` when missing — any IPv4/IPv6 literal, immediate apply, `§7c`) ·
+`api.port` (43210, clamp 1024..=65535; a bind failure is **loud + guided-change**, `§7c`) ·
 `api.token` (generated on first enable; the bearer token, regenerable in Settings — never blank while
 enabled).
 
-**Gate A API upgrade marker (internal KV, not a user-editable preference).**
-`api.network_notice_state` has values `pending` or `acknowledged`; absence identifies a profile
-not yet processed by this upgrade. On startup, atomically persist the initial state: absent plus
-`api.enabled=true` becomes `pending`; absent plus disabled becomes `acknowledged` (the current
-Settings threat model covers a subsequent first enable). Existing values are preserved across
-restart. `pending` stays pending even if the API is later disabled: the notice explains the prior
-broader bind, reports the current API state honestly, and offers the Settings disable control when
-applicable. A hidden/tray startup, rendering the notice, dismissing the window, or disabling the
-API must never consume it. Only explicit user acknowledgement in the visible main window changes
-`pending` to `acknowledged`. A persistence failure leaves the notice pending and surfaces an error.
-`ApiStatus.network_notice_pending: bool` exposes this state through generated bindings. The typed
-`acknowledge_api_network_notice` IPC command persists acknowledgement only for the visible
-main-window user action and returns the updated `ApiStatus`; no background acknowledgement or
-remote HTTP acknowledgement route. This uses the existing settings KV table, with no schema
-migration and no new API mode.
+`ApiStatus.bind_address: String` reports the canonical configured IP literal. The optional
+`set_api_config.bind_address` preserves the current value when omitted; supplied values are
+validated before mutation.
+
+**API bind compatibility.** Missing `api.bind_address` defaults to `127.0.0.1` for both
+fresh and existing profiles. Preserve enabled state, token and port. The superseded
+`api.network_notice_state` key is ignored; no acknowledgement command or notice status remains.
+This preference uses the existing settings KV table and needs no schema migration.
 
 Startup completion emits `api_status_changed` with a null/unit payload so the main UI
 invalidates its status query even if the first read preceded startup binding. The event never
@@ -1084,7 +1073,7 @@ system-local zone. Optional values serialize as null, not invented placeholders.
   without private content or credentials. IPC returns structured errors; existing legacy report
   commands may retain their string-error adapter. No report HTTP error surface is added.
 - `ReportScheduleConfig { enabled: bool, local_time: Option<String>, timezone: Option<String>,
-  output_folder: Option<String> }`. Defaults false/null/null/null. Local time is strict `HH:mm`;
+  output_folder: Option<String> }`. Defaults false/null/null/null. Local time is strict `HH:mm` (hour/minute precision only; no seconds input);
   output folder is absolute. Enable requires valid time/zone/folder; save failure preserves the
   previous configuration. Manual Run now requires selected zone/folder but not an enabled schedule.
 - `SavedReport { markdown: String, model: Option<String>, frame_ids: Vec<i64>,
@@ -1464,3 +1453,11 @@ Each item is demonstrated with verbatim command output or a described-and-perfor
 
 *Next layer:* `04_CLAUDE_CODE_BUILD_PROMPT.md` — how the agent operates against `00`–`03`
 (reading order, source-of-truth, build order, guardrails, stop-at-ambiguity).
+
+
+### Memory path normalization correction (2026-10-15)
+
+New memory settings, delivery destination snapshots and receipt/recovery paths use forward
+slashes. Read legacy backslash ownership paths compatibly and persist canonical ownership keys
+transactionally to avoid duplicate ownership/conflict records. This is Windows-only path
+normalization; preserve native atomic file operations. No schema migration is required.
