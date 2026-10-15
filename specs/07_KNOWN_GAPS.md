@@ -1,5 +1,12 @@
 # 07 — Known Gaps
 
+## 2026-10-15 — PR #123 review verification boundary
+
+Linux kernel/store tests and targeted clippy do not establish native memory-worker, credential,
+atomic-file or startup behavior. The new src-tauri regressions need Windows CI; real installed-model,
+recipient-change delivery and rendered UI acceptance remain manual gates. No live Telegram send
+was authorized or attempted for review fixes. Existing npm development advisories remain unchanged.
+
 ## 2026-10-15 — Report policies approved
 
 The previously recorded C–E policy questions are resolved by the explicit "Sure GO" approval;

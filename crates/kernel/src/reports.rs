@@ -107,7 +107,9 @@ struct EvidenceFrame {
 }
 
 /// Generates a recall report over `[start, end)` (`03 §8b`). `range`/`prompt` select
-/// the retrieval path and framing; `cfg` carries the settings-derived knobs. Emits
+/// the retrieval path and framing; `timezone` is the saved IANA zone for durable
+/// memory reports (local calendar-day coverage grid, `03 §8c`) and `None` keeps the
+/// legacy exact-UTC behavior; `cfg` carries the settings-derived knobs. Emits
 /// progress via `progress` and cooperatively cancels (between passes) when `cancel`
 /// is set. Returns the assembled [`ReportOutput`] (markdown + citations + auditable
 /// coverage/cost metadata). Errors (a sidecar failure, or cancellation) propagate as
@@ -120,6 +122,7 @@ pub async fn generate_report(
     start: i64,
     end: i64,
     prompt: Option<&str>,
+    timezone: Option<&str>,
     cfg: ReportConfig,
     progress: Option<&ReportProgress<'_>>,
     cancel: &AtomicBool,
@@ -131,6 +134,7 @@ pub async fn generate_report(
         start,
         end,
         prompt,
+        timezone,
         cfg,
         progress,
         cancel,
@@ -171,6 +175,7 @@ pub async fn generate_session_recap(
         start,
         end,
         None,
+        None,
         cfg,
         progress,
         cancel,
@@ -187,6 +192,7 @@ async fn generate_report_scoped(
     start: i64,
     end: i64,
     prompt: Option<&str>,
+    timezone: Option<&str>,
     cfg: ReportConfig,
     progress: Option<&ReportProgress<'_>>,
     cancel: &AtomicBool,
@@ -235,10 +241,42 @@ async fn generate_report_scoped(
         let periods_total = groups.len() as u32;
         (groups, periods_total, retrieved)
     } else {
-        let grid = grid_size(start, end, MAX_PERIODS);
-        let buckets = match &scope {
-            CoverageScope::TimeRange => store.timeline_buckets(start, end, grid).await?,
-            CoverageScope::Session(frames) => session_buckets(frames, start, end, grid),
+        // Coverage grid: legacy Daily/Weekly/Custom (and any window without a saved
+        // zone) keep the uniform UTC grid. A durable memory report that carries its
+        // saved IANA zone uses local calendar-day periods instead (`03 §8c`) so a
+        // DST-transition day counts once (25 h day → one period) and N local days →
+        // N periods; long spans group whole local days to stay under `MAX_PERIODS`.
+        let (buckets, periods_total, local_days) = match (range, timezone, &scope) {
+            (ReportRange::MemoryDaily, Some(zone), CoverageScope::TimeRange) => {
+                let periods =
+                    crate::memory_schedule::local_day_grid(zone, start, end, MAX_PERIODS)?;
+                let mut buckets = Vec::with_capacity(periods.len());
+                for (bucket_start, bucket_end) in periods {
+                    // One count query per local-day period (`bucket_count = 1`
+                    // returns the whole period as a single sparse bucket), mirroring
+                    // the existing per-period sampling query below.
+                    let count = store
+                        .timeline_buckets(bucket_start, bucket_end, 1)
+                        .await?
+                        .first()
+                        .map_or(0, |bucket| bucket.count);
+                    buckets.push(TimelineBucket {
+                        start: bucket_start,
+                        end: bucket_end,
+                        count,
+                    });
+                }
+                let total = buckets.len() as u32;
+                (buckets, total, true)
+            }
+            _ => {
+                let grid = grid_size(start, end, MAX_PERIODS);
+                let buckets = match &scope {
+                    CoverageScope::TimeRange => store.timeline_buckets(start, end, grid).await?,
+                    CoverageScope::Session(frames) => session_buckets(frames, start, end, grid),
+                };
+                (buckets, grid, false)
+            }
         };
         let total_in_range: u64 = buckets.iter().map(|b| u64::from(b.count)).sum();
         let counts: Vec<u32> = buckets.iter().map(|b| b.count).collect();
@@ -271,8 +309,14 @@ async fn generate_report_scoped(
             .collect();
         let texts = store.ocr_texts(&all_ids).await?;
         let mut groups = Vec::new();
-        for (b, frames) in buckets.iter().zip(periods_frames) {
-            let day = ((b.start - start) / DAY_MS + 1).max(1);
+        for (index, (b, frames)) in buckets.iter().zip(periods_frames).enumerate() {
+            let day = if local_days {
+                // Local calendar periods are consecutive; the index is the local day
+                // ordinal (25 h/23 h days still count once).
+                index as i64 + 1
+            } else {
+                ((b.start - start) / DAY_MS + 1).max(1)
+            };
             let chunks: Vec<RetrievedChunk> = frames
                 .into_iter()
                 .filter_map(|f| {
@@ -294,7 +338,7 @@ async fn generate_report_scoped(
                 });
             }
         }
-        (groups, grid, total_in_range)
+        (groups, periods_total, total_in_range)
     };
 
     let frames_sampled: usize = groups.iter().map(|g| g.chunks.len()).sum();
@@ -730,20 +774,20 @@ mod provenance_tests {
 }
 
 fn final_instruction(range: ReportRange, prompt: Option<&str>, start: i64, end: i64) -> String {
-    if range == ReportRange::MemoryDaily {
-        let timestamp = |value| {
-            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(value)
-                .map(|date| date.to_rfc3339())
-                .unwrap_or_else(|| value.to_string())
-        };
-        return format!("Write memory for the selected window [{} inclusive, {} exclusive]. Use the headings Activity, Explicitly evidenced decisions, Open questions, and Next steps. Include only supported facts; distinguish tentative screen text from commitments. If a section has no evidence, say so. Use the exact selected bounds rather than relative claims about today.", timestamp(start), timestamp(end));
-    }
     let base = match range {
+        // Durable memory framing (`03 §8c`): exact selected bounds and fixed headings;
+        // the prompt is deliberately ignored (there is no user prompt for memory).
+        ReportRange::MemoryDaily => {
+            let timestamp = |value| {
+                chrono::DateTime::<chrono::Utc>::from_timestamp_millis(value)
+                    .map(|date| date.to_rfc3339())
+                    .unwrap_or_else(|| value.to_string())
+            };
+            return format!("Write memory for the selected window [{} inclusive, {} exclusive]. Use the headings Activity, Explicitly evidenced decisions, Open questions, and Next steps. Include only supported facts; distinguish tentative screen text from commitments. If a section has no evidence, say so. Use the exact selected bounds rather than relative claims about today.", timestamp(start), timestamp(end));
+        }
         ReportRange::Daily => "Write the recall report for today.",
         ReportRange::Weekly => "Write the recall report for the last 7 days.",
-        ReportRange::Custom | ReportRange::MemoryDaily => {
-            "Write the recall report for the selected range."
-        }
+        ReportRange::Custom => "Write the recall report for the selected range.",
     };
     match prompt {
         Some(p) => format!("{base} Focus on: {p}"),
@@ -1005,6 +1049,7 @@ mod tests {
             0,
             DAY_MS,
             None,
+            None,
             cfg(),
             None,
             &cancel,
@@ -1061,6 +1106,7 @@ mod tests {
             0,
             DAY_MS,
             Some("framing must never turn this into a relevance query"),
+            None,
             cfg(),
             None,
             &AtomicBool::new(false),
@@ -1090,6 +1136,7 @@ mod tests {
             DAY_MS,
             2 * DAY_MS,
             None,
+            None,
             cfg(),
             None,
             &cancel,
@@ -1102,6 +1149,7 @@ mod tests {
             ReportRange::MemoryDaily,
             DAY_MS,
             2 * DAY_MS,
+            None,
             None,
             cfg(),
             None,
@@ -1135,6 +1183,7 @@ mod tests {
             0,
             DAY_MS,
             None,
+            None,
             config,
             None,
             &AtomicBool::new(false),
@@ -1162,6 +1211,7 @@ mod tests {
             ReportRange::Daily,
             0,
             DAY_MS,
+            None,
             None,
             cfg(),
             None,
@@ -1194,6 +1244,7 @@ mod tests {
             ReportRange::Daily,
             0,
             DAY_MS,
+            None,
             None,
             cfg(),
             None,
@@ -1258,6 +1309,7 @@ mod tests {
             0,
             7 * DAY_MS,
             None,
+            None,
             cfg(),
             None,
             &cancel,
@@ -1308,6 +1360,7 @@ mod tests {
             0,
             7 * DAY_MS,
             None,
+            None,
             cfg(),
             None,
             &cancel,
@@ -1344,6 +1397,7 @@ mod tests {
             ReportRange::Daily,
             0,
             DAY_MS,
+            None,
             None,
             cfg(),
             None,
@@ -1456,5 +1510,177 @@ mod tests {
         assert_eq!(out.mode, ReportMode::Empty);
         assert_eq!(out.passes, 0);
         assert_eq!(calls.load(Ordering::Relaxed), 0);
+    }
+
+    // ---- Local calendar-day memory grid (`03 §8c`) ----
+
+    fn stamp(value: &str) -> i64 {
+        chrono::DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .timestamp_millis()
+    }
+
+    #[tokio::test]
+    async fn memory_grid_counts_a_25h_dst_day_as_one_period() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        // Europe/Paris fall-back day 2026-10-25: local 00:00 +02:00 → next local 00:00
+        // +01:00 is a 25 h span that the legacy UTC grid ceil-divides into 2 periods.
+        let start = stamp("2026-10-24T22:00:00Z");
+        let end = stamp("2026-10-25T23:00:00Z");
+        assert_eq!(end - start, 25 * 3_600_000);
+        seed_day(&store, start + 3_600_000, 2).await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let answer = FakeAnswer { calls, big: false };
+        let cancel = AtomicBool::new(false);
+
+        let memory = generate_report(
+            &store,
+            &answer,
+            ReportRange::MemoryDaily,
+            start,
+            end,
+            None,
+            Some("Europe/Paris"),
+            cfg(),
+            None,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        assert_eq!(memory.periods_total, 1, "a 25 h local day is one period");
+        assert_eq!(memory.periods_covered, 1);
+        assert_eq!(memory.frames_sampled, 2);
+
+        // Legacy default (no saved zone) keeps the uniform UTC grid: ceil(25 h / 24 h) = 2.
+        let legacy = generate_report(
+            &store,
+            &answer,
+            ReportRange::MemoryDaily,
+            start,
+            end,
+            None,
+            None,
+            cfg(),
+            None,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            legacy.periods_total, 2,
+            "legacy UTC grid behavior is unchanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_week_has_exactly_seven_local_day_periods_across_dst() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        // Seven Europe/Paris local days 2026-10-21 00:00 → 2026-10-28 00:00, one of
+        // them the 25 h fall-back day: 7 local periods (legacy UTC grid: ceil(169 h/24 h)=8).
+        let start = stamp("2026-10-20T22:00:00Z");
+        let end = stamp("2026-10-27T23:00:00Z");
+        let periods =
+            crate::memory_schedule::local_day_grid("Europe/Paris", start, end, 31).unwrap();
+        assert_eq!(periods.len(), 7);
+        for (period_start, _) in &periods {
+            seed_day(&store, period_start + 3_600_000, 1).await;
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let answer = FakeAnswer { calls, big: false };
+        let cancel = AtomicBool::new(false);
+
+        let memory = generate_report(
+            &store,
+            &answer,
+            ReportRange::MemoryDaily,
+            start,
+            end,
+            None,
+            Some("Europe/Paris"),
+            cfg(),
+            None,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            memory.periods_total, 7,
+            "seven local days are seven periods"
+        );
+        assert_eq!(memory.periods_covered, 7);
+        assert_eq!(memory.frames_sampled, 7);
+
+        let legacy = generate_report(
+            &store,
+            &answer,
+            ReportRange::MemoryDaily,
+            start,
+            end,
+            None,
+            None,
+            cfg(),
+            None,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            legacy.periods_total, 8,
+            "legacy UTC grid behavior is unchanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_grid_handles_spring_forward_and_a_partial_local_day() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let answer = FakeAnswer { calls, big: false };
+        let cancel = AtomicBool::new(false);
+
+        // 2026-03-29 (Europe/Paris) is a 23 h spring-forward day → one period.
+        let short_start = stamp("2026-03-28T23:00:00Z");
+        let short_end = stamp("2026-03-29T22:00:00Z");
+        assert_eq!(short_end - short_start, 23 * 3_600_000);
+        seed_day(&store, short_start + 3_600_000, 1).await;
+        let short = generate_report(
+            &store,
+            &answer,
+            ReportRange::MemoryDaily,
+            short_start,
+            short_end,
+            None,
+            Some("Europe/Paris"),
+            cfg(),
+            None,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        assert_eq!(short.periods_total, 1, "a 23 h local day is one period");
+        assert_eq!(short.periods_covered, 1);
+
+        // A partial local day (window frozen mid-day) is still exactly one period.
+        let partial_start = stamp("2026-03-29T22:00:00Z"); // 2026-03-30 00:00 +02:00
+        let partial_end = stamp("2026-03-30T08:00:00Z"); // 10 h into the local day
+        seed_day(&store, partial_start + 3_600_000, 1).await;
+        let partial = generate_report(
+            &store,
+            &answer,
+            ReportRange::MemoryDaily,
+            partial_start,
+            partial_end,
+            None,
+            Some("Europe/Paris"),
+            cfg(),
+            None,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            partial.periods_total, 1,
+            "a partial local day is one period"
+        );
+        assert_eq!(partial.periods_covered, 1);
     }
 }

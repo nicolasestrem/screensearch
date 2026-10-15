@@ -18,6 +18,9 @@ pub struct ReportExecutionRequest<'a> {
     pub start: i64,
     pub end: i64,
     pub prompt: Option<&'a str>,
+    /// Saved IANA zone for durable memory reports (`03 §8c`); the coverage grid then
+    /// follows local midnights. `None` keeps the legacy exact-UTC grid.
+    pub timezone: Option<&'a str>,
     pub config: ReportConfig,
 }
 
@@ -88,6 +91,7 @@ where
         request.start,
         request.end,
         request.prompt,
+        request.timezone,
         request.config,
         progress,
         cancel,
@@ -193,6 +197,7 @@ mod tests {
                     start: 0,
                     end,
                     prompt,
+                    timezone: None,
                     config: ReportConfig {
                         daily_top_k: 20,
                         weekly_top_k: 100,
@@ -214,6 +219,7 @@ mod tests {
                 start: 0,
                 end: 2 * DAY,
                 prompt: Some("uniquelyunmatchedquery"),
+                timezone: None,
                 config: ReportConfig {
                     daily_top_k: 20,
                     weekly_top_k: 100,
@@ -241,6 +247,7 @@ mod tests {
                 start: 10,
                 end: 20,
                 prompt: None,
+                timezone: None,
                 config: ReportConfig {
                     daily_top_k: 20,
                     weekly_top_k: 100,
@@ -296,6 +303,7 @@ mod tests {
                 start: 10,
                 end: 20,
                 prompt: None,
+                timezone: None,
                 config: ReportConfig {
                     daily_top_k: 20,
                     weekly_top_k: 100,
@@ -314,5 +322,144 @@ mod tests {
         )
         .await;
         assert!(matches!(result,Err(ReportError{code,..}) if code=="MODEL_UNAVAILABLE"));
+    }
+
+    /// A `Store` whose evidence probe is forced **positive** while its sampling surface
+    /// stays empty — the reviewer's false-NO_DATA scenario: the window holds usable
+    /// content, but the coverage sampler finds none of it. The real in-memory store
+    /// cannot express that split, so this decorator pins the probe and lets the honest-empty
+    /// sampling defaults answer (no sampling trait methods are added anywhere).
+    struct ProbeMissesSamplerStore(store::SqliteStore);
+
+    #[async_trait::async_trait]
+    impl Store for ProbeMissesSamplerStore {
+        async fn report_has_usable_content(&self, _start: i64, _end: i64) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+        async fn timeline_buckets(
+            &self,
+            _start: i64,
+            _end: i64,
+            _bucket_count: u32,
+        ) -> anyhow::Result<Vec<traits::TimelineBucket>> {
+            Ok(Vec::new())
+        }
+        async fn sample_frames_in_range(
+            &self,
+            _start: i64,
+            _end: i64,
+            _limit: u32,
+        ) -> anyhow::Result<Vec<traits::FrameMeta>> {
+            Ok(Vec::new())
+        }
+        // Required `Store` methods: delegate to a real (empty) in-memory store.
+        async fn insert_frame(&self, f: traits::NewFrame) -> traits::Result<i64> {
+            self.0.insert_frame(f).await
+        }
+        async fn insert_ocr(&self, frame_id: i64, ocr: traits::OcrResult) -> traits::Result<()> {
+            self.0.insert_ocr(frame_id, ocr).await
+        }
+        async fn insert_vision(
+            &self,
+            frame_id: i64,
+            v: traits::VisionAnalysis,
+        ) -> traits::Result<()> {
+            self.0.insert_vision(frame_id, v).await
+        }
+        async fn upsert_text_embedding(
+            &self,
+            frame_id: i64,
+            chunk_index: i32,
+            chunk_text: &str,
+            source: traits::ChunkSource,
+            emb: &traits::Embedding,
+            model: &str,
+        ) -> traits::Result<()> {
+            self.0
+                .upsert_text_embedding(frame_id, chunk_index, chunk_text, source, emb, model)
+                .await
+        }
+        async fn hybrid_search(
+            &self,
+            q: &traits::SearchQuery,
+        ) -> traits::Result<Vec<traits::SearchHit>> {
+            self.0.hybrid_search(q).await
+        }
+        async fn get_enrichment_input(
+            &self,
+            frame_id: i64,
+        ) -> traits::Result<Option<traits::FrameEnrichmentInput>> {
+            self.0.get_enrichment_input(frame_id).await
+        }
+        async fn enqueue_job(&self, job: traits::NewJob) -> traits::Result<i64> {
+            self.0.enqueue_job(job).await
+        }
+        async fn claim_jobs(
+            &self,
+            kinds: &[traits::JobKind],
+            limit: u32,
+            now: i64,
+        ) -> traits::Result<Vec<traits::Job>> {
+            self.0.claim_jobs(kinds, limit, now).await
+        }
+        async fn complete_job(&self, id: i64) -> traits::Result<()> {
+            self.0.complete_job(id).await
+        }
+        async fn fail_job(&self, id: i64, err: &str, retry_at: Option<i64>) -> traits::Result<()> {
+            self.0.fail_job(id, err, retry_at).await
+        }
+        async fn job_stats(&self) -> traits::Result<traits::JobStats> {
+            self.0.job_stats().await
+        }
+        async fn reset_stale_running_jobs(&self, older_than_ms: i64) -> traits::Result<u64> {
+            self.0.reset_stale_running_jobs(older_than_ms).await
+        }
+        async fn get_setting(&self, key: &str) -> traits::Result<Option<String>> {
+            self.0.get_setting(key).await
+        }
+        async fn set_setting(&self, key: &str, value: &str) -> traits::Result<()> {
+            self.0.set_setting(key, value).await
+        }
+        async fn delete_settings(&self, keys: &[&str]) -> traits::Result<Vec<String>> {
+            self.0.delete_settings(keys).await
+        }
+    }
+
+    /// Regression (reviewer r4285794717): a *positive* usable-content probe followed by a
+    /// coverage grid that samples nothing of it must surface GENERATION_FAILED — never a
+    /// successful NO_DATA/Empty result, which would silently discard captured evidence.
+    #[tokio::test]
+    async fn positive_probe_with_missing_sampled_content_is_generation_failed_not_no_data() {
+        let store = ProbeMissesSamplerStore(store::SqliteStore::open_in_memory().unwrap());
+        let result = execute(
+            &store,
+            ReportExecutionRequest {
+                range: ReportRange::MemoryDaily,
+                start: 0,
+                end: 86_400_000,
+                prompt: None,
+                timezone: Some("Etc/UTC"),
+                config: ReportConfig {
+                    daily_top_k: 20,
+                    weekly_top_k: 100,
+                    map_reduce_min_frames: 0,
+                    reply_budget: 2048,
+                },
+            },
+            || async { Ok(Arc::new(ReasoningOnlyAnswer) as Arc<dyn AnswerProvider>) },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await;
+        let Err(ReportError { code, message }) = result else {
+            panic!(
+                "positive probe + sampler miss must fail generation, not report an empty window"
+            );
+        };
+        assert_eq!(code, "GENERATION_FAILED");
+        assert!(
+            message.contains("despite captured evidence"),
+            "the failure must name the captured evidence, got: {message}"
+        );
     }
 }

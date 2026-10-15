@@ -229,7 +229,7 @@ impl SqliteStore {
                 let existing: Option<String> = if let Some(schedule)=&run.schedule_id {
                     tx.query_row("SELECT payload FROM report_runs WHERE schedule_id=?1 AND window_start=?2 AND window_end=?3 AND revision_of IS NULL",params![schedule,run.window_start,run.window_end],|r|r.get(0)).optional()?
                 } else if run.requested_range.is_none() {
-                    tx.query_row("SELECT payload FROM report_runs WHERE schedule_id IS NULL AND revision_of IS NULL AND window_start=?1 AND window_end=?2 AND phase IN ('queued','running','blocked') AND json_extract(payload,'$.source_id')=?3 AND json_extract(payload,'$.requested_range') IS NULL ORDER BY created_at DESC",params![run.window_start,run.window_end,run.source_id],|r|r.get(0)).optional()?
+                    tx.query_row("SELECT payload FROM report_runs WHERE schedule_id IS NULL AND revision_of IS NULL AND window_start=?1 AND window_end=?2 AND phase IN ('queued','running') AND json_extract(payload,'$.source_id')=?3 AND json_extract(payload,'$.requested_range') IS NULL ORDER BY created_at DESC",params![run.window_start,run.window_end,run.source_id],|r|r.get(0)).optional()?
                 } else { None };
                 if let Some(json)=existing {return Ok(serde_json::from_str(&json)?);}
             }
@@ -752,9 +752,10 @@ mod tests {
         legacy.phase = ReportRunPhase::Blocked;
         store.update_report_run(legacy.clone()).await.unwrap();
         legacy.run_id = "legacy-duplicate".into();
+        // Blocked is not pending: a new request in the same window becomes its own run.
         assert_eq!(
             store.create_report_run(legacy).await.unwrap().run_id,
-            "legacy"
+            "legacy-duplicate"
         );
         let mut third = explicit.clone();
         third.run_id = "explicit-after-legacy".into();
@@ -762,7 +763,7 @@ mod tests {
             store.create_report_run(third).await.unwrap().run_id,
             "explicit-after-legacy"
         );
-        assert_eq!(store.list_report_runs(10).await.unwrap().len(), 4);
+        assert_eq!(store.list_report_runs(10).await.unwrap().len(), 5);
 
         let mut changed = explicit.clone();
         changed.requested_range.as_mut().unwrap().end_date = "1970-01-02".into();
@@ -799,6 +800,52 @@ mod tests {
         assert_eq!(
             store.create_report_run(first).await.unwrap().run_id,
             "new-source"
+        );
+    }
+
+    /// A blocked previous-day run is not pending work: a new manual request in the same
+    /// window must enqueue as its own run instead of silently resolving back to the
+    /// blocked one (which would suppress the request). While the matching run IS pending
+    /// (queued/running), identical requests still collapse onto it.
+    #[tokio::test]
+    async fn blocked_previous_day_run_does_not_suppress_new_queued_request() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let mut previous_day = run("previous-day");
+        previous_day.schedule_id = None;
+        store.create_report_run(previous_day.clone()).await.unwrap();
+        previous_day.phase = ReportRunPhase::Blocked;
+        previous_day.outcome = Some(ReportOutcome::Blocked);
+        store.update_report_run(previous_day.clone()).await.unwrap();
+
+        let mut retried = previous_day.clone();
+        retried.run_id = "previous-day-requeued".into();
+        retried.phase = ReportRunPhase::Queued;
+        retried.outcome = None;
+        let created = store.create_report_run(retried).await.unwrap();
+        assert_eq!(created.run_id, "previous-day-requeued");
+        assert_eq!(created.phase, ReportRunPhase::Queued);
+        assert_eq!(store.list_report_runs(10).await.unwrap().len(), 2);
+
+        let mut concurrent = created.clone();
+        concurrent.run_id = "previous-day-concurrent".into();
+        assert_eq!(
+            store.create_report_run(concurrent).await.unwrap().run_id,
+            "previous-day-requeued"
+        );
+
+        let mut during_running = created.clone();
+        during_running.run_id = "previous-day-running".into();
+        assert!(store
+            .claim_report_run("previous-day-requeued", 2)
+            .await
+            .unwrap());
+        assert_eq!(
+            store
+                .create_report_run(during_running)
+                .await
+                .unwrap()
+                .run_id,
+            "previous-day-requeued"
         );
     }
 

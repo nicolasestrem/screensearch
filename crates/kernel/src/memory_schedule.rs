@@ -132,6 +132,63 @@ pub fn range_is_in_progress(timezone: &str, end_date: &str, window_end: i64) -> 
     Ok(window_end < end)
 }
 
+/// Local calendar-day periods for a memory report window (`03 §8c`): boundaries are
+/// consecutive local midnights in `timezone`, resolved with the same DST rules as
+/// scheduled windows (a missing wall time resolves to the first valid instant; an
+/// ambiguous one uses the earlier instant once). The first period opens at `start`
+/// and the last closes exactly at `end`, so a 25 h fall-back day is one period, a
+/// 23 h spring-forward day is one period, N local days are N periods and a partial
+/// day is one period. When the window spans more than `max_periods` local days,
+/// whole local days are grouped so a long selected range keeps a bounded, evenly
+/// spread period count (no unlimited inference).
+pub fn local_day_grid(
+    timezone: &str,
+    start: i64,
+    end: i64,
+    max_periods: u32,
+) -> Result<Vec<(i64, i64)>> {
+    if end <= start {
+        return Ok(Vec::new());
+    }
+    let zone = timezone.parse::<Tz>().context("unknown IANA time zone")?;
+    let first = utc(start)?.with_timezone(&zone).date_naive();
+    let last = utc(end - 1)?.with_timezone(&zone).date_naive();
+    let days = last.signed_duration_since(first).num_days() + 1;
+    let cap = i64::from(max_periods.max(1));
+    let group = ((days + cap - 1) / cap).max(1);
+    let mut periods = Vec::new();
+    let mut offset = 0;
+    while offset < days {
+        let period_start = if offset == 0 {
+            start
+        } else {
+            midnight(zone, first, offset)?
+        };
+        let next = offset + group;
+        let period_end = if next >= days {
+            end
+        } else {
+            midnight(zone, first, next)?
+        };
+        // A whole civil date can be skipped (e.g. Pacific/Apia); that day has no
+        // period and the surrounding periods stay contiguous.
+        if period_end > period_start {
+            periods.push((period_start, period_end));
+        }
+        offset = next;
+    }
+    Ok(periods)
+}
+
+/// Local midnight for `first + offset` days in `zone`, via the shared DST resolve.
+fn midnight(zone: Tz, first: NaiveDate, offset: i64) -> Result<i64> {
+    let offset = u64::try_from(offset).context("calendar overflow")?;
+    let date = first
+        .checked_add_days(Days::new(offset))
+        .context("calendar overflow")?;
+    resolve(zone, date.and_time(NaiveTime::MIN))
+}
+
 /// Return the seven most recent eligible overdue windows oldest first, exposing older gaps.
 /// Caller durably enqueues each unique window before advancing its persisted cursor.
 pub fn due_windows(
@@ -275,5 +332,93 @@ mod tests {
         }
         assert!(selected_range("America/Los_Angeles", "2026-01-02", "2026-01-02", now).is_err());
         assert!(selected_range("Pacific/Apia", "2011-12-30", "2011-12-30", now).is_err());
+    }
+
+    #[test]
+    fn local_day_grid_is_one_period_per_local_day_through_dst() {
+        // Fall-back day (Europe/Paris 2026-10-25) lasts 25 h and is still one period.
+        let long = local_day_grid(
+            "Europe/Paris",
+            stamp("2026-10-24T22:00:00Z"),
+            stamp("2026-10-25T23:00:00Z"),
+            31,
+        )
+        .unwrap();
+        assert_eq!(
+            long,
+            vec![(stamp("2026-10-24T22:00:00Z"), stamp("2026-10-25T23:00:00Z"))]
+        );
+        // Spring-forward day (2026-03-29) lasts 23 h and is one period.
+        let short = local_day_grid(
+            "Europe/Paris",
+            stamp("2026-03-28T23:00:00Z"),
+            stamp("2026-03-29T22:00:00Z"),
+            31,
+        )
+        .unwrap();
+        assert_eq!(short.len(), 1);
+        // Seven local days are seven periods even with the 25 h day inside, and the
+        // boundaries land exactly on local midnights (whole local-day buckets).
+        let week = local_day_grid(
+            "Europe/Paris",
+            stamp("2026-10-20T22:00:00Z"),
+            stamp("2026-10-27T23:00:00Z"),
+            31,
+        )
+        .unwrap();
+        assert_eq!(week.len(), 7);
+        assert_eq!(week[0].0, stamp("2026-10-20T22:00:00Z"));
+        assert_eq!(week[6].1, stamp("2026-10-27T23:00:00Z"));
+        assert_eq!(week[4].1 - week[4].0, 25 * 3_600_000);
+        assert_eq!(week[5].1 - week[5].0, 24 * 3_600_000);
+        let zone: Tz = "Europe/Paris".parse().unwrap();
+        for (_, end) in week.iter().take(6) {
+            assert_eq!(
+                utc(*end).unwrap().with_timezone(&zone).time(),
+                NaiveTime::MIN
+            );
+        }
+        // A partial day (window frozen mid-day) is one period.
+        let partial = local_day_grid(
+            "Europe/Paris",
+            stamp("2026-03-29T22:00:00Z"),
+            stamp("2026-03-30T08:00:00Z"),
+            31,
+        )
+        .unwrap();
+        assert_eq!(
+            partial,
+            vec![(stamp("2026-03-29T22:00:00Z"), stamp("2026-03-30T08:00:00Z"))]
+        );
+    }
+
+    #[test]
+    fn local_day_grid_caps_long_spans_by_grouping_whole_local_days() {
+        let zone: Tz = "Europe/Paris".parse().unwrap();
+        let start = stamp("2026-01-01T23:00:00Z"); // 2026-01-02 00:00 local
+        let end = resolve(
+            zone,
+            NaiveDate::from_ymd_opt(2026, 3, 3)
+                .unwrap()
+                .and_time(NaiveTime::MIN),
+        )
+        .unwrap(); // 60 local days later
+        let grid = local_day_grid("Europe/Paris", start, end, 31).unwrap();
+        assert_eq!(grid.len(), 30, "60 local days grouped 2-at-a-time under 31");
+        assert!(grid.len() <= 31);
+        assert_eq!(grid[0].0, start);
+        assert_eq!(grid[29].1, end);
+        for (_, boundary) in grid.iter().take(29) {
+            assert_eq!(
+                utc(*boundary).unwrap().with_timezone(&zone).time(),
+                NaiveTime::MIN,
+                "group boundaries stay on local midnights"
+            );
+        }
+        // Degenerate and invalid inputs stay explicit, never a panic.
+        assert!(local_day_grid("Europe/Paris", end, start, 31)
+            .unwrap()
+            .is_empty());
+        assert!(local_day_grid("Not/AZone", start, end, 31).is_err());
     }
 }

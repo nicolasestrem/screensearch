@@ -765,6 +765,7 @@ async fn generate_report(
             start: request.time_range.start,
             end: request.time_range.end,
             prompt: request.prompt.as_deref(),
+            timezone: None,
             config: cfg,
         },
         || async {
@@ -1485,6 +1486,11 @@ pub fn run() {
             let vision_slot: SharedSlot<Arc<VisionSidecar>> = Arc::new(StdMutex::new(None));
             let answer_slot: SharedSlot<Arc<AnswerSidecar>> = Arc::new(StdMutex::new(None));
             let sidecar_binary_slot: SharedSlot<PathBuf> = Arc::new(StdMutex::new(None));
+            // Memory-run worker runtime. Created before the inference task so
+            // `init_inference` can signal when model initialization settles; the
+            // worker defers generation claims until then, so a startup catch-up run
+            // cannot persist a permanent BLOCKED from a transient `answer=None`.
+            let memory_runtime = Arc::new(memory::MemoryRuntime::new());
 
             // Forward kernel events to the UI, and kick off the off-thread model loads
             // (P3 embeddings + P4 inference) — app launch is never blocked on the
@@ -1531,15 +1537,28 @@ pub fn run() {
                     Some("resolving llama-server".to_string()),
                 );
                 let dyn_store: Arc<dyn Store> = store.clone();
-                tauri::async_runtime::spawn(init_inference(
-                    kernel.clone(),
-                    dyn_store,
-                    data_dir.clone(),
-                    supervisor_slot.clone(),
-                    vision_slot.clone(),
-                    answer_slot.clone(),
-                    sidecar_binary_slot.clone(),
-                ));
+                let inference_settle = memory_runtime.clone();
+                let inference_kernel = kernel.clone();
+                let inference_data_dir = data_dir.clone();
+                let inference_supervisor = supervisor_slot.clone();
+                let inference_vision = vision_slot.clone();
+                let inference_answer = answer_slot.clone();
+                let inference_sidecar = sidecar_binary_slot.clone();
+                tauri::async_runtime::spawn(async move {
+                    init_inference(
+                        inference_kernel,
+                        dyn_store,
+                        inference_data_dir,
+                        inference_supervisor,
+                        inference_vision,
+                        inference_answer,
+                        inference_sidecar,
+                    )
+                    .await;
+                    // Settled on success and failure alike; a genuinely unavailable
+                    // model still ends as a visible BLOCKED run once claims resume.
+                    inference_settle.mark_inference_settled();
+                });
                 tauri::async_runtime::spawn(retention_sweeper(
                     store.clone(),
                     kernel.clone(),
@@ -1577,7 +1596,7 @@ pub fn run() {
                 db_path,
                 frames_dir,
                 api_runtime: Arc::new(local_api::ApiRuntime::new()),
-                memory_runtime: Arc::new(memory::MemoryRuntime::new()),
+                memory_runtime,
                 api_host,
             });
 

@@ -1,26 +1,26 @@
-//! Forward-only schema migrations (`03 Â§4/Â§12`).
+//! Forward-only schema migrations (`03 §4/§12`).
 //!
 //! The authoritative DDL lives here. Migrations are an append-only list of
 //! `(version, sql)` pairs applied in order; the current version is tracked in the
 //! `schema_version` table (created by the bootstrap in [`crate`], not by a
-//! migration). To evolve the schema, **append** a new `(n, "...")` entry â€” never
+//! migration). To evolve the schema, **append** a new `(n, "...")` entry — never
 //! edit a shipped one (no schema drift).
 
 /// The highest migration version this build knows how to reach.
 pub const LATEST_SCHEMA_VERSION: i32 = 12;
 
-/// Vector dimensionality for every embedding lane (`03 Â§3/Â§4`,
+/// Vector dimensionality for every embedding lane (`03 §3/§4`,
 /// [`traits::EmbeddingProvider::dim`]).
 pub const EMBEDDING_DIM: usize = 768;
 
 /// `frame_text.filter_version` written by PR2's interim passthrough populator
-/// (`07` #51): `0` marks "no attention filter applied â€” `content_text` is a raw copy".
+/// (`07` #51): `0` marks "no attention filter applied — `content_text` is a raw copy".
 /// PR3's classifier writes [`FILTER_VERSION`] and is bumpable to recompute the chrome
-/// catalog (`03 Â§3b`).
+/// catalog (`03 §3b`).
 pub const UNFILTERED_FILTER_VERSION: i32 = 0;
 
 /// `frame_text.filter_version` written by PR3's attention filter. Bumping this is the
-/// "recompute the chrome catalog" lever (`03 Â§3b`): on startup
+/// "recompute the chrome catalog" lever (`03 §3b`): on startup
 /// [`SqliteStore::backfill_filter_version`] re-cleans every frame below the active
 /// version against the now-warm chrome catalog (`textfilter::reconcile`), so the live
 /// classifier's cold-start window no longer leaves app/nav chrome permanently in
@@ -46,7 +46,7 @@ pub const MIGRATIONS: &[(i32, &str)] = &[
     (12, MIGRATION_V12),
 ];
 
-/// v1 â€” the full data spine (`03 Â§4`, transcribed verbatim, plus the FTS5 and
+/// v1 — the full data spine (`03 §4`, transcribed verbatim, plus the FTS5 and
 /// vector-sync triggers the spec describes in prose).
 const MIGRATION_V1: &str = r#"
 -- frames: one row per stored (changed) capture
@@ -130,7 +130,7 @@ CREATE TRIGGER image_embeddings_ad AFTER DELETE ON image_embeddings BEGIN
   DELETE FROM image_embedding_vectors WHERE image_embedding_id = old.id;
 END;
 
--- durable job queue (the heart of enrich-deferred) â€” see 03 Â§5
+-- durable job queue (the heart of enrich-deferred) — see 03 §5
 CREATE TABLE jobs (
   id           INTEGER PRIMARY KEY,
   kind         TEXT NOT NULL,               -- 'embed_text' | 'embed_image' | 'vision_tag'
@@ -154,7 +154,7 @@ CREATE TABLE frame_tags (frame_id INTEGER REFERENCES frames(id) ON DELETE CASCAD
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 "#;
 
-/// v2 â€” index supporting the vision scheduler's pending-job dedup. The
+/// v2 — index supporting the vision scheduler's pending-job dedup. The
 /// `untagged_frame_ids` query runs a correlated `NOT EXISTS` over `jobs` keyed by
 /// `frame_id` (+ `kind`/`state`) for every candidate frame; without this the subquery
 /// scans the whole `jobs` table per candidate, which degrades as completed/dead rows
@@ -163,14 +163,14 @@ const MIGRATION_V2: &str = r#"
 CREATE INDEX IF NOT EXISTS idx_jobs_frame_kind_state ON jobs(frame_id, kind, state);
 "#;
 
-/// v3 â€” 0.2.x text signal (`03 Â§3b`/`Â§4`, `docs/0.2.0.md` PR2). Splits the single
+/// v3 — 0.2.x text signal (`03 §3b`/`§4`, `docs/0.2.0.md` PR2). Splits the single
 /// unfiltered OCR string into a preserved `raw_text` layer and a filtered
 /// `content_text` layer, adds per-word `text_spans` (normalized geometry + role) and
 /// the `chrome_text_catalog` PR3's static-chrome suppression will drive.
 ///
 /// Clean-DB assumption (`07` #51): `ocr_text` is empty in every install reaching v3,
-/// so it is dropped â€” `frame_text.raw_text` becomes the single raw store
-/// (`03 Â§4` "legacy ocr_text â€¦ not required going forward"). The `DROP â€¦ IF EXISTS`
+/// so it is dropped — `frame_text.raw_text` becomes the single raw store
+/// (`03 §4` "legacy ocr_text … not required going forward"). The `DROP … IF EXISTS`
 /// form keeps the migration idempotent. `include_chrome=true` searches raw via a
 /// dedicated raw FTS5 mirror (`frame_text_raw_fts`); roles aren't populated until PR3,
 /// so a role-filtered spans FTS would be meaningless now (`05`).
@@ -213,7 +213,7 @@ CREATE TRIGGER frame_text_au AFTER UPDATE ON frame_text BEGIN
   INSERT INTO frame_text_fts(rowid, content_text) VALUES (new.frame_id, new.content_text);
 END;
 
--- raw FTS mirror (porter) â€” searched only when include_chrome=true (03 Â§3b/Â§4)
+-- raw FTS mirror (porter) — searched only when include_chrome=true (03 §3b/§4)
 CREATE VIRTUAL TABLE frame_text_raw_fts USING fts5(raw_text, content='frame_text',
                                                    content_rowid='frame_id', tokenize='porter');
 CREATE TRIGGER frame_text_raw_ai AFTER INSERT ON frame_text BEGIN
@@ -251,11 +251,11 @@ CREATE TABLE chrome_text_catalog (
   seen_count      INTEGER NOT NULL,
   first_seen_at   INTEGER NOT NULL,
   last_seen_at    INTEGER NOT NULL,
-  suppressed      INTEGER NOT NULL DEFAULT 0 CHECK (suppressed IN (0,1))  -- 0/1; marked chrome after a configurable threshold (Â§8)
+  suppressed      INTEGER NOT NULL DEFAULT 0 CHECK (suppressed IN (0,1))  -- 0/1; marked chrome after a configurable threshold (§8)
 );
 "#;
 
-/// v4 â€” PR3 attention filter (`03 Â§3b`, `docs/0.2.0.md` PR3). Carries the OCR
+/// v4 — PR3 attention filter (`03 §3b`, `docs/0.2.0.md` PR3). Carries the OCR
 /// `line_index` onto each span so the classifier groups words into lines exactly
 /// (the engine already computed line boundaries; PR2 flattened spans to words and
 /// dropped them). Clean-DB: `text_spans` is empty at v4, so the `DEFAULT 0` only
@@ -265,7 +265,7 @@ const MIGRATION_V4: &str = r#"
 ALTER TABLE text_spans ADD COLUMN line_index INTEGER NOT NULL DEFAULT 0;
 "#;
 
-/// v5 â€” record **why** a frame was captured (0.2.1 event-driven capture,
+/// v5 — record **why** a frame was captured (0.2.1 event-driven capture,
 /// `docs/0.2.0.md`, `07` #47/#57). Nullable: frames captured before this column
 /// existed read back as `NULL` ("unknown/legacy"); new captures always write a token
 /// from [`traits::CaptureTrigger::as_db_str`] (`timer` in the 0.2.0 timer/idle path).
@@ -280,12 +280,12 @@ ALTER TABLE frames ADD COLUMN capture_trigger TEXT
          OR capture_trigger IN ('timer','idle','foreground_change','clipboard_change','typing_pause','manual'));
 "#;
 
-/// v6 â€” widen `frames.capture_trigger`'s CHECK to admit the `click` / `scroll_stop`
+/// v6 — widen `frames.capture_trigger`'s CHECK to admit the `click` / `scroll_stop`
 /// tokens of the event-driven remainder (`docs/0.2.0.md`, `07` #47). SQLite can't alter a
 /// column's CHECK in place, so this rebuilds `frames` via the documented recipe
-/// (create-new â†’ copy â†’ drop-old â†’ rename â†’ recreate index). `frames` is a **parent**
+/// (create-new → copy → drop-old → rename → recreate index). `frames` is a **parent**
 /// table with many `ON DELETE CASCADE` children, so the rebuild is only safe with foreign
-/// keys disabled â€” otherwise `DROP TABLE frames` fires an implicit cascade DELETE that
+/// keys disabled — otherwise `DROP TABLE frames` fires an implicit cascade DELETE that
 /// wipes every child row. The migration runner ([`crate::bootstrap_and_migrate`]) disables
 /// foreign keys around the whole migration phase and runs `foreign_key_check` afterward
 /// (PRAGMA foreign_keys is a no-op inside the per-migration transaction). The `frames_new`
@@ -324,7 +324,7 @@ ALTER TABLE frames_new RENAME TO frames;
 CREATE INDEX idx_frames_captured_at ON frames(captured_at);
 "#;
 
-/// v7 â€” degrade-to-text retention (`storage.retention_days`). Adds `frames.image_purged`:
+/// v7 — degrade-to-text retention (`storage.retention_days`). Adds `frames.image_purged`:
 /// `0` while the screenshot is on disk, `1` once the retention sweep has deleted the image
 /// file but kept the row + `frame_text` + `text_spans` + embeddings as durable proof. A
 /// plain additive `ADD COLUMN` (no table rebuild): existing rows default to `0` ("image
@@ -336,11 +336,11 @@ ALTER TABLE frames ADD COLUMN image_purged INTEGER NOT NULL DEFAULT 0
   CHECK (image_purged IN (0,1));
 "#;
 
-/// v8 â€” index the degrade-to-text retention sweep. `frames_with_image_older_than` filters
+/// v8 — index the degrade-to-text retention sweep. `frames_with_image_older_than` filters
 /// `captured_at < cutoff AND image_purged = 0 ORDER BY captured_at`. Under degrade-to-text,
 /// purged rows stay in `frames` forever, so against the plain `idx_frames_captured_at` the
 /// hourly sweep would scan and skip an ever-growing prefix of already-purged history to find
-/// the current candidates (or prove there are none) â€” cost grows with all expired history. A
+/// the current candidates (or prove there are none) — cost grows with all expired history. A
 /// **partial** index over `captured_at` restricted to `image_purged = 0` contains only the
 /// candidate rows (and shrinks as frames degrade), so the sweep is O(matched), independent of
 /// how much purged history has accumulated. SQLite uses it whenever the query's `WHERE`
@@ -350,18 +350,18 @@ CREATE INDEX IF NOT EXISTS idx_frames_image_retention
   ON frames(captured_at) WHERE image_purged = 0;
 "#;
 
-/// v9 â€” 0.3.0 PR4: remove the image-embedding lane (`03 Â§4` "0.3.0 migrations",
+/// v9 — 0.3.0 PR4: remove the image-embedding lane (`03 §4` "0.3.0 migrations",
 /// `docs/0.3.0.md` PR4, D5). The lane was dark-launched and flag-off
 /// (`enrich.image_embeddings`, default false), so this destroys **derived,
-/// re-derivable vectors only** â€” frames, stored images, text, and text embeddings are
+/// re-derivable vectors only** — frames, stored images, text, and text embeddings are
 /// untouched. Dropping `image_embeddings` takes its `image_embeddings_ad` vec0-sync
 /// trigger with it (a `DROP TABLE` fires no `AFTER DELETE` triggers), and dropping the
 /// `image_embedding_vectors` vec0 virtual table also removes its shadow tables (sqlite-vec
-/// is loaded on every connection before open â€” [`crate::register_vec_extension`]).
+/// is loaded on every connection before open — [`crate::register_vec_extension`]).
 /// `embed_image` jobs are deleted in **any** state: the kind no longer exists and
 /// [`traits::JobKind`] can no longer parse it, so a leftover row would fail
 /// `kind_from_token` at claim/list time. Deliberately **no** `jobs.kind` CHECK and **no**
-/// jobs-table rebuild (`07` #82 â€” D5 is drop-tables + delete-jobs only). The V1 image DDL
+/// jobs-table rebuild (`07` #82 — D5 is drop-tables + delete-jobs only). The V1 image DDL
 /// stays frozen in place (append-only migrations, `MIGRATION_V1` is never edited); a fresh
 /// DB creates the tables in V1 and drops them here, ending at the same schema as an upgrade.
 const MIGRATION_V9: &str = r#"
@@ -370,15 +370,15 @@ DROP TABLE image_embeddings;
 DELETE FROM jobs WHERE kind = 'embed_image';
 "#;
 
-/// v10 â€” 0.3.0 PR6: mark-this-moment (`03 Â§4` "0.3.0 migrations", `docs/0.3.0.md` PR6).
+/// v10 — 0.3.0 PR6: mark-this-moment (`03 §4` "0.3.0 migrations", `docs/0.3.0.md` PR6).
 /// One row per user-flagged moment, with an optional intention note. Plain additive DDL
 /// (no table rebuild): `marks.frame_id` CASCADEs with the frame like every per-frame
 /// child (`frame_text`, `text_spans`, `embeddings`, `jobs`), so a hard-deleted frame
 /// takes its marks with it; a retention-*degraded* frame keeps its row, so a mark
-/// survives image expiry â€” the mark keeps the text reconstruction reachable, no retention
-/// pinning (`03 Â§4`, D10). `idx_marks_open` serves `list_marks`' canonical order â€” the
+/// survives image expiry — the mark keeps the text reconstruction reachable, no retention
+/// pinning (`03 §4`, D10). `idx_marks_open` serves `list_marks`' canonical order — the
 /// unresolved group first (a partial-style `resolved_at IS NULL` head sorts first because
-/// SQL NULLs sort low), newest-first within each group by `created_at DESC` (`03 Â§7`).
+/// SQL NULLs sort low), newest-first within each group by `created_at DESC` (`03 §7`).
 const MIGRATION_V10: &str = r#"
 CREATE TABLE marks (
   id          INTEGER PRIMARY KEY,
@@ -390,34 +390,34 @@ CREATE TABLE marks (
 CREATE INDEX idx_marks_open ON marks(resolved_at, created_at DESC);
 "#;
 
-/// v11 â€” 0.4.0 PR3: sessions (`03 Â§4` "0.4.0 migration", `docs/0.4.0.md` Â§3 PR3 â€” the arc's
+/// v11 — 0.4.0 PR3: sessions (`03 §4` "0.4.0 migration", `docs/0.4.0.md` §3 PR3 — the arc's
 /// **only** schema change, D4). **Structure only, no backfill**: plain `CREATE TABLE` +
-/// `ALTER TABLE ADD COLUMN` + `CREATE INDEX`, no table rebuild â€” fast on a large DB, and it
+/// `ALTER TABLE ADD COLUMN` + `CREATE INDEX`, no table rebuild — fast on a large DB, and it
 /// creates **zero** session rows (PR4's segmenter assigns `frames.session_id` over history as a
 /// resumable background job, never the migration). Sessions are derived-but-persisted (D1): a
 /// wiped `sessions` table is fully recomputable from frames, so `frames.session_id` is
 /// `ON DELETE SET NULL` (a frame outlives its session) while `session_artifacts` CASCADE with
 /// their session. `session_artifacts` is the artifact extension point (D8): 'exchange' is the
-/// only kind used this arc; 'transcript' (the audio arc, D14) and 'note' are reserved â€” made
+/// only kind used this arc; 'transcript' (the audio arc, D14) and 'note' are reserved — made
 /// concrete by the schema, not built. The compound `role` CHECK requires a non-NULL
 /// 'user'/'agent' role on exchanges and forbids one on reserved kinds; the `role IS NOT NULL`
-/// guard is load-bearing â€” `NULL IN (â€¦)` is NULL, and SQLite passes a CHECK that evaluates to
+/// guard is load-bearing — `NULL IN (…)` is NULL, and SQLite passes a CHECK that evaluates to
 /// NULL (the same reason the bare `host` CHECK admits NULL by design). Additive (D10): nothing
 /// existing is touched beyond the new nullable `frames.session_id` column.
 const MIGRATION_V11: &str = r#"
--- 0.4.0 sessions (added by the PR3 migration, schema 10 â†’ 11; contract Â§7e). Derived-but-persisted:
--- a wiped `sessions` table is fully recomputable from frames (D1). Segmentation is pure heuristic â€”
+-- 0.4.0 sessions (added by the PR3 migration, schema 10 → 11; contract §7e). Derived-but-persisted:
+-- a wiped `sessions` table is fully recomputable from frames (D1). Segmentation is pure heuristic —
 -- zero model calls (D3); titles/summaries are lazily generated + cached on the row.
 CREATE TABLE sessions (
   id            INTEGER PRIMARY KEY,
   started_at    INTEGER NOT NULL,                 -- unix ms (first frame in the run)
   ended_at      INTEGER,                          -- NULL = open (still accreting)
   kind          TEXT NOT NULL CHECK (kind IN ('focus','meeting','ai','other')),
-  tool          TEXT CHECK (tool IS NULL OR kind = 'ai'),  -- taxonomy id ('claude-code','codex',â€¦); NULL unless kind='ai' (D7)
+  tool          TEXT CHECK (tool IS NULL OR kind = 'ai'),  -- taxonomy id ('claude-code','codex',…); NULL unless kind='ai' (D7)
   host          TEXT CHECK (host IN ('terminal','desktop','browser','ide')),
   context_key   TEXT NOT NULL,                    -- closed task-level grammar (06 #27/#28): 'ai:<tool-id>' |
                                                   --   'meeting:<taxonomy-id>' | 'focus:<dominant-app-stem>'
-                                                  --   (bare 'focus' when no stem qualifies); the Â§7b key generalized (Â§7e)
+                                                  --   (bare 'focus' when no stem qualifies); the §7b key generalized (§7e)
   title         TEXT,                             -- lazily generated + cached (D3); NULL until first asked
   summary       TEXT,                             -- lazily generated + cached (D3); NULL until first asked
   summary_model TEXT,                             -- model id that produced `summary` (provenance)
@@ -428,19 +428,19 @@ CREATE TABLE sessions (
 );
 CREATE INDEX idx_sessions_time ON sessions(started_at, ended_at);
 
--- frames link to their session (nullable; ON DELETE SET NULL â€” frames SURVIVE session deletion, D1).
+-- frames link to their session (nullable; ON DELETE SET NULL — frames SURVIVE session deletion, D1).
 -- Assigned by PR4's segmenter (incremental + a one-shot historical pass), never by the migration.
 ALTER TABLE frames ADD COLUMN session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL;
 CREATE INDEX idx_frames_session ON frames(session_id);
 
 -- the artifact extension point (D8). 'exchange' (user-vs-agent turns) is the only kind USED this arc;
--- 'transcript' is RESERVED for the audio arc (D14 â€” made concrete now, not built); 'note' reserved for
--- future annotation. Roles live here, not on spans â€” the Â§3b TextRole (chrome/content) axis is untouched.
+-- 'transcript' is RESERVED for the audio arc (D14 — made concrete now, not built); 'note' reserved for
+-- future annotation. Roles live here, not on spans — the §3b TextRole (chrome/content) axis is untouched.
 CREATE TABLE session_artifacts (
   id         INTEGER PRIMARY KEY,
   session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   kind       TEXT NOT NULL CHECK (kind IN ('exchange','transcript','note')),
-  role       TEXT CHECK ((kind = 'exchange' AND role IS NOT NULL AND role IN ('user','agent')) OR (kind IN ('transcript','note') AND role IS NULL)),  -- exchanges REQUIRE a non-null role, reserved kinds forbid one (D8; Â§7e "roles never invented"). The IS NOT NULL guard is load-bearing: NULL IN (â€¦) is NULL, and SQLite passes a CHECK that evaluates to NULL.
+  role       TEXT CHECK ((kind = 'exchange' AND role IS NOT NULL AND role IN ('user','agent')) OR (kind IN ('transcript','note') AND role IS NULL)),  -- exchanges REQUIRE a non-null role, reserved kinds forbid one (D8; §7e "roles never invented"). The IS NOT NULL guard is load-bearing: NULL IN (…) is NULL, and SQLite passes a CHECK that evaluates to NULL.
   frame_id   INTEGER REFERENCES frames(id) ON DELETE SET NULL,
   content    TEXT NOT NULL,
   created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)

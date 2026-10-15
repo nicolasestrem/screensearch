@@ -1,5 +1,15 @@
 # 08 — AI Changelog
 
+## 2026-10-15 — Address applicable PR #123 review feedback
+
+- Corrected inference startup claim ordering, previous-day blocked-run deduplication, explicit
+  Telegram recipient-change retry and truncation metadata, retaining immutable attempt history.
+- Carried saved timezone into memory coverage and used local-calendar periods through DST;
+  legacy report/session behavior remains unchanged. MemoryDaily has one exhaustive instruction arm.
+- Repaired comment/manifest mojibake in store/traits without changing migration 12 or its schema.
+- Added regressions for these cases and the already-present positive-probe/empty-sampler guard.
+  Linux kernel/store tests and targeted clippy passed; raw results and native limits are in `05`.
+
 ## 2026-10-15 — Restore project-context privacy statement
 
 Maintainer explicitly scoped this correction to `specs/01_PROJECT_CONTEXT.md`.

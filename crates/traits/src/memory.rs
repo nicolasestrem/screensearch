@@ -1,4 +1,4 @@
-//! Durable report and delivery contracts (`03 Â§8c`). No credentials are carried here.
+//! Durable report and delivery contracts (`03 §8c`). No credentials are carried here.
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 

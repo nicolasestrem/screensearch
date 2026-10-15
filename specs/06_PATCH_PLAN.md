@@ -1,5 +1,13 @@
 # 06 — Patch Plan
 
+## 2026-10-15 — PR #123 review fix approval
+
+Maintainer approved the review correction plan with GO. Preserve `03 §8c/§8d` contracts:
+generation waits for inference settlement (success or failure); manual dedup covers only active
+runs; changed Telegram recipients require explicit Retry and linked immutable attempts; partial
+coverage is not engine truncation; saved-zone local dates determine memory periods. No schema
+bump, release, merge, live delivery or product-policy change is part of this correction.
+
 ## 2026-10-15 — Approved report direction resolves C–E policy gate
 
 The maintainer's explicit report-policy approval resolves the prior A3 decision blocker.

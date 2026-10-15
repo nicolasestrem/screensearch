@@ -1,19 +1,19 @@
-//! `store` â€” the durable data spine: frames, OCR, vision, embeddings, hybrid
+//! `store` — the durable data spine: frames, OCR, vision, embeddings, hybrid
 //! retrieval, the job queue, and settings, on SQLite (WAL) + sqlite-vec + FTS5
-//! (`03 Â§4/Â§5`). *Everything writes here*, so it is built before any producer.
+//! (`03 §4/§5`). *Everything writes here*, so it is built before any producer.
 //!
 //! ## Concurrency model
 //! One [`rusqlite::Connection`] is kept for the store's lifetime behind a
 //! [`std::sync::Mutex`]; every async [`traits::Store`] method runs its SQL inside
 //! [`tokio::task::spawn_blocking`]. SQLite allows a single writer, so serializing
 //! through one connection is correct and simple, and an in-memory DB persists for
-//! the store's lifetime (clean `:memory:` tests, `03 Â§10`). The Mutex guard is
-//! only ever held *inside* a blocking task â€” never across an `.await`.
+//! the store's lifetime (clean `:memory:` tests, `03 §10`). The Mutex guard is
+//! only ever held *inside* a blocking task — never across an `.await`.
 //!
 //! ## Retrieval & the embedder
 //! [`SqliteStore::hybrid_search`] fuses an FTS5 arm with a sqlite-vec KNN arm via
 //! RRF. The KNN arm needs the *query* embedded, but the store must not depend on
-//! the embeddings impl â€” so it optionally holds an `Arc<dyn `[`EmbeddingProvider`]`>`
+//! the embeddings impl — so it optionally holds an `Arc<dyn `[`EmbeddingProvider`]`>`
 //! (a trait; modularity holds). With no embedder injected the search degrades to
 //! FTS-only; P3 injects the real fastembed provider. (`07` engineering note.)
 
@@ -44,7 +44,7 @@ mod settings;
 mod timeline;
 
 pub use schema::{EMBEDDING_DIM, FILTER_VERSION, LATEST_SCHEMA_VERSION};
-/// Re-export of the contract this crate implements (`03 Â§3`).
+/// Re-export of the contract this crate implements (`03 §3`).
 pub use traits::Store;
 
 /// The durable data spine over SQLite + sqlite-vec + FTS5.
@@ -54,10 +54,10 @@ pub use traits::Store;
 #[derive(Clone)]
 pub struct SqliteStore {
     conn: Arc<Mutex<Connection>>,
-    /// Runtime-settable (`03 Â§5`): the composition root attaches the embedder *after*
+    /// Runtime-settable (`03 §5`): the composition root attaches the embedder *after*
     /// the model finishes loading off the launch thread. Behind an `Arc<RwLock>` so
-    /// every clone shares it â€” injecting on one handle lights up every clone's vector
-    /// arm. `None` â‡’ search degrades to FTS-only.
+    /// every clone shares it — injecting on one handle lights up every clone's vector
+    /// arm. `None` ⇒ search degrades to FTS-only.
     embedder: Arc<RwLock<Option<Arc<dyn EmbeddingProvider>>>>,
 }
 
@@ -89,7 +89,7 @@ fn register_vec_extension() {
 fn open_connection(conn: Connection) -> Result<Connection> {
     // WAL is a no-op on `:memory:` (returns "memory"); foreign_keys and
     // recursive_triggers are per-connection and must be set every open so the
-    // cascade + vec-cleanup triggers fire (`03 Â§4`).
+    // cascade + vec-cleanup triggers fire (`03 §4`).
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
          PRAGMA foreign_keys=ON;
@@ -102,7 +102,7 @@ fn open_connection(conn: Connection) -> Result<Connection> {
 }
 
 /// Ensures `schema_version` exists, then applies every pending migration in its
-/// own transaction, advancing the tracked version forward-only (`03 Â§4/Â§12`).
+/// own transaction, advancing the tracked version forward-only (`03 §4/§12`).
 fn bootstrap_and_migrate(conn: &mut Connection) -> Result<()> {
     conn.execute_batch("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);")?;
     let rows: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0))?;
@@ -128,7 +128,7 @@ fn bootstrap_and_migrate(conn: &mut Connection) -> Result<()> {
     }
     // A migration may rebuild a table that has inbound foreign keys (v6 widens the
     // `frames.capture_trigger` CHECK, which SQLite can only do by recreating `frames`).
-    // Such a rebuild is only safe with foreign keys OFF â€” otherwise `DROP TABLE frames`
+    // Such a rebuild is only safe with foreign keys OFF — otherwise `DROP TABLE frames`
     // fires an implicit cascade DELETE that wipes every child row. `PRAGMA foreign_keys`
     // is a no-op inside a transaction, so toggle it here, around the whole loop, per
     // SQLite's documented schema-change recipe. Only when there is work to do (the common
@@ -163,15 +163,15 @@ fn bootstrap_and_migrate(conn: &mut Connection) -> Result<()> {
 }
 
 impl SqliteStore {
-    /// Opens an in-memory store (tests / ephemeral use, `03 Â§10`).
+    /// Opens an in-memory store (tests / ephemeral use, `03 §10`).
     pub fn open_in_memory() -> Result<Self> {
         register_vec_extension();
         let conn = open_connection(Connection::open_in_memory()?)?;
         Ok(Self::from_conn(conn))
     }
 
-    /// Opens (creating if needed) the store at `path` â€” the on-disk
-    /// `screensearch.db` (`03 Â§4`).
+    /// Opens (creating if needed) the store at `path` — the on-disk
+    /// `screensearch.db` (`03 §4`).
     pub fn open_path(path: &Path) -> Result<Self> {
         register_vec_extension();
         let conn = open_connection(Connection::open(path)?)?;
@@ -185,7 +185,7 @@ impl SqliteStore {
         }
     }
 
-    /// Builder form of [`Self::set_embedder`] â€” injects the query-embedding provider
+    /// Builder form of [`Self::set_embedder`] — injects the query-embedding provider
     /// that lights up the vector arm of [`Self::hybrid_search`]. Without it, search
     /// is FTS-only (P1 default; P3 injects fastembed once it has loaded).
     #[must_use]
@@ -194,14 +194,14 @@ impl SqliteStore {
         self
     }
 
-    /// Injects (or replaces) the query-embedding provider at runtime (`03 Â§5`). Takes
-    /// effect immediately for every clone sharing this store â€” the composition root
+    /// Injects (or replaces) the query-embedding provider at runtime (`03 §5`). Takes
+    /// effect immediately for every clone sharing this store — the composition root
     /// calls this once the fastembed model has loaded off the launch thread.
     pub fn set_embedder(&self, embedder: Arc<dyn EmbeddingProvider>) {
         *self.embedder.write().expect("store embedder lock poisoned") = Some(embedder);
     }
 
-    /// The DB's current (tracked) schema version (`03 Â§4`). Useful for the
+    /// The DB's current (tracked) schema version (`03 §4`). Useful for the
     /// readiness/diagnostics panel.
     pub fn schema_version(&self) -> Result<i32> {
         let conn = self.conn.lock().expect("store mutex poisoned");
@@ -230,8 +230,8 @@ impl SqliteStore {
 /// The [`traits::Store`] contract, forwarding to the inherent methods (which the
 /// module files implement and the test-suite exercises directly). The composition
 /// root depends on `dyn Store`, so this is the seam that keeps it impl-agnostic
-/// (`03 Â§2`). Inherent methods win method resolution, so the qualified
-/// `SqliteStore::â€¦` calls are non-recursive.
+/// (`03 §2`). Inherent methods win method resolution, so the qualified
+/// `SqliteStore::…` calls are non-recursive.
 #[async_trait]
 impl Store for SqliteStore {
     async fn list_report_family_deliveries(
@@ -632,7 +632,7 @@ mod migration_tests {
 
     /// v6 rebuilds the `frames` table to widen the `capture_trigger` CHECK (adding the
     /// `click` / `scroll_stop` tokens). A naive rebuild with foreign keys ON would fire an
-    /// implicit cascade DELETE on every child row when the old `frames` is dropped â€” so
+    /// implicit cascade DELETE on every child row when the old `frames` is dropped — so
     /// this proves the runner disables foreign keys around the migration: child rows must
     /// survive, the new tokens must be accepted, a bogus token must still be rejected, FK
     /// integrity must hold, and ON DELETE CASCADE must still be wired afterward.
@@ -764,7 +764,7 @@ mod migration_tests {
 
     /// v8 adds a **partial** index for the degrade-to-text retention sweep. The candidate
     /// query (`frames_with_image_older_than`) must use it instead of scanning past an
-    /// ever-growing prefix of already-purged rows â€” so the planner must pick
+    /// ever-growing prefix of already-purged rows — so the planner must pick
     /// `idx_frames_image_retention`, not the plain `captured_at` index, for that predicate.
     #[test]
     fn migration_v8_indexes_image_retention_sweep() {
@@ -805,7 +805,7 @@ mod migration_tests {
     /// state. Seeded at v8 with a frame carrying BOTH embedding lanes plus a mixed jobs
     /// queue, this proves the drop is surgical: the text lane, the surviving job kinds,
     /// the frame, and FK integrity all remain; no image-lane schema object is left behind
-    /// (`docs/0.3.0.md` PR4, `03 Â§4`/`Â§13b.3`, D5).
+    /// (`docs/0.3.0.md` PR4, `03 §4`/`§13b.3`, D5).
     #[test]
     fn migration_v9_drops_image_lane_and_embed_image_jobs() {
         let mut conn = open_at_version(8);
@@ -815,7 +815,7 @@ mod migration_tests {
             [],
         )
         .expect("insert frame");
-        // A valid FLOAT[768] blob (all zeros) â€” vec0 only stores the bytes here; no KNN runs.
+        // A valid FLOAT[768] blob (all zeros) — vec0 only stores the bytes here; no KNN runs.
         let zeros = vec![0u8; schema::EMBEDDING_DIM * 4];
         // Text lane (must survive v9): metadata row + vec0 shadow row.
         conn.execute(
@@ -869,7 +869,7 @@ mod migration_tests {
             "latest schema is v11 (0.4.0 PR3 added the sessions tables)"
         );
 
-        // No image-lane object survives â€” tables, trigger, or vec0 shadow tables.
+        // No image-lane object survives — tables, trigger, or vec0 shadow tables.
         let leftovers: i64 = conn
             .query_row(
                 "SELECT count(*) FROM sqlite_master
@@ -925,7 +925,7 @@ mod migration_tests {
         assert_eq!(fk_violation_count(&conn), 0, "no FK violations after v9");
     }
 
-    /// v10 (0.3.0 PR6) adds the `marks` table (mark-this-moment; `03 Â§4`/`Â§13b.5`, D15).
+    /// v10 (0.3.0 PR6) adds the `marks` table (mark-this-moment; `03 §4`/`§13b.5`, D15).
     /// Seeded at v9 with a frame, this proves the migration is additive and correctly
     /// wired: the `marks` table + `idx_marks_open` index exist, a mark inserts and reads
     /// back, `ON DELETE CASCADE` removes the mark when its frame is hard-deleted (the
@@ -987,8 +987,8 @@ mod migration_tests {
         assert_eq!(marks_after, 0, "a mark must CASCADE with its frame (D10)");
     }
 
-    /// Acceptance (`03 Â§13b.3`): a fresh DB (V1..V11 in one bootstrap) and a v8 DB upgraded
-    /// by the same runner must agree on the final schema â€” identical object set and
+    /// Acceptance (`03 §13b.3`): a fresh DB (V1..V11 in one bootstrap) and a v8 DB upgraded
+    /// by the same runner must agree on the final schema — identical object set and
     /// identical DDL text. Both paths execute the same forward-only migration chain, so
     /// the removed image lane (created in V1, dropped in V9) leaves no trace in either, and
     /// the 0.4.0 PR3 sessions objects (added in V11) appear identically on both.
@@ -1016,11 +1016,11 @@ mod migration_tests {
         assert_eq!(
             schema_objects(&fresh),
             schema_objects(&migrated),
-            "fresh-DB and migrated-DB schemas must agree at LATEST (03 Â§13b.3)"
+            "fresh-DB and migrated-DB schemas must agree at LATEST (03 §13b.3)"
         );
     }
 
-    /// Little-endian `FLOAT[768]` blob with `1.0` at `hot` â€” the byte shape sqlite-vec
+    /// Little-endian `FLOAT[768]` blob with `1.0` at `hot` — the byte shape sqlite-vec
     /// stores. Distinct hot indices give cosine distance 1.0, identical ones ~0.
     fn embedding_blob(hot: usize) -> Vec<u8> {
         let mut v = vec![0.0_f32; schema::EMBEDDING_DIM];
@@ -1028,7 +1028,7 @@ mod migration_tests {
         v.iter().flat_map(|f| f.to_le_bytes()).collect()
     }
 
-    /// A one-hot [`Embedding`] (dim 768) â€” the query-side counterpart of
+    /// A one-hot [`Embedding`] (dim 768) — the query-side counterpart of
     /// [`embedding_blob`], used to drive the vector arm deterministically.
     fn one_hot(hot: usize) -> Embedding {
         let mut v = vec![0.0_f32; schema::EMBEDDING_DIM];
@@ -1036,11 +1036,11 @@ mod migration_tests {
         Embedding(v)
     }
 
-    /// Real-shaped schema-10 data (`docs/0.4.0.md` Â§3 PR3): three frames carrying
+    /// Real-shaped schema-10 data (`docs/0.4.0.md` §3 PR3): three frames carrying
     /// `app_hint`/`window_title`/`browser_url`/`capture_trigger` (one image-purged),
     /// `frame_text` (the FTS mirrors fill via the v3 triggers), a `text_spans` row each,
     /// two marks (open + resolved), two text embeddings with their vec0 vector blobs, and
-    /// a mixed jobs queue. This is what the 10 â†’ 11 migration must carry across untouched.
+    /// a mixed jobs queue. This is what the 10 → 11 migration must carry across untouched.
     fn seed_v10_fixture(conn: &Connection) {
         conn.execute_batch(
             "INSERT INTO frames (id, captured_at, monitor_index, width, height, image_path, content_hash, app_hint, window_title, browser_url, capture_trigger, image_purged) VALUES
@@ -1087,7 +1087,7 @@ mod migration_tests {
 
     /// v11 (0.4.0 PR3) creates the sessions structure. Seeded at v10 with real-shaped data,
     /// this proves: the version bumps by exactly one to LATEST; all five new schema objects
-    /// exist; the migration is STRUCTURE ONLY â€” no session rows, no artifact rows, and every
+    /// exist; the migration is STRUCTURE ONLY — no session rows, no artifact rows, and every
     /// pre-existing frame's `session_id IS NULL` (no backfill, D4); every pre-existing row
     /// survives (incl. FTS matching); FK integrity holds.
     #[test]
@@ -1119,7 +1119,7 @@ mod migration_tests {
             .expect("read sqlite_master");
         assert_eq!(objs, 6, "v11 creates 2 tables + 4 indexes");
 
-        // Structure only â€” the migration creates zero rows and backfills nothing (D4).
+        // Structure only — the migration creates zero rows and backfills nothing (D4).
         let sessions: i64 = conn
             .query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))
             .expect("count sessions");
@@ -1172,9 +1172,9 @@ mod migration_tests {
         assert_eq!(fk_violation_count(&conn), 0, "no FK violations after v11");
     }
 
-    /// The `sessions` CHECK constraints fail loudly on invalid writes (`03 Â§4`): `kind` is a
+    /// The `sessions` CHECK constraints fail loudly on invalid writes (`03 §4`): `kind` is a
     /// closed set; `tool` is NULL unless `kind='ai'` (D7); `host` is a closed set (NULL passes
-    /// by design â€” the un-guarded `IN (â€¦)` is the deliberate nullable-CHECK idiom); `frozen`
+    /// by design — the un-guarded `IN (…)` is the deliberate nullable-CHECK idiom); `frozen`
     /// is `{0,1}`.
     #[test]
     fn migration_v11_sessions_check_constraints() {
@@ -1238,10 +1238,10 @@ mod migration_tests {
             .expect("freezing a session must satisfy the CHECK");
     }
 
-    /// The compound `session_artifacts.role` CHECK (`03 Â§4`): exchanges REQUIRE a
+    /// The compound `session_artifacts.role` CHECK (`03 §4`): exchanges REQUIRE a
     /// `'user'`/`'agent'` role; reserved kinds (`transcript`/`note`) forbid one. The
-    /// NULL-role-on-exchange rejection is the load-bearing case â€” without the `role IS NOT
-    /// NULL` guard, `NULL IN (â€¦)` is NULL and SQLite would admit a roleless exchange.
+    /// NULL-role-on-exchange rejection is the load-bearing case — without the `role IS NOT
+    /// NULL` guard, `NULL IN (…)` is NULL and SQLite would admit a roleless exchange.
     #[test]
     fn migration_v11_artifact_role_kind_coupling() {
         let mut conn = open_at_version(10);
@@ -1334,7 +1334,7 @@ mod migration_tests {
         );
     }
 
-    /// The three v11 FK behaviors (`03 Â§4`, D1): deleting a session SET-NULLs
+    /// The three v11 FK behaviors (`03 §4`, D1): deleting a session SET-NULLs
     /// `frames.session_id` (a frame SURVIVES its session) and CASCADEs its artifacts;
     /// deleting a frame SET-NULLs `session_artifacts.frame_id` (the artifact survives as
     /// session evidence).
@@ -1435,7 +1435,7 @@ mod migration_tests {
         }
     }
 
-    /// Every store read behind the frame-level features (`03 Â§13c.3`, D10): search (FTS +
+    /// Every store read behind the frame-level features (`03 §13c.3`, D10): search (FTS +
     /// vector arms) also backs overlay/Ask; `ocr_texts` is Ask's context assembly; `list_marks`
     /// backs marks + overlay; `recent_frame_contexts` is the kernel `where_was_i` heuristic's
     /// only store input; `timeline_buckets` + `sample_frames_in_range` + `insights_summary`
@@ -1482,8 +1482,8 @@ mod migration_tests {
         (hits, ocr, marks, contexts, buckets, samples, insights)
     }
 
-    /// D10 acceptance (`docs/0.4.0.md` Â§3 PR3): every frame-level surface returns identical
-    /// results on the same populated fixture before and after the 10 â†’ 11 migration. The
+    /// D10 acceptance (`docs/0.4.0.md` §3 PR3): every frame-level surface returns identical
+    /// results on the same populated fixture before and after the 10 → 11 migration. The
     /// migration only ADDs (two tables, three indexes, one nullable `frames` column) and every
     /// `frames` read uses an explicit column list, so nothing observable may change.
     #[tokio::test]
@@ -1495,7 +1495,7 @@ mod migration_tests {
 
         let pre = surface_snapshot(&store).await;
 
-        // Vacuity guards â€” an empty â‰¡ empty comparison would prove nothing.
+        // Vacuity guards — an empty ≡ empty comparison would prove nothing.
         assert!(!pre.0.is_empty(), "fixture must produce search hits");
         assert_eq!(pre.1.len(), 3, "fixture must produce ocr texts");
         assert_eq!(pre.2.len(), 2, "fixture must produce marks");

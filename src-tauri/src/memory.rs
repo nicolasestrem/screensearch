@@ -25,6 +25,7 @@ pub struct MemoryRuntime {
     stopping: AtomicBool,
     cancel: Arc<AtomicBool>,
     active: AtomicBool,
+    inference_settled: AtomicBool,
     join: StdMutex<Option<tokio::task::JoinHandle<()>>>,
     last_error: StdMutex<Option<ReportError>>,
 }
@@ -36,9 +37,22 @@ impl MemoryRuntime {
             stopping: AtomicBool::new(false),
             cancel: Arc::new(AtomicBool::new(false)),
             active: AtomicBool::new(false),
+            inference_settled: AtomicBool::new(false),
             join: StdMutex::new(None),
             last_error: StdMutex::new(None),
         }
+    }
+    /// True once `init_inference` has finished wiring (or failing to wire) the
+    /// inference slots at startup. Generation claims stay deferred until then so a
+    /// transient `answer=None` at launch cannot persist a permanent BLOCKED run.
+    pub fn inference_settled(&self) -> bool {
+        self.inference_settled.load(Ordering::Acquire)
+    }
+    /// Called by the `init_inference` task after it completes — on success and
+    /// failure alike — and wakes the worker so deferred claims proceed at once.
+    pub fn mark_inference_settled(&self) {
+        self.inference_settled.store(true, Ordering::Release);
+        self.wake.notify_one();
     }
 }
 
@@ -69,6 +83,13 @@ fn check_open(runtime: &MemoryRuntime) -> Result<(), ReportError> {
     } else {
         Ok(())
     }
+}
+/// Startup race guard (`03 §8c`): a queued run that still needs generation must
+/// not be claimed before inference initialization settles, or a transient
+/// `answer=None` at launch would persist a permanent `MODEL_UNAVAILABLE` block.
+/// Runs with saved output only need delivery rework and may proceed at any time.
+fn claim_allowed(run: &ReportRun, inference_settled: bool) -> bool {
+    run.result.is_some() || inference_settled
 }
 
 async fn setting<T: serde::de::DeserializeOwned + Default>(
@@ -443,6 +464,79 @@ pub async fn get_memory_deliveries(
     }
     Ok(items)
 }
+/// `03 §8d` explicit recovery for a changed Telegram recipient: an attempt whose
+/// immutable destination snapshot no longer matches the selected chat can never
+/// dispatch, and changing settings must not redirect it silently. An explicit
+/// retry is the user action that links a fresh attempt targeting the currently
+/// selected chat while preserving the old attempt as reviewed. Creation happens
+/// before the review so a crash between the two steps re-runs without loss.
+async fn redirect_stale_telegram_deliveries(
+    store: &dyn Store,
+    run_id: &str,
+    target_chat: Option<&str>,
+) -> Result<(), ReportError> {
+    let Some(target) = target_chat.map(str::trim).filter(|id| !id.is_empty()) else {
+        return Ok(());
+    };
+    let receipts = store
+        .list_report_deliveries(run_id)
+        .await
+        .map_err(storage)?;
+    for mut item in receipts
+        .iter()
+        .filter(|d| {
+            d.destination == ReportDestination::Telegram
+                && matches!(
+                    d.state,
+                    ReportDeliveryState::Pending | ReportDeliveryState::Failed
+                )
+        })
+        .cloned()
+        .collect::<Vec<_>>()
+    {
+        let Ok(snapshot) = serde_json::from_str::<TelegramSnapshot>(&item.destination_snapshot)
+        else {
+            continue;
+        };
+        if snapshot.chat_id == target {
+            continue;
+        }
+        let replacement_live = receipts.iter().any(|d| {
+            d.revision_of.as_deref() == Some(item.id.as_str())
+                && d.destination == ReportDestination::Telegram
+                && !matches!(
+                    d.state,
+                    ReportDeliveryState::Reviewed | ReportDeliveryState::Skipped
+                )
+        });
+        if !replacement_live {
+            let mut replacement = item.clone();
+            replacement.id = uuid();
+            replacement.revision_of = Some(item.id.clone());
+            replacement.state = ReportDeliveryState::Pending;
+            replacement.destination_snapshot = serde_json::to_string(&TelegramSnapshot {
+                chat_id: target.to_owned(),
+                text: snapshot.text,
+            })
+            .map_err(storage)?;
+            replacement.message_id = None;
+            replacement.error = None;
+            replacement.next_attempt_at = None;
+            replacement.attempt = 0;
+            replacement.created_at = now_ms();
+            replacement.updated_at = replacement.created_at;
+            store
+                .create_report_delivery(replacement)
+                .await
+                .map_err(storage)?;
+            tracing::info!(run_id=%run_id, attempt_id=%item.id, "stale telegram destination redirected to the currently selected chat");
+        }
+        let prior = item.state;
+        item.state = ReportDeliveryState::Reviewed;
+        update_delivery(store, &mut item, prior).await?;
+    }
+    Ok(())
+}
 #[tauri::command]
 pub async fn retry_memory_report(
     run_id: String,
@@ -463,6 +557,17 @@ pub async fn retry_memory_report(
     if matches!(run.phase, ReportRunPhase::Queued | ReportRunPhase::Running) {
         return Err(fail("BUSY", "This report is already queued or running."));
     }
+    // `03 §8d` explicit retargeting: attempts whose immutable destination snapshot
+    // no longer matches the selected chat can never dispatch, and changing settings
+    // must not redirect them silently. Retry links fresh attempts to the currently
+    // selected recipient while preserving the old ones as reviewed.
+    let current = settings(store.as_ref()).await?;
+    redirect_stale_telegram_deliveries(
+        store.as_ref(),
+        &run_id,
+        current.telegram_chat_id.as_deref(),
+    )
+    .await?;
     for mut item in store
         .list_report_deliveries(&run_id)
         .await
@@ -666,6 +771,7 @@ async fn generate(state: &AppState, run: &mut ReportRun) -> Result<(), ReportErr
     let answer = state.answer.lock().expect("answer slot").clone();
     let execution=kernel::report_service::execute(store.as_ref(),kernel::report_service::ReportExecutionRequest{
         range:ReportRange::MemoryDaily,start:run.window_start,end:run.window_end,prompt:None,
+        timezone:Some(run.timezone.as_str()),
         config:ReportConfig{daily_top_k:settings.reports_daily_top_k,weekly_top_k:settings.reports_weekly_top_k,map_reduce_min_frames:settings.reports_map_reduce_min_frames,reply_budget:crate::REPORT_REPLY_BUDGET},
     },||async{
         answer.ok_or_else(||fail("MODEL_UNAVAILABLE","Local answer model is not ready."))?
@@ -716,7 +822,10 @@ fn save_execution(
         periods_total: out.periods_total,
         periods_covered: out.periods_covered,
         passes: out.passes,
-        truncated: partial,
+        // `truncated` carries the report engine's own truncation flag. The other
+        // PARTIAL causes (in-progress range, deleted retained evidence) stay framed
+        // by the run outcome and coverage fields, never by this metadata (`03 §8c`).
+        truncated: out.truncated,
     });
     Ok(())
 }
@@ -1236,7 +1345,10 @@ pub fn start(app: &AppHandle) {
                     if runtime.stopping.load(Ordering::Acquire){break;}
                     let claimed={
                         let _guard=runtime.control.lock().await;
-                        if run.phase==ReportRunPhase::Queued {
+                        // Startup race guard: defer generation claims until inference
+                        // init settles; a transient answer=None must not persist a
+                        // permanent MODEL_UNAVAILABLE block (`03 §8c`).
+                        if run.phase==ReportRunPhase::Queued&&claim_allowed(&run,runtime.inference_settled()) {
                             let claimed=store.claim_report_run(&run.run_id,now_ms()).await.map_err(storage)?;
                             if claimed{runtime.active.store(true,Ordering::Release);}claimed
                         }else{false}
@@ -1672,6 +1784,144 @@ mod tests {
         assert_eq!(retry_delay(3, 0), Some(Duration::from_secs(600)));
         assert_eq!(retry_delay(4, 0), None);
     }
+    #[test]
+    fn queued_generation_defers_until_inference_settles_and_delivery_resume_is_unaffected() {
+        let mut run = run_fixture();
+        run.phase = ReportRunPhase::Queued;
+        run.result = None;
+        assert!(
+            !claim_allowed(&run, false),
+            "a startup catch-up run must not be claimed before inference settles"
+        );
+        assert!(claim_allowed(&run, true));
+        run.result = Some(run_fixture().result.expect("fixture result"));
+        assert!(
+            claim_allowed(&run, false),
+            "a saved-output retry only needs delivery rework"
+        );
+    }
+    #[tokio::test]
+    async fn inference_settlement_opens_the_claim_gate_and_wakes_the_worker() {
+        let runtime = MemoryRuntime::new();
+        assert!(!runtime.inference_settled());
+        runtime.mark_inference_settled();
+        assert!(runtime.inference_settled());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), runtime.wake.notified())
+                .await
+                .is_ok(),
+            "settlement must leave a stored wake permit for the worker loop"
+        );
+    }
+    #[tokio::test]
+    async fn retry_redirects_stale_telegram_attempts_to_the_selected_chat() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let run = run_fixture();
+        store.create_report_run(run.clone()).await.unwrap();
+        let snapshot = |chat: &str, text: &str| {
+            serde_json::to_string(&TelegramSnapshot {
+                chat_id: chat.into(),
+                text: text.into(),
+            })
+            .unwrap()
+        };
+        let mut first = delivery(
+            &run,
+            ReportDestination::Telegram,
+            snapshot("old-chat", "chunk one"),
+        );
+        first.chunk_index = Some(0);
+        first.chunk_count = Some(3);
+        let mut second = delivery(
+            &run,
+            ReportDestination::Telegram,
+            snapshot("old-chat", "chunk two"),
+        );
+        second.chunk_index = Some(1);
+        second.chunk_count = Some(3);
+        let mut failed = delivery(
+            &run,
+            ReportDestination::Telegram,
+            snapshot("old-chat", "third chunk"),
+        );
+        failed.chunk_index = Some(2);
+        failed.chunk_count = Some(3);
+        failed.state = ReportDeliveryState::Failed;
+        store
+            .create_report_deliveries(vec![first.clone(), second.clone(), failed.clone()])
+            .await
+            .unwrap();
+        redirect_stale_telegram_deliveries(&store, &run.run_id, Some("new-chat"))
+            .await
+            .unwrap();
+        let items = store.list_report_deliveries(&run.run_id).await.unwrap();
+        for old in [&first, &second, &failed] {
+            let stored = items.iter().find(|d| d.id == old.id).unwrap();
+            assert_eq!(
+                stored.state,
+                ReportDeliveryState::Reviewed,
+                "the old attempt is preserved as reviewed, never retargeted in place"
+            );
+            assert_eq!(stored.destination_snapshot, old.destination_snapshot);
+        }
+        let expected = ["chunk one", "chunk two", "third chunk"];
+        let linked: Vec<_> = items
+            .iter()
+            .filter(|d| d.state == ReportDeliveryState::Pending)
+            .collect();
+        assert_eq!(linked.len(), 3);
+        for d in &linked {
+            let snap: TelegramSnapshot = serde_json::from_str(&d.destination_snapshot).unwrap();
+            assert_eq!(snap.chat_id, "new-chat");
+            assert_eq!(snap.text, expected[d.chunk_index.unwrap() as usize]);
+            assert!(d.revision_of.is_some());
+            assert_eq!(d.attempt, 0);
+        }
+        // A second explicit retry creates no further attempts.
+        redirect_stale_telegram_deliveries(&store, &run.run_id, Some("new-chat"))
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .list_report_deliveries(&run.run_id)
+                .await
+                .unwrap()
+                .len(),
+            6
+        );
+        // A matching-chat failure is left for the ordinary retry reset, and an
+        // absent selected chat cannot redirect anything.
+        let mut same = delivery(
+            &run,
+            ReportDestination::Telegram,
+            snapshot("new-chat", "same chat"),
+        );
+        same.state = ReportDeliveryState::Failed;
+        store.create_report_delivery(same.clone()).await.unwrap();
+        redirect_stale_telegram_deliveries(&store, &run.run_id, Some("new-chat"))
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .get_report_delivery(&same.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .state,
+            ReportDeliveryState::Failed
+        );
+        redirect_stale_telegram_deliveries(&store, &run.run_id, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .list_report_deliveries(&run.run_id)
+                .await
+                .unwrap()
+                .len(),
+            7
+        );
+    }
     #[tokio::test]
     async fn shutdown_cancels_active_report_and_joins_worker() {
         let runtime = MemoryRuntime::new();
@@ -1796,7 +2046,7 @@ mod tests {
             end_date: "1970-01-01".into(),
         });
         run.window_end = 43_200_000;
-        let output = |mode| kernel::report_service::ReportExecution {
+        let output = |mode, truncated| kernel::report_service::ReportExecution {
             output: ReportOutput {
                 markdown: "Observed activity".into(),
                 frame_ids: vec![1],
@@ -1807,13 +2057,13 @@ mod tests {
                 frames_sampled: 1,
                 frames_summarized: 1,
                 passes: 1,
-                truncated: false,
+                truncated,
             },
             model: Some("local-model".into()),
         };
         save_execution(
             &mut run,
-            output(ReportMode::SinglePass),
+            output(ReportMode::SinglePass, false),
             ReportEvidence {
                 session_ids: vec![],
                 missing_frame_ids: vec![],
@@ -1822,10 +2072,38 @@ mod tests {
         .unwrap();
         assert_eq!(run.outcome, Some(ReportOutcome::Partial));
         let saved = run.result.as_ref().unwrap();
-        assert!(saved.truncated);
+        assert!(
+            !saved.truncated,
+            "complete elapsed coverage of an in-progress range is partial, not truncated"
+        );
         assert!(saved.markdown.contains("1970-01-01T12:00:00+00:00"));
         assert!(saved.markdown.contains("In-progress coverage"));
-        let mut empty = output(ReportMode::Empty);
+        // Deleted retained evidence is the other non-engine PARTIAL cause and must
+        // not claim the engine bounded the output either.
+        save_execution(
+            &mut run,
+            output(ReportMode::SinglePass, false),
+            ReportEvidence {
+                session_ids: vec![],
+                missing_frame_ids: vec![1],
+            },
+        )
+        .unwrap();
+        assert_eq!(run.outcome, Some(ReportOutcome::Partial));
+        assert!(!run.result.as_ref().unwrap().truncated);
+        // The engine's own truncation flag is what the saved metadata preserves.
+        save_execution(
+            &mut run,
+            output(ReportMode::SinglePass, true),
+            ReportEvidence {
+                session_ids: vec![],
+                missing_frame_ids: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(run.outcome, Some(ReportOutcome::Partial));
+        assert!(run.result.as_ref().unwrap().truncated);
+        let mut empty = output(ReportMode::Empty, false);
         empty.output.frame_ids.clear();
         empty.output.cited_frame_ids.clear();
         empty.output.frames_summarized = 0;

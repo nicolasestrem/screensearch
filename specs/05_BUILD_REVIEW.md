@@ -1,5 +1,40 @@
 # 05 — Build Review
 
+## 2026-10-15 — PR #123 review corrections (verification in progress)
+
+Reviewed pushed HEAD `2c81be4b14090254228b40bf790ff59a1491023a` against stacked base
+`dda1c60f975d9f9f1ec772a699d0216c7c080e17` (`feat/network-api`). Read AGENTS/CLAUDE
+and the mandatory 01 → 02 → 03 → UI_REFERENCE → 04 sequence plus the memory direction plan.
+Three parallel workers checked and corrected runtime, persistence/encoding and calendar coverage.
+
+Seven distinct actionable findings: defer generation claims until inference initialization settles;
+exclude blocked runs from concurrent manual deduplication; preserve immutable Telegram attempts
+while explicit Retry creates linked attempts for a changed recipient; separate engine truncation
+from other PARTIAL causes; plan memory coverage on saved-zone local midnights; remove the misleading
+generic MemoryDaily prompt fallback. UTF-8 corruption was repaired across five source files
+and the store manifest description.
+The eighth finding (false NO_DATA after a positive probe) was already fixed at this HEAD;
+added a regression for the existing GENERATION_FAILED guard instead of another implementation.
+
+Observed on Linux, Rust 1.95.0, Node 26.8.1 (not the CI Node 22):
+
+```text
+test result: ok. 80 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.90s
+test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.67s
+✓ built in 3.29s
+```
+
+Commands: `cargo test -p kernel --lib --locked`, `cargo test -p store --lib --locked`,
+`cargo clippy -p kernel -p store --all-targets --locked -- -D warnings`; UI `npm ci`,
+`npm run lint`, `npm run build` all exited 0. A first format check found a wrapped assertion
+in the store regression; corrected it. Final `cargo fmt --all -- --check`, `git diff --check`,
+and the generated-binding diff guard exited 0. Source/manifest mojibake scan returned no matches;
+the corrected store manifest loaded with locked/offline Cargo metadata and `cargo check` exited 0.
+Windows checks for this edited revision remain pending at commit time.
+Native src-tauri compilation/tests are not certified by these Linux checks: the local attempt
+stopped in glib-sys because pkg-config is missing. No live sends or private-profile changes.
+
 ## 2026-10-15 — Report policy approval and local scheduling contract
 
 The maintainer explicitly approved the proposed report policies with "Sure GO" after the
