@@ -2,7 +2,7 @@
 //!
 //! A `TestHost` implements [`api::ApiHost`] over a real in-memory `SqliteStore` (plus a
 //! scripted answer provider), so every endpoint is exercised against a populated DB. The
-//! server binds an ephemeral loopback port; requests go out over `reqwest` with a bearer
+//! server binds an ephemeral all-IPv4 port; requests go out over `reqwest` with a bearer
 //! token, exactly as a real client would.
 
 use std::sync::Arc;
@@ -151,25 +151,15 @@ impl ApiHost for TestHost {
 }
 
 /// Live manual-verification harness (ignored by default). Serves the real API over an
-/// on-disk store (from `SCREENSEARCH_LIVE_DB`, else a fixture) on port 43210 with a known
-/// token, then stays up so an external `curl` can exercise every endpoint — a genuine
+/// in-memory fixture store on port 43210 with a known test token. Never opens user
+/// history. It stays up so an external `curl` can exercise every endpoint — a genuine
 /// out-of-process live check without disturbing the running desktop app.
 /// Run: `cargo test -p api --test http_api -- --ignored --nocapture live_server_for_curl`
 #[tokio::test]
 #[ignore]
 async fn live_server_for_curl() {
     let token: SharedToken = Arc::new(std::sync::RwLock::new(TEST_TOKEN.to_string()));
-    let host: Arc<TestHost> = match std::env::var("SCREENSEARCH_LIVE_DB") {
-        Ok(path) => {
-            let store = Arc::new(SqliteStore::open_path(std::path::Path::new(&path)).unwrap());
-            Arc::new(TestHost {
-                store,
-                answer: None,
-                started_at_ms: 0,
-            })
-        }
-        Err(_) => fixture_host(false).await,
-    };
+    let host = fixture_host(false).await;
     let server = ApiServer::start(host, token, 43210)
         .await
         .expect("bind 43210");
@@ -224,14 +214,14 @@ async fn fixture_host(with_answer: bool) -> Arc<TestHost> {
     })
 }
 
-/// Starts a server over the fixture host on an ephemeral loopback port; returns the base
+/// Starts a server over the fixture host on an ephemeral all-IPv4 port; returns the base
 /// URL and the running server (kept alive by the caller).
 async fn start_server(host: Arc<TestHost>) -> (String, ApiServer, SharedToken) {
     let token: SharedToken = Arc::new(std::sync::RwLock::new(TEST_TOKEN.to_string()));
     let server = ApiServer::start(host, token.clone(), 0)
         .await
-        .expect("bind ephemeral loopback");
-    let base = format!("http://{}", server.local_addr());
+        .expect("bind ephemeral all-IPv4");
+    let base = format!("http://127.0.0.1:{}", server.local_addr().port());
     (base, server, token)
 }
 
@@ -248,17 +238,64 @@ fn bearer(token: &str) -> reqwest::header::HeaderMap {
     h
 }
 
-// ---- D11: bind is loopback-only, by construction ----
+// ---- Gate A: application API binds all IPv4 interfaces; local clients still work ----
 
 #[tokio::test]
-async fn binds_loopback_only() {
+async fn binds_all_ipv4_interfaces() {
     let (_base, server, _t) = start_server(fixture_host(false).await).await;
-    assert!(
-        server.local_addr().ip().is_loopback(),
-        "the server binds 127.0.0.1 only (D11)"
+    assert_eq!(
+        server.local_addr().ip(),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
     );
-    // And specifically IPv4 loopback (BIND_IP = 127.0.0.1).
-    assert_eq!(server.local_addr().ip().to_string(), "127.0.0.1");
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn loopback_client_still_connects() {
+    let (base, server, _t) = start_server(fixture_host(false).await).await;
+    let response = client()
+        .get(format!("{base}/v1/health"))
+        .headers(bearer(TEST_TOKEN))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn all_routes_require_bearer() {
+    let (base, server, _t) = start_server(fixture_host(false).await).await;
+    for (method, path) in [
+        (reqwest::Method::GET, "/v1/health"),
+        (reqwest::Method::GET, "/v1/search"),
+        (reqwest::Method::GET, "/v1/frames/1"),
+        (reqwest::Method::GET, "/v1/context/where-was-i"),
+        (reqwest::Method::GET, "/v1/sessions"),
+        (reqwest::Method::GET, "/v1/sessions/1"),
+        (reqwest::Method::GET, "/v1/marks"),
+        (reqwest::Method::POST, "/v1/marks"),
+        (reqwest::Method::POST, "/v1/marks/1/resolve"),
+        (reqwest::Method::POST, "/v1/ask"),
+        (reqwest::Method::GET, "/v1/export"),
+        (reqwest::Method::GET, "/v1/does-not-exist"),
+    ] {
+        for token in [None, Some("wrong-token")] {
+            let mut request = client().request(method.clone(), format!("{base}{path}"));
+            if let Some(token) = token {
+                request = request.headers(bearer(token));
+            }
+            let response = request.send().await.unwrap();
+            assert_eq!(response.status(), 401, "{method} {path}");
+        }
+    }
+    let response = client()
+        .get(format!("{base}/v1/does-not-exist"))
+        .headers(bearer(TEST_TOKEN))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
     server.stop().await;
 }
 

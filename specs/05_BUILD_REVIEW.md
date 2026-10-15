@@ -1,5 +1,77 @@
 # 05 — Build Review
 
+## 2026-10-15 — Network API increment B implementation verification
+
+### Local installer result
+
+The final source was packaged with Node 22 using
+`npm run build -- --ci --no-sign --config <temporary-build-config>` (exit 0).
+The temporary config contained only `{"bundle":{"createUpdaterArtifacts":false}}`.
+Production signing/updater configuration, application identity and version were not changed.
+This is a local unsigned 0.4.0 test installer, not an updater release. Raw final output:
+
+```text
+    Finished `release` profile [optimized] target(s) in 3m 14s
+       Built application at: C:\Users\nicol\Documents\GitHub\screensearch-v2c\target\release\screensearch.exe
+        Info Patching C:\Users\nicol\Documents\GitHub\screensearch-v2c\target\release\screensearch.exe with bundle type information: nsis
+        Info Target: x64
+     Running makensis to produce C:\Users\nicol\Documents\GitHub\screensearch-v2c\target\release\bundle\nsis\ScreenSearch_0.4.0_x64-setup.exe
+    Finished 1 bundle at:
+        C:\Users\nicol\Documents\GitHub\screensearch-v2c\target\release\bundle\nsis\ScreenSearch_0.4.0_x64-setup.exe
+```
+
+Complete raw package output: `target/verification/package.log`. Runnable workspace tests:
+766 passed, 15 ignored across all test binaries; the full raw per-binary results are in
+`target/verification/tests.log`. Ignored native/model tests remain unverified.
+
+Installer size: 13,754,211 bytes. SHA-256:
+`6B170F04DEA6FC661C89287E823120DA8EDA88F65F32ACE709A1A656ED601BAB`.
+
+### Implementation and verification detail
+
+- Changed only the application API listener to all IPv4; retained MCP destination validation,
+  inference loopback, bearer authentication, token rotation and default-off configuration.
+- Added persisted enabled-upgrade notice, explicit visible-main-window acknowledgement,
+  generated status binding and payload-free startup cache invalidation. Reviewed startup
+  failures must not overwrite enabled intent; early UI reads refresh after startup.
+- Initial full tests exposed Windows' default ability to bind a wildcard listener beside an
+  existing loopback listener on the same port. Fixed the actual server with native
+  `SO_EXCLUSIVEADDRUSE` before binding; retained the loopback conflict test and added wildcard
+  coverage. This prevents local MCP reaching another service despite a successful API startup.
+- Removed private-database input from the ignored fixed-token manual fixture server.
+- Independent agents reviewed contract, backend/UI startup fixes and exclusive socket ownership.
+- Verification used Node 22.23.3 and pinned Rust 1.95.0. UI lint/build, UI tests, fmt, locked
+  workspace clippy/build/test and the regenerated-binding guard exited 0. Commands match CI;
+  MCP was staged first. Cargo regenerated lockfile format 4 and added the existing Windows
+  dependency to API; no dependency versions changed.
+- Raw excerpts from the final `cargo clippy --locked --workspace --all-targets -- -D warnings`,
+  `cargo build --locked --workspace` and `cargo test --locked --workspace` outputs:
+
+```text
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 20.97s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 41.87s
+test binds_all_ipv4_interfaces ... ok
+test loopback_client_still_connects ... ok
+test all_routes_require_bearer ... ok
+test local_api::tests::wildcard_bind_failure_keeps_enabled_with_error ... ok
+test local_api::tests::bind_failure_keeps_enabled_with_error ... ok
+test local_api::tests::disabled_api_has_no_listener ... ok
+test local_api::tests::enabled_upgrade_shows_bind_change_notice_once ... ok
+```
+
+- Complete local raw logs: `target/verification/{clippy,build,tests,ui-lint,ui-build}.log`.
+  Initial failure is retained in `tests-initial.log`. `git diff --exit-code -- ui/src/bindings`
+  exited 0 after staging regenerated bindings. The generator's native trailing whitespace
+  in `ApiStatus.ts` is retained rather than hand-editing a generated file; source/docs whitespace
+  checks excluding generated bindings pass.
+- **Acceptance still open:** separate-machine HTTP, native rendered notice/keyboard states,
+  real-model Ask disconnect and live inference socket inspection. Automated sockets/fixtures
+  are not substituted for these checks. No app installation, private-history report, firewall
+  mutation, Telegram send, merge, tag or updater publication was performed.
+- **Remaining plan:** C–E requires the specifically unresolved report policies in the canonical
+  `docs/memory-api-direction-plan.md` / `docs/memory-report-contract-proposal.md`. Product-wide
+  validation replaces the original personal usefulness threshold. This is not full-plan completion.
+
 ## 2026-10-15 — Memory/API Gate A
 
 - Maintainer authorized execution of the desktop direction plan and clarified that this is

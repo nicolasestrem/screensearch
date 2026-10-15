@@ -125,6 +125,26 @@ export function useLiveEvents() {
       }),
     );
 
+    // The first status request can precede async API startup. Subscribe, then
+    // refresh once to cover a startup event emitted before registration. Cancel
+    // an initial in-flight read first: invalidation alone could reuse that stale
+    // request when the query has no data yet.
+    const refreshApiStatus = async () => {
+      if (!active) return;
+      await qc.cancelQueries({ queryKey: queryKeys.apiStatus });
+      if (active) {
+        await qc.invalidateQueries({ queryKey: queryKeys.apiStatus });
+      }
+    };
+    track(
+      listenTo("api_status_changed", () => {
+        void refreshApiStatus();
+      }).then((unlisten) => {
+        void refreshApiStatus();
+        return unlisten;
+      }),
+    );
+
     // A mark was created / resolved / annotated (possibly from the overlay window's own
     // JS context via the mark hotkey) — refresh the Deck's Intentions strip.
     track(

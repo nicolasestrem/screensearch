@@ -1,5 +1,13 @@
 # 06 — Patch Plan
 
+## 2026-10-15 — B review fixes and remaining release gates
+
+Resolved before build handoff: fallible startup intent read, post-startup query invalidation,
+visible acknowledgement persistence, and Windows exclusive socket binding. The initial failed
+loopback-conflict test led to a server correction, not a weakened expected result. Final full
+workspace tests pass; raw evidence is in `05`. Native acceptance remains open per
+`docs/TESTING.md`; C–E policy decisions remain in the report contract proposal. No release is implied.
+
 ## 2026-10-15 — Memory/API contract contradiction
 
 The execution request conflicts with the former all-interface prohibition in `03 §7c`

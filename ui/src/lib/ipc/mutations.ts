@@ -152,6 +152,20 @@ export function useRegenerateApiToken() {
   });
 }
 
+/** Never optimistically dismiss the upgrade notice: only a persisted acknowledgement clears it. */
+export function useAcknowledgeApiNetworkNotice() {
+  const qc = useQueryClient();
+  return useMutation<ApiStatus, unknown, void>({
+    mutationFn: cmd.acknowledgeApiNetworkNotice,
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: queryKeys.apiStatus });
+    },
+    onSuccess: (status) => {
+      qc.setQueryData(queryKeys.apiStatus, status);
+    },
+  });
+}
+
 /** Export screen history to a JSON file in Downloads (`03 §7c`, D12). Works with the
  *  API disabled; the caller toasts the returned path. No cache to reconcile. */
 export function useExportData() {

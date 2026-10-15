@@ -51,7 +51,7 @@ ts-rs = "10"
 # use in PR4). Compiled only into crates/harness, never the app or the MCP binary.
 toml = "0.9"
 
-# local HTTP API (0.3.0 PR7, opt-in, 127.0.0.1 only — 03 §7c). axum is the one new
+# HTTP API (opt-in, all IPv4 interfaces, bearer auth — 03 §7c). axum is the one new
 # dependency in this arc; it reuses the hyper 1.x / tower 0.5 / http 1.x stack already
 # in the tree (via reqwest + tauri), so only axum/axum-core/matchit compile fresh. It is
 # compiled **only** into `crates/api` + `src-tauri` (the app), never the MCP binary.

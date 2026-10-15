@@ -1,23 +1,48 @@
-# ScreenSearch Local API (v1)
+# ScreenSearch HTTP API (v1)
 
-The **local HTTP API** exposes ScreenSearch's search, ask, frames, sessions, where-was-i, and
-marks over `127.0.0.1` for local scripts and agents. It is **opt-in and off by default** (0.3.0
+The **HTTP API** exposes ScreenSearch's search, ask, frames, sessions, where-was-i, and
+marks to scripts and agents. It is **opt-in and off by default** (0.3.0
 PR7; the sessions surface added in 0.4.0 PR6, specs `03 §7c` / `§7e`).
 
-> **Threat model — read this before enabling.** *Any local process holding the token can
-> read your entire screen history — enabling this is an explicit trust decision.* The API
-> binds `127.0.0.1` only (hard-coded, never your network) and requires a bearer token on
-> every request, but it does not sandbox which local process presents that token.
+> **Threat model — read this before enabling.** The API binds `0.0.0.0` (all IPv4 interfaces)
+> and uses plain HTTP without transport encryption. Any token holder on a reachable host can
+> read your entire screen history. Network observers may intercept tokens and responses.
+> Use a trusted network and restrict inbound access; all-interface binding does not enforce
+> LAN-only access. ScreenSearch does not configure your firewall or router or provide public hosting.
 
 ## Enabling
 
-Settings → **Local API** → toggle on. This:
+Settings → **HTTP API** → toggle on. This:
 
-- binds `127.0.0.1:<port>` (default **43210**, configurable; the bind address is not);
+- binds `0.0.0.0:<port>` (default **43210**, configurable; the bind address is not);
 - generates a **bearer token** on first enable (shown in Settings — reveal / copy /
   regenerate; regenerating takes effect immediately, no restart);
 - if the port is already in use, does **not** start — Settings shows a warning + an inline
   "pick another port" retry.
+
+Existing enabled installations keep their token and enabled state on upgrade and receive a
+persistent in-app notice about the broader listener. Acknowledge it in the main window after
+reading it; hiding the app or disabling the API does not discard the pending explanation.
+Fresh installations remain disabled. Inference and the MCP client's destination stay loopback-only.
+
+### Connecting from another computer
+
+Use the Windows computer's actual IPv4 address as `SCREENSEARCH_HOST`; `0.0.0.0` is a listen
+address, never a client destination. Local examples below continue to use `127.0.0.1`.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://$SCREENSEARCH_HOST:43210/v1/health"
+```
+
+If necessary, manually open **Windows Defender Firewall with Advanced Security → Inbound Rules
+→ New Rule → Custom**, choose this ScreenSearch executable and TCP port, scope remote addresses
+to the intended devices, and select only the trusted Private profile. Review existing rules
+before adding one. ScreenSearch never adds a rule or forwards router ports automatically.
+Do not expose this plain-HTTP endpoint to the public Internet.
+
+`200` confirms a successful authenticated request; `401` confirms an HTTP response but rejected
+credentials. A timeout is not an authentication failure: check the app, address, routing and
+firewall. Connection refusal can mean the API is disabled or listening on another port.
 
 ## Authentication
 
@@ -54,7 +79,7 @@ clients can parse errors uniformly:
 
 ## Endpoints
 
-All paths are under `http://127.0.0.1:<port>`.
+All paths are under `http://<computer-address>:<port>`; use `127.0.0.1` locally.
 
 ### `GET /v1/health`
 

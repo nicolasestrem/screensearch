@@ -30,3 +30,7 @@ store = { workspace = true }
 kernel = { workspace = true }
 reqwest = { workspace = true }
 tempfile = { workspace = true }
+
+# Exclusive Windows bind prevents another interface-specific listener sharing the API port.
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Networking_WinSock"] }

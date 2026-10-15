@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex, RwLock};
 
 use async_trait::async_trait;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use traits::{
     AnswerProvider, ApiStatus, ExportFrameRow, ExportRequest, ExportResult, FrameDetail,
     ResumeContext, RetrievedChunk, Settings, Store, Toast, ToastLevel,
@@ -29,6 +29,7 @@ use crate::{ask_context, now_ms, safe_frame_path, AppState};
 const API_ENABLED_KEY: &str = "api.enabled";
 const API_PORT_KEY: &str = "api.port";
 const API_TOKEN_KEY: &str = "api.token";
+const API_NETWORK_NOTICE_KEY: &str = "api.network_notice_state";
 /// Lower bound for `api.port` (`03 §8`; the upper bound is `u16::MAX`).
 const PORT_MIN: u16 = 1024;
 
@@ -227,21 +228,58 @@ async fn read_api_config(store: &SqliteStore) -> (bool, u16, Option<String>) {
     (enabled, port, token)
 }
 
+/// Called with `config_lock` held, before changing enabled intent. The single KV
+/// write is atomic; this lock serializes startup, configuration and acknowledgement.
+async fn initialize_network_notice(store: &SqliteStore) -> Result<(), String> {
+    match store.get_setting(API_NETWORK_NOTICE_KEY).await {
+        Ok(Some(value)) if value == "pending" || value == "acknowledged" => Ok(()),
+        Ok(Some(_)) => Err("invalid API network notice state".to_string()),
+        Ok(None) => {
+            let enabled = store
+                .get_setting(API_ENABLED_KEY)
+                .await
+                .map_err(|e| format!("could not read API upgrade state: {e}"))?
+                .is_some_and(|value| value == "true");
+            store
+                .set_setting(
+                    API_NETWORK_NOTICE_KEY,
+                    if enabled { "pending" } else { "acknowledged" },
+                )
+                .await
+                .map_err(|e| format!("could not persist API upgrade notice: {e}"))
+        }
+        Err(e) => Err(format!("could not read API upgrade notice: {e}")),
+    }
+}
+
 /// The current API status: persisted intent + live running state + last bind error.
 pub async fn current_status(store: &SqliteStore, runtime: &ApiRuntime) -> ApiStatus {
     let (enabled, port, token) = read_api_config(store).await;
     let running = runtime.server.lock().await.is_some();
-    let last_error = runtime
+    let mut last_error = runtime
         .last_error
         .lock()
         .expect("api last_error lock")
         .clone();
+    let network_notice_pending = match store.get_setting(API_NETWORK_NOTICE_KEY).await {
+        Ok(Some(value)) if value == "acknowledged" => false,
+        Ok(Some(value)) if value == "pending" => true,
+        Ok(None) => enabled,
+        result => {
+            last_error = Some(match result {
+                Err(error) => format!("could not read API upgrade notice: {error}"),
+                _ => "invalid API network notice state".to_string(),
+            });
+            true
+        }
+    };
     ApiStatus {
         enabled,
         running,
         port,
         token,
         last_error,
+        network_notice_pending,
     }
 }
 
@@ -260,6 +298,17 @@ pub async fn apply_api_config(
 ) -> Result<ApiStatus, String> {
     // Serialize the whole transition so overlapping enable/disable calls can't interleave.
     let _config_guard = runtime.config_lock.lock().await;
+    apply_api_config_locked(store, runtime, host, enabled, port).await
+}
+
+async fn apply_api_config_locked(
+    store: &SqliteStore,
+    runtime: &ApiRuntime,
+    host: Arc<dyn ApiHost>,
+    enabled: bool,
+    port: Option<u16>,
+) -> Result<ApiStatus, String> {
+    initialize_network_notice(store).await?;
     let (_, current_port, _) = read_api_config(store).await;
     let target_port = clamp_api_port(port.unwrap_or(current_port));
     // Persist the intent *before* touching the running server; if the DB write fails, bail
@@ -339,15 +388,33 @@ pub fn autostart(app: &AppHandle) {
     let runtime = state.api_runtime.clone();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let (enabled, _, _) = read_api_config(store.as_ref()).await;
-        if !enabled {
-            return;
+        let _config_guard = runtime.config_lock.lock().await;
+        // Startup must not turn a failed read into a persisted disabled intent.
+        // Unlike tolerant status rendering, this read controls a configuration write.
+        let result = async {
+            let enabled = store
+                .get_setting(API_ENABLED_KEY)
+                .await
+                .map_err(|e| format!("could not read API startup configuration: {e}"))?
+                .is_some_and(|value| value == "true");
+            initialize_network_notice(store.as_ref()).await?;
+            if !enabled {
+                return Ok(current_status(store.as_ref(), &runtime).await);
+            }
+            let host: Arc<dyn ApiHost> = host;
+            apply_api_config_locked(store.as_ref(), &runtime, host, true, None).await
         }
-        let host: Arc<dyn ApiHost> = host;
-        match apply_api_config(store.as_ref(), &runtime, host, true, None).await {
+        .await;
+        match result {
             Ok(status) => warn_on_bind_failure(&app, &status),
-            Err(e) => tracing::error!(error = %e, "local API autostart failed"),
+            Err(e) => {
+                tracing::error!(error = %e, "local API autostart failed");
+                *runtime.last_error.lock().expect("api last_error lock") = Some(e);
+            }
         }
+        // Invalidate early UI reads after both successful and failed startup. Never
+        // broadcast ApiStatus itself: it contains the bearer token.
+        let _ = app.emit("api_status_changed", ());
     });
 }
 
@@ -395,6 +462,42 @@ pub async fn get_api_status(state: State<'_, AppState>) -> Result<ApiStatus, Str
         .store
         .clone()
         .ok_or_else(|| "database unavailable".to_string())?;
+    let _guard = state.api_runtime.config_lock.lock().await;
+    initialize_network_notice(store.as_ref()).await?;
+    Ok(current_status(store.as_ref(), &state.api_runtime).await)
+}
+
+fn require_visible_main_window(label: &str, visible: bool) -> Result<(), String> {
+    if label != "main" || !visible {
+        return Err("acknowledge the API notice in the visible main window".to_string());
+    }
+    Ok(())
+}
+
+async fn persist_notice_acknowledgement(store: &SqliteStore) -> Result<(), String> {
+    initialize_network_notice(store).await?;
+    store
+        .set_setting(API_NETWORK_NOTICE_KEY, "acknowledged")
+        .await
+        .map_err(|e| format!("could not acknowledge API network notice: {e}"))
+}
+
+/// Only the main window's explicit acknowledgement action may consume the notice.
+#[tauri::command]
+pub async fn acknowledge_api_network_notice(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<ApiStatus, String> {
+    let store = state
+        .store
+        .clone()
+        .ok_or_else(|| "database unavailable".to_string())?;
+    let _guard = state.api_runtime.config_lock.lock().await;
+    require_visible_main_window(
+        window.label(),
+        window.is_visible().map_err(|e| e.to_string())?,
+    )?;
+    persist_notice_acknowledgement(store.as_ref()).await?;
     Ok(current_status(store.as_ref(), &state.api_runtime).await)
 }
 
@@ -580,8 +683,18 @@ mod tests {
     /// persisted, `running = false`, and a `last_error` — the loud guided-change state.
     #[tokio::test]
     async fn bind_failure_keeps_enabled_with_error() {
-        // Occupy a loopback port so the API can't bind it.
-        let occupied = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        // A competing loopback service must block the wildcard API bind too:
+        // local MCP must never silently connect to a different service on this port.
+        assert_bind_failure("127.0.0.1").await;
+    }
+
+    #[tokio::test]
+    async fn wildcard_bind_failure_keeps_enabled_with_error() {
+        assert_bind_failure("0.0.0.0").await;
+    }
+
+    async fn assert_bind_failure(address: &str) {
+        let occupied = std::net::TcpListener::bind((address, 0)).unwrap();
         let port = occupied.local_addr().unwrap().port();
 
         let store = SqliteStore::open_in_memory().unwrap();
@@ -601,5 +714,87 @@ mod tests {
             store.get_setting("api.enabled").await.unwrap().as_deref(),
             Some("true")
         );
+    }
+
+    #[tokio::test]
+    async fn enabled_upgrade_shows_bind_change_notice_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notice.sqlite");
+        {
+            let store = SqliteStore::open_path(&path).unwrap();
+            store.set_setting(API_ENABLED_KEY, "true").await.unwrap();
+            initialize_network_notice(&store).await.unwrap();
+            assert!(
+                current_status(&store, &ApiRuntime::new())
+                    .await
+                    .network_notice_pending
+            );
+            // Disabling must retain the warning about the prior exposure.
+            let status = apply_api_config(&store, &ApiRuntime::new(), host(), false, None)
+                .await
+                .unwrap();
+            assert!(status.network_notice_pending);
+        }
+        {
+            let store = SqliteStore::open_path(&path).unwrap();
+            initialize_network_notice(&store).await.unwrap();
+            assert!(
+                current_status(&store, &ApiRuntime::new())
+                    .await
+                    .network_notice_pending
+            );
+            persist_notice_acknowledgement(&store).await.unwrap();
+        }
+        let store = SqliteStore::open_path(&path).unwrap();
+        initialize_network_notice(&store).await.unwrap();
+        assert!(
+            !current_status(&store, &ApiRuntime::new())
+                .await
+                .network_notice_pending
+        );
+    }
+
+    #[test]
+    fn notice_acknowledgement_requires_visible_main_window() {
+        assert!(require_visible_main_window("main", true).is_ok());
+        assert!(require_visible_main_window("main", false).is_err());
+        assert!(require_visible_main_window("overlay", true).is_err());
+    }
+
+    #[tokio::test]
+    async fn disabled_api_has_no_listener() {
+        let probe = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        let store = SqliteStore::open_in_memory().unwrap();
+        let runtime = ApiRuntime::new();
+        let status = apply_api_config(&store, &runtime, host(), false, Some(port))
+            .await
+            .unwrap();
+        assert!(!status.enabled);
+        assert!(!status.running);
+        assert!(!status.network_notice_pending);
+        assert!(runtime.server.lock().await.is_none());
+        let available = std::net::TcpListener::bind(("0.0.0.0", port)).unwrap();
+        assert_eq!(available.local_addr().unwrap().port(), port);
+    }
+
+    #[tokio::test]
+    async fn invalid_notice_state_blocks_enable_and_surfaces_error() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        store
+            .set_setting(API_NETWORK_NOTICE_KEY, "invalid")
+            .await
+            .unwrap();
+        let runtime = ApiRuntime::new();
+        let error = apply_api_config(&store, &runtime, host(), true, None)
+            .await
+            .unwrap_err();
+        assert!(error.contains("invalid API network notice state"));
+        assert!(runtime.server.lock().await.is_none());
+        let status = current_status(&store, &runtime).await;
+        assert!(status.network_notice_pending);
+        assert!(status.last_error.is_some());
+        assert!(!status.enabled);
     }
 }

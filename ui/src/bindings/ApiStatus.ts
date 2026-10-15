@@ -15,6 +15,10 @@
  */
 export type ApiStatus = { 
 /**
+ * Pending upgrade notice; only explicit visible main-window acknowledgement clears it.
+ */
+network_notice_pending: boolean, 
+/**
  * Persisted intent — the master toggle.
  */
 enabled: boolean, 
@@ -23,7 +27,7 @@ enabled: boolean,
  */
 running: boolean, 
 /**
- * The configured port (default 43210); the bind is always `127.0.0.1`.
+ * The configured port (default 43210); listens on `0.0.0.0` (all IPv4 interfaces).
  */
 port: number, 
 /**

@@ -1,5 +1,31 @@
 # Testing — quick guide
 
+## Network API increment (unreleased): native acceptance checklist
+
+These are required checks, not claims of completed acceptance. Use an isolated test profile
+and fixture history; never serve personal history with a fixture token. Record raw outputs
+without tokens or screen content. Preserve the everyday installation.
+
+1. Fresh profile: API disabled, no listener. Enable in Settings; inspect the real socket
+   (`Get-NetTCPConnection`) and confirm `0.0.0.0:<configured-port>`.
+2. From a separate computer use the Windows host's actual address: authenticated `/v1/health`
+   returns 200 and the build version, missing/wrong token returns 401. Unknown path returns
+   401 without a token and 404 with a valid token. Record any manual firewall change separately.
+3. Existing enabled profile without `api.network_notice_state`: restart and observe the main
+   window notice. Hide/reopen, navigate and restart: notice stays. Disable API: notice stays
+   and reports disabled. Acknowledge visibly: restart confirms it no longer appears.
+4. Rotate token while running: old token rejected, new token accepted. Disable/re-enable and
+   restart preserve token/port. Port conflict retains enabled intent with a visible error.
+5. Local MCP still handshakes and queries via `127.0.0.1`; remote URLs are rejected. Cancel
+   an Ask stream during real model generation and observe worker cancellation. Confirm the
+   inference socket remains `127.0.0.1`, independent of the application API listener.
+6. Check notice keyboard focus, acknowledgement save error, hidden startup, Settings loading/
+   error/off/listening states, and listen-address/client-address distinction in the native UI.
+
+Unit/integration fixtures and a successful installer build do not replace these observations.
+Rollback: disable the API; use the previous build to restore loopback-only serving. No schema
+migration or token reset is part of this increment. Schedules and Telegram are separate work.
+
 Run from the repo root. Each command stands alone. Green = good.
 
 ## ✅ The one command

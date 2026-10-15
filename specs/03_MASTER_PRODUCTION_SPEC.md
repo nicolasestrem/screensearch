@@ -646,6 +646,9 @@ writes, report endpoints and Telegram are outside this increment.
 connect via `127.0.0.1` plus its port in API/MCP fixtures. Prove disabled means no listener,
 authentication covers all routes, enabled upgrades show the notice once, token rotation takes
 effect without restart, bind errors remain visible and status reports the listen address honestly.
+On Windows claim the API port with `SO_EXCLUSIVEADDRUSE` before bind: a wildcard listener
+must reject an existing loopback/interface-specific listener as well as another wildcard
+listener. Otherwise local MCP could connect to a different process on the configured port.
 Run the native Windows build and app; from a separate machine verify `/v1/health` returns 200
 with the actual version for a valid token and 401 for missing/wrong tokens. Verify local MCP,
 disable/enable, app restart and Ask stream disconnect, and confirm the inference sidecar remains
@@ -983,6 +986,12 @@ API must never consume it. Only explicit user acknowledgement in the visible mai
 main-window user action and returns the updated `ApiStatus`; no background acknowledgement or
 remote HTTP acknowledgement route. This uses the existing settings KV table, with no schema
 migration and no new API mode.
+
+Startup completion emits `api_status_changed` with a null/unit payload so the main UI
+invalidates its status query even if the first read preceded startup binding. The event never
+carries a token. Event subscription also refreshes status after registration to close the
+subscribe-versus-startup race. Startup must read persisted enabled intent fallibly before
+mutating configuration; a failed read must not silently persist a disabled preference.
 
 **0.3.2 lifecycle keys** (`§7d`; the only new settings surface this arc — new keys exist only where a
 PR names them, `docs/0.3.2.md`). PR3 shipped these two names as proposed; they are **contract** now (D7).

@@ -2,10 +2,10 @@
 //!
 //! A small [`axum`] server that exposes the same core queries the UI uses — search,
 //! ask, frames, where-was-i, marks — plus a streamed JSON export, over
-//! `127.0.0.1:<port>` for local scripts and agents. It is **off by default** and, when
-//! enabled, binds loopback **only** (the bind IP is a `const`, never a setting — a
-//! `0.0.0.0` bind is impossible by construction, D11) and requires a **bearer token** on
-//! every request.
+//! all IPv4 interfaces for scripts and agents. It is **off by default** and, when
+//! enabled, binds `0.0.0.0:<port>` and requires a **bearer token** on every request.
+//! This is plain HTTP: any reachable token holder can read history (`03 §7c`).
+//! Clients use the computer's address, or `127.0.0.1` locally, as their destination.
 //!
 //! The crate depends on [`traits`] only (`03 §2`): everything it needs from the app is
 //! behind the [`ApiHost`] trait, which the composition root implements over the concrete
@@ -37,10 +37,9 @@ use traits::{
 /// The default port for the local API (`api.port`, configurable; `03 §8`, D11).
 pub const DEFAULT_PORT: u16 = 43210;
 
-/// The **only** address the server ever binds (D11). Not a parameter of [`ApiServer::start`]
-/// and never sourced from settings, so a `0.0.0.0`/LAN bind cannot happen by construction —
-/// asserted by the `binds_loopback_only` integration test.
-const BIND_IP: Ipv4Addr = Ipv4Addr::LOCALHOST;
+/// The application API binds all IPv4 interfaces (`03 §7c`, Gate A amendment).
+/// This is not configurable and does not change the inference or MCP destination boundary.
+const BIND_IP: Ipv4Addr = Ipv4Addr::UNSPECIFIED;
 
 /// The live bearer token, shared with the auth middleware. Held behind an `RwLock` and
 /// read per request, so regenerating the token takes effect immediately without
@@ -143,16 +142,45 @@ pub struct ApiServer {
 }
 
 impl ApiServer {
-    /// Binds `127.0.0.1:<port>` **before** spawning the serve task, so a port conflict is
+    /// Binds `0.0.0.0:<port>` **before** spawning the serve task, so a port conflict is
     /// a synchronous `Err` the caller can surface loudly (`ApiStatus.last_error`,
     /// port-in-use guided change — `03 §7c`). The bind IP is [`BIND_IP`], never a
-    /// parameter — a non-loopback bind is impossible by construction (D11).
+    /// parameter — all IPv4 interfaces are served when enabled.
     pub async fn start(
         host: Arc<dyn ApiHost>,
         token: SharedToken,
         port: u16,
     ) -> std::io::Result<ApiServer> {
-        let listener = tokio::net::TcpListener::bind((BIND_IP, port)).await?;
+        let socket = tokio::net::TcpSocket::new_v4()?;
+        // Windows otherwise permits wildcard and interface-specific listeners to
+        // share a port. Local MCP could reach the other service despite a successful
+        // API bind. Claim the port exclusively before binding any interface.
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawSocket;
+            use windows::Win32::Networking::WinSock::{
+                setsockopt, WSAGetLastError, SOCKET, SOCKET_ERROR, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+            };
+            let enabled = 1_i32.to_ne_bytes();
+            // SAFETY: socket owns a live Winsock socket; the option byte slice has
+            // the required BOOL width and remains valid for this synchronous call.
+            let result = unsafe {
+                setsockopt(
+                    SOCKET(socket.as_raw_socket() as usize),
+                    SOL_SOCKET,
+                    SO_EXCLUSIVEADDRUSE,
+                    Some(&enabled),
+                )
+            };
+            if result == SOCKET_ERROR {
+                // SAFETY: retrieves this thread's error from the failed Winsock call.
+                return Err(std::io::Error::from_raw_os_error(unsafe {
+                    WSAGetLastError().0
+                }));
+            }
+        }
+        socket.bind(SocketAddr::from((BIND_IP, port)))?;
+        let listener = socket.listen(128)?;
         let local_addr = listener.local_addr()?;
         let router = build_router(ApiState { host, token });
         let (stop, mut stop_rx) = watch::channel(false);
@@ -176,8 +204,8 @@ impl ApiServer {
         })
     }
 
-    /// The bound socket address (always loopback). Used by tests and to report the live
-    /// port.
+    /// The bound socket address (IPv4 unspecified). Used to report the live port;
+    /// clients must use a reachable host address rather than this listen address.
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }

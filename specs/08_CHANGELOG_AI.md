@@ -1,5 +1,16 @@
 # 08 — AI Changelog
 
+## 2026-10-15 — Network API implementation and product-wide plan
+
+- Implemented all-IPv4 API with native Windows exclusive port ownership; kept auth on all
+  routes, local MCP validation and inference isolation. Corrected fixture destination URLs.
+- Added persisted upgrade notice and acknowledgement IPC, generated `ApiStatus`, complete
+  notice/error/current-state UI and startup invalidation without broadcasting tokens.
+- Updated README/API/MCP/architecture/testing docs and CHANGELOG; preserved historical release
+  statements. Added canonical execution plan and removed personal pilot acceptance framing.
+- Full verification passed after fixing the real Windows mixed-address bind conflict.
+  Raw output excerpts and command/log references are in `05`; live acceptance remains open.
+
 ## 2026-10-15 — Separate API contract amendment
 
 - Updated active network rules in AGENTS/CLAUDE and specs 01–04/UI_REFERENCE before code.

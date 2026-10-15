@@ -1,13 +1,13 @@
-// ApiPanel — the Settings · Local API surface (0.3.0 PR7; UI_REFERENCE §4/§5, `03 §7c`).
+// ApiPanel — the Settings · HTTP API surface (0.3.0 PR7; UI_REFERENCE §4/§5, `03 §7c`).
 //
-// Off by default. Enabling binds 127.0.0.1:<port> and mints a bearer token; the panel
+// Off by default. Enabling binds 0.0.0.0:<port> and mints a bearer token; the panel
 // reveals/copies/regenerates it. A port already in use is the loud guided-change state:
 // the server does not start (enabled && !running && last_error), and the panel shows the
 // warning + a "pick another port" retry — mirroring the D6 hotkey-conflict pattern.
 //
 // Five states (UI_REFERENCE §4): loading → skeleton; error → load failed + retry;
 // off (empty-off) → "API disabled" + the threat-model copy; enabling (partial) →
-// "Binding…"; populated → "Listening on 127.0.0.1:<port>" + token controls.
+// "Binding…"; populated → "Listening on 0.0.0.0:<port>" + token controls.
 import { useEffect, useState } from "react";
 
 import { Button, Chip, Field, Panel, Skeleton, Toggle } from "../primitives";
@@ -17,10 +17,7 @@ import {
   useSetApiConfig,
 } from "../../lib/ipc/mutations";
 import { toast } from "../../state/toastStore";
-
-// The threat model, verbatim from `03 §7c` — shown wherever the API can be enabled.
-const THREAT_MODEL =
-  "Any local process holding the token can read your entire screen history — enabling this is an explicit trust decision.";
+import { API_THREAT_MODEL } from "../../lib/apiCopy";
 
 const DEFAULT_PORT = 43210;
 const PORT_MIN = 1024;
@@ -45,10 +42,10 @@ export function ApiPanel() {
   if (status.isLoading || !status.data) {
     if (status.isError) {
       return (
-        <Panel group title="Local API">
+        <Panel group title="HTTP API">
           <div className="flex flex-col gap-3">
             <span className="text-body text-ink-muted font-body">
-              Could not load the local API status.
+              Could not load the HTTP API status.
             </span>
             <div>
               <Button variant="secondary" onClick={() => status.refetch()}>
@@ -60,7 +57,7 @@ export function ApiPanel() {
       );
     }
     return (
-      <Panel group title="Local API">
+      <Panel group title="HTTP API">
         <div className="flex flex-col gap-3">
           <Skeleton className="h-6 w-40" />
           <Skeleton className="h-16 w-full" />
@@ -87,14 +84,14 @@ export function ApiPanel() {
       {
         onSuccess: (result) => {
           if (!next) {
-            toast.info("Local API disabled.");
+            toast.info("HTTP API disabled.");
           } else if (result.running) {
-            toast.success(`Local API listening on 127.0.0.1:${result.port}.`);
+            toast.success(`HTTP API listening on 0.0.0.0:${result.port}.`);
           }
           // A bind failure (enabled but not running) already surfaced a warning toast
           // from the backend; the inline warning below carries the guided retry.
         },
-        onError: (e) => toast.error(`Could not change the local API: ${String(e)}`),
+        onError: (e) => toast.error(`Could not change the HTTP API: ${String(e)}`),
       },
     );
   };
@@ -107,10 +104,10 @@ export function ApiPanel() {
       {
         onSuccess: (result) => {
           if (result.running) {
-            toast.success(`Local API listening on 127.0.0.1:${result.port}.`);
+            toast.success(`HTTP API listening on 0.0.0.0:${result.port}.`);
           }
         },
-        onError: (e) => toast.error(`Could not restart the local API: ${String(e)}`),
+        onError: (e) => toast.error(`Could not restart the HTTP API: ${String(e)}`),
       },
     );
   };
@@ -136,32 +133,34 @@ export function ApiPanel() {
   };
 
   const statusChip = setConfig.isPending ? (
-    <Chip tone="accent">binding…</Chip>
+    <Chip tone="accent">{setConfig.variables?.enabled ? "binding…" : "stopping…"}</Chip>
   ) : s.running ? (
     <Chip tone="ok">listening</Chip>
   ) : bindFailed ? (
     <Chip tone="warn">port in use</Chip>
+  ) : s.enabled ? (
+    <Chip tone="warn">not listening</Chip>
   ) : (
     <Chip tone="neutral">disabled</Chip>
   );
 
   return (
-    <Panel group title="Local API" action={statusChip}>
+    <Panel group title="HTTP API" action={statusChip}>
       <div className="flex flex-col gap-4">
         {/* Section intro — plain language, from the user's side (UI_REFERENCE §9). */}
         <p className="text-caption text-ink-muted font-body">
-          Lets other tools on this computer read your history over a local,
-          token-protected API. Leave it off unless you use one.
+          Lets scripts and agents on this computer or a trusted network read your
+          history through a token-protected API. Leave it off unless you use one.
         </p>
         <Toggle
-          label="Enable local HTTP API"
+          label="Enable HTTP API"
           checked={s.enabled}
           onChange={toggle}
           disabled={busy}
-          hint="Serves your screen history to local scripts and agents over 127.0.0.1 only. Off by default."
+          hint="Listens on all IPv4 interfaces (0.0.0.0). Off by default."
         />
 
-        <p className="text-caption text-warn font-body">{THREAT_MODEL}</p>
+        <p className="text-caption text-warn font-body">{API_THREAT_MODEL}</p>
 
         {/* Off (empty-off): nothing else to show — the toggle + threat model is the state. */}
         {!s.enabled && (
@@ -173,7 +172,9 @@ export function ApiPanel() {
         {/* Enabling (partial). */}
         {setConfig.isPending && (
           <p className="text-caption text-ink-muted font-body">
-            Binding 127.0.0.1:{parsedPort()}…
+            {setConfig.variables?.enabled
+              ? `Binding 0.0.0.0:${parsedPort()}…`
+              : "Stopping the HTTP API…"}
           </p>
         )}
 
@@ -188,7 +189,7 @@ export function ApiPanel() {
             onChange={(e) => setPortDraft(e.currentTarget.value)}
             disabled={busy}
             error={bindFailed ? s.last_error : null}
-            hint="127.0.0.1 only (not configurable). Changing the port restarts the server."
+            hint="All IPv4 interfaces (not configurable). Changing the port restarts the server."
           />
         )}
 
@@ -220,8 +221,19 @@ export function ApiPanel() {
         {s.running && (
           <div className="flex flex-col gap-2">
             <span className="text-body text-ink font-body">
-              Listening on 127.0.0.1:{s.port}
+              Listening on 0.0.0.0:{s.port} (all IPv4 interfaces)
             </span>
+            <p className="text-caption text-ink-muted">
+              Local clients use <code className="font-mono">http://127.0.0.1:{s.port}</code>.
+              Other computers use this computer’s network address and port {s.port};
+              0.0.0.0 is a listen address, not a client destination. Local MCP stays on 127.0.0.1.
+            </p>
+            <p className="text-caption text-ink-muted">
+              Remote access may need a Windows Firewall inbound rule for this port on
+              your trusted network. ScreenSearch does not change firewall rules. An HTTP
+              401 means the server was reached but the token was rejected; a connection
+              timeout may mean the address, routing or firewall needs checking.
+            </p>
             <label className="text-caption text-ink-muted font-body">
               Bearer token
             </label>

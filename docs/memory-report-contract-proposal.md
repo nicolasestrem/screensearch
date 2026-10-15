@@ -3,12 +3,12 @@
 Status: **Proposal for review, not an approved implementation contract.**
 
 This document resolves the remaining A3 design questions in
-`C:\Users\nicol\Desktop\memory-api-direction-plan.md`. It is a review artifact for increments
+[memory-api-direction-plan.md](memory-api-direction-plan.md). It is a review artifact for increments
 C–E, not permission to implement them. Approved decisions must be recorded in
 `specs/03_MASTER_PRODUCTION_SPEC.md` before implementation, with the separate scheduling and
 Telegram boundary amendments required by Gate A. The application serves approximately 15,000
-people, as clarified by the maintainer; Nico's setup is one validation environment, not the
-product's audience or acceptance standard.
+people, as clarified by the maintainer; an individual setup is one validation environment, not
+the product’s audience or acceptance standard.
 
 ## Existing plan decisions
 
@@ -140,8 +140,9 @@ itself require a separate product decision.
 
 ## Proposed replacement for F1/F2 validation
 
-This section proposes replacing Nico-only usefulness thresholds in the desktop plan. It does
-not claim pilot results or invent a population-wide quality score.
+This section records the proposed product-wide validation mirrored in the canonical
+[memory-api-direction-plan.md](memory-api-direction-plan.md). It does not claim pilot results
+or invent a population-wide quality score.
 
 ### F1 — Opt-in pilot across supported environments
 

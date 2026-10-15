@@ -270,6 +270,10 @@ export const setApiConfig = (args: {
 export const getApiStatus = (): Promise<ApiStatus> =>
   invoke<ApiStatus>("get_api_status");
 
+/** Explicit visible-main-window acknowledgement; persistence failure preserves pending state. */
+export const acknowledgeApiNetworkNotice = (): Promise<ApiStatus> =>
+  invoke<ApiStatus>("acknowledge_api_network_notice");
+
 /** Regenerate the bearer token (no server restart — the middleware reads it live). */
 export const regenerateApiToken = (): Promise<ApiStatus> =>
   invoke<ApiStatus>("regenerate_api_token");
