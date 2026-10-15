@@ -20,3 +20,12 @@
 > Live rows: #15 (upstream llama.cpp leak), #23 (PDH blind to Vulkan).
 
 When the spec contradicts itself, stop, ask the user, and log the resolution here before coding.
+
+## 2026-10-15 — Security maintenance
+
+All six current alerts are triaged in `05`: five targeted dependency fixes and
+one evidence-backed CodeQL false-positive dismissal. User authorized the work
+and PR, with release-first sequencing. PR #124 is merged and v0.4.1 is tagged;
+publication/assets must be confirmed before opening the security PR. No merge
+or release is authorized here. Native Windows CI remains required before merge.
+Retire the selector-parser override when upstream ranges resolve patched copies.
