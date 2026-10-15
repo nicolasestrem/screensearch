@@ -14,7 +14,7 @@ local database; the MCP wrapper uses loopback. The HTTP API defaults to `127.0.0
 explicit network binding lets authenticated devices that can reach this computer read history.
 Inference stays on-device.
 
-> **Status — v0.4.0 shipped (2026-07-11).** The full app is live: capture → OCR/UIA text →
+> **Status — v0.4.1 shipped (2026-10-15).** The full app is live: capture → OCR/UIA text →
 > deferred enrichment → **hybrid search**, a supervised out-of-process **llama.cpp inference
 > sidecar** (Job-Object-bound) for vision tagging and grounded streaming answers, the six-screen
 > **Command Deck** UI, a
@@ -28,14 +28,13 @@ Inference stays on-device.
 > [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md). A standalone, clean-slate project — it
 > shares no code or data with any prior version.
 
-## New in development — from screen history to memory reports
+## New in v0.4.1 — from screen history to memory reports
 
 Turn captured activity into notes you can revisit in **Obsidian**, with an optional digest in
 **Telegram**. Generate a report when you need it, or set a daily schedule. Capture storage and
 AI inference stay on your Windows computer.
 
-These additions are implemented and packaged in the current development branch, **not yet in
-the public release**. The latest released version remains v0.4.0.
+These additions shipped in v0.4.1 and reach existing installs through auto-update.
 
 | Addition | What you can do |
 |---|---|
@@ -112,7 +111,7 @@ HTTP API exposes history to authenticated clients; see its [network boundary](do
   sidecar**: streaming answers with cited frames, and Daily / Weekly / Custom **Recall reports**
   that cite the frames they used. Vision tagging emits structured output with an honest confidence,
   never a fabricated score.
-- **Memory reports (unreleased).** Save reports for selected dates or on a daily schedule,
+- **Memory reports.** Save reports for selected dates or on a daily schedule,
   browse them as Markdown notes in Obsidian, and optionally receive Telegram digests.
   Coverage and delivery receipts make empty windows, partial reports and failed attempts visible.
 - **Sessions.** A pure on-device heuristic groups frames into focus, meeting, and concurrent

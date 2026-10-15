@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-15
+
+Highlights: PR [#122](https://github.com/nicolasestrem/screensearch-v2c/pull/122) (opt-in network API,
+configurable bind address) and PR [#123](https://github.com/nicolasestrem/screensearch-v2c/pull/123)
+(durable memory reports, date/range selection, Telegram digests; schema 11 → 12). The release
+workflow now publishes a full release automatically.
+
 ### Added
 - Manual memory report date/range selection, including today's in-progress evidence, with
   inclusive dates in the selected timezone and separate owned report files/index links.
@@ -47,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remain recognized. Windows-only file operations and the database schema are unchanged.
 - The memory/reporting execution plan now targets configurable product behavior and validation
   across supported user environments. Native acceptance remains separate from build verification.
+
+### Changed (release pipeline)
+- `release.yml` publishes the GitHub Release itself (full release, `generate_release_notes`, body from
+  `docs/release-notes/<tag>.md`) instead of leaving a draft, so the signed `latest.json` is
+  immediately visible to the updater.
 
 ### Removed
 - Unused UI scaffold, search-icon alias, local-day helper, and mark-note mutation hook;
