@@ -14,6 +14,7 @@ import { listenTo } from "./events";
 import { queryKeys } from "./queryKeys";
 import { toast as toastStore } from "../../state/toastStore";
 import type { Readiness } from "../../bindings/Readiness";
+import { memoryKeys } from "./memory";
 
 /** Debounce window for coalescing capture_tick bursts into one invalidation. */
 const TICK_DEBOUNCE_MS = 800;
@@ -122,6 +123,35 @@ export function useLiveEvents() {
     track(
       listenTo("sessions_changed", () => {
         qc.invalidateQueries({ queryKey: queryKeys.sessionsPrefix });
+      }),
+    );
+
+    track(
+      listenTo("memory_status_changed", () => {
+        qc.invalidateQueries({ queryKey: memoryKeys.all });
+      }).then((unlisten) => {
+        if (active) qc.invalidateQueries({ queryKey: memoryKeys.all });
+        return unlisten;
+      }),
+    );
+
+    // The first status request can precede async API startup. Subscribe, then
+    // refresh once to cover a startup event emitted before registration. Cancel
+    // an initial in-flight read first: invalidation alone could reuse that stale
+    // request when the query has no data yet.
+    const refreshApiStatus = async () => {
+      if (!active) return;
+      await qc.cancelQueries({ queryKey: queryKeys.apiStatus });
+      if (active) {
+        await qc.invalidateQueries({ queryKey: queryKeys.apiStatus });
+      }
+    };
+    track(
+      listenTo("api_status_changed", () => {
+        void refreshApiStatus();
+      }).then((unlisten) => {
+        void refreshApiStatus();
+        return unlisten;
       }),
     );
 

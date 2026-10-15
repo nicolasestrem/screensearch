@@ -1,23 +1,58 @@
-# ScreenSearch Local API (v1)
+# ScreenSearch HTTP API (v1)
 
-The **local HTTP API** exposes ScreenSearch's search, ask, frames, sessions, where-was-i, and
-marks over `127.0.0.1` for local scripts and agents. It is **opt-in and off by default** (0.3.0
+The **HTTP API** exposes ScreenSearch's search, ask, frames, sessions, where-was-i, and
+marks to scripts and agents. It is **opt-in and off by default** (0.3.0
 PR7; the sessions surface added in 0.4.0 PR6, specs `03 §7c` / `§7e`).
 
-> **Threat model — read this before enabling.** *Any local process holding the token can
-> read your entire screen history — enabling this is an explicit trust decision.* The API
-> binds `127.0.0.1` only (hard-coded, never your network) and requires a bearer token on
-> every request, but it does not sandbox which local process presents that token.
+> **Threat model — read this before enabling.** The API uses plain HTTP without transport
+> encryption. The default bind is `127.0.0.1` (local access). If you choose a network address,
+> any token holder on a reachable host can read your entire screen history. Network observers
+> may intercept tokens and responses. Wildcard binding does not enforce LAN-only access.
+> ScreenSearch does not configure your firewall or router or provide public hosting.
 
 ## Enabling
 
-Settings → **Local API** → toggle on. This:
+Settings → **HTTP API** → choose a bind address and port, then toggle on.
 
-- binds `127.0.0.1:<port>` (default **43210**, configurable; the bind address is not);
-- generates a **bearer token** on first enable (shown in Settings — reveal / copy /
-  regenerate; regenerating takes effect immediately, no restart);
-- if the port is already in use, does **not** start — Settings shows a warning + an inline
-  "pick another port" retry.
+- Bind address accepts any IPv4/IPv6 literal: `127.0.0.1`, `::1`, a specific interface address,
+  or `0.0.0.0` / `::`. Hostnames, URLs and embedded ports are rejected.
+- Missing address defaults to `127.0.0.1`, including existing enabled installations. Upgrading
+  never broadens access automatically. Enabled state, token and port are preserved.
+- Port defaults to **43210**. Address/port changes persist and apply immediately.
+- A bearer token is generated on first enable; reveal, copy or regenerate it in Settings.
+  Rotation takes effect immediately without restart.
+- A bind failure is visible in Settings with guidance to correct the address/port.
+
+Inference and the MCP client's destination remain loopback-only. A bind that excludes loopback
+may make local MCP unavailable; configure an appropriate loopback or wildcard listener to use MCP.
+
+### Connecting from another computer
+
+First select a network-capable bind address. Use the Windows computer's actual reachable address
+as `SCREENSEARCH_HOST`; wildcard addresses are never client destinations. For IPv6, bracket the
+address in URLs, for example `http://[::1]:43210/v1/health`. Local examples below use `127.0.0.1`.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://$SCREENSEARCH_HOST:43210/v1/health"
+```
+
+If necessary, manually open **Windows Defender Firewall with Advanced Security → Inbound Rules
+→ New Rule → Custom**, choose this ScreenSearch executable and TCP port, scope remote addresses
+to the intended devices, and select only the trusted Private profile. Review existing rules
+before adding one. ScreenSearch never adds a rule or forwards router ports automatically.
+Do not expose this plain-HTTP endpoint to the public Internet.
+
+`200` confirms a successful authenticated request; `401` confirms an HTTP response but rejected
+credentials. A timeout is not an authentication failure: check the app, address, routing and
+firewall. Connection refusal can mean the API is disabled or listening on another port.
+
+## Connection bounds
+
+All listeners, including loopback, allow at most **64 active connections**. Excess sockets close
+immediately, before HTTP authentication, rather than receiving an HTTP error response. Clients
+may retry after another connection closes. Each request has **30 seconds to send its headers**;
+idle keep-alive connections close on the same next-header deadline. This does not limit the
+duration of an active Ask SSE or export response. These limits are fixed, not configurable.
 
 ## Authentication
 
@@ -54,7 +89,7 @@ clients can parse errors uniformly:
 
 ## Endpoints
 
-All paths are under `http://127.0.0.1:<port>`.
+All paths are under `http://<computer-address>:<port>`; use `127.0.0.1` locally.
 
 ### `GET /v1/health`
 

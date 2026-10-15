@@ -18,6 +18,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 axum = { workspace = true }
+# The bounded accept loop + request-header deadline (PR #122 review amendment): the
+# HTTP/1 connection builder, TokioIo/TokioExecutor/TokioTimer, and the tower→hyper
+# service bridge. Already compiled for the tree via axum's server path.
+hyper-util = { workspace = true }
 getrandom = { workspace = true }
 futures-util = { workspace = true }
 # `net` for the TcpListener bind; `fs`/`io-util` for the export-to-file path (PR7 §7c).
@@ -30,3 +34,7 @@ store = { workspace = true }
 kernel = { workspace = true }
 reqwest = { workspace = true }
 tempfile = { workspace = true }
+
+# Exclusive Windows bind prevents another interface-specific listener sharing the API port.
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Networking_WinSock"] }

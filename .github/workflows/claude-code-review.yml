@@ -75,8 +75,8 @@ jobs:
             full commit SHA in the URL or the Markdown preview will not render.
 
           claude_args: |
-            --model claude-sonnet-4-6
-            --max-turns 35
+            --model claude-sonnet-5
+            --max-turns 50
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep"
 
           show_full_output: true

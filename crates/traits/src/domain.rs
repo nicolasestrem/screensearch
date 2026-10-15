@@ -529,6 +529,8 @@ pub struct ExportFrameRow {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportRange {
     Daily,
+    /// Durable daily memory uses coverage retrieval and explicit dated framing.
+    MemoryDaily,
     Weekly,
     Custom,
 }
@@ -570,6 +572,8 @@ pub struct ReportOutput {
     pub markdown: String,
     /// Frames the model actually read (deduped, in inclusion order).
     pub cited_frame_ids: Vec<i64>,
+    /// Full distinct frame IDs actually summarized, without the UI citation cap.
+    pub frame_ids: Vec<i64>,
     /// How the report was produced.
     pub mode: ReportMode,
     /// Periods in range (active + empty).
@@ -578,7 +582,7 @@ pub struct ReportOutput {
     pub periods_covered: u32,
     /// Frames sampled into the map step.
     pub frames_sampled: u32,
-    /// Frames actually summarized (== `cited_frame_ids.len()`).
+    /// Frames actually summarized (== `frame_ids.len()`).
     pub frames_summarized: u32,
     /// Total sidecar passes (map + reduce + final); `0` for a no-evidence report.
     pub passes: u32,

@@ -45,13 +45,16 @@ futures = "0.3"
 # serialization + typed IPC
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+uuid = { version = "1", features = ["v4"] }
 ts-rs = "10"
 # TOML for the dev-only segmentation harness (0.4.0 PR2): the hand-label files and the
 # D7 recognition-taxonomy data file (the format 03 §7e proposes the shipped taxonomy will
 # use in PR4). Compiled only into crates/harness, never the app or the MCP binary.
 toml = "0.9"
 
-# local HTTP API (0.3.0 PR7, opt-in, 127.0.0.1 only — 03 §7c). axum is the one new
+# HTTP API (opt-in, all IPv4 interfaces, bearer auth — 03 §7c). axum is the one new
 # dependency in this arc; it reuses the hyper 1.x / tower 0.5 / http 1.x stack already
 # in the tree (via reqwest + tauri), so only axum/axum-core/matchit compile fresh. It is
 # compiled **only** into `crates/api` + `src-tauri` (the app), never the MCP binary.
@@ -59,6 +62,18 @@ axum = { version = "0.8", default-features = false, features = [
     "http1",
     "json",
     "query",
+    "tokio",
+] }
+# hyper 1.x server plumbing for the API's bounded accept loop + request-header deadline
+# (PR #122 review amendment, `03 §7c`): the HTTP/1 connection builder, TokioIo/
+# TokioExecutor/TokioTimer, and the tower→hyper service bridge. Every feature listed is
+# already enabled transitively by axum's server path for this workspace, so no new crate
+# compiles; `http2`/`server-auto` stay off — the listener is HTTP/1 across the board, so
+# the header deadline covers every request.
+hyper-util = { version = "0.1.20", default-features = false, features = [
+    "http1",
+    "server",
+    "service",
     "tokio",
 ] }
 # CSPRNG for the API bearer token; already in the tree (rustls), so no new compilation.

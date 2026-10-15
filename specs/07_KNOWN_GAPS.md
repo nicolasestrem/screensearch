@@ -1,5 +1,48 @@
 # 07 — Known Gaps
 
+## PR #122 — connection-bound decision and verification boundary
+
+Gap #89(b) is revisited because configurable binding widens the surface. Maintainer approved
+64 active connections and a timed 30-second request-header deadline on all listeners, with
+immediate close at capacity, no SSE/body deadline, and owned bounded shutdown (`03 §7c`).
+Connection-bound implementation passed native Windows regression/build/Clippy gates (`05`);
+the connection-cap part of #89(b) is addressed, while rate limiting remains deferred.
+The amended API toast passed actual Windows WebView2/IPC interaction at 1280×900. Narrow
+375×812 stress still overflows the desktop shell; it is below the 960 px minimum and does not
+change the Windows desktop contract. No mobile support or real-model/Telegram acceptance inferred.
+
+## 2026-10-15 — PR #123 review verification boundary
+
+Linux kernel/store tests and targeted clippy do not establish native memory-worker, credential,
+atomic-file or startup behavior. The new src-tauri regressions need Windows CI; real installed-model,
+recipient-change delivery and rendered UI acceptance remain manual gates. No live Telegram send
+was authorized or attempted for review fixes. Existing npm development advisories remain unchanged.
+
+## 2026-10-15 — Report policies approved
+
+The previously recorded C–E policy questions are resolved by the explicit "Sure GO" approval;
+`03 §8c` is the implementation contract. Live installed-model/folder/Telegram acceptance still
+requires actual test inputs and observed results. Firewall access for this work was approved;
+the app does not automatically alter firewall rules. Do not infer Telegram credentials or
+recipient from this permission.
+
+Implementation C–E has passed the local Windows automated suite (817 passed, 15 existing
+hardware/manual tests ignored); native quality and product-wide pilot gates remain open. OS
+file operations may continue after the bounded async worker is cancelled; persisted intents
+recover the outcome. Slow/unavailable-folder native acceptance must check this behavior.
+The current Node 22 UI install reports 10 development-tree advisories (3 moderate, 7 high);
+`npm audit --omit=dev` reports zero. No unrelated lockfile remediation was applied.
+
+## 2026-10-15 — Memory/API execution gates (owner: maintainer + agent)
+
+- C–E policies are approved in `03 §8c/§8d`; implementation verification is tracked in `05`.
+  Product acceptance must cover diverse supported user setups, not a personal usefulness score.
+- Before network release: real separate-machine HTTP authentication, local MCP, native
+  visible upgrade notice, restart, disable/enable, Ask cancellation and inference bind evidence.
+- Before automation acceptance: user-selected test folder, installed model, and explicitly
+  approved Telegram test destination; no fabricated receipts or private-history defaults.
+- Website source is not present in this repository; external privacy-copy review remains open.
+
 > Where the **spec is silent** and a decision was needed, plus **manual interventions** still
 > required (with owner + deadline). The agent appends here instead of guessing (`04 §5`). Empty
 > until the build hits a gap.
@@ -138,3 +181,33 @@ here. Windows build/clippy/tests and binding freshness are verified by GitHub CI
 on Rust 1.95.0. Dependabot alert #4 (quinn-proto, GHSA-4w2j-m93h-cj5j) must move
 to fixed after merge; do not dismiss or suppress it. This update does not itself
 publish a new installer or update existing installations.
+
+## 2026-10-15 — configurable API and minute-only schedule correction
+
+The earlier automatic all-interface upgrade behavior is superseded: missing
+`api.bind_address` stays `127.0.0.1`, including enabled installations. Users select a literal
+IPv4/IPv6 address explicitly. Native HTTP tests cover loopback and selected wildcard/IPv6
+listeners; separate-machine and interactive Settings acceptance remain open (owner: maintainer,
+before release). Schedule controls and displayed report times use hour/minute precision.
+
+New settings and delivery paths use forward slashes. Native filesystem boundaries restore
+Windows verbatim/device prefix syntax so normalization does not reinterpret extended paths.
+Real Windows tests cover ordinary and verbatim atomic create/replace/read, plus legacy file
+ownership lookup and transactional separator normalization. The app remains Windows-only.
+
+
+## 2026-10-15 — selected-date Memory reports and diagnostic boundary
+
+The reported empty note was a genuine previous-day NO_DATA window with zero frames; its Telegram
+receipt was skipped before transport. The new manual date/range controls address choosing the
+intended capture dates, including partial today. They preserve the configured daily schedule.
+Native Settings interaction, real installed-model quality and approved live Telegram delivery
+remain acceptance gates (owner: maintainer, before release); the running installation was left
+untouched during diagnosis and development.
+
+Source review additionally found that empty model responses and sampling without usable chunks
+could become empty coverage output after a positive usable-content probe. Shared execution now
+fails those cases explicitly; true empty windows and prompt-based no-match output retain their
+meaning. Sparse-content sampling can still require a larger frame budget to obtain useful output;
+it must never be represented as proof that the window had no data. Privacy-safe run/delivery
+status logs complement durable receipts without screen text, credentials, recipients or paths.
