@@ -16,8 +16,8 @@
   slow/unavailable-folder behaviour (OS file operations can finish after async cancellation, durable
   intents recover the outcome); rate limiting remains deferred (#89(b) — the 64-connection cap and
   30 s header deadline shipped); sparse-content sampling can need a larger frame budget and must never
-  be read as proof of no data; the Windows credential read CodeQL alert awaits dismissal as a false
-  positive; the dev-tree npm advisories remain (`npm audit --omit=dev` is clean).
+  be read as proof of no data; the Windows credential read CodeQL alert was dismissed as a false positive on
+  2026-10-15 (evidence in `05`); the remaining dev-tree braces advisory is tracked below.
 - Schema 11 → 12 (0.4.1) is forward-only and there is no automatic pre-migration backup in the app;
   the 0.4.1 release notes tell users to back up the data folder first.
 
@@ -150,3 +150,16 @@ Manual steps still required (e.g. signing certs, first-run model download, CI se
 - **Verification remains local:** Node 26.8.1 was used instead of CI's Node 22; no
   remote CI, interactive app-wide QA, GPU/model smoke, installer or release check
   was performed. Existing hardware/manual gates above remain open.
+
+
+## 2026-10-15 — Remaining npm build-tool advisory
+
+Owner: maintainer; reassess on upstream patch or build-input changes.
+GHSA-vfj7-8cjw-p6xm affects braces 3.0.3, propagated through chokidar, micromatch,
+fast-glob and Tailwind (five high package entries, one underlying advisory).
+Registry latest remains 3.0.3, with no patched release. Globs are fixed in the
+repository's Tailwind config; captured text and API requests do not become build
+patterns. The static production UI does not execute this Node pipeline, and
+`npm audit --omit=dev` is clean. Do not force a Tailwind 4 migration just to
+silence propagation. Reassess before accepting untrusted build patterns.
+CodeQL alert 2 was dismissed with the FFI contract evidence recorded in `05`.

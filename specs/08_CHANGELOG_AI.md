@@ -25,3 +25,14 @@
 > Live file holds only the current arc.
 
 ---
+
+## 2026-10-15 — Six security alerts
+
+- **Change:** reapplied the five dependency fixes onto v0.4.1 main: rustls
+  0.23.45/webpki 0.103.15, brace-expansion 1.1.21/5.0.12, source-map-js 1.2.2,
+  and selector-parser 7.1.6 via override. Dismissed CodeQL alert 2 as a false
+  positive after verifying CredReadW allocation, null check, copy and free order.
+- **Why:** remediate the six alerts at the maintainer's request while retaining
+  all 0.4.1 changes and the Quinn fix.
+- **Verification:** clean UI install/lint/build/tests and byte-identical output;
+  production npm audits clean. Alert mapping and raw check excerpts in `05`.
