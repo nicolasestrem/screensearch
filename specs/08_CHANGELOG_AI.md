@@ -1,5 +1,27 @@
 # 08 — AI Changelog
 
+## 2026-10-16 — External-agent memory API contract and inventories
+
+- **Change:** explicit narrow portable/remote stdio-client boundary plus `03 §7f`
+  contracts for chronological evidence, stable allocator metadata, truthful bounded
+  coverage, independent read credential, safe saved-report reads and acceptance.
+  Companion scope/operating/UI documents updated; schema remains 12. No runtime
+  feature implementation in P0 and no listener or inference-default changes.
+- **Why:** execute Nico's attached plan in independently checkable increments,
+  retaining ordinary local workflows. An unfinished-run/saved-output contradiction
+  is explicitly held for Nico rather than guessed; P1/P2 remain independent.
+- **Verification:** independent inventories and boundary/full-contract review;
+  residual OS prohibition and implicit HEAD classification corrected, verified by
+  parent. Separate boundary commit `9f912e2`. Unchanged Linux MCP baseline:
+
+  ```text
+  BUILD EXIT CODE: 0
+  TEST EXIT CODE: 0
+  CLIPPY EXIT CODE: 0
+  ```
+
+  Parent binary/version/stdio verification and uncompleted native/remote gates in `05`.
+
 > Append-only record of what the agent changed during the build, **with reasons**. One entry per
 > meaningful change set. Empty until P0 begins. (This tracks build work; the design-phase history
 > lives in git.)

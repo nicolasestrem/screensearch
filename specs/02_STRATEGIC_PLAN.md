@@ -222,7 +222,8 @@ Recall/session reports retain their behavior while sharing execution and evidenc
 
 Contract order: reviewed schedule/local-report amendment → separate outbound Telegram amendment
 → implementation C–E. The API increment remains independently reviewable; report HTTP/MCP
-endpoints and deeper weekly/project memory remain deferred. `03 §8c` freezes the approved
+generation/retry/delivery endpoints and deeper weekly/project memory remain deferred; saved-output
+reads are promoted by the approved external-agent increment (`§5h`, `03 §7f`). `03 §8c` freezes the approved
 activation, DST, retry/regenerate, provenance, retention, ownership and error rules. Explicitly
 selected folders/timezones/credentials are runtime setup, not another plan-approval gate.
 Manual execution also supports a selected calendar date or inclusive date range, including
@@ -241,6 +242,56 @@ cloud inference, implicit recipient or telemetry. Credentials live only in Windo
 Manager. Generation, vault writing and Telegram acceptance have separate durable receipts;
 unknown acceptance never triggers automatic resend. Actual Bot API delivery requires an
 explicitly approved test recipient/send and inspection, not a fabricated acknowledgement.
+
+## 5h. External-agent memory API — approved increment (2026-10-16)
+
+Nico approved the attached external-agent memory plan and its recommendations for execution.
+The normative contract is fully recorded in `03 §7f`, not delegated back to a draft attachment.
+Approval is not implementation evidence and authorizes neither merge nor release. The separate
+remote-wrapper boundary amendment must receive independent review before its behavior lands.
+
+**Outcome:** external agents enumerate a selected UTC-bounded day's chronological captured
+evidence, resume checkpoints, inspect truthful capture limitations and read saved reports using
+independent read-only credentials. They need no answer model, scheduler, folder export or
+Telegram. Existing local capture/search/Ask/reports/schedules remain compatible with API off.
+No Screenpipe adapter/endpoint parity or superiority claim; no inferred work-duration scoring.
+
+**Frozen choices:** tuple-keyset `(captured_at,id)` ascending bounded-membership/live-content
+pages; full separately labeled raw and filtered text including textless frames; per-history
+identity and transactional no-reuse high-water allocator in reserved settings metadata; truthful
+bounded current-process observations (1000 transitions, at most 100 returned intervals, unknown
+history explicit); independent read token with explicit read/mutation/capture/inference classes;
+existing Rust stdio HTTP wrapper with explicitly selected remote HTTP/HTTPS, `.no_proxy()`, no
+redirects; saved-report reads preserving original prose and generation-time provenance. Frame/
+report pages default 100, valid 1–1000; cursors at most 4096 bytes, literal app/title filters at
+most 256 UTF-8 bytes each. These are approved contracts, not shipped APIs at the planning base.
+
+**Order:** P0 inventory/contracts → P1 independently useful HTTP evidence/identity/auth/coverage
+and credential UI plus a runnable checkpoint consumer → P2 portable remote MCP → P3 saved-report
+HTTP/MCP reads → P4 integrated acceptance and active documentation. Each unit has separate
+observed acceptance gates (`03 §7f.9`); review has at most two rounds before explicit blocker
+escalation. No redundant blanket GO is needed. One owner for shared traits/router/auth; disjoint
+MCP transport/packaging can proceed after interfaces freeze; report work follows P1 contracts
+and P2 priority. No concurrent writers on shared implementation files.
+
+**Fences:** no change to API enable/bind defaults, connection/header/shutdown security, capture
+runtime or inference exposure; desktop/capture/inference remain Windows-only. Only the standalone
+HTTP-client wrapper targets Windows x86_64, Linux x86_64 and macOS arm64, and native evidence is
+required before calling artifacts verified. No hosted MCP server, proxy expansion, automatic
+firewall changes, new NavRail route, accounts, arbitrary scopes UI, cloud inference, telemetry,
+remote generation/retry/delivery, durable capture journal, tombstone replication or default
+uploads. Report reads promote only saved-output deferrals, not generation permissions. Schema
+stays 12; if storage protection or measured query plans require a table/index, stop for separate
+migration approval rather than silently widening scope. No live-profile write/download/send.
+
+**Evidence:** fixture drain/resume (>1000 frames), no read side effects, raw/full-text parity,
+identity/rewind reconciliation, truthful unknown coverage, URL/redirect/proxy tests, native
+package checks on each named target, real non-Windows-wrapper → separate Windows-app path, saved
+run comparison with model unloaded/schedule off and ordinary-user regressions. Missing native/
+remote evidence is blocked acceptance, never inferred from compile or loopback fixture success.
+Archives/checksums publication, NSIS release/updater actions, merge and tags require separate
+authorization. Rollback revokes the read token/disables API without deleting local history,
+reports or notes; restoring/using older writers invalidates client checkpoints explicitly.
 
 ## 6. Risks & mitigations
 

@@ -29,3 +29,15 @@ and PR, with release-first sequencing. PR #124 is merged and v0.4.1 is tagged;
 publication/assets must be confirmed before opening the security PR. No merge
 or release is authorized here. Native Windows CI remains required before merge.
 Retire the selector-parser override when upstream ranges resolve patched copies.
+
+## 2026-10-16 — External-agent memory API P0
+
+- **Open, P3 only:** the approved plan asks for null results for unfinished runs, but
+  `src-tauri/src/memory.rs` at `cd9f5fe` (lines 613–617, 786–788) retains immutable
+  saved output during queued/running delivery retries. `03 §7f.10` records the
+  contradiction. Nico was asked whether reads should expose that existing output;
+  recommended resolution is stored-presence projection. Do not implement either
+  visibility policy until answered. P1/P2 are independently authorized.
+- Remote-wrapper scope is a separately reviewable boundary amendment before runtime
+  changes. Capture/app remain Windows-native; inference remains loopback-only.
+  No listener-default change, schema migration, main merge or release is authorized.

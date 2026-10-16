@@ -718,7 +718,8 @@ extends it with the sessions endpoints.
 
 **MCP server (PR8, D13).** A separate workspace **binary** crate `crates/mcp` → `screensearch-mcp.exe`,
 shipped in the NSIS installer — a thin **stdio** wrapper over this HTTP API, with **no store access and
-no app coupling**: it is purely an HTTP client of `127.0.0.1:<port>` with the bearer token from
+no app coupling**: it is purely an HTTP client, default `127.0.0.1:<port>`, with explicit
+remote destination support approved under `§7f` (not assumed implemented). The bearer token comes from
 args/env (`SCREENSEARCH_API_URL` / `SCREENSEARCH_API_TOKEN`). Tools: `search_screen_history`,
 `ask_screen_history`, `get_moment`, `where_was_i`, `list_marks`, `add_mark`. If the API is off, every
 tool returns a clear "enable the API in ScreenSearch Settings" error. Docs: `docs/MCP.md` (copy-paste
@@ -880,6 +881,344 @@ notifications, **no** "you spent N hours in X" nudges, **no** streaks or scores.
 surfaced honestly (a low-confidence session says so); an open session is shown as still-running with
 non-final boundaries. **Degradation (D10).** Sessions never gate capture; a segmenter failure degrades
 to "no sessions", never to lost frames.
+
+## 7f. External-agent memory API — approved normative contract (2026-10-16)
+
+**Authority and implementation state.** Nico approved execution of the external-agent memory
+API plan, including its recommendations. This section freezes the approved contract; it is not
+an assertion that these endpoints, permission controls or portable artifacts exist at the
+planning base `cd9f5fecfa35970962be0067f76105553b24bfba` (0.4.1, schema 12). The attachment's
+DRAFT/awaiting-GO labels are superseded by that direct instruction. Do not request redundant
+blanket approval. Independent review of the remote-wrapper boundary precedes its implementation;
+no merge, release, publication, updater action or live-profile write is authorized.
+
+**Scope precedence.** Saved-output HTTP/MCP reads are promoted from the earlier deferral in
+`§8c`; remote generation, retry, scheduling, delivery, credential-management HTTP APIs and
+filesystem repair remain excluded. `§7c` is unchanged for existing listener defaults, socket
+ownership, authentication of unknown routes, 64-connection cap, 30-second header deadline,
+shutdown and sidecar isolation. This section adds read contracts, not a listener rewrite.
+The ordinary local workflow with API disabled remains compatible. Retrieval/report defaults
+stay filtered; only evidence enumeration exposes raw and filtered layers separately. No query,
+answer model, scheduler, output folder or Telegram is a prerequisite for evidence/report reads.
+DTOs and Store seams belong in `traits`; SQL belongs in `store`; HTTP adapts through the host/
+composition root. MCP remains an HTTP-only client with no Store dependency. No schema migration
+is approved: the initial implementation uses existing settings and report rows. If invariant
+protection or measured query plans require a metadata table/index, stop for a separately approved
+forward-only migration with populated-DB tests; do not silently rebuild frames or change schema 12.
+
+### 7f.1 Chronological evidence pages
+
+`GET /v1/frames?from=<UTC-ms>&to=<UTC-ms>&app=<literal>&window_title=<literal>&limit=<n>&cursor=<opaque>`
+
+- Initial request requires finite `from` and `to`, `from < to`, half-open `[from,to)`. No query term, model or report dependency. Client examples convert a calendar day in an explicitly chosen timezone to UTC bounds, including DST.
+- Order is **`captured_at ASC, id ASC`**, not ID-only append order. App is case-insensitive exact match using the existing SQLite NOCASE convention; title is literal substring using the same documented ASCII case-fold behavior. `%` and `_` are literal characters, not caller-supplied SQL wildcards. Resolve app/title from target-window metadata when present, falling back to frame metadata; never inferred vision labels. Null metadata does not match a supplied filter. Filters run before limit.
+- `limit` defaults 100, valid 1–1000; invalid bounds/limits/filters/cursors return JSON 400, not an empty success. App and title filters are each capped at 256 UTF-8 bytes before normalization (400 above the bound). Use a canonical compact encoding; add a worst-case escaping test proving every accepted filter combination produces a cursor within the 4096-byte encoded wire limit. Cursor input length is capped at the same limit. Continuations provide the cursor and optional limit only; filters/time are frozen in the cursor. Mixing cursor with filters is 400.
+- Response: `items`, `next_cursor` (explicit null at exhaustion), `history_id`, `window`, `snapshot_max_frame_id`, `observed_at`, and `consistency: "bounded_membership_live_content"`. Cursor v1 carries history identity, normalized filters/window, fixed maximum frame ID, and last `(captured_at,id)`; validate all fields. A cursor is not a credential. A mismatched history identity returns 409 `history_changed`; malformed/version-unsupported cursors return 400.
+- Select max frame ID and the first page in one database read transaction. Later pages filter `id <= snapshot_max_frame_id` and seek strictly after the last tuple. With allocator-active writers only, new/backdated inserts cannot extend the active traversal. Old/direct writers can silently violate this bound; unsupported writes and state rewinds require checkpoint invalidation and reconciliation, not an assumed server-side detection guarantee. Equal timestamps and out-of-order capture timestamps remain deterministic. Cursor replay is retryable but not a byte-identical snapshot of mutable text.
+- Each item returns stable `frame_id`, timestamp, monitor, stored app/title/URL, full `raw_text`, full `content_text`, text source/filter version when present, stored vision text when present, session reference when present, and `image_purged`. No text snippet truncation or dropped textless frames; missing text is null plus `text_state: "not_available"`, not proof of empty OCR or permanent failure. Stored-but-empty text is distinguished. Images use the existing detail image route, not inline page blobs; filesystem paths are not part of the new DTO.
+- Retention or deletion can remove members between pages: this is not a frozen DB snapshot and not a full replication feed. A page may shrink; the keyset still progresses. Missing detail remains 404 and purged image retains its existing error. Return complete text or an explicit error, never silently truncate to fit MCP context. Clients can lower page size.
+- New frames and later OCR/filter/vision updates require a new bounded traversal or detail re-read. Document a retryable reference consumer: persist page cursor only after processing, upsert by `(history_id,frame_id)` while comparing the recorded `captured_at`; a changed timestamp is an identity conflict, never a silent overwrite. Preserve the old fact, invalidate the traversal and reconcile the window. This detects some reuse, not same-timestamp reuse. Re-read textless IDs, and periodically re-scan the selected window to reconcile late enrichment. Do not promise eventual completeness after one traversal or claim exhaustion means capture completeness.
+
+**Identity prerequisite:** initialize a distinct `api.history_id` once during app/store setup, not on GET and not by repurposing resettable `memory.source_id`. Preserve across moves/restores; independently active clones are not auto-detectable. Use a transactional persisted high-water allocator for all production frame inserts (`api.frame_id_high_water` in existing settings), initialized at the existing maximum. Allocate explicitly above both persisted high-water and current maximum; never reduce on deletion. Treat both identity and allocator settings keys as reserved internal metadata: user settings reset/import/export and retired-key cleanup must neither copy them into another history nor remove/lower them in place. Initialize missing keys only for first upgrade/new history; an established history with missing allocator metadata must fail feed readiness, not silently recreate a lower counter. The P0 inventory below covers every settings write/delete/reset/import path before accepting this storage choice. If that invariant cannot be enforced with current settings storage, stop and propose a dedicated metadata table with a forward migration rather than weakening identity guarantees. This preserves existing IDs and prevents future reuse without table reconstruction. Previously deleted/reused IDs cannot be repaired retroactively. Persist the observed allocator high-water alongside client checkpoints and expose the current allocator high-water in coverage. A decrease is a detectable rewind signal: invalidate the cursor and re-scan the selected window. This signal is sufficient but not necessary: a restored DB can catch up before observation, so invisible rewinds remain possible. An operator restoring a backup must invalidate client checkpoints explicitly even without a decrease. No cross-restore global exactly-once promise. Old binaries do not maintain the allocator: returning to them invalidates the new feed's continuity guarantee.
+
+### 7f.2 Bounded coverage/status, not activity estimates
+
+`GET /v1/coverage?from=<UTC-ms>&to=<UTC-ms>` requires the same valid half-open bounds.
+
+Return request window; observation time; current capture-enabled state (explicitly intent, not proof of health); current persisted allocator high-water; global oldest/newest stored frame and newest timestamp; in-window stored-frame and text-available counts; image-retention days with `0=keep`; image-only retention semantics; saved-report retention policy; and capture-observation availability.
+
+Minimal known-interruption support is a **process-local bounded record**, not a new journal: record capture start/stop and worker errors already observed by the controller, with reason enum and observed timestamp. Keep up to 1000 transitions; return at most 100 intersecting intervals, `truncated`, observation start and unavailable-before boundary. An open pause has null end. On restart, previous-process intervals are explicitly unavailable; do not infer sleep, lock, privacy exclusion or crash durations from missing frame timestamps. A lost/overflowed observation is unknown, never silently complete. No OCR, titles or paths in transition records. Retention settings are policies, not proof of successful purge at a specific time.
+
+Empty window means **no recorded frames in this query**, not “nothing happened.” Even enabled capture plus no frames cannot prove inactivity: diff gating, errors and privacy gates exist. No work-duration/activity scoring, no fabricated percentage of a person's day. Storage failures are errors, not NO_DATA. Keep `/health` compatible and cheap; coverage is a separate read.
+
+### 7f.3 Genuine read-only credential
+
+Add one independently generated/revocable/rotatable **read-only token** alongside the existing token; do not build a user-account or arbitrary-scope administration subsystem. Existing token and clients retain existing access; upgraded profiles have no read token until the user creates one. Creating/rotating it does not enable API or change bind address.
+
+Define internal permission classes now: `history.read`, `marks.write`, `capture.request`, `answer.generate`; reserve `reports.generate` as unsupported. Read token grants only `history.read`; legacy token retains only currently supported classes, never future report-generation permission by default.
+
+- Read allowlist: existing health/search/frame/image/context/marks/session/export reads plus new frame/coverage/report reads. Explicitly classify methods/routes, not “all GETs are safe.”
+- Marks on an existing frame and resolve require `marks.write`; `now:true` additionally requires `capture.request`, checked before entering capture. Ask including session Ask requires `answer.generate`. Read credentials get JSON 403 before any side effect.
+- Missing/invalid token remains 401 including unknown routes; valid token on unknown route remains 404. Unsupported future routes are not implicitly granted. Token rotation/revocation affects subsequent requests without restart; active streams keep existing behavior, documented rather than falsely claimed cancelled.
+- Local Settings can create/reveal/copy/rotate/revoke read token independently, with loading/empty/error/partial/populated states. No tokens in general settings/export/report DTOs/logs. Keep existing token storage mechanism; no credential-store migration.
+- Serialize read-token creation/rotation/revocation with the existing API configuration lock;
+  persist successfully before swapping live credentials. A persistence failure preserves the
+  prior live credential and listener state. Legacy-token rotation leaves the read token unchanged.
+- MCP gains explicit `--read-only` mode for memory-agent configs: lists/accepts only read tools. This is ergonomics, **not authorization**; API independently enforces token rights even with normal MCP mode or raw HTTP. Clear 403 guidance, not an API-off error.
+
+### 7f.4 Supported remote MCP client
+
+Extend the existing Rust stdio wrapper, not a new server. Default remains `http://127.0.0.1:43210`; supplying canonical `--api-url` (with existing `--url` retained as a backward-compatible alias) or `SCREENSEARCH_API_URL` explicitly selects the remote destination. Both flag spellings have the same precedence: CLI > environment > default. No second redundant remote-enable flag.
+
+Validate with a URL parser in the shared client construction path as well as CLI parsing: allow HTTP/HTTPS, hostnames and concrete IPv4/IPv6, optional explicit port; reject credentials, query, fragment, wildcard destinations, missing host and non-root path. Strip only a root trailing slash. Document newly rejected URL shapes as compatibility tightening. Preserve `.no_proxy()` for all destinations in this increment; no environment-proxy leakage or proxy-support expansion. HTTPS certificate checks stay enabled.
+
+Set redirect policy to **none**, for same-origin and cross-origin redirects and every client request path (JSON, image and SSE). Return an explicit redirect error without visiting Location or forwarding token. No listener, CORS or inference-sidecar changes.
+
+Add MCP read tools `list_frames`, `get_capture_coverage`, then `list_reports`/`get_report` when their HTTP routes land. Preserve structured page objects/cursors/nulls; never auto-drain history or silently shorten text. Existing tools remain compatible outside `--read-only`.
+
+Supported first client artifacts: Windows x86_64, Linux x86_64, macOS arm64. Publish standalone wrapper archives/checksums through the existing release process **only under separate release authorization**; preserve the Windows NSIS bundled executable and its staging contract. Rust 1.95.0 build instructions offer source builds, but untested architectures are not labeled supported. Do not stub Windows app crates to compile the wrapper. Add package-scoped native client verification, not a cross-platform workspace build.
+
+### 7f.5 Saved reports, not remote generation
+
+`GET /v1/reports?from=&to=&phase=&outcome=&limit=&cursor=` lists runs overlapping `[from,to)` (`window_start < to AND window_end > from`), newest `created_at DESC,run_id DESC`. Initial time bounds required; defaults/limits/errors match frame listing. Cursor freezes window/filter/order/high-water tuple. Phase/outcome are current observations; filtered pagination is not a status-update feed and may change during execution. Clients re-list a window to discover transitions.
+
+`GET /v1/reports/{run_id}` returns a public projection, not serialized `ReportRun` internals:
+- run/source/revision IDs; selected dates when present; UTC window/timezone/local date; created/updated times; phase/outcome; allowlisted error code;
+- saved Markdown/model and coverage counts/flags; full summarized frame IDs, cited IDs and generation-time session IDs (distinct concepts, no 200-item citation cap substituted for full evidence);
+- null result when no saved result exists, truthful NO_DATA result when stored; **P3 STOP:** queued/running delivery retries can retain an immutable saved result. Whether unfinished phases expose that stored result is unresolved (see §7f.10), not silently decided here;
+- generation-time provenance preserved even if current frames/sessions are gone. Existing frame/session endpoints resolve references and may return 404. Do not invent availability from old IDs or replace stored session IDs with current segmentation.
+
+List rows omit Markdown/full evidence arrays; detail supplies the complete saved result. No config snapshot, destination snapshot, folder/recovery path, Telegram chat/receipt, credential or arbitrary error message. Missing/pruned run returns 404, never reconstructs from a folder or regenerates. Apply the 90-day terminal-run retention and pending-delivery exceptions in `§8c`; exported notes can outlive API run records. This does not retroactively persist old unsaved Recall reports.
+
+Reads work with schedules off and no loaded answer model; they cannot claim/queue/retry a run, write an index, send a message or repair missing content. No new report SQL schema is needed for read projection; add SQL-side window/keyset filtering, not fetch-100-then-filter.
+
+
+### 7f.6 Typed wire definitions and validation
+
+The following JSON field names and nullability are normative for the new surfaces. Rust
+implementations may factor structs internally but must export equivalent types from `traits`.
+UTC timestamps, frame/session IDs and allocator values are signed `i64` JSON integers, never
+floating-point timestamps; limits are `u32` with the stricter HTTP range above. UUID identities
+are opaque strings. Counts use nonnegative integer types large enough for the stored history.
+All optional response fields are present with JSON null; arrays are present, including empty
+arrays. Responses must not replace missing values with empty strings or fabricated timestamps.
+
+- `EvidenceWindow { from: i64, to: i64 }`: required, finite integral UTC milliseconds, `from < to`.
+- `FramePageRequest`: initial `{ from, to, app?: String, window_title?: String, limit?: u32 }`
+  or continuation `{ cursor: String, limit?: u32 }`, mutually exclusive. Reject malformed integer
+  syntax, overflow, nonpositive/out-of-range limits, duplicate/ambiguous filter values and invalid
+  cursor fields with JSON 400. A supplied filter is a literal string; no SQL-pattern interpretation
+  or Unicode casefold beyond SQLite ASCII NOCASE. Preserve literal whitespace; normalization must
+  not change the requested matching semantics. The byte bound applies before normalization.
+- `FrameEvidence { frame_id: i64, captured_at: i64, monitor_index: u32,
+  app_hint: Option<String>, window_title: Option<String>, browser_url: Option<String>,
+  raw_text: Option<String>, content_text: Option<String>, text_source: Option<TextSource>,
+  filter_version: Option<i32>, text_state: FrameTextState,
+  vision_description: Option<String>, session_id: Option<i64>, image_purged: bool }`.
+  `FrameTextState` serializes `available|not_available`: available includes stored empty strings;
+  not_available means no stored text record, so raw/content/source/version are null. Available
+  empty OCR is not missing OCR. App/title use target metadata when nonnull and stored frame
+  fallback otherwise, consistently for filtering and returned labels. Browser URL is only the
+  stored value. Session is the observed stored reference, not an inference call. Vision is the
+  complete stored description or null. No image paths or image bytes occur here.
+- `FramePage { items: Vec<FrameEvidence>, next_cursor: Option<String>, history_id: String,
+  window: EvidenceWindow, snapshot_max_frame_id: i64, observed_at: i64,
+  consistency: "bounded_membership_live_content" }`. Empty database maximum is represented as 0.
+  Hydrate rows and text in the same page read, not remote detail calls or load-all filtering.
+  A terminal empty page has null next_cursor. A short page alone is not a capture-completeness
+  claim. Cursor v1 must validate window/filter/identity/high-water/seek tuple relationships,
+  numeric ranges and known version, not just decode successfully. The cursor must not permit
+  a seek outside the frozen window or above its maximum. Validate maximum input size before
+  decoding; canonical compact encoding must satisfy worst-case filter escaping within 4096 bytes.
+- `CaptureCoverage` contains `window: EvidenceWindow`, `observed_at: i64`,
+  `capture_enabled: bool` (controller intent only), `frame_id_high_water: i64`,
+  `oldest_frame: Option<FrameReference>`, `newest_frame: Option<FrameReference>`,
+  `newest_captured_at: Option<i64>`, `frames_stored` and `frames_text_available` in the requested
+  window, `image_retention_days: u32`, `retention_scope: "images_only"`,
+  `saved_report_retention` and `capture_observations`. A `FrameReference` is `{frame_id, captured_at}`;
+  global oldest/newest use chronological `(captured_at,id)` order, not insertion order. Global
+  references/timestamp are null when the database is empty. Text-available count includes empty
+  stored text, excludes absent text, and cannot exceed stored-frame count. `saved_report_retention`
+  states `terminal_days: 90` plus the queued/running/blocked and active-delivery exemptions below;
+  it is policy, not a per-run expiry guarantee. Store read failures return an error, never zeros.
+- `CaptureObservations { observation_started_at: i64, unavailable_before: i64,
+  intervals: Vec<CaptureInterruption>, truncated: bool }`; an interruption is
+  `{ start: i64, end: Option<i64>, reason: CaptureInterruptionReason }`.
+  Reasons are observed controller stop (`capture_stopped`) or observed worker error (`worker_error`),
+  never inferred sleep/lock/exclusion/crash. Capture start closes a known pause. Controller
+  start/stop/error observations carry observed timestamps internally; retain at most 1000 such
+  transitions. Return at most 100 intervals intersecting the requested half-open window in
+  chronological order. Preserve actual observed endpoints (do not relabel query bounds as
+  observations); null end denotes an ongoing known interruption. At process startup,
+  observation_started_at and unavailable_before begin at process observation start; overflow
+  advances unavailable_before. Truncated is true if the requested interval includes unavailable
+  observations or if intersecting intervals exceed the response cap. Earlier process history,
+  missing observations and overflow are unknown; a current enabled intent does not erase them.
+- `ReportPageRequest`: initial `{from, to, phase?, outcome?, limit?}` or `{cursor, limit?}`.
+  Phase values are `queued|running|blocked|finished`; outcomes `OK|PARTIAL|NO_DATA|BLOCKED|FAILED`.
+  Unknown enum values are JSON 400, not ignored. No inference from absent/null outcomes. The same
+  required bounds, default 100, valid 1–1000, mutually exclusive continuation and 4096-byte cursor
+  cap apply. SQL filters overlap/status before limit and seeks descending `(created_at,run_id)`.
+  The initial maximum ordering tuple and normalized filters/window stay frozen in cursor v1;
+  later pages admit no tuple above that maximum and seek strictly below the last tuple. This
+  bounds tuples, not a frozen membership snapshot or replication log. Equal-ms lower UUIDs,
+  backdated inserts and clock rollback can admit newly created rows below the frozen high tuple;
+  status changes alter filtered membership. Re-list the selected window for transitions.
+- `ReportSummary { run_id: String, source_id: String, revision_of: Option<String>,
+  requested_range: Option<MemoryReportRange>, window_start: i64, window_end: i64,
+  timezone: String, local_date: String, created_at: i64, updated_at: i64,
+  phase: ReportRunPhase, outcome: Option<ReportOutcome>, error_code: Option<String> }`.
+  Error codes are only the §8c allowlist; never expose arbitrary stored error messages or codes.
+  Unknown/unallowlisted errors project as null, not private diagnostic text.
+- `ReportPage { items: Vec<ReportSummary>, next_cursor: Option<String> }` with explicit terminal
+  null. `ReportDetail` contains all ReportSummary fields plus `result: Option<SavedReport>`.
+  The §8c SavedReport fields are the complete public saved-result shape: markdown, model,
+  frame_ids, session_ids, cited_frame_ids, frames_sampled, frames_summarized, periods_total,
+  periods_covered, passes, truncated. Preserve immutable saved values, full distinct summarized
+  IDs and generation-time session provenance. Queued/running delivery retry with saved output is
+  an unresolved P3-only visibility decision (§7f.10); do not implement phase-based hiding or
+  stored-presence exposure until resolved. A blocked/unfinished/failed run without saved output
+  has null result, not generated replacement prose; stored NO_DATA remains its factual result.
+  No delivery, path, configuration, Telegram or credential fields enter either projection.
+
+Report retention is **90 days from last terminal update**, not created_at. Never prune
+queued/running/blocked runs, runs with pending/sending/unknown/conflict delivery, or failed
+delivery with nonnull next_attempt_at. Failed delivery without a pending retry is terminal;
+reviewed uncertainty can expire. Exported notes and ownership records outlive run pruning;
+missing/pruned API rows remain 404. These reads do not create persistence for old unsaved reports.
+
+New read-route HTTP failures use existing JSON envelope conventions with fixed safe messages:
+invalid query/cursor/enum/limit is 400; history identity mismatch is 409 `history_changed`;
+missing/pruned detail is 404; readiness/store/JSON-decode failures are explicit non-success
+responses, never empty data/NO_DATA. Return 503 for unavailable feed readiness, 500 for storage/
+decode failure. Do not serialize/log private anyhow error strings, stored payloads, paths or
+credentials on these new read adapters. Saved uppercase error_code is distinct from HTTP errors.
+Report reads serve stored error/provenance only, never the in-app current-evidence overlay.
+
+### 7f.7 Explicit route/tool/permission matrix
+
+Inventory checked against `crates/api/src/lib.rs::build_router` and
+`crates/mcp/src/tools.rs` at the planning base. Rows tagged new are approved contracts, not
+routes/tools observed implemented. L = existing legacy token; R = independently created read
+token. `history.read` is granted to both. No class automatically expands to future routes.
+
+| Method + route | MCP tool | Required classes | L | R |
+|---|---|---|---|---|
+| GET /v1/health | none | history.read | allow | allow |
+| GET /v1/search | search_screen_history | history.read | allow | allow |
+| GET /v1/frames/{id}, including ?image=1 | get_moment | history.read | allow | allow |
+| GET /v1/context/where-was-i | where_was_i | history.read | allow | allow |
+| GET /v1/marks | list_marks | history.read | allow | allow |
+| GET /v1/sessions | list_sessions | history.read | allow | allow |
+| GET /v1/sessions/{id}, including include_summary=1 | get_session | history.read; cached summary only | allow | allow |
+| GET /v1/export | none | history.read | allow | allow |
+| POST /v1/marks, existing frame | add_mark | marks.write | allow | 403 |
+| POST /v1/marks, now:true / existing capture-now shape | add_mark | marks.write AND capture.request | allow | 403 |
+| POST /v1/marks/{id}/resolve | none | marks.write | allow | 403 |
+| POST /v1/ask, with or without session_id (SSE) | ask_screen_history / ask_session | answer.generate | allow | 403 |
+| GET /v1/frames (new) | list_frames (new) | history.read | allow | allow |
+| GET /v1/coverage (new) | get_capture_coverage (new) | history.read | allow | allow |
+| GET /v1/reports (new) | list_reports (new, P3) | history.read | allow | allow |
+| GET /v1/reports/{run_id} (new) | get_report (new, P3) | history.read | allow | allow |
+| Unknown route | unknown tool rejected locally | authenticate first; no implicit grant | 404 | 404 |
+| Any unsupported future mutation/generation route | not registered | default-deny; reports.generate reserved unsupported | no implicit grant | no implicit grant |
+
+Missing/invalid credentials return JSON 401 even on unknown routes. Valid read credentials on
+all registered GET routes and their implicit HEAD variants require `history.read`; HEAD runs
+the same authorized handler before body removal, including image reads and search embeddings.
+The existing POST-only routes do not gain HEAD support. Valid read credentials on
+recognized writes/Ask return JSON 403 before capture/provider/store mutation; body flags cannot
+smuggle capture into a read. Keep existing method behavior for unregistered methods; never
+route them to a permitted GET handler. Image and SSE paths use the same authentication policy.
+MCP --read-only registers and dispatches only the read tools in the matrix; it rejects add_mark,
+ask_screen_history and ask_session without entering the client. Normal mode preserves legacy
+registry behavior while the HTTP server independently enforces credentials. Unknown tools never
+fall through to arbitrary HTTP. Revocation/rotation affects subsequent requests, not a promise
+to cancel an already authorized in-flight stream. Settings is the only credential-management UI;
+there is no network credential administration endpoint or general scope editor.
+
+### 7f.8 P0 storage/identity inventory and implementation obligations
+
+The settings-KV choice is accepted subject to enforcing the following protections in P1;
+this inventory is source inspection, **not proof that protection already exists**:
+
+| Path at planning base | Observed responsibility | Required P1 protection |
+|---|---|---|
+| kernel/src/capture_loop.rs → Store::insert_frame → store/src/lib.rs → store/src/records.rs::insert_frame | Production timer/event/demanded capture shares the Store insertion seam; SQL currently omits explicit id | Allocate and persist explicit id + high-water atomically in that seam; concurrent inserts serialize, deleted tails never reuse |
+| store/src/schema.rs migration frame-copy SQL | Forward migration copies old IDs, not a new capture writer | Preserve IDs; no table rebuild or allocator rewind in this arc |
+| harness/src/export.rs and fixture/test SQL | Isolated test/harness inserts, not production capture | Label direct writes unsupported for continuity; production must not acquire a bypass |
+| store/src/settings.rs::set_setting / set_settings_batch / delete_settings | Generic unguarded KV upsert/delete seams | Reject generic overwrite/delete of reserved identity/allocator keys; dedicated transactional setup/allocation owns them |
+| kernel/src/settings.rs::save_settings / load_settings / retired-key purge | Fixed typed settings list; retired-key deletion is explicit | Exclude reserved keys from public settings/export/import/reset and retire cleanup; reset-to-default typed values cannot lower/remove them |
+| kernel/src/settings.rs model-tier/hotkey/session-setting compatibility writes | Narrow named-key migrations, not a reset-all API | Keep named updates disjoint from reserved keys |
+| src-tauri/src/local_api.rs config and bearer writes; src-tauri/src/lib.rs set_model_tier; tray.rs toast marker | Named app/API settings writers | Read-token lifecycle cannot touch history identity, allocator, enabled intent or bind address |
+| store/src/records.rs filter-version watermark | Direct SQL named settings write | Keep disjoint from reserved keys |
+| store/src/memory.rs ensure_report_source_id / reset_report_source_id; src-tauri/src/memory.rs settings/schedule state | Resettable report identity and report KV state | Never reuse/reset api.history_id; report identity reset leaves frame continuity untouched |
+| kernel/src/sessions_scheduler.rs backfill marker | Named resumable-session KV state | Keep disjoint from reserved keys |
+
+At this base, source search found no general settings-import or reset-all handler; that absence
+is not permission for a later one to copy or clear reserved metadata. `get_settings` returns a
+typed public projection; existing /v1/export emits frame content/marks, not settings. Dedicated
+history setup must initialize both keys transactionally before serving the feed or accepting
+new production inserts, once for a new/first-upgraded history, never as a GET side effect.
+If established history identity exists without valid allocator metadata, block feed readiness
+instead of recreating from current max. Ordinary settings saves, memory-source reset, retired
+key cleanup and API toggles must preserve both reserved keys. Allocation must reject exhausted/
+invalid counters explicitly, preserve existing IDs and commit frame + high-water together.
+The generic write/delete APIs must be made incapable of removing/lowering them, including batch
+calls. A malicious/manual DB edit, old binary, or restore is outside allocator-only continuity;
+client reconciliation is mandatory, not an undetectable server guarantee. If settings storage
+cannot enforce these invariants, stop for a metadata-table migration proposal before proceeding.
+
+### 7f.9 Acceptance gates and rollback (approved, not yet demonstrated)
+
+P1 must drain and resume more than 1000 nonprivate fixture frames with equal/out-of-order
+capture timestamps, with the answer provider unavailable and schedules disabled. Verify exact
+bounded membership absent deliberate deletion/rewind/nonallocator writes; preserve full raw and
+filtered text, absent versus empty text, late-text re-read, backdated inserts, deletion progress,
+terminal cursor null, literal wildcard/Unicode filtering, byte bounds and worst-case cursor
+encoding. Verify transactional allocator restart/concurrency/deleted-tail/reset protections,
+missing metadata blocked readiness, history mismatch 409, invalid cursor 400, timestamp identity
+conflict and decreasing-high-water checkpoint invalidation. The runnable reference consumer
+must actually process pages from an isolated API fixture, commit cursor only after work, retain
+earlier conflicting facts and perform bounded reconciliation, not consume canned responses.
+
+Permission tests cover every route/tool/method class, image and SSE, independent token lifecycle,
+unknown-route 401/404, read denial 403, zero capture/provider/mutation calls on denial and
+future-route default deny. Coverage tests cover empty windows, source errors, process restart,
+overflow and response caps without inferred inactivity. Read-token UI must be exercised natively,
+including save failure, all states, keyboard operation, independent revoke and no API enable/rebind.
+
+P2 verifies 301/302/303/307/308 for JSON/image/SSE, same/cross-origin, with zero destination requests
+and no forwarded token; proxy environment ignored; certificate validation retained; invalid URL
+shapes rejected in both CLI and shared client. Verify handshake/tool schema, complete page/null
+objects, no auto-drain, full large single-frame payload or explicit failure, and 403 guidance.
+Native package build/test/archive-unpack/version/handshake/authenticated-read evidence is required
+for Windows x86_64, Linux x86_64 and macOS arm64 before calling those artifacts verified. Also
+exercise a real non-Windows wrapper → separate Windows app path with read success, invalid-token
+401, direct forbidden mutation 403 and continued pagination; loopback fixtures cannot replace
+this acceptance. Publishing still needs separate release authorization.
+
+P3 verifies SQL-side overlap/status/keyset filters, ties/revisions, mutable statuses, precise
+null/NO_DATA outputs, internal-field exclusion and unchanged stored Markdown/evidence/session
+provenance after source deletion/resegmentation. Read a persisted fixture run with model unloaded
+and schedules off, asserting no generator/scheduler/file writer/Telegram calls or state mutation.
+P4 exercises coverage → page/resume → report → current source detail and ordinary local/API-off
+workflows, existing schedules, legacy clients and Windows staging/bundling. No Telegram send or
+new report generation is required for this arc's acceptance when a safe saved fixture suffices.
+
+Retain existing bearer/rotation, cached-session-read, export paging, image purge, connection cap/
+header timeout/shutdown and loopback-upgrade regressions. Profile increasing nonprivate histories,
+late narrow windows and sparse filters; record SQL query plan, latency, peak memory. Use bounded
+hydration/keyset seeks, not load-all, OFFSET or per-item remote calls. Establish performance budget
+from measurement before optimization; no guessed latency promise. Missing native/remote evidence
+is an explicit blocked gate. Stop on unresolved contradictions, snippets replacing full text,
+read-triggered inference, mutation by read token, or unenforceable stable identity.
+
+Rollback disables API/revokes only the read token first and preserves local history/reports,
+notes and unrelated credentials. Wrapper rollback is independent. Snapshot isolated verification
+DB before identity/setup changes; no live-profile downgrade or schema-version edit. Old writers
+or backup restores invalidate checkpoints and require bounded reconciliation even if observed
+high-water has already caught up; preserve metadata for forward repair. No global exactly-once
+or cross-restore uniqueness guarantee, release tag, merge or updater action is implied.
+
+### 7f.10 Unresolved P3-only visibility decision and evidence handoff
+
+The report inventory found queued/running delivery retries with immutable saved results in
+`src-tauri/src/memory.rs` (planning-base lines 613–617 and 786–788). The approved plan's
+unfinished-result-null wording conflicts with preserving saved output in those states. **P3 is
+blocked on this decision only**: recommend mirroring actual saved-result presence rather than
+phase-based suppression, but Nico must resolve it. P1/P2 remain authorized and unaffected.
+Record this contradiction in `06_PATCH_PLAN.md` and the decision request in `07_KNOWN_GAPS.md`
+by their owning agent; this contract worker does not own those files. Wire projection field
+names/nullability, explicit enum validation, unknown error-code→null and observed chronological
+coverage definitions above are normalization decisions to record in `07`, not runtime evidence.
+
+Independent P0 evidence artifacts (profile scratch): `memory-api-reports-inventory.md` and
+`memory-api-store-inventory.md`. The latter pins producer/settings anchors and confirms existing
+KV storage is feasible without migration only after generic single/batch/delete reserved-key
+rejection plus dedicated atomic initialization/allocation. Every production producer shares the
+same insertion primitive. Identity-present/allocator-missing blocks feed readiness; never
+recreate a lower allocator. These prerequisites are required code, not already implemented.
 
 ## 8. Configuration / settings (keys in `settings`)
 
@@ -1056,7 +1395,8 @@ for that increment.
 The maintainer approved execution and the report policies. This separately reviewed amendment
 permits default-off scheduled **local** reports and user-selected folder writes, an explicit
 exception to earlier pull-only behavior. No scoring, nags, cloud inference, automatic model
-downloads or report HTTP/MCP endpoints. Telegram's outbound exception is the separately reviewed `§8d` amendment.
+downloads. Saved-output HTTP/MCP reads are promoted by the approved `§7f` contract; remote
+generation/retry/delivery remain excluded. Telegram's outbound exception is the separately reviewed `§8d` amendment.
 
 ### Shared execution and lifecycle
 
@@ -1087,7 +1427,8 @@ system-local zone. Optional values serialize as null, not invented placeholders.
   `BUSY`, `SOURCE_UNAVAILABLE`, `MODEL_UNAVAILABLE`, `STORE_ERROR`, `GENERATION_FAILED`,
   `FILE_CONFLICT`, `WRITE_FAILED`, `CREDENTIAL_UNAVAILABLE`, `DELIVERY_FAILED` identify failures
   without private content or credentials. IPC returns structured errors; existing legacy report
-  commands may retain their string-error adapter. No report HTTP error surface is added.
+  commands may retain their string-error adapter. The original report increment added no HTTP
+error surface; the later saved-read-only surface uses the `§7f` HTTP contract.
 - `ReportScheduleConfig { enabled: bool, local_time: Option<String>, timezone: Option<String>,
   output_folder: Option<String> }`. Defaults false/null/null/null. Local time is strict `HH:mm` (hour/minute precision only; no seconds input);
   output folder is absolute. Enable requires valid time/zone/folder; save failure preserves the
