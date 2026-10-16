@@ -14,7 +14,7 @@ local database; the MCP wrapper uses loopback. The HTTP API defaults to `127.0.0
 explicit network binding lets authenticated devices that can reach this computer read history.
 Inference stays on-device.
 
-> **Status — v0.4.0 shipped (2026-07-11).** The full app is live: capture → OCR/UIA text →
+> **Status — v0.4.1 shipped (2026-10-15).** The full app is live: capture → OCR/UIA text →
 > deferred enrichment → **hybrid search**, a supervised out-of-process **llama.cpp inference
 > sidecar** (Job-Object-bound) for vision tagging and grounded streaming answers, the six-screen
 > **Command Deck** UI, a
@@ -28,14 +28,13 @@ Inference stays on-device.
 > [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md). A standalone, clean-slate project — it
 > shares no code or data with any prior version.
 
-## New in development — from screen history to memory reports
+## New in v0.4.1 — from screen history to memory reports
 
 Turn captured activity into notes you can revisit in **Obsidian**, with an optional digest in
 **Telegram**. Generate a report when you need it, or set a daily schedule. Capture storage and
 AI inference stay on your Windows computer.
 
-These additions are implemented and packaged in the current development branch, **not yet in
-the public release**. The latest released version remains v0.4.0.
+These additions shipped in v0.4.1 and reach existing installs through auto-update.
 
 | Addition | What you can do |
 |---|---|
@@ -46,7 +45,7 @@ the public release**. The latest released version remains v0.4.0.
 | **See coverage and delivery status** | Inspect the captured sources, partial coverage and separate note/Telegram receipts. Retry delivery without regenerating, or create a new report revision. Empty windows are labeled `NO_DATA` and skip Telegram. |
 | **Choose the API bind address** | Keep the default `127.0.0.1`, choose another IPv4/IPv6 address, or explicitly select a wildcard for network access. Existing enabled installations retain loopback when no address is configured. |
 
-To get started in a development build, open **Settings → Memory reports**, choose a timezone
+To get started, open **Settings → Memory reports**, choose a timezone
 and output folder, then select dates under **Run a report**. Daily scheduling and Telegram are
 independent options and both start **off**. Reports use an already installed local answer model;
 they do not download one automatically.
@@ -112,7 +111,7 @@ HTTP API exposes history to authenticated clients; see its [network boundary](do
   sidecar**: streaming answers with cited frames, and Daily / Weekly / Custom **Recall reports**
   that cite the frames they used. Vision tagging emits structured output with an honest confidence,
   never a fabricated score.
-- **Memory reports (unreleased).** Save reports for selected dates or on a daily schedule,
+- **Memory reports.** Save reports for selected dates or on a daily schedule,
   browse them as Markdown notes in Obsidian, and optionally receive Telegram digests.
   Coverage and delivery receipts make empty windows, partial reports and failed attempts visible.
 - **Sessions.** A pure on-device heuristic groups frames into focus, meeting, and concurrent
@@ -122,7 +121,7 @@ HTTP API exposes history to authenticated clients; see its [network boundary](do
   Tauri window for quick Search/Ask without leaving your foreground app. `Esc` hides it; `Enter`
   opens the selected Moment in the main Command Deck. `Ctrl+Alt+M` marks the current moment.
 - **HTTP API + local MCP.** An opt-in HTTP API (off by default, bearer authenticated) with
-  configurable IPv4/IPv6 binding in the development branch and a loopback default
+  configurable IPv4/IPv6 binding (loopback by default)
   exposes search / ask / frames / marks / sessions and JSON export to reachable scripts and agents.
   Plain HTTP is not encrypted; enable only with appropriate network access restrictions.
   `screensearch-mcp.exe` — bundled in the installer — wraps it as a stdio **MCP server** for

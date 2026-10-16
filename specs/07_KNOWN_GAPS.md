@@ -1,47 +1,25 @@
 # 07 — Known Gaps
 
-## PR #122 — connection-bound decision and verification boundary
-
-Gap #89(b) is revisited because configurable binding widens the surface. Maintainer approved
-64 active connections and a timed 30-second request-header deadline on all listeners, with
-immediate close at capacity, no SSE/body deadline, and owned bounded shutdown (`03 §7c`).
-Connection-bound implementation passed native Windows regression/build/Clippy gates (`05`);
-the connection-cap part of #89(b) is addressed, while rate limiting remains deferred.
-The amended API toast passed actual Windows WebView2/IPC interaction at 1280×900. Narrow
-375×812 stress still overflows the desktop shell; it is below the 960 px minimum and does not
-change the Windows desktop contract. No mobile support or real-model/Telegram acceptance inferred.
-
-## 2026-10-15 — PR #123 review verification boundary
-
-Linux kernel/store tests and targeted clippy do not establish native memory-worker, credential,
-atomic-file or startup behavior. The new src-tauri regressions need Windows CI; real installed-model,
-recipient-change delivery and rendered UI acceptance remain manual gates. No live Telegram send
-was authorized or attempted for review fixes. Existing npm development advisories remain unchanged.
-
-## 2026-10-15 — Report policies approved
-
-The previously recorded C–E policy questions are resolved by the explicit "Sure GO" approval;
-`03 §8c` is the implementation contract. Live installed-model/folder/Telegram acceptance still
-requires actual test inputs and observed results. Firewall access for this work was approved;
-the app does not automatically alter firewall rules. Do not infer Telegram credentials or
-recipient from this permission.
-
-Implementation C–E has passed the local Windows automated suite (817 passed, 15 existing
-hardware/manual tests ignored); native quality and product-wide pilot gates remain open. OS
-file operations may continue after the bounded async worker is cancelled; persisted intents
-recover the outcome. Slow/unavailable-folder native acceptance must check this behavior.
-The current Node 22 UI install reports 10 development-tree advisories (3 moderate, 7 high);
-`npm audit --omit=dev` reports zero. No unrelated lockfile remediation was applied.
-
 ## 2026-10-15 — Memory/API execution gates (owner: maintainer + agent)
 
 - C–E policies are approved in `03 §8c/§8d`; implementation verification is tracked in `05`.
   Product acceptance must cover diverse supported user setups, not a personal usefulness score.
-- Before network release: real separate-machine HTTP authentication, local MCP, native
-  visible upgrade notice, restart, disable/enable, Ask cancellation and inference bind evidence.
+- Before network release: real separate-machine HTTP authentication, local MCP,
+  restart, disable/enable, Ask cancellation and inference bind evidence.
 - Before automation acceptance: user-selected test folder, installed model, and explicitly
   approved Telegram test destination; no fabricated receipts or private-history defaults.
 - Website source is not present in this repository; external privacy-copy review remains open.
+- **Carried forward from the 0.4.1 arc** (resolved decisions and verification detail:
+  `specs/archive/07_KNOWN_GAPS.v0.4.1.md`; owner: maintainer unless stated). Still open:
+  separate-machine HTTP authentication and interactive Settings acceptance for the configurable
+  bind; real installed-model report quality; an explicitly authorized live Telegram send;
+  slow/unavailable-folder behaviour (OS file operations can finish after async cancellation, durable
+  intents recover the outcome); rate limiting remains deferred (#89(b) — the 64-connection cap and
+  30 s header deadline shipped); sparse-content sampling can need a larger frame budget and must never
+  be read as proof of no data; the Windows credential read CodeQL alert awaits dismissal as a false
+  positive; the dev-tree npm advisories remain (`npm audit --omit=dev` is clean).
+- Schema 11 → 12 (0.4.1) is forward-only and there is no automatic pre-migration backup in the app;
+  the 0.4.1 release notes tell users to back up the data folder first.
 
 > Where the **spec is silent** and a decision was needed, plus **manual interventions** still
 > required (with owner + deadline). The agent appends here instead of guessing (`04 §5`). Empty
@@ -51,7 +29,6 @@ The current Node 22 UI install reports 10 development-tree advisories (3 moderat
 |---|---|---|---|---|---|
 | 72 | 2026-06-29 | **llama.cpp multimodal host-memory leak (build 9842).** ~149 MB committed host RAM leaked **per vision inference** (VRAM flat; isolated 60-frame test 2026-06-29: 6.8 → 16.3 GB committed). Freed only on process exit. | **Open (upstream).** Local mitigation shipped 0.2.1: the **sidecar recycle valve** (`sidecar.recycle_enabled` default true; `sidecar.recycle_rss_mb` default 0=auto, explicit clamp 8192–131072 MiB; the 8 GiB floor clears the 8B vision warmup baseline so it can't recycle-per-request) recycles llama-server at a committed-RAM ceiling. **The real fix is upstream** / a newer bundled llama.cpp build — re-run the 60-frame test when it lands. Shipped-mitigation detail + small-RAM behaviour: `06` #15 and the `08`/CHANGELOG v0.2.x archives. | agent | open (upstream; local mitigation ✅ 0.2.1) |
 | 46 | 2026-06-24 | **Stall-abort can't cancel hf-hub's detached chunk tasks** (PR #26, Codex P1) — the model-download stall watchdog calls `task.abort()` on the outer fetch task, but `hf-hub` 0.4.3 starts its own per-chunk `tokio::spawn`s internally; aborting the parent drops their join handles without stopping them, so a chunk task on a (briefly) revived socket could still write the `.sync.part` after the UI reports `Failed`. | **Open (bounded, deferred):** the blast radius is contained — (a) resume reads the **committed counter** in the `.sync.part` trailer as the authoritative offset, so stale writes past it are re-fetched/overwritten next attempt (committed data isn't corrupted); (b) downloads are **serialized per lane**, so a user-initiated retry never runs a second `ModelDownloader` fetch concurrently. A real fix means replacing the high-level `ApiRepo::download_with_progress` with a cancellable chunked downloader we own (or forking hf-hub) — a larger change than this PR's scope. **Update (0.2.0 PR8):** the default path is now the chunked downloader, whose chunk futures are awaited *inside* the fetch task (`buffer_unordered`, no detached `tokio::spawn`), so `task.abort()` cancels every in-flight chunk — **no orphaned writers on the chunked path**. This gap now applies only to the single-stream hf-hub **fallback** (range-less servers), where the bounded mitigations above still hold. | agent | mostly resolved (chunked path); remains for hf-hub fallback only |
-| 50 | 2026-06-25 | **Scheduled / saved reports (deferred beyond PR6)** — PR6 ships on-demand Daily/Weekly/Custom reports with **no** saved-report table; recurring scheduled reports + persistence are out of 0.2.0 scope (`03 §8b`). | **Deferred** (`docs/0.2.0.md` PR6): revisit after the reports feature lands; would add a saved-report/schedule store + a scheduler. | agent | post-0.2.0 |
 | 58 | 2026-06-25 | **OPEN — live multi-DPI / secondary-monitor `target_rect` acceptance check (PR3)** — gap #54 marks the `target_rect` DPI mapping *code* resolved, but the runtime behaviour can only be confirmed on real hardware: a `npm run dev` session spanning **≥2 monitors at different DPI scales**, verifying the foreground window's normalized rect maps to the correct monitor band (background/system suppression fires on the right monitor, never the wrong one). CI cannot cover this. Tracked as its own row so it stays visible **after** PR #32 merges and #54 reads ✅. | **Open (manual, owner = user/maintainer):** run the multi-DPI check on a real desktop session; a wrong rect can only *under*-suppress (recoverable via `include_chrome` + preserved `raw_text`), never silently lose content, so it does not block merge — but the check must be done before relying on background/system suppression on multi-monitor setups. Update this row to ✅ once verified. | user | open (before multi-monitor reliance) |
 | 75 | 2026-07-03 | **Audio capture / transcription — deferred (0.3.0 arc, `02 §5c`).** The single most-requested capability in this product category, and explicitly out of 0.3.0. | **Deferred to 0.4.x by user decision:** mic capture, a Whisper lane, and consent UX are a full arc of their own. Not a spec silence — a scoped deferral recorded per the roadmap. | user+agent | 0.4.x candidate |
 | 76 | 2026-07-03 | **Custom GGUF "bring-your-own-model" path — deferred (0.3.0).** The tinkerer escape hatch that replaces the retired Beta tier. | **Deferred:** small, but kept out of 0.3.0 so PR3 stays a pure subtraction (`docs/0.3.0.md`). | user+agent | post-0.3.0 |
@@ -59,7 +36,7 @@ The current Node 22 UI install reports 10 development-tree advisories (3 moderat
 | 78 | 2026-07-03 | **Marks in Recall reports — deferred (0.3.0).** Surfacing unresolved marks inside daily/weekly reports. | **Deferred:** reports stay as shipped in 0.2.x (`03 §8b`); a later refinement. | user+agent | post-0.3.0 |
 | 79 | 2026-07-03 | **API write scopes beyond marks — deferred (0.3.0).** | **Deferred:** the v1 local API is read-only except `POST /v1/marks` (`03 §7c`, D11). | user+agent | post-0.3.0 |
 | 82 | 2026-07-03 | **`jobs.kind` has no `CHECK` constraint (optional hardening; PR #70 gemini review).** The live `jobs.kind` column is `TEXT NOT NULL` with only a comment enumerating values (`crates/store/src/schema.rs:132`); a reviewer suggested a `CHECK (kind IN ('embed_text','vision_tag'))`. | **Declined for the 0.3.0 arc, recorded:** adding a `CHECK` to the `§4` DDL would (a) diverge the spec from the real, un-constrained schema, and (b) if treated as contract, force an unplanned **jobs-table rebuild** in PR4 (SQLite can't add a `CHECK` in place) — scope creep beyond D5 (which only drops the image tables + deletes `embed_image` jobs). Kept as opt-in future hardening: if ever added, it lands as its own forward-only migration (+1, populated-DB test, D15) that rebuilds `jobs`, not silently folded into PR4. | agent | optional / post-0.3.0 |
-| 89 | 2026-07-04 | **PR7 v1-API scope residuals (recorded, not built).** Three items sit just outside the PR7 surface. | **Deferred, recorded:** (a) **non-JSON export formats** — `format=` accepts only `json` in v1 (anything else → 400); CSV/NDJSON are future formats. (b) **No rate limiting / connection cap** on the local surface — acceptable for a single-user localhost API behind a bearer token; revisit if the surface widens. (c) **`captured_at`-seeded export cursor** — the keyset cursor scans by `id` from 0 even for a *late* time window, so a huge history with a recent-only `from` still walks early ids (bounded, ordered PK scan; correct, just not optimal). A future optimization can seed the cursor from the first in-window id. | agent | post-0.3.0 |
+| 89 | 2026-07-04 | **PR7 v1-API scope residuals (recorded, not built).** Three items sit just outside the PR7 surface. | **Deferred, recorded:** (a) **non-JSON export formats** — `format=` accepts only `json` in v1 (anything else → 400); CSV/NDJSON are future formats. (b) **No rate limiting** on the local surface — 0.4.1 added a 64-active-connection cap and a 30 s request-header deadline on every listener (`03 §7c`), but there is still no per-request rate limit; acceptable behind a bearer token on loopback by default, revisit as the configurable bind widens the surface. (c) **`captured_at`-seeded export cursor** — the keyset cursor scans by `id` from 0 even for a *late* time window, so a huge history with a recent-only `from` still walks early ids (bounded, ordered PK scan; correct, just not optimal). A future optimization can seed the cursor from the first in-window id. | agent | post-0.3.0 |
 | 92 | 2026-07-04 | **UIA circuit-breaker thresholds are named constants, not settings.** `BREAKER_CONSECUTIVE_BAD` (3) and `BREAKER_COOLDOWN_MS` (30 min) in `crates/uia/src/breaker.rs` govern the per-app UIA→OCR back-off, but are not exposed as `capture.*` settings, unlike other thresholds (`03 §3b` says thresholds live in settings). | **User-decided exception, recorded:** the 0.3.0 arc is surface-*reduction*; the user chose breaker-only protection with no new settings surface. The constants are conservative and self-documenting; promote them to settings only if real usage shows the default 3/30-min back-off is wrong for some workflow. **Update (0.3.3):** since `#93` now skips Chromium/Electron windows outright, the breaker only backstops *native* apps (and any browser whose class lookup failed), so its thresholds matter even less — no change warranted. | user+agent | post-0.3.0 (only if defaults prove wrong) |
 | 95 | 2026-07-04 | **UIA client spawn vs. concurrent settings-save has a vanishingly-narrow residual race (PR #79 review follow-up).** `get_or_spawn_uia` now reads the *live* `config.budget` under the `respawn_gate` (was: the caller's pre-gate snapshot), so a single settings save landing during the capture-start → first-spawn window can no longer bake a stale budget into the new client — the realistic bug the reviewer found. The only residual is a *second* settings save whose `apply_settings` teardown interleaves exactly between this spawn's fresh config read and its slot store (both saves changing the budget within the ~ms spawn) — the teardown then no-ops on the still-empty slot and the mismatch persists until the next save. | **Fixed for the reachable case; residual recorded as accepted.** The residual needs two distinct human saves within a single client's spawn window (not reachable by a person) and self-heals on the next save (which tears down the now-populated slot). A full close would need to serialize teardown against the in-flight spawn (e.g. a config generation counter checked under the slot write lock) — disproportionate to a non-reachable micro-race on a latency-budget value. | agent | post-0.3.0 (only if it ever proves reachable) |
 | 91 | 2026-07-04 | **Monitor hot-unplug mid-session stalls capture silently (PR9 audit finding).** The 3440×1440 primary display disconnected (DP power-save) during the PR9 live audit: one `WARN capture::wgc: capture: readback failed monitor=1 error=no frame available from the capture device`, then **no frames stored for ~4 min** despite foreground events, while `/v1/health` kept reporting `capturing:true`; a mark-hotkey press during the transition produced a frame but **no mark row and no visible toast** (silent loss), and later presses did nothing (requests into the stalled worker). | **Open (post-0.3.0 hardening), bounded:** a manual Deck STOP → START immediately restored frame flow (verified live); no data corruption. Fix direction: the capture worker should react to display-topology changes (`WM_DISPLAYCHANGE` / WGC item `Closed`) by recreating its sessions for the surviving monitors — or at minimum flip capture readiness to Error + toast instead of continuing to report capturing=true. Not a release blocker: environmental trigger, loud only in the log today, recoverable in two clicks. **Update (0.4.0):** sessions render such a stall **visible** — a session with a silent hole — which strengthens the case; but capture-worker topology handling is not sessions work, so it stays deferred as a **first-line 0.4.1 candidate, priority raised** (`docs/0.4.0.md` §2/§6). | agent | post-0.3.0 (first-line 0.4.1 candidate) |
@@ -82,6 +59,8 @@ The current Node 22 UI install reports 10 development-tree advisories (3 moderat
 > Resolved + shipped 0.3.2-arc rows (#83/#96/#97/#100/#105) and the resolved 0.1.1 TODO block → `specs/archive/07_KNOWN_GAPS.v0.3.2.md` (ids preserved). The live table holds only still-open rows and standing deferrals.
 > Resolved 0.3.3 row (#93 — first-UIA-walk-hangs-Chromium, reversed → window-class skip) → `specs/archive/07_KNOWN_GAPS.v0.3.3.md` (id preserved). Standing deferrals #92/#95 carry a 0.3.3 update note but stay live.
 > Resolved 0.4.0-arc rows (#98/#102/#110/#111/#114/#118/#119) → `specs/archive/07_KNOWN_GAPS.v0.4.0.md` (ids preserved). #102 closed GitHub issue #88 at the v0.4.0 release. The live table holds only still-open rows and standing deferrals.
+> Shipped 0.4.1 history (opt-in network API #122, durable memory reports #123, maintenance) →
+> `specs/archive/07_KNOWN_GAPS.v0.4.1.md` (resolved decisions; open gates carried forward above). Row #50 (scheduled / saved reports) shipped in 0.4.1 and moved there (id preserved).
 
 Manual steps still required (e.g. signing certs, first-run model download, CI secrets):
 - **First-run model download** — embedding models (P3) auto-download via fastembed into
@@ -171,43 +150,3 @@ Manual steps still required (e.g. signing certs, first-run model download, CI se
 - **Verification remains local:** Node 26.8.1 was used instead of CI's Node 22; no
   remote CI, interactive app-wide QA, GPU/model smoke, installer or release check
   was performed. Existing hardware/manual gates above remain open.
-
-
-
-## 2026-10-14 — PR #112 verification boundary
-
-The task's executor is Linux; the Windows-only application cannot be launched
-here. Windows build/clippy/tests and binding freshness are verified by GitHub CI
-on Rust 1.95.0. Dependabot alert #4 (quinn-proto, GHSA-4w2j-m93h-cj5j) must move
-to fixed after merge; do not dismiss or suppress it. This update does not itself
-publish a new installer or update existing installations.
-
-## 2026-10-15 — configurable API and minute-only schedule correction
-
-The earlier automatic all-interface upgrade behavior is superseded: missing
-`api.bind_address` stays `127.0.0.1`, including enabled installations. Users select a literal
-IPv4/IPv6 address explicitly. Native HTTP tests cover loopback and selected wildcard/IPv6
-listeners; separate-machine and interactive Settings acceptance remain open (owner: maintainer,
-before release). Schedule controls and displayed report times use hour/minute precision.
-
-New settings and delivery paths use forward slashes. Native filesystem boundaries restore
-Windows verbatim/device prefix syntax so normalization does not reinterpret extended paths.
-Real Windows tests cover ordinary and verbatim atomic create/replace/read, plus legacy file
-ownership lookup and transactional separator normalization. The app remains Windows-only.
-
-
-## 2026-10-15 — selected-date Memory reports and diagnostic boundary
-
-The reported empty note was a genuine previous-day NO_DATA window with zero frames; its Telegram
-receipt was skipped before transport. The new manual date/range controls address choosing the
-intended capture dates, including partial today. They preserve the configured daily schedule.
-Native Settings interaction, real installed-model quality and approved live Telegram delivery
-remain acceptance gates (owner: maintainer, before release); the running installation was left
-untouched during diagnosis and development.
-
-Source review additionally found that empty model responses and sampling without usable chunks
-could become empty coverage output after a positive usable-content probe. Shared execution now
-fails those cases explicitly; true empty windows and prompt-based no-match output retain their
-meaning. Sparse-content sampling can still require a larger frame budget to obtain useful output;
-it must never be represented as proof that the window had no data. Privacy-safe run/delivery
-status logs complement durable receipts without screen text, credentials, recipients or paths.

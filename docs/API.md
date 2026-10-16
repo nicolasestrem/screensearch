@@ -94,7 +94,7 @@ All paths are under `http://<computer-address>:<port>`; use `127.0.0.1` locally.
 ### `GET /v1/health`
 
 ```json
-{ "version": "0.4.0", "uptime_secs": 128, "capturing": true }
+{ "version": "0.4.1", "uptime_secs": 128, "capturing": true }
 ```
 
 ### `GET /v1/search`
