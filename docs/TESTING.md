@@ -17,8 +17,10 @@ without tokens or screen content. Preserve the everyday installation.
    with token, enabled state and port preserved; no automatic broadening or upgrade notice.
 4. Rotate token: old rejected, new accepted. Disable/re-enable preserves configuration.
    Port conflicts, including wildcard/specific listeners, retain enabled intent with visible error.
-5. Local MCP handshakes via loopback when the selected bind accepts it; remote URLs remain
-   rejected. Cancel a real Ask stream and observe cancellation. Inference remains loopback-only.
+5. Local MCP handshakes via loopback when the selected bind accepts it. Shipped v0.4.1 rejects
+   remote destinations; verify the separate P2 wrapper's explicit URL/redirect/proxy boundary
+   with its focused fixtures, then a separately scoped cross-machine app run. Cancel a real
+   Ask stream only in an authorized native acceptance run. Inference remains loopback-only.
 6. Check address field validation, keyboard access and loading/error/off/listening states;
    distinguish wildcard listen addresses from client URLs and bracket IPv6 client addresses.
 7. Schedule input exposes hours/minutes only. New memory path settings, snapshots and receipts
@@ -31,13 +33,87 @@ migration or token reset is part of this increment. Schedules and Telegram are s
 
 Run from the repo root. Each command stands alone. Green = good.
 
+## External-agent memory API P1/P2 — verification status
+
+These are evidence boundaries, not a release or app-acceptance claim. Contract/source:
+[API frames](API.md#chronological-frames), [coverage](API.md#coverage),
+[MCP transport](MCP.md#configuration), [consumer](MEMORY_CONSUMER.md), and spec `03 §7f`.
+
+| Observed evidence | Scope / still pending |
+|---|---|
+| Native store review at `history_pages.rs` SHA256 `f71c4c21802ccaad74980ba27b0805563f81f4773cd78f2a2f37a478a40a0d9e`: focused 14/14; full store 156 passed, 0 failed, 3 ignored; all-target clippy exit 0. | Isolated store snapshot only, not integrated HTTP/UI/app acceptance. Pre-fix `u64` decoding did not compile; the checked `i64` conversion fix is present. |
+| API interface/cursor checkpoint: four cursor unit tests and API-lib clippy passed; initial HTTP attempt blocked by that store compile defect. | Historical blocker fixed by store owner; these notes alone do not prove the later HTTP rerun passed. |
+| P2 transport report: build/test/clippy/fmt exit 0; 66 tests (36 unit, 8 remote transport, 22 stdio). Registry at `7831e84` has nine normal/six read-only tools. | Historical (earlier commit): component evidence only. TLS-negative fixture actually ran there with OpenSSL; it can skip if OpenSSL is absent. No feed/coverage MCP tools at that commit. |
+| P2 transport committed at `409d380` (draft PR [#127](https://github.com/nicolasestrem/screensearch/pull/127)): package-scoped build/test/clippy/fmt exit 0; **77 tests** (41 lib unit, 6 memory_tools, 8 remote transport, 22 stdio), 0 failed; packaged-archive verify observed `tools/list: 11 tools` and read-only `8 tools`. | Component/protocol evidence only: the two new tools drive controlled HTTP fixtures, not a real P1 end-to-end read. Not in any released binary or the P1 bundled wrapper. Windows/macOS legs of the native package workflow not yet observed. |
+| Earlier local consumer run: 20 tests, 4 skipped, exit 0. | Historical baseline; the fixture runner did not yet exist. A skip is not successful API consumption or P1 acceptance. |
+| Current consumer run (F1/F2/F3 fixes): **23 tests, 0 skips, 7 real-API tests executed**, exit 0, against a real `ApiServer` + `SqliteStore` (no mock HTTP). | Real-API frame/coverage consumption receipted at component scope; the runner binary + source hash were re-verified independently. Not P1 app/UI acceptance. |
+
+Local evidence notes are under the active profile scratch directory, not repository links:
+`scratch/memory-api-p1-feed-api-interface.md`,
+`scratch/memory-api-p1-pages-native-review.md`, and `scratch/memory-api-p2-transport.md`.
+Their timestamps/immutable snapshots matter; inspect raw outputs before advancing a gate.
+Do not promote a base build, worker summary or synthetic fixture into current app acceptance.
+
+### Focused checks (required receipts, not claimed rerun here)
+
+On a prepared native Windows checkout, use the **unchanged CI order below first**: UI install,
+lint, build → MCP staging → fmt → workspace clippy → build → test → generated-binding guard.
+Keep each exit code and source/snapshot identity. Focused follow-ups do not replace that order:
+
+```sh
+cargo test --locked -p store --lib history_pages::tests -- --nocapture
+cargo test --locked -p api --lib history::tests -- --nocapture
+cargo test --locked -p api --test http_api history_reads -- --nocapture
+cargo test --locked -p api --test http_api history_bad_queries -- --nocapture
+cargo test --locked -p mcp
+cargo clippy --locked -p mcp --all-targets -- -D warnings
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s examples -p test_memory_consumer.py -v
+```
+
+The last command without `SCREENSEARCH_CONSUMER_FIXTURE_CMD` visibly skips the real-API
+cases. The runner exists at `crates/api/examples/memory_consumer_fixture.rs`; build it with
+`cargo build --locked -p api --example memory_consumer_fixture` on the prepared native
+checkout, then set that variable to a JSON argv array naming the **absolute** path of the built
+executable. `CARGO_TARGET_DIR` is not stable across trees, so resolve the directory once with
+`cargo metadata --format-version 1 --no-deps` (its `target_directory` field) and join
+`debug/examples/memory_consumer_fixture[.exe]` — do not hardcode a private `target/debug` path
+or a path from another checkout. The harness creates fresh disposable SQLite state and random
+read credentials. Record all seven integration outcomes; runner presence is not an execution
+receipt. The consumer guide's earlier pending-runner wording/old suggested integration-test
+path is not evidence that a run has passed.
+
+Required fixture/native checks include >1000 rows, timestamp ties/out-of-order timestamps,
+filters before limit, 256-byte UTF-8 filters/4096-byte cursor bound, strict invalid input,
+full/missing/empty text, frozen membership, deletion/retention during traversal, late
+enrichment and re-scan, page checkpoint crash/resume, identity conflict and decreasing-high-
+water reconciliation, known restore after high-water catch-up, explicit timezone/DST days,
+read-token lifecycle persistence failures, HEAD/401/403/404/405, and no read side effects.
+Do not skip or remove IPv6 tests because a Linux host lacks `::1`; that is a failed host
+prerequisite, not a native Windows pass. Use fixtures, not personal captures or model downloads.
+
+Receipted since the table above: the **integrated native Windows CI-order gate** now passes
+on the existing native checkout at `f76dda6` (Rust 1.95.0 / Node 22): fmt, clippy
+(`--all-targets -D warnings`), build and test all exit 0 — **928 passed, 0 failed, 15
+hardware/model-ignored** across 60 binaries — plus the 41-file source-hash guard and the
+generated-binding guard. See `scratch/memory-api-p1-integrated-native.md`. This is native
+build/test evidence, **not** app/UI acceptance.
+
+Still pending unless separately receipted: rendered credential UI states (the native UI
+acceptance run is prepared but not executed — its isolated launch is blocked on the session-0
+safety question), separate-machine frame traversal/consumer resume, supported native
+wrapper/archive execution (Windows/Linux/macOS legs) and real paging/latency measurements.
+P3 saved-report reads are **blocked pending Nico's retry-result visibility decision**.
+Generation/retry/scheduling/delivery remain deferred. No merge, publication, installer
+replacement or release is implied.
+
 ## ✅ The one command
 
 ```sh
 cargo test --workspace
 ```
 
-That runs every test. **0 failed = pass.** (GPU/model tests are skipped automatically — that's normal.)
+That runs the default workspace tests, not ignored/manual acceptance gates. **0 failed** only
+passes the tests actually executed; skipped/ignored cases and native acceptance remain separate.
 
 ## 🔁 Before you push (CI-order gates)
 

@@ -12,11 +12,30 @@ artifact; that external file is preserved unchanged. The product serves approxim
 people, as clarified by the maintainer. Pilot and release validation must cover supported user
 environments rather than use one person's workflow as the acceptance standard.
 
+## External-agent follow-up (2026-10-16, P1/P2 unreleased)
+
+The earlier B/C–E narrative below records the original network/report direction. The current
+external-agent contract is `03 §7f`; its HTTP guide is [API.md](API.md#chronological-frames),
+transport guide [MCP.md](MCP.md#configuration), and evidence boundary
+[TESTING.md](TESTING.md#external-agent-memory-api-p1p2--verification-status).
+P1 source now supplies chronological frames, coverage, allocator/read-token protection and
+consumer; the integrated native Windows build/test gate now passes (928 tests, 0 failed, 15
+hardware-ignored; fmt/clippy/build/bindings/source-hash all clean), which is build/test
+evidence, not app/UI acceptance. P2 transport is committed at `409d380` (draft PR
+[#127](https://github.com/nicolasestrem/screensearch/pull/127)): explicit remote HTTP/HTTPS
+roots with no proxies/redirects and verified TLS, now including `list_frames` /
+`get_capture_coverage` (eleven normal / eight read-only). It is not released and not in the P1
+bundled wrapper (still the baseline nine-tool `--url`-only registry), and the new tools run
+against controlled fixtures only. Standalone native archives are not claimed.
+P3 saved-report reads remain **blocked pending Nico's retry-result visibility decision**;
+remote generation/retry/scheduling/delivery stay deferred. No merge/release is authorized.
+Active repository: https://github.com/nicolasestrem/screensearch .
+
 ## 1. Goal and scope
 
 Make ScreenSearch useful without requiring the user to open its search UI: turn captured work into source-backed memory in Obsidian and useful scheduled reports delivered through Telegram. Keep search as the evidence-retrieval foundation.
 
-Make the application HTTP API bind address configurable as any IPv4/IPv6 literal, persisted as `api.bind_address`. Missing values default to `127.0.0.1`, including existing enabled installations; upgrades must never broaden access automatically. Apply address/port edits immediately. Preserve authentication, exclusive socket ownership and loopback-only MCP destination validation/default URL. Wildcards are listen addresses, never client destinations.
+Make the application HTTP API bind address configurable as any IPv4/IPv6 literal, persisted as `api.bind_address`. Missing values default to `127.0.0.1`, including existing enabled installations; upgrades must never broaden access automatically. Apply address/port edits immediately. Preserve authentication, exclusive socket ownership and the loopback MCP default URL. The later P2 amendment permits explicitly configured remote wrapper destinations without changing the app listener, CORS or inference boundary. Wildcards are listen addresses, never client destinations.
 
 Execute the authorized increments with their separate contract, implementation and evidence gates. Do not mark an increment accepted until its verification output has been inspected and native acceptance observed. Firewall changes, private-history generation, an everyday installation replacement and Telegram test sends remain separately scoped actions; do not infer a destination or permission from implementation authorization.
 

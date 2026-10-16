@@ -10,9 +10,12 @@ you, ScreenSearch exposes your screen history through an opt-in local **MCP serv
 (`screensearch-mcp`) — so Claude Desktop, Claude Code, or any MCP client can search your captures,
 ask grounded questions with cited frames, and, as of v0.4.0, reason over automatically segmented
 **work sessions** (`list_sessions`, `get_session`, `ask_session`). Every answer is drawn from the
-local database; the MCP wrapper uses loopback. The HTTP API defaults to `127.0.0.1`;
-explicit network binding lets authenticated devices that can reach this computer read history.
-Inference stays on-device.
+local database. The shipped MCP wrapper uses loopback; the unreleased P2 wrapper adds
+explicitly configured remote HTTP/HTTPS roots, still loopback by default. The HTTP API defaults
+to `127.0.0.1`; explicit network binding lets authenticated reachable devices read history.
+Plain HTTP exposes tokens/history to network observers. Inference stays on-device.
+
+Active source repository: [github.com/nicolasestrem/screensearch](https://github.com/nicolasestrem/screensearch).
 
 > **Status — v0.4.1 shipped (2026-10-15).** The full app is live: capture → OCR/UIA text →
 > deferred enrichment → **hybrid search**, a supervised out-of-process **llama.cpp inference
@@ -55,6 +58,42 @@ Both are linked from `ScreenSearch/Index.md` inside your chosen folder.
 
 See the [Memory reports guide](docs/MEMORY.md) for setup, scheduling and recovery, or the
 [HTTP API guide](docs/API.md) for binding, authentication and the plain-HTTP network boundary.
+
+## External-agent memory API — unreleased P1/P2
+
+On `feat/agent-memory-http`, chronological `GET /v1/frames` and `GET /v1/coverage`
+provide bounded half-open UTC-window reads, full raw/filtered text (including missing versus
+stored-empty states), allocator/retention facts and bounded process-local capture observations.
+An independent read credential denies marks, capture and Ask; MCP `--read-only` only filters
+tools and is **not authorization**. Capture intent, empty windows and frame gaps are not proof
+of health, inactivity or complete memory. Supported allocation protects future identity reuse,
+not old binaries, clones or restores; known restores require explicit client reconciliation.
+
+Use the [exact HTTP contract](docs/API.md#chronological-frames) and the runnable
+[checkpoint consumer](docs/MEMORY_CONSUMER.md), which requires an explicit timezone for local
+days, handles DST, saves cursor only with processed facts and preserves identity conflicts.
+The [P2 MCP configuration](docs/MCP.md#configuration) documents `--api-url` / `--url`, environment
+precedence, strict root URLs, no proxies/redirects and HTTPS certificate verification. The P2
+change set is now committed at `409d380` (draft PR
+[#127](https://github.com/nicolasestrem/screensearch/pull/127)) and adds `list_frames` /
+`get_capture_coverage` — **eleven** tools in normal mode, **eight** read-only — but it is **not
+released and not bundled**: the shipped v0.4.1 binary and the P1 bundled wrapper still carry
+the baseline nine-tool, `--url`-only wrapper, and the two new tools pass protocol-fixture tests
+only, so the real P1 end-to-end read is still pending. Those MCP reads keep full text, require
+the caller to set page size (no auto-drain) and preserve coverage unknowns; the
+[HTTP contract](docs/API.md#coverage) and [consumer](docs/MEMORY_CONSUMER.md) cover the same
+ground meanwhile. The integrated native Windows build/test gate now passes (Rust 1.95.0 /
+Node 22: fmt, clippy, build, test — 928 passed / 0 failed / 15 hardware-ignored — plus the
+source-hash and binding guards); that is build/test evidence, **not** app/UI acceptance. Native
+archives, integrated Windows UI/app acceptance and successful cross-machine consumption are
+not claimed; the three native wrapper targets (Windows x86_64, Linux x86_64, macOS arm64) each
+need their own build-and-run receipt before any portable-release or supported-platform claim.
+See
+[completed versus pending evidence](docs/TESTING.md#external-agent-memory-api-p1p2--verification-status).
+
+P3 saved-report reads are **blocked pending Nico's retry-result visibility decision** for
+queued/running retries with already saved output. Remote report generation, retry, scheduling
+and delivery remain deferred; shipped local Memory reports are a separate surface.
 
 ## Screenshots
 
@@ -246,8 +285,8 @@ cargo test --workspace            # GPU/WinRT/model/perf tests are #[ignore]d
 #    (commit the regenerated files, or CI fails).
 git diff --exit-code -- ui/src/bindings
 
-# Run the app (debug) — the Tauri CLI ships as the npm dev-dependency `@tauri-apps/cli`,
-# so launch via the root npm script (use `cargo tauri dev` only if you `cargo install tauri-cli`).
+# Run the app only via the root npm script — never the debug executable or cargo tauri dev.
+# The Tauri CLI ships as the npm dev-dependency `@tauri-apps/cli`.
 npm run dev
 ```
 
@@ -271,8 +310,10 @@ cargo run -p doctor            # WebView2 / Vulkan / llama-server readiness (dia
 
 ## Platform
 
-Windows 10/11 only (uses Windows-native capture, OCR, and WebView2 APIs). Cross-platform
-abstractions are intentionally **not** added (see [`CLAUDE.md`](./CLAUDE.md)).
+The desktop app/capture/inference remain Windows 10/11 only (Windows-native capture, OCR,
+WebView2). The approved exception is the standalone stdio HTTP-client wrapper, not a
+cross-platform app rewrite; package-scoped wrapper verification and native archives remain
+separate gates (see [`CLAUDE.md`](./CLAUDE.md) and [MCP](docs/MCP.md)).
 
 ## Inspirations & prior art
 
