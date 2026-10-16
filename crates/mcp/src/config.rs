@@ -1,8 +1,8 @@
 //! Command-line + environment resolution for `screensearch-mcp`.
 //!
-//! The binary's entire configuration is the local API base URL and the bearer token
-//! (`03 §7c`, D13). Precedence is **flag > environment variable > built-in default**.
-//! Both `--flag value` and `--flag=value` forms are accepted.
+//! The binary's entire configuration is the API base URL, the bearer token, and the
+//! read-only tool filter (`03 §7c`, D13). Precedence is **flag > environment variable >
+//! built-in default**. Both `--flag value` and `--flag=value` forms are accepted.
 
 /// Environment variable naming the API base URL (`03 §7c`).
 pub const ENV_URL: &str = "SCREENSEARCH_API_URL";
@@ -17,6 +17,8 @@ pub const DEFAULT_URL: &str = "http://127.0.0.1:43210";
 pub struct Config {
     pub url: String,
     pub token: Option<String>,
+    /// Tool-selection ergonomics only; the HTTP server independently authorizes requests.
+    pub read_only: bool,
 }
 
 /// The outcome of parsing the command line.
@@ -37,26 +39,33 @@ pub const USAGE: &str = "\
 screensearch-mcp — a stdio MCP server wrapping the ScreenSearch local API.
 
 USAGE:
-    screensearch-mcp [--url <URL>] [--token <TOKEN>]
+    screensearch-mcp [--api-url <URL>] [--token <TOKEN>] [--read-only]
 
 OPTIONS:
-    --url <URL>       Base URL of the local API (default: http://127.0.0.1:43210)
+    --api-url <URL>   HTTP/HTTPS API root (default: http://127.0.0.1:43210)
+    --url <URL>       Backward-compatible alias for --api-url
     --token <TOKEN>   Bearer token from ScreenSearch Settings -> Local API
+    --read-only       List/accept only read tools (not server authorization)
     --version         Print version and exit
     --help            Print this help and exit
 
 ENVIRONMENT:
-    SCREENSEARCH_API_URL     Same as --url (flag wins)
+    SCREENSEARCH_API_URL     Same as --api-url (flag wins; last URL flag wins)
     SCREENSEARCH_API_TOKEN   Same as --token (flag wins)
 
 The API is off by default; enable it in ScreenSearch Settings -> Local API and copy the
-token shown there. Any local process holding the token can read your entire screen
-history — enabling the API is an explicit trust decision.";
+token shown there. Explicit remote URLs are allowed; plain HTTP exposes history and tokens
+to the network. HTTPS verifies certificates. Proxies and all redirects are disabled.
+Only root URLs are accepted: no credentials, query, fragment, non-root paths or wildcard
+addresses (these formerly accepted shapes are now rejected). --read-only is ergonomics;
+use an independently created read-only API token for server-enforced permissions.
+Any process holding a token can read history — enabling the API is a trust decision.";
 
 /// Parses `args` (process args **without** argv[0]) against an environment lookup.
 pub fn parse(args: &[String], env: impl Fn(&str) -> Option<String>) -> Cli {
     let mut url_flag: Option<String> = None;
     let mut token_flag: Option<String> = None;
+    let mut read_only = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -69,7 +78,8 @@ pub fn parse(args: &[String], env: impl Fn(&str) -> Option<String>) -> Cli {
         match key {
             "--help" | "-h" => return Cli::Help,
             "--version" | "-V" => return Cli::Version,
-            "--url" | "--token" => {
+            "--read-only" if inline.is_none() => read_only = true,
+            "--api-url" | "--url" | "--token" => {
                 let value = match inline {
                     Some(v) => v,
                     None => {
@@ -80,7 +90,7 @@ pub fn parse(args: &[String], env: impl Fn(&str) -> Option<String>) -> Cli {
                         }
                     }
                 };
-                if key == "--url" {
+                if matches!(key, "--url" | "--api-url") {
                     url_flag = Some(value);
                 } else {
                     token_flag = Some(value);
@@ -94,49 +104,69 @@ pub fn parse(args: &[String], env: impl Fn(&str) -> Option<String>) -> Cli {
     let url = url_flag
         .or_else(|| env(ENV_URL))
         .unwrap_or_else(|| DEFAULT_URL.to_string());
-    // Trim a trailing slash so `{url}/v1/...` never doubles up.
-    let url = url.trim_end_matches('/').to_string();
-    // MCP intentionally remains a local client even though the application API serves
-    // all IPv4 interfaces. Reject remote destinations to avoid leaking the token through
-    // a typo or copied config; remote MCP needs a separate contract amendment (`03 §7c`).
-    if !is_loopback_url(&url) {
-        return Cli::BadUsage(format!(
-            "--url must be a loopback address (127.0.0.1 / localhost / [::1]); got `{url}`"
-        ));
-    }
+    let url = match validate_api_url(&url) {
+        Ok(url) => url,
+        Err(message) => return Cli::BadUsage(message),
+    };
     let token = token_flag
         .or_else(|| env(ENV_TOKEN))
         .filter(|t| !t.is_empty());
 
-    Cli::Run(Config { url, token })
+    Cli::Run(Config {
+        url,
+        token,
+        read_only,
+    })
 }
 
-/// Whether `raw` is an `http`/`https` URL whose host is the loopback interface.
-///
-/// Uses `reqwest`'s URL parser (already linked) so IPv6 brackets, ports, and userinfo are
-/// handled correctly; `host_str()` avoids naming the `url::Host` type so the crate needs no
-/// direct `url` dependency. An unparseable URL is not loopback.
-fn is_loopback_url(raw: &str) -> bool {
-    let Ok(parsed) = reqwest::Url::parse(raw) else {
-        return false;
+/// Shared destination validation, called both by CLI and every client constructor.
+/// Raw syntax is checked as well as the parsed URL, so URL normalization cannot turn a
+/// non-root path (including dot segments) or empty userinfo into an accepted destination.
+/// Diagnostics never echo the supplied URL: it may contain credentials.
+pub fn validate_api_url(raw: &str) -> Result<String, String> {
+    let invalid = || {
+        "--api-url must be an HTTP/HTTPS root URL with a concrete host and no credentials, query, fragment or non-root path".to_string()
     };
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return false;
+    let parsed = reqwest::Url::parse(raw).map_err(|_| invalid())?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || raw
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c == '\\')
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || parsed.path() != "/"
+    {
+        return Err(invalid());
     }
-    match parsed.host_str() {
-        Some(host) if host.eq_ignore_ascii_case("localhost") => true,
-        Some(host) => {
-            // `host_str()` keeps an IPv6 literal in brackets — strip them before parsing.
-            let bare = host
-                .strip_prefix('[')
-                .and_then(|s| s.strip_suffix(']'))
-                .unwrap_or(host);
-            bare.parse::<std::net::IpAddr>()
-                .map(|ip| ip.is_loopback())
-                .unwrap_or(false)
-        }
-        None => false,
+    let (_, rest) = raw.split_once("://").ok_or_else(invalid)?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    if authority.is_empty()
+        || authority.contains('@')
+        || authority.contains('*')
+        || !matches!(&rest[end..], "" | "/")
+    {
+        return Err(invalid());
     }
+    let host = parsed.host_str().ok_or_else(invalid)?;
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host);
+    if bare
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_unspecified())
+    {
+        return Err(invalid());
+    }
+    // Only the validated root slash is removed; do not strip arbitrary trailing paths.
+    Ok(parsed
+        .as_str()
+        .strip_suffix('/')
+        .ok_or_else(invalid)?
+        .to_string())
 }
 
 #[cfg(test)]
@@ -212,13 +242,8 @@ mod tests {
     }
 
     #[test]
-    fn non_loopback_url_is_rejected() {
-        for u in [
-            "http://example.com:43210",
-            "http://10.0.0.5:43210",
-            "http://0.0.0.0:43210",
-            "not-a-url",
-        ] {
+    fn invalid_url_is_rejected() {
+        for u in ["http://0.0.0.0:43210", "not-a-url"] {
             assert!(
                 matches!(parse(&[format!("--url={u}")], no_env), Cli::BadUsage(_)),
                 "{u} should be rejected"

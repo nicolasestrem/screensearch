@@ -2,10 +2,11 @@
 //! API (0.3.0 PR8; `03 §7c`, D13).
 //!
 //! It speaks newline-delimited JSON-RPC 2.0 over stdin/stdout (the MCP stdio transport) and
-//! is otherwise a pure HTTP client of `127.0.0.1:<port>` with a bearer token from
-//! args/env — **no store access, no app coupling**. Six tools wrap the API's search / ask /
-//! frames / where-was-i / marks surface; if the API is off, every tool call returns a clear
-//! "enable the API in ScreenSearch Settings" error.
+//! is otherwise a pure HTTP client of the configured HTTP API root (loopback by default)
+//! with a bearer token from args/env — **no store access, no app coupling**. Nine tools
+//! wrap the API's search / ask / frames / where-was-i / marks / sessions surface; if the
+//! API is off, every tool call returns a clear "enable the API in ScreenSearch Settings"
+//! error.
 //!
 //! Logging goes to **stderr only**; stdout carries protocol messages exclusively.
 

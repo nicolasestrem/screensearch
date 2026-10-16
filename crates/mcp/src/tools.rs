@@ -36,7 +36,7 @@ pub fn definitions() -> Value {
         {
             "name": "search_screen_history",
             "title": "Search screen history",
-            "description": "Full-text + semantic search over the user's local screen-capture history. Returns matching moments (frames) with a text snippet, relevance score, timestamp, and app. Use a frame_id from the results with get_moment. Local data only — served by the ScreenSearch app on 127.0.0.1.",
+            "description": "Full-text + semantic search over the user's local screen-capture history. Returns matching moments (frames) with a text snippet, relevance score, timestamp, and app. Use a frame_id from the results with get_moment. Local data only — served by the ScreenSearch app on the configured API endpoint.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -53,7 +53,7 @@ pub fn definitions() -> Value {
         {
             "name": "ask_screen_history",
             "title": "Ask about screen history",
-            "description": "Ask a natural-language question and get a grounded answer synthesized from the user's screen history, with the frame ids it cited. Runs a local model — may take a while. Local data only — served by the ScreenSearch app on 127.0.0.1.",
+            "description": "Ask a natural-language question and get a grounded answer synthesized from the user's screen history, with the frame ids it cited. Runs a local model — may take a while. Local data only — served by the ScreenSearch app on the configured API endpoint.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -69,7 +69,7 @@ pub fn definitions() -> Value {
         {
             "name": "get_moment",
             "title": "Get a moment",
-            "description": "Fetch full detail (metadata + reconstructed text) for one captured moment by frame_id. Set include_image to also return the stored screenshot. Local data only — served by the ScreenSearch app on 127.0.0.1.",
+            "description": "Fetch full detail (metadata + reconstructed text) for one captured moment by frame_id. Set include_image to also return the stored screenshot. Local data only — served by the ScreenSearch app on the configured API endpoint.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -83,19 +83,19 @@ pub fn definitions() -> Value {
         {
             "name": "where_was_i",
             "title": "Where was I?",
-            "description": "Return the last sustained context (app/window/URL and time span) the user was in before their current activity — the 'what was I doing before this detour?' answer. Local data only — served by the ScreenSearch app on 127.0.0.1.",
+            "description": "Return the last sustained context (app/window/URL and time span) the user was in before their current activity — the 'what was I doing before this detour?' answer. Local data only — served by the ScreenSearch app on the configured API endpoint.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
         },
         {
             "name": "list_marks",
             "title": "List marks",
-            "description": "List the user's marks (saved moments / intentions), unresolved first then newest-first. Local data only — served by the ScreenSearch app on 127.0.0.1.",
+            "description": "List the user's marks (saved moments / intentions), unresolved first then newest-first. Local data only — served by the ScreenSearch app on the configured API endpoint.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
         },
         {
             "name": "add_mark",
             "title": "Add a mark",
-            "description": "Mark a moment for later. Omit frame_id to capture the current screen right now (bypassing the change gate) and mark it; pass frame_id to mark an existing moment. Local data only — served by the ScreenSearch app on 127.0.0.1.",
+            "description": "Mark a moment for later. Omit frame_id to capture the current screen right now (bypassing the change gate) and mark it; pass frame_id to mark an existing moment. Local data only — served by the ScreenSearch app on the configured API endpoint.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -108,7 +108,7 @@ pub fn definitions() -> Value {
         {
             "name": "list_sessions",
             "title": "List sessions",
-            "description": "List the user's activity sessions (derived runs of related screen activity), newest first. Filter by kind, tool, and/or a time window; sessions that overlap the window are returned. Use a session id from the results with get_session or ask_session. Local data only — served by the ScreenSearch app on 127.0.0.1.",
+            "description": "List the user's activity sessions (derived runs of related screen activity), newest first. Filter by kind, tool, and/or a time window; sessions that overlap the window are returned. Use a session id from the results with get_session or ask_session. Local data only — served by the ScreenSearch app on the configured API endpoint.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -124,7 +124,7 @@ pub fn definitions() -> Value {
         {
             "name": "get_session",
             "title": "Get a session",
-            "description": "Fetch one session's detail plus its extracted user/agent exchanges by session id. include_summary returns the cached summary if one exists — it never generates one. Local data only — served by the ScreenSearch app on 127.0.0.1.",
+            "description": "Fetch one session's detail plus its extracted user/agent exchanges by session id. include_summary returns the cached summary if one exists — it never generates one. Local data only — served by the ScreenSearch app on the configured API endpoint.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -138,7 +138,7 @@ pub fn definitions() -> Value {
         {
             "name": "ask_session",
             "title": "Ask about a session",
-            "description": "Ask a natural-language question scoped to one session and get a grounded answer citing only that session's frames — e.g. 'what did I do in my last Claude Code session?'. Runs a local model — may take a while. Local data only — served by the ScreenSearch app on 127.0.0.1.",
+            "description": "Ask a natural-language question scoped to one session and get a grounded answer citing only that session's frames — e.g. 'what did I do in my last Claude Code session?'. Runs a local model — may take a while. Local data only — served by the ScreenSearch app on the configured API endpoint.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -155,10 +155,43 @@ pub fn definitions() -> Value {
     ])
 }
 
+/// Whether a tool name is explicitly classified as a history read. This is the read-only
+/// allowlist: names absent here — including any tool added later — are never listed and
+/// can never dispatch in read-only mode.
+pub fn is_read_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "search_screen_history"
+            | "get_moment"
+            | "where_was_i"
+            | "list_marks"
+            | "list_sessions"
+            | "get_session"
+    )
+}
+
+/// Tool definitions selected for the requested mode. Unknown future tools default out.
+pub fn definitions_for(read_only: bool) -> Value {
+    let mut tools = definitions();
+    if read_only {
+        tools
+            .as_array_mut()
+            .expect("tool definitions array")
+            .retain(|tool| tool["name"].as_str().is_some_and(is_read_tool));
+    }
+    tools
+}
+
 /// Handles a `tools/call` request, returning the full JSON-RPC response. An unknown tool
 /// name is a protocol error (`-32602`); everything else is an in-band tool result.
 pub async fn call(client: &ApiClient, id: Value, params: Value) -> Value {
     let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+    // Read-only mode is an explicit allowlist: only a classified read tool may dispatch.
+    // Every other name — a known mutator, Ask, or a tool added later — is refused here,
+    // before argument handling and before any HTTP client is entered (default deny).
+    if client.is_read_only() && !is_read_tool(name) {
+        return rpc::success(id, error_result("Tool unavailable in --read-only mode: only read tools are accepted (marks/capture and Ask are excluded). API token permissions are enforced independently."));
+    }
     let args = params
         .get("arguments")
         .cloned()
@@ -570,5 +603,44 @@ mod tests {
                 "expected Input error for {bad}"
             );
         }
+    }
+
+    #[test]
+    fn read_only_allowlist_is_explicit_and_defaults_future_tools_out() {
+        let read_names = [
+            "search_screen_history",
+            "get_moment",
+            "where_was_i",
+            "list_marks",
+            "list_sessions",
+            "get_session",
+        ];
+        for name in read_names {
+            assert!(is_read_tool(name), "{name}");
+        }
+        for name in [
+            "add_mark",
+            "ask_screen_history",
+            "ask_session",
+            "future_tool",
+            "",
+        ] {
+            assert!(!is_read_tool(name), "{name}");
+        }
+        // The read-only listing is exactly the allowlist-filtered definitions, and every
+        // listed tool passes the predicate (the filter never admits an unclassified name).
+        let read_only_defs = definitions_for(true);
+        let listed: Vec<&str> = read_only_defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(listed, read_names);
+        for tool in read_only_defs.as_array().unwrap() {
+            assert!(is_read_tool(tool["name"].as_str().unwrap()));
+        }
+        // Normal mode is unchanged: all nine tools.
+        assert_eq!(definitions_for(false).as_array().unwrap().len(), 9);
     }
 }
