@@ -81,7 +81,10 @@ plan and spec build on a fixed base:
 
 ## 7. Explicit non-goals (today)
 
-macOS/Linux support · OS automation (deferred to a later phase) · cloud sync or default telemetry ·
+macOS/Linux desktop/capture support (the approved standalone stdio HTTP-client wrapper exception
+permits other OSes and explicitly selected HTTP/HTTPS remote destinations; it uses `.no_proxy()`,
+refuses redirects and leaves app/inference Windows-only, inference loopback-only, and API listener/
+CORS unchanged; approval is not implementation evidence) · OS automation (deferred to a later phase) · cloud sync or default telemetry ·
 mobile · multi-user / accounts / tenancy · real-time vision · importing V1 data.
 
 ## 8. Status

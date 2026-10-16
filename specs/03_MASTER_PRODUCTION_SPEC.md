@@ -643,8 +643,11 @@ contract is superseded and its internal marker is no longer used.
 **Network boundary.** This is not public hosting. No automatic firewall changes, router port
 forwarding or inference exposure. Document a user-managed Windows inbound-allow step and explain
 that 200/401 is an HTTP result while a timeout can indicate routing/firewall failure. A wildcard
-bind itself does not guarantee LAN-only reachability. MCP’s loopback-only destination validation
-and default URL stay unchanged; remote MCP needs its own amendment. Scheduled reports, vault
+bind itself does not guarantee LAN-only reachability. The approved standalone remote-wrapper
+amendment permits the stdio HTTP-client wrapper on other OSes and explicit remote HTTP/HTTPS
+destinations only. Default URL remains loopback; preserve `.no_proxy()`, validate destinations and
+refuse every redirect. The app/capture/inference remain Windows-only, inference loopback-only;
+no network-hosted MCP server, listener or CORS change. This approves scope, not shipped behavior. Scheduled reports, vault
 writes, report endpoints and Telegram are outside this increment.
 
 **Acceptance for the network increment.** Assert actual bound sockets for IPv4/IPv6 loopback,

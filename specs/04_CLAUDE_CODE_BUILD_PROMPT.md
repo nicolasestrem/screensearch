@@ -46,8 +46,11 @@ non-shaming** (D11 — nothing notifies, nudges, streaks, or scores). The **spec
 **For the network API increment (Gate A, 2026-10-15):** read `02 §5e`, amended `03 §7c`
 and `UI_REFERENCE` API/bind-address contract. Review and commit the API-only amendment before
 implementation; keep scheduled delivery and Telegram permissions in separate later amendments.
-This is a configurable product feature for all installations. Preserve MCP/inference loopback
-boundaries; require native Windows and separate-machine HTTP evidence before claiming acceptance.
+This is a configurable product feature for all installations. The approved remote-wrapper
+boundary permits only the standalone stdio HTTP client on other OSes and explicit HTTP/HTTPS
+remote destinations, keeping the loopback default, `.no_proxy()` and no redirects. The app/capture
+remain Windows-only; inference stays loopback-only; no listener/CORS changes or network-hosted MCP.
+Approval is not evidence of implemented behavior; require native Windows and separate-machine HTTP evidence before claiming acceptance.
 Update active user-facing privacy copy with the implementation, not before the behavior exists.
 
 **Do not** hold the spec in your head from a prior session — re-read; the files evolve.
@@ -151,8 +154,10 @@ If the answer is in a doc, **use it verbatim** — do not invent alternatives.
   is allowed for build/dev tooling (e.g. the `hf` CLI). Network = localhost + model downloads + the
   signed GitHub-Releases update check (`03 §11b`), plus user-enabled authenticated HTTP API
   serving on a configurable IPv4/IPv6 literal (default loopback) (`03 §7c`, Gate A). Plain HTTP exposes history to reachable
-  token holders; no public hosting or automatic firewall/router changes. MCP destinations and
-  inference stay loopback-only. Approved local schedules and user-selected folder writes are
+  token holders; no public hosting or automatic firewall/router changes. Only the standalone
+  stdio HTTP-client wrapper may use explicit remote HTTP/HTTPS destinations or other OSes, with
+  `.no_proxy()` and redirects refused; no network-hosted MCP server or listener/CORS changes.
+  The app stays Windows-only and inference loopback-only. Approved local schedules and user-selected folder writes are
   permitted by `03 §8c`; the separate `03 §8d` exception permits explicitly enabled saved-report
   text digests to the user-configured Telegram destination. No screenshots/raw OCR or arbitrary
   outbound processing; tokens remain in Windows Credential Manager.

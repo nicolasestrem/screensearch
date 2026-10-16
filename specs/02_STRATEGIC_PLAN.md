@@ -198,10 +198,14 @@ master switch and port, with no personal host, account, path or credential baked
 - **Boundary:** default-off, authenticated plain HTTP on a configurable IPv4/IPv6 literal.
   Missing `api.bind_address` defaults to `127.0.0.1`, including existing enabled installations;
   upgrades never broaden access automatically. A token holder on any reachable host can read history. MCP destination
-  validation/default URL and the inference sidecar remain loopback-only.
+  default URL remains loopback; the inference sidecar remains loopback-only. A separately reviewable
+  approved boundary permits only the standalone stdio HTTP-client wrapper on other OSes and
+  explicit remote HTTP/HTTPS destinations, retaining `.no_proxy()` and rejecting all redirects;
+  no listener/CORS changes or network-hosted MCP server. Approval does not establish implementation.
 - **Scope:** listener, existing auth/configuration lifecycle, bind-address configuration and accurate copy.
   No scheduler, vault writer, schema migration, report endpoints, Telegram, firewall automation,
-  public hosting or remote MCP. Scheduled delivery and outbound Telegram need separate reviewed
+  public hosting or a network-hosted MCP server. The explicit remote-wrapper exception above
+  supersedes the old remote-destination prohibition only. Scheduled delivery and outbound Telegram need separate reviewed
   amendments before their implementations.
 - **Acceptance:** native Windows verification plus real cross-machine authenticated health
   (200 with actual version; 401 without/wrong token), local MCP, disable/enable, restart, Ask
@@ -251,7 +255,11 @@ explicitly approved test recipient/send and inspection, not a fabricated acknowl
 | Scope creep | Automation + nice-to-haves are explicitly **out of v1.0**. |
 
 ## 7. Non-goals (reaffirmed)
-macOS/Linux · OS automation (v1.0) · cloud/telemetry · accounts/multi-user · real-time vision ·
+macOS/Linux desktop/capture support (the approved standalone stdio HTTP-client wrapper exception
+permits the standalone stdio HTTP-client wrapper on Windows x86_64, Linux x86_64 and macOS arm64
+with explicitly selected HTTP/HTTPS remote destinations; it uses `.no_proxy()`, refuses redirects,
+and leaves app/capture/inference Windows-only, inference loopback-only, and API listener/CORS
+unchanged; approval is not implementation evidence) · OS automation (v1.0) · cloud/telemetry · accounts/multi-user · real-time vision ·
 V1 data import · **proactive nudges / notifications** (0.3.0 recall is pull-based only; sessions stay
 non-shaming — no streaks/scores, D11-of-0.4.0) · **audio capture / transcription** (*for now* — a
 0.4.x candidate, `§5d`; the `session_artifacts.kind='transcript'` extension point is reserved but
