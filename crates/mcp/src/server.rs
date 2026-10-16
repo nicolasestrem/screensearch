@@ -71,7 +71,7 @@ fn initialize_result(params: &Value) -> Value {
             "title": "ScreenSearch screen history",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "Search, ask about, and mark the user's ScreenSearch screen-capture history through the configured HTTP API (loopback by default). Requires the API enabled in ScreenSearch Settings -> Local API."
+        "instructions": "Search, ask about, and mark the user's ScreenSearch screen-capture history through the configured HTTP API (loopback by default). Requires the API enabled in ScreenSearch Settings -> HTTP API."
     })
 }
 

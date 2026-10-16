@@ -44,7 +44,7 @@ USAGE:
 OPTIONS:
     --api-url <URL>   HTTP/HTTPS API root (default: http://127.0.0.1:43210)
     --url <URL>       Backward-compatible alias for --api-url
-    --token <TOKEN>   Bearer token from ScreenSearch Settings -> Local API
+    --token <TOKEN>   Bearer token from ScreenSearch Settings -> HTTP API
     --read-only       List/accept only read tools (not server authorization)
     --version         Print version and exit
     --help            Print this help and exit
@@ -53,7 +53,7 @@ ENVIRONMENT:
     SCREENSEARCH_API_URL     Same as --api-url (flag wins; last URL flag wins)
     SCREENSEARCH_API_TOKEN   Same as --token (flag wins)
 
-The API is off by default; enable it in ScreenSearch Settings -> Local API and copy the
+The API is off by default; enable it in ScreenSearch Settings -> HTTP API and copy the
 token shown there. Explicit remote URLs are allowed; plain HTTP exposes history and tokens
 to the network. HTTPS verifies certificates. Proxies and all redirects are disabled.
 Only root URLs are accepted: no credentials, query, fragment, non-root paths or wildcard

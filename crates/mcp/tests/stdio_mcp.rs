@@ -466,6 +466,8 @@ async fn handshake_and_tools_list_over_stdio() {
             "search_screen_history",
             "ask_screen_history",
             "get_moment",
+            "list_frames",
+            "get_capture_coverage",
             "where_was_i",
             "list_marks",
             "add_mark",
@@ -739,7 +741,7 @@ async fn api_off_tool_calls_return_guided_error() {
     // Handshake + tools/list still work (they never touch the API).
     mcp.handshake();
     let list = mcp.request("tools/list", json!({}));
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 11);
 
     // Release the port now — immediately before the call that must hit connection-refused —
     // shrinking the reuse window to the microseconds between here and the child's connect.
@@ -780,7 +782,7 @@ async fn missing_token_still_serves_tools_list_but_calls_are_guided() {
 
     // Listing works.
     let list = mcp.request("tools/list", json!({}));
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 11);
 
     // A call is guided (the no-token message also carries the contract phrase).
     let result = mcp.call_tool("list_marks", json!({}));

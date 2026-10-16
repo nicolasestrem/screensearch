@@ -1,4 +1,4 @@
-//! The nine MCP tools and their dispatch to the local API.
+//! The eleven MCP tools and their dispatch to the local API.
 //!
 //! Each tool maps to one HTTP endpoint (`docs/API.md`). Tool results are pretty-printed
 //! JSON text blocks — full fidelity for the calling model — plus, for `get_moment`, an
@@ -29,7 +29,7 @@ impl ToolError {
     }
 }
 
-/// The nine tool definitions, in listing order. One source of truth for `tools/list` and
+/// The eleven tool definitions, in listing order. One source of truth for `tools/list` and
 /// dispatch, so a name can never drift between them.
 pub fn definitions() -> Value {
     json!([
@@ -77,6 +77,41 @@ pub fn definitions() -> Value {
                     "include_image": { "type": "boolean", "description": "Also return the stored screenshot as an image block (default false)." }
                 },
                 "required": ["frame_id"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "list_frames",
+            "title": "List captured frames",
+            "description": "One chronological page of the user's captured frames over the exact half-open UTC window [from, to), with the full stored text layers (raw, filtered and vision) — never truncated. To continue, pass the returned next_cursor back with only an optional limit; the window and filters are frozen in the cursor. Each page is returned whole — reduce pages on the caller's side. Local data only — served by the ScreenSearch app on the configured API endpoint.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "from": { "type": "integer", "description": "Start of the half-open window [from, to), unix epoch ms. Required for the first page." },
+                    "to": { "type": "integer", "description": "End (exclusive) of the half-open window, unix epoch ms. Required for the first page." },
+                    "app": { "type": "string", "description": "Optional app filter: literal, ASCII-case-insensitive exact match (null metadata never matches)." },
+                    "window_title": { "type": "string", "description": "Optional window-title filter: literal, ASCII-case-insensitive substring (%, _ are literal characters)." },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "description": "Max frames per page (default 100, max 1000)." },
+                    "cursor": { "type": "string", "description": "Opaque next_cursor from a previous page; continues that page's frozen window and filters. Only limit may accompany it." }
+                },
+                "anyOf": [
+                    { "required": ["from", "to"] },
+                    { "required": ["cursor"] }
+                ],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "get_capture_coverage",
+            "title": "Get capture coverage",
+            "description": "Truthful bounded coverage of the stored screen history for the exact half-open UTC window [from, to): stored-frame and text-available counts, oldest/newest frame, allocator high-water, retention settings, and capture observations with explicit unknowns (truncated observations, unavailable_before, open intervals). Counts describe stored records — they are not proof of what the user did. Local data only — served by the ScreenSearch app on the configured API endpoint.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "from": { "type": "integer", "description": "Start of the half-open window [from, to), unix epoch ms." },
+                    "to": { "type": "integer", "description": "End (exclusive) of the half-open window, unix epoch ms." }
+                },
+                "required": ["from", "to"],
                 "additionalProperties": false
             }
         },
@@ -163,6 +198,8 @@ pub fn is_read_tool(name: &str) -> bool {
         name,
         "search_screen_history"
             | "get_moment"
+            | "list_frames"
+            | "get_capture_coverage"
             | "where_was_i"
             | "list_marks"
             | "list_sessions"
@@ -201,6 +238,8 @@ pub async fn call(client: &ApiClient, id: Value, params: Value) -> Value {
         "search_screen_history" => search(client, &args).await,
         "ask_screen_history" => ask(client, &args).await,
         "get_moment" => get_moment(client, &args).await,
+        "list_frames" => list_frames(client, &args).await,
+        "get_capture_coverage" => get_capture_coverage(client, &args).await,
         "where_was_i" => where_was_i(client).await,
         "list_marks" => list_marks(client).await,
         "add_mark" => add_mark(client, &args).await,
@@ -357,6 +396,31 @@ async fn get_moment(client: &ApiClient, args: &Value) -> Result<Vec<Value>, Tool
     Ok(content)
 }
 
+/// `list_frames` — one chronological evidence page (`GET /v1/frames`, `03 §7f.1`). The whole
+/// structured page is returned unmodified: every item keeps its full raw/content/vision text,
+/// `next_cursor` is preserved exactly (including the terminal `null`), and nothing is fetched
+/// ahead or shortened to fit a context budget — callers reduce pages, not the server.
+async fn list_frames(client: &ApiClient, args: &Value) -> Result<Vec<Value>, ToolError> {
+    let params = build_frames_query(args)?;
+    let page = client
+        .get_json("/v1/frames", &params)
+        .await
+        .map_err(ToolError::Api)?;
+    Ok(vec![text_block(pretty(&page))])
+}
+
+/// `get_capture_coverage` — truthful bounded coverage (`GET /v1/coverage`, `03 §7f.2`). The
+/// structured response is returned verbatim, so explicit unknowns (`truncated`,
+/// `unavailable_before`, open intervals) and any fields added later survive unchanged.
+async fn get_capture_coverage(client: &ApiClient, args: &Value) -> Result<Vec<Value>, ToolError> {
+    let params = build_coverage_query(args)?;
+    let coverage = client
+        .get_json("/v1/coverage", &params)
+        .await
+        .map_err(ToolError::Api)?;
+    Ok(vec![text_block(pretty(&coverage))])
+}
+
 async fn where_was_i(client: &ApiClient) -> Result<Vec<Value>, ToolError> {
     let body = client
         .get_json("/v1/context/where-was-i", &[])
@@ -472,6 +536,98 @@ fn build_add_mark_body(args: &Value) -> Result<Value, ToolError> {
     Ok(Value::Object(body))
 }
 
+/// The `limit` bound documented by the frame-page contract (`03 §7f.1`, mirroring
+/// `traits::FRAME_PAGE_MAX_LIMIT`). The MCP validates JSON argument types, the cursor/initial
+/// combination, and this existing bound only; bounds ordering, filter caps and cursor decoding
+/// stay with the API, which remains authoritative.
+const FRAMES_MAX_LIMIT: i64 = 1000;
+
+/// Builds the `GET /v1/frames` query (`03 §7f.1`). The initial form is required `from`+`to`
+/// with optional `app`/`window_title`/`limit`; the continuation form is `cursor` with an
+/// optional `limit` only — window and filters are frozen inside the cursor, and mixing a
+/// cursor with them is a client error.
+fn build_frames_query(args: &Value) -> Result<Vec<(&'static str, String)>, ToolError> {
+    let limit = optional_integer(args, "limit")?;
+    if let Some(limit) = limit {
+        if !(1..=FRAMES_MAX_LIMIT).contains(&limit) {
+            return Err(ToolError::Input(format!(
+                "`limit` must be between 1 and {FRAMES_MAX_LIMIT}"
+            )));
+        }
+    }
+    if let Some(cursor) = optional_string(args, "cursor")? {
+        for key in ["from", "to", "app", "window_title"] {
+            if args.get(key).is_some_and(|v| !v.is_null()) {
+                return Err(ToolError::Input(format!(
+                    "`{key}` cannot be combined with `cursor` — a continuation carries the \
+                     frozen window and filters; pass only `limit` alongside `cursor`"
+                )));
+            }
+        }
+        let mut params: Vec<(&'static str, String)> = vec![("cursor", cursor)];
+        if let Some(limit) = limit {
+            params.push(("limit", limit.to_string()));
+        }
+        return Ok(params);
+    }
+    let from = require_integer(args, "from")?;
+    let to = require_integer(args, "to")?;
+    let mut params: Vec<(&'static str, String)> =
+        vec![("from", from.to_string()), ("to", to.to_string())];
+    if let Some(app) = optional_string(args, "app")? {
+        params.push(("app", app));
+    }
+    if let Some(window_title) = optional_string(args, "window_title")? {
+        params.push(("window_title", window_title));
+    }
+    if let Some(limit) = limit {
+        params.push(("limit", limit.to_string()));
+    }
+    Ok(params)
+}
+
+/// Builds the `GET /v1/coverage` query (`03 §7f.2`): both half-open bounds are required and
+/// nothing else is forwarded.
+fn build_coverage_query(args: &Value) -> Result<Vec<(&'static str, String)>, ToolError> {
+    let from = require_integer(args, "from")?;
+    let to = require_integer(args, "to")?;
+    Ok(vec![("from", from.to_string()), ("to", to.to_string())])
+}
+
+/// A required JSON integer argument (UTC ms). Absent, `null` or a non-integer value — e.g. a
+/// numeric string or a float — is a client error; the value is never coerced.
+fn require_integer(args: &Value, key: &str) -> Result<i64, ToolError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Err(ToolError::Input(format!(
+            "missing required integer argument `{key}`"
+        ))),
+        Some(v) => v
+            .as_i64()
+            .ok_or_else(|| ToolError::Input(format!("`{key}` must be an integer"))),
+    }
+}
+
+/// An optional JSON integer argument with the same strict typing as [`require_integer`].
+fn optional_integer(args: &Value, key: &str) -> Result<Option<i64>, ToolError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| ToolError::Input(format!("`{key}` must be an integer"))),
+    }
+}
+
+/// An optional JSON string argument. Absent and `null` mean "not given"; any other non-string
+/// value is a client error (a stringified number is never silently accepted).
+fn optional_string(args: &Value, key: &str) -> Result<Option<String>, ToolError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(_) => Err(ToolError::Input(format!("`{key}` must be a string"))),
+    }
+}
+
 const PURGED_NOTE: &str = "(screenshot purged by retention — the text reconstruction is preserved)";
 
 fn require_str(args: &Value, key: &str) -> Result<String, ToolError> {
@@ -504,7 +660,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exactly_nine_tools_with_object_schemas() {
+    fn exactly_eleven_tools_with_object_schemas() {
         let defs = definitions();
         let arr = defs.as_array().unwrap();
         let names: Vec<&str> = arr.iter().map(|t| t["name"].as_str().unwrap()).collect();
@@ -514,6 +670,8 @@ mod tests {
                 "search_screen_history",
                 "ask_screen_history",
                 "get_moment",
+                "list_frames",
+                "get_capture_coverage",
                 "where_was_i",
                 "list_marks",
                 "add_mark",
@@ -545,6 +703,22 @@ mod tests {
         assert_eq!(
             by_name("get_moment")["inputSchema"]["required"],
             json!(["frame_id"])
+        );
+        // list_frames has no unconditional required set: from+to are required for the first
+        // page, a cursor for a continuation — expressed via anyOf (see the wire-type test).
+        assert!(by_name("list_frames")["inputSchema"]
+            .get("required")
+            .is_none());
+        assert_eq!(
+            by_name("list_frames")["inputSchema"]["anyOf"],
+            json!([
+                { "required": ["from", "to"] },
+                { "required": ["cursor"] }
+            ])
+        );
+        assert_eq!(
+            by_name("get_capture_coverage")["inputSchema"]["required"],
+            json!(["from", "to"])
         );
         // add_mark has no required field (frame_id omitted => capture now).
         assert!(by_name("add_mark")["inputSchema"].get("required").is_none());
@@ -610,6 +784,8 @@ mod tests {
         let read_names = [
             "search_screen_history",
             "get_moment",
+            "list_frames",
+            "get_capture_coverage",
             "where_was_i",
             "list_marks",
             "list_sessions",
@@ -623,6 +799,9 @@ mod tests {
             "ask_screen_history",
             "ask_session",
             "future_tool",
+            // P3 report tools are deliberately not registered yet (and so not read-allowed).
+            "list_reports",
+            "get_report",
             "",
         ] {
             assert!(!is_read_tool(name), "{name}");
@@ -640,7 +819,179 @@ mod tests {
         for tool in read_only_defs.as_array().unwrap() {
             assert!(is_read_tool(tool["name"].as_str().unwrap()));
         }
-        // Normal mode is unchanged: all nine tools.
-        assert_eq!(definitions_for(false).as_array().unwrap().len(), 9);
+        // Normal mode lists every tool: all eleven.
+        assert_eq!(definitions_for(false).as_array().unwrap().len(), 11);
+    }
+
+    #[test]
+    fn new_read_tools_declare_accurate_wire_types() {
+        let defs = definitions();
+        let arr = defs.as_array().unwrap();
+        let by_name = |n: &str| arr.iter().find(|t| t["name"] == n).unwrap().clone();
+
+        let frames = by_name("list_frames");
+        let props = &frames["inputSchema"]["properties"];
+        for key in ["from", "to", "limit"] {
+            assert_eq!(props[key]["type"], "integer", "list_frames.{key}");
+        }
+        for key in ["app", "window_title", "cursor"] {
+            assert_eq!(props[key]["type"], "string", "list_frames.{key}");
+        }
+        assert_eq!(props["limit"]["minimum"], 1);
+        assert_eq!(props["limit"]["maximum"], 1000);
+        assert_eq!(frames["inputSchema"]["additionalProperties"], false);
+
+        let coverage = by_name("get_capture_coverage");
+        assert_eq!(coverage["inputSchema"]["required"], json!(["from", "to"]));
+        assert_eq!(
+            coverage["inputSchema"]["properties"]["from"]["type"],
+            "integer"
+        );
+        assert_eq!(
+            coverage["inputSchema"]["properties"]["to"]["type"],
+            "integer"
+        );
+        assert_eq!(coverage["inputSchema"]["additionalProperties"], false);
+    }
+
+    fn frames_params(args: Value) -> Vec<(&'static str, String)> {
+        match build_frames_query(&args) {
+            Ok(params) => params,
+            Err(e) => panic!("expected Ok for {args}, got: {}", e.message()),
+        }
+    }
+
+    fn frames_error(args: Value) -> String {
+        match build_frames_query(&args) {
+            Err(ToolError::Input(message)) => message,
+            Err(other) => panic!(
+                "expected an input error for {args}, got: {}",
+                other.message()
+            ),
+            Ok(params) => panic!("expected an input error for {args}, got {params:?}"),
+        }
+    }
+
+    #[test]
+    fn frames_query_builds_initial_and_continuation_forms() {
+        // Initial form: from+to required; app/window_title/limit forwarded only when set.
+        assert_eq!(
+            frames_params(json!({ "from": 1000, "to": 2000 })),
+            vec![("from", "1000".to_string()), ("to", "2000".to_string())]
+        );
+        assert_eq!(
+            frames_params(json!({
+                "from": 1000,
+                "to": 2000,
+                "app": "VS Code",
+                "window_title": "main.rs",
+                "limit": 250
+            })),
+            vec![
+                ("from", "1000".to_string()),
+                ("to", "2000".to_string()),
+                ("app", "VS Code".to_string()),
+                ("window_title", "main.rs".to_string()),
+                ("limit", "250".to_string()),
+            ]
+        );
+        // Null filters mean "not given" — never a forwarded empty string.
+        assert_eq!(
+            frames_params(json!({ "from": 1, "to": 2, "app": null, "window_title": null })),
+            vec![("from", "1".to_string()), ("to", "2".to_string())]
+        );
+        // Continuation form: the cursor alone, or cursor + limit only.
+        assert_eq!(
+            frames_params(json!({ "cursor": "opaque-1" })),
+            vec![("cursor", "opaque-1".to_string())]
+        );
+        assert_eq!(
+            frames_params(json!({ "cursor": "opaque-1", "limit": 1 })),
+            vec![
+                ("cursor", "opaque-1".to_string()),
+                ("limit", "1".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn frames_query_rejects_bad_types_and_mixed_forms() {
+        // Missing bounds on the initial form.
+        assert!(frames_error(json!({})).contains("`from`"));
+        assert!(frames_error(json!({ "from": 1 })).contains("`to`"));
+        // The cursor freezes window + filters: mixing them is rejected before any HTTP.
+        for mixed in [
+            json!({ "cursor": "c", "from": 1 }),
+            json!({ "cursor": "c", "to": 2 }),
+            json!({ "cursor": "c", "app": "x" }),
+            json!({ "cursor": "c", "window_title": "x" }),
+        ] {
+            assert!(
+                frames_error(mixed.clone()).contains("cannot be combined with `cursor`"),
+                "{mixed}"
+            );
+        }
+        // Strict JSON types: numeric strings and floats are never coerced.
+        assert!(frames_error(json!({ "from": "1000", "to": 2000 }))
+            .contains("`from` must be an integer"));
+        assert!(
+            frames_error(json!({ "from": 1000, "to": 2000.5 })).contains("`to` must be an integer")
+        );
+        assert!(
+            frames_error(json!({ "from": 1000, "to": 2000, "limit": "10" }))
+                .contains("`limit` must be an integer")
+        );
+        assert!(frames_error(json!({ "from": 1000, "to": 2000, "app": 7 }))
+            .contains("`app` must be a string"));
+        assert!(
+            frames_error(json!({ "from": 1000, "to": 2000, "cursor": 7 }))
+                .contains("`cursor` must be a string")
+        );
+    }
+
+    #[test]
+    fn frames_query_limit_matches_the_api_bound() {
+        // 1..=1000 is the existing frame-page bound (`03 §7f.1`) — validated locally as a
+        // convenience, never widened or narrowed; the API stays authoritative for the rest.
+        for ok in [1, 100, 1000] {
+            assert_eq!(
+                frames_params(json!({ "from": 1, "to": 2, "limit": ok })),
+                vec![
+                    ("from", "1".to_string()),
+                    ("to", "2".to_string()),
+                    ("limit", ok.to_string()),
+                ]
+            );
+        }
+        for bad in [0, -1, 1001, i64::MAX] {
+            assert!(
+                frames_error(json!({ "from": 1, "to": 2, "limit": bad }))
+                    .contains("between 1 and 1000"),
+                "limit {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn coverage_query_requires_two_integer_bounds() {
+        match build_coverage_query(&json!({ "from": 1000, "to": 2000 })) {
+            Ok(params) => assert_eq!(
+                params,
+                vec![("from", "1000".to_string()), ("to", "2000".to_string())]
+            ),
+            Err(e) => panic!("expected Ok, got: {}", e.message()),
+        }
+        for bad in [
+            json!({}),
+            json!({ "from": 1 }),
+            json!({ "to": 2 }),
+            json!({ "from": "1", "to": 2 }),
+            json!({ "from": 1, "to": 2.5 }),
+        ] {
+            assert!(
+                matches!(build_coverage_query(&bad), Err(ToolError::Input(_))),
+                "expected an input error for {bad}"
+            );
+        }
     }
 }

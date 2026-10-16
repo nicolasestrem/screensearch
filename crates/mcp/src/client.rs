@@ -46,22 +46,22 @@ impl ApiFailure {
         match self {
             ApiFailure::NotReachable { url } => format!(
                 "ScreenSearch's local API is not responding at {url} — enable the API in \
-                 ScreenSearch Settings (Settings -> Local API), then set \
+                 ScreenSearch Settings (Settings -> HTTP API), then set \
                  SCREENSEARCH_API_TOKEN to the token shown there."
             ),
             ApiFailure::NoToken => {
                 "No API token is configured. Copy the token from ScreenSearch Settings -> \
-                 Local API and set SCREENSEARCH_API_TOKEN (or pass --token). If the API is \
+                 HTTP API and set SCREENSEARCH_API_TOKEN (or pass --token). If the API is \
                  off, enable the API in ScreenSearch Settings first."
                     .to_string()
             }
             ApiFailure::Unauthorized => {
                 "The API token was rejected (401). Copy the current token from ScreenSearch \
-                 Settings -> Local API — it may have been regenerated — and update \
+                 Settings -> HTTP API — it may have been regenerated — and update \
                  SCREENSEARCH_API_TOKEN."
                     .to_string()
             }
-            ApiFailure::Forbidden => "Permission denied (403): this API token lacks permission for the requested operation. A read-only token cannot create marks, request capture or run Ask. Use read tools (--read-only hides unsupported tools), or explicitly configure an appropriately authorized token from ScreenSearch Settings -> Local API.".to_string(),
+            ApiFailure::Forbidden => "Permission denied (403): this API token lacks permission for the requested operation. A read-only token cannot create marks, request capture or run Ask. Use read tools (--read-only hides unsupported tools), or explicitly configure an appropriately authorized token from ScreenSearch Settings -> HTTP API.".to_string(),
             ApiFailure::Redirect { status } => format!("API redirect refused (HTTP {status}); no redirect destination was visited. Configure --api-url with the final HTTP/HTTPS API root. The bearer token was not forwarded."),
             ApiFailure::Api { code, message } => format!("{code}: {message}"),
             ApiFailure::Transport(e) => format!("Local API request failed: {e}"),
