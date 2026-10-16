@@ -26,6 +26,7 @@ use traits::{
 };
 
 mod capture_loop;
+mod capture_observations;
 mod events;
 pub mod memory_schedule;
 pub mod report_service;
@@ -610,7 +611,12 @@ mod sessions_scheduler_contract_tests {
 }
 
 pub use capture_loop::{run_capture_loop, CaptureLoopExit, LoopCtx, PendingDemand};
+pub use capture_observations::{
+    CaptureInterruption, CaptureInterruptionReason, CaptureObservations,
+};
 pub use events::KernelEvent;
+
+use capture_observations::{CaptureObservation, CaptureObservationBuffer};
 pub use worker_pool::process_job;
 
 /// Timeout for one `capture_now` demand end-to-end (the worker ack, then the kernel
@@ -675,6 +681,8 @@ pub struct Kernel {
     readiness: Arc<RwLock<Readiness>>,
     capture: Arc<Mutex<Option<CaptureHandle>>>,
     capture_generation: AtomicU64,
+    /// Process-local, privacy-safe controller observations; never a health journal.
+    capture_observations: Arc<std::sync::Mutex<CaptureObservationBuffer>>,
     /// The loaded embedding provider, attached after it finishes loading off the
     /// launch thread (`03 §5`); `None` until [`Kernel::attach_embedder`]. Shared live
     /// with the worker pool so inference can start vision workers first.
@@ -784,6 +792,9 @@ impl Kernel {
             readiness: Arc::new(RwLock::new(initial_readiness)),
             capture: Arc::new(Mutex::new(None)),
             capture_generation: AtomicU64::new(1),
+            capture_observations: Arc::new(std::sync::Mutex::new(CaptureObservationBuffer::new(
+                worker_pool::now_ms(),
+            ))),
             embedder: Arc::new(RwLock::new(None)),
             workers: Mutex::new(None),
             vision: Arc::new(RwLock::new(None)),
@@ -827,6 +838,31 @@ impl Kernel {
         self.capture.lock().await.is_some()
     }
 
+    /// Read current controller intent and bounded capture observations together.
+    /// This does not consult frames, start capture, or call any provider/inference.
+    /// `true` means a controller handle exists, never that capture is healthy.
+    pub async fn capture_observations(
+        &self,
+        from: i64,
+        to: i64,
+    ) -> anyhow::Result<(bool, CaptureObservations)> {
+        anyhow::ensure!(from < to, "invalid capture observation window");
+        let capture = self.capture.lock().await;
+        let observations = self
+            .capture_observations
+            .lock()
+            .expect("capture observations lock poisoned")
+            .snapshot(from, to);
+        Ok((capture.is_some(), observations))
+    }
+
+    fn observe_capture(&self, observation: CaptureObservation) {
+        self.capture_observations
+            .lock()
+            .expect("capture observations lock poisoned")
+            .record(worker_pool::now_ms(), observation);
+    }
+
     /// Starts the capture loop (idempotent — a no-op if already running). Loads
     /// settings, builds the capture source via the factory, and spawns the loop;
     /// flips `capture` readiness Initializing → Ready (or Unavailable on failure).
@@ -852,6 +888,9 @@ impl Kernel {
             Ok(c) => c,
             Err(e) => {
                 self.set_capture_readiness(ComponentStatus::Unavailable, Some(e.to_string()));
+                self.observe_capture(CaptureObservation::Interrupted(
+                    CaptureInterruptionReason::WorkerError,
+                ));
                 return Err(e);
             }
         };
@@ -874,12 +913,29 @@ impl Kernel {
         let readiness = self.readiness.clone();
         let events = self.events.clone();
         let ocr_for_shutdown = self.ocr.clone();
+        let observations = self.capture_observations.clone();
+        // Observe start before the task can emit an error, without interpreting the
+        // accepted startup request as a health/recovery probe.
+        self.observe_capture(CaptureObservation::Started);
         let join = tokio::spawn(async move {
-            let exit = run_capture_loop(capture, ctx, stop_rx).await;
+            let exit = capture_loop::run_capture_loop_observed(
+                capture,
+                ctx,
+                stop_rx,
+                Some(observations.clone()),
+            )
+            .await;
             if exit == CaptureLoopExit::SourceShutdown {
                 let mut guard = capture_slot.lock().await;
                 if guard.as_ref().is_some_and(|h| h.id == id) {
                     *guard = None;
+                    observations
+                        .lock()
+                        .expect("capture observations lock poisoned")
+                        .record(
+                            worker_pool::now_ms(),
+                            CaptureObservation::Interrupted(CaptureInterruptionReason::WorkerError),
+                        );
                     set_capture_readiness(
                         &readiness,
                         &events,
@@ -910,11 +966,21 @@ impl Kernel {
     /// Stops the capture loop (idempotent). Signals the loop, waits for it to drop
     /// the capture source (releasing OS resources), and flips `capture` → Disabled.
     pub async fn stop_capture(&self) {
-        let handle = self.capture.lock().await.take();
+        let handle = {
+            let mut capture = self.capture.lock().await;
+            let handle = capture.take();
+            self.observe_capture(CaptureObservation::Interrupted(
+                CaptureInterruptionReason::CaptureStopped,
+            ));
+            handle
+        };
         if let Some(h) = handle {
             let _ = h.stop.send(true);
             if let Err(e) = h.join.await {
                 tracing::warn!(error = %e, "capture task join failed");
+                self.observe_capture(CaptureObservation::Interrupted(
+                    CaptureInterruptionReason::WorkerError,
+                ));
             }
             // The loop has joined — no `recognize` is in flight. Notify the OCR provider so
             // the UIA composite can disconnect its client and release Chromium/Electron apps

@@ -15,6 +15,7 @@
 
 pub mod contracts;
 pub mod domain;
+pub mod history;
 pub mod ipc;
 pub mod jobs;
 pub mod memory;
@@ -26,6 +27,7 @@ pub use contracts::{
     SessionSegmenter, Store, VisionProvider,
 };
 pub use domain::*;
+pub use history::*;
 pub use ipc::*;
 pub use jobs::*;
 pub use memory::*;

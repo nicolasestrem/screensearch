@@ -1183,6 +1183,22 @@ pub struct ApiStatus {
     pub last_error: Option<String>,
 }
 
+/// Passive, nonsecret availability of the independent read credential (`03 §7f.3`).
+/// Only explicit local reveal/copy actions return credential bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct ApiReadTokenStatus {
+    pub configured: bool,
+}
+
+/// Deliberately secret-bearing local IPC response; never a settings/event/report field.
+/// No Debug implementation: accidental diagnostic formatting must not expose the token.
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct ApiReadTokenSecret {
+    pub token: String,
+}
+
 /// Auto-update lifecycle (0.3.2 PR2, #69; `03 §11b`). Output of `get_update_status` /
 /// `check_for_updates` and the payload of the `update_status_changed` event. The updater
 /// is **pull-based and quiet** (D1): `Idle` means no update is known — the UI renders

@@ -18,6 +18,11 @@ use traits::{
     SessionArtifactRole, SessionHost, SessionKind, Settings, Store,
 };
 
+#[path = "support/history_reads.rs"]
+mod history_reads;
+#[path = "support/permissions.rs"]
+mod permission_cases;
+
 const TEST_TOKEN: &str = "test-token-000000000000000000000000000000000000000000000000000000";
 
 /// A scripted answer provider: streams a fixed set of deltas, then `Done`.
@@ -57,6 +62,8 @@ struct TestHost {
     store: Arc<SqliteStore>,
     answer: Option<Arc<dyn AnswerProvider>>,
     started_at_ms: i64,
+    capture_kernel: Option<Arc<kernel::Kernel>>,
+    history_fault: Option<history_reads::HistoryFault>,
 }
 
 #[async_trait]
@@ -78,6 +85,24 @@ impl ApiHost for TestHost {
     }
     async fn frame_detail(&self, frame_id: i64) -> anyhow::Result<Option<FrameDetail>> {
         self.store.get_frame(frame_id).await
+    }
+    async fn frame_page(
+        &self,
+        request: traits::FramePageRequest,
+    ) -> Result<traits::StoredFramePage, traits::HistoryReadError> {
+        if let Some(fault) = self.history_fault {
+            return Err(fault.error());
+        }
+        self.store.frame_page(request).await
+    }
+    async fn capture_coverage(
+        &self,
+        window: traits::EvidenceWindow,
+    ) -> Result<traits::CaptureCoverage, traits::HistoryReadError> {
+        if let Some(fault) = self.history_fault {
+            return Err(fault.error());
+        }
+        history_reads::compose_coverage(self, window).await
     }
     async fn frame_image(&self, frame_id: i64) -> anyhow::Result<Option<FrameImage>> {
         // The fixture doesn't write real image files; a frame with image_purged=false and
@@ -212,6 +237,8 @@ async fn fixture_host(with_answer: bool) -> Arc<TestHost> {
         store,
         answer: with_answer.then(|| Arc::new(ScriptedAnswer) as Arc<dyn AnswerProvider>),
         started_at_ms: 500,
+        capture_kernel: None,
+        history_fault: None,
     })
 }
 
@@ -237,6 +264,46 @@ fn bearer(token: &str) -> reqwest::header::HeaderMap {
         format!("Bearer {token}").parse().unwrap(),
     );
     h
+}
+
+// ---- P1 explicit permission boundary ----
+
+#[tokio::test]
+async fn read_token_is_live_and_cannot_invoke_capture_or_inference() {
+    let (base, server, _legacy) = start_server(fixture_host(true).await).await;
+    server.set_read_token(Some("read-only-token".to_string()));
+    let c = client();
+    let health = c
+        .get(format!("{base}/v1/health"))
+        .bearer_auth("read-only-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(health.status(), 200);
+    for (path, body) in [
+        ("/v1/marks", serde_json::json!({"frame_id": 1})),
+        ("/v1/marks", serde_json::json!({"now": true})),
+        ("/v1/marks/1/resolve", serde_json::json!({})),
+        ("/v1/ask", serde_json::json!({"query": "invoice"})),
+        (
+            "/v1/ask",
+            serde_json::json!({"query": "invoice", "session_id": 999}),
+        ),
+    ] {
+        let r = c
+            .post(format!("{base}{path}"))
+            .bearer_auth("read-only-token")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 403, "{path}: {body}");
+        assert_eq!(
+            r.json::<serde_json::Value>().await.unwrap()["error"],
+            "forbidden"
+        );
+    }
+    server.stop().await;
 }
 
 // ---- Configurable binding retains loopback by default ----
@@ -847,6 +914,8 @@ async fn sessions_fixture_host(with_answer: bool) -> Arc<TestHost> {
         store,
         answer: with_answer.then(|| Arc::new(ScriptedAnswer) as Arc<dyn AnswerProvider>),
         started_at_ms: 500,
+        capture_kernel: None,
+        history_fault: None,
     })
 }
 
@@ -1289,6 +1358,8 @@ async fn fixture_host_with_slow_answer() -> Arc<TestHost> {
             deltas: 75,
         })),
         started_at_ms: 500,
+        capture_kernel: None,
+        history_fault: None,
     })
 }
 

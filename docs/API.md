@@ -4,6 +4,20 @@ The **HTTP API** exposes ScreenSearch's search, ask, frames, sessions, where-was
 marks to scripts and agents. It is **opt-in and off by default** (0.3.0
 PR7; the sessions surface added in 0.4.0 PR6, specs `03 §7c` / `§7e`).
 
+**External-agent increment (P1/P2, unreleased):** this guide also describes the implemented
+chronological frame/coverage adapters and independent read credential on
+`feat/agent-memory-http`, against `crates/api/src/history.rs` and `crates/traits/src/history.rs`.
+Source presence and focused component checks are not integrated Windows-app acceptance. The
+portable MCP transport is a separate change; see [MCP configuration](MCP.md#configuration)
+and the [verification status](TESTING.md#external-agent-memory-api-p1p2--verification-status).
+The approved contract is [spec 03 §7f](../specs/03_MASTER_PRODUCTION_SPEC.md).
+
+P3 saved-report reads are **blocked pending Nico's retry-result visibility decision**: a
+queued/running delivery retry can already retain immutable saved output. Neither hiding that
+output by phase nor exposing it by stored presence has been approved. `/v1/reports` and
+`/v1/reports/{run_id}` are not registered in the inspected router. Remote report generation,
+retry, scheduling and delivery remain deferred; neither credential grants `reports.generate`.
+
 > **Threat model — read this before enabling.** The API uses plain HTTP without transport
 > encryption. The default bind is `127.0.0.1` (local access). If you choose a network address,
 > any token holder on a reachable host can read your entire screen history. Network observers
@@ -23,8 +37,11 @@ Settings → **HTTP API** → choose a bind address and port, then toggle on.
   Rotation takes effect immediately without restart.
 - A bind failure is visible in Settings with guidance to correct the address/port.
 
-Inference and the MCP client's destination remain loopback-only. A bind that excludes loopback
-may make local MCP unavailable; configure an appropriate loopback or wildcard listener to use MCP.
+Inference remains loopback-only. The shipped v0.4.1 MCP wrapper validates loopback destinations;
+the separately implemented P2 wrapper permits explicitly selected HTTP/HTTPS API roots, still
+loopback by default. See the [MCP guide](MCP.md#url-validation-and-transport-boundary) before
+using a remote destination. This does not add TLS to the application's HTTP listener, change
+CORS or open a firewall.
 
 ### Connecting from another computer
 
@@ -62,17 +79,50 @@ Every request to every route (health included) must send:
 Authorization: Bearer <token>
 ```
 
-A missing or wrong token returns **401**. The token is compared in constant time.
+A missing, malformed, revoked or wrong token returns **401**, including on unknown paths.
+Use the exact `Bearer ` prefix. Credentials are compared in constant time. There are two
+independent credential slots in P1:
+
+| Credential | Server-enforced permissions |
+|---|---|
+| Existing/legacy token | `history.read`, `marks.write`, `capture.request`, `answer.generate`; existing clients retain these supported operations, not a wildcard grant. |
+| Independently created read token | `history.read` only. It can read full raw/filtered text and stored images; it is not a redacted-history token. |
+
+Upgrades start with **no read token**. Local Settings create/reveal/copy/rotate/revoke it
+independently of the legacy token; these actions do not enable the API or alter bind/port.
+Credential changes persist successfully before the live credential is swapped. Failed
+persistence preserves the old credential/listener; legacy rotation leaves the read token
+unchanged. Rotation/revocation affects subsequent requests without restart, not guaranteed
+cancellation of a request or stream already authorized. No credential-management HTTP route
+is exposed. Keep credentials out of URLs, logs and ordinary settings/export/report payloads.
+
+| Registered operation | Legacy | Read |
+|---|---|---|
+| `GET`/`HEAD` health, search, frame listing, coverage, frame detail/image, context, marks, sessions/detail/cached summary, export | allow | allow |
+| `POST /v1/marks` for a stored frame; `POST /v1/marks/{id}/resolve` | allow (`marks.write`) | 403 |
+| `POST /v1/marks` with `now:true` | allow (`marks.write` **and** `capture.request`) | 403 |
+| `POST /v1/ask`, including session Ask | allow (`answer.generate`) | 403 |
+
+Each route/method is explicitly classified; future GETs or new tools are not implicitly
+safe. **HEAD has the same authentication, permission, validation and read path as GET**, but
+no response body. A valid token on an unknown path gets **404**; a valid read token on a
+classified write/Ask gets **403 before side effects**, not an API-off/401 error. An unsupported
+method on a classified path gets **405** with `Allow`; an unclassified registered route is
+denied, not inherited by either credential. P3 report routes are not yet registered.
+
+`--read-only` in MCP only filters listed/accepted tools. Use the independent API read token
+for authorization, even when calling raw HTTP or running MCP without that flag.
 
 ```bash
-curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:43210/v1/health
+curl -s -H "Authorization: Bearer ***" http://127.0.0.1:43210/v1/health
 ```
 
 ## Errors
 
-Every non-2xx response is a JSON body — including malformed query strings, bodies, and path
-segments, which are mapped to `400 bad_request` rather than a framework plaintext rejection, so
-clients can parse errors uniformly:
+API handler/authentication errors use this JSON envelope, including malformed query strings,
+bodies and path segments mapped to `400 bad_request`. Exceptions: HEAD has no body, the
+route/method gate's 405 has an `Allow` header and no JSON envelope, and connection-limit/header
+failures can close a socket without an HTTP response. Do not parse these as empty data:
 
 ```json
 { "error": "not_found", "message": "frame 42 not found" }
@@ -81,11 +131,21 @@ clients can parse errors uniformly:
 | Status | `error`         | When |
 |--------|-----------------|------|
 | 400    | `bad_request`   | Malformed params/body (e.g. missing `q`, `from`/`to` not paired, `from` > `to`, invalid session `kind`, non-integer session id, `format` ≠ `json`, both `frame_id` and `now`). |
-| 401    | `unauthorized`  | Missing or wrong bearer token. |
-| 404    | `not_found`     | Unknown frame, mark, or session (or an unknown endpoint path). |
+| 401    | `unauthorized`  | Missing or invalid bearer token, including on unknown paths. |
+| 403    | `forbidden`     | Authenticated token lacks the classified permission; no write/capture/Ask has started. |
+| 404    | `not_found`     | Unknown frame, mark, or session (or unknown endpoint with a valid token). |
 | 404    | `image_purged`  | The frame exists but its screenshot was retention-purged (text is preserved). |
-| 503    | `unavailable`   | A dependency is unavailable (answer model not loaded; capture off for `POST /v1/marks {"now":true}`). |
-| 500    | `internal`      | Unexpected store failure. |
+| 405    | *(no envelope)* | Unsupported method on a classified route; inspect `Allow`. |
+| 409    | `history_changed` | Frame cursor belongs to another initialized history; restart/reconcile traversal. |
+| 503    | `unavailable`   | A dependency is unavailable (answer model not loaded; capture off for `POST /v1/marks {"now":true}`; missing/invalid feed identity or allocator metadata; host without feed support). |
+| 500    | `internal`      | Storage/decode failure, never an empty successful result. |
+
+New frame/coverage errors have fixed safe messages: 400 `invalid history query or cursor`,
+409 `history changed; restart the traversal`, 503 `history feed unavailable`, and 500
+`history storage error`. They do not echo filters/cursors, private paths or underlying storage
+diagnostics. A cursor maximum above the current allocator high-water is 400, not automatically
+409; the client must also compare coverage and reconcile known restores. These stricter
+validation/error rules do not redefine older endpoint query contracts.
 
 ## Endpoints
 
@@ -110,6 +170,132 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 Returns an array of `SearchHit` (`frame_id`, `captured_at`, `snippet`, `score`,
 `image_path`, `image_purged`, `app_hint`) — the same shape and ranking as the UI.
+
+### Chronological frames
+
+`GET /v1/frames` (P1, unreleased) enumerates evidence without a search term, model,
+OCR run or generation. This is not the ranked `/v1/search` surface.
+
+| Input | Exact contract |
+|---|---|
+| Initial `from`, `to` | Both required signed `i64` UTC epoch milliseconds; `from < to`; half-open `[from,to)`. ASCII decimal integers, optional leading minus; no floats, plus sign, whitespace or overflow. |
+| `app` | Optional literal exact match, ASCII-case-insensitive SQLite NOCASE. |
+| `window_title` | Optional literal substring, ASCII-case-insensitive; `%`, `_` and backslash are not patterns. |
+| Filter limits | Each decoded filter is at most **256 UTF-8 bytes**, before ASCII lowercase normalization. No trimming or Unicode casefold. Absent and supplied empty string are distinct. |
+| `limit` | Default **100**, valid **1–1000**, rejected rather than clamped outside that range. |
+| Continuation | `cursor` plus optional `limit` **only**; do not repeat bounds or filters. Limit may change between pages. Cursor input is capped at **4096 encoded bytes** before decoding. |
+
+Unknown parameters, duplicate decoded names, malformed percent escapes, invalid UTF-8,
+missing `=`, invalid integers and invalid/unsupported cursors return JSON 400. Form-query
+`+` means space; URL-encode literal plus signs. App/title filters run before the limit and
+use target-window metadata when nonnull, otherwise stored frame metadata. A present empty
+target value is preserved; null metadata never matches a supplied filter.
+
+Response (`FramePage`; illustrative, not live capture output):
+
+```json
+{
+  "items": [{
+    "frame_id": 41, "captured_at": 1000, "monitor_index": 0,
+    "app_hint": null, "window_title": null, "browser_url": null,
+    "raw_text": "", "content_text": "", "text_source": "ocr",
+    "filter_version": 1, "text_state": "available",
+    "vision_description": null, "session_id": null, "image_purged": false
+  }],
+  "next_cursor": null,
+  "history_id": "12345678-1234-4123-8123-123456789abc",
+  "window": {"from": 0, "to": 2000},
+  "snapshot_max_frame_id": 41,
+  "observed_at": 3000,
+  "consistency": "bounded_membership_live_content"
+}
+```
+
+Optional fields are present as JSON null, arrays remain arrays. Each item has the exact
+fields above; `text_source` is `ocr`, `uia` or null. Raw/content text and stored vision
+are **complete**, not snippets. `not_available` means no stored text row: raw/content,
+source and filter version are null. `available` includes stored empty strings; absence
+is not empty OCR or permanent failure. URL/session are stored observations, not inference.
+Pages contain neither filesystem paths nor image bytes; use frame detail/image reads.
+The page limit bounds rows, not response bytes; lower it for large text. Failures are
+explicit errors, never silent text truncation.
+
+Order is **`captured_at ASC, frame_id ASC`**. The first page reads global current maximum
+frame ID and hydrated membership in one database read transaction; empty storage has
+maximum 0. Later pages freeze that maximum and seek strictly after the last tuple.
+`next_cursor: null` alone marks exhaustion; an empty terminal page is valid after deletion.
+The opaque v1 cursor freezes history/window/normalized filters/maximum/last tuple. Current
+encoding is base64url without padding, at most 791 characters for accepted filters; the
+4096-byte public bound is not permission to construct cursors. Cursors are not credentials.
+
+With supported allocator-active writers, later/new/backdated inserts cannot extend an
+active traversal. Mutable text, metadata and session references remain live across pages;
+retention/deletion may remove members. This is **bounded membership, live content**, not a
+frozen database snapshot, deletion log, exactly-once feed or capture-completeness proof.
+Re-list the same selected window to discover new frames and late enrichment.
+
+#### Identity and reconciliation
+
+`api.history_id` is distinct from resettable report identity and credentials. Setup creates
+it and `api.frame_id_high_water` together for a new/pre-upgrade history, preserving existing
+frame IDs. Supported inserts transactionally allocate above **both** persisted high-water
+and current maximum; deletion does not lower the counter. Reserved metadata is excluded
+from user settings import/export/reset/retired-key cleanup. Reads never initialize/repair
+missing or invalid metadata: unavailable prerequisites return 503, not empty success.
+A cursor for another history returns 409 `history_changed`.
+
+These guarantees do not repair previously reused/deleted IDs or cover old binaries, direct
+SQL, unsupported imports, independently active clones or backup rewind. Moving/restoring a
+history preserves its identity; that is not global uniqueness across clones/restores.
+Persist coverage high-water with the checkpoint: a decrease invalidates progress and requires
+a fresh bounded reconciliation. A restore can catch up before it is observed, so the operator
+must invalidate checkpoints after any known restore/old-writer use even without a decrease.
+Same-ID/same-timestamp reuse can remain undetected.
+
+The [reference consumer](MEMORY_CONSUMER.md) and
+[`examples/memory_consumer.py`](../examples/memory_consumer.py) process facts and checkpoint
+in one durable local SQLite transaction, saving the cursor **after** page writes. They upsert
+by `(history_id,frame_id)` only when the recorded `captured_at` agrees. On conflict, retain
+old facts, record competing versions, invalidate traversal and reconcile the selected window;
+do not silently overwrite identity. The example re-reads textless IDs and periodically
+re-lists that window; `--reconcile` explicitly invalidates progress after operator restore.
+One traversal cannot promise eventual completeness or prove inactivity.
+
+Calendar-day consumers must choose an explicit IANA timezone, convert **both** local date
+boundaries independently to UTC, and preserve the exclusive end. Do not assume the host
+zone or add 24 UTC hours: DST days may have 23 or 25 hours. The developer example accepts
+`--day 2026-10-25 --timezone Europe/Paris`, or explicit UTC `--from`/`--to`; it rejects naive
+bounds and nonexistent historical local dates rather than guessing.
+
+### Coverage
+
+`GET /v1/coverage?from=<UTC-ms>&to=<UTC-ms>` (P1, unreleased) accepts **only** required
+`from`/`to`, with the same strict integer, half-open and duplicate/unknown-key rules above.
+It returns `CaptureCoverage`, not an activity score:
+
+| Response field | Meaning |
+|---|---|
+| `window: {from,to}`, `observed_at` | Requested UTC window and observation time in integral epoch ms. Store facts share one read transaction; controller/settings observations are composed separately. |
+| `capture_enabled: bool` | Current controller **intent**, not proof of capture health. |
+| `frame_id_high_water: i64` | Current persisted allocator counter, not current `MAX(id)` or the page's frozen maximum. Coverage has no `history_id`; page responses supply it. |
+| `oldest_frame`, `newest_frame` | Global chronological extrema as `{frame_id,captured_at}`, ordered by timestamp then ID, not restricted to the window; null when storage is empty. |
+| `newest_captured_at` | Global newest timestamp or null. |
+| `frames_stored`, `frames_text_available` | Nonnegative in-window counts; available includes empty stored text, excludes missing rows. Store failures are errors, never zero-data success. |
+| `image_retention_days`, `retention_scope` | Configured image policy (`0` = keep), scope `"images_only"`; not proof a purge completed. Text is preserved by image retention. |
+| `saved_report_retention` | `{terminal_days:90, exempt_phases:["queued","running","blocked"], exempt_delivery_states:["pending","sending","unknown_delivery","conflict"], failed_delivery_with_pending_retry_exempt:true}`. Days count from last terminal update; policy, not per-run expiry or a report-read endpoint. |
+| `capture_observations` | `{observation_started_at, unavailable_before, intervals, truncated}`; times are integral UTC ms. |
+
+Each interval is `{start,end,reason}` with actual observed endpoints (not clipped to query
+bounds), nullable `end`, and reason `capture_stopped` or `worker_error`. A null end means an
+unresolved observation, not proof of continuous failure. Capture start closes a known pause.
+The process-local record retains at most **1000 transitions** and returns at most **100
+intersecting intervals**, chronologically. Restart/overflow makes earlier observations unknown;
+backwards-clock loss remains unknown until re-observed. `truncated` marks unavailable/lost
+observations or excess intersecting intervals. An empty interval array is not a complete
+health record. Unobserved sleep, lock, privacy exclusion, crash or internal capture errors
+are not reconstructed from frame gaps. Policy, counts and observations cannot establish
+work duration or percentage of a person's day. Empty success means **no recorded frames in
+this query**, not “nothing happened”; HTTP/storage failure is never `NO_DATA`.
 
 ### `POST /v1/ask`
 

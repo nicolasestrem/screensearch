@@ -39,10 +39,150 @@
 
 - **Windows:** `ssh nicol@tbx` available; separate detached worktree and fixture
   tooling created, Rust 1.95.0 verified, official Node 22 extracted with checksum
-  validation. Native baseline checks assigned. Installed app/history untouched.
+  validation. Installed app/history untouched. Native baseline at `cd9f5fe` completed;
+  parent read back actual return codes from both phase logs and independently checked
+  the native worktree remained clean:
+
+  ```text
+  RC_UI_NPM_CI=0 elapsed_s=4.3
+  RC_UI_NPM_LINT=0 elapsed_s=2.5
+  RC_UI_NPM_BUILD=0 elapsed_s=5.3
+  RC_STAGE_MCP=0 elapsed_s=32.9
+  RC_FMT=0 elapsed_s=0.9
+  RC_CLIPPY=0 elapsed_s=66.5
+  RC_BUILD=0 elapsed_s=83.7
+  RC_TEST=0 elapsed_s=100.7
+  RC_BINDING_GUARD=0
+  ```
+
+  This verifies the unchanged base, not the concurrently developed P1 implementation.
 - **Not accepted:** new API behavior, native UI, cross-machine traversal, macOS
   archive execution, allocator behavior, consumer resume and paging measurements
   still require implementation and real evidence. No merge/release/publication.
+
+## 2026-10-16 — P1 implementation in progress (not acceptance)
+
+- Store/traits contracts now exist. Allocator/setup/readiness/reserved-setting guards
+  and real SQLite regression tests are implemented; native allocator review/tests
+  are running on an immutable component snapshot, not the changing parent tree.
+  Frame/coverage SQL is a separate disjoint module under implementation.
+- Kernel process-local observations are wired to actual controller/worker events.
+  Its isolated pure-std buffer check returned:
+
+  ```text
+  test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+  ```
+
+  Native controller tests and independent review are in progress. Unobserved WGC-
+  internal readback errors stay unknown; no frame-gap-derived intervals were added.
+- API explicit permissions and independent live read-token authentication are
+  implemented. The worker observed clippy exit 0; its API test run exited 101
+  solely on the retained IPv6 listener test because that Linux host has no `::1`
+  address. The failure is not patched out or called a native pass. Native API
+  verification and new frame/coverage endpoints remain open.
+- Reference consumer local SQLite/UTC/resume/conflict checks were independently
+  rerun by the parent:
+
+  ```text
+  Ran 20 tests in 2.788s
+
+  OK (skipped=4)
+  CONSUMER_LOCAL_TEST_EXIT=0
+  ```
+
+  Four skipped tests require the real API+Store fixture runner; no successful
+  production API consumption is claimed. Token UI/composition and the isolated
+  MCP transport lane are still under implementation. Full P1 acceptance remains open.
+
+## 2026-10-16 — P1 real API consumer gate exercised
+
+The fixture runner composes the actual API router, production SQLite Store and kernel
+observations over nonprivate seeded history, with capture/scheduling off and answer
+provider unavailable. It exercises more than 1000 frames, ties/out-of-order timestamps,
+mid-window resume, full/textless/empty text, late enrichment, timestamp identity conflict,
+and backup rewind/catch-up reconciliation. This is not a canned HTTP response server.
+
+The parent independently reran the full consumer suite with
+`SCREENSEARCH_CONSUMER_FIXTURE_CMD` pointing to the compiled
+`memory_consumer_fixture` example and `PYTHONDONTWRITEBYTECODE=1`:
+
+```text
+Ran 20 tests in 50.708s
+
+OK
+PARENT_REAL_API_CONSUMER_EXIT=0
+```
+
+All four real-API cases executed; no skips in this run. The earlier local-only skipped
+run above remains historical. Timing is under concurrent development load, not a release
+latency budget. Native whole-workspace/app/UI and cross-machine MCP acceptance remain
+separate gates; P1 is not declared complete by this fixture pass.
+
+### P1 scoped API follow-up (Linux, not native app acceptance)
+
+Parent-executed checks on the current HTTP foundation:
+
+```text
+cargo test --locked -p api --test http_api history_reads
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 35 filtered out
+P1_HTTP_HISTORY_EXIT=0
+
+cargo test --locked -p api --lib
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+P1_API_LIB_EXIT=0
+```
+
+The eight HTTP cases exercise the real Store-backed frame/coverage routes, more than
+1000-frame chronology and bounded membership, literal filters/metadata/text, deletion
+progress, cursor/history failures, explicit GET/HEAD authorization, truthful empty coverage
+and safe errors. Library cases cover cursor bounds/codec/query rejection, future-route
+default-deny, capture permission separation and retained connection/stream limits.
+
+These are scoped package checks, not a full Linux workspace build, Windows/IPv6 or UI
+acceptance. Independent consumer audit additionally found mid-traversal rewind and
+single-history-change recovery bugs not covered by the earlier 20 passing consumer tests;
+their fixes and real-API regressions remain required before the P1 gate closes.
+
+### P1 native integration and consumer recovery follow-up
+
+The frozen 41-file runtime candidate (`content_sha256`
+`139392392d9299fcad21c40d7ac87a5b413a2e6b0b6d040a00e92cab7c17facf`)
+passed on native Windows with Rust 1.95.0 / Node 22:
+
+```text
+P1N_fmt_EXIT=0
+P1N_clippy_EXIT=0
+P1N_build_EXIT=0
+P1N_test_EXIT=0
+P1N_RUN_DONE
+```
+
+Commands were workspace formatting, locked all-target clippy with warnings denied,
+locked workspace build/test and the generated-binding/source hash guards. Unchanged UI
+bytes had already passed `npm ci`, lint, build, 14 UI tests and MCP staging. Parent parsed
+the raw native results: **928 passed, 0 failed, 15 ignored** across 60 result summaries;
+the IPv4/IPv6 HTTP listener and IPv6 composition tests both executed successfully. The
+15 existing environment/hardware-gated ignores were retained, not introduced to obtain green.
+Parent independently re-read the remote native source files: `41/41 PASS`, matching this
+candidate and the local worktree.
+
+Consumer F1/F2/F3 are now fixed: a proven mid-drain allocator decrease reconciles after
+the real cursor 400; one 409/history transition consumes one logical bounded restart;
+a conflicting detail read is not counted as a successful textless re-read. Three new
+real-API regressions failed on the old logic and pass on the fix. The full consumer suite
+ran **23 tests, 0 skips**; parent verified the runner/source hashes and independently ran
+all seven real-API cases:
+
+```text
+Ran 7 tests in 31.761s
+OK
+PARENT_CONSUMER_RECOVERY_EXIT=0
+```
+
+Native build/test acceptance is not native app/UI acceptance. Settings keyboard/clipboard/
+error-state inspection and separate-machine MCP remain open. In particular, the desktop
+app autostarts capture; there is no production `capture.enabled` setting. Verification
+must not assume that an invented seed key disables capture or launch against a live profile.
 
 > **Populated during the build**, after each meaningful pass (`04 §7`). Record what actually
 > happened — honestly. Empty until P0 begins.

@@ -32,6 +32,8 @@ use traits::{
 
 mod embeddings;
 mod frames;
+mod history;
+mod history_pages;
 mod insights;
 mod jobs;
 mod marks;
@@ -91,13 +93,14 @@ fn open_connection(conn: Connection) -> Result<Connection> {
     // recursive_triggers are per-connection and must be set every open so the
     // cascade + vec-cleanup triggers fire (`03 §4`).
     conn.execute_batch(
-        "PRAGMA journal_mode=WAL;
+        "PRAGMA busy_timeout=5000;
+         PRAGMA journal_mode=WAL;
          PRAGMA foreign_keys=ON;
-         PRAGMA recursive_triggers=ON;
-         PRAGMA busy_timeout=5000;",
+         PRAGMA recursive_triggers=ON;",
     )?;
     let mut conn = conn;
     bootstrap_and_migrate(&mut conn)?;
+    history::setup_history_metadata(&mut conn)?;
     Ok(conn)
 }
 
@@ -234,6 +237,26 @@ impl SqliteStore {
 /// `SqliteStore::…` calls are non-recursive.
 #[async_trait]
 impl Store for SqliteStore {
+    async fn history_readiness(
+        &self,
+    ) -> std::result::Result<traits::HistoryMetadata, traits::HistoryReadError> {
+        SqliteStore::history_readiness(self).await
+    }
+
+    async fn frame_page(
+        &self,
+        request: traits::FramePageRequest,
+    ) -> std::result::Result<traits::StoredFramePage, traits::HistoryReadError> {
+        SqliteStore::frame_page(self, request).await
+    }
+
+    async fn stored_coverage(
+        &self,
+        window: traits::EvidenceWindow,
+    ) -> std::result::Result<traits::StoredCoverage, traits::HistoryReadError> {
+        SqliteStore::stored_coverage(self, window).await
+    }
+
     async fn list_report_family_deliveries(
         &self,
         run_id: &str,
