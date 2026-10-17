@@ -965,7 +965,7 @@ Supported first client artifacts: Windows x86_64, Linux x86_64, macOS arm64. Pub
 `GET /v1/reports/{run_id}` returns a public projection, not serialized `ReportRun` internals:
 - run/source/revision IDs; selected dates when present; UTC window/timezone/local date; created/updated times; phase/outcome; allowlisted error code;
 - saved Markdown/model and coverage counts/flags; full summarized frame IDs, cited IDs and generation-time session IDs (distinct concepts, no 200-item citation cap substituted for full evidence);
-- null result when no saved result exists, truthful NO_DATA result when stored; **P3 STOP:** queued/running delivery retries can retain an immutable saved result. Whether unfinished phases expose that stored result is unresolved (see §7f.10), not silently decided here;
+- null result only when no saved result exists; truthful NO_DATA result when stored. **Resolved (§7f.10, Nico GO):** an immutable saved result is exposed immediately whenever it exists, including while delivery is queued or retrying — the delivery phase never hides already saved evidence;
 - generation-time provenance preserved even if current frames/sessions are gone. Existing frame/session endpoints resolve references and may return 404. Do not invent availability from old IDs or replace stored session IDs with current segmentation.
 
 List rows omit Markdown/full evidence arrays; detail supplies the complete saved result. No config snapshot, destination snapshot, folder/recovery path, Telegram chat/receipt, credential or arbitrary error message. Missing/pruned run returns 404, never reconstructs from a folder or regenerates. Apply the 90-day terminal-run retention and pending-delivery exceptions in `§8c`; exported notes can outlive API run records. This does not retroactively persist old unsaved Recall reports.
@@ -1055,11 +1055,14 @@ arrays. Responses must not replace missing values with empty strings or fabricat
   The §8c SavedReport fields are the complete public saved-result shape: markdown, model,
   frame_ids, session_ids, cited_frame_ids, frames_sampled, frames_summarized, periods_total,
   periods_covered, passes, truncated. Preserve immutable saved values, full distinct summarized
-  IDs and generation-time session provenance. Queued/running delivery retry with saved output is
-  an unresolved P3-only visibility decision (§7f.10); do not implement phase-based hiding or
-  stored-presence exposure until resolved. A blocked/unfinished/failed run without saved output
-  has null result, not generated replacement prose; stored NO_DATA remains its factual result.
-  No delivery, path, configuration, Telegram or credential fields enter either projection.
+  IDs and generation-time session provenance. **Resolved visibility rule (§7f.10, Nico GO):**
+  `result` is `Some` for any valid persisted `SavedReport` regardless of the run's current
+  delivery/run phase — expose immutable saved output immediately whenever it exists, including
+  while delivery is queued or retrying; the delivery phase never hides already saved evidence.
+  The prior unfinished-result-null rule no longer nulls a present saved result: a run with no
+  saved result has null result (any phase), not generated replacement prose; stored NO_DATA
+  remains its factual saved result; a malformed persisted saved payload is a read error, never
+  null. No delivery, path, configuration, Telegram or credential fields enter either projection.
 
 Report retention is **90 days from last terminal update**, not created_at. Never prune
 queued/running/blocked runs, runs with pending/sending/unknown/conflict delivery, or failed
@@ -1201,17 +1204,29 @@ or backup restores invalidate checkpoints and require bounded reconciliation eve
 high-water has already caught up; preserve metadata for forward repair. No global exactly-once
 or cross-restore uniqueness guarantee, release tag, merge or updater action is implied.
 
-### 7f.10 Unresolved P3-only visibility decision and evidence handoff
+### 7f.10 Resolved P3 saved-output visibility decision and evidence handoff
 
-The report inventory found queued/running delivery retries with immutable saved results in
-`src-tauri/src/memory.rs` (planning-base lines 613–617 and 786–788). The approved plan's
-unfinished-result-null wording conflicts with preserving saved output in those states. **P3 is
-blocked on this decision only**: recommend mirroring actual saved-result presence rather than
-phase-based suppression, but Nico must resolve it. P1/P2 remain authorized and unaffected.
-Record this contradiction in `06_PATCH_PLAN.md` and the decision request in `07_KNOWN_GAPS.md`
-by their owning agent; this contract worker does not own those files. Wire projection field
-names/nullability, explicit enum validation, unknown error-code→null and observed chronological
-coverage definitions above are normalization decisions to record in `07`, not runtime evidence.
+**Resolved (Nico, GO).** The report inventory found queued/running delivery retries with immutable
+saved results in `src-tauri/src/memory.rs` (planning-base lines 613–617 and 786–788), where a run
+is re-queued for delivery while `run.result` is preserved. The approved plan's unfinished-result-null
+wording conflicted with preserving saved output in those states; Nico resolved the conflict in favor
+of mirroring actual saved-result presence rather than phase-based suppression:
+
+- Expose immutable saved output immediately whenever it exists, including while delivery is queued
+  or retrying. `ReportDetail.result` is `Some` for any valid persisted `SavedReport` regardless of
+  the run's current delivery/run phase; the delivery phase must not hide already saved evidence.
+- The prior unfinished-result-null rule no longer nulls a present saved result. Null remains only
+  for a run with no saved result. Stored NO_DATA remains its factual saved result; a malformed
+  persisted saved payload is a read error, never null.
+- Only the allowlisted saved-result projection is exposed. Generation, delivery, retry and their
+  side effects remain excluded; no internal config/destination/path/Telegram/credential fields
+  enter the projection, and stable provenance and immutable saved Markdown are preserved.
+
+This decision unblocks P3 (P1/P2 were always authorized and are unaffected). Record the resolved
+decision in `06_PATCH_PLAN.md`/`07_KNOWN_GAPS.md` by their owning agent; this contract worker does
+not own those files. Wire projection field names/nullability, explicit enum validation, unknown
+error-code→null and observed chronological coverage definitions above are normalization decisions
+to record in `07`, not runtime evidence.
 
 Independent P0 evidence artifacts (profile scratch): `memory-api-reports-inventory.md` and
 `memory-api-store-inventory.md`. The latter pins producer/settings anchors and confirms existing

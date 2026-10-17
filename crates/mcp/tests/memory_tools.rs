@@ -472,6 +472,77 @@ fn empty_page() -> Value {
 }
 
 // ---------------------------------------------------------------------------
+// Report fixture data (03 §7f.5 / §7f.6) — authored from the normative wire types
+// (spec + `traits::SavedReport`/`MemoryReportRange`), never captured from a running API.
+// ---------------------------------------------------------------------------
+
+/// One `ReportSummary` list row: metadata only — no saved Markdown/evidence arrays.
+fn report_summary(run_id: &str, phase: &str, outcome: Value) -> Value {
+    json!({
+        "run_id": run_id,
+        "source_id": "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+        "revision_of": null,
+        "requested_range": { "start_date": "2026-10-12", "end_date": "2026-10-17" },
+        "window_start": 1_000,
+        "window_end": 2_000,
+        "timezone": "Europe/Paris",
+        "local_date": "2026-10-17",
+        "created_at": 1_700_000_000_000i64,
+        "updated_at": 1_700_000_100_000i64,
+        "phase": phase,
+        "outcome": outcome,
+        "error_code": null
+    })
+}
+
+/// A `ReportPage`: `{ items, next_cursor }` with an explicit (possibly null) terminal cursor.
+fn report_page(items: Vec<Value>, next_cursor: Value) -> Value {
+    json!({ "items": items, "next_cursor": next_cursor })
+}
+
+/// A complete `SavedReport` (spec §7f.6 / `traits::SavedReport`). `frame_ids` deliberately
+/// exceeds the 200-item display cap so a substituted citation cap would be caught.
+fn saved_report() -> Value {
+    json!({
+        "markdown": "# Weekly recall\n\nBody line one.\nBody line two with a `code` span.\n",
+        "model": "qwen2.5-7b-instruct",
+        "frame_ids": (1..=250).collect::<Vec<i64>>(),
+        "session_ids": (1..=12).collect::<Vec<i64>>(),
+        "cited_frame_ids": (1..=200).collect::<Vec<i64>>(),
+        "frames_sampled": 250,
+        "frames_summarized": 250,
+        "periods_total": 5,
+        "periods_covered": 5,
+        "passes": 2,
+        "truncated": false
+    })
+}
+
+/// The factual saved result a stored NO_DATA run carries: a truthful note and no evidence.
+fn no_data_saved_report() -> Value {
+    json!({
+        "markdown": "No screen activity was recorded for the requested window.",
+        "model": null,
+        "frame_ids": [],
+        "session_ids": [],
+        "cited_frame_ids": [],
+        "frames_sampled": 0,
+        "frames_summarized": 0,
+        "periods_total": 5,
+        "periods_covered": 0,
+        "passes": 1,
+        "truncated": false
+    })
+}
+
+/// A `ReportDetail`: every `ReportSummary` field plus the optional saved result.
+fn report_detail(run_id: &str, phase: &str, outcome: Value, result: Value) -> Value {
+    let mut detail = report_summary(run_id, phase, outcome);
+    detail["result"] = result;
+    detail
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -482,9 +553,16 @@ fn empty_page() -> Value {
 fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
     let page = empty_page();
     let coverage = sample_coverage();
+    let report_rows = report_page(
+        vec![report_summary("r1", "finished", json!("OK"))],
+        json!(null),
+    );
+    let report_one = report_detail("r1", "finished", json!("OK"), json!(null));
     let fixture = MemoryFixture::start(Box::new(move |_method, path, _query| match path {
         "/v1/frames" => (200, "application/json", json_body(&page)),
         "/v1/coverage" => (200, "application/json", json_body(&coverage)),
+        "/v1/reports" => (200, "application/json", json_body(&report_rows)),
+        "/v1/reports/r1" => (200, "application/json", json_body(&report_one)),
         _ => (
             404,
             "application/json",
@@ -506,6 +584,8 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
             "get_moment",
             "list_frames",
             "get_capture_coverage",
+            "list_reports",
+            "get_report",
             "where_was_i",
             "list_marks",
             "add_mark",
@@ -552,6 +632,45 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
     );
     assert_eq!(coverage_tool["inputSchema"]["additionalProperties"], false);
 
+    // The report read tools carry accurate schemas (03 §7f.6): list_reports mirrors the
+    // frame page (initial from/to vs continuation cursor, 1..=1000 limit) with literal
+    // phase/outcome strings; get_report takes an opaque string run_id.
+    let list_reports = by_name("list_reports");
+    let lr_props = &list_reports["inputSchema"]["properties"];
+    assert_eq!(lr_props["from"]["type"], "integer");
+    assert_eq!(lr_props["to"]["type"], "integer");
+    assert_eq!(lr_props["limit"]["type"], "integer");
+    assert_eq!(lr_props["limit"]["minimum"], 1);
+    assert_eq!(lr_props["limit"]["maximum"], 1000);
+    assert_eq!(lr_props["phase"]["type"], "string");
+    assert_eq!(
+        lr_props["phase"]["enum"],
+        json!(["queued", "running", "blocked", "finished"])
+    );
+    assert_eq!(lr_props["outcome"]["type"], "string");
+    assert_eq!(
+        lr_props["outcome"]["enum"],
+        json!(["OK", "PARTIAL", "NO_DATA", "BLOCKED", "FAILED"])
+    );
+    assert_eq!(lr_props["cursor"]["type"], "string");
+    assert_eq!(
+        list_reports["inputSchema"]["anyOf"],
+        json!([
+            { "required": ["from", "to"] },
+            { "required": ["cursor"] }
+        ]),
+        "the initial/continuation combination is expressed in the schema"
+    );
+    assert_eq!(list_reports["inputSchema"]["additionalProperties"], false);
+
+    let get_report = by_name("get_report");
+    assert_eq!(get_report["inputSchema"]["required"], json!(["run_id"]));
+    assert_eq!(
+        get_report["inputSchema"]["properties"]["run_id"]["type"],
+        "string"
+    );
+    assert_eq!(get_report["inputSchema"]["additionalProperties"], false);
+
     // Normal mode keeps the retained behavior: an unknown name is a protocol error.
     let unknown = normal.request(
         "tools/call",
@@ -559,7 +678,7 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
     );
     assert_eq!(unknown["error"]["code"], -32602, "{unknown}");
 
-    // Read-only mode: exactly the eight read tools, new reads included.
+    // Read-only mode: exactly the ten read tools, the report reads included.
     let mut read_only = McpChild::spawn(&fixture.base(), Some(TEST_TOKEN), &["--read-only"]);
     read_only.handshake();
     let listed = read_only.request("tools/list", json!({}));
@@ -576,6 +695,8 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
             "get_moment",
             "list_frames",
             "get_capture_coverage",
+            "list_reports",
+            "get_report",
             "where_was_i",
             "list_marks",
             "list_sessions",
@@ -584,31 +705,36 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
         "read-only mode lists the shared allowlist"
     );
 
-    // Both new read tools are accepted in read-only mode and reach the fixture.
+    // Every read tool — including the report reads — is accepted in read-only mode and
+    // reaches the fixture.
     let frames_result = read_only.call_tool("list_frames", json!({ "from": 1000, "to": 2000 }));
     assert_ne!(frames_result["isError"], json!(true), "{frames_result}");
     let coverage_result =
         read_only.call_tool("get_capture_coverage", json!({ "from": 1000, "to": 2000 }));
     assert_ne!(coverage_result["isError"], json!(true), "{coverage_result}");
-    let recorded = fixture.wait_for_requests(2, Duration::from_secs(10));
+    let reports_result = read_only.call_tool("list_reports", json!({ "from": 1000, "to": 2000 }));
+    assert_ne!(reports_result["isError"], json!(true), "{reports_result}");
+    let report_result = read_only.call_tool("get_report", json!({ "run_id": "r1" }));
+    assert_ne!(report_result["isError"], json!(true), "{report_result}");
+    let recorded = fixture.wait_for_requests(4, Duration::from_secs(10));
     assert_eq!(
         recorded.len(),
-        2,
+        4,
         "read-only calls reached the API: {recorded:?}"
     );
     assert_eq!(recorded[0].method, "GET");
     assert_eq!(recorded[0].path, "/v1/frames");
     assert_eq!(recorded[1].path, "/v1/coverage");
+    assert_eq!(recorded[2].path, "/v1/reports");
+    assert_eq!(recorded[3].path, "/v1/reports/r1");
 
-    // Read-only refuses mutators, Ask, unknown names and the not-yet-registered P3 report
-    // tools — in-band, before any HTTP client is entered.
+    // Read-only refuses mutators, Ask and unknown names — in-band, before any HTTP client
+    // is entered. (The report reads are now classified reads, so they are no longer here.)
     for name in [
         "add_mark",
         "ask_screen_history",
         "ask_session",
         "future_tool",
-        "list_reports",
-        "get_report",
     ] {
         let result = read_only.call_tool(
             name,
@@ -625,7 +751,7 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
     thread::sleep(Duration::from_millis(150));
     assert_eq!(
         fixture.requests().len(),
-        2,
+        4,
         "denied read-only calls must not reach the API"
     );
 
@@ -1131,4 +1257,611 @@ fn accepted_connection_blocks_until_a_delayed_request_arrives() {
         query_map(&recorded[0].query),
         params(&[("from", "1000"), ("to", "2000")])
     );
+}
+
+// ---------------------------------------------------------------------------
+// Report read tools (03 §7f.5) — protocol-fixture evidence over the raw HTTP fixture.
+// These prove the MCP's translation/forwarding and full-fidelity passthrough against a
+// fixture that speaks the frozen wire contract. They are NOT producer/cross-machine
+// acceptance: the real `/v1/reports` routes are a separate, still-pending gate.
+// ---------------------------------------------------------------------------
+
+/// `list_reports` forwards the initial and continuation forms exactly, preserves the opaque
+/// cursor (including the terminal `null`), and returns list rows that carry only the summary
+/// — never the saved Markdown/evidence arrays (those belong to `get_report`).
+#[test]
+fn list_reports_forwards_query_and_cursor_and_rows_omit_saved_result() {
+    let page1 = report_page(
+        vec![
+            report_summary("run-a", "finished", json!("OK")),
+            report_summary("run-b", "running", json!(null)),
+        ],
+        json!("REPORT-CURSOR-2"),
+    );
+    let page2 = report_page(
+        vec![report_summary("run-c", "blocked", json!("BLOCKED"))],
+        json!(null),
+    );
+    let served1 = page1.clone();
+    let served2 = page2.clone();
+    let fixture = MemoryFixture::start(Box::new(move |_method, path, query| {
+        if path != "/v1/reports" {
+            return (
+                404,
+                "application/json",
+                br#"{"error":"not_found","message":"no route"}"#.to_vec(),
+            );
+        }
+        match query_map(query).get("cursor").cloned().as_deref() {
+            None => (200, "application/json", json_body(&served1)),
+            Some("REPORT-CURSOR-2") => (200, "application/json", json_body(&served2)),
+            _ => (
+                400,
+                "application/json",
+                br#"{"error":"bad_request","message":"invalid report query or cursor"}"#.to_vec(),
+            ),
+        }
+    }));
+
+    let mut mcp = McpChild::spawn(&fixture.base(), Some(TEST_TOKEN), &[]);
+    mcp.handshake();
+
+    // Initial form: from/to/phase/outcome/limit forwarded exactly — nothing else.
+    let result = mcp.call_tool(
+        "list_reports",
+        json!({ "from": 1000, "to": 2000, "phase": "finished", "outcome": "OK", "limit": 2 }),
+    );
+    assert_ne!(result["isError"], json!(true), "{result}");
+    let recorded = fixture.wait_for_requests(1, Duration::from_secs(10));
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].method, "GET");
+    assert_eq!(recorded[0].path, "/v1/reports");
+    assert_eq!(
+        query_map(&recorded[0].query),
+        params(&[
+            ("from", "1000"),
+            ("to", "2000"),
+            ("phase", "finished"),
+            ("outcome", "OK"),
+            ("limit", "2"),
+        ]),
+        "the initial query forwards exactly the documented parameters"
+    );
+
+    let text = first_text(&result);
+    let page: Value = serde_json::from_str(&text).expect("tool text is the page JSON");
+    assert_eq!(page, page1, "the whole structured page is preserved");
+    assert_eq!(page["next_cursor"], json!("REPORT-CURSOR-2"));
+    assert!(text.contains("\"next_cursor\": \"REPORT-CURSOR-2\""));
+    // List rows carry the summary only — no saved Markdown/evidence arrays.
+    assert!(
+        page["items"][0].get("result").is_none(),
+        "list rows omit result: {text}"
+    );
+    assert!(page["items"][0].get("markdown").is_none());
+    assert!(page["items"][0].get("frame_ids").is_none());
+    assert_eq!(page["items"][0]["phase"], "finished");
+    assert_eq!(page["items"][0]["outcome"], json!("OK"));
+    assert_eq!(page["items"][1]["outcome"], json!(null));
+    assert_eq!(page["items"][0]["revision_of"], json!(null));
+    assert_eq!(
+        fixture.requests().len(),
+        1,
+        "no auto-drain after a cursor-bearing page"
+    );
+
+    // Continuation form: only cursor + limit are forwarded.
+    let result = mcp.call_tool(
+        "list_reports",
+        json!({ "cursor": "REPORT-CURSOR-2", "limit": 50 }),
+    );
+    assert_ne!(result["isError"], json!(true), "{result}");
+    let recorded = fixture.wait_for_requests(2, Duration::from_secs(10));
+    assert_eq!(recorded.len(), 2);
+    assert_eq!(
+        query_map(&recorded[1].query),
+        params(&[("cursor", "REPORT-CURSOR-2"), ("limit", "50")]),
+        "a continuation forwards the cursor and limit only"
+    );
+    let text = first_text(&result);
+    let page: Value = serde_json::from_str(&text).expect("tool text is the page JSON");
+    assert_eq!(page, page2, "the terminal page is preserved");
+    assert!(text.contains("\"next_cursor\": null"));
+    assert_eq!(fixture.requests().len(), 2, "exactly one page per call");
+
+    assert_eq!(mcp.close_and_wait(), 0);
+}
+
+/// `get_report` returns the full public detail unmodified: the saved Markdown byte-for-byte,
+/// the full summarized frame-id union (>200, never a citation-cap substitute), generation-time
+/// session provenance, a saved result exposed while the run is still queued, an explicit
+/// `result: null` when nothing is saved, and a factual stored NO_DATA result.
+#[test]
+fn get_report_preserves_full_saved_result_and_provenance() {
+    let saved = saved_report();
+    let expected_finished =
+        report_detail("run-finished", "finished", json!("PARTIAL"), saved.clone());
+    // A saved result is exposed immediately even while the run/delivery is still queued.
+    let expected_queued = report_detail("run-queued", "queued", json!(null), saved.clone());
+    // No saved result -> an explicit, present `result: null` (never generated prose).
+    let expected_null = report_detail("run-null", "running", json!(null), json!(null));
+    // A stored NO_DATA run keeps its factual saved result.
+    let expected_no_data = report_detail(
+        "run-nodata",
+        "finished",
+        json!("NO_DATA"),
+        no_data_saved_report(),
+    );
+    let served_finished = expected_finished.clone();
+    let served_queued = expected_queued.clone();
+    let served_null = expected_null.clone();
+    let served_no_data = expected_no_data.clone();
+    let fixture = MemoryFixture::start(Box::new(move |_method, path, _query| {
+        let body = match path {
+            "/v1/reports/run-finished" => Some(served_finished.clone()),
+            "/v1/reports/run-queued" => Some(served_queued.clone()),
+            "/v1/reports/run-null" => Some(served_null.clone()),
+            "/v1/reports/run-nodata" => Some(served_no_data.clone()),
+            _ => None,
+        };
+        match body {
+            Some(body) => (200, "application/json", json_body(&body)),
+            None => (
+                404,
+                "application/json",
+                br#"{"error":"not_found","message":"no saved report for run"}"#.to_vec(),
+            ),
+        }
+    }));
+
+    let mut mcp = McpChild::spawn(&fixture.base(), Some(TEST_TOKEN), &[]);
+    mcp.handshake();
+
+    // Full saved result: Markdown byte-exact, >200 evidence ids, provenance, counts, nulls.
+    let result = mcp.call_tool("get_report", json!({ "run_id": "run-finished" }));
+    assert_ne!(result["isError"], json!(true), "{result}");
+    let recorded = fixture.wait_for_requests(1, Duration::from_secs(10));
+    assert_eq!(recorded[0].method, "GET");
+    assert_eq!(recorded[0].path, "/v1/reports/run-finished");
+    let text = first_text(&result);
+    let detail: Value = serde_json::from_str(&text).expect("tool text is the detail JSON");
+    assert_eq!(detail, expected_finished, "the whole detail is preserved");
+    assert_eq!(
+        detail["result"]["markdown"],
+        json!("# Weekly recall\n\nBody line one.\nBody line two with a `code` span.\n"),
+        "Markdown preserved byte-for-byte"
+    );
+    assert_eq!(detail["result"]["frame_ids"].as_array().unwrap().len(), 250);
+    assert!(
+        detail["result"]["frame_ids"].as_array().unwrap().len() > 200,
+        "the full summarized frame-id union is kept, not a 200-item citation cap"
+    );
+    assert_eq!(
+        detail["result"]["session_ids"].as_array().unwrap().len(),
+        12
+    );
+    assert_eq!(
+        detail["result"]["cited_frame_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        200
+    );
+    assert_eq!(detail["result"]["model"], "qwen2.5-7b-instruct");
+    assert_eq!(detail["result"]["frames_sampled"], json!(250));
+    assert_eq!(detail["result"]["passes"], json!(2));
+    assert_eq!(detail["result"]["truncated"], json!(false));
+    assert_eq!(detail["revision_of"], json!(null));
+    assert_eq!(detail["error_code"], json!(null));
+    assert!(text.contains("\"markdown\""));
+
+    // A saved result is exposed while the run is still queued (delivery phase never hides it).
+    let queued = mcp.call_tool("get_report", json!({ "run_id": "run-queued" }));
+    assert_ne!(queued["isError"], json!(true), "{queued}");
+    let queued_detail: Value =
+        serde_json::from_str(&first_text(&queued)).expect("queued detail JSON");
+    assert_eq!(queued_detail["phase"], "queued");
+    assert!(
+        queued_detail["result"].is_object(),
+        "a queued run exposes its saved result: {queued}"
+    );
+    assert_eq!(
+        queued_detail["result"]["frame_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        250
+    );
+
+    // No saved result -> an explicit, present `result: null`.
+    let null_result = mcp.call_tool("get_report", json!({ "run_id": "run-null" }));
+    assert_ne!(null_result["isError"], json!(true), "{null_result}");
+    let null_text = first_text(&null_result);
+    let null_detail: Value = serde_json::from_str(&null_text).expect("null detail JSON");
+    assert!(
+        null_detail.get("result").is_some(),
+        "the result key is present"
+    );
+    assert_eq!(null_detail["result"], json!(null));
+    assert!(null_text.contains("\"result\": null"));
+
+    // A stored NO_DATA run keeps its factual saved result.
+    let no_data = mcp.call_tool("get_report", json!({ "run_id": "run-nodata" }));
+    assert_ne!(no_data["isError"], json!(true), "{no_data}");
+    let no_data_detail: Value =
+        serde_json::from_str(&first_text(&no_data)).expect("no_data detail JSON");
+    assert_eq!(no_data_detail["outcome"], "NO_DATA");
+    assert!(
+        no_data_detail["result"].is_object(),
+        "NO_DATA keeps its factual saved result, not null: {no_data}"
+    );
+    assert_eq!(no_data_detail["result"]["frame_ids"], json!([]));
+    assert!(no_data_detail["result"]["markdown"]
+        .as_str()
+        .unwrap()
+        .contains("No screen activity"));
+
+    assert_eq!(mcp.close_and_wait(), 0);
+}
+
+/// A `run_id` is an opaque string and must be encoded as exactly one URL path segment: a
+/// slash, question mark, hash or percent (or space/backslash) can never add a path segment,
+/// start a query string, start a fragment, or introduce a percent-escape.
+#[test]
+fn get_report_encodes_run_id_as_one_url_segment() {
+    let served = report_detail("opaque", "finished", json!("OK"), json!(null));
+    let fixture = MemoryFixture::start(Box::new(move |_method, path, _query| {
+        if path.starts_with("/v1/reports/") {
+            (200, "application/json", json_body(&served))
+        } else {
+            (
+                404,
+                "application/json",
+                br#"{"error":"not_found","message":"no route"}"#.to_vec(),
+            )
+        }
+    }));
+
+    let mut mcp = McpChild::spawn(&fixture.base(), Some(TEST_TOKEN), &[]);
+    mcp.handshake();
+
+    let cases = [
+        ("a/b", "/v1/reports/a%2Fb"),
+        ("a?b", "/v1/reports/a%3Fb"),
+        ("a#b", "/v1/reports/a%23b"),
+        ("a%b", "/v1/reports/a%25b"),
+        ("a b", "/v1/reports/a%20b"),
+        ("a\\b", "/v1/reports/a%5Cb"),
+    ];
+    for (run_id, expected_path) in cases {
+        let result = mcp.call_tool("get_report", json!({ "run_id": run_id }));
+        assert_ne!(result["isError"], json!(true), "{run_id}: {result}");
+        let recorded = fixture.requests();
+        let last = recorded.last().expect("a request was recorded");
+        assert_eq!(last.method, "GET", "{run_id}");
+        assert_eq!(
+            last.path, expected_path,
+            "run_id {run_id:?} must be one encoded path segment"
+        );
+        assert_eq!(
+            last.query, "",
+            "run_id {run_id:?} must not introduce a query"
+        );
+    }
+
+    // A multi-character hostile id stays one segment end to end.
+    let hostile = "run/with?special#chars%2Fand space";
+    let result = mcp.call_tool("get_report", json!({ "run_id": hostile }));
+    assert_ne!(result["isError"], json!(true), "{result}");
+    let recorded = fixture.requests();
+    let last = recorded.last().unwrap();
+    assert_eq!(
+        last.path,
+        "/v1/reports/run%2Fwith%3Fspecial%23chars%252Fand%20space"
+    );
+    assert_eq!(last.query, "");
+    assert_eq!(recorded.len(), cases.len() + 1);
+
+    assert_eq!(mcp.close_and_wait(), 0);
+}
+
+/// The `run_id` is carried as exactly one URL path segment. The degenerate ids that cannot be
+/// represented as one segment — `.`, `..` and the empty string — are rejected locally with
+/// ZERO HTTP requests: percent-encoding their dots does not survive `reqwest`'s URL re-parse
+/// (it normalizes `%2E` back to a dot segment and then drops it), so any such workaround would
+/// silently retarget the request at `/v1/reports/` or `/v1/` — a different endpoint. Ids that
+/// merely *contain* dots stay literal single segments, and a valid id's served error is
+/// preserved (never masked by the local rejection).
+#[test]
+fn get_report_rejects_unrepresentable_dot_ids_before_http() {
+    let served = report_detail("a.b", "finished", json!("OK"), json!(null));
+    let fixture = MemoryFixture::start(Box::new(move |_method, path, _query| {
+        if path == "/v1/reports/broken" {
+            return (
+                500,
+                "application/json",
+                br#"{"error":"internal","message":"report store read failed"}"#.to_vec(),
+            );
+        }
+        if path.starts_with("/v1/reports/") {
+            (200, "application/json", json_body(&served))
+        } else {
+            (
+                404,
+                "application/json",
+                br#"{"error":"not_found","message":"no route"}"#.to_vec(),
+            )
+        }
+    }));
+
+    let mut mcp = McpChild::spawn(&fixture.base(), Some(TEST_TOKEN), &[]);
+    mcp.handshake();
+
+    // Unrepresentable ids: a local isError and no HTTP request at all.
+    for run_id in [".", "..", ""] {
+        let result = mcp.call_tool("get_report", json!({ "run_id": run_id }));
+        assert_eq!(result["isError"], json!(true), "{run_id:?}: {result}");
+        let message = first_text(&result);
+        assert!(
+            message.contains("run_id"),
+            "{run_id:?}: the message names the argument: {message}"
+        );
+        assert!(
+            !message.contains("enable the API") && !message.contains("not responding"),
+            "{run_id:?}: a local rejection is not an API-off error: {message}"
+        );
+    }
+    thread::sleep(Duration::from_millis(150));
+    assert_eq!(
+        fixture.requests().len(),
+        0,
+        "unrepresentable ids must be rejected before any HTTP: {:#?}",
+        fixture.requests()
+    );
+
+    // Ids that merely contain dots are representable and stay literal single segments.
+    for (run_id, expected_path) in [
+        ("a.b", "/v1/reports/a.b"),
+        ("...", "/v1/reports/..."),
+        (".hidden", "/v1/reports/.hidden"),
+        ("a/../b", "/v1/reports/a%2F..%2Fb"),
+    ] {
+        let result = mcp.call_tool("get_report", json!({ "run_id": run_id }));
+        assert_ne!(result["isError"], json!(true), "{run_id:?}: {result}");
+        let recorded = fixture.requests();
+        let last = recorded.last().expect("a request was recorded");
+        assert_eq!(last.method, "GET", "{run_id:?}");
+        assert_eq!(
+            last.path, expected_path,
+            "run_id {run_id:?} must reach one literal encoded segment"
+        );
+        assert_eq!(last.query, "", "{run_id:?} must not introduce a query");
+    }
+
+    // A valid id's served failure is preserved, not masked by the local rejection.
+    let result = mcp.call_tool("get_report", json!({ "run_id": "broken" }));
+    assert_eq!(result["isError"], json!(true), "{result}");
+    assert!(
+        first_text(&result).contains("internal"),
+        "{}",
+        first_text(&result)
+    );
+    let recorded = fixture.requests();
+    assert_eq!(recorded.last().unwrap().path, "/v1/reports/broken");
+
+    assert_eq!(mcp.close_and_wait(), 0);
+}
+
+/// Local validation (JSON types, the initial/continuation combination, the limit bound and
+/// the 4096-byte cursor cap) fails before any HTTP; enum membership and window ordering stay
+/// the API's to judge, so a bogus phase/outcome or an inverted window is forwarded and its
+/// own 400 surfaces as the tool error.
+#[test]
+fn list_reports_local_validation_and_api_authoritative_enum_and_interval() {
+    let fixture = MemoryFixture::start(Box::new(|_method, path, query| {
+        if path == "/v1/reports" {
+            let recorded = query_map(query);
+            let bogus = recorded.get("phase").map(String::as_str) == Some("bogus")
+                || recorded.get("outcome").map(String::as_str) == Some("bogus")
+                || recorded.get("from").map(String::as_str) == Some("5");
+            if bogus {
+                return (
+                    400,
+                    "application/json",
+                    br#"{"error":"bad_request","message":"invalid report query or cursor"}"#
+                        .to_vec(),
+                );
+            }
+            return (
+                200,
+                "application/json",
+                json_body(&report_page(vec![], json!(null))),
+            );
+        }
+        (
+            400,
+            "application/json",
+            br#"{"error":"bad_request","message":"invalid report query or cursor"}"#.to_vec(),
+        )
+    }));
+
+    let mut mcp = McpChild::spawn(&fixture.base(), Some(TEST_TOKEN), &[]);
+    mcp.handshake();
+
+    // Local client errors — none of these may reach the API.
+    let local: Vec<(Value, &str)> = vec![
+        (json!({}), "missing required integer argument `from`"),
+        (
+            json!({ "from": 1 }),
+            "missing required integer argument `to`",
+        ),
+        (
+            json!({ "from": 1, "to": 2, "cursor": "c" }),
+            "cannot be combined with `cursor`",
+        ),
+        (
+            json!({ "cursor": "c", "phase": "finished" }),
+            "cannot be combined with `cursor`",
+        ),
+        (
+            json!({ "cursor": "c", "outcome": "OK" }),
+            "cannot be combined with `cursor`",
+        ),
+        (
+            json!({ "from": 1, "to": 2, "limit": 0 }),
+            "between 1 and 1000",
+        ),
+        (
+            json!({ "from": 1, "to": 2, "limit": 1001 }),
+            "between 1 and 1000",
+        ),
+        (json!({ "from": "1", "to": 2 }), "`from` must be an integer"),
+        (
+            json!({ "from": 1, "to": 2, "limit": "10" }),
+            "`limit` must be an integer",
+        ),
+        (
+            json!({ "from": 1, "to": 2, "phase": 7 }),
+            "`phase` must be a string",
+        ),
+        (
+            json!({ "from": 1, "to": 2, "outcome": 7 }),
+            "`outcome` must be a string",
+        ),
+        (
+            json!({ "from": 1, "to": 2, "cursor": 7 }),
+            "`cursor` must be a string",
+        ),
+    ];
+    for (args, needle) in local {
+        let result = mcp.call_tool("list_reports", args.clone());
+        assert_eq!(result["isError"], json!(true), "{args}: {result}");
+        let message = first_text(&result);
+        assert!(message.contains(needle), "{args}: {message}");
+        assert!(
+            !message.contains("bad_request"),
+            "{args}: local validation must not call the API: {message}"
+        );
+    }
+
+    // The 4096-byte cursor cap is validated locally, before any HTTP.
+    let oversized = "x".repeat(4097);
+    let result = mcp.call_tool("list_reports", json!({ "cursor": oversized }));
+    assert_eq!(result["isError"], json!(true), "{result}");
+    assert!(
+        first_text(&result).contains("4096"),
+        "{}",
+        first_text(&result)
+    );
+
+    thread::sleep(Duration::from_millis(150));
+    assert_eq!(
+        fixture.requests().len(),
+        0,
+        "locally rejected calls must not reach the API: {:#?}",
+        fixture.requests()
+    );
+
+    // Enum membership and window ordering are the API's to judge: a bogus phase/outcome or
+    // an inverted window is forwarded, and the API's own 400 surfaces as the tool error.
+    for args in [
+        json!({ "from": 1, "to": 2, "phase": "bogus" }),
+        json!({ "from": 1, "to": 2, "outcome": "bogus" }),
+        json!({ "from": 5, "to": 1 }),
+    ] {
+        let result = mcp.call_tool("list_reports", args.clone());
+        assert_eq!(result["isError"], json!(true), "{args}: {result}");
+        assert!(
+            first_text(&result).contains("bad_request"),
+            "{args}: {}",
+            first_text(&result)
+        );
+    }
+    let recorded = fixture.wait_for_requests(3, Duration::from_secs(10));
+    assert_eq!(recorded.len(), 3, "{recorded:?}");
+    assert_eq!(
+        query_map(&recorded[0].query),
+        params(&[("from", "1"), ("to", "2"), ("phase", "bogus")]),
+        "the rejected phase was forwarded unmodified"
+    );
+    assert_eq!(
+        query_map(&recorded[1].query),
+        params(&[("from", "1"), ("to", "2"), ("outcome", "bogus")])
+    );
+    assert_eq!(
+        query_map(&recorded[2].query),
+        params(&[("from", "5"), ("to", "1")]),
+        "the inverted window was forwarded unmodified"
+    );
+
+    assert_eq!(mcp.close_and_wait(), 0);
+}
+
+/// The report read routes surface served failures as guided tool errors — a missing/pruned
+/// detail (404) and store/feed failures (500/503) — never as empty data, NO_DATA or the
+/// API-off guidance.
+#[test]
+fn report_read_errors_404_500_503_surface_as_tool_errors() {
+    let fixture = MemoryFixture::start(Box::new(|_method, path, _query| match path {
+        "/v1/reports" => (
+            503,
+            "application/json",
+            br#"{"error":"unavailable","message":"report feed not ready"}"#.to_vec(),
+        ),
+        "/v1/reports/missing" => (
+            404,
+            "application/json",
+            br#"{"error":"not_found","message":"no saved report for run"}"#.to_vec(),
+        ),
+        "/v1/reports/broken" => (
+            500,
+            "application/json",
+            br#"{"error":"internal","message":"report store read failed"}"#.to_vec(),
+        ),
+        _ => (
+            404,
+            "application/json",
+            br#"{"error":"not_found","message":"no route"}"#.to_vec(),
+        ),
+    }));
+
+    let mut mcp = McpChild::spawn(&fixture.base(), Some(TEST_TOKEN), &[]);
+    mcp.handshake();
+
+    let cases = [
+        (
+            "list_reports",
+            json!({ "from": 1, "to": 2 }),
+            "503",
+            "unavailable",
+        ),
+        (
+            "get_report",
+            json!({ "run_id": "missing" }),
+            "404",
+            "not_found",
+        ),
+        (
+            "get_report",
+            json!({ "run_id": "broken" }),
+            "500",
+            "internal",
+        ),
+    ];
+    for (tool, args, status, code) in cases {
+        let result = mcp.call_tool(tool, args.clone());
+        assert_eq!(result["isError"], json!(true), "{tool} {args}: {result}");
+        let message = first_text(&result);
+        assert!(message.contains(code), "{tool} ({status}): {message}");
+        assert!(
+            !message.contains("enable the API"),
+            "{tool} ({status}): a served error is not API-off: {message}"
+        );
+        assert!(
+            !message.contains("not responding"),
+            "{tool} ({status}): a served error is not unreachable: {message}"
+        );
+    }
+
+    assert_eq!(mcp.close_and_wait(), 0);
 }

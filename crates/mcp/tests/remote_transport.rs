@@ -353,6 +353,8 @@ async fn read_only_mode_is_an_explicit_allowlist_at_listing_and_dispatch() {
             "get_moment",
             "list_frames",
             "get_capture_coverage",
+            "list_reports",
+            "get_report",
             "where_was_i",
             "list_marks",
             "list_sessions",
@@ -368,22 +370,21 @@ async fn read_only_mode_is_an_explicit_allowlist_at_listing_and_dispatch() {
         .filter(|name| mcp::tools::is_read_tool(name))
         .collect();
     assert_eq!(names, expected);
-    assert_eq!(all.as_array().unwrap().len(), 11);
+    assert_eq!(all.as_array().unwrap().len(), 13);
 
     // The predicate is explicit and default-deny: a name that is not classified as a read
     // (a known mutator, Ask, or a tool added later) is not a read tool.
     assert!(mcp::tools::is_read_tool("search_screen_history"));
     assert!(mcp::tools::is_read_tool("list_frames"));
     assert!(mcp::tools::is_read_tool("get_capture_coverage"));
+    assert!(mcp::tools::is_read_tool("list_reports"));
+    assert!(mcp::tools::is_read_tool("get_report"));
     for name in [
         "add_mark",
         "ask_screen_history",
         "ask_session",
         "future_tool",
         "search_everything",
-        // P3 report tools are not registered yet, so they are not read-allowed.
-        "list_reports",
-        "get_report",
     ] {
         assert!(!mcp::tools::is_read_tool(name), "{name}");
     }
@@ -395,7 +396,6 @@ async fn read_only_mode_is_an_explicit_allowlist_at_listing_and_dispatch() {
         "ask_screen_history",
         "ask_session",
         "future_tool",
-        "list_reports",
     ] {
         let result = mcp::tools::call(
             &client,
@@ -411,7 +411,7 @@ async fn read_only_mode_is_an_explicit_allowlist_at_listing_and_dispatch() {
     }
 
     // Normal mode keeps the retained behavior: unknown names are protocol errors (-32602),
-    // and the full eleven-tool listing is unchanged.
+    // and the full thirteen-tool listing is unchanged.
     let normal = ApiClient::new(base, Some("token".into())).unwrap();
     let resp = mcp::tools::call(
         &normal,
@@ -422,7 +422,7 @@ async fn read_only_mode_is_an_explicit_allowlist_at_listing_and_dispatch() {
     assert_eq!(resp["error"]["code"], -32602, "{resp}");
     assert_eq!(
         mcp::tools::definitions_for(false).as_array().unwrap().len(),
-        11
+        13
     );
 
     // No request reached the API for any call above.
@@ -786,7 +786,7 @@ async fn proxy_environment_is_not_used_for_json_image_and_sse_paths() {
     let init = mcp.handshake();
     assert_eq!(init["protocolVersion"], "2025-06-18");
     let listed = mcp.request("tools/list", json!({}));
-    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 11);
+    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 13);
 
     // JSON path.
     let search = mcp.call_tool("search_screen_history", json!({ "query": "proxy probe" }));

@@ -1,4 +1,4 @@
-//! The eleven MCP tools and their dispatch to the local API.
+//! The thirteen MCP tools and their dispatch to the local API.
 //!
 //! Each tool maps to one HTTP endpoint (`docs/API.md`). Tool results are pretty-printed
 //! JSON text blocks — full fidelity for the calling model — plus, for `get_moment`, an
@@ -29,7 +29,7 @@ impl ToolError {
     }
 }
 
-/// The eleven tool definitions, in listing order. One source of truth for `tools/list` and
+/// The thirteen tool definitions, in listing order. One source of truth for `tools/list` and
 /// dispatch, so a name can never drift between them.
 pub fn definitions() -> Value {
     json!([
@@ -112,6 +112,40 @@ pub fn definitions() -> Value {
                     "to": { "type": "integer", "description": "End (exclusive) of the half-open window, unix epoch ms." }
                 },
                 "required": ["from", "to"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "list_reports",
+            "title": "List saved reports",
+            "description": "One newest-first page of the user's saved recall reports whose run window overlaps the half-open UTC window [from, to). Optionally filter by the run's current phase and/or its stored outcome. Each row is the run's public summary — metadata, phase, outcome and error code only; the saved Markdown and evidence arrays are omitted (use get_report for the full saved result). To continue, pass the returned next_cursor back with only an optional limit; the window, filters and ordering tuple are frozen inside the cursor. Reads work with schedules off and never generate, queue, retry or deliver a run. Local data only — served by the ScreenSearch app on the configured API endpoint.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "from": { "type": "integer", "description": "Start of the half-open window [from, to), unix epoch ms. Required for the first page." },
+                    "to": { "type": "integer", "description": "End (exclusive) of the half-open window, unix epoch ms. Required for the first page." },
+                    "phase": { "type": "string", "enum": ["queued", "running", "blocked", "finished"], "description": "Optional filter on the run's current phase (forwarded literally; the API enforces membership)." },
+                    "outcome": { "type": "string", "enum": ["OK", "PARTIAL", "NO_DATA", "BLOCKED", "FAILED"], "description": "Optional filter on the run's stored outcome (forwarded literally; the API enforces membership)." },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "description": "Max report rows per page (default 100, max 1000)." },
+                    "cursor": { "type": "string", "description": "Opaque next_cursor from a previous page; continues that page's frozen window and filters. Only limit may accompany it." }
+                },
+                "anyOf": [
+                    { "required": ["from", "to"] },
+                    { "required": ["cursor"] }
+                ],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "get_report",
+            "title": "Get a saved report",
+            "description": "Fetch one saved recall report's full public projection by its opaque run_id: the summary metadata plus the immutable saved result (Markdown, model, summarized and cited frame ids, session provenance and coverage counts) whenever one has been stored — the saved output is exposed whenever it exists, regardless of the run's delivery phase. A missing or pruned run is a not_found error; nothing is regenerated. Local data only — served by the ScreenSearch app on the configured API endpoint.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "run_id": { "type": "string", "description": "The opaque run identity from list_reports (or a known run id). Treated as an opaque string, never an integer." }
+                },
+                "required": ["run_id"],
                 "additionalProperties": false
             }
         },
@@ -200,6 +234,8 @@ pub fn is_read_tool(name: &str) -> bool {
             | "get_moment"
             | "list_frames"
             | "get_capture_coverage"
+            | "list_reports"
+            | "get_report"
             | "where_was_i"
             | "list_marks"
             | "list_sessions"
@@ -240,6 +276,8 @@ pub async fn call(client: &ApiClient, id: Value, params: Value) -> Value {
         "get_moment" => get_moment(client, &args).await,
         "list_frames" => list_frames(client, &args).await,
         "get_capture_coverage" => get_capture_coverage(client, &args).await,
+        "list_reports" => list_reports(client, &args).await,
+        "get_report" => get_report(client, &args).await,
         "where_was_i" => where_was_i(client).await,
         "list_marks" => list_marks(client).await,
         "add_mark" => add_mark(client, &args).await,
@@ -594,6 +632,135 @@ fn build_coverage_query(args: &Value) -> Result<Vec<(&'static str, String)>, Too
     Ok(vec![("from", from.to_string()), ("to", to.to_string())])
 }
 
+/// The `limit` bound for report listing (`03 §7f.5`/§7f.6: "defaults/limits/errors match frame
+/// listing"). The MCP validates this existing bound locally; ordering and the rest stay with
+/// the API.
+const REPORTS_MAX_LIMIT: i64 = 1000;
+
+/// The cursor byte cap (`03 §7f.5`/§7f.6: the frame-listing 4096-byte bound also applies to
+/// report cursors). Validated locally, before any HTTP, as "validate maximum input size before
+/// decoding" requires.
+const CURSOR_MAX_BYTES: usize = 4096;
+
+/// `list_reports` — one newest-first page of saved recall reports (`GET /v1/reports`,
+/// `03 §7f.5`). The structured page is returned unmodified: list rows carry only the public
+/// summary (no saved Markdown/evidence arrays), `next_cursor` is preserved exactly (including
+/// the terminal `null`), and a read never generates, queues, retries or delivers a run.
+async fn list_reports(client: &ApiClient, args: &Value) -> Result<Vec<Value>, ToolError> {
+    let params = build_reports_query(args)?;
+    let page = client
+        .get_json("/v1/reports", &params)
+        .await
+        .map_err(ToolError::Api)?;
+    Ok(vec![text_block(pretty(&page))])
+}
+
+/// `get_report` — the full public projection of one saved report (`GET /v1/reports/{run_id}`,
+/// `03 §7f.5`). The detail is returned verbatim (full saved Markdown, provenance, explicit
+/// nulls); a missing/pruned run surfaces the API's own 404 and is never regenerated.
+async fn get_report(client: &ApiClient, args: &Value) -> Result<Vec<Value>, ToolError> {
+    let run_id = require_str(args, "run_id")?;
+    reject_unrepresentable_run_id(&run_id)?;
+    let path = format!("/v1/reports/{}", encode_path_segment(&run_id));
+    let detail = client.get_json(&path, &[]).await.map_err(ToolError::Api)?;
+    Ok(vec![text_block(pretty(&detail))])
+}
+
+/// Builds the `GET /v1/reports` query (`03 §7f.5`). The initial form is required `from`+`to`
+/// with optional `phase`/`outcome`/`limit`; the continuation form is `cursor` with an optional
+/// `limit` only — the window, filters and ordering tuple are frozen inside the cursor, and
+/// mixing a cursor with them is a client error.
+///
+/// The MCP validates JSON argument types, the initial/continuation combination, the limit
+/// bound and the cursor byte cap locally. Enum membership (`phase`/`outcome`) and window
+/// ordering stay with the API, which returns the authoritative 400 — the values are forwarded
+/// as literal strings, never inspected or reinterpreted here.
+fn build_reports_query(args: &Value) -> Result<Vec<(&'static str, String)>, ToolError> {
+    let limit = optional_integer(args, "limit")?;
+    if let Some(limit) = limit {
+        if !(1..=REPORTS_MAX_LIMIT).contains(&limit) {
+            return Err(ToolError::Input(format!(
+                "`limit` must be between 1 and {REPORTS_MAX_LIMIT}"
+            )));
+        }
+    }
+    if let Some(cursor) = optional_string(args, "cursor")? {
+        // Validate maximum input size before the API would decode it (`03 §7f.6`).
+        if cursor.len() > CURSOR_MAX_BYTES {
+            return Err(ToolError::Input(format!(
+                "`cursor` exceeds the {CURSOR_MAX_BYTES}-byte limit"
+            )));
+        }
+        for key in ["from", "to", "phase", "outcome"] {
+            if args.get(key).is_some_and(|v| !v.is_null()) {
+                return Err(ToolError::Input(format!(
+                    "`{key}` cannot be combined with `cursor` — a continuation carries the \
+                     frozen window and filters; pass only `limit` alongside `cursor`"
+                )));
+            }
+        }
+        let mut params: Vec<(&'static str, String)> = vec![("cursor", cursor)];
+        if let Some(limit) = limit {
+            params.push(("limit", limit.to_string()));
+        }
+        return Ok(params);
+    }
+    let from = require_integer(args, "from")?;
+    let to = require_integer(args, "to")?;
+    let mut params: Vec<(&'static str, String)> =
+        vec![("from", from.to_string()), ("to", to.to_string())];
+    if let Some(phase) = optional_string(args, "phase")? {
+        params.push(("phase", phase));
+    }
+    if let Some(outcome) = optional_string(args, "outcome")? {
+        params.push(("outcome", outcome));
+    }
+    if let Some(limit) = limit {
+        params.push(("limit", limit.to_string()));
+    }
+    Ok(params)
+}
+
+/// Encodes an opaque `run_id` as exactly one URL path segment, using the URL crate that
+/// `reqwest` already re-exports (`reqwest::Url` — no new dependency). Pushing a segment makes
+/// the crate percent-encode `/`, `?`, `#`, `%`, space, backslash and other delimiters, so an
+/// unusual or hostile id can never add a path segment, start a query or a fragment, or
+/// introduce an escape: the request always stays on `/v1/reports/{one segment}`. The id is
+/// never parsed, coerced or otherwise interpreted — only its URL representation is encoded.
+///
+/// The caller must first reject the ids this cannot represent
+/// ([`reject_unrepresentable_run_id`]): the URL crate normalizes a bare `.`/`..` segment away
+/// and drops a trailing empty segment, so pushing one of those would silently collapse the
+/// request onto a different endpoint.
+fn encode_path_segment(run_id: &str) -> String {
+    let mut url = reqwest::Url::parse("http://localhost/").expect("static base URL parses");
+    url.path_segments_mut()
+        .expect("http URL supports path segments")
+        .push(run_id);
+    url.path().trim_start_matches('/').to_string()
+}
+
+/// Rejects the `run_id` values that cannot be carried as exactly one URL path segment.
+///
+/// `.`, `..` and the empty string are not representable: the URL crate removes a bare dot
+/// segment and a trailing empty segment while parsing, so the request would silently collapse
+/// onto `/v1/reports/` (the collection route) or `/v1/` — a *different* endpoint than the id
+/// names. Percent-encoding the dots does not help: `reqwest` re-parses the assembled URL and
+/// normalizes `%2E` back to a dot segment before sending (verified against the real wire). The
+/// id is opaque, so no substitute spelling is invented — the unrepresentable id is a local
+/// input error, raised before any HTTP. Every other id (including ones that merely *contain*
+/// dots) is preserved literally by [`encode_path_segment`].
+fn reject_unrepresentable_run_id(run_id: &str) -> Result<(), ToolError> {
+    if run_id.is_empty() || run_id == "." || run_id == ".." {
+        return Err(ToolError::Input(
+            "`run_id` must be a non-empty opaque id that is not `.` or `..` — it is carried \
+             as a single URL path segment"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// A required JSON integer argument (UTC ms). Absent, `null` or a non-integer value — e.g. a
 /// numeric string or a float — is a client error; the value is never coerced.
 fn require_integer(args: &Value, key: &str) -> Result<i64, ToolError> {
@@ -660,7 +827,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exactly_eleven_tools_with_object_schemas() {
+    fn exactly_thirteen_tools_with_object_schemas() {
         let defs = definitions();
         let arr = defs.as_array().unwrap();
         let names: Vec<&str> = arr.iter().map(|t| t["name"].as_str().unwrap()).collect();
@@ -672,6 +839,8 @@ mod tests {
                 "get_moment",
                 "list_frames",
                 "get_capture_coverage",
+                "list_reports",
+                "get_report",
                 "where_was_i",
                 "list_marks",
                 "add_mark",
@@ -719,6 +888,22 @@ mod tests {
         assert_eq!(
             by_name("get_capture_coverage")["inputSchema"]["required"],
             json!(["from", "to"])
+        );
+        // list_reports mirrors list_frames: no unconditional required set (from+to for the
+        // first page, a cursor for a continuation — expressed via anyOf).
+        assert!(by_name("list_reports")["inputSchema"]
+            .get("required")
+            .is_none());
+        assert_eq!(
+            by_name("list_reports")["inputSchema"]["anyOf"],
+            json!([
+                { "required": ["from", "to"] },
+                { "required": ["cursor"] }
+            ])
+        );
+        assert_eq!(
+            by_name("get_report")["inputSchema"]["required"],
+            json!(["run_id"])
         );
         // add_mark has no required field (frame_id omitted => capture now).
         assert!(by_name("add_mark")["inputSchema"].get("required").is_none());
@@ -786,6 +971,8 @@ mod tests {
             "get_moment",
             "list_frames",
             "get_capture_coverage",
+            "list_reports",
+            "get_report",
             "where_was_i",
             "list_marks",
             "list_sessions",
@@ -799,9 +986,6 @@ mod tests {
             "ask_screen_history",
             "ask_session",
             "future_tool",
-            // P3 report tools are deliberately not registered yet (and so not read-allowed).
-            "list_reports",
-            "get_report",
             "",
         ] {
             assert!(!is_read_tool(name), "{name}");
@@ -819,8 +1003,8 @@ mod tests {
         for tool in read_only_defs.as_array().unwrap() {
             assert!(is_read_tool(tool["name"].as_str().unwrap()));
         }
-        // Normal mode lists every tool: all eleven.
-        assert_eq!(definitions_for(false).as_array().unwrap().len(), 11);
+        // Normal mode lists every tool: all thirteen.
+        assert_eq!(definitions_for(false).as_array().unwrap().len(), 13);
     }
 
     #[test]
@@ -852,6 +1036,34 @@ mod tests {
             "integer"
         );
         assert_eq!(coverage["inputSchema"]["additionalProperties"], false);
+
+        let reports = by_name("list_reports");
+        let rprops = &reports["inputSchema"]["properties"];
+        for key in ["from", "to", "limit"] {
+            assert_eq!(rprops[key]["type"], "integer", "list_reports.{key}");
+        }
+        for key in ["phase", "outcome", "cursor"] {
+            assert_eq!(rprops[key]["type"], "string", "list_reports.{key}");
+        }
+        assert_eq!(rprops["limit"]["minimum"], 1);
+        assert_eq!(rprops["limit"]["maximum"], 1000);
+        assert_eq!(
+            rprops["phase"]["enum"],
+            json!(["queued", "running", "blocked", "finished"])
+        );
+        assert_eq!(
+            rprops["outcome"]["enum"],
+            json!(["OK", "PARTIAL", "NO_DATA", "BLOCKED", "FAILED"])
+        );
+        assert_eq!(reports["inputSchema"]["additionalProperties"], false);
+
+        let report = by_name("get_report");
+        assert_eq!(report["inputSchema"]["required"], json!(["run_id"]));
+        assert_eq!(
+            report["inputSchema"]["properties"]["run_id"]["type"],
+            "string"
+        );
+        assert_eq!(report["inputSchema"]["additionalProperties"], false);
     }
 
     fn frames_params(args: Value) -> Vec<(&'static str, String)> {
@@ -991,6 +1203,219 @@ mod tests {
             assert!(
                 matches!(build_coverage_query(&bad), Err(ToolError::Input(_))),
                 "expected an input error for {bad}"
+            );
+        }
+    }
+
+    fn reports_params(args: Value) -> Vec<(&'static str, String)> {
+        match build_reports_query(&args) {
+            Ok(params) => params,
+            Err(e) => panic!("expected Ok for {args}, got: {}", e.message()),
+        }
+    }
+
+    fn reports_error(args: Value) -> String {
+        match build_reports_query(&args) {
+            Err(ToolError::Input(message)) => message,
+            Err(other) => panic!(
+                "expected an input error for {args}, got: {}",
+                other.message()
+            ),
+            Ok(params) => panic!("expected an input error for {args}, got {params:?}"),
+        }
+    }
+
+    #[test]
+    fn reports_query_builds_initial_and_continuation_forms() {
+        // Initial form: from+to required; phase/outcome/limit forwarded only when set.
+        assert_eq!(
+            reports_params(json!({ "from": 1000, "to": 2000 })),
+            vec![("from", "1000".to_string()), ("to", "2000".to_string())]
+        );
+        assert_eq!(
+            reports_params(json!({
+                "from": 1000,
+                "to": 2000,
+                "phase": "finished",
+                "outcome": "PARTIAL",
+                "limit": 25
+            })),
+            vec![
+                ("from", "1000".to_string()),
+                ("to", "2000".to_string()),
+                ("phase", "finished".to_string()),
+                ("outcome", "PARTIAL".to_string()),
+                ("limit", "25".to_string()),
+            ]
+        );
+        // Null filters mean "not given" — never a forwarded empty string.
+        assert_eq!(
+            reports_params(json!({ "from": 1, "to": 2, "phase": null, "outcome": null })),
+            vec![("from", "1".to_string()), ("to", "2".to_string())]
+        );
+        // Continuation form: the cursor alone, or cursor + limit only.
+        assert_eq!(
+            reports_params(json!({ "cursor": "opaque-report-1" })),
+            vec![("cursor", "opaque-report-1".to_string())]
+        );
+        assert_eq!(
+            reports_params(json!({ "cursor": "opaque-report-1", "limit": 1 })),
+            vec![
+                ("cursor", "opaque-report-1".to_string()),
+                ("limit", "1".to_string())
+            ]
+        );
+        // Enum membership is NOT decided locally: a literal value is forwarded verbatim and
+        // the API returns the authoritative 400.
+        assert_eq!(
+            reports_params(json!({ "from": 1, "to": 2, "phase": "bogus" })),
+            vec![
+                ("from", "1".to_string()),
+                ("to", "2".to_string()),
+                ("phase", "bogus".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_query_rejects_bad_types_and_mixed_forms() {
+        // Missing bounds on the initial form.
+        assert!(reports_error(json!({})).contains("`from`"));
+        assert!(reports_error(json!({ "from": 1 })).contains("`to`"));
+        // The cursor freezes window + filters: mixing them is rejected before any HTTP.
+        for mixed in [
+            json!({ "cursor": "c", "from": 1 }),
+            json!({ "cursor": "c", "to": 2 }),
+            json!({ "cursor": "c", "phase": "finished" }),
+            json!({ "cursor": "c", "outcome": "OK" }),
+        ] {
+            assert!(
+                reports_error(mixed.clone()).contains("cannot be combined with `cursor`"),
+                "{mixed}"
+            );
+        }
+        // Strict JSON types: numeric strings and floats are never coerced.
+        assert!(reports_error(json!({ "from": "1000", "to": 2000 }))
+            .contains("`from` must be an integer"));
+        assert!(reports_error(json!({ "from": 1000, "to": 2000.5 }))
+            .contains("`to` must be an integer"));
+        assert!(
+            reports_error(json!({ "from": 1000, "to": 2000, "limit": "10" }))
+                .contains("`limit` must be an integer")
+        );
+        assert!(
+            reports_error(json!({ "from": 1000, "to": 2000, "phase": 7 }))
+                .contains("`phase` must be a string")
+        );
+        assert!(
+            reports_error(json!({ "from": 1000, "to": 2000, "outcome": 7 }))
+                .contains("`outcome` must be a string")
+        );
+        assert!(
+            reports_error(json!({ "from": 1000, "to": 2000, "cursor": 7 }))
+                .contains("`cursor` must be a string")
+        );
+    }
+
+    #[test]
+    fn reports_query_limit_and_cursor_cap_match_the_contract() {
+        // 1..=1000 is the frame-listing bound the report listing inherits (`03 §7f.5`).
+        for ok in [1, 100, 1000] {
+            assert_eq!(
+                reports_params(json!({ "from": 1, "to": 2, "limit": ok })),
+                vec![
+                    ("from", "1".to_string()),
+                    ("to", "2".to_string()),
+                    ("limit", ok.to_string()),
+                ]
+            );
+        }
+        for bad in [0, -1, 1001, i64::MAX] {
+            assert!(
+                reports_error(json!({ "from": 1, "to": 2, "limit": bad }))
+                    .contains("between 1 and 1000"),
+                "limit {bad}"
+            );
+        }
+        // The 4096-byte cursor cap is validated locally, before any HTTP.
+        let at_cap = "x".repeat(4096);
+        assert_eq!(
+            reports_params(json!({ "cursor": at_cap.clone() })),
+            vec![("cursor", at_cap)]
+        );
+        let over_cap = "x".repeat(4097);
+        assert!(
+            reports_error(json!({ "cursor": over_cap })).contains("4096"),
+            "a cursor over the byte cap must be rejected locally"
+        );
+    }
+
+    #[test]
+    fn run_id_is_encoded_as_a_single_url_segment() {
+        // A slash, question mark, hash or percent can never add a path segment, start a query
+        // or a fragment, or introduce an escape.
+        assert_eq!(encode_path_segment("a/b"), "a%2Fb");
+        assert_eq!(encode_path_segment("a?b"), "a%3Fb");
+        assert_eq!(encode_path_segment("a#b"), "a%23b");
+        assert_eq!(encode_path_segment("a%b"), "a%25b");
+        assert_eq!(encode_path_segment("a b"), "a%20b");
+        assert_eq!(encode_path_segment("a\\b"), "a%5Cb");
+        assert_eq!(
+            encode_path_segment("run/with?special#chars%2Fand space"),
+            "run%2Fwith%3Fspecial%23chars%252Fand%20space"
+        );
+        // An ordinary opaque id is passed through unchanged.
+        assert_eq!(
+            encode_path_segment("4c2f0b1e-0000-4000-8000-000000000001"),
+            "4c2f0b1e-0000-4000-8000-000000000001"
+        );
+        // Dots that are not a whole `.`/`..` segment stay literal (only the exact degenerate
+        // ids are unrepresentable, and those are rejected before encoding).
+        assert_eq!(encode_path_segment("a.b"), "a.b");
+        assert_eq!(encode_path_segment("..."), "...");
+        assert_eq!(encode_path_segment(".hidden"), ".hidden");
+    }
+
+    #[test]
+    fn unrepresentable_run_ids_are_rejected_locally() {
+        // `.`, `..` and the empty string cannot be carried as exactly one URL path segment
+        // (the URL crate normalizes them away), so they are local input errors — never
+        // percent-encoded into a different identifier and never sent.
+        for bad in [".", "..", ""] {
+            assert!(
+                matches!(reject_unrepresentable_run_id(bad), Err(ToolError::Input(_))),
+                "{bad:?} must be rejected locally"
+            );
+        }
+        // Every other id — including ones that merely contain dots — is representable.
+        for ok in [
+            "a.b",
+            "...",
+            ".hidden",
+            "4c2f0b1e-0000-4000-8000-000000000001",
+            "%2E",
+        ] {
+            assert!(
+                reject_unrepresentable_run_id(ok).is_ok(),
+                "{ok:?} is a representable opaque id"
+            );
+        }
+    }
+
+    #[test]
+    fn no_generation_retry_or_delivery_tools_are_registered() {
+        let defs = definitions();
+        let names: Vec<&str> = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names.len(), 13);
+        for forbidden in ["generate", "retry", "deliver", "queue", "send"] {
+            assert!(
+                !names.iter().any(|n| n.contains(forbidden)),
+                "no {forbidden} tool may be registered: {names:?}"
             );
         }
     }

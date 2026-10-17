@@ -12,11 +12,14 @@ WHAT THIS DOES
   app.
 
   Flow: `initialize` + `tools/list` -> `get_capture_coverage` -> `list_frames` pages
-  (cursor) -> wrapper process restart + resume from the durable cursor -> `get_moment`
-  detail. The driver compares the observed frame ids, capture timestamps, full-text hashes
-  and preserved null/unknown coverage fields against an operator-supplied non-private
-  fixture manifest. It then verifies, against the same app, that an invalid token yields
-  **401** and that the read token is refused a frame mark with **403**.
+  (cursor) -> wrapper process restart + resume from the durable cursor -> `list_reports`
+  pages -> `get_report` details -> `get_moment` source-frame detail. The driver compares the
+  observed frame ids, capture timestamps, full-text hashes and preserved null/unknown coverage
+  fields against an operator-supplied non-private fixture manifest, and — when that manifest
+  carries a `reports` block — the report summaries, details, saved-result provenance arrays and
+  Markdown digest (never the Markdown text) against the same manifest. It then verifies,
+  against the same app, that an invalid token yields **401** and that the read token is
+  refused a frame mark with **403**.
 
 BOUNDARIES (why it is safe to run)
   * Stdout carries exactly one compact JSON report: status, counts, fixture ids and sha256
@@ -30,12 +33,13 @@ BOUNDARIES (why it is safe to run)
   * It touches only the private state DB and fixture manifest paths given on the CLI.
 
 ATTESTATION BOUNDARY
-  The frame-page (`list_frames`) and coverage (`get_capture_coverage`) tools match the
-  read-only tool surface; `get_moment` is the retained frame-detail tool. A successful
-  run proves the exchange with the supplied origin and expected fixture, not that the
-  origin belongs to a particular app or physical machine. The operator must independently
-  attest native Windows source, profile isolation and a direct separate-machine path.
-  No saved-report tool is exercised, and full P4 is not claimed.
+  The read-only tool surface is `list_frames`, `get_capture_coverage`, `list_reports`,
+  `get_report` (plus the retained `get_moment` source-frame detail). A successful run proves
+  the exchange with the supplied origin and expected fixture, not that the origin belongs to a
+  particular app or physical machine. The operator must independently attest native Windows
+  source, profile isolation and a direct separate-machine path. A frame-only manifest reports
+  the report step as `not_exercised`; a manifest with a `reports` block must pass every report
+  check. This driver never claims full P4.
 """
 
 from __future__ import annotations
@@ -65,6 +69,11 @@ READ_TOOL_ORDER = [
     "get_moment",
     "list_frames",
     "get_capture_coverage",
+    # P3 saved-report reads, registered immediately after coverage (03 §7f.4 line 957; the
+    # MCP writer's tools.rs enumeration places them here). Both stay read-only: they only
+    # read a stored projection and can never generate/queue/retry/deliver a run.
+    "list_reports",
+    "get_report",
     "where_was_i",
     "list_marks",
     "list_sessions",
@@ -97,6 +106,66 @@ SUPPORTED_PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 # A deliberately wrong bearer for the 401 probe: random, never the real credential.
 INVALID_TOKEN = "invalid-" + secrets.token_hex(32)
+
+# --- saved-report wire contract (03 §7f.5 / §7f.6 / §8c) --------------------
+# `ReportSummary` exact public fields, in declaration order (03 §7f.6). A list row is a
+# summary only; the saved Markdown and evidence arrays appear only in a `get_report` detail.
+REPORT_SUMMARY_FIELDS = (
+    "run_id",
+    "source_id",
+    "revision_of",
+    "requested_range",
+    "window_start",
+    "window_end",
+    "timezone",
+    "local_date",
+    "created_at",
+    "updated_at",
+    "phase",
+    "outcome",
+    "error_code",
+)
+# `ReportDetail` = all summary fields plus the optional saved result.
+REPORT_DETAIL_FIELDS = REPORT_SUMMARY_FIELDS + ("result",)
+# `ReportPage` = items + next_cursor only (no summary fields at the page level).
+REPORT_PAGE_FIELDS = ("items", "next_cursor")
+# `SavedReport` fields after the Markdown payload (03 §7f.6 / traits::SavedReport).
+SAVED_REPORT_TAIL_FIELDS = (
+    "model",
+    "frame_ids",
+    "session_ids",
+    "cited_frame_ids",
+    "frames_sampled",
+    "frames_summarized",
+    "periods_total",
+    "periods_covered",
+    "passes",
+    "truncated",
+)
+# The live detail carries `markdown`; the operator's expected detail replaces that one field
+# with its UTF-8 sha256 so no Markdown text ever has to live in the manifest or on stdout.
+SAVED_REPORT_FIELDS = ("markdown",) + SAVED_REPORT_TAIL_FIELDS
+EXPECTED_SAVED_REPORT_FIELDS = ("markdown_sha256",) + SAVED_REPORT_TAIL_FIELDS
+REPORT_PHASES = ("queued", "running", "blocked", "finished")
+REPORT_OUTCOMES = ("OK", "PARTIAL", "NO_DATA", "BLOCKED", "FAILED")
+# The exact §8c `ReportError` code allowlist (03 lines 1426-1431); anything else projects null.
+REPORT_ERROR_CODES = (
+    "INVALID_CONFIG",
+    "NOT_FOUND",
+    "BUSY",
+    "SOURCE_UNAVAILABLE",
+    "MODEL_UNAVAILABLE",
+    "STORE_ERROR",
+    "GENERATION_FAILED",
+    "FILE_CONFLICT",
+    "WRITE_FAILED",
+    "CREDENTIAL_UNAVAILABLE",
+    "DELIVERY_FAILED",
+)
+# The frame-listing 4096-byte cursor cap also bounds report cursors (03 §7f.6).
+REPORT_CURSOR_MAX_BYTES = 4096
+# Strict `YYYY-MM-DD` (local date and selected-range dates are dates, never timestamps).
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 EXIT_OK = 0
 EXIT_FAIL = 2
@@ -329,6 +398,35 @@ class Fixture:
             if len(keys) != 1:
                 raise InputError("each coverage_check needs exactly one of equals/is_null/present")
         self.coverage_checks = checks
+
+        # Optional P3 saved-report extension (freeze: independent acceptance-manifest
+        # extension). The expected rows are produced by the operator from production seed
+        # inputs and a direct read-only SQLite projection — never scraped from an API/MCP
+        # response. When the block is absent the manifest stays frame-only and the report
+        # step is reported as not_exercised, never as full P4 acceptance.
+        reports = doc.get("reports")
+        if reports is None:
+            self.reports = None
+        else:
+            if not isinstance(reports, dict):
+                raise InputError("fixture 'reports' must be an object when present")
+            summaries = reports.get("expected_summaries")
+            details = reports.get("expected_details")
+            if not isinstance(summaries, list) or not summaries:
+                raise InputError("fixture reports.expected_summaries must be a non-empty array")
+            if not isinstance(details, list) or not details:
+                raise InputError("fixture reports.expected_details must be a non-empty array")
+            if len(details) != len(summaries):
+                raise InputError(
+                    "fixture reports expected_summaries/expected_details must correspond one-to-one"
+                )
+            for entry in summaries:
+                if not isinstance(entry, dict):
+                    raise InputError("each fixture report summary must be an object")
+            for entry in details:
+                if not isinstance(entry, dict):
+                    raise InputError("each fixture report detail must be an object")
+            self.reports = {"expected_summaries": summaries, "expected_details": details}
 
         self.declared_window = doc.get("window")
         target = doc.get("post_target_frame_id")
@@ -940,6 +1038,290 @@ def apply_coverage_checks(coverage, checks):
     return results, failures
 
 
+# --------------------------------------------------------------------------- report validation
+
+
+def _fail(exc, message):
+    raise exc(message)
+
+
+def _require_exact_fields(obj, fields, what, exc: type[Exception] = ProtocolError):
+    if not isinstance(obj, dict):
+        _fail(exc, f"{what} is not an object")
+    keys = set(obj.keys())
+    want = set(fields)
+    if keys != want:
+        missing = sorted(want - keys)
+        extra = sorted(keys - want)
+        _fail(exc, f"{what} has the wrong field set (missing={missing}, extra={extra})")
+
+
+def _require_int(value, what, exc: type[Exception] = ProtocolError, minimum=None):
+    # `type(...) is int` (not isinstance) so JSON true/false is never accepted as 1/0.
+    if type(value) is not int:
+        _fail(exc, f"{what} must be an integer")
+    if minimum is not None and value < minimum:
+        _fail(exc, f"{what} must be >= {minimum}")
+    return value
+
+
+def _require_nonempty_str(value, what, exc: type[Exception] = ProtocolError):
+    if not isinstance(value, str) or value == "":
+        _fail(exc, f"{what} must be a non-empty string")
+    return value
+
+
+def _require_nullable_str(value, what, exc: type[Exception] = ProtocolError):
+    if value is not None and not isinstance(value, str):
+        _fail(exc, f"{what} must be a string or null")
+    return value
+
+
+def _normalize_requested_range(value, what, exc):
+    if value is None:
+        return None
+    _require_exact_fields(value, ("start_date", "end_date"), f"{what}.requested_range", exc)
+    for key in ("start_date", "end_date"):
+        if not isinstance(value[key], str) or not DATE_RE.fullmatch(value[key]):
+            _fail(exc, f"{what}.requested_range.{key} must be a strict YYYY-MM-DD date")
+    return {"start_date": value["start_date"], "end_date": value["end_date"]}
+
+
+def normalize_report_summary(item, start, end, exc: type[Exception] = ProtocolError):
+    """Validate one `ReportSummary` (list row) against the frozen wire contract and return it.
+
+    Exact field set, JSON types, explicit nulls, enum membership, the §8c error-code allowlist
+    and half-open window overlap (`window_start < to AND window_end > from`) are enforced. A
+    list row is a summary only, so a saved `result`/`markdown` key is rejected as a bad field.
+    """
+    _require_exact_fields(item, REPORT_SUMMARY_FIELDS, "report summary", exc)
+    run_id = _require_nonempty_str(item["run_id"], "report summary run_id", exc)
+    source_id = _require_nonempty_str(item["source_id"], "report summary source_id", exc)
+    revision_of = _require_nullable_str(item["revision_of"], "report summary revision_of", exc)
+    requested_range = _normalize_requested_range(item["requested_range"], "report summary", exc)
+    window_start = _require_int(item["window_start"], "report summary window_start", exc)
+    window_end = _require_int(item["window_end"], "report summary window_end", exc)
+    if window_start >= window_end:
+        _fail(exc, "report summary window_start must be strictly before window_end")
+    if not (window_start < end and window_end > start):
+        _fail(exc, "report summary window does not overlap the selected [from, to) window")
+    timezone = _require_nonempty_str(item["timezone"], "report summary timezone", exc)
+    local_date = item["local_date"]
+    if not isinstance(local_date, str) or not DATE_RE.fullmatch(local_date):
+        _fail(exc, "report summary local_date must be a strict YYYY-MM-DD date")
+    created_at = _require_int(item["created_at"], "report summary created_at", exc)
+    updated_at = _require_int(item["updated_at"], "report summary updated_at", exc)
+    phase = item["phase"]
+    if phase not in REPORT_PHASES:
+        _fail(exc, "report summary phase is not one of queued|running|blocked|finished")
+    outcome = item["outcome"]
+    if outcome is not None and outcome not in REPORT_OUTCOMES:
+        _fail(exc, "report summary outcome is not a known ReportOutcome")
+    error_code = item["error_code"]
+    if error_code is not None and error_code not in REPORT_ERROR_CODES:
+        _fail(exc, "report summary error_code is not in the §8c allowlist")
+    return {
+        "run_id": run_id,
+        "source_id": source_id,
+        "revision_of": revision_of,
+        "requested_range": requested_range,
+        "window_start": window_start,
+        "window_end": window_end,
+        "timezone": timezone,
+        "local_date": local_date,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "phase": phase,
+        "outcome": outcome,
+        "error_code": error_code,
+    }
+
+
+def _normalize_saved_report(result, markdown_key, what, exc):
+    _require_exact_fields(result, (markdown_key,) + SAVED_REPORT_TAIL_FIELDS, what, exc)
+    payload = result[markdown_key]
+    if not isinstance(payload, str):
+        _fail(exc, f"{what} {markdown_key} must be a string")
+    model = _require_nullable_str(result["model"], f"{what} model", exc)
+    arrays = {}
+    for key in ("frame_ids", "session_ids", "cited_frame_ids"):
+        value = result[key]
+        if not isinstance(value, list) or any(type(x) is not int for x in value):
+            _fail(exc, f"{what} {key} must be an array of integers")
+        arrays[key] = list(value)
+    counts = {
+        key: _require_int(result[key], f"{what} {key}", exc, minimum=0)
+        for key in (
+            "frames_sampled",
+            "frames_summarized",
+            "periods_total",
+            "periods_covered",
+            "passes",
+        )
+    }
+    truncated = result["truncated"]
+    if not isinstance(truncated, bool):
+        _fail(exc, f"{what} truncated must be a boolean")
+    return {markdown_key: payload, "model": model, **arrays, **counts, "truncated": truncated}
+
+
+def normalize_saved_report(result, exc: type[Exception] = ProtocolError):
+    """Validate the live `SavedReport` (a detail `result`) and return it with the real Markdown."""
+    return _normalize_saved_report(result, "markdown", "saved report", exc)
+
+
+def normalize_report_detail(detail, start, end, exc: type[Exception] = ProtocolError):
+    """Validate one live `ReportDetail` (all summary fields + `result`) and return it."""
+    _require_exact_fields(detail, REPORT_DETAIL_FIELDS, "report detail", exc)
+    summary = normalize_report_summary(
+        {key: detail[key] for key in REPORT_SUMMARY_FIELDS}, start, end, exc
+    )
+    result = detail["result"]
+    normalized = dict(summary)
+    normalized["result"] = None if result is None else normalize_saved_report(result, exc)
+    return normalized
+
+
+def normalize_expected_report_detail(detail, start, end, exc: type[Exception] = InputError):
+    """Validate one manifest `expected_details` entry (its result uses `markdown_sha256`)."""
+    _require_exact_fields(detail, REPORT_DETAIL_FIELDS, "expected report detail", exc)
+    summary = normalize_report_summary(
+        {key: detail[key] for key in REPORT_SUMMARY_FIELDS}, start, end, exc
+    )
+    result = detail["result"]
+    normalized = dict(summary)
+    if result is None:
+        normalized["result"] = None
+    else:
+        normalized["result"] = _normalize_saved_report(
+            result, "markdown_sha256", "expected saved report", exc
+        )
+    return normalized
+
+
+def verify_report_page(page, start, end):
+    """Validate a `ReportPage` (`items` + explicit `next_cursor`) and return (items, cursor).
+
+    Items must be strictly descending by `(created_at, run_id)`; a non-terminal cursor must be
+    a non-empty string within the 4096-byte cap.
+    """
+    _require_exact_fields(page, REPORT_PAGE_FIELDS, "report page")
+    next_cursor = page["next_cursor"]
+    if next_cursor is not None:
+        if not isinstance(next_cursor, str) or next_cursor == "":
+            raise ProtocolError("report page next_cursor must be a non-empty string or null")
+        if len(next_cursor.encode("utf-8")) > REPORT_CURSOR_MAX_BYTES:
+            raise ProtocolError("report page next_cursor exceeds the 4096-byte cap")
+    items = page["items"]
+    if not isinstance(items, list):
+        raise ProtocolError("report page items is not an array")
+    normalized = [normalize_report_summary(item, start, end) for item in items]
+    previous = None
+    for summary in normalized:
+        key = (summary["created_at"], summary["run_id"])
+        if previous is not None and key >= previous:
+            raise ProtocolError(
+                "report page items are not strictly descending by (created_at, run_id)"
+            )
+        previous = key
+    return normalized, next_cursor
+
+
+def normalize_expected_reports(block, start, end, known_frame_ids):
+    """Validate the manifest `reports` block and return `(expected_summaries, expected_details)`.
+
+    Both arrays are validated against the frozen public DTOs; they must correspond one-to-one by
+    `run_id`, be unique and descending by `(created_at, run_id)`, and at least one saved result
+    must reference a frame also present in the frame fixture so the report -> source-frame-detail
+    chain can be resolved.
+    """
+    expected_summaries = [
+        normalize_report_summary(entry, start, end, exc=InputError)
+        for entry in block["expected_summaries"]
+    ]
+    expected_details = [
+        normalize_expected_report_detail(entry, start, end) for entry in block["expected_details"]
+    ]
+    summary_ids = [s["run_id"] for s in expected_summaries]
+    detail_ids = [d["run_id"] for d in expected_details]
+    if summary_ids != detail_ids:
+        raise InputError(
+            "fixture reports expected_details must correspond one-to-one (same run_id order) as "
+            "expected_summaries"
+        )
+    if len(set(summary_ids)) != len(summary_ids):
+        raise InputError("fixture reports expected_summaries has a duplicate run_id")
+    keys = [(s["created_at"], s["run_id"]) for s in expected_summaries]
+    if any(keys[i] <= keys[i + 1] for i in range(len(keys) - 1)):
+        raise InputError(
+            "fixture reports expected_summaries must be in descending (created_at, run_id) order"
+        )
+    saved_frames = [
+        fid
+        for detail in expected_details
+        if detail["result"] is not None
+        for fid in detail["result"]["frame_ids"]
+    ]
+    if not any(fid in known_frame_ids for fid in saved_frames):
+        raise InputError(
+            "fixture reports must reference at least one saved frame that is also present in "
+            "'frames', so the report -> source-frame-detail chain can be resolved"
+        )
+    return expected_summaries, expected_details
+
+
+def compare_report_detail(observed, expected, mismatches):
+    """Compare one observed `ReportDetail` to its manifest expectation (Markdown via digest).
+
+    Only field names, ids, counts and hashes are ever recorded — never the Markdown text.
+    """
+    run_id = expected["run_id"]
+    for field in REPORT_SUMMARY_FIELDS:
+        if observed[field] != expected[field]:
+            mismatches.append(
+                {
+                    "run_id": run_id,
+                    "field": field,
+                    "expected": expected[field],
+                    "observed": observed[field],
+                }
+            )
+    expected_result = expected["result"]
+    observed_result = observed["result"]
+    if (expected_result is None) != (observed_result is None):
+        mismatches.append(
+            {
+                "run_id": run_id,
+                "field": "result.present",
+                "expected_present": expected_result is not None,
+                "observed_present": observed_result is not None,
+            }
+        )
+        return
+    if expected_result is None:
+        return
+    for field in SAVED_REPORT_TAIL_FIELDS:
+        if observed_result[field] != expected_result[field]:
+            mismatches.append(
+                {
+                    "run_id": run_id,
+                    "field": f"result.{field}",
+                    "expected": expected_result[field],
+                    "observed": observed_result[field],
+                }
+            )
+    observed_digest = sha256_hex(observed_result["markdown"])
+    if observed_digest != expected_result["markdown_sha256"]:
+        mismatches.append(
+            {
+                "run_id": run_id,
+                "field": "result.markdown_sha256",
+                "expected_sha256": expected_result["markdown_sha256"],
+                "observed_sha256": observed_digest,
+            }
+        )
+
+
 # --------------------------------------------------------------------------- HTTP probes
 
 
@@ -999,8 +1381,22 @@ def new_report():
         "counts": {},
         "ids": {},
         "hashes": {"coverage_sha256": None, "pages": [], "details": []},
+        "reports": {
+            "pages": 0,
+            "summaries": 0,
+            "details": 0,
+            "saved_results": 0,
+            "null_results": 0,
+            "queued_running_with_saved": 0,
+            "phases": {},
+            "outcomes": {},
+            "summary_sha256": None,
+            "page_sha256": [],
+            "detail_sha256": [],
+            "chain_source_frame_id": None,
+        },
         "checks": {},
-        "p3_reports": "blocked: no report routes registered",
+        "p3_reports": "unknown",
         "p4_full": "not_claimed",
         "native_app_attestation": "operator-supplied origin (driver cannot itself attest the target)",
         "actual_cross_machine_run": "not_performed",
@@ -1048,6 +1444,24 @@ def run(args, report):
             "fixture window does not match --from/--to",
         )
     _require(1 <= args.limit <= 1000, "--limit must be within 1..=1000")
+    _require(1 <= args.report_page_size <= 1000, "--report-page-size must be within 1..=1000")
+
+    # The optional report extension is validated up front against the same window and frame
+    # fixture, so a malformed manifest fails as invalid_input before any process starts.
+    reports_present = fixture.reports is not None
+    expected_summaries = []
+    expected_details = []
+    if reports_present:
+        expected_summaries, expected_details = normalize_expected_reports(
+            fixture.reports, start, end, set(fixture.frames)
+        )
+    # Set the report-step status up front so an early failure still tells the truth about the
+    # manifest: the final roll-up overwrites this with ok/failed once the step has run.
+    report["p3_reports"] = (
+        "pending: reports block present; report step not yet executed"
+        if reports_present
+        else "not_exercised: manifest has no reports block"
+    )
 
     expected_ids = fixture.ordered_ids()
     expected_tuples = fixture.ordered_tuples()
@@ -1069,6 +1483,7 @@ def run(args, report):
     page_hashes = []
     mismatches = []
     resumed_from_cursor = False
+    exchange_observed = False
     try:
         # -- 3. handshake + tool surface ------------------------------------------
         init = client.handshake()
@@ -1099,6 +1514,7 @@ def run(args, report):
 
         # -- 4. coverage ----------------------------------------------------------
         coverage = client.tool_json("get_capture_coverage", {"from": start, "to": end})
+        exchange_observed = True
         coverage_counts = verify_coverage(coverage, start, end)
         report["hashes"]["coverage_sha256"] = sha256_hex(canonical_json_bytes(coverage))
         checks.record("coverage_shape", True, coverage_counts)
@@ -1171,28 +1587,150 @@ def run(args, report):
         )
         checks.record("frame_matches_fixture", not mismatches, {"mismatches": mismatches[:20], "count": len(mismatches)})
 
-        # -- 6. detail ------------------------------------------------------------
+        # -- 6. saved report pages + details --------------------------------------
+        # Optional P3 read surface: the frozen `list_reports`/`get_report` tools over the
+        # manifest's own UTC window. Every report check runs when the manifest carries a
+        # `reports` block; a frame-only manifest leaves the step not_exercised, never P4.
+        report_page_hashes = []
+        report_detail_hashes = []
+        report_mismatches = []
+        report_source_ids = []
+        report_phase_counts = {}
+        report_outcome_counts = {}
+        report_state = {"saved_results": 0, "null_results": 0, "queued_running_with_saved": 0}
+        report_chain_source_id = None
+        report_chain_source = None
+        if reports_present:
+            limit = args.report_page_size
+            call_args = {"from": start, "to": end, "limit": limit}
+            observed_summaries = []
+            report_pages = 0
+            terminal = False
+            last_key = None
+            previous_cursor = None
+            while True:
+                page = client.tool_json("list_reports", call_args)
+                items, next_cursor = verify_report_page(page, start, end)
+                for summary in items:
+                    key = (summary["created_at"], summary["run_id"])
+                    if last_key is not None and key >= last_key:
+                        raise ProtocolError("report rows are not strictly descending across pages")
+                    last_key = key
+                observed_summaries.extend(items)
+                report_page_hashes.append(sha256_hex(canonical_json_bytes(page)))
+                report_pages += 1
+                if next_cursor is None:
+                    terminal = True
+                    break
+                if next_cursor == previous_cursor:
+                    raise ProtocolError("report next_cursor did not advance between pages")
+                if report_pages >= args.max_pages:
+                    break
+                previous_cursor = next_cursor
+                call_args = {"cursor": next_cursor, "limit": limit}
+            checks.record(
+                "report_pages",
+                terminal and report_pages >= 1,
+                {
+                    "pages": report_pages,
+                    "summaries": len(observed_summaries),
+                    "cursor_terminal": terminal,
+                    "page_size": limit,
+                    "max_pages_hit": bool(not terminal and report_pages >= args.max_pages),
+                },
+            )
+            checks.record(
+                "report_list_matches_manifest",
+                observed_summaries == expected_summaries,
+                {"expected": len(expected_summaries), "observed": len(observed_summaries)},
+            )
+            for expected in expected_details:
+                detail = client.tool_json("get_report", {"run_id": expected["run_id"]})
+                observed = normalize_report_detail(detail, start, end)
+                compare_report_detail(observed, expected, report_mismatches)
+                report_detail_hashes.append(sha256_hex(canonical_json_bytes(detail)))
+                if observed["result"] is not None:
+                    report_state["saved_results"] += 1
+                    report_source_ids.extend(observed["result"]["frame_ids"])
+                    if observed["phase"] in ("queued", "running"):
+                        report_state["queued_running_with_saved"] += 1
+                else:
+                    report_state["null_results"] += 1
+                report_phase_counts[observed["phase"]] = (
+                    report_phase_counts.get(observed["phase"], 0) + 1
+                )
+                outcome_key = "null" if observed["outcome"] is None else observed["outcome"]
+                report_outcome_counts[outcome_key] = report_outcome_counts.get(outcome_key, 0) + 1
+            checks.record(
+                "report_details",
+                not report_mismatches,
+                {
+                    "checked": len(expected_details),
+                    "mismatches": report_mismatches[:20],
+                    "count": len(report_mismatches),
+                },
+            )
+            # A stored immutable result must stay readable regardless of delivery phase
+            # (§7f.10 resolved for acceptance). A `result.present` mismatch is exactly the
+            # "phase suppressed the stored result" failure this check guards against.
+            checks.record(
+                "report_phase_never_suppresses_result",
+                not any(m.get("field") == "result.present" for m in report_mismatches),
+                {"queued_running_with_saved": report_state["queued_running_with_saved"]},
+            )
+
+        # -- 7. detail (source frame resolved from the saved report, then the window) --
         seen_ids = [item["frame_id"] for item in received] or [int(x) for x in []]
         detail_ids = [fid for fid in expected_ids if fid in set(seen_ids)]
         if not detail_ids:
             detail_ids = expected_ids
+        if reports_present:
+            # Prefer a frame the saved result actually returned; fall back to the expected
+            # saved frames (normalize_expected_reports guarantees at least one is in the
+            # fixture) so the report -> source-frame-detail chain always resolves.
+            observed_frames = [fid for fid in report_source_ids if fid in fixture.frames]
+            expected_frames = [
+                fid
+                for detail in expected_details
+                if detail["result"] is not None
+                for fid in detail["result"]["frame_ids"]
+                if fid in fixture.frames
+            ]
+            resolvable = observed_frames or expected_frames
+            report_chain_source_id = resolvable[0]
+            report_chain_source = "observed" if observed_frames else "expected"
+            if report_chain_source_id not in detail_ids:
+                detail_ids = [report_chain_source_id] + detail_ids
         if args.detail_limit:
             detail_ids = detail_ids[: args.detail_limit]
         detail_mismatches = []
         detail_hashes = []
         image_requests = 0
+        chain_ok = False
         for fid in detail_ids:
             detail = client.tool_json("get_moment", {"frame_id": fid})
             compare_detail(detail, fixture, detail_mismatches)
             detail_hashes.append(sha256_hex(canonical_json_bytes(detail)))
+            if report_chain_source_id is not None and fid == report_chain_source_id:
+                chain_ok = True
         checks.record(
             "detail_hashes",
             not detail_mismatches,
             {"checked": len(detail_ids), "mismatches": detail_mismatches[:20], "count": len(detail_mismatches), "image_requests": image_requests},
         )
         report["hashes"]["details"] = detail_hashes
+        if reports_present:
+            checks.record(
+                "report_source_frame_detail",
+                chain_ok,
+                {
+                    "source_frame_id": report_chain_source_id,
+                    "resolved_from_saved_report": True,
+                    "source": report_chain_source,
+                },
+            )
 
-        # -- 7. permission probes -------------------------------------------------
+        # -- 8. permission probes -------------------------------------------------
         if args.probes:
             status = probe_invalid_token(origin)
             checks.record("direct_invalid_token_401", status == 401, {"status": status})
@@ -1210,7 +1748,7 @@ def run(args, report):
         client.close()
         state.close()
 
-    # -- 8. report ----------------------------------------------------------------
+    # -- 9. report ----------------------------------------------------------------
     received_ids = [item["frame_id"] for item in received]
     received_tuples = [(item["captured_at"], item["frame_id"]) for item in received]
     report["ids"] = {
@@ -1233,18 +1771,55 @@ def run(args, report):
         }
     )
 
-    # The driver performed a real MCP -> HTTP run against the operator-supplied origin, but
-    # it cannot itself attest that origin is the isolated cross-machine Windows app: that
-    # attestation stays pending the tested Windows app and the new read tools.
-    report["actual_cross_machine_run"] = "not_attested_by_driver"
-    report["native_app_attestation"] = (
-        "origin exchange completed; physical host and native-app identity require "
-        "independent operator evidence"
-    )
+    # Record the report step's own roll-up and hashes (sanitized: ids/counts/hashes only).
+    report["reports"]["pages"] = len(report_page_hashes)
+    report["reports"]["page_sha256"] = report_page_hashes
+    report["reports"]["detail_sha256"] = report_detail_hashes
+    report["reports"]["summaries"] = len(expected_summaries)
+    report["reports"]["details"] = len(expected_details)
+    report["reports"]["saved_results"] = report_state["saved_results"]
+    report["reports"]["null_results"] = report_state["null_results"]
+    report["reports"]["queued_running_with_saved"] = report_state["queued_running_with_saved"]
+    report["reports"]["phases"] = report_phase_counts
+    report["reports"]["outcomes"] = report_outcome_counts
+    report["reports"]["chain_source_frame_id"] = report_chain_source_id
+    if reports_present:
+        report["reports"]["summary_sha256"] = sha256_hex(
+            canonical_json_bytes(
+                [{key: s[key] for key in REPORT_SUMMARY_FIELDS} for s in expected_summaries]
+            )
+        )
+        report_checks = [name for name in checks.items if name.startswith("report_")]
+        report["p3_reports"] = (
+            "ok"
+            if report_checks and all(checks.items[name]["ok"] for name in report_checks)
+            else "failed"
+        )
+    else:
+        report["p3_reports"] = "not_exercised: manifest has no reports block"
+
+    # The driver performed a real MCP -> HTTP run against the operator-supplied origin, but it
+    # cannot itself attest that origin is the isolated cross-machine Windows app. The
+    # "exchange observed" wording is emitted only when the coverage read actually succeeded, so
+    # an unavailable origin never inherits a task-progress claim.
+    if exchange_observed:
+        report["actual_cross_machine_run"] = "not_attested_by_driver"
+        report["native_app_attestation"] = (
+            "origin exchange observed by the driver; physical host and native-app identity "
+            "require independent operator evidence"
+        )
+    else:
+        report["actual_cross_machine_run"] = "not_performed"
+        report["native_app_attestation"] = (
+            "not_attested: the driver did not complete an origin exchange"
+        )
     report["pending"] = [
         "Native-app isolation and a direct separate-machine path are not attested by this driver.",
-        "Saved-report tools are not exercised; their acceptance requires a separate gate.",
     ]
+    if not reports_present:
+        report["pending"].append(
+            "Saved-report tools are not exercised; their acceptance requires a separate gate."
+        )
     if checks.all_ok():
         report["status"] = "ok"
         return EXIT_OK
@@ -1267,6 +1842,13 @@ def build_parser():
     parser.add_argument("--fixture", required=True, help="non-private expected-fixture manifest (JSON)")
     parser.add_argument("--state", required=True, help="private state DB path (cursor checkpoint)")
     parser.add_argument("--limit", type=int, default=100, help="page size 1..1000 (default 100)")
+    parser.add_argument(
+        "--report-page-size",
+        dest="report_page_size",
+        type=int,
+        default=100,
+        help="saved-report page size 1..1000 (default 100); a small value forces report pagination",
+    )
     parser.add_argument("--max-pages", type=int, default=0, help="stop after N pages (0 = drain fully)")
     parser.add_argument("--restart-after", type=int, default=1, help="restart the wrapper after N pages (0 = never)")
     parser.add_argument("--detail-limit", type=int, default=0, help="verify detail for at most N frames (0 = all)")
