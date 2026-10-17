@@ -1,5 +1,38 @@
 # 05 — Build Review
 
+## 2026-10-17 — F3 G1 contract + migration (`03 §8e`)
+
+- **Scope:** `ReportRunKind` (`daily` | `weekly_synthesis`) on `ReportRun`,
+  `ReportSummary`, `ReportDetail`; forward-only `MIGRATION_V13` (`report_runs.kind TEXT NOT
+  NULL DEFAULT 'daily'`, CHECK, `(kind, created_at)` index), `LATEST_SCHEMA_VERSION = 13`;
+  `list_report_runs` kind filter; kernel `WeeklyWindow` + `weekly_window` /
+  `weekly_first_window` / `weekly_previous`; note frontmatter schema v2. No weekly engine,
+  writer, promotion, scheduler or Telegram behavior (G2–G6).
+- **Windows (tbx, Rust 1.95.0, Node 26.11.1), `04 §1c` order, branch
+  `feat/f3-g1-contract-migration` at `7e17abf`:**
+
+  ```text
+  EXIT npm ci = 0
+  EXIT npm run lint = 0
+  EXIT npm run build = 0
+  EXIT stage-mcp = 0
+  EXIT cargo fmt = 0
+  EXIT cargo clippy = 0
+  EXIT cargo build = 0
+  EXIT cargo test = 0   (62 suites, passed=1011 failed=0)
+  EXIT bindings diff = 0
+  ```
+
+  Named G1 checks observed `ok`: `migration_12_to_13_defaults_existing_runs_to_daily`,
+  `weekly_run_identity_reuses_schedule_window`, `weekly_window_handles_dst`,
+  `frontmatter_v1_still_parses`, plus `frontmatter_v2_roundtrips_for_weekly_synthesis`,
+  `unknown_frontmatter_schema_is_rejected`, `weekly_kind_reaches_summary_and_detail_projections`.
+- **Findings fixed during the pass:** first Windows run failed to compile `screensearch`
+  (daily writer missed the v2 frontmatter fields; test-only `ReportRunKind` imports tripped
+  `-D warnings`); `preserves_existing_ids` hard-coded schema 12. Fixed in `7e17abf` / `d4234e4`.
+- **Not run:** native app acceptance (`npm run dev`, isolated profile) — G1 adds no
+  user-visible behavior; native weekly acceptance belongs to G2–G5.
+
 ## 2026-10-16 — External-agent memory API P0 inventory and baseline
 
 - **Contract work:** six delegated inventories/contracts covered production inserts,

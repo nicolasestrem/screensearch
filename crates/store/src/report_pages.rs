@@ -26,16 +26,17 @@
 use rusqlite::{named_params, Connection, OptionalExtension, Row, TransactionBehavior};
 use traits::{
     HistoryReadError, MemoryReportRange, ReportDetail, ReportOutcome, ReportPageRequest,
-    ReportPosition, ReportRun, ReportRunPhase, ReportSnapshot, ReportSummary, StoredReportPage,
-    REPORT_ERROR_CODE_ALLOWLIST,
+    ReportPosition, ReportRun, ReportRunKind, ReportRunPhase, ReportSnapshot, ReportSummary,
+    StoredReportPage, REPORT_ERROR_CODE_ALLOWLIST,
 };
 
 use crate::SqliteStore;
 
 // Summary projection shared by both page statements. Columns 0..=5 are real
-// columns; 6..=12 are `json_extract` scalars from `payload` (an object/array
-// extracts as its JSON text; a JSON null extracts as SQL NULL). The payload's
-// Markdown, evidence arrays and `config_snapshot` are never read here.
+// columns, 13 is the real `kind` column (`03 §8e`); 6..=12 are `json_extract`
+// scalars from `payload` (an object/array extracts as its JSON text; a JSON null
+// extracts as SQL NULL). The payload's Markdown, evidence arrays and
+// `config_snapshot` are never read here.
 //
 // The overlap predicate is `window_start < :to AND window_end > :from` — a run's
 // `created_at` is deliberately independent of the window, so no created_at bound
@@ -53,7 +54,8 @@ const REPORT_PAGE_FIRST_SQL: &str = r#"
            json_extract(payload,'$.timezone'),
            json_extract(payload,'$.local_date'),
            json_extract(payload,'$.outcome'),
-           json_extract(payload,'$.error.code')
+           json_extract(payload,'$.error.code'),
+           kind
     FROM report_runs
     WHERE window_start < :to AND window_end > :from
       AND (:phase IS NULL OR phase = :phase)
@@ -77,7 +79,8 @@ const REPORT_PAGE_AFTER_SQL: &str = r#"
            json_extract(payload,'$.timezone'),
            json_extract(payload,'$.local_date'),
            json_extract(payload,'$.outcome'),
-           json_extract(payload,'$.error.code')
+           json_extract(payload,'$.error.code'),
+           kind
     FROM report_runs
     WHERE created_at = :after_created AND run_id < :after_run
       AND window_start < :to AND window_end > :from
@@ -91,7 +94,8 @@ const REPORT_PAGE_AFTER_SQL: &str = r#"
            json_extract(payload,'$.timezone'),
            json_extract(payload,'$.local_date'),
            json_extract(payload,'$.outcome'),
-           json_extract(payload,'$.error.code')
+           json_extract(payload,'$.error.code'),
+           kind
     FROM report_runs
     WHERE created_at < :after_created
       AND window_start < :to AND window_end > :from
@@ -142,6 +146,14 @@ fn parse_phase(value: &str) -> Option<ReportRunPhase> {
     }
 }
 
+fn parse_kind(value: &str) -> Option<ReportRunKind> {
+    match value {
+        "daily" => Some(ReportRunKind::Daily),
+        "weekly_synthesis" => Some(ReportRunKind::WeeklySynthesis),
+        _ => None,
+    }
+}
+
 fn outcome_db(value: ReportOutcome) -> &'static str {
     match value {
         ReportOutcome::Ok => "OK",
@@ -186,9 +198,12 @@ fn row_to_summary(row: &Row<'_>) -> rusqlite::Result<ReportSummary> {
     let timezone: String = row.get(9)?;
     let local_date: String = row.get(10)?;
     let error_code: Option<String> = row.get(12)?;
+    let kind_raw: String = row.get(13)?;
+    let kind = parse_kind(&kind_raw).ok_or_else(|| conversion(13, "invalid stored report kind"))?;
     Ok(ReportSummary {
         run_id: row.get(0)?,
         source_id,
+        kind,
         revision_of: row.get(7)?,
         requested_range,
         window_start: row.get(1)?,
@@ -361,6 +376,7 @@ mod tests {
             }),
             run_id: run_id.to_owned(),
             source_id: "profile".to_owned(),
+            kind: ReportRunKind::Daily,
             schedule_id: None,
             revision_of: None,
             window_start: window.0,
@@ -640,6 +656,38 @@ mod tests {
         assert!(!json.contains("schedule_id"));
     }
 
+    /// The persisted `kind` discriminator (`03 §8e`) reaches both wire projections
+    /// from the real column, for weekly and daily runs alike.
+    #[tokio::test]
+    async fn weekly_kind_reaches_summary_and_detail_projections() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let mut weekly = base_run("weekly", 20, (0, 100));
+        weekly.kind = ReportRunKind::WeeklySynthesis;
+        weekly.schedule_id = Some("schedule".into());
+        weekly.requested_range = None;
+        insert(&store, weekly).await;
+        insert(&store, base_run("daily", 10, (0, 100))).await;
+
+        let page = store.report_page(request(0, 100, 100)).await.unwrap();
+        let items: Vec<(String, ReportRunKind)> = page
+            .items
+            .iter()
+            .map(|item| (item.run_id.clone(), item.kind))
+            .collect();
+        assert_eq!(
+            items,
+            vec![
+                ("weekly".to_owned(), ReportRunKind::WeeklySynthesis),
+                ("daily".to_owned(), ReportRunKind::Daily),
+            ]
+        );
+
+        let detail = store.report_detail("weekly").await.unwrap().unwrap();
+        assert_eq!(detail.kind, ReportRunKind::WeeklySynthesis);
+        let detail = store.report_detail("daily").await.unwrap().unwrap();
+        assert_eq!(detail.kind, ReportRunKind::Daily);
+    }
+
     #[tokio::test]
     async fn detail_preserves_full_summarized_ids_and_provenance_after_source_deletion() {
         let store = SqliteStore::open_in_memory().unwrap();
@@ -819,11 +867,12 @@ mod tests {
         run.result = Some(saved("kept markdown", vec![1, 2]));
         insert(&store, run).await;
 
-        let runs = store.list_report_runs(10).await.unwrap();
+        let runs = store.list_report_runs(10, None).await.unwrap();
         assert_eq!(runs.len(), 1);
         // The legacy list still returns the full stored run (result included).
         assert_eq!(runs[0].result.as_ref().unwrap().markdown, "kept markdown");
         assert_eq!(runs[0].config_snapshot, "{\"private\":\"secret-config\"}");
+        assert_eq!(runs[0].kind, ReportRunKind::Daily);
     }
 
     #[tokio::test]

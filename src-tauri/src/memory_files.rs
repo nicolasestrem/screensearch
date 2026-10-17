@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
-use traits::{MemoryReportRange, ReportOutcome, ReportRun};
+use traits::{MemoryReportRange, ReportOutcome, ReportRun, ReportRunKind};
 
 #[derive(Debug)]
 pub struct WriteReceipt {
@@ -59,7 +59,12 @@ impl Drop for TemporaryNote {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+/// Schema-1 notes omit the v2 `kind`; it reads back as `daily` (`03 §8e`).
+fn kind_is_daily(kind: &ReportRunKind) -> bool {
+    *kind == ReportRunKind::Daily
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Frontmatter {
     #[serde(default)]
     pub requested_range: Option<MemoryReportRange>,
@@ -80,6 +85,35 @@ pub struct Frontmatter {
     pub truncated: bool,
     pub frame_ids: Vec<i64>,
     pub session_ids: Vec<i64>,
+    /// v2 (`03 §8e`): absent on schema-1 notes and read as `daily`.
+    #[serde(default, skip_serializing_if = "kind_is_daily")]
+    pub kind: ReportRunKind,
+    /// v2 (`03 §8e`): daily runs a weekly synthesis consumed; empty on schema-1 notes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub daily_run_ids: Vec<String>,
+    /// v2 (`03 §8e`): local calendar dates covered by the window; empty on schema-1 notes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub window_local_dates: Vec<String>,
+}
+
+impl Frontmatter {
+    /// A note carrying any v2 field is written as schema 2 (`03 §8e`); schema-1 notes
+    /// (existing daily notes) stay schema 1.
+    fn carries_v2_fields(&self) -> bool {
+        self.kind != ReportRunKind::Daily
+            || !self.daily_run_ids.is_empty()
+            || !self.window_local_dates.is_empty()
+    }
+
+    /// Schema number stamped at serialization, derived from the carried fields so a
+    /// note with v2 fields can never be written as schema 1.
+    fn schema_number(&self) -> u32 {
+        if self.carries_v2_fields() {
+            2
+        } else {
+            1
+        }
+    }
 }
 
 pub fn report_label(run: &ReportRun) -> String {
@@ -159,6 +193,7 @@ pub fn daily_note(run: &ReportRun, base_run_id: Option<&str>) -> anyhow::Result<
     let metadata = Frontmatter {
         requested_range: run.requested_range.clone(),
         base_run_id: base_run_id.map(str::to_owned),
+        // Stamped by `serialize_frontmatter` from the carried fields.
         schema: 1,
         run_id: run.run_id.clone(),
         source_id: run.source_id.clone(),
@@ -174,11 +209,15 @@ pub fn daily_note(run: &ReportRun, base_run_id: Option<&str>) -> anyhow::Result<
         truncated: r.truncated,
         frame_ids: ids,
         session_ids,
+        kind: run.kind,
+        // Weekly provenance fields are populated by the G3 weekly writer (`03 §8e`).
+        daily_run_ids: Vec::new(),
+        window_local_dates: Vec::new(),
     };
     // JSON flow mappings are valid YAML 1.2. This preserves scalar escaping and array types.
     let mut text = format!(
         "---\n{}\n---\n\n# {}\n\n",
-        serde_json::to_string_pretty(&metadata)?,
+        serialize_frontmatter(&metadata)?,
         report_label(run)
     );
     if status == ReportOutcome::Partial {
@@ -189,6 +228,15 @@ pub fn daily_note(run: &ReportRun, base_run_id: Option<&str>) -> anyhow::Result<
     Ok(text)
 }
 
+/// Serialize the frontmatter JSON body written between a note's `---` fences.
+/// The schema number is stamped from the carried fields (`03 §8e`): notes with v2
+/// fields are written as schema 2, schema-1 notes stay schema 1.
+pub fn serialize_frontmatter(metadata: &Frontmatter) -> anyhow::Result<String> {
+    let mut stamped = metadata.clone();
+    stamped.schema = metadata.schema_number();
+    Ok(serde_json::to_string_pretty(&stamped)?)
+}
+
 pub fn parse_frontmatter(text: &str) -> anyhow::Result<Frontmatter> {
     let body = text
         .strip_prefix("---\n")
@@ -196,7 +244,13 @@ pub fn parse_frontmatter(text: &str) -> anyhow::Result<Frontmatter> {
     let (json, _) = body
         .split_once("\n---\n")
         .ok_or_else(|| anyhow::anyhow!("incomplete frontmatter"))?;
-    Ok(serde_json::from_str(json)?)
+    let metadata: Frontmatter = serde_json::from_str(json)?;
+    anyhow::ensure!(
+        metadata.schema == 1 || metadata.schema == 2,
+        "unsupported frontmatter schema {}",
+        metadata.schema
+    );
+    Ok(metadata)
 }
 
 fn safe_parent(path: &Path, create: bool) -> Result<Option<Vec<fs::File>>, WriteFailure> {
@@ -559,6 +613,9 @@ mod tests {
             truncated: true,
             frame_ids: vec![42],
             session_ids: vec![3],
+            kind: ReportRunKind::Daily,
+            daily_run_ids: vec![],
+            window_local_dates: vec![],
         };
         let text = format!(
             "---\n{}\n---\nbody",
@@ -566,6 +623,135 @@ mod tests {
         );
         assert_eq!(parse_frontmatter(&text).unwrap(), m);
     }
+
+    /// Weekly-synthesis frontmatter fixture (`03 §8e`), Europe/Paris ISO week 2026-W42.
+    fn weekly_frontmatter() -> Frontmatter {
+        Frontmatter {
+            requested_range: None,
+            base_run_id: None,
+            schema: 2,
+            run_id: "9b1f3d4e-5a6c-4f70-8a9b-0c1d2e3f4a5b".into(),
+            source_id: "6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f".into(),
+            window_start: "2026-10-11T22:00:00+00:00".into(),
+            window_end: "2026-10-18T22:00:00+00:00".into(),
+            timezone: "Europe/Paris".into(),
+            status: ReportOutcome::Ok,
+            model: Some("ministral-3-3b-reasoning".into()),
+            frames_sampled: 40,
+            frames_summarized: 4,
+            periods_total: 7,
+            periods_covered: 7,
+            truncated: false,
+            frame_ids: vec![101, 102, 103, 104],
+            session_ids: vec![7, 8, 9],
+            kind: ReportRunKind::WeeklySynthesis,
+            daily_run_ids: vec![
+                "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d".into(),
+                "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e".into(),
+                "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f".into(),
+                "3d4e5f6a-7b8c-4d9e-8f0a-2b3c4d5e6f7a".into(),
+                "4e5f6a7b-8c9d-4e0f-9a1b-3c4d5e6f7a8b".into(),
+                "5f6a7b8c-9d0e-4f1a-8b2c-4d5e6f7a8b9c".into(),
+                "6a7b8c9d-0e1f-4a2b-9c3d-5e6f7a8b9c0d".into(),
+            ],
+            window_local_dates: vec![
+                "2026-10-12".into(),
+                "2026-10-13".into(),
+                "2026-10-14".into(),
+                "2026-10-15".into(),
+                "2026-10-16".into(),
+                "2026-10-17".into(),
+                "2026-10-18".into(),
+            ],
+        }
+    }
+
+    #[test]
+    fn frontmatter_v1_still_parses() {
+        // Verbatim schema-1 frontmatter block as the current daily writer emits it (`03 §8c`).
+        let text = r#"---
+{
+  "requested_range": null,
+  "base_run_id": null,
+  "schema": 1,
+  "run_id": "3f2b6b1e-8a4c-4c3e-9b6a-1f2e3d4c5b6a",
+  "source_id": "7c9d0e1f-2a3b-4c5d-8e9f-0a1b2c3d4e5f",
+  "window_start": "2026-10-14T22:00:00+00:00",
+  "window_end": "2026-10-15T22:00:00+00:00",
+  "timezone": "Europe/Paris",
+  "status": "OK",
+  "model": "ministral-3-3b-reasoning",
+  "frames_sampled": 12,
+  "frames_summarized": 2,
+  "periods_total": 24,
+  "periods_covered": 24,
+  "truncated": false,
+  "frame_ids": [
+    41,
+    42
+  ],
+  "session_ids": [
+    7
+  ]
+}
+---
+
+# 2026-10-15
+
+body
+"#;
+        let metadata = parse_frontmatter(text).unwrap();
+        assert_eq!(metadata.schema, 1);
+        assert_eq!(metadata.kind, ReportRunKind::Daily);
+        assert!(metadata.daily_run_ids.is_empty());
+        assert!(metadata.window_local_dates.is_empty());
+        assert_eq!(metadata.requested_range, None);
+        assert_eq!(metadata.base_run_id, None);
+        assert_eq!(metadata.run_id, "3f2b6b1e-8a4c-4c3e-9b6a-1f2e3d4c5b6a");
+        assert_eq!(metadata.source_id, "7c9d0e1f-2a3b-4c5d-8e9f-0a1b2c3d4e5f");
+        assert_eq!(metadata.window_start, "2026-10-14T22:00:00+00:00");
+        assert_eq!(metadata.window_end, "2026-10-15T22:00:00+00:00");
+        assert_eq!(metadata.timezone, "Europe/Paris");
+        assert_eq!(metadata.status, ReportOutcome::Ok);
+        assert_eq!(metadata.model.as_deref(), Some("ministral-3-3b-reasoning"));
+        assert_eq!(metadata.frames_sampled, 12);
+        assert_eq!(metadata.frames_summarized, 2);
+        assert_eq!(metadata.periods_total, 24);
+        assert_eq!(metadata.periods_covered, 24);
+        assert!(!metadata.truncated);
+        assert_eq!(metadata.frame_ids, vec![41, 42]);
+        assert_eq!(metadata.session_ids, vec![7]);
+    }
+
+    #[test]
+    fn frontmatter_v2_roundtrips_for_weekly_synthesis() {
+        let m = weekly_frontmatter();
+        let json = serialize_frontmatter(&m).unwrap();
+        assert!(json.contains("\"schema\": 2"));
+        assert!(json.contains("\"kind\": \"weekly_synthesis\""));
+        let text = format!("---\n{json}\n---\nbody");
+        assert_eq!(parse_frontmatter(&text).unwrap(), m);
+        // The schema number is stamped from the carried fields: a note carrying v2
+        // fields cannot be written as schema 1.
+        let mut stale = m.clone();
+        stale.schema = 1;
+        assert!(serialize_frontmatter(&stale)
+            .unwrap()
+            .contains("\"schema\": 2"));
+    }
+
+    #[test]
+    fn unknown_frontmatter_schema_is_rejected() {
+        let json = serialize_frontmatter(&weekly_frontmatter()).unwrap();
+        for unknown in ["0", "3", "99"] {
+            let text = format!(
+                "---\n{}\n---\nbody",
+                json.replace("\"schema\": 2", &format!("\"schema\": {unknown}"))
+            );
+            assert!(parse_frontmatter(&text).is_err());
+        }
+    }
+
     #[test]
     fn range_filenames_validate_dates_and_base_identity() {
         let range = MemoryReportRange {

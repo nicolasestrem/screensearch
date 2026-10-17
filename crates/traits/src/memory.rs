@@ -1,4 +1,5 @@
-//! Durable report and delivery contracts (`03 §8c`). No credentials are carried here.
+//! Durable report and delivery contracts (`03 §8c`; the persisted run `kind`
+//! discriminator is frozen by `03 §8e`). No credentials are carried here.
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -10,6 +11,21 @@ pub enum ReportRunPhase {
     Running,
     Blocked,
     Finished,
+}
+
+/// Which durable report lane a stored run belongs to (`03 §8e`). Deliberately
+/// distinct from the on-demand `ReportKind` (`crate::ipc`, `03 §8b`): the
+/// `weekly_synthesis` kind is the scheduled weekly layer over saved dailies and
+/// never shares its token, label or filename stem with `ReportKind::Weekly`.
+/// `Daily` is the default so pre-migration (schema 12) payloads keep
+/// deserializing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub enum ReportRunKind {
+    #[default]
+    Daily,
+    WeeklySynthesis,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -112,6 +128,10 @@ pub struct ReportRun {
     pub requested_range: Option<MemoryReportRange>,
     pub run_id: String,
     pub source_id: String,
+    /// The persisted run-kind discriminator (`03 §8e`). Defaults to `daily` for
+    /// payloads written before the schema 12 → 13 migration added the column.
+    #[serde(default)]
+    pub kind: ReportRunKind,
     pub schedule_id: Option<String>,
     pub revision_of: Option<String>,
     #[ts(type = "number")]

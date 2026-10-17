@@ -1934,6 +1934,7 @@ mod tests {
             requested_range: None,
             run_id: run_id.into(),
             source_id: "profile-fixture".into(),
+            kind: traits::ReportRunKind::Daily,
             schedule_id: None,
             revision_of: None,
             window_start,
@@ -2067,7 +2068,7 @@ mod tests {
 
         let pruned = store.prune_report_runs(now - 90 * day).await.unwrap();
         let remaining: std::collections::BTreeSet<String> = store
-            .list_report_runs(1000)
+            .list_report_runs(1000, None)
             .await
             .unwrap()
             .into_iter()
@@ -2158,6 +2159,7 @@ mod tests {
             requested_range: None,
             run_id: run_id.into(),
             source_id: "profile-fixture".into(),
+            kind: traits::ReportRunKind::Daily,
             schedule_id: None,
             revision_of: None,
             window_start,
@@ -2348,6 +2350,6 @@ mod tests {
         assert!(body.get("config_snapshot").is_none());
         server.stop().await;
         // No state mutation: still exactly the one seeded run.
-        assert_eq!(store.list_report_runs(1000).await.unwrap().len(), 1);
+        assert_eq!(store.list_report_runs(1000, None).await.unwrap().len(), 1);
     }
 }

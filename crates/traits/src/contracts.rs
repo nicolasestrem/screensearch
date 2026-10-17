@@ -265,8 +265,13 @@ pub trait Store: Send + Sync {
     async fn get_report_run(&self, _id: &str) -> Result<Option<crate::ReportRun>> {
         anyhow::bail!("durable report storage is unsupported")
     }
-    /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
-    async fn list_report_runs(&self, _limit: u32) -> Result<Vec<crate::ReportRun>> {
+    /// Durable reports (`03 §8c`); unsupported stores fail explicitly. `kind` filters
+    /// the listing on the persisted discriminator (`03 §8e`); `None` lists every kind.
+    async fn list_report_runs(
+        &self,
+        _limit: u32,
+        _kind: Option<crate::ReportRunKind>,
+    ) -> Result<Vec<crate::ReportRun>> {
         anyhow::bail!("durable report storage is unsupported")
     }
     /// Durable reports (`03 §8c`); unsupported stores fail explicitly.

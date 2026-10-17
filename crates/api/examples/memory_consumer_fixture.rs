@@ -79,9 +79,9 @@ use traits::{
     CaptureInterruptionReason, CaptureObservations, EvidenceWindow, ExportFrameRow,
     FrameContinuation, FrameDetail, FrameFilters, FramePageRequest, HistoryReadError, NewFrame,
     OcrResult, Readiness, ReportDelivery, ReportDeliveryState, ReportDestination, ReportDetail,
-    ReportError, ReportFileOwnership, ReportOutcome, ReportPageRequest, ReportRun, ReportRunPhase,
-    ResumeContext, RetentionScope, RetrievedChunk, SavedReport, SavedReportRetention, Settings,
-    Store, StoredFramePage, StoredReportPage,
+    ReportError, ReportFileOwnership, ReportOutcome, ReportPageRequest, ReportRun, ReportRunKind,
+    ReportRunPhase, ResumeContext, RetentionScope, RetrievedChunk, SavedReport,
+    SavedReportRetention, Settings, Store, StoredFramePage, StoredReportPage,
 };
 
 /// Selected window of the nonprivate fixture history: 2026-01-01T00:00:00Z for 10
@@ -708,7 +708,7 @@ impl FixtureHost {
     async fn report_state(&self) -> anyhow::Result<Value> {
         let inner = self.inner();
         let store = inner.store.as_ref();
-        let runs = store.list_report_runs(PAGE_ENUM_LIMIT).await?;
+        let runs = store.list_report_runs(PAGE_ENUM_LIMIT, None).await?;
         let pending = store.list_pending_report_runs().await?;
         let files = store.list_report_files().await?;
         let mut run_views = Vec::with_capacity(runs.len());
@@ -1184,6 +1184,7 @@ fn base_report_run(
         requested_range: None,
         run_id: run_id.to_string(),
         source_id: source_id.to_string(),
+        kind: ReportRunKind::Daily,
         schedule_id: None,
         revision_of: None,
         window_start: window.0,

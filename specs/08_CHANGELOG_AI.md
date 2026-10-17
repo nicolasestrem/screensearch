@@ -1,5 +1,15 @@
 # 08 — AI Changelog
 
+## 2026-10-17 — F3 G1: report-run kind, 12 → 13 migration, weekly window, frontmatter v2
+
+- **Change:** `ReportRunKind` on runs and `/v1/reports` projections; forward-only
+  `MIGRATION_V13` adds `report_runs.kind` (default `daily`); kernel ISO-week window helpers;
+  note frontmatter schema v2 with schema-1 compatibility.
+- **Why:** `03 §8e` G1 — freeze identity, window, kind discriminator and frontmatter before
+  the weekly engine (G2).
+- **Verification:** full `04 §1c` Windows chain on tbx at `7e17abf`, all exit 0, 1011 tests
+  passed / 0 failed; raw output in `05`. No native app acceptance (no user-visible change).
+
 ## 2026-10-17 — F3 deeper-memory contract (02 §5i, 03 §8e)
 
 - **Change:** recorded Nico's FINAL F3 deeper-memory decisions (GO, 2026-10-17; the F1-pilot

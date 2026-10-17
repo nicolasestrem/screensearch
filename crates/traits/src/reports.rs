@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     EvidenceWindow, HistoryReadError, MemoryReportRange, ReportError, ReportOutcome, ReportRun,
-    ReportRunPhase, SavedReport,
+    ReportRunKind, ReportRunPhase, SavedReport,
 };
 
 /// Whole-cursor cap for untrusted `GET /v1/reports` cursor input. The opaque
@@ -119,12 +119,15 @@ pub struct StoredReportPage {
     pub next_position: Option<ReportPosition>,
 }
 
-/// Wire summary (`03 §7f.6`) — never serialized from a stored `ReportRun`.
-/// `error_code` is allowlisted only; unknown/unallowlisted codes project as null.
+/// Wire summary (`03 §7f.6`, `kind` per `03 §8e`) — never serialized from a
+/// stored `ReportRun`. `error_code` is allowlisted only; unknown/unallowlisted
+/// codes project as null.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReportSummary {
     pub run_id: String,
     pub source_id: String,
+    /// Required persisted run kind (`03 §8e`): `daily` | `weekly_synthesis`.
+    pub kind: ReportRunKind,
     pub revision_of: Option<String>,
     pub requested_range: Option<MemoryReportRange>,
     pub window_start: i64,
@@ -144,6 +147,7 @@ impl ReportSummary {
         Self {
             run_id: run.run_id.clone(),
             source_id: run.source_id.clone(),
+            kind: run.kind,
             revision_of: run.revision_of.clone(),
             requested_range: run.requested_range.clone(),
             window_start: run.window_start,
@@ -166,6 +170,8 @@ impl ReportSummary {
 pub struct ReportDetail {
     pub run_id: String,
     pub source_id: String,
+    /// Required persisted run kind (`03 §8e`): `daily` | `weekly_synthesis`.
+    pub kind: ReportRunKind,
     pub revision_of: Option<String>,
     pub requested_range: Option<MemoryReportRange>,
     pub window_start: i64,
@@ -187,6 +193,7 @@ impl ReportDetail {
         Self {
             run_id: summary.run_id,
             source_id: summary.source_id,
+            kind: summary.kind,
             revision_of: summary.revision_of,
             requested_range: summary.requested_range,
             window_start: summary.window_start,
