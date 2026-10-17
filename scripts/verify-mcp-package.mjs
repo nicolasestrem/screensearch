@@ -43,13 +43,15 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /// Tools that must be present in the normal-mode `tools/list` (subset check only — the tool
 /// surface grows, so an exact count is deliberately never asserted). This is the current
-/// eleven-tool wrapper surface, including the chronological-read additions.
+/// wrapper surface, including chronological and saved-report reads.
 const REQUIRED_TOOLS = [
   "search_screen_history",
   "ask_screen_history",
   "get_moment",
   "list_frames",
   "get_capture_coverage",
+  "list_reports",
+  "get_report",
   "where_was_i",
   "list_marks",
   "add_mark",
@@ -65,6 +67,8 @@ const REQUIRED_READ_TOOLS = [
   "get_moment",
   "list_frames",
   "get_capture_coverage",
+  "list_reports",
+  "get_report",
   "where_was_i",
   "list_marks",
   "list_sessions",
