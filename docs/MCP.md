@@ -3,7 +3,7 @@
 `screensearch-mcp.exe` is a small [Model Context Protocol](https://modelcontextprotocol.io)
 server that lets an MCP client — **Claude Desktop**, **Claude Code**, or any other — search,
 ask about, and mark your ScreenSearch history. It is a thin **stdio** wrapper over the
-[HTTP API](https://github.com/nicolasestrem/screensearch/blob/feat/agent-memory-saved-reports/docs/API.md): it holds no data of its own and sends your bearer token to one
+[HTTP API](API.md): it holds no data of its own and sends your bearer token to one
 configured API root (loopback by default).
 
 **P2 transport is implemented and committed, but not released or integrated-app accepted:**
@@ -13,14 +13,14 @@ isolated transport worktree; that worktree's `crates/mcp/` change set is now com
 [#127](https://github.com/nicolasestrem/screensearch/pull/127)). The shipped v0.4.1 binary
 **and** the P1 bundled wrapper still carry the earlier baseline wrapper — nine tools, `--url`
 only, loopback-only validation, no read-only mode. Do not assume installing v0.4.1 supplies these new flags, tools or remote
-behavior. See [verification status](https://github.com/nicolasestrem/screensearch/blob/feat/agent-memory-saved-reports/docs/TESTING.md#external-agent-memory-api-p1p2--verification-status).
+behavior. See [verification status](TESTING.md#external-agent-memory-api-p1p2--verification-status).
 The active source repository is [nicolasestrem/screensearch](https://github.com/nicolasestrem/screensearch).
 
 > **Threat model — read this before enabling.** The application API defaults to loopback and accepts a configured IPv4/IPv6 bind address
 > using plain HTTP: any reachable token holder can read your history, and network traffic is
 > not encrypted. P2 permits deliberately configured remote HTTP/HTTPS destinations, still using
 > stdio to the MCP host; it does not expose a network MCP server. Protect client configuration
-> containing the token and review the [API network boundary](https://github.com/nicolasestrem/screensearch/blob/feat/agent-memory-saved-reports/docs/API.md). Read-only mode is not
+> containing the token and review the [API network boundary](API.md). Read-only mode is not
 > authorization; use a separately created API read token for server-enforced permissions.
 
 ## Prerequisites
@@ -148,8 +148,8 @@ bundled wrapper or any released binary, and the base API on that branch does not
 `/v1/frames` or `/v1/coverage` — the P1 routes live on `feat/agent-memory-http` — so they are
 tested separately from the P1 producer source. A current packaged-client integration against
 the real P1/P3 fixture has now passed (see verification status). Until they are released
-and integrated, use the [HTTP frame/coverage reads](https://github.com/nicolasestrem/screensearch/blob/feat/agent-memory-saved-reports/docs/API.md#chronological-frames) and the
-[reference consumer](https://github.com/nicolasestrem/screensearch/blob/feat/agent-memory-saved-reports/docs/MEMORY_CONSUMER.md) directly. Do not infer their presence from the
+and integrated, use the [HTTP frame/coverage reads](API.md#chronological-frames) and the
+[reference consumer](MEMORY_CONSUMER.md) directly. Do not infer their presence from the
 specification or from this page.
 
 **P3 report tools (`list_reports`, `get_report`) are resolved** (Nico GO, stored-presence
@@ -194,7 +194,7 @@ assumes otherwise:
 - **Full text, never truncated.** Each `list_frames` item carries the complete `raw_text`,
   `content_text` and stored `vision_description`. The MCP does not snippet, elide or summarise
   them; the page `limit` bounds rows, not response bytes, and a failure is an explicit error
-  rather than silent text loss (see the [frame contract](https://github.com/nicolasestrem/screensearch/blob/feat/agent-memory-saved-reports/docs/API.md#chronological-frames)).
+  rather than silent text loss (see the [frame contract](API.md#chronological-frames)).
 - **Client-side page size, no auto-drain.** One call returns exactly one page and its
   `next_cursor` unchanged — including the terminal `null`. The MCP never prefetches or drains
   later pages, so **the caller sets page size and decides how many pages to read**; a large page
@@ -204,7 +204,7 @@ assumes otherwise:
   `truncated`, `unavailable_before`, open (`end: null`) intervals and any fields added later
   survive unchanged. Counts describe **stored records**, not proof of capture health or of what
   the user did; an empty window is not `NO_DATA` (see the
-  [coverage contract](https://github.com/nicolasestrem/screensearch/blob/feat/agent-memory-saved-reports/docs/API.md#coverage) and the [reference consumer](https://github.com/nicolasestrem/screensearch/blob/feat/agent-memory-saved-reports/docs/MEMORY_CONSUMER.md)).
+  [coverage contract](API.md#coverage) and the [reference consumer](MEMORY_CONSUMER.md)).
 
 ### Example: asking about a past session
 
@@ -240,4 +240,4 @@ generation itself).
 | Server shows as connected but tools are missing | Confirm the `command` path points at `screensearch-mcp.exe` and restart the client. |
 
 For the underlying HTTP contract (status codes, JSON shapes, the SSE format), see
-[docs/API.md](https://github.com/nicolasestrem/screensearch/blob/feat/agent-memory-saved-reports/docs/API.md).
+[docs/API.md](API.md).
