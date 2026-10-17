@@ -34,6 +34,13 @@ fn phase(value: ReportRunPhase) -> &'static str {
         ReportRunPhase::Finished => "finished",
     }
 }
+/// The frozen `report_runs.kind` wire tokens (`03 §8e`).
+fn kind_db(value: ReportRunKind) -> &'static str {
+    match value {
+        ReportRunKind::Daily => "daily",
+        ReportRunKind::WeeklySynthesis => "weekly_synthesis",
+    }
+}
 fn state(value: ReportDeliveryState) -> &'static str {
     match value {
         ReportDeliveryState::Pending => "pending",
@@ -69,12 +76,13 @@ fn validate_run(run: &ReportRun) -> Result<()> {
 fn write_run(conn: &Connection, run: &ReportRun) -> Result<()> {
     validate_run(run)?;
     conn.execute(
-        "UPDATE report_runs SET phase=?2,updated_at=?3,payload=?4 WHERE run_id=?1",
+        "UPDATE report_runs SET phase=?2,updated_at=?3,payload=?4,kind=?5 WHERE run_id=?1",
         params![
             run.run_id,
             phase(run.phase),
             run.updated_at,
-            serde_json::to_string(run)?
+            serde_json::to_string(run)?,
+            kind_db(run.kind)
         ],
     )?;
     Ok(())
@@ -233,7 +241,7 @@ impl SqliteStore {
                 } else { None };
                 if let Some(json)=existing {return Ok(serde_json::from_str(&json)?);}
             }
-            tx.execute("INSERT INTO report_runs(run_id,schedule_id,revision_of,window_start,window_end,phase,created_at,updated_at,payload) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![run.run_id,run.schedule_id,run.revision_of,run.window_start,run.window_end,phase(run.phase),run.created_at,run.updated_at,serde_json::to_string(&run)?])?;
+            tx.execute("INSERT INTO report_runs(run_id,schedule_id,revision_of,window_start,window_end,phase,created_at,updated_at,payload,kind) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![run.run_id,run.schedule_id,run.revision_of,run.window_start,run.window_end,phase(run.phase),run.created_at,run.updated_at,serde_json::to_string(&run)?,kind_db(run.kind)])?;
             tx.commit()?;
             Ok(run)
         }).await
@@ -242,12 +250,19 @@ impl SqliteStore {
         let id = id.to_owned();
         self.with_conn(move |conn| run_at(conn, &id)).await
     }
-    pub async fn list_report_runs(&self, limit: u32) -> Result<Vec<ReportRun>> {
+    pub async fn list_report_runs(
+        &self,
+        limit: u32,
+        kind: Option<ReportRunKind>,
+    ) -> Result<Vec<ReportRun>> {
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT payload FROM report_runs ORDER BY created_at DESC,run_id DESC LIMIT ?1",
+                "SELECT payload FROM report_runs WHERE (?2 IS NULL OR kind=?2) ORDER BY created_at DESC,run_id DESC LIMIT ?1",
             )?;
-            let rows = stmt.query_map([limit.clamp(1, 1000)], |r| r.get::<_, String>(0))?;
+            let rows = stmt.query_map(
+                params![limit.clamp(1, 1000), kind.map(kind_db)],
+                |r| r.get::<_, String>(0),
+            )?;
             rows.map(|s| Ok(serde_json::from_str(&s?)?)).collect()
         })
         .await
@@ -258,6 +273,7 @@ impl SqliteStore {
                 run_at(conn, &run.run_id)?.ok_or_else(|| anyhow::anyhow!("report not found"))?;
             ensure!(
                 old.source_id == run.source_id
+                    && old.kind == run.kind
                     && old.schedule_id == run.schedule_id
                     && old.revision_of == run.revision_of
                     && old.requested_range == run.requested_range
@@ -288,8 +304,13 @@ impl SqliteStore {
             run.phase = ReportRunPhase::Running;
             run.updated_at = now;
             Ok(conn.execute(
-                "UPDATE report_runs SET phase='running',updated_at=?2,payload=?3 WHERE run_id=?1 AND phase='queued'",
-                params![run.run_id, run.updated_at, serde_json::to_string(&run)?],
+                "UPDATE report_runs SET phase='running',updated_at=?2,payload=?3,kind=?4 WHERE run_id=?1 AND phase='queued'",
+                params![
+                    run.run_id,
+                    run.updated_at,
+                    serde_json::to_string(&run)?,
+                    kind_db(run.kind)
+                ],
             )? == 1)
         })
         .await
@@ -508,6 +529,7 @@ mod tests {
         ReportRun {
             run_id: id.into(),
             source_id: "profile".into(),
+            kind: ReportRunKind::Daily,
             schedule_id: Some("schedule".into()),
             revision_of: None,
             requested_range: None,
@@ -566,7 +588,7 @@ mod tests {
         let first = store.prune_report_runs(100).await.unwrap();
         let second = store.prune_report_runs(100).await.unwrap();
         assert_eq!(first + second, 2);
-        assert!(store.list_report_runs(10).await.unwrap().is_empty());
+        assert!(store.list_report_runs(10, None).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -667,7 +689,7 @@ mod tests {
             item.created_at += index;
             store.create_report_run(item).await.unwrap();
         }
-        assert_eq!(store.list_report_runs(20).await.unwrap().len(), 20);
+        assert_eq!(store.list_report_runs(20, None).await.unwrap().len(), 20);
         assert_eq!(store.list_pending_report_runs().await.unwrap().len(), 25);
         let mut item = store.get_report_run("run-0").await.unwrap().unwrap();
         item.phase = ReportRunPhase::Finished;
@@ -763,7 +785,7 @@ mod tests {
             store.create_report_run(third).await.unwrap().run_id,
             "explicit-after-legacy"
         );
-        assert_eq!(store.list_report_runs(10).await.unwrap().len(), 5);
+        assert_eq!(store.list_report_runs(10, None).await.unwrap().len(), 5);
 
         let mut changed = explicit.clone();
         changed.requested_range.as_mut().unwrap().end_date = "1970-01-02".into();
@@ -824,7 +846,7 @@ mod tests {
         let created = store.create_report_run(retried).await.unwrap();
         assert_eq!(created.run_id, "previous-day-requeued");
         assert_eq!(created.phase, ReportRunPhase::Queued);
-        assert_eq!(store.list_report_runs(10).await.unwrap().len(), 2);
+        assert_eq!(store.list_report_runs(10, None).await.unwrap().len(), 2);
 
         let mut concurrent = created.clone();
         concurrent.run_id = "previous-day-concurrent".into();
@@ -863,6 +885,101 @@ mod tests {
         let mut changed = first;
         changed.window_end += 1;
         assert!(store.update_report_run(changed).await.is_err());
+    }
+    /// A weekly synthesis run is identified by `(schedule_id, window)` exactly like a daily
+    /// run (`03 §8e`): the same schedule + window reuses the stored run, `kind` is not a
+    /// deduplication dimension, and runs of either kind with different windows coexist and
+    /// stay separable by the listing filter.
+    #[tokio::test]
+    async fn weekly_run_identity_reuses_schedule_window() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let mut weekly = run("weekly-run");
+        weekly.kind = ReportRunKind::WeeklySynthesis;
+        let first = store.create_report_run(weekly).await.unwrap();
+        assert_eq!(first.run_id, "weekly-run");
+        assert_eq!(first.kind, ReportRunKind::WeeklySynthesis);
+
+        // Same (schedule_id, window): the existing unique key reuses the stored run.
+        let mut duplicate = run("weekly-duplicate");
+        duplicate.kind = ReportRunKind::WeeklySynthesis;
+        let duplicate = store.create_report_run(duplicate).await.unwrap();
+        assert_eq!(duplicate.run_id, first.run_id);
+        assert_eq!(duplicate.kind, ReportRunKind::WeeklySynthesis);
+
+        // `kind` is not a deduplication dimension: the unchanged partial unique key still
+        // rejects a raw insert for the same schedule + window, whatever kind it carries.
+        store
+            .with_conn(|conn| {
+                assert!(
+                    conn.execute(
+                        "INSERT INTO report_runs(run_id,schedule_id,revision_of,window_start,window_end,phase,created_at,updated_at,payload,kind) \
+                         VALUES('raw-daily','schedule',NULL,0,86400000,'queued',1,1,'{}','daily')",
+                        [],
+                    )
+                    .is_err(),
+                    "the unchanged (schedule_id, window) unique key must still conflict"
+                );
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        // A daily run and a weekly run for different windows coexist, each persisting its
+        // own kind through the real writer.
+        let mut daily = run("daily-run");
+        daily.window_start = 86400000;
+        daily.window_end = 2 * 86400000;
+        assert_eq!(
+            store.create_report_run(daily).await.unwrap().kind,
+            ReportRunKind::Daily
+        );
+        let mut next_week = run("weekly-next");
+        next_week.kind = ReportRunKind::WeeklySynthesis;
+        next_week.window_start = 7 * 86400000;
+        next_week.window_end = 8 * 86400000;
+        assert_eq!(
+            store.create_report_run(next_week).await.unwrap().kind,
+            ReportRunKind::WeeklySynthesis
+        );
+
+        // Read back through the store: kinds survive the payload round-trip...
+        assert_eq!(
+            store
+                .get_report_run("weekly-run")
+                .await
+                .unwrap()
+                .unwrap()
+                .kind,
+            ReportRunKind::WeeklySynthesis
+        );
+        assert_eq!(
+            store
+                .get_report_run("daily-run")
+                .await
+                .unwrap()
+                .unwrap()
+                .kind,
+            ReportRunKind::Daily
+        );
+        // ...and the listing filter separates them.
+        let mut weekly_ids: Vec<String> = store
+            .list_report_runs(10, Some(ReportRunKind::WeeklySynthesis))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.run_id)
+            .collect();
+        weekly_ids.sort();
+        assert_eq!(weekly_ids, vec!["weekly-next", "weekly-run"]);
+        let daily_ids: Vec<String> = store
+            .list_report_runs(10, Some(ReportRunKind::Daily))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.run_id)
+            .collect();
+        assert_eq!(daily_ids, vec!["daily-run"]);
+        assert_eq!(store.list_report_runs(10, None).await.unwrap().len(), 3);
     }
     #[tokio::test]
     async fn interrupted_run_is_recoverable_and_unknown_send_is_not_retried() {

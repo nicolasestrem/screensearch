@@ -1,6 +1,8 @@
 //! Pure calendar scheduling: fixed IANA zones, explicit UTC windows, no wall-clock side effects.
 use anyhow::{bail, Context, Result};
-use chrono::{DateTime, Days, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{
+    DateTime, Datelike, Days, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+};
 use chrono_tz::Tz;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,6 +17,16 @@ pub struct DailyWindow {
 pub struct ScheduleDue {
     pub windows: Vec<DailyWindow>,
     pub gap: Option<(i64, i64)>,
+}
+
+/// Explicit UTC `[start, end)` window of one ISO week (`03 §8e`), with the `YYYY-Www`
+/// label and the fire time on the Monday that closes the week.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeeklyWindow {
+    pub start: i64,
+    pub end: i64,
+    pub label: String,
+    pub due_at: i64,
 }
 
 pub fn validate(timezone: &str, local_time: &str) -> Result<(Tz, NaiveTime)> {
@@ -228,11 +240,80 @@ pub fn due_windows(
     Ok(ScheduleDue { windows, gap })
 }
 
+/// Monday of the ISO week containing `date`.
+fn week_start(date: NaiveDate) -> Result<NaiveDate> {
+    date.checked_sub_days(Days::new(u64::from(date.weekday().num_days_from_monday())))
+        .context("calendar overflow")
+}
+
+/// ISO-week window (`03 §8e`): Monday 00:00 → next Monday 00:00 local, resolved with
+/// the shared DST rules (missing wall time → first valid instant; ambiguous → earlier
+/// instant once), so DST-shortened/lengthened weeks are 167/169-hour windows, never
+/// 24·7 UTC hours. `due_at` is the selected local time on the Monday that closes the
+/// week, mirroring the daily fire rule.
+fn week_window(zone: Tz, time: NaiveTime, monday: NaiveDate) -> Result<WeeklyWindow> {
+    let next_monday = monday
+        .checked_add_days(Days::new(7))
+        .context("calendar overflow")?;
+    let week = monday.iso_week();
+    Ok(WeeklyWindow {
+        start: resolve(zone, monday.and_time(NaiveTime::MIN))?,
+        end: resolve(zone, next_monday.and_time(NaiveTime::MIN))?,
+        due_at: resolve(zone, next_monday.and_time(time))?,
+        label: format!("{}-W{:02}", week.year(), week.week()),
+    })
+}
+
+/// The ISO-week window containing `date` (`03 §8e`): the run-identity window
+/// `[week_start, week_end)` for a weekly synthesis run, labelled `YYYY-Www`.
+pub fn weekly_window(timezone: &str, local_time: &str, date: NaiveDate) -> Result<WeeklyWindow> {
+    let (zone, time) = validate(timezone, local_time)?;
+    week_window(zone, time, week_start(date)?)
+}
+
+/// First eligible scheduled window (`03 §8e`): the first complete ISO week starting at
+/// or after activation; a partial activation week is never scheduled.
+pub fn weekly_first_window(
+    timezone: &str,
+    local_time: &str,
+    activated_at: i64,
+) -> Result<WeeklyWindow> {
+    let (zone, time) = validate(timezone, local_time)?;
+    let mut monday = week_start(utc(activated_at)?.with_timezone(&zone).date_naive())?;
+    if resolve(zone, monday.and_time(NaiveTime::MIN))? < activated_at {
+        monday = monday
+            .checked_add_days(Days::new(7))
+            .context("calendar overflow")?;
+    }
+    week_window(zone, time, monday)
+}
+
+/// The most recent complete ISO week at `now` (`03 §8e`, Run now): the last week whose
+/// close has passed, regardless of the configured fire time.
+pub fn weekly_previous(timezone: &str, now: i64) -> Result<WeeklyWindow> {
+    let zone = timezone.parse::<Tz>().context("unknown IANA time zone")?;
+    let monday = week_start(utc(now)?.with_timezone(&zone).date_naive())?
+        .checked_sub_days(Days::new(7))
+        .context("calendar overflow")?;
+    week_window(zone, NaiveTime::MIN, monday)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     fn stamp(s: &str) -> i64 {
         DateTime::parse_from_rfc3339(s).unwrap().timestamp_millis()
+    }
+    fn ymd(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+    fn local_stamp(zone: Tz, y: i32, m: u32, d: u32, h: u32, min: u32) -> i64 {
+        zone.from_local_datetime(
+            &ymd(y, m, d).and_time(NaiveTime::from_hms_opt(h, min, 0).unwrap()),
+        )
+        .single()
+        .expect("test instants are unambiguous")
+        .timestamp_millis()
     }
     #[test]
     fn daily_window_handles_dst() {
@@ -420,5 +501,154 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(local_day_grid("Not/AZone", start, end, 31).is_err());
+    }
+
+    #[test]
+    fn weekly_window_handles_dst() {
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        let new_york: Tz = "America/New_York".parse().unwrap();
+
+        // Europe/Paris spring-forward week (2026-W13, transition 2026-03-29): 167 h.
+        let short = weekly_window("Europe/Paris", "08:00", ymd(2026, 3, 25)).unwrap();
+        assert_eq!(short.label, "2026-W13");
+        assert_eq!(short.start, local_stamp(paris, 2026, 3, 23, 0, 0));
+        assert_eq!(short.end, local_stamp(paris, 2026, 3, 30, 0, 0));
+        assert_eq!(short.end - short.start, 167 * 3_600_000);
+        assert_eq!(short.due_at, local_stamp(paris, 2026, 3, 30, 8, 0));
+
+        // Europe/Paris fall-back week (2026-W43, transition 2026-10-25): 169 h.
+        let long = weekly_window("Europe/Paris", "08:00", ymd(2026, 10, 19)).unwrap();
+        assert_eq!(long.label, "2026-W43");
+        assert_eq!(long.start, local_stamp(paris, 2026, 10, 19, 0, 0));
+        assert_eq!(long.end, local_stamp(paris, 2026, 10, 26, 0, 0));
+        assert_eq!(long.end - long.start, 169 * 3_600_000);
+        assert_eq!(long.due_at, local_stamp(paris, 2026, 10, 26, 8, 0));
+
+        // The same transitions in America/New_York: 2026-W10 is 167 h, 2026-W44 is 169 h.
+        let short_us = weekly_window("America/New_York", "08:00", ymd(2026, 3, 8)).unwrap();
+        assert_eq!(short_us.label, "2026-W10");
+        assert_eq!(short_us.start, local_stamp(new_york, 2026, 3, 2, 0, 0));
+        assert_eq!(short_us.end, local_stamp(new_york, 2026, 3, 9, 0, 0));
+        assert_eq!(short_us.end - short_us.start, 167 * 3_600_000);
+        let long_us = weekly_window("America/New_York", "08:00", ymd(2026, 11, 1)).unwrap();
+        assert_eq!(long_us.label, "2026-W44");
+        assert_eq!(long_us.start, local_stamp(new_york, 2026, 10, 26, 0, 0));
+        assert_eq!(long_us.end, local_stamp(new_york, 2026, 11, 2, 0, 0));
+        assert_eq!(long_us.end - long_us.start, 169 * 3_600_000);
+
+        // A week without a transition is 24 × 7 h.
+        let normal = weekly_window("Europe/Paris", "08:00", ymd(2026, 1, 5)).unwrap();
+        assert_eq!(normal.label, "2026-W02");
+        assert_eq!(normal.start, local_stamp(paris, 2026, 1, 5, 0, 0));
+        assert_eq!(normal.end, local_stamp(paris, 2026, 1, 12, 0, 0));
+        assert_eq!(normal.end - normal.start, 168 * 3_600_000);
+
+        // ISO-year boundary: 2026 has 53 ISO weeks; 2027-01-01 still belongs to
+        // 2026-W53, and the week of Monday 2027-01-04 is 2027-W01.
+        let w53 = weekly_window("Europe/Paris", "08:00", ymd(2027, 1, 1)).unwrap();
+        assert_eq!(w53.label, "2026-W53");
+        assert_eq!(w53.start, local_stamp(paris, 2026, 12, 28, 0, 0));
+        assert_eq!(w53.end, local_stamp(paris, 2027, 1, 4, 0, 0));
+        let w01 = weekly_window("Europe/Paris", "08:00", ymd(2027, 1, 4)).unwrap();
+        assert_eq!(w01.label, "2027-W01");
+        assert_eq!(w01.start, w53.end);
+        // The 2020-W53 case: the week of Monday 2020-12-28 also runs into 2021.
+        let w53_2020 = weekly_window("Europe/Paris", "08:00", ymd(2020, 12, 31)).unwrap();
+        assert_eq!(w53_2020.label, "2020-W53");
+        assert_eq!(w53_2020.start, local_stamp(paris, 2020, 12, 28, 0, 0));
+        assert_eq!(w53_2020.end, local_stamp(paris, 2021, 1, 4, 0, 0));
+
+        // Any local date in the week labels the week: 2026-10-17 is 2026-W42.
+        let current = weekly_window("Europe/Paris", "08:00", ymd(2026, 10, 17)).unwrap();
+        assert_eq!(current.label, "2026-W42");
+        assert_eq!(current.start, local_stamp(paris, 2026, 10, 12, 0, 0));
+        assert_eq!(current.end, local_stamp(paris, 2026, 10, 19, 0, 0));
+    }
+
+    #[test]
+    fn weekly_window_resolves_gap_and_overlap_week_starts() {
+        let casablanca: Tz = "Africa/Casablanca".parse().unwrap();
+        // 2009-06-01 00:00–00:59 local was skipped (+00 → +01): the week start is the
+        // first valid instant, 01:00 (+01), and the previous week ends exactly there.
+        let missing = ymd(2009, 6, 1).and_time(NaiveTime::MIN);
+        assert!(matches!(
+            casablanca.from_local_datetime(&missing),
+            LocalResult::None
+        ));
+        let gap_week = weekly_window("Africa/Casablanca", "08:00", ymd(2009, 6, 3)).unwrap();
+        assert_eq!(gap_week.start, local_stamp(casablanca, 2009, 6, 1, 1, 0));
+        assert_eq!(
+            weekly_window("Africa/Casablanca", "08:00", ymd(2009, 5, 28))
+                .unwrap()
+                .end,
+            gap_week.start
+        );
+
+        // 2001-09-24 00:00 in Asia/Jerusalem occurs twice (+03 then +02): the earlier
+        // instant is used once, keeping consecutive weeks contiguous.
+        let jerusalem: Tz = "Asia/Jerusalem".parse().unwrap();
+        let repeated = ymd(2001, 9, 24).and_time(NaiveTime::MIN);
+        let earlier = match jerusalem.from_local_datetime(&repeated) {
+            LocalResult::Ambiguous(first, second) => first.min(second).timestamp_millis(),
+            other => panic!("expected an ambiguous local midnight, got {other:?}"),
+        };
+        let overlap_week = weekly_window("Asia/Jerusalem", "08:00", ymd(2001, 9, 26)).unwrap();
+        assert_eq!(overlap_week.start, earlier);
+        assert_eq!(
+            weekly_window("Asia/Jerusalem", "08:00", ymd(2001, 9, 20))
+                .unwrap()
+                .end,
+            earlier
+        );
+    }
+
+    #[test]
+    fn weekly_first_window_excludes_partial_activation_week() {
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        // Activation mid-week: the activation week 2026-W42 is partial and never scheduled.
+        let first =
+            weekly_first_window("Europe/Paris", "08:00", stamp("2026-10-17T12:00:00Z")).unwrap();
+        assert_eq!(first.label, "2026-W43");
+        assert_eq!(first.start, local_stamp(paris, 2026, 10, 19, 0, 0));
+        assert_eq!(first.end, local_stamp(paris, 2026, 10, 26, 0, 0));
+        assert_eq!(first.due_at, local_stamp(paris, 2026, 10, 26, 8, 0));
+        // Activation exactly at a week start: that complete week is eligible.
+        let boundary = local_stamp(paris, 2026, 10, 19, 0, 0);
+        assert_eq!(
+            weekly_first_window("Europe/Paris", "08:00", boundary)
+                .unwrap()
+                .label,
+            "2026-W43"
+        );
+        // One millisecond later the week is already partial, so the next one is first.
+        assert_eq!(
+            weekly_first_window("Europe/Paris", "08:00", boundary + 1)
+                .unwrap()
+                .label,
+            "2026-W44"
+        );
+        // A DST-shortened activation week is partial too and is skipped as a whole.
+        let dst =
+            weekly_first_window("Europe/Paris", "08:00", stamp("2026-03-26T12:00:00Z")).unwrap();
+        assert_eq!(dst.label, "2026-W14");
+        assert_eq!(dst.start, local_stamp(paris, 2026, 3, 30, 0, 0));
+    }
+
+    #[test]
+    fn weekly_previous_is_the_most_recent_complete_week() {
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        // Saturday 2026-10-17: the current week 2026-W42 is still open.
+        let previous = weekly_previous("Europe/Paris", stamp("2026-10-17T12:00:00Z")).unwrap();
+        assert_eq!(previous.label, "2026-W41");
+        assert_eq!(previous.start, local_stamp(paris, 2026, 10, 5, 0, 0));
+        assert_eq!(previous.end, local_stamp(paris, 2026, 10, 12, 0, 0));
+        // Exactly at a week close, the week that just closed is complete and most recent.
+        let closed = local_stamp(paris, 2026, 10, 19, 0, 0);
+        let just_closed = weekly_previous("Europe/Paris", closed).unwrap();
+        assert_eq!(just_closed.label, "2026-W42");
+        assert_eq!(just_closed.end, closed);
+        // Across the fall-back transition the most recent complete week is the 169 h week.
+        let dst = weekly_previous("Europe/Paris", stamp("2026-10-26T12:00:00Z")).unwrap();
+        assert_eq!(dst.end - dst.start, 169 * 3_600_000);
     }
 }

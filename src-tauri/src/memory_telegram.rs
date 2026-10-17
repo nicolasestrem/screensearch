@@ -216,6 +216,7 @@ mod tests {
         ReportRun {
             run_id: "report-fixture".into(),
             source_id: "source-fixture".into(),
+            kind: traits::ReportRunKind::Daily,
             schedule_id: None,
             revision_of: None,
             requested_range: None,

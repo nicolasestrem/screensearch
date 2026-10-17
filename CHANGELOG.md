@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+
+- Note frontmatter parsing now accepts only schema `1` or `2`; any other value is rejected as
+  invalid provenance metadata (`FILE_CONFLICT`), where previously an unknown schema number was
+  accepted. Affects hand-edited notes and notes written by a future build (`03 §8e`).
+
+### Added
+
+- **F3 G1 (internal):** report runs carry a `kind` (`daily` | `weekly_synthesis`) persisted by
+  the forward-only schema 12 → 13 migration and exposed on `GET /v1/reports`; ISO-week window
+  helpers and note frontmatter schema v2 for the coming weekly synthesis. No user-visible
+  behavior yet (`03 §8e`).
+
+### Changed
 - **CI cost:** Claude PR review is no longer automatic. `claude-code-review.yml` runs only on a
   `/claude-review` PR comment (owner/member/collaborator) or a manual dispatch and uses Sonnet
   (`claude-sonnet-5-5`). `claude.yml` (`@claude` mentions) is unchanged.

@@ -190,7 +190,7 @@ async fn status(state: &AppState) -> Result<MemoryStatus, ReportError> {
         settings: config,
         source_id: source_id.clone(),
         latest_run: store
-            .list_report_runs(1)
+            .list_report_runs(1, None)
             .await
             .map_err(storage)?
             .into_iter()
@@ -348,6 +348,7 @@ async fn enqueue(
             Some(p) => p.source_id.clone(),
             None => source(store.as_ref()).await?,
         },
+        kind: ReportRunKind::Daily,
         schedule_id,
         revision_of: prior.map(|p| p.run_id.clone()),
         window_start: window.start,
@@ -426,7 +427,7 @@ pub async fn list_memory_runs(
     state: State<'_, AppState>,
 ) -> Result<Vec<ReportRun>, ReportError> {
     db(&state)?
-        .list_report_runs(limit.unwrap_or(20).clamp(1, 100))
+        .list_report_runs(limit.unwrap_or(20).clamp(1, 100), None)
         .await
         .map_err(storage)
 }
@@ -2196,6 +2197,7 @@ mod tests {
             requested_range: None,
             run_id: "report-fixture".into(),
             source_id: "source-fixture".into(),
+            kind: ReportRunKind::Daily,
             schedule_id: None,
             revision_of: None,
             window_start: 0,

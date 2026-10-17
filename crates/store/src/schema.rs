@@ -7,7 +7,7 @@
 //! edit a shipped one (no schema drift).
 
 /// The highest migration version this build knows how to reach.
-pub const LATEST_SCHEMA_VERSION: i32 = 12;
+pub const LATEST_SCHEMA_VERSION: i32 = 13;
 
 /// Vector dimensionality for every embedding lane (`03 §3/§4`,
 /// [`traits::EmbeddingProvider::dim`]).
@@ -44,6 +44,7 @@ pub const MIGRATIONS: &[(i32, &str)] = &[
     (10, MIGRATION_V10),
     (11, MIGRATION_V11),
     (12, MIGRATION_V12),
+    (13, MIGRATION_V13),
 ];
 
 /// v1 — the full data spine (`03 §4`, transcribed verbatim, plus the FTS5 and
@@ -479,4 +480,15 @@ CREATE TABLE report_files (
  path TEXT PRIMARY KEY NOT NULL,
  payload TEXT NOT NULL
 );
+"#;
+
+/// v13 (`03 §8e`): the persisted report-run `kind` discriminator. Forward-only:
+/// existing rows read `daily` through the column default, new runs persist their
+/// kind explicitly at enqueue. The CHECK pins exactly the two frozen wire tokens
+/// and the index backs listing/filtering by kind. `idx_report_schedule_window`
+/// is deliberately unchanged — `kind` is not a deduplication dimension.
+const MIGRATION_V13: &str = r#"
+ALTER TABLE report_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'daily'
+ CHECK(kind IN ('daily','weekly_synthesis'));
+CREATE INDEX idx_report_runs_kind_created ON report_runs(kind, created_at DESC);
 "#;
