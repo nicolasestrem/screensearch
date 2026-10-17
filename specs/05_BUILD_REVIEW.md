@@ -184,6 +184,25 @@ error-state inspection and separate-machine MCP remain open. In particular, the 
 app autostarts capture; there is no production `capture.enabled` setting. Verification
 must not assume that an invented seed key disables capture or launch against a live profile.
 
+### Follow-up: real tuple seeks and the native UI launch blocker
+
+Measured continuation work exposed a prefix scan despite correct page membership. The
+membership CTE now merges two disjoint indexed branches (equal timestamp plus rowid range,
+then greater timestamps), using the existing `idx_frames_captured_at`; no DDL, index,
+migration, cursor format or public contract changed. Bundled SQLite measurements cover
+distinct, all-equal, grouped and shuffled timestamps. A persistent VM-step regression fails
+against the old SQL and passes with the fix, alongside a 2500 equal-timestamp-frame drain.
+Parent independently reran the full Store package and eight Store-backed HTTP history cases;
+both commands exited 0. Native affected/full checks for these new SQL bytes are separate
+from the earlier 928-pass snapshot and must be observed before counting them green.
+
+The actual isolated native app was launched on a service window station in SSH Session 0.
+It opened only the verification profile, failed WGC capture as expected and initialized the
+backend, but created no WebView2 renderer/CDP endpoint. Native Settings interaction therefore
+remains **blocked**, not passed. No interactive-session fallback or capture-disable bypass
+was used. No model inference, report generation or delivery was exercised. The isolated
+process tree was stopped; nonprivate fixtures remain available for backend-only remote proof.
+
 > **Populated during the build**, after each meaningful pass (`04 §7`). Record what actually
 > happened — honestly. Empty until P0 begins.
 

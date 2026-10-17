@@ -16,20 +16,35 @@ use crate::{history::read_history_metadata, SqliteStore};
 // not a JSON blob or vision_analysis.app_hint. COALESCE preserves present "".
 // lower/instr is literal, ASCII-case-insensitive and NUL-safe: unlike LIKE,
 // it neither interprets %/_/backslash nor truncates an accepted NUL-containing
-// title filter. The additional timestamp bound keeps continuation index scans
-// from restarting at the beginning of the requested window.
+// title filter. The continuation predicate is a true keyset seek over the
+// existing idx_frames_captured_at: because a non-unique index is stored as
+// (captured_at, rowid), the equal-timestamp branch is a single seek to
+// `captured_at = ? AND rowid > ?` and the range branch is a seek to
+// `captured_at > ?`, so a page never restarts at the window start nor walks an
+// already-consumed prefix. COALESCE(:after_time, :from)/COALESCE(:after_id, 0)
+// fold the first page (after_time NULL) into the same statement, where
+// `(captured_at, id) > (:from, 0)` is exactly `captured_at >= :from` for the
+// positive frame rowids the allocator and recorder assign. The two branches are
+// disjoint (equal vs strictly greater), so UNION ALL needs no deduplication.
 const FRAME_PAGE_SQL: &str = r#"
     WITH page AS (
         SELECT f.id, f.captured_at
         FROM frames AS f
         LEFT JOIN frame_text AS t ON t.frame_id = f.id
-        WHERE f.captured_at >= :from AND f.captured_at < :to
-          AND f.captured_at >= COALESCE(:after_time, :from)
+        WHERE f.captured_at = COALESCE(:after_time, :from)
+          AND f.id > COALESCE(:after_id, 0)
           AND f.id <= :maximum
-          AND (:after_time IS NULL OR (f.captured_at, f.id) > (:after_time, :after_id))
           AND (:app IS NULL OR COALESCE(t.target_app_hint, f.app_hint) = :app COLLATE NOCASE)
           AND (:title IS NULL OR instr(lower(COALESCE(t.target_window_title, f.window_title)), lower(:title)) > 0)
-        ORDER BY f.captured_at ASC, f.id ASC
+        UNION ALL
+        SELECT f.id, f.captured_at
+        FROM frames AS f
+        LEFT JOIN frame_text AS t ON t.frame_id = f.id
+        WHERE f.captured_at > COALESCE(:after_time, :from) AND f.captured_at < :to
+          AND f.id <= :maximum
+          AND (:app IS NULL OR COALESCE(t.target_app_hint, f.app_hint) = :app COLLATE NOCASE)
+          AND (:title IS NULL OR instr(lower(COALESCE(t.target_window_title, f.window_title)), lower(:title)) > 0)
+        ORDER BY captured_at ASC, id ASC
         LIMIT :row_limit
     )
     SELECT f.id, f.captured_at, f.monitor_index,
@@ -966,5 +981,98 @@ mod tests {
             stored_coverage(&conn, request(1).window),
             Err(HistoryReadError::Storage(_))
         ));
+    }
+
+    // Contract gate (03 §7f.9): a page is a bounded keyset seek, never a rescan
+    // of the already-consumed prefix. VM instructions are read straight from
+    // SQLite (SQLITE_STMTSTATUS_VM_STEP) for the production FRAME_PAGE_SQL, so
+    // this fails if a continuation ever walks earlier rows again. The fixture
+    // ends in a long run of one shared captured_at — the case where a plain
+    // `captured_at >= ?` bound seeks only to the run's start and then walks the
+    // whole prefix to the cursor.
+    #[test]
+    fn continuation_seek_cost_is_independent_of_consumed_prefix() {
+        use rusqlite::StatementStatus;
+        let store = fixture();
+        let conn = store.conn.lock().expect("connection");
+        const DISTINCT: i64 = 2_000;
+        const EQUAL: i64 = 2_000;
+        let mut inserted = Vec::new();
+        for tick in 0..DISTINCT {
+            inserted.push(insert(&conn, tick, None, None));
+        }
+        for _ in 0..EQUAL {
+            inserted.push(insert(&conn, DISTINCT, None, None));
+        }
+        let maximum: i64 = conn
+            .query_row("SELECT MAX(id) FROM frames", [], |r| r.get(0))
+            .expect("maximum");
+        let steps = |after_time: Option<i64>, after_id: Option<i64>| -> i64 {
+            let mut stmt = conn.prepare(FRAME_PAGE_SQL).expect("production page SQL");
+            {
+                let mut rows = stmt
+                    .query(named_params! {
+                        ":from": 0_i64, ":to": DISTINCT + 1, ":maximum": maximum,
+                        ":after_time": after_time, ":after_id": after_id,
+                        ":app": Option::<&str>::None, ":title": Option::<&str>::None,
+                        ":row_limit": 101_i64,
+                    })
+                    .expect("query production page SQL");
+                while rows.next().expect("step page SQL").is_some() {}
+            }
+            i64::from(stmt.get_status(StatementStatus::VmStep))
+        };
+        let initial = steps(None, None);
+        let shallow = steps(Some(999), Some(inserted[999]));
+        let deep = steps(Some(DISTINCT), Some(inserted[(DISTINCT + 999) as usize]));
+        // A rescan of the consumed prefix adds ~6 VM steps per skipped frame
+        // (tens of thousands here); a real seek differs from the shallow page by
+        // a constant that cannot grow with the prefix.
+        assert!(
+            deep <= shallow + 4_096,
+            "continuation rescanned the consumed prefix: shallow={shallow} deep={deep}"
+        );
+        assert!(
+            deep <= initial + 4_096,
+            "deep continuation {deep} exceeds first-page cost {initial} beyond a constant"
+        );
+    }
+
+    // Equal captured_at is the adversarial keyset case for a single-column
+    // timestamp index. Draining a pure equal-stamp history must still visit every
+    // frame exactly once in id order and terminate — no re-yield, no skip.
+    #[test]
+    fn many_equal_timestamp_continuation_progresses_without_rescan_or_duplication() {
+        let store = fixture();
+        let conn = store.conn.lock().expect("connection");
+        const N: i64 = 2_500;
+        let mut expected = Vec::new();
+        for _ in 0..N {
+            expected.push(insert(&conn, 42, None, None));
+        }
+        let mut page = frame_page(&conn, request(100)).expect("first page");
+        let snapshot = page.snapshot.clone();
+        let mut actual = ids(&page);
+        let mut pages = 1;
+        while let Some(position) = page.next_position {
+            let next = FramePageRequest {
+                window: page.window,
+                filters: FrameFilters::default(),
+                limit: 100,
+                continuation: Some(FrameContinuation {
+                    snapshot: snapshot.clone(),
+                    after: position,
+                }),
+            };
+            page = frame_page(&conn, next).expect("continuation page");
+            actual.extend(ids(&page));
+            pages += 1;
+            assert!(pages <= N, "equal-stamp drain failed to terminate");
+        }
+        assert_eq!(
+            actual, expected,
+            "every equal-stamp frame visited once, in id order"
+        );
+        assert_eq!(page.snapshot, snapshot);
     }
 }
