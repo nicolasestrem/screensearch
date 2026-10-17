@@ -20,9 +20,9 @@ use traits::{
     AnswerProvider, ApiReadTokenSecret, ApiReadTokenStatus, ApiStatus, CaptureCoverage,
     CaptureInterruption, CaptureInterruptionReason, CaptureObservations, EvidenceWindow,
     ExportFrameRow, ExportRequest, ExportResult, FrameDetail, FramePageRequest, HistoryReadError,
-    ReportDeliveryState, ReportDetail, ReportPageRequest, ReportRunKind, ReportRunPhase,
-    ResumeContext, RetentionScope, RetrievedChunk, SavedReportRetention, Settings, Store,
-    StoredFramePage, StoredReportPage, Toast, ToastLevel,
+    ReportDeliveryState, ReportDetail, ReportPageRequest, ReportRunPhase, ResumeContext,
+    RetentionScope, RetrievedChunk, SavedReportRetention, Settings, Store, StoredFramePage,
+    StoredReportPage, Toast, ToastLevel,
 };
 
 use api::{ApiHost, ApiServer, FrameImage, SharedToken, DEFAULT_BIND_ADDRESS, DEFAULT_PORT};
@@ -1934,7 +1934,7 @@ mod tests {
             requested_range: None,
             run_id: run_id.into(),
             source_id: "profile-fixture".into(),
-            kind: ReportRunKind::Daily,
+            kind: traits::ReportRunKind::Daily,
             schedule_id: None,
             revision_of: None,
             window_start,
@@ -2159,7 +2159,7 @@ mod tests {
             requested_range: None,
             run_id: run_id.into(),
             source_id: "profile-fixture".into(),
-            kind: ReportRunKind::Daily,
+            kind: traits::ReportRunKind::Daily,
             schedule_id: None,
             revision_of: None,
             window_start,

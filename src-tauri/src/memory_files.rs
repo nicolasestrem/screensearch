@@ -209,6 +209,10 @@ pub fn daily_note(run: &ReportRun, base_run_id: Option<&str>) -> anyhow::Result<
         truncated: r.truncated,
         frame_ids: ids,
         session_ids,
+        kind: run.kind,
+        // Weekly provenance fields are populated by the G3 weekly writer (`03 §8e`).
+        daily_run_ids: Vec::new(),
+        window_local_dates: Vec::new(),
     };
     // JSON flow mappings are valid YAML 1.2. This preserves scalar escaping and array types.
     let mut text = format!(
