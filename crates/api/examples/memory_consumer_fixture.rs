@@ -1307,6 +1307,7 @@ async fn seed_reports(store: &SqliteStore, counters: &Counters) -> anyhow::Resul
         periods_covered: 3,
         passes: 2,
         truncated: false,
+        daily_run_ids: Vec::new(),
     });
     full.config_snapshot = format!(
         "{{\"canary\":\"{CANARY_CONFIG_SNAPSHOT}\",\"output_folder\":\"{CANARY_VAULT_PATH}\"}}"
@@ -1335,6 +1336,7 @@ async fn seed_reports(store: &SqliteStore, counters: &Counters) -> anyhow::Resul
         periods_covered: 1,
         passes: 1,
         truncated: false,
+        daily_run_ids: Vec::new(),
     });
     store.create_report_run(queued).await?;
 
@@ -1361,6 +1363,7 @@ async fn seed_reports(store: &SqliteStore, counters: &Counters) -> anyhow::Resul
         periods_covered: 1,
         passes: 1,
         truncated: true,
+        daily_run_ids: Vec::new(),
     });
     running.updated_at = running.created_at + 250;
     store.update_report_run(running).await?;
@@ -1385,6 +1388,7 @@ async fn seed_reports(store: &SqliteStore, counters: &Counters) -> anyhow::Resul
         periods_covered: 0,
         passes: 0,
         truncated: false,
+        daily_run_ids: Vec::new(),
     });
     nodata.updated_at = nodata.created_at + 100;
     store.create_report_run(nodata).await?;
@@ -1473,6 +1477,7 @@ async fn seed_reports(store: &SqliteStore, counters: &Counters) -> anyhow::Resul
         periods_covered: 2,
         passes: 1,
         truncated: false,
+        daily_run_ids: Vec::new(),
     });
     store.create_report_run(revision).await?;
 
@@ -1501,6 +1506,7 @@ async fn seed_reports(store: &SqliteStore, counters: &Counters) -> anyhow::Resul
             periods_covered: 1,
             passes: 1,
             truncated: false,
+            daily_run_ids: Vec::new(),
         });
         tie.updated_at = tie.created_at + 42;
         store.create_report_run(tie).await?;

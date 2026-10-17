@@ -40,6 +40,7 @@ fn saved(markdown: &str, frame_ids: Vec<i64>) -> SavedReport {
         passes: 1,
         truncated: false,
         frame_ids,
+        daily_run_ids: Vec::new(),
     }
 }
 

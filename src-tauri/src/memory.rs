@@ -331,10 +331,13 @@ async fn snapshot(state: &AppState, config: MemorySettings) -> Result<String, Re
     })
     .map_err(storage)
 }
+/// Creates a run of the given persisted kind (`03 §8e`), letting the store reuse an
+/// existing `(schedule_id, window)` identity; `kind` is not a deduplication dimension.
 async fn enqueue(
     state: &AppState,
     config: MemorySettings,
     window: kernel::memory_schedule::DailyWindow,
+    kind: ReportRunKind,
     schedule_id: Option<String>,
     prior: Option<&ReportRun>,
     requested_range: Option<MemoryReportRange>,
@@ -348,7 +351,7 @@ async fn enqueue(
             Some(p) => p.source_id.clone(),
             None => source(store.as_ref()).await?,
         },
-        kind: ReportRunKind::Daily,
+        kind,
         schedule_id,
         revision_of: prior.map(|p| p.run_id.clone()),
         window_start: window.start,
@@ -409,7 +412,16 @@ pub async fn run_memory_report(
             return Ok(run);
         }
     }
-    let run = enqueue(&state, config, window, None, None, range).await?;
+    let run = enqueue(
+        &state,
+        config,
+        window,
+        ReportRunKind::Daily,
+        None,
+        None,
+        range,
+    )
+    .await?;
     runtime.wake.notify_one();
     notify(&app);
     Ok(run)
@@ -657,10 +669,13 @@ pub async fn regenerate_memory_report(
         local_date: prior.local_date.clone(),
         due_at: now_ms(),
     };
+    // Regenerate mirrors `§8c` (`03 §8e`): the linked revision keeps the prior run's
+    // kind, schedule identity and explicit UTC `[start, end)` window.
     let run = enqueue(
         &state,
         config,
         window,
+        prior.kind,
         prior.schedule_id.clone(),
         Some(&prior),
         prior.requested_range.clone(),
@@ -745,6 +760,7 @@ async fn schedule_due(state: &AppState) -> Result<(), ReportError> {
             state,
             config.clone(),
             window,
+            ReportRunKind::Daily,
             Some(schedule.schedule_id.clone()),
             None,
             None,
@@ -784,6 +800,24 @@ fn requested_range_in_progress(run: &ReportRun) -> Result<bool, ReportError> {
         .map(|value| value.unwrap_or(false))
 }
 
+/// Resolves the shared answer provider for daily and weekly runs (`03 §8c`/`§8e`):
+/// an unsettled or uninstalled model is a visible `MODEL_UNAVAILABLE`, never a
+/// silently empty report.
+fn resolve_answer(
+    answer: Option<Arc<inference::AnswerSidecar>>,
+    settings: &Settings,
+) -> Result<Arc<dyn AnswerProvider>, ReportError> {
+    answer
+        .ok_or_else(|| fail("MODEL_UNAVAILABLE", "Local answer model is not ready."))?
+        .installed_provider_for(settings.models_answer_tier, SidecarParams::from(settings))
+        .map_err(|_| {
+            fail(
+                "MODEL_UNAVAILABLE",
+                "The selected answer model is not installed. Download it explicitly in Models, then retry.",
+            )
+        })
+}
+
 async fn generate(state: &AppState, run: &mut ReportRun) -> Result<(), ReportError> {
     if run.result.is_some() {
         return Ok(());
@@ -792,20 +826,57 @@ async fn generate(state: &AppState, run: &mut ReportRun) -> Result<(), ReportErr
     let config: RunSnapshot = serde_json::from_str(&run.config_snapshot).map_err(storage)?;
     let settings = &config.report_settings;
     let answer = state.answer.lock().expect("answer slot").clone();
-    let execution=kernel::report_service::execute(store.as_ref(),kernel::report_service::ReportExecutionRequest{
-        range:ReportRange::MemoryDaily,start:run.window_start,end:run.window_end,prompt:None,
-        timezone:Some(run.timezone.as_str()),
-        config:ReportConfig{daily_top_k:settings.reports_daily_top_k,weekly_top_k:settings.reports_weekly_top_k,map_reduce_min_frames:settings.reports_map_reduce_min_frames,reply_budget:crate::REPORT_REPLY_BUDGET},
-    },||async{
-        answer.ok_or_else(||fail("MODEL_UNAVAILABLE","Local answer model is not ready."))?
-            .installed_provider_for(settings.models_answer_tier,SidecarParams::from(settings))
-            .map_err(|_|fail("MODEL_UNAVAILABLE","The selected answer model is not installed. Download it explicitly in Models, then retry."))
-    },None,&state.memory_runtime.cancel).await?;
-    let evidence = store
-        .report_evidence(execution.output.frame_ids.clone())
-        .await
-        .map_err(storage)?;
-    save_execution(run, execution, evidence)
+    let report_config = ReportConfig {
+        daily_top_k: settings.reports_daily_top_k,
+        weekly_top_k: settings.reports_weekly_top_k,
+        map_reduce_min_frames: settings.reports_map_reduce_min_frames,
+        reply_budget: crate::REPORT_REPLY_BUDGET,
+    };
+    let resolve = move || async move { resolve_answer(answer.clone(), settings) };
+    match run.kind {
+        ReportRunKind::Daily => {
+            let execution = kernel::report_service::execute(
+                store.as_ref(),
+                kernel::report_service::ReportExecutionRequest {
+                    range: ReportRange::MemoryDaily,
+                    start: run.window_start,
+                    end: run.window_end,
+                    prompt: None,
+                    timezone: Some(run.timezone.as_str()),
+                    config: report_config,
+                },
+                resolve,
+                None,
+                &state.memory_runtime.cancel,
+            )
+            .await?;
+            let evidence = store
+                .report_evidence(execution.output.frame_ids.clone())
+                .await
+                .map_err(storage)?;
+            save_execution(run, execution, evidence)
+        }
+        ReportRunKind::WeeklySynthesis => {
+            let execution = kernel::report_service::execute_weekly(
+                store.as_ref(),
+                kernel::report_service::WeeklyExecutionRequest {
+                    start: run.window_start,
+                    end: run.window_end,
+                    timezone: run.timezone.as_str(),
+                    config: report_config,
+                },
+                resolve,
+                None,
+                &state.memory_runtime.cancel,
+            )
+            .await?;
+            let evidence = store
+                .report_evidence(execution.output.frame_ids.clone())
+                .await
+                .map_err(storage)?;
+            save_weekly_execution(run, execution, evidence)
+        }
+    }
 }
 
 fn save_execution(
@@ -849,6 +920,76 @@ fn save_execution(
         // PARTIAL causes (in-progress range, deleted retained evidence) stay framed
         // by the run outcome and coverage fields, never by this metadata (`03 §8c`).
         truncated: out.truncated,
+        daily_run_ids: Vec::new(),
+    });
+    Ok(())
+}
+
+/// The weekly PARTIAL lead names the concrete gaps (`03 §8e`) — days without complete
+/// saved daily coverage, bounded sampling or deleted evidence — instead of reusing the
+/// daily sampled-evidence sentence, which would misstate a week whose gap is specific days.
+fn weekly_partial_banner(
+    truncated: bool,
+    missing_evidence: bool,
+    missing_local_dates: &[String],
+) -> String {
+    let mut causes: Vec<String> = Vec::new();
+    if !missing_local_dates.is_empty() {
+        causes.push(format!(
+            "the week is missing complete saved daily coverage for {}",
+            missing_local_dates.join(", ")
+        ));
+    }
+    if truncated {
+        causes.push("sampling was bounded below the week's observed activity".into());
+    }
+    if missing_evidence {
+        causes.push(
+            "some evidence recorded by the week's daily reports has since been deleted".into(),
+        );
+    }
+    format!("**Partial coverage:** {}.\n\n", causes.join("; "))
+}
+
+/// Saves a weekly synthesis with the `03 §8e` truthful statuses: `NO_DATA` for a week
+/// with no saved dailies and no evidence, `PARTIAL` whenever a day lacks its saved
+/// daily report, the output is truncated or recorded evidence is missing, and `OK`
+/// only with complete measured coverage. Blocked and failed runs never reach this
+/// save; `process_run` classifies them.
+fn save_weekly_execution(
+    run: &mut ReportRun,
+    execution: kernel::report_service::WeeklyExecution,
+    evidence: ReportEvidence,
+) -> Result<(), ReportError> {
+    let out = execution.output;
+    let missing_local_dates = execution.missing_local_dates;
+    let missing_evidence = !evidence.missing_frame_ids.is_empty();
+    let partial = out.truncated || missing_evidence || !missing_local_dates.is_empty();
+    run.outcome = Some(if out.mode == ReportMode::Empty {
+        ReportOutcome::NoData
+    } else if partial {
+        ReportOutcome::Partial
+    } else {
+        ReportOutcome::Ok
+    });
+    let banner = if partial && out.mode != ReportMode::Empty {
+        weekly_partial_banner(out.truncated, missing_evidence, &missing_local_dates)
+    } else {
+        String::new()
+    };
+    run.result = Some(SavedReport {
+        markdown: format!("{banner}{}", out.markdown),
+        model: execution.model,
+        frame_ids: out.frame_ids,
+        session_ids: evidence.session_ids,
+        cited_frame_ids: out.cited_frame_ids,
+        frames_sampled: out.frames_sampled,
+        frames_summarized: out.frames_summarized,
+        periods_total: out.periods_total,
+        periods_covered: out.periods_covered,
+        passes: out.passes,
+        truncated: out.truncated,
+        daily_run_ids: execution.daily_run_ids,
     });
     Ok(())
 }
@@ -1174,6 +1315,33 @@ async fn write_files(
         }
         return Ok(());
     }
+    if run.kind == ReportRunKind::WeeklySynthesis {
+        // `03 §8e`: the weekly note and index branches belong to the weekly writer
+        // (G3). A weekly synthesis must never write a daily-shaped note, so it
+        // records honest skipped receipts and leaves note and index untouched.
+        for dest in [ReportDestination::Vault, ReportDestination::Index] {
+            if !store
+                .list_report_deliveries(&run.run_id)
+                .await
+                .map_err(storage)?
+                .iter()
+                .any(|d| d.destination == dest)
+            {
+                let mut item = delivery(
+                    run,
+                    dest,
+                    serde_json::to_string(&path_string(&root)).map_err(storage)?,
+                );
+                item.state = ReportDeliveryState::Skipped;
+                item.error = Some(fail(
+                    "WRITE_FAILED",
+                    "This version writes no weekly synthesis note.",
+                ));
+                store.create_report_delivery(item).await.map_err(storage)?;
+            }
+        }
+        return Ok(());
+    }
     let base_id = base_report_id(store, run).await?;
     let relative = crate::memory_files::note_relative_path(
         &run.local_date,
@@ -1309,22 +1477,30 @@ async fn write_files(
     Ok(())
 }
 
+/// Settles a failed generation on the run (`03 §8c`/`§8e`): a missing prerequisite
+/// (`MODEL_UNAVAILABLE`, `SOURCE_UNAVAILABLE`) is a visible BLOCKED; any other
+/// execution error is FAILED. `process_run` is the only caller, keeping this the
+/// single classification point for daily and weekly runs alike.
+fn settle_generation_failure(run: &mut ReportRun, error: ReportError) {
+    let blocked = error.code == "MODEL_UNAVAILABLE" || error.code == "SOURCE_UNAVAILABLE";
+    run.phase = if blocked {
+        ReportRunPhase::Blocked
+    } else {
+        ReportRunPhase::Finished
+    };
+    run.outcome = Some(if blocked {
+        ReportOutcome::Blocked
+    } else {
+        ReportOutcome::Failed
+    });
+    run.error = Some(error);
+}
+
 async fn process_run(state: &AppState, mut run: ReportRun) -> Result<(), ReportError> {
     let store = db(state)?;
     let config: RunSnapshot = serde_json::from_str(&run.config_snapshot).map_err(storage)?;
     if let Err(error) = generate(state, &mut run).await {
-        let blocked = error.code == "MODEL_UNAVAILABLE" || error.code == "SOURCE_UNAVAILABLE";
-        run.phase = if blocked {
-            ReportRunPhase::Blocked
-        } else {
-            ReportRunPhase::Finished
-        };
-        run.outcome = Some(if blocked {
-            ReportOutcome::Blocked
-        } else {
-            ReportOutcome::Failed
-        });
-        run.error = Some(error);
+        settle_generation_failure(&mut run, error);
     } else {
         run.phase = ReportRunPhase::Finished;
         run.error = None;
@@ -1523,6 +1699,7 @@ async fn deliver_telegram(
         .iter()
         .any(|d| d.destination == ReportDestination::Telegram && d.chunk_index.is_some());
     let eligible = config.memory.telegram_enabled
+        && run.kind == ReportRunKind::Daily
         && matches!(
             run.outcome,
             Some(ReportOutcome::Ok | ReportOutcome::Partial)
@@ -1535,6 +1712,10 @@ async fn deliver_telegram(
     {
         let skip = if !config.memory.telegram_enabled {
             Some("Telegram was disabled for this report.")
+        } else if run.kind != ReportRunKind::Daily {
+            // `03 §8e`: the weekly digest format is a separate increment (G6); a
+            // weekly synthesis must never be sent as a daily digest.
+            Some("This version sends no Telegram digest for weekly syntheses.")
         } else if !matches!(
             run.outcome,
             Some(ReportOutcome::Ok | ReportOutcome::Partial)
@@ -2219,6 +2400,7 @@ mod tests {
                 periods_covered: 0,
                 passes: 0,
                 truncated: false,
+                daily_run_ids: Vec::new(),
             }),
             config_snapshot: "{}".into(),
             created_at: 1,
@@ -2419,5 +2601,320 @@ mod tests {
         assert_eq!(store.list_report_files().await.unwrap().len(), 4);
         revision.revision_of = Some(uuid());
         assert!(base_report_id(&store, &revision).await.is_err());
+    }
+
+    fn stamp(value: &str) -> i64 {
+        chrono::DateTime::parse_from_rfc3339(value)
+            .expect("fixture timestamp")
+            .timestamp_millis()
+    }
+
+    /// A weekly synthesis run fixture (`03 §8e`): ISO week 2026-W42 in Europe/Paris,
+    /// scheduled, with a saved result so delivery paths can be exercised.
+    fn weekly_run_fixture() -> ReportRun {
+        let mut run = run_fixture();
+        run.run_id = "weekly-report-fixture".into();
+        run.kind = ReportRunKind::WeeklySynthesis;
+        run.schedule_id = Some("weekly-schedule-fixture".into());
+        run.window_start = stamp("2026-10-11T22:00:00Z");
+        run.window_end = stamp("2026-10-18T22:00:00Z");
+        run.timezone = "Europe/Paris".into();
+        run.local_date = "2026-W42".into();
+        run
+    }
+
+    fn weekly_execution(
+        mode: ReportMode,
+        truncated: bool,
+        missing_local_dates: Vec<String>,
+    ) -> kernel::report_service::WeeklyExecution {
+        kernel::report_service::WeeklyExecution {
+            output: ReportOutput {
+                markdown: "Weekly synthesis body".into(),
+                frame_ids: vec![11, 12],
+                cited_frame_ids: vec![11],
+                mode,
+                periods_total: 7,
+                periods_covered: 7,
+                frames_sampled: 2,
+                frames_summarized: 2,
+                passes: 2,
+                truncated,
+            },
+            model: Some("local-model".into()),
+            daily_run_ids: vec!["daily-run-a".into(), "daily-run-b".into()],
+            missing_local_dates,
+        }
+    }
+
+    #[tokio::test]
+    async fn weekly_requires_saved_dailies() {
+        // `03 §8e`: a week with no saved dailies and no evidence is NO_DATA, decided
+        // before any model is acquired — the §8c inspect-before-model rule applies.
+        let store = SqliteStore::open_in_memory().unwrap();
+        let cancel = AtomicBool::new(false);
+        let execution = kernel::report_service::execute_weekly(
+            &store,
+            kernel::report_service::WeeklyExecutionRequest {
+                start: stamp("2026-10-11T22:00:00Z"),
+                end: stamp("2026-10-18T22:00:00Z"),
+                timezone: "Europe/Paris",
+                config: ReportConfig {
+                    daily_top_k: 24,
+                    weekly_top_k: 200,
+                    map_reduce_min_frames: 24,
+                    reply_budget: crate::REPORT_REPLY_BUDGET,
+                },
+            },
+            || async {
+                Err(fail(
+                    "MODEL_UNAVAILABLE",
+                    "a no-dailies week must not acquire a model",
+                ))
+            },
+            None,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        assert_eq!(execution.output.mode, ReportMode::Empty);
+        assert!(execution.daily_run_ids.is_empty());
+        let mut run = weekly_run_fixture();
+        let evidence = store
+            .report_evidence(execution.output.frame_ids.clone())
+            .await
+            .unwrap();
+        save_weekly_execution(&mut run, execution, evidence).unwrap();
+        assert_eq!(run.outcome, Some(ReportOutcome::NoData));
+        let saved = run.result.as_ref().unwrap();
+        assert!(saved.model.is_none());
+        assert!(!saved.markdown.contains("Partial coverage"));
+    }
+
+    #[test]
+    fn partial_week_reports_missing_days() {
+        // `03 §8e`: any day in the window without a saved daily report makes the
+        // whole week PARTIAL, and the banner names the missing local dates.
+        let mut run = weekly_run_fixture();
+        save_weekly_execution(
+            &mut run,
+            weekly_execution(
+                ReportMode::MapReduce,
+                false,
+                vec!["2026-10-14".into(), "2026-10-15".into()],
+            ),
+            ReportEvidence {
+                session_ids: vec![],
+                missing_frame_ids: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(run.outcome, Some(ReportOutcome::Partial));
+        let saved = run.result.as_ref().unwrap();
+        assert!(saved
+            .markdown
+            .contains("missing complete saved daily coverage"));
+        assert!(saved.markdown.contains("2026-10-14"));
+        assert!(saved.markdown.contains("2026-10-15"));
+        assert!(
+            !saved.markdown.contains("uses sampled evidence"),
+            "the weekly banner must not reuse the daily sampled-evidence wording"
+        );
+    }
+
+    #[test]
+    fn weekly_no_model_is_blocked() {
+        // A missing model surfaces as MODEL_UNAVAILABLE and settles as a visible
+        // BLOCKED — never FAILED and never a silently saved empty report (`03 §8e`).
+        let Err(error) = resolve_answer(None, &Settings::default()) else {
+            panic!("a missing model must not resolve a provider");
+        };
+        assert_eq!(error.code, "MODEL_UNAVAILABLE");
+        let mut run = weekly_run_fixture();
+        run.phase = ReportRunPhase::Running;
+        run.outcome = None;
+        run.result = None;
+        settle_generation_failure(&mut run, error);
+        assert_eq!(run.phase, ReportRunPhase::Blocked);
+        assert_eq!(run.outcome, Some(ReportOutcome::Blocked));
+        assert!(
+            run.result.is_none(),
+            "a blocked weekly run must not carry an empty report"
+        );
+        assert_eq!(
+            run.error.as_ref().map(|error| error.code.as_str()),
+            Some("MODEL_UNAVAILABLE")
+        );
+        // Other execution errors stay FAILED.
+        let mut failed = weekly_run_fixture();
+        failed.phase = ReportRunPhase::Running;
+        failed.result = None;
+        settle_generation_failure(&mut failed, fail("GENERATION_FAILED", "no usable text"));
+        assert_eq!(failed.phase, ReportRunPhase::Finished);
+        assert_eq!(failed.outcome, Some(ReportOutcome::Failed));
+    }
+
+    #[test]
+    fn weekly_statuses_are_truthful() {
+        let complete_evidence = || ReportEvidence {
+            session_ids: vec![7],
+            missing_frame_ids: vec![],
+        };
+        // Truncated output is PARTIAL with a bounded-sampling banner naming no dates.
+        let mut truncated = weekly_run_fixture();
+        save_weekly_execution(
+            &mut truncated,
+            weekly_execution(ReportMode::MapReduce, true, vec![]),
+            complete_evidence(),
+        )
+        .unwrap();
+        assert_eq!(truncated.outcome, Some(ReportOutcome::Partial));
+        let saved = truncated.result.as_ref().unwrap();
+        assert!(saved.markdown.contains("sampling was bounded"));
+        assert!(!saved
+            .markdown
+            .contains("missing complete saved daily coverage"));
+        // Deleted recorded evidence is PARTIAL, framed as deleted evidence.
+        let mut deleted = weekly_run_fixture();
+        save_weekly_execution(
+            &mut deleted,
+            weekly_execution(ReportMode::MapReduce, false, vec![]),
+            ReportEvidence {
+                session_ids: vec![],
+                missing_frame_ids: vec![11],
+            },
+        )
+        .unwrap();
+        assert_eq!(deleted.outcome, Some(ReportOutcome::Partial));
+        assert!(deleted
+            .result
+            .as_ref()
+            .unwrap()
+            .markdown
+            .contains("has since been deleted"));
+        // Complete measured coverage is OK, with no banner at all.
+        let mut complete = weekly_run_fixture();
+        save_weekly_execution(
+            &mut complete,
+            weekly_execution(ReportMode::MapReduce, false, vec![]),
+            complete_evidence(),
+        )
+        .unwrap();
+        assert_eq!(complete.outcome, Some(ReportOutcome::Ok));
+        let saved = complete.result.as_ref().unwrap();
+        assert_eq!(saved.markdown, "Weekly synthesis body");
+        assert_eq!(saved.model.as_deref(), Some("local-model"));
+        assert_eq!(saved.periods_total, 7);
+        assert_eq!(saved.periods_covered, 7);
+        assert_eq!(saved.frames_summarized, 2);
+    }
+
+    #[test]
+    fn daily_run_partial_wording_is_unchanged() {
+        // The daily save path keeps its exact sampled-evidence wording (`03 §8c`);
+        // the weekly banner change must not leak into daily output.
+        let mut run = run_fixture();
+        save_execution(
+            &mut run,
+            kernel::report_service::ReportExecution {
+                output: ReportOutput {
+                    markdown: "Observed activity".into(),
+                    frame_ids: vec![1],
+                    cited_frame_ids: vec![1],
+                    mode: ReportMode::SinglePass,
+                    periods_total: 1,
+                    periods_covered: 1,
+                    frames_sampled: 1,
+                    frames_summarized: 1,
+                    passes: 1,
+                    truncated: true,
+                },
+                model: Some("local-model".into()),
+            },
+            ReportEvidence {
+                session_ids: vec![],
+                missing_frame_ids: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(run.outcome, Some(ReportOutcome::Partial));
+        assert_eq!(
+            run.result.as_ref().unwrap().markdown,
+            "**Partial coverage:** This report uses sampled evidence and does not cover all requested activity.\n\nObserved activity"
+        );
+    }
+
+    #[tokio::test]
+    async fn weekly_runs_skip_note_and_index_with_receipts() {
+        // `03 §8e`: weekly notes are the weekly writer's (G3) surface. Until they
+        // exist, a weekly run records skipped vault/index receipts and touches no
+        // files — it must never write a daily-shaped note.
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteStore::open_in_memory().unwrap();
+        let config = RunSnapshot {
+            version: 1,
+            memory: MemorySettings {
+                output_folder: Some(path_string(dir.path())),
+                ..Default::default()
+            },
+            report_settings: Settings::default(),
+            model_at_enqueue: None,
+        };
+        let run = weekly_run_fixture();
+        store.create_report_run(run.clone()).await.unwrap();
+        write_files(&store, &run, &config).await.unwrap();
+        let receipts = store.list_report_deliveries(&run.run_id).await.unwrap();
+        assert_eq!(receipts.len(), 2);
+        assert!(receipts
+            .iter()
+            .all(|item| item.state == ReportDeliveryState::Skipped));
+        assert!(receipts
+            .iter()
+            .any(|item| item.destination == ReportDestination::Vault));
+        assert!(receipts
+            .iter()
+            .any(|item| item.destination == ReportDestination::Index));
+        assert!(
+            !dir.path().join("ScreenSearch").exists(),
+            "a weekly run must not write note files"
+        );
+        assert!(store.list_report_files().await.unwrap().is_empty());
+        // A second recovery pass stays idempotent.
+        write_files(&store, &run, &config).await.unwrap();
+        assert_eq!(
+            store
+                .list_report_deliveries(&run.run_id)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn weekly_regenerate_linked_revision_keeps_kind() {
+        // Regenerate mirrors daily (`03 §8e`): the linked revision keeps kind, schedule
+        // identity and the explicit UTC window, and `(schedule_id, window)` still
+        // reuses the stored run for retries — `kind` is not a dedup dimension.
+        let store = SqliteStore::open_in_memory().unwrap();
+        let base = weekly_run_fixture();
+        store.create_report_run(base.clone()).await.unwrap();
+        let mut revision = base.clone();
+        revision.run_id = uuid();
+        revision.revision_of = Some(base.run_id.clone());
+        revision.phase = ReportRunPhase::Queued;
+        revision.outcome = None;
+        revision.result = None;
+        let stored = store.create_report_run(revision.clone()).await.unwrap();
+        assert_eq!(stored.run_id, revision.run_id);
+        assert_eq!(stored.kind, ReportRunKind::WeeklySynthesis);
+        assert_eq!(stored.schedule_id, base.schedule_id);
+        assert_eq!(stored.window_start, base.window_start);
+        assert_eq!(stored.window_end, base.window_end);
+        assert_eq!(stored.timezone, "Europe/Paris");
+        let mut duplicate = base.clone();
+        duplicate.run_id = uuid();
+        let reused = store.create_report_run(duplicate).await.unwrap();
+        assert_eq!(reused.run_id, base.run_id);
     }
 }

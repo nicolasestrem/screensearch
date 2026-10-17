@@ -274,6 +274,15 @@ pub trait Store: Send + Sync {
     ) -> Result<Vec<crate::ReportRun>> {
         anyhow::bail!("durable report storage is unsupported")
     }
+    /// Finished saved daily runs whose `[window_start, window_end)` lies inside `[start, end)`,
+    /// oldest first by `window_start` (`03 §8e` weekly inputs).
+    /// A queued/running/blocked/failed run, a finished run without a stored
+    /// result and a saved weekly synthesis are not saved dailies; a range
+    /// containing none is an empty list, never an error (`03 §8c`; unsupported
+    /// stores fail explicitly).
+    async fn saved_daily_runs(&self, _start: i64, _end: i64) -> Result<Vec<crate::ReportRun>> {
+        anyhow::bail!("durable report storage is unsupported")
+    }
     /// Durable reports (`03 §8c`); unsupported stores fail explicitly.
     async fn update_report_run(&self, _run: crate::ReportRun) -> Result<()> {
         anyhow::bail!("durable report storage is unsupported")

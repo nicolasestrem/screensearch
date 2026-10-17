@@ -267,6 +267,29 @@ impl SqliteStore {
         })
         .await
     }
+    /// Finished saved daily runs whose window lies inside `[start, end)`, oldest
+    /// first by `window_start` (`03 §8e` weekly inputs). Only `kind='daily'` runs
+    /// that are `finished` and actually carry a saved result qualify: a
+    /// queued/running/blocked/failed run and a finished run without a stored
+    /// result are not saved dailies. Containment (not overlap) is the predicate,
+    /// so a range containing none is an empty vec, never an error. `run_id`
+    /// breaks `window_start` ties deterministically (the spec fixes only the
+    /// primary order); the `kind` column and its index keep the scan to daily
+    /// rows, and no new index or migration is involved.
+    pub async fn saved_daily_runs(&self, start: i64, end: i64) -> Result<Vec<ReportRun>> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT payload FROM report_runs
+                 WHERE kind='daily' AND phase='finished'
+                   AND window_start>=?1 AND window_end<=?2
+                   AND json_extract(payload,'$.result') IS NOT NULL
+                 ORDER BY window_start,run_id",
+            )?;
+            let rows = stmt.query_map(params![start, end], |r| r.get::<_, String>(0))?;
+            rows.map(|s| Ok(serde_json::from_str(&s?)?)).collect()
+        })
+        .await
+    }
     pub async fn update_report_run(&self, run: ReportRun) -> Result<()> {
         self.with_conn(move |conn| {
             let old =
@@ -706,6 +729,7 @@ mod tests {
             periods_covered: 0,
             passes: 0,
             truncated: false,
+            daily_run_ids: Vec::new(),
         });
         store.update_report_run(item).await.unwrap();
         assert!(store
@@ -981,6 +1005,132 @@ mod tests {
         assert_eq!(daily_ids, vec!["daily-run"]);
         assert_eq!(store.list_report_runs(10, None).await.unwrap().len(), 3);
     }
+
+    /// `saved_daily_runs` (`03 §8e` weekly inputs) feeds the weekly synthesis from
+    /// finished, saved daily runs whose `[window_start, window_end)` lies inside the
+    /// requested range, oldest first. A saved weekly synthesis, a non-finished run
+    /// (even one already carrying a saved result), a finished run with no stored
+    /// result and runs whose windows only overlap or lie outside the range are not
+    /// saved dailies.
+    #[tokio::test]
+    async fn saved_daily_runs_returns_only_finished_saved_dailies_inside_the_window_oldest_first() {
+        const DAY: i64 = 86_400_000;
+        let store = SqliteStore::open_in_memory().unwrap();
+        let saved_result = || SavedReport {
+            markdown: "evidenced daily output".into(),
+            model: Some("local".into()),
+            frame_ids: vec![1],
+            session_ids: vec![7],
+            cited_frame_ids: vec![1],
+            frames_sampled: 1,
+            frames_summarized: 1,
+            periods_total: 1,
+            periods_covered: 1,
+            passes: 1,
+            truncated: false,
+            daily_run_ids: Vec::new(),
+        };
+        let saved_daily = |id: &str, start: i64, end: i64| {
+            let mut item = run(id);
+            item.window_start = start;
+            item.window_end = end;
+            item.phase = ReportRunPhase::Finished;
+            item.outcome = Some(ReportOutcome::Ok);
+            item.result = Some(saved_result());
+            item
+        };
+
+        // Created newest-window-first: ordering must come from `window_start`, not
+        // from insertion order.
+        store
+            .create_report_run(saved_daily("day-newest", 2 * DAY, 3 * DAY))
+            .await
+            .unwrap();
+        store
+            .create_report_run(saved_daily("day-oldest", DAY, 2 * DAY))
+            .await
+            .unwrap();
+        // Inside the requested window but not saved dailies:
+        let mut running = run("day-running");
+        running.window_start = 3 * DAY;
+        running.window_end = 4 * DAY;
+        running.phase = ReportRunPhase::Running;
+        running.result = Some(saved_result());
+        store.create_report_run(running).await.unwrap();
+        let mut no_result = run("day-finished-no-result");
+        no_result.window_start = 4 * DAY;
+        no_result.window_end = 5 * DAY;
+        no_result.phase = ReportRunPhase::Finished;
+        no_result.outcome = Some(ReportOutcome::Failed);
+        store.create_report_run(no_result).await.unwrap();
+        let mut weekly = saved_daily("weekly-saved", 5 * DAY, 6 * DAY);
+        weekly.kind = ReportRunKind::WeeklySynthesis;
+        store.create_report_run(weekly).await.unwrap();
+        // Windows touching the requested [DAY, 6*DAY) without lying inside it:
+        store
+            .create_report_run(saved_daily("before", 0, DAY))
+            .await
+            .unwrap();
+        store
+            .create_report_run(saved_daily("crosses-start", 0, 2 * DAY))
+            .await
+            .unwrap();
+        store
+            .create_report_run(saved_daily("crosses-end", 2 * DAY, 7 * DAY))
+            .await
+            .unwrap();
+
+        let runs = store.saved_daily_runs(DAY, 6 * DAY).await.unwrap();
+        let ids: Vec<&str> = runs.iter().map(|item| item.run_id.as_str()).collect();
+        assert_eq!(ids, vec!["day-oldest", "day-newest"]);
+        assert_eq!(runs[0].window_start, DAY);
+        assert_eq!(runs[1].window_start, 2 * DAY);
+        assert!(runs.iter().all(|item| item.kind == ReportRunKind::Daily));
+        assert_eq!(
+            runs[0].result.as_ref().unwrap().markdown,
+            "evidenced daily output"
+        );
+        // The composition root consumes the store as `dyn Store`; prove the
+        // trait forwarding reaches the same implementation.
+        let dynamic: &dyn traits::Store = &store;
+        assert_eq!(
+            dynamic.saved_daily_runs(DAY, 6 * DAY).await.unwrap().len(),
+            2
+        );
+    }
+
+    /// An empty result is honest data, never an error: a range matching no saved
+    /// daily returns an empty vec — on an empty store and when runs exist but lie
+    /// outside the requested window.
+    #[tokio::test]
+    async fn saved_daily_runs_empty_window_is_an_empty_vec_not_an_error() {
+        const DAY: i64 = 86_400_000;
+        let store = SqliteStore::open_in_memory().unwrap();
+        assert!(store.saved_daily_runs(0, DAY).await.unwrap().is_empty());
+
+        let mut item = run("outside");
+        item.window_start = 2 * DAY;
+        item.window_end = 3 * DAY;
+        item.phase = ReportRunPhase::Finished;
+        item.outcome = Some(ReportOutcome::NoData);
+        item.result = Some(SavedReport {
+            markdown: "No evidence in the inspected window.".into(),
+            model: None,
+            frame_ids: vec![],
+            session_ids: vec![],
+            cited_frame_ids: vec![],
+            frames_sampled: 0,
+            frames_summarized: 0,
+            periods_total: 1,
+            periods_covered: 0,
+            passes: 0,
+            truncated: false,
+            daily_run_ids: Vec::new(),
+        });
+        store.create_report_run(item).await.unwrap();
+
+        assert!(store.saved_daily_runs(0, DAY).await.unwrap().is_empty());
+    }
     #[tokio::test]
     async fn interrupted_run_is_recoverable_and_unknown_send_is_not_retried() {
         let dir = tempfile::tempdir().unwrap();
@@ -1084,6 +1234,7 @@ mod tests {
             periods_covered: 1,
             passes: 1,
             truncated: false,
+            daily_run_ids: Vec::new(),
         });
         store.create_report_run(r.clone()).await.unwrap();
         r.result.as_mut().unwrap().markdown = "changed".into();

@@ -28,9 +28,11 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{anyhow, Result};
+use chrono::Datelike;
 use traits::{
-    AnswerOpts, AnswerProvider, ReportConfig, ReportMode, ReportOutput, ReportRange,
-    RetrievedChunk, SearchHit, SearchQuery, SegmenterFrame, Store, TimeRange, TimelineBucket,
+    AnswerOpts, AnswerProvider, ReportConfig, ReportMode, ReportOutcome, ReportOutput, ReportRange,
+    ReportRun, RetrievedChunk, SearchHit, SearchQuery, SegmenterFrame, Store, TimeRange,
+    TimelineBucket,
 };
 
 const DAY_MS: i64 = 86_400_000;
@@ -522,6 +524,407 @@ async fn generate_report_scoped(
     })
 }
 
+/// One day of weekly synthesis material (`03 §8e`): either a group to summarize from that
+/// day's recorded evidence, or — when none of it is still readable — the saved daily
+/// prose carried as a pre-computed section node.
+enum WeeklyMaterial {
+    Group(Group),
+    Saved { date: String, text: String },
+}
+
+/// Weekly synthesis (`03 §8e`): one report over a week's saved daily reports, running
+/// through the same map → reduce → final machinery and the same prompts as every other
+/// report — no second engine, no second model path. Inputs are exactly the saved dailies
+/// the caller consumed (via `Store::saved_daily_runs`): their recorded evidence IDs are
+/// re-read in one bulk hydration (`Store::ocr_texts`) — never a fresh sample of the raw
+/// window — and a day whose recorded evidence is gone (retention) contributes its saved
+/// prose as a pre-computed section node, so a pruned frame can never silently drop a day.
+/// Each day is labelled with its local date, its daily run ID and its recorded session
+/// IDs, so every item the model writes can cite the daily run, frame and session IDs the
+/// framing requires. A window whose saved dailies yield no material at all returns the
+/// honest empty output; the service layer decides that a positive probe with no material
+/// is a generation failure.
+#[allow(clippy::too_many_arguments)]
+pub async fn generate_weekly_synthesis(
+    store: &dyn Store,
+    answer: &dyn AnswerProvider,
+    dailies: &[ReportRun],
+    start: i64,
+    end: i64,
+    timezone: &str,
+    cfg: ReportConfig,
+    progress: Option<&ReportProgress<'_>>,
+    cancel: &AtomicBool,
+) -> Result<ReportOutput> {
+    let opts = AnswerOpts {
+        thinking: false,
+        max_tokens: cfg.reply_budget,
+    };
+    let ctx_tokens = answer
+        .answer_context_budget()
+        .map(|c| c as usize)
+        .unwrap_or(REPORT_CTX_TOKENS);
+    let zone: chrono_tz::Tz = timezone
+        .parse()
+        .map_err(|_| anyhow!("unknown IANA time zone"))?;
+    let periods_total =
+        crate::memory_schedule::local_day_grid(timezone, start, end, MAX_PERIODS)?.len() as u32;
+    let week = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(start)
+        .ok_or_else(|| anyhow!("timestamp outside supported calendar"))?
+        .with_timezone(&zone)
+        .date_naive()
+        .iso_week();
+    let week_label = format!("{}-W{:02}", week.year(), week.week());
+
+    // One bulk hydration of every consumed daily's recorded evidence IDs (deduplicated,
+    // first occurrence wins). This is the only evidence read — the weekly never re-samples
+    // the raw window.
+    let mut evidence_ids: Vec<i64> = Vec::new();
+    let mut seen_ids = std::collections::HashSet::new();
+    for run in dailies {
+        if let Some(result) = &run.result {
+            for id in &result.frame_ids {
+                if seen_ids.insert(*id) {
+                    evidence_ids.push(*id);
+                }
+            }
+        }
+    }
+    let texts = store.ocr_texts(&evidence_ids).await?;
+
+    // Day materials in persisted order (the store returns runs oldest first).
+    let mut materials: Vec<WeeklyMaterial> = Vec::new();
+    let mut frame_dates: std::collections::BTreeMap<i64, String> =
+        std::collections::BTreeMap::new();
+    for run in dailies {
+        let Some(result) = &run.result else { continue };
+        let date = local_date(zone, run.window_start)?;
+        let label = weekly_day_label(&date, &run.run_id, &result.session_ids);
+        let chunks: Vec<RetrievedChunk> = result
+            .frame_ids
+            .iter()
+            .filter_map(|id| {
+                texts
+                    .get(id)
+                    .filter(|text| !text.trim().is_empty())
+                    .map(|text| RetrievedChunk {
+                        frame_id: *id,
+                        text: text.clone(),
+                        score: 0.0,
+                        captured_at: run.window_start,
+                    })
+            })
+            .collect();
+        if chunks.is_empty() {
+            let prose = result.markdown.trim();
+            if !prose.is_empty() {
+                materials.push(WeeklyMaterial::Saved {
+                    date,
+                    text: format!("{label}: {prose}"),
+                });
+            }
+        } else {
+            for chunk in &chunks {
+                frame_dates.insert(chunk.frame_id, date.clone());
+            }
+            materials.push(WeeklyMaterial::Group(Group { label, chunks }));
+        }
+    }
+    let frames_sampled: usize = materials
+        .iter()
+        .map(|material| match material {
+            WeeklyMaterial::Group(group) => group.chunks.len(),
+            WeeklyMaterial::Saved { .. } => 0,
+        })
+        .sum();
+    if materials.is_empty() {
+        return Ok(empty_output(periods_total));
+    }
+    // Recorded evidence that could not be read back (retention) or carried no text is
+    // unsummarized evidence, not a mere filter — the same honest truncation rule as the
+    // daily coverage path.
+    let mut truncated = (frames_sampled as u64) < (evidence_ids.len() as u64);
+
+    // --- Single-pass fast path (mirrors the daily coverage path) ---
+    // Collapse only when every day contributes live evidence: a lone group always
+    // qualifies, and a small week collapses too iff its evidence still fits one window.
+    // With saved-prose nodes in play the reduce/final path runs so days keep their order.
+    let has_saved_nodes = materials
+        .iter()
+        .any(|material| matches!(material, WeeklyMaterial::Saved { .. }));
+    let groups_only: Vec<&Group> = materials
+        .iter()
+        .filter_map(|material| match material {
+            WeeklyMaterial::Group(group) => Some(group),
+            WeeklyMaterial::Saved { .. } => None,
+        })
+        .collect();
+    let collapse = !has_saved_nodes
+        && (groups_only.len() == 1
+            || (frames_sampled <= cfg.map_reduce_min_frames as usize
+                && chunks_fit(
+                    groups_only.iter().flat_map(|group| &group.chunks),
+                    cfg.reply_budget,
+                    ctx_tokens,
+                )));
+    if collapse {
+        check_cancel(cancel)?;
+        emit(progress, "Writing report", 1, 1);
+        let mut all: Vec<RetrievedChunk> = materials
+            .into_iter()
+            .flat_map(|material| match material {
+                WeeklyMaterial::Group(group) => group.chunks,
+                WeeklyMaterial::Saved { .. } => Vec::new(),
+            })
+            .collect();
+        all.sort_by_key(|chunk| chunk.captured_at); // the week narrates in day order
+        let (markdown, cited) = answer
+            .summarize(
+                FINAL_SYSTEM_PROMPT,
+                &weekly_final_instruction(&week_label, start, end),
+                &all,
+                opts,
+            )
+            .await?;
+        let (cited, frame_ids) = report_citations(cited);
+        let summarized = frame_ids.len() as u32;
+        let truncated = truncated || summarized < frames_sampled as u32;
+        let periods_covered =
+            covered_local_days(&frame_dates, &std::collections::BTreeSet::new(), &frame_ids);
+        return Ok(ReportOutput {
+            markdown,
+            cited_frame_ids: cited,
+            frame_ids,
+            mode: ReportMode::SinglePass,
+            periods_total,
+            periods_covered,
+            frames_sampled: frames_sampled as u32,
+            frames_summarized: summarized,
+            passes: 1,
+            truncated,
+        });
+    }
+
+    // --- MAP: one pass per evidence day; saved-prose days pass through untouched ---
+    let group_count = groups_only.len() as u32;
+    let mut nodes: Vec<String> = Vec::new();
+    let mut consumed_saved_dates: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    let mut union: Vec<i64> = Vec::new();
+    let mut passes: u32 = 0;
+    let mut done: u32 = 0;
+    for material in materials {
+        match material {
+            WeeklyMaterial::Saved { date, text } => {
+                consumed_saved_dates.insert(date);
+                nodes.push(text);
+            }
+            WeeklyMaterial::Group(group) => {
+                check_cancel(cancel)?;
+                done += 1;
+                emit(
+                    progress,
+                    &format!("Summarizing {done} of {group_count}"),
+                    done,
+                    group_count,
+                );
+                let instruction = format!("Summarize {} of this week.", group.label);
+                let (text, cited) = answer
+                    .summarize(MAP_SYSTEM_PROMPT, &instruction, &group.chunks, opts)
+                    .await?;
+                passes += 1;
+                if !text.trim().is_empty() {
+                    for id in cited {
+                        if !union.contains(&id) {
+                            union.push(id);
+                        }
+                    }
+                    nodes.push(format!("{}: {}", group.label, text.trim()));
+                }
+                if passes >= MAX_REPORT_PASSES {
+                    truncated = true;
+                    break;
+                }
+            }
+        }
+    }
+    if nodes.is_empty() {
+        return Ok(empty_output(periods_total));
+    }
+
+    // --- REDUCE: bounded hierarchical fan-in, day order preserved (mirrors the daily path) ---
+    while nodes.len() > 1 && !fits_single_pass(&nodes, cfg.reply_budget, ctx_tokens) {
+        if passes >= MAX_REPORT_PASSES {
+            truncated = true;
+            break;
+        }
+        let mut next = Vec::with_capacity(nodes.len() / REDUCE_FANOUT + 1);
+        for chunk_group in nodes.chunks(REDUCE_FANOUT) {
+            // A trailing group of one needs no combining — pass it through untouched
+            // rather than spend a model call summarizing a single summary.
+            if chunk_group.len() == 1 {
+                next.push(chunk_group[0].clone());
+                continue;
+            }
+            check_cancel(cancel)?;
+            emit(progress, "Combining summaries", passes, MAX_REPORT_PASSES);
+            let (text, _) = answer
+                .summarize(
+                    REDUCE_SYSTEM_PROMPT,
+                    "",
+                    &nodes_as_chunks(chunk_group),
+                    opts,
+                )
+                .await?;
+            passes += 1;
+            next.push(text.trim().to_string());
+            if passes >= MAX_REPORT_PASSES {
+                truncated = true;
+                break;
+            }
+        }
+        nodes = next;
+        if truncated {
+            break;
+        }
+    }
+
+    // --- FINAL: the user-facing weekly synthesis ---
+    check_cancel(cancel)?;
+    let sections = nodes.len() as u32;
+    emit(progress, "Writing report", sections, sections);
+    let (markdown, _) = answer
+        .summarize(
+            FINAL_SYSTEM_PROMPT,
+            &weekly_final_instruction(&week_label, start, end),
+            &nodes_as_chunks(&nodes),
+            opts,
+        )
+        .await?;
+    passes += 1;
+
+    let (cited, frame_ids) = report_citations(union);
+    let summarized = frame_ids.len() as u32;
+    let periods_covered = covered_local_days(&frame_dates, &consumed_saved_dates, &frame_ids);
+    let truncated = truncated || summarized < frames_sampled as u32;
+    Ok(ReportOutput {
+        markdown,
+        cited_frame_ids: cited,
+        frame_ids,
+        mode: ReportMode::MapReduce,
+        periods_total,
+        periods_covered,
+        frames_sampled: frames_sampled as u32,
+        frames_summarized: summarized,
+        passes,
+        truncated,
+    })
+}
+
+/// Every local calendar date in `[start, end)` (`03 §8e` missing-day signal) that has no
+/// saved daily report overlapping its local day, or whose overlapping saved dailies are
+/// all marked partial/truncated (run outcome `PARTIAL`, or the saved report's `truncated`
+/// flag — a run without a saved result is never complete coverage). Oldest-first. The
+/// weekly window is an ISO week, so the shared local-day grid is exactly one period per
+/// local date. Base runs and revisions are consumed exactly as returned: no revision
+/// precedence is defined, so the date counts as covered when at least one overlapping
+/// saved daily is complete.
+pub(crate) fn weekly_missing_local_dates(
+    dailies: &[ReportRun],
+    start: i64,
+    end: i64,
+    timezone: &str,
+) -> Result<Vec<String>> {
+    let zone: chrono_tz::Tz = timezone
+        .parse()
+        .map_err(|_| anyhow!("unknown IANA time zone"))?;
+    let mut missing = Vec::new();
+    for (period_start, period_end) in
+        crate::memory_schedule::local_day_grid(timezone, start, end, MAX_PERIODS)?
+    {
+        let complete = dailies.iter().any(|run| {
+            run.window_start < period_end && run.window_end > period_start && !daily_is_partial(run)
+        });
+        if !complete {
+            missing.push(local_date(zone, period_start)?);
+        }
+    }
+    Ok(missing)
+}
+
+/// A saved daily counts as partial coverage when its run outcome is `PARTIAL`
+/// (in-progress range, missing retained evidence — `03 §8c`) or its saved report is
+/// flagged truncated. A saved daily without a result is never complete coverage.
+fn daily_is_partial(run: &ReportRun) -> bool {
+    run.outcome == Some(ReportOutcome::Partial)
+        || match &run.result {
+            Some(result) => result.truncated,
+            None => true,
+        }
+}
+
+/// The local `YYYY-MM-DD` date of a UTC instant in the report's saved zone.
+fn local_date(zone: chrono_tz::Tz, at: i64) -> Result<String> {
+    Ok(chrono::DateTime::<chrono::Utc>::from_timestamp_millis(at)
+        .ok_or_else(|| anyhow!("timestamp outside supported calendar"))?
+        .with_timezone(&zone)
+        .date_naive()
+        .to_string())
+}
+
+/// `day 2026-10-14 (daily run <id>; sessions 3, 7)` — the day's persisted provenance, so
+/// every item the model writes can cite the daily run, frame and session IDs.
+fn weekly_day_label(date: &str, run_id: &str, session_ids: &[i64]) -> String {
+    if session_ids.is_empty() {
+        format!("day {date} (daily run {run_id})")
+    } else {
+        let sessions: Vec<String> = session_ids.iter().map(|id| id.to_string()).collect();
+        format!(
+            "day {date} (daily run {run_id}; sessions {})",
+            sessions.join(", ")
+        )
+    }
+}
+
+/// The weekly synthesis framing (`03 §8e`): fixed headings, exact ISO-week bounds, the
+/// citation rule (the daily run of every day described; the frame and session IDs relied
+/// on) and the no-over-claiming rule (tentative screen text is never a commitment).
+fn weekly_final_instruction(label: &str, start: i64, end: i64) -> String {
+    let timestamp = |value: i64| {
+        chrono::DateTime::<chrono::Utc>::from_timestamp_millis(value)
+            .map(|date| date.to_rfc3339())
+            .unwrap_or_else(|| value.to_string())
+    };
+    format!(
+        "Write the weekly synthesis for {label} [{} inclusive, {} exclusive) from the saved daily \
+         reports and their evidence. Use the headings Activity, Explicitly evidenced decisions, \
+         Open questions, and Next steps. Every item must cite the IDs it rests on — the daily run \
+         ID of each day it describes, plus the frame and session IDs it relied on — and never \
+         describe a day without citing that day's daily run. Include only supported facts; never \
+         state tentative screen text as a commitment. If a section has no evidence, say so. Use \
+         the exact week bounds rather than relative claims about this week.",
+        timestamp(start),
+        timestamp(end)
+    )
+}
+
+/// Local days represented in the synthesis: days whose summarized frames the model read,
+/// plus days carried by their saved prose (evidence no longer readable).
+fn covered_local_days(
+    frame_dates: &std::collections::BTreeMap<i64, String>,
+    saved_dates: &std::collections::BTreeSet<String>,
+    summarized: &[i64],
+) -> u32 {
+    let mut dates: std::collections::BTreeSet<&str> =
+        saved_dates.iter().map(String::as_str).collect();
+    for id in summarized {
+        if let Some(date) = frame_dates.get(id) {
+            dates.insert(date.as_str());
+        }
+    }
+    dates.len() as u32
+}
+
 /// Hydrate relevance hits with their `content_text` in one bulk read (`Store::ocr_texts`
 /// returns `content_text`, never raw), falling back to the FTS snippet when a frame's
 /// text is unavailable; relevance order (best-first) is preserved.
@@ -721,16 +1124,28 @@ fn split_groups_to_fit(groups: Vec<Group>, reply_budget: u32, ctx_tokens: usize)
     out
 }
 
-/// Whether all of `groups`' chunks fit a single map pass within `ctx_tokens` — the gate for
+/// Whether all of `groups`' chunks fit a single pass within `ctx_tokens` — the gate for
 /// collapsing a small multi-period report into one final pass without truncating. Mirrors
 /// [`split_chunks_into_batches`]'s per-batch budget (a conservative heuristic; the inference
 /// budgeter is the hard bound).
 fn chunks_fit_one_pass(groups: &[Group], reply_budget: u32, ctx_tokens: usize) -> bool {
+    chunks_fit(
+        groups.iter().flat_map(|group| &group.chunks),
+        reply_budget,
+        ctx_tokens,
+    )
+}
+
+/// Whether the given chunks fit a single map/final pass within `ctx_tokens` (shared core
+/// of [`chunks_fit_one_pass`] and the weekly synthesis's collapse gate).
+fn chunks_fit<'a>(
+    chunks: impl Iterator<Item = &'a RetrievedChunk>,
+    reply_budget: u32,
+    ctx_tokens: usize,
+) -> bool {
     let reserve = reply_budget as usize + est_tokens(MAP_SYSTEM_PROMPT) + REPORT_TEMPLATE_OVERHEAD;
     let budget = ctx_tokens.saturating_sub(reserve);
-    let used: usize = groups
-        .iter()
-        .flat_map(|g| &g.chunks)
+    let used: usize = chunks
         .filter(|c| !c.text.trim().is_empty())
         .map(|c| est_tokens(c.text.trim()) + REPORT_ID_FRAMING)
         .sum();
@@ -839,7 +1254,12 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
     use store::SqliteStore;
-    use traits::{AnswerDelta, NewFrame, NewSession, OcrResult, SessionHost, SessionKind};
+    use traits::{
+        AnswerDelta, NewFrame, NewSession, OcrResult, ReportError, ReportRunKind, ReportRunPhase,
+        SavedReport, SessionHost, SessionKind,
+    };
+
+    use crate::report_service::{execute_weekly, WeeklyExecutionRequest};
 
     // ---- Pure-function tests (no store / no sidecar) ----
 
@@ -1682,5 +2102,379 @@ mod tests {
             "a partial local day is one period"
         );
         assert_eq!(partial.periods_covered, 1);
+    }
+
+    // ---- Weekly synthesis engine (`03 §8e`) ----
+
+    /// A saved daily run fixture: finished, with a result whose provenance is `frame_ids`.
+    fn weekly_run(
+        run_id: &str,
+        start: i64,
+        end: i64,
+        local_date: &str,
+        frame_ids: Vec<i64>,
+        truncated: bool,
+        outcome: ReportOutcome,
+    ) -> ReportRun {
+        ReportRun {
+            requested_range: None,
+            run_id: run_id.to_string(),
+            source_id: "test-source".to_string(),
+            kind: ReportRunKind::Daily,
+            schedule_id: Some("memory.daily".to_string()),
+            revision_of: None,
+            window_start: start,
+            window_end: end,
+            timezone: "Etc/UTC".to_string(),
+            local_date: local_date.to_string(),
+            phase: ReportRunPhase::Finished,
+            outcome: Some(outcome),
+            error: None,
+            result: Some(SavedReport {
+                markdown: format!("Daily report for {local_date}."),
+                model: Some("test-model".to_string()),
+                frame_ids: frame_ids.clone(),
+                session_ids: Vec::new(),
+                cited_frame_ids: frame_ids.clone(),
+                frames_sampled: frame_ids.len() as u32,
+                frames_summarized: frame_ids.len() as u32,
+                periods_total: 1,
+                periods_covered: 1,
+                passes: 1,
+                truncated,
+                daily_run_ids: Vec::new(),
+            }),
+            config_snapshot: "{}".to_string(),
+            created_at: start,
+            updated_at: start,
+        }
+    }
+
+    /// The Monday-anchored ISO week 2026-10-12 … 2026-10-19 (`Etc/UTC`, seven dates).
+    fn week_bounds() -> (i64, i64) {
+        (stamp("2026-10-12T00:00:00Z"), stamp("2026-10-19T00:00:00Z"))
+    }
+
+    /// The seven local calendar dates of [`week_bounds`], computed independently of the
+    /// engine under test.
+    fn week_dates() -> Vec<String> {
+        (0..7)
+            .map(|offset| {
+                (chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap()
+                    + chrono::Duration::days(offset))
+                .to_string()
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn weekly_requires_saved_dailies() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        // No saved dailies in the week and no captured evidence: the frozen NO_DATA
+        // shape — Empty, no model, every local date reported missing — and the resolver
+        // must never be asked for a provider.
+        let execution = execute_weekly(
+            &store,
+            WeeklyExecutionRequest {
+                start,
+                end,
+                timezone: "Etc/UTC",
+                config: cfg(),
+            },
+            || async { panic!("a week without saved dailies must not resolve a model") },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await
+        .unwrap();
+        assert_eq!(execution.output.mode, ReportMode::Empty);
+        assert!(execution.model.is_none());
+        assert!(execution.daily_run_ids.is_empty());
+        assert_eq!(execution.missing_local_dates, week_dates());
+        assert!(execution.output.markdown.contains("No captured content"));
+    }
+
+    #[tokio::test]
+    async fn weekly_evidence_without_saved_dailies_is_refused() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        // Captured frames exist in the week, but no saved daily report covers any date.
+        // `03 §8e` defines neither NO_DATA (that needs no evidence too) nor a synthesis
+        // for this, so the run must stop instead of guessing.
+        seed_day(&store, start + 3_600_000, 2).await;
+        let result = execute_weekly(
+            &store,
+            WeeklyExecutionRequest {
+                start,
+                end,
+                timezone: "Etc/UTC",
+                config: cfg(),
+            },
+            || async { panic!("no saved dailies must not resolve a model") },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await;
+        let Err(err) = result else {
+            panic!("captured frames without saved dailies must not become Empty/NO_DATA or a synthesis");
+        };
+        assert_eq!(err.code, "GENERATION_FAILED");
+        assert!(err.message.contains("saved daily reports"));
+    }
+
+    #[tokio::test]
+    async fn partial_week_reports_missing_days() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        // Five of the seven local dates have saved dailies; 2026-10-15 and 2026-10-16 do
+        // not (offsets 3 and 4 of the Monday-anchored week).
+        let seeded = [0usize, 1, 2, 5, 6];
+        let mut consumed_ids = Vec::new();
+        for offset in seeded {
+            let day_start = start + offset as i64 * DAY_MS;
+            let date = week_dates()[offset].clone();
+            let frames = seed_day(&store, day_start + 1_000, 2).await;
+            let run = weekly_run(
+                &format!("daily-{date}"),
+                day_start,
+                day_start + DAY_MS,
+                &date,
+                frames,
+                false,
+                ReportOutcome::Ok,
+            );
+            store.create_report_run(run).await.unwrap();
+            consumed_ids.push(format!("daily-{date}"));
+        }
+        // Expected missing dates computed in the test from the fixture, not by calling the
+        // engine's helper.
+        let expected_missing: Vec<String> = week_dates()
+            .into_iter()
+            .filter(|date| {
+                !seeded
+                    .iter()
+                    .any(|offset| week_date_of(*offset) == date.as_str())
+            })
+            .collect();
+        assert_eq!(expected_missing, vec!["2026-10-15", "2026-10-16"]);
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider_calls = calls.clone();
+        let execution =
+            execute_weekly(
+                &store,
+                WeeklyExecutionRequest {
+                    start,
+                    end,
+                    timezone: "Etc/UTC",
+                    config: cfg(),
+                },
+                || {
+                    let calls = provider_calls.clone();
+                    async move {
+                        Ok(Arc::new(FakeAnswer { calls, big: false }) as Arc<dyn AnswerProvider>)
+                    }
+                },
+                None,
+                &AtomicBool::new(false),
+            )
+            .await
+            .unwrap();
+        assert_eq!(execution.missing_local_dates, expected_missing);
+        let mut got = execution.daily_run_ids.clone();
+        got.sort();
+        let mut want = consumed_ids.clone();
+        want.sort();
+        assert_eq!(got, want, "exactly the consumed saved dailies are recorded");
+        assert_ne!(execution.output.mode, ReportMode::Empty);
+        assert_eq!(execution.output.periods_total, 7);
+        assert_eq!(execution.output.periods_covered, 5);
+        assert_eq!(execution.output.frames_summarized, 10);
+        assert!(!execution.output.truncated);
+        for heading in [
+            "Activity",
+            "Explicitly evidenced decisions",
+            "Open questions",
+            "Next steps",
+        ] {
+            assert!(
+                execution.output.markdown.contains(heading),
+                "weekly framing missing heading {heading}"
+            );
+        }
+        assert!(
+            calls.load(Ordering::Relaxed) > 0,
+            "the shared model path ran"
+        );
+    }
+
+    #[tokio::test]
+    async fn partial_or_truncated_dailies_mark_their_dates_missing() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        // Every date is saved, but 2026-10-15's saved report is flagged truncated and
+        // 2026-10-17's run outcome is PARTIAL: both are partial coverage signals.
+        let fixtures = [
+            (0, ReportOutcome::Ok, false),
+            (1, ReportOutcome::Ok, false),
+            (2, ReportOutcome::Ok, false),
+            (3, ReportOutcome::Ok, true),
+            (4, ReportOutcome::Ok, false),
+            (5, ReportOutcome::Partial, false),
+            (6, ReportOutcome::Ok, false),
+        ];
+        for (offset, outcome, truncated) in fixtures {
+            let day_start = start + offset as i64 * DAY_MS;
+            let date = week_dates()[offset].clone();
+            let run = weekly_run(
+                &format!("daily-{date}"),
+                day_start,
+                day_start + DAY_MS,
+                &date,
+                Vec::new(),
+                truncated,
+                outcome,
+            );
+            store.create_report_run(run).await.unwrap();
+        }
+        let provider_calls = Arc::new(AtomicUsize::new(0));
+        let execution =
+            execute_weekly(
+                &store,
+                WeeklyExecutionRequest {
+                    start,
+                    end,
+                    timezone: "Etc/UTC",
+                    config: cfg(),
+                },
+                || {
+                    let calls = provider_calls.clone();
+                    async move {
+                        Ok(Arc::new(FakeAnswer { calls, big: false }) as Arc<dyn AnswerProvider>)
+                    }
+                },
+                None,
+                &AtomicBool::new(false),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            execution.missing_local_dates,
+            vec!["2026-10-15", "2026-10-17"]
+        );
+    }
+
+    #[tokio::test]
+    async fn weekly_no_model_is_blocked() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        let frames = seed_day(&store, start + 1_000, 2).await;
+        let run = weekly_run(
+            "daily-2026-10-12",
+            start,
+            start + DAY_MS,
+            "2026-10-12",
+            frames,
+            false,
+            ReportOutcome::Ok,
+        );
+        store.create_report_run(run).await.unwrap();
+        // With saved dailies present the run needs a model: a resolver failure must
+        // surface unchanged, with no partial success.
+        let result = execute_weekly(
+            &store,
+            WeeklyExecutionRequest {
+                start,
+                end,
+                timezone: "Etc/UTC",
+                config: cfg(),
+            },
+            || async {
+                Err(ReportError {
+                    code: "MODEL_UNAVAILABLE".into(),
+                    message: "The selected answer model is not installed.".into(),
+                })
+            },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await;
+        let Err(err) = result else {
+            panic!("a resolver failure must not produce a partial success");
+        };
+        assert_eq!(err.code, "MODEL_UNAVAILABLE");
+        assert_eq!(err.message, "The selected answer model is not installed.");
+    }
+
+    /// Returns empty prose with no citations — the blank-prose failure path.
+    struct BlankAnswer;
+
+    #[async_trait]
+    impl AnswerProvider for BlankAnswer {
+        async fn answer(
+            &self,
+            _query: &str,
+            _context: &[RetrievedChunk],
+            _opts: AnswerOpts,
+            _tx: tokio::sync::mpsc::Sender<AnswerDelta>,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn summarize(
+            &self,
+            _system: &str,
+            _instruction: &str,
+            _context: &[RetrievedChunk],
+            _opts: AnswerOpts,
+        ) -> Result<(String, Vec<i64>)> {
+            Ok((String::new(), Vec::new()))
+        }
+    }
+
+    #[tokio::test]
+    async fn weekly_blank_prose_is_generation_failed() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        let frames = seed_day(&store, start + 1_000, 2).await;
+        store
+            .create_report_run(weekly_run(
+                "daily-2026-10-12",
+                start,
+                start + DAY_MS,
+                "2026-10-12",
+                frames,
+                false,
+                ReportOutcome::Ok,
+            ))
+            .await
+            .unwrap();
+        // Saved dailies were found, so blank model prose is a generation failure — never
+        // a successful note and never a NO_DATA claim.
+        let result = execute_weekly(
+            &store,
+            WeeklyExecutionRequest {
+                start,
+                end,
+                timezone: "Etc/UTC",
+                config: cfg(),
+            },
+            || async { Ok(Arc::new(BlankAnswer) as Arc<dyn AnswerProvider>) },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await;
+        let Err(err) = result else {
+            panic!("blank prose after a positive probe must fail");
+        };
+        assert_eq!(err.code, "GENERATION_FAILED");
+        assert!(err.message.contains("no usable text"));
+    }
+
+    /// The `Etc/UTC` local date for a day offset of [`week_bounds`] — test-side only.
+    fn week_date_of(offset: usize) -> String {
+        (chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap()
+            + chrono::Duration::days(offset as i64))
+        .to_string()
     }
 }
