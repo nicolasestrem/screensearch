@@ -1,5 +1,21 @@
 # 07 — Known Gaps
 
+## 2026-10-17 — F3 deeper-memory plan: open decisions (owner: maintainer; PROPOSED, no GO)
+
+Source: `docs/deeper-memory-f3-plan.md` §6. Specs `02`/`03` are silent on all of these; none is
+resolved and no implementation is authorized.
+
+- **Weekly kind token.** `ReportKind::Weekly` already exists (`crates/traits/src/ipc.rs:158`,
+  `03 §8b`: on-demand trailing 7 local days). The scheduled ISO-week synthesis needs a distinct
+  token; proposal `weekly_synthesis`.
+- **Persisted `kind`.** No discriminator exists on `ReportRun` (`crates/traits/src/memory.rs:110-132`),
+  `report_runs` (`crates/store/src/schema.rs:455-469`) or the `GET /v1/reports` projections. Column
+  vs payload field, and its default for existing daily runs, is a 12 → 13 migration decision.
+- **Weekly catch-up cap:** 4 complete weeks proposed.
+- **Weekly note headings:** reuse daily `Activity` / `Explicitly evidenced decisions` or new names.
+- **Project notes:** one user-selected note (direction-plan F3 minimum); more than one is out of scope.
+- **Weekly Telegram digest** under `03 §8d`: later increment or never.
+
 ## 2026-10-16 — External-agent memory API P0 decisions and gates
 
 - Nico authorized execution of the attached plan, replacing its draft/no-GO labels.

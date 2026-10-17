@@ -11,7 +11,10 @@
 Build **ScreenSearch V2c** as specified in `specs/01`–`03`. Standalone, Windows-only, local-first,
 Rust + Tauri 2. Correctness over speed — there is no deadline.
 
-## 1. Mandatory reading order (every session, before coding)
+## 1. Mandatory reading (every session, before coding — targeted, not end to end)
+Read `01` in full (it is short). For `02`/`03`/`UI_REFERENCE.md`, grep the headings and read only
+the sections the task touches plus their cross-references — the per-arc pointers below name them.
+Do not read the large specs end to end (token cost; `03` alone is ~150 KB).
 1. `01_PROJECT_CONTEXT.md` — what is true today (env, constraints, non-goals).
 2. `02_STRATEGIC_PLAN.md` — what to build and in what phase order.
 3. `03_MASTER_PRODUCTION_SPEC.md` — exactly how (schema, traits, protocols, DoD).
@@ -53,7 +56,7 @@ remain Windows-only; inference stays loopback-only; no listener/CORS changes or 
 Approval is not evidence of implemented behavior; require native Windows and separate-machine HTTP evidence before claiming acceptance.
 Update active user-facing privacy copy with the implementation, not before the behavior exists.
 
-**Do not** hold the spec in your head from a prior session — re-read; the files evolve.
+**Do not** hold the spec in your head from a prior session — re-read the sections you need; the files evolve.
 
 **For memory reports (2026-10-15):** read `docs/memory-api-direction-plan.md`, `02 §5f`,
 `03 §8c` and the memory-report UI contract. The maintainer approved execution and the frozen

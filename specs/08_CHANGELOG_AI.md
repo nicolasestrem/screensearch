@@ -1,5 +1,40 @@
 # 08 — AI Changelog
 
+## 2026-10-17 — Fix untrusted PR checkout in on-demand Claude review (CI security)
+
+- **Change:** `claude-code-review.yml` checks out the default branch instead of
+  `refs/pull/<n>/head`; the review reads the diff via the GitHub API.
+- **Why:** #134 made the review comment/dispatch-triggered, which runs with secrets
+  (`CLAUDE_CODE_OAUTH_TOKEN`, `id-token: write`); checking out fork PR code there let a PR plant
+  `.claude/settings.json` hooks or CLAUDE.md instructions that Claude Code would load. CodeQL flagged
+  `actions/untrusted-checkout/high` + `actions/untrusted-checkout-toctou/high` (alerts #3, #4).
+  #134 was merged before its checks finished — process miss; wait for checks before merging.
+- **Verification:** `actionlint 1.7.7` exit 0; CodeQL re-scan on the fix PR.
+
+## 2026-10-17 — F3 deeper-memory plan corrected after review (docs only)
+
+- **Change:** corrected `docs/deeper-memory-f3-plan.md` (PR #131): renamed the proposed kind
+  away from the existing `ReportKind::Weekly`; stated that `kind` is new persisted/wire surface,
+  not an existing field; scoped the slice to one project note; described the index/path/provenance
+  writer work; fixed heading names, the symlink-rule citation and the retention wording. Logged the
+  open decisions in `07`.
+- **Why:** two valid review threads (r4303787850, r4303788563) and a citation check against code
+  and specs at `e55f2cc`. `02`/`03` untouched; no schema or code change.
+- **Verification:** docs only; each cited `path:line` was re-read at the PR head. No build run.
+
+## 2026-10-17 — Claude cost reduction: on-demand PR review + targeted spec reads (CI/docs)
+
+- **Change:** `claude-code-review.yml` no longer runs on `pull_request`; it runs only on a
+  `/claude-review` PR comment from an owner/member/collaborator or a manual `workflow_dispatch`
+  (PR number input), checks out the PR head, and pins `--model claude-sonnet-5-5`. `CLAUDE.md` and
+  `04 §1` replace the "read 01–04 + UI_REFERENCE end to end every session" rule with targeted
+  section reads; the CLAUDE.md release-history paragraph is condensed to a pointer to
+  `CHANGELOG-ARCHIVE.md` / `specs/archive/` (no history lost).
+- **Why:** Nico approved (A–D) after cost review: ~50 automatic multi-agent reviews in 3 days
+  (every push, Dependabot, docs-only PRs) and ~60k tokens of mandatory spec reading per session.
+- **Verification:** `actionlint 1.7.7` on both Claude workflows exit 0. The comment trigger only
+  takes effect once the workflow is on `main` (`issue_comment` uses the default-branch file).
+
 ## 2026-10-17 — P3 saved-report read contract and visibility resolution (docs/policy ledger)
 
 - **Change:** resolved the stale "awaiting Nico / P3 only" saved-output visibility hold across the
