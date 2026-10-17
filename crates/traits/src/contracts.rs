@@ -192,6 +192,29 @@ pub trait Store: Send + Sync {
             crate::HistoryUnavailableReason::UnsupportedStore,
         ))
     }
+    /// Bounded overlap/status keyset enumeration over saved reports (`03 §7f.5/.6`).
+    /// One read transaction: the frozen maximum ordering tuple and the candidate
+    /// summaries share a snapshot; filters and window apply in SQL before the limit.
+    /// Never generates, retries, delivers, writes or overlays current sources.
+    async fn report_page(
+        &self,
+        _request: crate::ReportPageRequest,
+    ) -> Result<crate::StoredReportPage, crate::HistoryReadError> {
+        Err(crate::HistoryReadError::Unavailable(
+            crate::HistoryUnavailableReason::UnsupportedStore,
+        ))
+    }
+    /// Public detail projection of one stored run, or `None` (→404). The stored
+    /// saved result is exposed whenever it exists, independent of phase; a
+    /// malformed stored payload is a storage error, never null.
+    async fn report_detail(
+        &self,
+        _run_id: &str,
+    ) -> Result<Option<crate::ReportDetail>, crate::HistoryReadError> {
+        Err(crate::HistoryReadError::Unavailable(
+            crate::HistoryUnavailableReason::UnsupportedStore,
+        ))
+    }
     /// All revision-family receipts; missing ancestors fail closed.
     async fn list_report_family_deliveries(
         &self,
