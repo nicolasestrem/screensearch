@@ -72,14 +72,19 @@ The files are the source of truth, not your memory — re-read the relevant sect
   chronological full-text reads, truthful bounded coverage, independent read credentials and
   saved-report HTTP/MCP reads. Only saved output is promoted; remote generation/retry/delivery
   remain excluded. Do not repeat blanket plan approval; require independent boundary review,
-  real per-unit verification and separate merge/release authorization. Schema remains 12 unless
-  a separately approved migration is needed; never weaken allocator/identity protection to fit KV.
+  real per-unit verification and separate merge/release authorization. Schema remains 12 until
+  the approved F3 migration (12 → 13, `03 §8e`) lands; any other migration needs separate
+  approval; never weaken allocator/identity protection to fit KV.
   Read authorization is explicit per route/method; no new scope is implicitly granted. Existing
   local workflows, listener security/defaults and Windows NSIS bundling remain compatible.
   The approved local-memory amendment permits default-off scheduled local reports and user-selected
   folder writes (`03 §8c`), without nags or scoring. The separately approved Telegram exception
   (`03 §8d`) permits opt-in text digests of saved reports to a user-selected Bot API destination;
   never raw OCR/screenshots, automatic recipient selection, remote commands or cloud inference.
+  The approved F3 deeper-memory amendment (`02 §5i`, normative `03 §8e`) adds the scheduled
+  `weekly_synthesis` kind (distinct from on-demand `Weekly`), one user-created project note written
+  only by user-confirmed promotion, and a weekly-format Telegram digest under `03 §8d`. Contract
+  only: each G1–G6 unit needs real verification, independent review and separate merge approval.
 - **No real-time vision** — vision runs on-demand / timer / idle only (`03 §5`).
 - **Sidecar must never orphan** — implement the Job-Object lifecycle exactly (`03 §6`); do not ship
   P4 until the no-orphan test passes.
