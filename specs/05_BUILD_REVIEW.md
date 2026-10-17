@@ -235,6 +235,35 @@ API/SQLite/kernel fixture: 1035 frames in five pages, process restart/resume, ma
 text/nulls and 1035 details, 401/403 authorization, zero OCR/answer-provider calls. This closes
 neither the Windows network nor GUI gate; P3 saved-report policy remains separately blocked.
 
+### Token-audit corrections: affected native checks
+
+The configured read credential is now passed into API state before the accepting serve task
+starts (startup/enable/rebind), without changing legacy constructor signatures or live rotation.
+`ApiStatus` now uses redacted diagnostic formatting; its serialization and generated binding
+remain unchanged. Regressions cover initial real-socket authentication without a setter,
+credential preservation through bind failure/rebind, and diagnostic-token redaction.
+
+Parent copied only the three changed source files into the existing native verification
+checkout, preserving their earlier bytes and verifying the full 41-file manifest before and
+after the affected checks. On Windows Rust 1.95.0 / Node 22:
+
+```text
+traits:    2 passed; 0 failed; 0 ignored
+api_lib:  19 passed; 0 failed; 0 ignored
+api_http: 42 passed; 0 failed; 1 ignored
+local_api: 23 passed; 0 failed; 0 ignored
+fmt_RC=0
+clippy_RC=0
+bindings_RC=0
+TOKEN_AUDIT_NATIVE_OVERALL_RC=0
+TOKEN_AUDIT_NATIVE_SOURCE_HASHES=41/41 PASS
+```
+
+The IPv6 test that could not bind in the Linux container passes natively; it was not disabled.
+These are affected native regressions, not a rerun or extension of the historical 930-test
+receipt. No app was launched and no UI, clipboard, capture, live-profile or network-policy
+acceptance is inferred; the existing GUI/network/P3 gates remain open.
+
 > **Populated during the build**, after each meaningful pass (`04 §7`). Record what actually
 > happened — honestly. Empty until P0 begins.
 

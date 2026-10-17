@@ -214,10 +214,22 @@ pub struct ApiState {
 impl ApiState {
     /// Legacy-compatible state, with no read credential until explicitly configured.
     pub fn new(host: Arc<dyn ApiHost>, token: SharedToken) -> Self {
+        Self::with_read_token(host, token, None)
+    }
+
+    /// State whose read credential is present from construction. The composition root
+    /// uses this at startup so a configured credential exists **before** the accepting
+    /// serve task starts — no fail-closed 401 window (audit P1 defect 1). A `None`
+    /// credential still fails closed (read auth stays unavailable until configured).
+    pub fn with_read_token(
+        host: Arc<dyn ApiHost>,
+        token: SharedToken,
+        read_token: Option<String>,
+    ) -> Self {
         Self {
             host,
             token,
-            read_token: Arc::new(RwLock::new(None)),
+            read_token: Arc::new(RwLock::new(read_token)),
         }
     }
 }
@@ -255,7 +267,37 @@ impl ApiServer {
         bind_address: IpAddr,
         port: u16,
     ) -> std::io::Result<ApiServer> {
-        Self::start_on_with(host, token, bind_address, port, ServerLimits::default()).await
+        Self::start_on_with(
+            host,
+            token,
+            None,
+            bind_address,
+            port,
+            ServerLimits::default(),
+        )
+        .await
+    }
+
+    /// Backward-compatible startup that installs the configured read credential
+    /// **before** the accepting serve task is spawned — no fail-closed 401 window
+    /// (audit P1 defect 1). [`ApiServer::start`] / [`ApiServer::start_on`] stay
+    /// credential-free (`None`) for legacy callers; a `None` credential fails closed.
+    pub async fn start_on_with_read_token(
+        host: Arc<dyn ApiHost>,
+        token: SharedToken,
+        read_token: Option<String>,
+        bind_address: IpAddr,
+        port: u16,
+    ) -> std::io::Result<ApiServer> {
+        Self::start_on_with(
+            host,
+            token,
+            read_token,
+            bind_address,
+            port,
+            ServerLimits::default(),
+        )
+        .await
     }
 
     /// [`ApiServer::start_on`] with an injectable connection budget — production always
@@ -263,6 +305,7 @@ impl ApiServer {
     async fn start_on_with(
         host: Arc<dyn ApiHost>,
         token: SharedToken,
+        read_token: Option<String>,
         bind_address: IpAddr,
         port: u16,
         limits: ServerLimits,
@@ -301,7 +344,7 @@ impl ApiServer {
         socket.bind(SocketAddr::from((bind_address, port)))?;
         let listener = socket.listen(128)?;
         let local_addr = listener.local_addr()?;
-        let state = ApiState::new(host, token.clone());
+        let state = ApiState::with_read_token(host, token.clone(), read_token);
         let read_token = state.read_token.clone();
         let router = build_router(state);
         let (stop, stop_rx) = watch::channel(false);
@@ -740,7 +783,7 @@ mod connection_tests {
             answer,
         });
         let token: SharedToken = Arc::new(RwLock::new(TEST_TOKEN.to_string()));
-        let server = ApiServer::start_on_with(host, token, DEFAULT_BIND_ADDRESS, 0, limits)
+        let server = ApiServer::start_on_with(host, token, None, DEFAULT_BIND_ADDRESS, 0, limits)
             .await
             .expect("bind loopback");
         (server.local_addr(), server)
@@ -760,6 +803,15 @@ mod connection_tests {
     fn health_request() -> Vec<u8> {
         format!(
             "GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TEST_TOKEN}\r\n\r\n"
+        )
+        .into_bytes()
+    }
+
+    /// The same `GET /v1/health` request with an explicit bearer token (the read
+    /// credential in the startup-availability regression).
+    fn health_request_with(token: &str) -> Vec<u8> {
+        format!(
+            "GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n"
         )
         .into_bytes()
     }
@@ -835,6 +887,50 @@ mod connection_tests {
             REQUEST_HEADER_DEADLINE,
             "production must use the fixed constants"
         );
+    }
+
+    /// Audit P1 defect 1: the configured read credential must be live the instant the
+    /// listener accepts — `start_on_with_read_token` installs it *before* the accepting
+    /// serve task is spawned, so there is no fail-closed 401 window between bind and
+    /// credential install. No `set_read_token` call is made here: the credential came in
+    /// at construction, and the first request on the fresh socket must already be 200.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn read_credential_is_available_from_startup_without_a_setter() {
+        let host = Arc::new(Host {
+            store: Arc::new(store::SqliteStore::open_in_memory().expect("open store")),
+            answer: None,
+        });
+        let token: SharedToken = Arc::new(RwLock::new(TEST_TOKEN.to_string()));
+        let read = "startup-read-credential";
+        let server = ApiServer::start_on_with_read_token(
+            host,
+            token,
+            Some(read.to_string()),
+            DEFAULT_BIND_ADDRESS,
+            0,
+        )
+        .await
+        .expect("bind loopback");
+        let addr = server.local_addr();
+
+        // No setter call: the credential is already live on the fresh listener.
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream.write_all(&health_request_with(read)).await.unwrap();
+        stream.flush().await.unwrap();
+        let body = read_one_response(&mut stream)
+            .await
+            .expect("read credential 200 straight from startup");
+        assert!(body.contains("\"version\""), "{body}");
+
+        // The legacy token stays independently valid on the same listener.
+        let mut legacy = TcpStream::connect(addr).await.unwrap();
+        legacy.write_all(&health_request()).await.unwrap();
+        legacy.flush().await.unwrap();
+        read_one_response(&mut legacy)
+            .await
+            .expect("legacy token still 200");
+
+        server.stop().await;
     }
 
     /// Incomplete request headers are closed at the header deadline — and not before

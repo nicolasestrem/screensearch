@@ -1166,7 +1166,7 @@ pub struct ThrottleStatus {
 /// `None` only before the first enable ever generated one. The token lives in the
 /// `settings` KV table, **never** in the `Settings` struct, so it cannot leak through
 /// `get_settings`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 pub struct ApiStatus {
     /// Configured IPv4 or IPv6 literal; missing configuration defaults to 127.0.0.1.
@@ -1181,6 +1181,24 @@ pub struct ApiStatus {
     pub token: Option<String>,
     /// Why the server is not running despite `enabled` (e.g. "port 43210 in use").
     pub last_error: Option<String>,
+}
+
+/// Manual `Debug` that never prints the bearer token bytes — a future
+/// `tracing!(?status)` or `{:?}` on `ApiStatus` must not leak the secret (the same
+/// discipline `ApiReadTokenSecret` keeps by omitting `Debug`). Presence is shown as a
+/// redaction marker so diagnostics still distinguish `None` from `Some`; the derived
+/// `Serialize`/`TS` impls (the UI contract) are unchanged.
+impl std::fmt::Debug for ApiStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiStatus")
+            .field("bind_address", &self.bind_address)
+            .field("enabled", &self.enabled)
+            .field("running", &self.running)
+            .field("port", &self.port)
+            .field("token", &self.token.as_ref().map(|_| "[redacted]"))
+            .field("last_error", &self.last_error)
+            .finish()
+    }
 }
 
 /// Passive, nonsecret availability of the independent read credential (`03 §7f.3`).
@@ -1305,6 +1323,72 @@ mod ts_number_guard {
                 !decl.contains("bigint"),
                 "{name} exports a `bigint` field — add #[ts(type = \"number\")]: {decl}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod api_status_redaction {
+    use super::ApiStatus;
+    use ts_rs::TS;
+
+    /// A distinctive secret so a leak is unambiguous even by prefix.
+    const CANARY: &str = "canary-legacy-bearer-3f9a1c0d7e2b4856";
+
+    fn status_with(token: Option<&str>) -> ApiStatus {
+        ApiStatus {
+            bind_address: "127.0.0.1".to_string(),
+            enabled: true,
+            running: true,
+            port: 43210,
+            token: token.map(str::to_string),
+            last_error: None,
+        }
+    }
+
+    /// Guard-rail: `ApiStatus` carries the legacy bearer token, so diagnostic
+    /// formatting must never print its bytes. `ApiReadTokenSecret` already omits
+    /// `Debug`; this pins the same discipline for `ApiStatus`.
+    #[test]
+    fn debug_never_exposes_the_bearer_token() {
+        let debug = format!("{:?}", status_with(Some(CANARY)));
+        assert!(
+            !debug.contains(CANARY),
+            "Debug leaked the bearer token: {debug}"
+        );
+        assert!(
+            !debug.contains("3f9a1c0d"),
+            "Debug leaked token bytes: {debug}"
+        );
+        assert!(
+            debug.contains("[redacted]"),
+            "Debug should mark the redaction: {debug}"
+        );
+        assert!(
+            debug.contains("Some"),
+            "Debug should still show credential presence: {debug}"
+        );
+        // A `None` credential formats as absent, never as a fabricated secret.
+        let absent = format!("{:?}", status_with(None));
+        assert!(absent.contains("token: None"), "{absent}");
+    }
+
+    /// The redaction must not change the serialization/UI contract: `ApiStatus` is still
+    /// `Serialize` (so `token` rides the JSON wire for Settings reveal/copy) and the
+    /// generated binding still declares the token field. The repo's binding guard
+    /// (`git diff --exit-code -- ui/src/bindings`) pins the exact exported bytes.
+    #[test]
+    fn serialization_and_binding_contract_are_unchanged() {
+        fn assert_serialize<T: serde::Serialize>() {}
+        assert_serialize::<ApiStatus>();
+
+        let decl = ApiStatus::decl();
+        assert!(
+            decl.contains("token: string | null"),
+            "binding lost the token field: {decl}"
+        );
+        for field in ["bind_address", "enabled", "running", "port", "last_error"] {
+            assert!(decl.contains(field), "binding lost {field}: {decl}");
         }
     }
 }

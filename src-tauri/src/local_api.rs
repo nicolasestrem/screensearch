@@ -494,11 +494,20 @@ async fn apply_api_config_locked(
             *runtime.token.write().expect("api token lock") = token;
         }
 
-        match ApiServer::start_on(host, runtime.token.clone(), target_address, target_port).await {
+        match ApiServer::start_on_with_read_token(
+            host,
+            runtime.token.clone(),
+            read_token,
+            target_address,
+            target_port,
+        )
+        .await
+        {
             Ok(server) => {
-                // Install on every fresh handle (startup, enable, and rebind), before
-                // publishing it. Prior to this assignment read authentication fails closed.
-                server.set_read_token(read_token);
+                // The configured read credential is installed inside
+                // `start_on_with_read_token`, before the accepting serve task is spawned
+                // (startup, enable, and rebind): there is no fail-closed 401 window.
+                // A `None` credential still fails closed.
                 *runtime.server.lock().await = Some(server);
             }
             Err(e) => {
@@ -1057,6 +1066,46 @@ mod tests {
             read_health(status.port, &token).await,
             reqwest::StatusCode::OK
         );
+        stop_server(&runtime).await;
+    }
+
+    /// Audit P1 defect 1 (+ gap 3): a bind failure must leave the read credential
+    /// persisted, and the retry/rebind must install it again *at startup* through the
+    /// credential-first entry point — so it is live the moment the listener accepts.
+    /// Real sockets throughout; no `set_read_token` call is made.
+    #[tokio::test]
+    async fn read_credential_survives_bind_failure_and_is_reinstalled_on_rebind() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let runtime = ApiRuntime::new();
+        // A competing loopback listener occupies the port, so the enable bind fails.
+        let occupied = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let blocked_port = occupied.local_addr().unwrap().port();
+        change_read_token(&store, &runtime, ReadTokenChange::Create)
+            .await
+            .unwrap();
+        let token = read_read_token(&store).await.unwrap().unwrap();
+
+        let failed = apply_api_config(&store, &runtime, host(), true, Some(blocked_port), None)
+            .await
+            .unwrap();
+        assert!(failed.enabled, "intent is preserved");
+        assert!(!failed.running, "the occupied port blocks the bind");
+        assert!(failed.last_error.is_some());
+        assert!(runtime.server.lock().await.is_none());
+        // The credential is untouched on disk and none is live yet.
+        assert_eq!(
+            read_read_token(&store).await.unwrap().as_deref(),
+            Some(token.as_str())
+        );
+
+        drop(occupied);
+        let free = available_port();
+        let rebound = apply_api_config(&store, &runtime, host(), true, Some(free), None)
+            .await
+            .unwrap();
+        assert!(rebound.running, "{:?}", rebound.last_error);
+        // Installed at startup by the credential-first entry point — no setter here.
+        assert_eq!(read_health(free, &token).await, reqwest::StatusCode::OK);
         stop_server(&runtime).await;
     }
 
