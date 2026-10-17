@@ -65,6 +65,16 @@ contract commits separate and independently reviewed before implementing their b
 the durable state and installed-only model path before scheduling or destination side effects.
 Native acceptance and pilot evidence remain open until observed; no fake success receipts.
 
+**For deeper memory (F3, approved 2026-10-17):** also read `02 §5i` and the normative `03 §8e`
+(weekly synthesis + project note), plus `03 §8b`/`§8c`/`§8d` where `§8e` extends them and
+`UI_REFERENCE §11` for the memory-report UI. Hard constraints: **exactly one schema migration**
+(G1 only, 12 → 13 — the indexed `kind` column; if any other unit appears to need schema, that
+unit is wrong: stop and report); **no report HTTP/MCP generation** (C3 stays deferred);
+**exactly one user-created project note**, appended only through explicit user-confirmed
+promotion — no auto-edits of identity/knowledge pages, no nags/scores; weekly runs are local,
+scheduled and default-off; the weekly Telegram digest lands only as G6 under the `03 §8d`
+exception. The **specs are the contract**; `docs/deeper-memory-f3-plan.md` is context.
+
 ## 1b. External-agent memory API execution (approved 2026-10-16)
 
 Read `02 §5h`, the complete `03 §7f` contract (including wire types, route/tool permission matrix,
@@ -111,6 +121,44 @@ Snapshot isolated DBs before setup; no live private-history inspection, model do
 activation or Telegram send is authorized by this increment. Update `05`–`08` after meaningful
 implementation passes with completed versus blocked evidence; active user docs mark saved-read
 availability only when implemented. Historical release descriptions remain historical.
+
+## 1c. Deeper memory (F3) execution (approved 2026-10-17)
+
+Read `02 §5i` and the complete `03 §8e` contract (run identity/window/statuses, the `kind`
+discriminator and the 12 → 13 migration, weekly note + index + provenance branches, promotion
+rules, weekly scheduling/catch-up, and the G6 digest), plus `03 §8b`/`§8c`/`§8d` where `§8e`
+extends them and `UI_REFERENCE §11`. Nico's explicit GO supersedes the draft plan's pending-GO
+status and waives its F1-pilot contingency; no repeated blanket GO is required. Approval is
+contract-only — it is not authority to merge, push a release/tag or change the live profile, and
+G1–G6 each require real per-unit verification and independent review before landing.
+
+G1 contract + migration → G2 weekly engine → G3 writer (note + index + provenance) → G4 promotion
+→ G5 scheduler + catch-up → G6 weekly Telegram digest (weekly-specific format under `03 §8d`).
+No runtime edits in the contract unit. Weekly runs execute through the shared report application
+service; no second engine, model path or discriminator.
+
+One migration only: the forward-only 12 → 13 `kind` column in G1, with a populated-DB test and a
+`schema_version` bump; any other unit that appears to need schema is wrong — stop and report.
+Keep `Weekly` and `weekly_synthesis` tokens/labels/filenames distinct. Weekly runs are local,
+scheduled and default-off; retries reuse `(schedule_id, window)`; statuses reuse the daily
+`NO_DATA`/`PARTIAL`/`BLOCKED`/`FAILED`/`OK` set truthfully. Promotion is the only project-note
+write path: explicit user confirmation, append-only, no rewrites, user edits surface as
+conflicts, rejected proposals are not persisted. Weekly note/index/frontmatter follow the daily
+writer guarantees (atomic, hash-tracked, ownership, symlink rejection); frontmatter v1 daily
+notes must still parse. No HTTP/MCP generation, no multiple project notes, no
+identity/knowledge-page edits, no scoring/nags.
+
+Run targeted tests as changes land. Integrated Windows acceptance order is UI `npm ci`,
+`npm run lint`, `npm run build`; `node scripts/stage-mcp.mjs`; `cargo fmt --all -- --check`;
+`cargo clippy --locked --workspace --all-targets -- -D warnings`;
+`cargo build --locked --workspace`; `cargo test --locked --workspace`;
+`git diff --exit-code -- ui/src/bindings`; then app verification via `npm run dev` in an isolated
+profile. Native acceptance mirrors the daily arc: a real weekly run over a real week of saved
+dailies, the rendered note inspected in Obsidian with working links, and one promotion in the
+running app. Report raw command exit/output; compile/fixture success does not prove native
+acceptance. No live private-history inspection, model download, schedule activation or Telegram
+send is authorized by this contract; G6 still needs an explicitly approved test recipient/send.
+Update `05`–`08` after meaningful implementation passes with completed versus blocked evidence.
 
 ## 2. Source of truth (which doc answers which question)
 | Question | Authority |

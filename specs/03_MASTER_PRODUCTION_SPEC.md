@@ -980,6 +980,8 @@ implementations may factor structs internally but must export equivalent types f
 UTC timestamps, frame/session IDs and allocator values are signed `i64` JSON integers, never
 floating-point timestamps; limits are `u32` with the stricter HTTP range above. UUID identities
 are opaque strings. Counts use nonnegative integer types large enough for the stored history.
+The F3 increment adds a `kind` field to `ReportSummary`/`ReportDetail`; that addition is
+normative in `§8e`.
 All optional response fields are present with JSON null; arrays are present, including empty
 arrays. Responses must not replace missing values with empty strings or fabricated timestamps.
 
@@ -1694,6 +1696,186 @@ requires a user-approved recipient/send and visual inspection in Telegram. A ret
 ID proves service acceptance, never that a person read the message. No test credentials,
 hardcoded destinations, synthetic receipts or undocumented sends. Rollback disables delivery
 independently of local schedules and preserves reports, notes and receipts.
+
+## 8e. Deeper memory: weekly synthesis and project note (approved 2026-10-17)
+
+The maintainer approved this deeper-memory contract on 2026-10-17 (`02 §5i`), explicitly
+waiving the direction plan's F1-pilot contingency. This separately reviewed amendment extends
+the `§8c` exception with exactly two layers above the saved daily report — one scheduled
+weekly synthesis and one user-created project note — plus the single `kind` schema addition
+they require; the weekly Telegram digest (G6) rides the existing `§8d` exception. Loop: saved
+daily reports → weekly synthesis citing them → explicit user-confirmed promotion → the
+project note. No new capture, no scoring, nags or unsolicited automation, no cloud inference,
+no automatic model downloads, no new outbound exception. Approval is contract-level: this
+section authorizes no code, and each increment G1–G6 requires real per-unit verification,
+independent review and separate merge authorization.
+
+### Weekly synthesis runs
+
+- Kind token `weekly_synthesis`, executed through the shared report application service (C1) —
+  no second engine, no second model path. It is deliberately distinct from the on-demand
+  `ReportKind::Weekly` (`crates/traits/src/ipc.rs:158`, `§8b`: trailing 7 local days,
+  frame-based map-reduce), which keeps its name, label ("Weekly",
+  `ui/src/components/domain/ReportBuilder.tsx:62`) and `screensearch-report-weekly-…`
+  filenames (`ui/src/lib/time.ts:86`). The on-demand report and the scheduled weekly synthesis
+  never share a token, label or filename stem.
+- Run identity: schedule ID + explicit UTC window `[week_start, week_end)`. The window is the
+  ISO week (Monday 00:00 local → next Monday 00:00 local) in the selected IANA timezone;
+  DST-shortened/lengthened weeks produce 167/169-hour windows, never 24·7 UTC hours.
+- Uniqueness is `(schedule_id, window)`; retries reuse the run; Regenerate creates a linked
+  revision, mirroring `§8c`. `kind` is not a deduplication dimension.
+- Truthful statuses reuse C4: `NO_DATA` for a week with no saved dailies and no evidence;
+  `PARTIAL` when any day in the window lacks a saved daily report or its coverage is marked
+  partial/truncated; `BLOCKED` when prerequisites (model) are missing; `FAILED` on execution
+  errors; `OK` only with complete measured coverage of the window. Shared `§8c` execution
+  rules apply unchanged (inspect empty windows before acquiring a model, store errors are
+  FAILED, blank prose after a positive probe is GENERATION_FAILED, model-load failure is
+  visible BLOCKED).
+- Inputs: the saved daily reports in the window, their stored evidence IDs and coverage
+  records. A weekly run may re-read evidence but must record the `daily_run_ids` it consumed
+  in its provenance; a weekly report citing no daily run for a day it describes is a defect.
+
+### Persistence, kind and retention
+
+- `kind` is an indexed `report_runs` column (`kind TEXT NOT NULL DEFAULT 'daily'`), added by
+  the increment's single forward-only 12 → 13 migration with the `schema_version` bump
+  (`crates/store/src/schema.rs:10`, `:456-469`); run listings filter on it. Existing runs read
+  as `daily`; new runs persist their kind explicitly at enqueue. The existing partial unique
+  key (`crates/store/src/schema.rs:467-468`) stays. A populated-schema-12 migration test must
+  preserve existing runs, frames, sessions and settings.
+- `ReportSummary` and `ReportDetail` (`crates/traits/src/reports.rs:125-181`, `§7f.6`) gain
+  required `kind` (`daily` | `weekly_synthesis`) on the `GET /v1/reports` projections — the
+  deliberate wire-contract addition reviewed with this migration, not an existing field that
+  surfaces automatically. The on-demand `ReportKind::Weekly` (`§8b`) is not this kind.
+- Weekly runs use the same run store, `ReportRun`/`ReportDelivery` machinery, destination
+  snapshots and delivery receipts as daily runs. No HTTP/MCP generation, retry or delivery
+  surface is added (C3 stays deferred); promotion has no HTTP/MCP surface in this slice.
+- Retention interplay: finished runs of any kind prune 90 days after their last terminal
+  update under the existing `§8c` exemptions (`src-tauri/src/memory.rs:20`). Weekly notes and
+  the project note are user-owned output and are never pruned by run retention; ownership
+  records outlive run pruning. Provenance IDs may outlive their sources; frame/session and
+  report reads report missing evidence honestly (404) and never invent availability.
+
+### Weekly note, index and frontmatter
+
+- Path: `<selected folder>/ScreenSearch/Weekly/YYYY-Www.md` (e.g. `2026-W42.md`), with the
+  same writer guarantees as daily notes: atomic same-directory temporary write/replace,
+  persisted SHA-256 ownership independent of run retention, edited/unrelated files prechecked
+  and preserved untouched, ReplaceFileW replacement with the displaced-backup hash compare,
+  conflict receipts carrying `recovery_path`, reparse-point rejection, no tokens or invented
+  deep links. `edited_weekly_note_is_preserved` and the existing interrupted-write behavior
+  apply.
+- `ScreenSearch/Index.md` gains weekly entries (label `YYYY-Www`, status, brief source-backed
+  topic) linking the week to its weekly note and the daily notes it consumed, under the same
+  atomic-write, ownership and conflict rules. The index builder's folder filter
+  (`src-tauri/src/memory.rs:1219`), its provenance re-derivation check
+  (`src-tauri/src/memory.rs:1261-1276`) and `note_relative_path`
+  (`src-tauri/src/memory_files.rs:95-120`) each gain a weekly branch so a
+  `Weekly/YYYY-Www.md` file passes the same check as daily notes. Index.md grows by design;
+  any split rule is a review decision, never silent bounding.
+- Frontmatter schema v2 adds `kind`, `daily_run_ids` and `window_local_dates` to the schema-1
+  keys (`src-tauri/src/memory_files.rs:62-83`); weekly notes write schema 2 and schema-1
+  notes must still parse (`frontmatter_v1_still_parses`), with a typed parse/serialization
+  roundtrip. `kind` defaults to `daily` when absent; the same coverage counts, RFC3339 UTC
+  `window_start`/`window_end` and frame/session ID arrays as daily apply.
+- Headings: `Activity`, `Explicitly evidenced decisions`, `Open questions`, `Next steps` —
+  the daily headings with `Open questions` and `Next steps` added for cross-day synthesis
+  (`crates/kernel/src/reports.rs:786`). Every item cites frame/session/daily-run IDs;
+  tentative screen text is never stated as a commitment.
+
+### Project note and promotion
+
+- Exactly one user-created, user-named project note at
+  `<selected folder>/ScreenSearch/Projects/<slug>.md`; the app never invents, renames or
+  deletes it, creation is manual and default-empty, and multiple notes are out of scope.
+- Promotion is the only write path: the user selects items from a weekly synthesis or daily
+  report and confirms; the app appends one dated, provenance-carrying entry in one atomic
+  write. No promotion without explicit confirmation; generated prose never enters a project
+  note unreviewed, and rejected proposals are not persisted anywhere. No automatic edits to
+  personal identity or existing knowledge pages.
+- Fixed sections: `## Decisions`, `## Open questions`, `## Next steps`, `## Log`. Each
+  appended entry carries its date, source `run_id`(s) and frame/session IDs; the note is an
+  append-only ledger — existing lines are never rewritten, and the app appends only to
+  unchanged owned files. After first write the note is user-owned under the same ownership
+  rules; user edits surface as conflicts, including an edit between selection and
+  confirmation, and are never overwritten.
+
+### Weekly scheduling
+
+- Default-off weekly schedule beside the daily one; Settings controls mirror D4 (enable,
+  local time, timezone; the output folder is the `§8c` selected folder, not a separate
+  choice; Run now; last-run status). Persist weekly enable/time/zone with weekly activation,
+  cursor and gap state beside the daily schedule state (`memory.weekly.*` mirroring
+  `memory.schedule.*`); enable requires valid time and zone and the selected folder. Run now
+  enqueues the most recent complete ISO week and requires a selected zone but not an enabled
+  schedule.
+- First eligible window is the first complete ISO week after activation; no partial
+  activation week is scheduled. Fire at the selected local time after the week closes,
+  mirroring the daily rule. Timezone selection is fixed while travelling; DST gap/overlap
+  follow the `§8c` rules (missing local time → first valid instant; overlapping → earlier
+  instant once).
+- Restart catch-up processes missed weeks oldest-first, capped at the 4 most recent complete
+  ISO weeks; older gaps stay visible and are never claimed as covered. No duplicate finalized
+  UTC window for the same schedule; config changes never mutate old deduplication keys.
+
+### Weekly Telegram digest (G6, after G5)
+
+- A weekly digest with its own weekly-specific format — week label `YYYY-Www`, truthful
+  status and coverage, and the saved synthesis highlights with source IDs — under the
+  existing `§8d` opt-in exception: default-off, explicitly enabled, text only, derived from
+  the saved weekly output, user-selected destination, no raw OCR or screenshots, no second
+  generation and no second model.
+- `§8d` credential handling, masking, chunk bounds, delivery intents, retry bounds,
+  unknown-delivery handling and resolution apply unchanged to the weekly destination.
+
+### Non-goals
+
+- No automatic edits to personal identity or existing knowledge pages; no promotion without
+  explicit confirmation; rejected proposals are not persisted.
+- No report generation, retry or delivery over HTTP/MCP (C3 stays deferred); weekly runs are
+  local, scheduled and default-off like daily; no HTTP/MCP surface for weekly runs or
+  promotion in this slice.
+- No new capture, no audio, no cross-platform capture, no cloud inference, no automatic model
+  downloads; no scoring, nags or unsolicited automation (pull-based, D4/D11).
+- No multiple project notes and no additional rollup layer above the weekly synthesis in this
+  slice.
+- Schema changes only as the single forward-only 12 → 13 migration, never guessed or
+  downgraded.
+
+### Increments and acceptance
+
+Each increment is separately reviewable and lands only with its named checks; a name here is
+not evidence that a check ran. G1–G6 need no repeated blanket GO.
+
+- **G1 Contract + migration:** freeze run identity, window, statuses, the `weekly_synthesis`
+  kind, the persisted `kind` discriminator (12 → 13), promotion and note-frontmatter schema
+  v2 in this section. `weekly_window_handles_dst`,
+  `weekly_run_identity_reuses_schedule_window`,
+  `migration_12_to_13_defaults_existing_runs_to_daily`, `frontmatter_v1_still_parses`.
+- **G2 Engine:** weekly run through the shared service consuming saved dailies; truthful
+  statuses. `weekly_requires_saved_dailies`, `partial_week_reports_missing_days`,
+  `weekly_no_model_is_blocked`.
+- **G3 Writer:** atomic weekly note + index/path/provenance branches.
+  `weekly_note_contains_provenance`, `weekly_index_links_daily_and_weekly`,
+  `weekly_note_path_passes_provenance_check`, `edited_weekly_note_is_preserved`.
+- **G4 Promotion:** select → confirm → append; conflicts preserved.
+  `promotion_requires_explicit_confirm`, `promotion_appends_without_rewrite`,
+  `promotion_to_edited_note_surfaces_conflict`.
+- **G5 Scheduler:** weekly schedule, catch-up, visible gaps. `weekly_catchup_oldest_first`,
+  `weekly_backfill_cap_reports_gap`.
+- **G6 Weekly Telegram digest:** weekly-format rendering from the saved weekly report and
+  reuse of the `§8d` receipt/retry machinery. `weekly_digest_uses_saved_weekly_report`,
+  `weekly_digest_renders_weekly_format`, `weekly_digest_chunks_fit_telegram_limit`.
+
+Native acceptance mirrors the daily arc: a real weekly run over a real week of saved dailies,
+the rendered note inspected in Obsidian with working links, and one promotion performed in
+the running app. G6 additionally requires a user-approved destination/send and inspection in
+Telegram, mirroring `§8d`; approval is not authorization to message a recipient. No test
+changes the live profile, rewrites user notes or sends a real message without that approval.
+Review focus: week-boundary/DST correctness, synthesis over-claiming (uncited claims are a
+defect, not style), promotion races and kind separation. Rollback disables the weekly
+schedule independently of the daily schedule and preserves reports, notes and receipts;
+never delete or rewrite user notes.
 
 ## 9. Logging & observability
 `tracing` + daily-rotating file (`tracing-appender`) and console. Job-queue depth, sidecar state
