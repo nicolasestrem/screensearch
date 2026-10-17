@@ -1,5 +1,20 @@
 # 07 — Known Gaps
 
+## 2026-10-17 — F3 G1 implementation readings (owner: agent; maintainer may override)
+
+- **Daily notes keep frontmatter schema 1.** `03 §8e` requires weekly notes to write schema 2
+  and schema-1 notes to keep parsing; it does not move daily notes. Daily output stays
+  byte-identical; schema is stamped from the carried fields (any v2 field ⇒ 2).
+- **First eligible weekly window** uses the daily `§8c` rule "at or after activation":
+  activation exactly at Monday 00:00 local makes that week eligible. One-character switch in
+  `weekly_first_window` if strictly-after was intended.
+- **Weekly catch-up scan-back bound is unspecified.** `§8e` fixes oldest-first and the
+  4-complete-ISO-week cap but not the lookback; deferred to G5, not guessed in G1.
+- **`kind` is not a dedup dimension.** The `(schedule_id, window_start, window_end)` partial
+  unique key is unchanged per `§8e`; a daily and a weekly run cannot share the same schedule
+  and window. G5 must therefore give the weekly schedule its own schedule ID (weekly windows
+  never coincide with daily ones, but a shared ID must not be relied on).
+
 ## 2026-10-17 — F3 deeper-memory plan: open decisions (owner: maintainer) — **Resolved (Nico, 2026-10-17)**
 
 Source: `docs/deeper-memory-f3-plan.md` §6. Specs `02`/`03` were silent on all of these; each was
