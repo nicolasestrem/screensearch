@@ -454,6 +454,11 @@ impl TargetFixture {
             while !stop_flag.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        // The listener polls non-blocking, and on BSD/macOS an accepted
+                        // socket inherits that flag (Linux does not), which would make the
+                        // blocking request/response helpers below fail with WouldBlock.
+                        // Clear it so the fixture behaves identically on every platform.
+                        stream.set_nonblocking(false).unwrap();
                         let (head, body) = read_request(&mut stream);
                         seen.lock()
                             .unwrap()
@@ -854,6 +859,26 @@ impl Drop for ChildGuard {
     }
 }
 
+/// Counts the fixture's server-side records of a TLS handshake a client opened and then
+/// aborted before any HTTP exchange. OpenSSL's `s_server` words this differently by
+/// platform and build: a received alert (`...alert certificate unknown... SSL alert number
+/// 46`) on Linux, a handshake record read cut short by the peer (`unexpected eof while
+/// reading`) on Windows. Both are written only after a client's TLS ClientHello reached the
+/// fixture, so a growing count is portable evidence that the client connected and was
+/// rejected inside the handshake — not that the endpoint was simply absent (a dead endpoint
+/// writes nothing). Matching either phrasing keeps the assertion from pinning one OpenSSL
+/// build's exact log text.
+fn handshake_aborts(log: &str) -> usize {
+    log.lines()
+        .filter(|line| {
+            line.contains("alert")
+                || line
+                    .to_ascii_lowercase()
+                    .contains("unexpected eof while reading")
+        })
+        .count()
+}
+
 #[tokio::test]
 async fn https_verification_stays_on_for_untrusted_certificates() {
     // A real TLS endpoint (openssl s_server — a local tool, no new library dependency)
@@ -951,37 +976,58 @@ async fn https_verification_stays_on_for_untrusted_certificates() {
         control_text.contains("CONNECTED"),
         "control handshake failed: {control_text}"
     );
-    let alerts_before = std::fs::read_to_string(&log_path)
-        .unwrap_or_default()
-        .matches("alert")
-        .count();
+    let aborts_before = handshake_aborts(&std::fs::read_to_string(&log_path).unwrap_or_default());
 
-    // The client under test must refuse the untrusted certificate.
+    // The client under test must refuse the untrusted certificate on every real request
+    // path (JSON, image bytes, SSE). TLS verification is not configurable in this client,
+    // so this pins the builder defaults staying on across all three.
     let client = ApiClient::new(
         format!("https://127.0.0.1:{port}"),
         Some("tls-test-token".into()),
     )
     .unwrap();
-    let outcome = client.get_json("/v1/marks", &[]).await;
-    assert!(
-        outcome.is_err(),
-        "client accepted an untrusted certificate: {outcome:?}"
-    );
+    let outcomes: [(&str, Result<(), ApiFailure>); 3] = [
+        ("json", client.get_json("/v1/marks", &[]).await.map(|_| ())),
+        (
+            "image",
+            client.get_bytes("/v1/frames/1", &[]).await.map(|_| ()),
+        ),
+        ("sse", client.ask(json!({})).await.map(|_| ())),
+    ];
 
-    // The fixture log shows a new TLS alert: the client connected and aborted inside the
-    // handshake after certificate verification failed.
+    // Portable error assertion: a refused certificate is a connect-class failure, so no
+    // HTTP response is ever produced — a request that reached the server would return Ok,
+    // and a served rejection would surface as Forbidden/Unauthorized/Api/Redirect, never
+    // NotReachable. That is the observable HTTP non-arrival: every path died before the
+    // HTTP layer, so the client kept certificate verification on.
+    for (path, outcome) in &outcomes {
+        assert!(
+            matches!(outcome, Err(ApiFailure::NotReachable { .. })),
+            "{path} path did not fail as a connect-class TLS rejection: {outcome:?}"
+        );
+    }
+
+    // The fixture must itself observe the client's aborted handshakes: one new
+    // handshake-abort record per request. A genuinely unreachable endpoint writes nothing,
+    // so this is what separates "certificate rejected" from "never connected" — matched
+    // portably (TLS alert OR handshake EOF), never by one OpenSSL build's exact phrasing.
     let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
+    let log = loop {
         let log = std::fs::read_to_string(&log_path).unwrap_or_default();
-        if log.matches("alert").count() > alerts_before {
-            break;
+        if handshake_aborts(&log) >= aborts_before + outcomes.len() {
+            break log;
         }
         assert!(
             Instant::now() < deadline,
-            "no new TLS alert in s_server log:\n{log}"
+            "fixture never observed the client's aborted TLS handshakes \
+             (aborts before: {aborts_before}):\n{log}"
         );
         thread::sleep(Duration::from_millis(50));
-    }
+    };
+    assert!(
+        handshake_aborts(&log) >= aborts_before + outcomes.len(),
+        "fixture did not record one aborted handshake per request:\n{log}"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

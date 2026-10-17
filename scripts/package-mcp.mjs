@@ -14,6 +14,11 @@
 // target OS runner, never a cross-compile, so the label can't drift from the binary.
 // Archive format follows the target OS: `.zip` on Windows, `.tar.gz` elsewhere.
 //
+// The archiver is chosen per host (`archiver()`): on Windows the CI shell is GitBash,
+// whose PATH shadows the OS libarchive `bsdtar` with MSYS/GNU `tar`, so the native
+// `%SystemRoot%\System32\tar.exe` is resolved by absolute path. A `.zip` that is not a
+// real ZIP (the mislabeled-tar failure mode) is rejected after creation.
+//
 // Prints (the workflow parses the archive/checksums lines):
 //   [package-mcp] archive=<abs path>
 //   [package-mcp] checksums=<abs path>
@@ -57,6 +62,32 @@ function parseArgs(argv) {
 function run(command, args, options = {}) {
   console.log(`[package-mcp] $ ${command} ${args.join(" ")}`);
   return execFileSync(command, args, { cwd: repoRoot, stdio: "inherit", ...options });
+}
+
+/**
+ * The archiver to run for this host.
+ *
+ * On Windows the CI shell is GitBash, whose PATH puts MSYS/GNU `tar` (1.35) ahead of the
+ * OS-provided libarchive `bsdtar`. GNU tar reads a `D:\...` path as a remote `host:path`
+ * ("tar: Cannot connect to D: resolve failed") and cannot write zip, so `-a` with a `.zip`
+ * name would emit an uncompressed tar mislabeled `.zip`. The canonical native archiver is
+ * `%SystemRoot%\System32\tar.exe` (libarchive bsdtar, present on Windows 10 1803+ / Server
+ * 2019+); resolve it by absolute path so the GitBash PATH shadow can never select GNU tar.
+ *
+ * Elsewhere `tar` from PATH is the platform archiver (GNU tar on Linux, bsdtar on macOS).
+ */
+function archiver() {
+  if (process.platform !== "win32") return "tar";
+  const root = process.env.SystemRoot || process.env.windir || "C:\\Windows";
+  const native = join(root, "System32", "tar.exe");
+  if (!existsSync(native)) {
+    throw new Error(
+      `no native Windows archiver at ${native} (Windows 10 1803+/Server 2019+ ship ` +
+        "libarchive bsdtar); refusing to fall back to MSYS/GNU tar, which cannot write " +
+        "zip and misparses drive paths",
+    );
+  }
+  return native;
 }
 
 function hostTriple() {
@@ -178,13 +209,28 @@ function main() {
 
   const archive = join(outDir, `${base}.${ext}`);
   rmSync(archive, { force: true });
+  const tar = archiver();
   if (ext === "zip") {
-    // bsdtar (the Windows built-in `tar`) writes zip when the name says .zip.
-    run("tar", ["-a", "-cf", archive, "-C", outDir, base]);
+    // bsdtar writes a real zip when `-a` sees a .zip name; GNU tar would emit an
+    // uncompressed tar mislabeled .zip, so `archiver()` never returns MSYS/GNU tar here.
+    run(tar, ["-a", "-cf", archive, "-C", outDir, base]);
   } else {
-    run("tar", ["-czf", archive, "-C", outDir, base]);
+    run(tar, ["-czf", archive, "-C", outDir, base]);
   }
   if (!existsSync(archive)) throw new Error(`archive was not created at ${archive}`);
+
+  // A `.zip` that is not a real ZIP (or a `.tar.gz` that is not gzip) means the wrong
+  // archiver ran; fail loudly rather than publish a mislabeled archive.
+  const magic = readFileSync(archive).subarray(0, 4);
+  const hex = [...magic].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+  const okZip = magic[0] === 0x50 && magic[1] === 0x4b; // "PK"
+  const okGzip = magic[0] === 0x1f && magic[1] === 0x8b;
+  if (ext === "zip" ? !okZip : !okGzip) {
+    throw new Error(
+      `archive ${archive} is not a real ${ext === "zip" ? "ZIP" : "gzip"} (magic ${hex}); ` +
+        "the selected archiver did not honor the container format",
+    );
+  }
 
   const sha256 = createHash("sha256").update(readFileSync(archive)).digest("hex");
   const checksums = `${archive}.sha256`;

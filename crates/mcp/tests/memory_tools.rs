@@ -62,6 +62,19 @@ impl MemoryFixture {
             while !stop_thread.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        // A listener that is nonblocking for the accept-poll loop makes
+                        // macOS/BSD `accept()` hand back a socket that inherits O_NONBLOCK
+                        // (Linux does not inherit it). Left as-is, a read before the client's
+                        // bytes arrive — or a write larger than the send buffer, like the
+                        // multi-hundred-KB frame page — fails with `WouldBlock` (EAGAIN,
+                        // errno 35) instead of blocking. Put the accepted stream into
+                        // blocking mode before any BufReader/read/write; the 10 s read
+                        // timeout in `read_request` and the peer-driven writes keep every
+                        // blocking read/write bounded, and the listener stays nonblocking so
+                        // the accept-poll loop still honors `stop`.
+                        stream
+                            .set_nonblocking(false)
+                            .expect("accepted stream blocking");
                         let (method, path, query) = read_request(&mut stream);
                         requests_thread.lock().unwrap().push(RecordedRequest {
                             method: method.clone(),
@@ -1032,4 +1045,67 @@ fn invalid_arguments_fail_before_http_and_api_validation_stays_authoritative() {
     );
 
     assert_eq!(mcp.close_and_wait(), 0);
+}
+
+/// Regression for the macOS inherited-nonblocking fixture bug. `accept()` on a nonblocking
+/// listener hands back a socket that inherits `O_NONBLOCK` on macOS/BSD (Linux does not), so
+/// a read issued before the client's request bytes arrive fails with `WouldBlock` (EAGAIN,
+/// errno 35) instead of blocking — the exact panic the hosted macOS job hit at
+/// `read_request`'s `read_line`. The fixture must configure the accepted stream for blocking
+/// I/O. Here a raw client connects and deliberately withholds its request line, so the
+/// fixture is forced to enter `read_request` with an empty socket; the delayed request must
+/// still be read and answered.
+///
+/// A real-socket test with no OS faking. It can only fail where the platform inherits
+/// `O_NONBLOCK` (macOS/BSD) — on Linux the accepted socket is already blocking, so it passes
+/// with or without the fix; the hosted macOS rerun is the true proof.
+#[test]
+fn accepted_connection_blocks_until_a_delayed_request_arrives() {
+    let fixture = MemoryFixture::start(Box::new(|_method, path, _query| match path {
+        "/v1/coverage" => (200, "application/json", json_body(&sample_coverage())),
+        _ => (
+            404,
+            "application/json",
+            br#"{"error":"not_found","message":"no route"}"#.to_vec(),
+        ),
+    }));
+
+    // Connect first, then withhold the request bytes: the fixture's `accept` returns at
+    // once, but its read must block until these bytes arrive rather than failing with
+    // `WouldBlock`.
+    let mut client = TcpStream::connect(fixture.addr).expect("connect fixture");
+    client
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("client read timeout");
+    thread::sleep(Duration::from_millis(200));
+    client
+        .write_all(
+            b"GET /v1/coverage?from=1000&to=2000 HTTP/1.1\r\nHost: fixture\r\n\
+              Connection: close\r\n\r\n",
+        )
+        .expect("send delayed request");
+    client.flush().expect("flush request");
+
+    let mut response = Vec::new();
+    client
+        .read_to_end(&mut response)
+        .expect("read fixture response");
+    let response = String::from_utf8(response).expect("utf8 response");
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK"),
+        "fixture must answer the delayed request: {response}"
+    );
+    assert!(
+        response.contains("\"retention_scope\""),
+        "fixture must serve the coverage body: {response}"
+    );
+
+    let recorded = fixture.wait_for_requests(1, Duration::from_secs(10));
+    assert_eq!(recorded.len(), 1, "the delayed request must be recorded");
+    assert_eq!(recorded[0].method, "GET");
+    assert_eq!(recorded[0].path, "/v1/coverage");
+    assert_eq!(
+        query_map(&recorded[0].query),
+        params(&[("from", "1000"), ("to", "2000")])
+    );
 }

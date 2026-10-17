@@ -25,6 +25,11 @@
 // the actual generated token, so a future edit that dumps a raw object fails the gate. The
 // token is random per run; set SCREENSEARCH_VERIFY_FIXTURE_TOKEN to inject a known canary
 // (used by the local regression to assert the captured output is token-free).
+//
+// Archiver selection: on Windows the CI shell is GitBash, whose PATH shadows the OS
+// libarchive `bsdtar` with MSYS/GNU `tar` (which cannot read zip and misparses drive
+// paths), so `archiver()` resolves `%SystemRoot%\System32\tar.exe` by absolute path. A
+// `.zip` that is not a real ZIP (the mislabeled-tar failure mode) is rejected before unpack.
 
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -132,6 +137,31 @@ function workspaceVersion() {
 function run(command, args, options = {}) {
   log(`${tag} $ ${command} ${args.join(" ")}`);
   return execFileSync(command, args, { stdio: "inherit", ...options });
+}
+
+/**
+ * The archiver to run for this host.
+ *
+ * On Windows the CI shell is GitBash, whose PATH puts MSYS/GNU `tar` ahead of the
+ * OS-provided libarchive `bsdtar`. GNU tar cannot read zip at all and reads a `D:\...`
+ * path as a remote `host:path` ("tar: Cannot connect to D: resolve failed"), so unpacking
+ * a `.zip` there fails. The canonical native archiver is `%SystemRoot%\System32\tar.exe`
+ * (libarchive bsdtar); resolve it by absolute path so the GitBash PATH shadow cannot pick
+ * GNU tar. Elsewhere `tar` from PATH is the platform archiver (GNU tar on Linux, bsdtar on
+ * macOS).
+ */
+function archiver() {
+  if (process.platform !== "win32") return "tar";
+  const root = process.env.SystemRoot || process.env.windir || "C:\\Windows";
+  const native = join(root, "System32", "tar.exe");
+  if (!existsSync(native)) {
+    fail(
+      `no native Windows archiver at ${native} (Windows 10 1803+/Server 2019+ ship ` +
+        "libarchive bsdtar); refusing to fall back to MSYS/GNU tar, which cannot read zip " +
+        "and misparses drive paths",
+    );
+  }
+  return native;
 }
 
 /** A promise-based line reader for a child's stdout. */
@@ -249,10 +279,19 @@ async function main() {
   // --- 2. unpack -----------------------------------------------------------
   const extractDir = mkdtempSync(join(tmpdir(), "mcp-verify-extract-"));
   const workDir = mkdtempSync(join(tmpdir(), "mcp-verify-fixture-"));
+  const tar = archiver();
+  log(`${tag} archiver=${tar}`);
   if (archive.endsWith(".zip")) {
-    run("tar", ["-xf", archive, "-C", extractDir]);
+    // Assert the container is a real ZIP before unpacking: a tar mislabeled `.zip` (what
+    // MSYS/GNU tar `-a` produces) must fail here rather than silently unpack as a tar.
+    const magic = readFileSync(archive).subarray(0, 4);
+    const hex = [...magic].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+    if (!(magic[0] === 0x50 && magic[1] === 0x4b)) {
+      fail(`archive is not a real ZIP (magic ${hex}); refusing to unpack a tar mislabeled .zip`);
+    }
+    run(tar, ["-xf", archive, "-C", extractDir]);
   } else if (archive.endsWith(".tar.gz") || archive.endsWith(".tgz")) {
-    run("tar", ["-xzf", archive, "-C", extractDir]);
+    run(tar, ["-xzf", archive, "-C", extractDir]);
   } else {
     fail(`unsupported archive extension (expected .zip/.tar.gz/.tgz): ${archive}`);
   }
