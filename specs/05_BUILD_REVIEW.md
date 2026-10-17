@@ -1,5 +1,49 @@
 # 05 — Build Review
 
+## 2026-10-16 — External-agent memory API P0 inventory and baseline
+
+- **Contract work:** six delegated inventories/contracts covered production inserts,
+  settings/reset boundaries, every HTTP route/MCP tool, saved-report projections,
+  wrapper portability and native Windows readiness at `cd9f5fe` (0.4.1, schema 12).
+  New normative contract: `03 §7f`. No runtime feature implementation in this pass.
+- **Review:** independent boundary review found the leftover bare macOS/Linux
+  non-goal in `02 §7`; corrected and parent-verified before runtime implementation.
+  Full P1/P2 review found implicit HEAD classification missing; made explicit along
+  with persisted-before-live read-token lifecycle. No P1/P2 product contradiction.
+  P3 visibility contradiction remains open in `06`/`07`. Separately reviewed boundary
+  committed as `9f912e2`; exact parent checks:
+
+  ```text
+  boundary_staged_non_goal_carveout=PASS
+  boundary_only_staging=PASS
+  boundary_secret_scan=PASS
+  ```
+- **Baseline:** unchanged Linux MCP package, Rust 1.95.0. Actual process output:
+
+  ```text
+  BUILD EXIT CODE: 0
+  TEST EXIT CODE: 0
+  CLIPPY EXIT CODE: 0
+  ```
+
+  Commands: `cargo +1.95.0 build --locked -p mcp`, `cargo +1.95.0 test --locked -p mcp`,
+  `cargo +1.95.0 clippy --locked -p mcp --all-targets -- -D warnings`.
+  Parent independently exercised the compiled binary and stdio protocol:
+
+  ```text
+  screensearch-mcp 0.4.1
+  parent_verified_stdio_exit=0
+  parent_verified_tools=9
+  parent_verified_server={"name": "screensearch-mcp", "title": "ScreenSearch screen history", "version": "0.4.1"}
+  ```
+
+- **Windows:** `ssh nicol@tbx` available; separate detached worktree and fixture
+  tooling created, Rust 1.95.0 verified, official Node 22 extracted with checksum
+  validation. Native baseline checks assigned. Installed app/history untouched.
+- **Not accepted:** new API behavior, native UI, cross-machine traversal, macOS
+  archive execution, allocator behavior, consumer resume and paging measurements
+  still require implementation and real evidence. No merge/release/publication.
+
 > **Populated during the build**, after each meaningful pass (`04 §7`). Record what actually
 > happened — honestly. Empty until P0 begins.
 

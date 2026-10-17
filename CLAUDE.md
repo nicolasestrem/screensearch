@@ -92,7 +92,20 @@ Re-read each session — the files are the source of truth, not your memory.
   No cloud inference or arbitrary cloud uploads. Network exceptions: localhost, model downloads, the signed GitHub-Releases
   update check (`03 §11b`), and user-enabled authenticated HTTP API serving on a user-selected IPv4/IPv6 literal (default loopback)
   (`03 §7c`, Gate A API amendment). That API is plain HTTP: any reachable token holder can read
-  history. No public hosting, automatic firewall/router changes, remote MCP, or exposed inference.
+  history. No public hosting, automatic firewall/router changes, network-hosted MCP server, or exposed inference.
+  Approved remote-wrapper boundary: only the standalone stdio HTTP-client wrapper may run on
+  other OSes and use explicitly configured HTTP/HTTPS remote destinations (`03 §7c`). The app,
+  capture and inference remain Windows-only; inference remains loopback-only. The wrapper keeps
+  `.no_proxy()`, validates destinations and refuses all redirects; no listener or CORS changes.
+  This is approved scope, not a claim of implemented portable/remote behavior.
+  Nico approved execution of the external-agent memory increment (`02 §5h`, normative `03 §7f`):
+  chronological full-text reads, truthful bounded coverage, independent read credentials and
+  saved-report HTTP/MCP reads. Only saved output is promoted; remote generation/retry/delivery
+  remain excluded. Do not repeat blanket plan approval; require independent boundary review,
+  real per-unit verification and separate merge/release authorization. Schema remains 12 unless
+  a separately approved migration is needed; never weaken allocator/identity protection to fit KV.
+  Read authorization is explicit per route/method; no new scope is implicitly granted. Existing
+  local workflows, listener security/defaults and Windows NSIS bundling remain compatible.
   The approved local-memory amendment permits default-off scheduled local reports and user-selected
   folder writes (`03 §8c`), without nags or scoring. The separately approved Telegram exception
   (`03 §8d`) permits opt-in text digests of saved reports to a user-selected Bot API destination;

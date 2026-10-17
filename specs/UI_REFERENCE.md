@@ -387,3 +387,32 @@ requires inspect-conversation guidance and explicit Mark reviewed or Resend inte
 latter explains duplicate risk. No automatic resend, fake read receipt or implicit test send.
 Disabled, loading, credential unavailable, pending, partial, failed, confirmed and unknown states
 use existing tokens/accessible primitives without route layout shift; failures keep the form.
+
+## 12. External-agent read credential (approved contract, not implemented)
+
+Settings · HTTP API adds independent read-token controls beside existing legacy-token controls,
+using generated Rust IPC types and TanStack Query. No new NavRail route or hand-written payload
+types. Existing token access remains; upgrades have no read token. Create/reveal/copy/rotate/
+revoke act independently and never enable API or change bind/port. Tokens stay out of general
+settings/export/report DTOs, status events and logs. Retain the existing credential storage;
+no credential-store migration, account system or scope editor. A dedicated credential action
+may reveal/copy the token; passive status reports only availability. Keep successful values
+private, hide by default, and never render into errors or event payloads.
+
+Explain: read token can access captured raw/filtered history, stored images and saved reports,
+but cannot Ask/generate, mutate marks, capture now, retry reports or deliver content. Plain HTTP
+may expose tokens/history to network observers; explicitly configured remote wrapper clients
+use the same threat model. Revocation affects subsequent requests, not guaranteed cancellation
+of already authorized streams. Creating a credential is not evidence that the API is listening.
+
+| State | Required presentation |
+|---|---|
+| loading | Geometry-matched skeleton; do not flash a token or false absent state |
+| empty | No read token configured; Create action; API-off status remains independent |
+| error | Preserve controls/form; explain failed credential action with retry; no secret echo |
+| partial | Credential present but API off/bind error; show both facts, do not claim connectivity |
+| populated | Hidden token, explicit reveal/copy, independent rotate and revoke; truthful action result |
+
+Use existing tokens/primitives, keyboard focus, accessible labels, error boundary, reduced motion
+and one-scroll/no-CLS rules. Verify all states natively, including save failure and independent
+revocation. This contract approves UI work; it is not a screenshot or implementation receipt.

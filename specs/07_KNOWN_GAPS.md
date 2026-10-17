@@ -1,5 +1,27 @@
 # 07 — Known Gaps
 
+## 2026-10-16 — External-agent memory API P0 decisions and gates
+
+- Nico authorized execution of the attached plan, replacing its draft/no-GO labels.
+  The new contract is `03 §7f`; it describes authorized behavior, not completed work.
+- **Awaiting Nico, P3 only:** expose saved output while an existing run is queued/
+  running for delivery retry, or suppress it under the plan's unfinished-null rule.
+  Recommendation: mirror immutable saved-result presence. Evidence/contradiction:
+  `06` external-agent P0 entry; implementation of that projection remains blocked.
+- Wire normalization is explicit in `03 §7f.6`: signed integral timestamps, present
+  nullable fields, absent versus empty text, chronological global coverage extrema,
+  duplicate query rejection, safe fixed new-read errors and unknown saved error-code
+  to null. These are serialization/validation decisions, not broader capabilities.
+- Existing `--url` remains an alias of canonical `--api-url`; both override the
+  environment. Saved-report tuple high-water does not freeze status or membership.
+- Store inventory supports existing KV metadata without migration only with reserved
+  single/batch/delete guards, atomic pair setup and allocator-backed production
+  inserts. Established missing metadata must not be repaired on a read.
+- Native UI, three native wrapper archives, real cross-machine Windows-application
+  traversal, full workspace regression and measured paging profiles remain open
+  until recorded execution. TBX SSH is verified; Node 22/isolation preparation and
+  independent contract reviews are in progress. No installed/private history used.
+
 ## 2026-10-15 — Memory/API execution gates (owner: maintainer + agent)
 
 - C–E policies are approved in `03 §8c/§8d`; implementation verification is tracked in `05`.

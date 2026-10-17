@@ -46,8 +46,11 @@ non-shaming** (D11 — nothing notifies, nudges, streaks, or scores). The **spec
 **For the network API increment (Gate A, 2026-10-15):** read `02 §5e`, amended `03 §7c`
 and `UI_REFERENCE` API/bind-address contract. Review and commit the API-only amendment before
 implementation; keep scheduled delivery and Telegram permissions in separate later amendments.
-This is a configurable product feature for all installations. Preserve MCP/inference loopback
-boundaries; require native Windows and separate-machine HTTP evidence before claiming acceptance.
+This is a configurable product feature for all installations. The approved remote-wrapper
+boundary permits only the standalone stdio HTTP client on other OSes and explicit HTTP/HTTPS
+remote destinations, keeping the loopback default, `.no_proxy()` and no redirects. The app/capture
+remain Windows-only; inference stays loopback-only; no listener/CORS changes or network-hosted MCP.
+Approval is not evidence of implemented behavior; require native Windows and separate-machine HTTP evidence before claiming acceptance.
 Update active user-facing privacy copy with the implementation, not before the behavior exists.
 
 **Do not** hold the spec in your head from a prior session — re-read; the files evolve.
@@ -58,6 +61,53 @@ report policies; do not ask for blanket plan approval again. Keep local-schedule
 contract commits separate and independently reviewed before implementing their behavior. Build
 the durable state and installed-only model path before scheduling or destination side effects.
 Native acceptance and pilot evidence remain open until observed; no fake success receipts.
+
+## 1b. External-agent memory API execution (approved 2026-10-16)
+
+Read `02 §5h`, the complete `03 §7f` contract (including wire types, route/tool permission matrix,
+source-inspected allocator/settings inventory and acceptance), and `UI_REFERENCE §12`. Nico's
+explicit execution instruction supersedes the plan attachment's DRAFT/awaiting-GO status and
+includes its recommendations; no repeated blanket GO is required. Preserve the remote-wrapper
+boundary as an independently reviewable amendment before implementing that behavior. This is
+not authority to merge, push a release/tag, publish client artifacts or change the live profile.
+
+P0 documents/inventory only → P1 HTTP feed + history/allocator protection + read authorization +
+coverage + credential UI + runnable reference consumer → P2 portable remote stdio MCP → P3
+saved-output reads → P4 integrated acceptance/docs. No runtime edits in the contract unit.
+Shared traits/router/auth have one integration owner; no competing writes. Disjoint MCP transport/
+packaging may work after interfaces freeze; report work follows P1 and P2 priority. At most two
+review rounds; record unresolved findings and stop rather than loop or weaken the contract.
+
+Use existing schema 12, Rust 1.95.0, Node 22 and lockfiles. No new index/table without separate
+schema-scope approval and a populated-DB forward-migration test. Protect reserved metadata in
+all generic KV write/delete/reset/import/retirement paths; all production frame inserts must
+allocate at the shared Store seam. No GET may initialize identity, generate, queue/retry a run,
+write local output or send. Full text and explicit nulls are mandatory; no snippets/context-budget
+truncation, ranked/offset enumeration or auto-draining MCP tools. Preserve alias `--url` for
+canonical `--api-url`, CLI > env > default; --read-only is ergonomics, not server authorization.
+
+Run targeted tests as changes land. Integrated Windows acceptance order is UI `npm ci`,
+`npm run lint`, `npm run build`; `node scripts/stage-mcp.mjs`; `cargo fmt --all -- --check`;
+`cargo clippy --locked --workspace --all-targets -- -D warnings`;
+`cargo build --locked --workspace`; `cargo test --locked --workspace`;
+`git diff --exit-code -- ui/src/bindings`; then app verification via `npm run dev` in an isolated
+profile. Portable wrapper verification uses `cargo build --locked -p mcp` and
+`cargo test --locked -p mcp` on each named native target, never cross-platform workspace stubs.
+Keep existing security/retention/export/session no-generation regressions. Report raw command
+exit/output and skipped hardware/native checks separately; compile/fixture success does not
+prove live remote/native acceptance. Windows x86_64/Linux x86_64/macOS arm64 archives require
+unpack/version/handshake/authenticated-read evidence and separate release authorization to publish.
+
+Exercise a real non-Windows wrapper against a separate isolated Windows application; test valid
+read token, invalid 401, direct forbidden mutation 403 and page resume. Do not substitute a timeout
+or loopback success. Profile query plans/latency/memory against increasing nonprivate histories;
+agree a budget from observed baseline, not invention. Stop on contradictory contract, weak
+identity invariant, read side effect, snippet replacement or missing required native/remote
+resource. Missing resources block acceptance, not documentation or unrelated safe implementation.
+Snapshot isolated DBs before setup; no live private-history inspection, model download, schedule
+activation or Telegram send is authorized by this increment. Update `05`–`08` after meaningful
+implementation passes with completed versus blocked evidence; active user docs mark saved-read
+availability only when implemented. Historical release descriptions remain historical.
 
 ## 2. Source of truth (which doc answers which question)
 | Question | Authority |
@@ -151,8 +201,10 @@ If the answer is in a doc, **use it verbatim** — do not invent alternatives.
   is allowed for build/dev tooling (e.g. the `hf` CLI). Network = localhost + model downloads + the
   signed GitHub-Releases update check (`03 §11b`), plus user-enabled authenticated HTTP API
   serving on a configurable IPv4/IPv6 literal (default loopback) (`03 §7c`, Gate A). Plain HTTP exposes history to reachable
-  token holders; no public hosting or automatic firewall/router changes. MCP destinations and
-  inference stay loopback-only. Approved local schedules and user-selected folder writes are
+  token holders; no public hosting or automatic firewall/router changes. Only the standalone
+  stdio HTTP-client wrapper may use explicit remote HTTP/HTTPS destinations or other OSes, with
+  `.no_proxy()` and redirects refused; no network-hosted MCP server or listener/CORS changes.
+  The app stays Windows-only and inference loopback-only. Approved local schedules and user-selected folder writes are
   permitted by `03 §8c`; the separate `03 §8d` exception permits explicitly enabled saved-report
   text digests to the user-configured Telegram destination. No screenshots/raw OCR or arbitrary
   outbound processing; tokens remain in Windows Credential Manager.

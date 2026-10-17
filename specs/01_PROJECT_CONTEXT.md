@@ -81,8 +81,31 @@ plan and spec build on a fixed base:
 
 ## 7. Explicit non-goals (today)
 
-macOS/Linux support · OS automation (deferred to a later phase) · cloud sync or default telemetry ·
+macOS/Linux desktop/capture support (the approved standalone stdio HTTP-client wrapper exception
+permits other OSes and explicitly selected HTTP/HTTPS remote destinations; it uses `.no_proxy()`,
+refuses redirects and leaves app/inference Windows-only, inference loopback-only, and API listener/
+CORS unchanged; approval is not implementation evidence) · OS automation (deferred to a later phase) · cloud sync or default telemetry ·
 mobile · multi-user / accounts / tenancy · real-time vision · importing V1 data.
+
+## 8a. Approved external-agent increment versus observed base (2026-10-16)
+
+The historical greenfield inventory above describes intake, not the present checkout. The
+external-agent planning base is `cd9f5fecfa35970962be0067f76105553b24bfba`, version 0.4.1, schema
+12. Existing configurable-bind HTTP API, stdio MCP and durable saved reports are dependencies,
+not features to rebuild. The new chronological feed, allocator continuity, read-only credential,
+coverage and saved-report API/MCP projections are approved contracts in `03 §7f`, not behavior
+verified at that base. Nico authorized plan execution including recommendations; the draft
+attachment's pending-GO text is superseded, but no merge/release is authorized.
+
+Local storage/inference and API default-off/default-loopback remain. Explicitly configured
+external API readers may receive full raw and filtered captured text; retrieval/report defaults
+remain content-text. Only the standalone stdio HTTP-client wrapper has the portable/explicit
+remote-destination exception above; capture/Tauri/inference stay Windows-only. No listener,
+CORS, cloud inference or default-upload expansion. Saved-output reads are approved; remote
+report generation/retry/delivery are not. The implementation must protect distinct persistent
+api.history_id and monotonic allocator metadata against reset/import/retirement; it cannot
+claim continuity across old writers or restores. See `02 §5h` for ordered delivery and `03 §7f`
+for self-contained contracts and source-inspected inventory.
 
 ## 8. Status
 
