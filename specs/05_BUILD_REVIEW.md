@@ -203,6 +203,38 @@ remains **blocked**, not passed. No interactive-session fallback or capture-disa
 was used. No model inference, report generation or delivery was exercised. The isolated
 process tree was stopped; nonprivate fixtures remain available for backend-only remote proof.
 
+### Post-seek native and actual-app backend evidence
+
+The new seek bytes were subsequently verified on native Windows, not borrowed from the
+earlier 928-pass snapshot. Formatting, locked workspace all-target clippy/build/test,
+generated bindings and 41-file source guards all passed. Parent fetched and parsed the raw
+native log, independently rechecked all remote source hashes and confirmed fixture cleanup:
+
+```text
+POSTSEEK_NATIVE_PASSED=930
+POSTSEEK_NATIVE_FAILED=0
+POSTSEEK_NATIVE_IGNORED=15
+POSTSEEK_REMOTE_SOURCE_HASHES=41/41 PASS
+FIXTURE_PORT45999_LISTENERS=0
+```
+
+A separately built P2 Windows wrapper then exercised the **actual isolated Windows app**
+backend on Windows localhost: 1035 expected/received frames, process restart/resume,
+1035 matching details, no hash mismatch, valid read credential 200, invalid credential 401,
+and direct existing-frame mutation 403. The local fixture credential was seeded, not created
+through the unavailable UI. Session 0 capture failed; no GGUF model, inference, report
+generation or delivery was used. Private API settings/credentials were revoked/restored and
+the owned app stopped after the test.
+
+The separate-machine connection still timed out under Windows' default inbound block with
+no rule for the test port. No firewall, SSH-forward or port-proxy workaround was applied.
+**Windows localhost is not the cross-machine gate.** Native Settings UI remains blocked.
+
+Independently, the checksum-verified **CI-packaged Linux client** exercised the real P1
+API/SQLite/kernel fixture: 1035 frames in five pages, process restart/resume, matching full
+text/nulls and 1035 details, 401/403 authorization, zero OCR/answer-provider calls. This closes
+neither the Windows network nor GUI gate; P3 saved-report policy remains separately blocked.
+
 > **Populated during the build**, after each meaningful pass (`04 §7`). Record what actually
 > happened — honestly. Empty until P0 begins.
 
