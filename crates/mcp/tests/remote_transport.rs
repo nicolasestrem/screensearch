@@ -859,24 +859,155 @@ impl Drop for ChildGuard {
     }
 }
 
-/// Counts the fixture's server-side records of a TLS handshake a client opened and then
-/// aborted before any HTTP exchange. OpenSSL's `s_server` words this differently by
-/// platform and build: a received alert (`...alert certificate unknown... SSL alert number
-/// 46`) on Linux, a handshake record read cut short by the peer (`unexpected eof while
-/// reading`) on Windows. Both are written only after a client's TLS ClientHello reached the
-/// fixture, so a growing count is portable evidence that the client connected and was
-/// rejected inside the handshake — not that the endpoint was simply absent (a dead endpoint
-/// writes nothing). Matching either phrasing keeps the assertion from pinning one OpenSSL
-/// build's exact log text.
-fn handshake_aborts(log: &str) -> usize {
-    log.lines()
-        .filter(|line| {
-            line.contains("alert")
-                || line
-                    .to_ascii_lowercase()
-                    .contains("unexpected eof while reading")
-        })
-        .count()
+/// A TCP relay the test owns, placed in front of the real TLS fixture (`openssl
+/// s_server`). It records every client connection whose first bytes are a TLS handshake
+/// record and forwards the bytes to the fixture, so the fixture stays a genuine TLS
+/// endpoint that completes real handshakes and rejects the untrusted certificate.
+///
+/// This is the portable evidence that "the client reached the fixture and was rejected
+/// inside the TLS handshake, before any HTTP exchange". It is observed from the test's own
+/// socket, so it does not depend on how a particular TLS backend terminates the connection
+/// or on how one OpenSSL build words the failure on stderr. Counting `s_server`'s stderr
+/// records is not portable: it words the abort as an alert on Linux and as an `unexpected
+/// eof while reading` on Windows, but on Windows it writes *nothing* when the client aborts
+/// with a clean close — which is exactly what the production client's `native-tls`
+/// (Schannel) backend does once workspace feature unification selects it. A count that
+/// never grows then looks like "never connected" even though the client did connect.
+struct TlsHandshakeObserver {
+    addr: SocketAddr,
+    tls_handshakes: Arc<AtomicUsize>,
+    shutdown: Arc<AtomicBool>,
+}
+
+impl TlsHandshakeObserver {
+    /// Starts a relay in front of `upstream` (the `host:port` of the real TLS fixture).
+    fn start(upstream: String) -> TlsHandshakeObserver {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind TLS observer");
+        let addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let tls_handshakes = Arc::new(AtomicUsize::new(0));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let (count, stop) = (tls_handshakes.clone(), shutdown.clone());
+        thread::spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((client, _)) => {
+                        let upstream = upstream.clone();
+                        let count = count.clone();
+                        thread::spawn(move || relay_to_fixture(client, upstream, count));
+                    }
+                    Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        TlsHandshakeObserver {
+            addr,
+            tls_handshakes,
+            shutdown,
+        }
+    }
+
+    /// The `https://` root the client under test should target (the relay, not the fixture).
+    fn base(&self) -> String {
+        format!("https://127.0.0.1:{}", self.addr.port())
+    }
+
+    /// The `host:port` argument the raw-TLS control client should target (the relay).
+    fn connect_arg(&self) -> String {
+        self.addr.to_string()
+    }
+
+    fn tls_handshakes(&self) -> usize {
+        self.tls_handshakes.load(Ordering::SeqCst)
+    }
+
+    /// Waits (bounded) until the relay has observed `count` TLS handshake openings, and
+    /// returns what it has seen — so a baseline is settled before the requests that follow.
+    fn wait_for_tls_handshakes(&self, count: usize, timeout: Duration) -> usize {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let seen = self.tls_handshakes();
+            if seen >= count || Instant::now() >= deadline {
+                return seen;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+}
+
+impl Drop for TlsHandshakeObserver {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Relays one accepted connection to the fixture, counting it as a TLS handshake attempt
+/// when the client opens with a TLS handshake record (content type `0x16`, major version
+/// `0x03`) rather than a plaintext HTTP request. Byte order is preserved so the client
+/// still receives the fixture's real certificate and aborts in the real handshake.
+fn relay_to_fixture(mut client: TcpStream, upstream: String, tls_handshakes: Arc<AtomicUsize>) {
+    // macOS/BSD accepts inherit the listener's O_NONBLOCK. All relay I/O below is
+    // blocking-style; configure it explicitly before cloning or reading the socket.
+    client
+        .set_nonblocking(false)
+        .expect("TLS observer accepted stream blocking");
+    let mut server = match TcpStream::connect(&upstream) {
+        Ok(server) => server,
+        Err(_) => return,
+    };
+    for stream in [&client, &server] {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("TLS observer read timeout");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .expect("TLS observer write timeout");
+    }
+    let mut client_read = client.try_clone().expect("clone client stream");
+    let mut server_write = server.try_clone().expect("clone fixture stream");
+    let fixture_to_client = thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match server.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if client.write_all(&buf[..n]).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = client.shutdown(std::net::Shutdown::Write);
+    });
+    let mut buf = [0u8; 8192];
+    let mut prefix = Vec::new();
+    let mut classified = false;
+    loop {
+        match client_read.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if !classified {
+                    prefix.extend_from_slice(&buf[..n]);
+                    if prefix.len() >= 2 {
+                        classified = true;
+                        if prefix[0] == 0x16 && prefix[1] == 0x03 {
+                            tls_handshakes.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                }
+                if server_write.write_all(&buf[..n]).is_err() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    let _ = server_write.shutdown(std::net::Shutdown::Write);
+    let _ = fixture_to_client.join();
 }
 
 #[tokio::test]
@@ -959,11 +1090,18 @@ async fn https_verification_stays_on_for_untrusted_certificates() {
         thread::sleep(Duration::from_millis(25));
     }
 
-    // Control: a raw TLS client completes a handshake here (s_client does not abort on a
-    // verify error), proving the fixture is a reachable TLS endpoint — so the client
-    // failure below is certificate rejection, not an unreachable server.
+    // The client under test targets a relay the test owns, in front of the fixture, so the
+    // test observes the client's own TLS handshake attempt directly (see
+    // `TlsHandshakeObserver`) instead of inferring it from `s_server`'s stderr, whose
+    // wording — and very presence — varies by platform and by the client's TLS backend.
+    let observer = TlsHandshakeObserver::start(accept.clone());
+
+    // Control: a raw TLS client completes a handshake through the relay to the fixture
+    // (s_client does not abort on a verify error), proving the fixture is a reachable TLS
+    // endpoint that completes real handshakes — so the client failure below is certificate
+    // rejection, not an unreachable server.
     let control = Command::new("openssl")
-        .args(["s_client", "-connect", accept.as_str()])
+        .args(["s_client", "-connect", observer.connect_arg().as_str()])
         .stdin(Stdio::null())
         .output()
         .expect("run openssl s_client");
@@ -976,16 +1114,16 @@ async fn https_verification_stays_on_for_untrusted_certificates() {
         control_text.contains("CONNECTED"),
         "control handshake failed: {control_text}"
     );
-    let aborts_before = handshake_aborts(&std::fs::read_to_string(&log_path).unwrap_or_default());
+    assert!(
+        control_text.contains("-----BEGIN CERTIFICATE-----"),
+        "control must receive the fixture's real certificate: {control_text}"
+    );
+    let handshakes_before = observer.wait_for_tls_handshakes(1, Duration::from_secs(5));
 
     // The client under test must refuse the untrusted certificate on every real request
     // path (JSON, image bytes, SSE). TLS verification is not configurable in this client,
     // so this pins the builder defaults staying on across all three.
-    let client = ApiClient::new(
-        format!("https://127.0.0.1:{port}"),
-        Some("tls-test-token".into()),
-    )
-    .unwrap();
+    let client = ApiClient::new(observer.base(), Some("tls-test-token".into())).unwrap();
     let outcomes: [(&str, Result<(), ApiFailure>); 3] = [
         ("json", client.get_json("/v1/marks", &[]).await.map(|_| ())),
         (
@@ -1007,26 +1145,18 @@ async fn https_verification_stays_on_for_untrusted_certificates() {
         );
     }
 
-    // The fixture must itself observe the client's aborted handshakes: one new
-    // handshake-abort record per request. A genuinely unreachable endpoint writes nothing,
-    // so this is what separates "certificate rejected" from "never connected" — matched
-    // portably (TLS alert OR handshake EOF), never by one OpenSSL build's exact phrasing.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let log = loop {
-        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
-        if handshake_aborts(&log) >= aborts_before + outcomes.len() {
-            break log;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "fixture never observed the client's aborted TLS handshakes \
-             (aborts before: {aborts_before}):\n{log}"
-        );
-        thread::sleep(Duration::from_millis(50));
-    };
+    // The fixture must itself observe the client's TLS handshake attempts: one new opening
+    // per request, seen by the relay. A genuinely unreachable endpoint observes none, so
+    // this is what separates "certificate rejected" from "never connected". Counting from
+    // the relay's own socket keeps it true for every TLS backend the client may be built
+    // with, unlike a count of `s_server`'s platform-specific stderr records.
+    let observed = observer
+        .wait_for_tls_handshakes(handshakes_before + outcomes.len(), Duration::from_secs(5));
+    let server_log = std::fs::read_to_string(&log_path).unwrap_or_default();
     assert!(
-        handshake_aborts(&log) >= aborts_before + outcomes.len(),
-        "fixture did not record one aborted handshake per request:\n{log}"
+        observed >= handshakes_before + outcomes.len(),
+        "fixture never observed the client's TLS handshake openings \
+         (observed before: {handshakes_before}, now: {observed}):\nserver log:\n{server_log}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);
