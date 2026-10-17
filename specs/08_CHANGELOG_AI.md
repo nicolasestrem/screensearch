@@ -1,5 +1,27 @@
 # 08 — AI Changelog
 
+## 2026-10-17 — P3 saved-report read contract and visibility resolution (docs/policy ledger)
+
+- **Change:** resolved the stale "awaiting Nico / P3 only" saved-output visibility hold across the
+  live ledgers as **approved/superseded** (historical records preserved): saved report output is
+  exposed by persisted presence, including while a run is queued or retrying for delivery; absent
+  output is explicit `null`; stored `NO_DATA` stays factual; a malformed saved payload is a read
+  error (`03 §7f.10`, Nico GO). Documented the exact P3 report read contract — `GET /v1/reports`
+  and `GET /v1/reports/{run_id}` inputs, wire DTOs (`ReportSummary`/`ReportPage`/`ReportDetail`/
+  `SavedReport`), provenance, nullability, privacy exclusions, error mapping, half-open window
+  overlap and the descending `(created_at, run_id)` tuple cursor with live-status semantics — in
+  `docs/API.md`, and recorded the `list_reports`/`get_report` tools and stacked-branch status in
+  `docs/MCP.md`. Recorded the P3 verification layers (genuine `ApiServer`+`SqliteStore` fixture vs
+  raw-HTTP protocol fixtures, the independent expected manifest/driver, the model-unloaded /
+  schedules-off no-mutation gate) and the pending GUI/native and cross-machine gates in
+  `docs/TESTING.md`; updated `README.md` and `docs/memory-api-direction-plan.md`.
+- **Why:** the earlier P3 visibility hold was answered by Nico (GO) and the contract is frozen in
+  `03 §7f`; the docs must state the approved contract without claiming it is implemented. The
+  runtime is being implemented on `feat/agent-memory-saved-reports`.
+- **Verification:** documentation-only edit (no runtime, schema, index, build or Git-index change).
+  Markdown link/fragment validation and a targeted diff check were run; **P3 runtime verification
+  remains pending** and is not claimed here. No P2 old-head CI run is reused as P3 evidence.
+
 ## 2026-10-16 — External-agent memory API contract and inventories
 
 - **Change:** explicit narrow portable/remote stdio-client boundary plus `03 §7f`

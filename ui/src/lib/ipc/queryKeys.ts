@@ -62,6 +62,8 @@ export const queryKeys = {
   // API panel status; mutations and api_status_changed
   // refresh it, including completion of asynchronous startup.
   apiStatus: ["apiStatus"] as const,
+  // Availability only. Read-token secrets must never enter a query cache.
+  apiReadTokenStatus: ["apiReadTokenStatus"] as const,
   // 0.3.2 auto-update (PR2, #69): the updater snapshot behind the NavRail presence
   // indicator + the Settings · App section. Kept live by the `update_status_changed`
   // event; the manual check mutation also writes it (`03 §11b`).

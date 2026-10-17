@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test test/sessionBandLayout.test.mjs",
+    "test": "node --experimental-strip-types --test test/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },

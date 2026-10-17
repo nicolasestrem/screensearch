@@ -226,11 +226,18 @@ impl SqliteStore {
     /// Inserts a captured frame, returning its new id (`03 §3`).
     pub async fn insert_frame(&self, f: NewFrame) -> Result<i64> {
         self.with_conn(move |conn| {
-            conn.execute(
+            // Acquire the database writer lock before reading metadata/MAX(id),
+            // not just the per-handle mutex: independent handles share this DB.
+            let tx = rusqlite::Transaction::new_unchecked(
+                conn,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
+            let id = crate::history::allocate_frame_id(&tx)?;
+            tx.execute(
                 "INSERT INTO frames
                    (captured_at, monitor_index, width, height, image_path, content_hash,
-                    app_hint, window_title, browser_url, capture_trigger)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    app_hint, window_title, browser_url, capture_trigger, id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     f.captured_at,
                     f.monitor_index,
@@ -242,9 +249,11 @@ impl SqliteStore {
                     f.window_title,
                     f.browser_url,
                     f.capture_trigger.map(|t| t.as_db_str()),
+                    id,
                 ],
             )?;
-            Ok(conn.last_insert_rowid())
+            tx.commit()?;
+            Ok(id)
         })
         .await
     }

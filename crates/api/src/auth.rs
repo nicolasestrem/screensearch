@@ -5,36 +5,63 @@
 //! anything else is 401. The token is compared in constant time so a timing side channel
 //! can't recover it byte by byte.
 
-use axum::extract::{Request, State};
+use crate::error::ApiError;
+use crate::permissions::{Policies, Principal};
+use crate::ApiState;
+use axum::extract::{MatchedPath, Request, State};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use std::sync::Arc;
 
-use crate::error::ApiError;
-use crate::ApiState;
+#[derive(Clone)]
+pub(crate) struct AuthState {
+    pub(crate) api: ApiState,
+    pub(crate) policies: Arc<Policies>,
+}
 
-/// Middleware: reject any request lacking a valid bearer token. Reads the live token
-/// from the shared lock per request (so `regenerate_api_token` takes effect immediately),
-/// releasing the guard before the compare's `.await`-free path.
-pub async fn require_bearer(State(state): State<ApiState>, req: Request, next: Next) -> Response {
+pub(crate) async fn require_bearer(
+    State(state): State<AuthState>,
+    mut req: Request,
+    next: Next,
+) -> Response {
     let presented = req
         .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
-
-    let authorized = match presented {
-        Some(token) => {
-            let current = state.token.read().expect("api token lock poisoned").clone();
+    let principal = presented.and_then(|token| {
+        let legacy = state.api.token.read().expect("api token lock poisoned");
+        let read = state
+            .api
+            .read_token
+            .read()
+            .expect("api read token lock poisoned");
+        let legacy_match =
+            !legacy.is_empty() && constant_time_eq(token.as_bytes(), legacy.as_bytes());
+        let read_match = read.as_deref().is_some_and(|current| {
             !current.is_empty() && constant_time_eq(token.as_bytes(), current.as_bytes())
+        });
+        // Colliding configuration fails toward least privilege, never elevates the read slot.
+        if read_match {
+            Some(Principal::READ)
+        } else if legacy_match {
+            Some(Principal::LEGACY)
+        } else {
+            None
         }
-        None => false,
+    });
+    let Some(principal) = principal else {
+        return ApiError::Unauthorized.into_response();
     };
-
-    if authorized {
-        next.run(req).await
-    } else {
-        ApiError::Unauthorized.into_response()
+    if let Some(response) = state.policies.authorize(
+        req.extensions().get::<MatchedPath>(),
+        req.method(),
+        &principal,
+    ) {
+        return response;
     }
+    req.extensions_mut().insert(principal);
+    next.run(req).await
 }
 
 /// Constant-time byte-slice equality — no new dependency. Accumulates the XOR of every

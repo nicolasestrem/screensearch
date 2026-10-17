@@ -4,11 +4,12 @@
 
 use std::time::Duration;
 
+use crate::permissions::{Permission, Principal};
 use axum::extract::State;
 use axum::http::{header, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
+use axum::{Extension, Json};
 use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
 use traits::{AnswerDelta, AnswerOpts, Mark, ResumeContext, SearchHit};
@@ -181,8 +182,9 @@ pub struct CreatedMark {
     pub mark_id: i64,
 }
 
-pub async fn create_mark(
+pub(crate) async fn create_mark(
     State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
     ApiJson(body): ApiJson<CreateMarkBody>,
 ) -> Result<Response, ApiError> {
     match (body.frame_id, body.now) {
@@ -205,6 +207,7 @@ pub async fn create_mark(
             Ok((StatusCode::CREATED, Json(CreatedMark { mark_id })).into_response())
         }
         (None, true) => {
+            principal.require(Permission::CaptureRequest)?;
             // `capture_now` fails honestly when capture is off / privacy denies — 503
             // with the reason, never a silent no-op (`03 §7b`).
             let mark_id = state

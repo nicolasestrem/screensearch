@@ -470,6 +470,20 @@ async fn kernel_clears_capture_and_marks_error_when_source_shuts_down() {
     }
 
     assert!(!kernel.is_capturing().await);
+    let (enabled, observations) = kernel
+        .capture_observations(i64::MIN, i64::MAX)
+        .await
+        .unwrap();
+    assert!(!enabled);
+    let interruption = observations
+        .intervals
+        .last()
+        .expect("source shutdown observed");
+    assert_eq!(
+        interruption.reason,
+        kernel::CaptureInterruptionReason::WorkerError
+    );
+    assert_eq!(interruption.end, None);
     let readiness = kernel.readiness().capture;
     assert_eq!(readiness.status, ComponentStatus::Error);
     assert!(readiness
@@ -562,6 +576,291 @@ async fn kernel_refuses_to_start_capture_when_ocr_is_unavailable() {
     assert!(!kernel.is_capturing().await);
     assert!(db.get_frame(1).await.unwrap().is_none());
     assert_eq!(store.job_stats().await.unwrap().pending, 0);
+}
+
+// Coverage observes controller intent/errors; it never asks capture to produce a frame.
+#[tokio::test]
+async fn coverage_snapshot_reads_are_inert_and_controller_transitions_are_idempotent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let starts = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let seen = starts.clone();
+    let factory: CaptureFactory = Arc::new(move |_, _| {
+        seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Box::new(FakeCapture {
+            frames: VecDeque::new(),
+            after_frames: AfterFrames::Pending,
+        }))
+    });
+    let kernel = Kernel::new(
+        db.clone(),
+        Arc::new(FakeOcr),
+        factory,
+        tmp.path().join("frames"),
+        Readiness::default(),
+    );
+    let (enabled, initial) = kernel
+        .capture_observations(i64::MIN, i64::MAX)
+        .await
+        .unwrap();
+    assert!(!enabled);
+    assert!(initial.truncated, "previous-process history is unknown");
+    assert_eq!(initial.intervals[0].start, initial.observation_started_at);
+    assert_eq!(initial.intervals[0].end, None);
+    assert_eq!(
+        initial.intervals[0].reason,
+        kernel::CaptureInterruptionReason::CaptureStopped
+    );
+    kernel.stop_capture().await;
+    assert_eq!(
+        kernel
+            .capture_observations(i64::MIN, i64::MAX)
+            .await
+            .unwrap()
+            .1,
+        initial
+    );
+    assert_eq!(starts.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(kernel.capture_observations(1, 1).await.is_err());
+    assert!(kernel.capture_observations(2, 1).await.is_err());
+    assert!(db.get_frame(1).await.unwrap().is_none());
+    assert_eq!(db.job_stats().await.unwrap().pending, 0);
+
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    kernel.start_capture().await.unwrap();
+    let started = kernel
+        .capture_observations(i64::MIN, i64::MAX)
+        .await
+        .unwrap();
+    assert!(
+        started.0,
+        "enabled is intent, not proof of successful capture"
+    );
+    assert!(started.1.intervals[0].end.is_some());
+    kernel.start_capture().await.unwrap();
+    assert_eq!(
+        kernel
+            .capture_observations(i64::MIN, i64::MAX)
+            .await
+            .unwrap(),
+        started
+    );
+    assert_eq!(starts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    kernel.stop_capture().await;
+    let stopped = kernel
+        .capture_observations(i64::MIN, i64::MAX)
+        .await
+        .unwrap();
+    assert!(!stopped.0);
+    assert_eq!(stopped.1.intervals.last().unwrap().end, None);
+    kernel.stop_capture().await;
+    assert_eq!(
+        kernel
+            .capture_observations(i64::MIN, i64::MAX)
+            .await
+            .unwrap(),
+        stopped
+    );
+}
+
+struct ErrorThenPendingCapture(bool);
+
+#[async_trait]
+impl CaptureSource for ErrorThenPendingCapture {
+    fn monitors(&self) -> Vec<MonitorInfo> {
+        Vec::new()
+    }
+    async fn next_frame(&mut self) -> Result<Option<CapturedFrame>> {
+        if std::mem::take(&mut self.0) {
+            anyhow::bail!("private diagnostic must never enter observations")
+        }
+        std::future::pending().await
+    }
+}
+
+#[tokio::test]
+async fn coverage_records_observed_worker_errors_without_claiming_capture_health() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let factory: CaptureFactory = Arc::new(|_, _| Ok(Box::new(ErrorThenPendingCapture(true))));
+    let kernel = Kernel::new(
+        db.clone(),
+        Arc::new(FakeOcr),
+        factory,
+        tmp.path().join("frames"),
+        Readiness::default(),
+    );
+    kernel.start_capture().await.unwrap();
+    let observations = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let snapshot = kernel
+                .capture_observations(i64::MIN, i64::MAX)
+                .await
+                .unwrap();
+            if snapshot.1.intervals.last().is_some_and(|interval| {
+                interval.reason == kernel::CaptureInterruptionReason::WorkerError
+            }) {
+                break snapshot;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("source error observed by actual capture loop");
+    assert!(
+        observations.0,
+        "nonfatal worker error leaves controller intent enabled"
+    );
+    assert_eq!(observations.1.intervals.last().unwrap().end, None);
+    kernel.start_capture().await.unwrap();
+    assert_eq!(
+        kernel
+            .capture_observations(i64::MIN, i64::MAX)
+            .await
+            .unwrap(),
+        observations,
+        "an idempotent start is not a health recovery observation"
+    );
+    assert!(!format!("{:?}", observations.1).contains("private diagnostic"));
+    assert!(db.get_frame(1).await.unwrap().is_none());
+    kernel.stop_capture().await;
+}
+
+#[tokio::test]
+async fn stop_capture_after_source_shutdown_does_not_relabel_worker_error() {
+    // A source that self-terminates (monitor disconnect, driver reset) clears the capture
+    // slot and records an open-ended worker error. A later user stop (capture_control(Stop),
+    // tray stop, quit) has no handle to stop, so it must not close that error interval and
+    // relabel it as a deliberate `capture_stopped` observation (03 §7f.2/§7f.6: reasons are
+    // observed, never inferred; actual observed endpoints are preserved).
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let factory: CaptureFactory = Arc::new(|_cfg, _rx| {
+        Ok(Box::new(FakeCapture {
+            frames: VecDeque::new(),
+            after_frames: AfterFrames::Shutdown,
+        }) as Box<dyn CaptureSource>)
+    });
+    let kernel = Kernel::new(
+        db.clone(),
+        Arc::new(FakeOcr),
+        factory,
+        tmp.path().join("frames"),
+        Readiness::default(),
+    );
+    kernel.start_capture().await.unwrap();
+
+    // Wait until the shutdown watcher has cleared the capture slot and recorded the
+    // worker error; both happen under the capture lock, so observing the error proves
+    // the slot is already empty.
+    let before = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let snapshot = kernel
+                .capture_observations(i64::MIN, i64::MAX)
+                .await
+                .unwrap();
+            if snapshot.1.intervals.last().is_some_and(|interval| {
+                interval.reason == kernel::CaptureInterruptionReason::WorkerError
+            }) {
+                break snapshot;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("source shutdown observed by the watcher");
+    assert!(!kernel.is_capturing().await);
+    assert_eq!(before.1.intervals.last().unwrap().end, None);
+
+    kernel.stop_capture().await;
+    let after = kernel
+        .capture_observations(i64::MIN, i64::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        after, before,
+        "a no-handle stop must not fabricate a capture_stopped observation"
+    );
+    let last = after.1.intervals.last().unwrap();
+    assert_eq!(last.end, None);
+    assert_eq!(last.reason, kernel::CaptureInterruptionReason::WorkerError);
+}
+
+#[tokio::test]
+async fn coverage_observes_capture_worker_startup_failure_without_private_diagnostics() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let factory: CaptureFactory =
+        Arc::new(|_, _| anyhow::bail!("private worker startup diagnostic"));
+    let kernel = Kernel::new(
+        store,
+        Arc::new(FakeOcr),
+        factory,
+        tmp.path().join("frames"),
+        Readiness::default(),
+    );
+    assert!(kernel.start_capture().await.is_err());
+    let (enabled, observations) = kernel
+        .capture_observations(i64::MIN, i64::MAX)
+        .await
+        .unwrap();
+    assert!(!enabled);
+    let interruption = observations.intervals.last().unwrap();
+    assert_eq!(
+        interruption.reason,
+        kernel::CaptureInterruptionReason::WorkerError
+    );
+    assert_eq!(interruption.end, None);
+    assert!(!format!("{observations:?}").contains("private worker startup diagnostic"));
+}
+
+#[tokio::test]
+async fn coverage_observes_frame_processing_errors_without_changing_capture_behavior() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let factory: CaptureFactory = Arc::new(|_, _| {
+        Ok(Box::new(FakeCapture {
+            // Backdated fixture frame time must never become the error observation time.
+            frames: VecDeque::from([frame(-1_000_000)]),
+            after_frames: AfterFrames::Pending,
+        }))
+    });
+    let kernel = Kernel::new(
+        db.clone(),
+        Arc::new(ErrorOcr),
+        factory,
+        tmp.path().join("frames"),
+        Readiness::default(),
+    );
+    kernel.start_capture().await.unwrap();
+    let (enabled, observations) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let snapshot = kernel
+                .capture_observations(i64::MIN, i64::MAX)
+                .await
+                .unwrap();
+            if snapshot.1.intervals.last().is_some_and(|interval| {
+                interval.reason == kernel::CaptureInterruptionReason::WorkerError
+            }) {
+                break snapshot;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("OCR failure observed in actual processing loop");
+    assert!(
+        enabled,
+        "per-frame errors do not stop the existing pipeline"
+    );
+    let interruption = observations.intervals.last().unwrap();
+    assert!(interruption.start >= observations.observation_started_at);
+    assert_ne!(interruption.start, -1_000_000);
+    assert_eq!(interruption.end, None);
+    assert!(db.get_frame(1).await.unwrap().is_none());
+    assert_eq!(db.job_stats().await.unwrap().pending, 0);
+    kernel.stop_capture().await;
 }
 
 // ── Mark-this-moment: capture_now + add_mark (03 §7b, D8, 0.3.0 PR6) ──────────────

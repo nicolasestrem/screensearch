@@ -22,6 +22,9 @@ pub mod auth;
 pub mod error;
 pub mod export;
 pub mod extract;
+mod history;
+mod permissions;
+mod reports;
 pub mod routes;
 pub mod sessions;
 
@@ -30,7 +33,6 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use axum::routing::{get, post};
 use axum::Router;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto::Builder as AutoBuilder;
@@ -97,6 +99,10 @@ impl Default for ServerLimits {
 /// restarting the server (`regenerate_api_token`, `03 §7c`).
 pub type SharedToken = Arc<RwLock<String>>;
 
+/// Independent live read credential. `None` (including upgrades) grants no access.
+/// Never serialized or logged; persistence belongs to the composition root.
+pub type SharedReadToken = Arc<RwLock<Option<String>>>;
+
 /// A stored frame image ready to serve as the `?image=1` response body (`GET
 /// /v1/frames/{id}`). `content_type` is the MIME derived from the stored file's
 /// extension (WebP for current frames; JPEG for pre-WebP ones).
@@ -129,6 +135,28 @@ pub trait ApiHost: Send + Sync + 'static {
 
     /// Full detail for a frame, or `None` if it does not exist (`GET /v1/frames/{id}`).
     async fn frame_detail(&self, frame_id: i64) -> anyhow::Result<Option<FrameDetail>>;
+
+    /// Bounded chronological evidence; never search, inference, capture or detail enumeration.
+    /// Composition overrides this with the Store's transactional page adapter.
+    async fn frame_page(
+        &self,
+        _request: traits::FramePageRequest,
+    ) -> Result<traits::StoredFramePage, traits::HistoryReadError> {
+        Err(traits::HistoryReadError::Unavailable(
+            traits::HistoryUnavailableReason::UnsupportedStore,
+        ))
+    }
+
+    /// Coverage facts composed from Store, current controller intent/observations and
+    /// retention policy. This read must not inspect files or start capture.
+    async fn capture_coverage(
+        &self,
+        _window: traits::EvidenceWindow,
+    ) -> Result<traits::CaptureCoverage, traits::HistoryReadError> {
+        Err(traits::HistoryReadError::Unavailable(
+            traits::HistoryUnavailableReason::UnsupportedStore,
+        ))
+    }
 
     /// The stored image bytes for a frame, or `None` if the frame does not exist **or**
     /// its image was retention-purged (`?image=1`). The route distinguishes the two.
@@ -174,6 +202,30 @@ pub trait ApiHost: Send + Sync + 'static {
         to: Option<i64>,
         limit: u32,
     ) -> anyhow::Result<Vec<ExportFrameRow>>;
+
+    /// Bounded overlap listing of saved reports (`GET /v1/reports`, `03 §7f.5/.6`). Never
+    /// generation, scheduling, delivery or current-source overlay. Legacy hosts that
+    /// cannot reach durable report storage keep the safe `UnsupportedStore` default (→503);
+    /// the composition root overrides this with the concrete Store adapter.
+    async fn report_page(
+        &self,
+        _request: traits::ReportPageRequest,
+    ) -> Result<traits::StoredReportPage, traits::HistoryReadError> {
+        Err(traits::HistoryReadError::Unavailable(
+            traits::HistoryUnavailableReason::UnsupportedStore,
+        ))
+    }
+
+    /// One saved report's complete public projection (`GET /v1/reports/{run_id}`); `None`
+    /// is 404. Same no-generation rule and safe default as [`ApiHost::report_page`].
+    async fn report_detail(
+        &self,
+        _run_id: &str,
+    ) -> Result<Option<traits::ReportDetail>, traits::HistoryReadError> {
+        Err(traits::HistoryReadError::Unavailable(
+            traits::HistoryUnavailableReason::UnsupportedStore,
+        ))
+    }
 }
 
 /// The axum handler state: the app seam + the live bearer token.
@@ -181,6 +233,30 @@ pub trait ApiHost: Send + Sync + 'static {
 pub struct ApiState {
     pub host: Arc<dyn ApiHost>,
     pub token: SharedToken,
+    pub read_token: SharedReadToken,
+}
+
+impl ApiState {
+    /// Legacy-compatible state, with no read credential until explicitly configured.
+    pub fn new(host: Arc<dyn ApiHost>, token: SharedToken) -> Self {
+        Self::with_read_token(host, token, None)
+    }
+
+    /// State whose read credential is present from construction. The composition root
+    /// uses this at startup so a configured credential exists **before** the accepting
+    /// serve task starts — no fail-closed 401 window (audit P1 defect 1). A `None`
+    /// credential still fails closed (read auth stays unavailable until configured).
+    pub fn with_read_token(
+        host: Arc<dyn ApiHost>,
+        token: SharedToken,
+        read_token: Option<String>,
+    ) -> Self {
+        Self {
+            host,
+            token,
+            read_token: Arc::new(RwLock::new(read_token)),
+        }
+    }
 }
 
 /// A running local API server. [`ApiServer::stop`] shuts it down, bounded. Dropping
@@ -192,7 +268,12 @@ pub struct ApiServer {
     stop: watch::Sender<bool>,
     join: JoinHandle<()>,
     local_addr: SocketAddr,
+    token: SharedToken,
+    read_token: SharedReadToken,
 }
+
+/// Server-handle spelling for integrations; the existing `ApiServer` name remains valid.
+pub type ServerHandle = ApiServer;
 
 impl ApiServer {
     /// Starts on the default loopback address. Explicit network access uses `start_on`.
@@ -211,7 +292,37 @@ impl ApiServer {
         bind_address: IpAddr,
         port: u16,
     ) -> std::io::Result<ApiServer> {
-        Self::start_on_with(host, token, bind_address, port, ServerLimits::default()).await
+        Self::start_on_with(
+            host,
+            token,
+            None,
+            bind_address,
+            port,
+            ServerLimits::default(),
+        )
+        .await
+    }
+
+    /// Backward-compatible startup that installs the configured read credential
+    /// **before** the accepting serve task is spawned — no fail-closed 401 window
+    /// (audit P1 defect 1). [`ApiServer::start`] / [`ApiServer::start_on`] stay
+    /// credential-free (`None`) for legacy callers; a `None` credential fails closed.
+    pub async fn start_on_with_read_token(
+        host: Arc<dyn ApiHost>,
+        token: SharedToken,
+        read_token: Option<String>,
+        bind_address: IpAddr,
+        port: u16,
+    ) -> std::io::Result<ApiServer> {
+        Self::start_on_with(
+            host,
+            token,
+            read_token,
+            bind_address,
+            port,
+            ServerLimits::default(),
+        )
+        .await
     }
 
     /// [`ApiServer::start_on`] with an injectable connection budget — production always
@@ -219,6 +330,7 @@ impl ApiServer {
     async fn start_on_with(
         host: Arc<dyn ApiHost>,
         token: SharedToken,
+        read_token: Option<String>,
         bind_address: IpAddr,
         port: u16,
         limits: ServerLimits,
@@ -257,7 +369,9 @@ impl ApiServer {
         socket.bind(SocketAddr::from((bind_address, port)))?;
         let listener = socket.listen(128)?;
         let local_addr = listener.local_addr()?;
-        let router = build_router(ApiState { host, token });
+        let state = ApiState::with_read_token(host, token.clone(), read_token);
+        let read_token = state.read_token.clone();
+        let router = build_router(state);
         let (stop, stop_rx) = watch::channel(false);
         let join = tokio::spawn(serve(listener, router, stop_rx, limits));
         tracing::info!(%local_addr, "local API listening");
@@ -265,7 +379,25 @@ impl ApiServer {
             stop,
             join,
             local_addr,
+            token,
+            read_token,
         })
+    }
+
+    /// Replace only the live legacy token. Existing `SharedToken` writers keep working.
+    /// The caller must persist first under its API configuration lock.
+    pub fn set_token(&self, token: String) {
+        *self.token.write().expect("api token lock poisoned") = token;
+    }
+
+    /// Replace or revoke only the live read credential without changing the listener.
+    /// Empty values are disabled too. Persist first under the composition config lock.
+    /// Subsequent requests observe the change; admitted streams are not cancelled.
+    pub fn set_read_token(&self, token: Option<String>) {
+        *self
+            .read_token
+            .write()
+            .expect("api read token lock poisoned") = token;
     }
 
     /// The actual bound IPv4 or IPv6 socket address. Used to report the live port;
@@ -424,28 +556,26 @@ fn log_connection_end(result: Result<(), Box<dyn std::error::Error + Send + Sync
 /// included — the whole surface is private). The ask + export routes are added by the
 /// PR7 SSE/export module.
 pub fn build_router(state: ApiState) -> Router {
-    Router::new()
-        .route("/v1/health", get(routes::health))
-        .route("/v1/search", get(routes::search))
-        .route("/v1/frames/{id}", get(routes::frame))
-        .route("/v1/context/where-was-i", get(routes::where_was_i))
-        .route("/v1/sessions", get(sessions::list_sessions))
-        .route("/v1/sessions/{id}", get(sessions::session_detail))
-        .route(
-            "/v1/marks",
-            get(routes::list_marks).post(routes::create_mark),
-        )
-        .route("/v1/marks/{id}/resolve", post(routes::resolve_mark))
-        .route("/v1/ask", post(routes::ask))
-        .route("/v1/export", get(export::export))
-        // Unmatched paths still answer on the JSON error contract (not axum's default 404
-        // body). Registered before the auth layer so it, too, requires a token.
-        .fallback(routes::not_found)
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            auth::require_bearer,
-        ))
-        .with_state(state)
+    use permissions::{ClassifiedRouter, Permission::*};
+    ClassifiedRouter::new()
+        .get("/v1/health", routes::health, HistoryRead)
+        .get("/v1/search", routes::search, HistoryRead)
+        .get("/v1/frames", history::frames, HistoryRead)
+        .get("/v1/coverage", history::coverage, HistoryRead)
+        .get("/v1/frames/{id}", routes::frame, HistoryRead)
+        .get("/v1/context/where-was-i", routes::where_was_i, HistoryRead)
+        .get("/v1/sessions", sessions::list_sessions, HistoryRead)
+        .get("/v1/sessions/{id}", sessions::session_detail, HistoryRead)
+        .get("/v1/marks", routes::list_marks, HistoryRead)
+        .post("/v1/marks", routes::create_mark, MarksWrite)
+        .post("/v1/marks/{id}/resolve", routes::resolve_mark, MarksWrite)
+        .post("/v1/ask", routes::ask, AnswerGenerate)
+        .get("/v1/export", export::export, HistoryRead)
+        // P3 saved-report reads (`03 §7f.5/.6`): history.read only, exactly like the
+        // other read routes — no new permission, generation or mutation route.
+        .get("/v1/reports", reports::list_reports, HistoryRead)
+        .get("/v1/reports/{run_id}", reports::report_detail, HistoryRead)
+        .finish(state)
 }
 
 /// Generates a fresh bearer token: 32 CSPRNG bytes as 64 lowercase hex chars (`03 §7c`,
@@ -615,6 +745,33 @@ mod connection_tests {
         }
     }
 
+    #[tokio::test]
+    async fn legacy_hosts_without_new_adapters_return_explicit_unsupported_not_empty() {
+        let host = Host {
+            store: Arc::new(store::SqliteStore::open_in_memory().unwrap()),
+            answer: None,
+        };
+        let window = traits::EvidenceWindow { from: 0, to: 1 };
+        let request = traits::FramePageRequest {
+            window,
+            filters: traits::FrameFilters::default(),
+            limit: 100,
+            continuation: None,
+        };
+        assert!(matches!(
+            host.frame_page(request).await,
+            Err(traits::HistoryReadError::Unavailable(
+                traits::HistoryUnavailableReason::UnsupportedStore
+            ))
+        ));
+        assert!(matches!(
+            host.capture_coverage(window).await,
+            Err(traits::HistoryReadError::Unavailable(
+                traits::HistoryUnavailableReason::UnsupportedStore
+            ))
+        ));
+    }
+
     /// Streams `deltas` token events `tick` apart, then `Done`; exits early when the
     /// receiver goes away — exactly what a shutdown-cancelled stream looks like.
     struct SlowAnswer {
@@ -655,16 +812,35 @@ mod connection_tests {
             answer,
         });
         let token: SharedToken = Arc::new(RwLock::new(TEST_TOKEN.to_string()));
-        let server = ApiServer::start_on_with(host, token, DEFAULT_BIND_ADDRESS, 0, limits)
+        let server = ApiServer::start_on_with(host, token, None, DEFAULT_BIND_ADDRESS, 0, limits)
             .await
             .expect("bind loopback");
         (server.local_addr(), server)
+    }
+
+    pub(super) fn permission_test_state() -> super::ApiState {
+        super::ApiState::new(
+            Arc::new(Host {
+                store: Arc::new(store::SqliteStore::open_in_memory().unwrap()),
+                answer: None,
+            }),
+            Arc::new(RwLock::new("permission-legacy".to_string())),
+        )
     }
 
     /// A complete `GET /v1/health` request with the bearer token, over a raw socket.
     fn health_request() -> Vec<u8> {
         format!(
             "GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TEST_TOKEN}\r\n\r\n"
+        )
+        .into_bytes()
+    }
+
+    /// The same `GET /v1/health` request with an explicit bearer token (the read
+    /// credential in the startup-availability regression).
+    fn health_request_with(token: &str) -> Vec<u8> {
+        format!(
+            "GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n"
         )
         .into_bytes()
     }
@@ -740,6 +916,50 @@ mod connection_tests {
             REQUEST_HEADER_DEADLINE,
             "production must use the fixed constants"
         );
+    }
+
+    /// Audit P1 defect 1: the configured read credential must be live the instant the
+    /// listener accepts — `start_on_with_read_token` installs it *before* the accepting
+    /// serve task is spawned, so there is no fail-closed 401 window between bind and
+    /// credential install. No `set_read_token` call is made here: the credential came in
+    /// at construction, and the first request on the fresh socket must already be 200.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn read_credential_is_available_from_startup_without_a_setter() {
+        let host = Arc::new(Host {
+            store: Arc::new(store::SqliteStore::open_in_memory().expect("open store")),
+            answer: None,
+        });
+        let token: SharedToken = Arc::new(RwLock::new(TEST_TOKEN.to_string()));
+        let read = "startup-read-credential";
+        let server = ApiServer::start_on_with_read_token(
+            host,
+            token,
+            Some(read.to_string()),
+            DEFAULT_BIND_ADDRESS,
+            0,
+        )
+        .await
+        .expect("bind loopback");
+        let addr = server.local_addr();
+
+        // No setter call: the credential is already live on the fresh listener.
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream.write_all(&health_request_with(read)).await.unwrap();
+        stream.flush().await.unwrap();
+        let body = read_one_response(&mut stream)
+            .await
+            .expect("read credential 200 straight from startup");
+        assert!(body.contains("\"version\""), "{body}");
+
+        // The legacy token stays independently valid on the same listener.
+        let mut legacy = TcpStream::connect(addr).await.unwrap();
+        legacy.write_all(&health_request()).await.unwrap();
+        legacy.flush().await.unwrap();
+        read_one_response(&mut legacy)
+            .await
+            .expect("legacy token still 200");
+
+        server.stop().await;
     }
 
     /// Incomplete request headers are closed at the header deadline — and not before

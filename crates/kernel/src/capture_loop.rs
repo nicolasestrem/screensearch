@@ -17,6 +17,9 @@ use traits::{
     Store, TextFilterContext,
 };
 
+use crate::capture_observations::{
+    CaptureInterruptionReason, CaptureObservation, CaptureObservationBuffer,
+};
 use crate::events::KernelEvent;
 
 /// Why the capture loop stopped.
@@ -66,9 +69,20 @@ pub struct LoopCtx {
 /// (`03 §12` "corrupt/oversized frame → mark + skip; capture continues"). Dropping
 /// `capture` on return releases the underlying OS capture resources.
 pub async fn run_capture_loop(
+    capture: Box<dyn CaptureSource>,
+    ctx: LoopCtx,
+    stop: watch::Receiver<bool>,
+) -> CaptureLoopExit {
+    run_capture_loop_observed(capture, ctx, stop, None).await
+}
+
+/// The controller installs its observer directly, rather than relying on the
+/// lossy broadcast event bus. Keep the public LoopCtx/direct-loop seam unchanged.
+pub(crate) async fn run_capture_loop_observed(
     mut capture: Box<dyn CaptureSource>,
     ctx: LoopCtx,
     mut stop: watch::Receiver<bool>,
+    observations: Option<Arc<std::sync::Mutex<CaptureObservationBuffer>>>,
 ) -> CaptureLoopExit {
     loop {
         tokio::select! {
@@ -83,15 +97,31 @@ pub async fn run_capture_loop(
                     if let Err(e) = process_frame(&ctx, frame).await {
                         // No frame content in the log (privacy, 03 §9) — just the error.
                         tracing::warn!(monitor, error = %e, "capture loop: dropping frame");
+                        observe_worker_error(&observations);
                     }
                 }
                 Ok(None) => {
                     tracing::info!("capture loop: source signaled shutdown");
                     return CaptureLoopExit::SourceShutdown;
                 }
-                Err(e) => tracing::warn!(error = %e, "capture loop: source error"),
+                Err(e) => {
+                    tracing::warn!(error = %e, "capture loop: source error");
+                    observe_worker_error(&observations);
+                }
             }
         }
+    }
+}
+
+fn observe_worker_error(observations: &Option<Arc<std::sync::Mutex<CaptureObservationBuffer>>>) {
+    if let Some(observations) = observations {
+        observations
+            .lock()
+            .expect("capture observations lock poisoned")
+            .record(
+                crate::worker_pool::now_ms(),
+                CaptureObservation::Interrupted(CaptureInterruptionReason::WorkerError),
+            );
     }
 }
 

@@ -18,6 +18,7 @@ import {
 } from "../../lib/ipc/mutations";
 import { toast } from "../../state/toastStore";
 import { API_THREAT_MODEL } from "../../lib/apiCopy";
+import { ApiReadTokenControls } from "./ApiReadTokenControls";
 
 const DEFAULT_PORT = 43210;
 const socketAddress = (address: string, port: number) =>
@@ -60,6 +61,7 @@ export function ApiPanel() {
                 Retry
               </Button>
             </div>
+            <ApiReadTokenControls />
           </div>
         </Panel>
       );
@@ -69,6 +71,7 @@ export function ApiPanel() {
         <div className="flex flex-col gap-3">
           <Skeleton className="h-6 w-40" />
           <Skeleton className="h-16 w-full" />
+          <ApiReadTokenControls />
         </div>
       </Panel>
     );
@@ -299,6 +302,7 @@ export function ApiPanel() {
             </span>
           </div>
         )}
+        <ApiReadTokenControls apiStatus={s} />
       </div>
     </Panel>
   );

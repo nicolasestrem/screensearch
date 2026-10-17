@@ -168,6 +168,53 @@ pub trait SessionSegmenter: Send + Sync {
 /// (SQLite + sqlite-vec + FTS5 impl in `store`, `03 §3/§4/§5`).
 #[async_trait]
 pub trait Store: Send + Sync {
+    /// Read-only metadata validation; never initializes or repairs history.
+    async fn history_readiness(&self) -> Result<crate::HistoryMetadata, crate::HistoryReadError> {
+        Err(crate::HistoryReadError::Unavailable(
+            crate::HistoryUnavailableReason::UnsupportedStore,
+        ))
+    }
+    /// Bounded tuple-keyset enumeration with same-transaction full hydration.
+    async fn frame_page(
+        &self,
+        _request: crate::FramePageRequest,
+    ) -> Result<crate::StoredFramePage, crate::HistoryReadError> {
+        Err(crate::HistoryReadError::Unavailable(
+            crate::HistoryUnavailableReason::UnsupportedStore,
+        ))
+    }
+    /// SQL facts only; controller intent/observations and policies are composed above Store.
+    async fn stored_coverage(
+        &self,
+        _window: crate::EvidenceWindow,
+    ) -> Result<crate::StoredCoverage, crate::HistoryReadError> {
+        Err(crate::HistoryReadError::Unavailable(
+            crate::HistoryUnavailableReason::UnsupportedStore,
+        ))
+    }
+    /// Bounded overlap/status keyset enumeration over saved reports (`03 §7f.5/.6`).
+    /// One read transaction: the frozen maximum ordering tuple and the candidate
+    /// summaries share a snapshot; filters and window apply in SQL before the limit.
+    /// Never generates, retries, delivers, writes or overlays current sources.
+    async fn report_page(
+        &self,
+        _request: crate::ReportPageRequest,
+    ) -> Result<crate::StoredReportPage, crate::HistoryReadError> {
+        Err(crate::HistoryReadError::Unavailable(
+            crate::HistoryUnavailableReason::UnsupportedStore,
+        ))
+    }
+    /// Public detail projection of one stored run, or `None` (→404). The stored
+    /// saved result is exposed whenever it exists, independent of phase; a
+    /// malformed stored payload is a storage error, never null.
+    async fn report_detail(
+        &self,
+        _run_id: &str,
+    ) -> Result<Option<crate::ReportDetail>, crate::HistoryReadError> {
+        Err(crate::HistoryReadError::Unavailable(
+            crate::HistoryUnavailableReason::UnsupportedStore,
+        ))
+    }
     /// All revision-family receipts; missing ancestors fail closed.
     async fn list_report_family_deliveries(
         &self,
@@ -278,6 +325,8 @@ pub trait Store: Send + Sync {
         anyhow::bail!("durable report storage is unsupported")
     }
     // frames + ocr + vision
+    /// Production inserts atomically allocate above persisted high-water and current MAX(id).
+    /// No deletion/settings reset may reduce that counter; unavailable metadata fails closed.
     async fn insert_frame(&self, f: NewFrame) -> Result<i64>;
     async fn insert_ocr(&self, frame_id: i64, ocr: OcrResult) -> Result<()>;
     /// Inserts a frame's OCR **and** applies PR3's attention filter in one

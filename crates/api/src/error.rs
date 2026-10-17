@@ -18,12 +18,18 @@ pub struct ErrorBody {
 pub enum ApiError {
     /// Missing or wrong bearer token → 401.
     Unauthorized,
+    /// Authenticated credential lacks the explicitly required permission → 403.
+    Forbidden,
     /// Malformed request (bad params/body/format) → 400.
     BadRequest(String),
     /// The requested frame/mark does not exist → 404.
     NotFound(String),
     /// The frame exists but its image was retention-purged → 404 (distinct code).
     ImagePurged,
+    /// Cursor refers to a different initialized history → 409.
+    HistoryChanged,
+    /// New history reads deliberately never expose or log underlying private errors.
+    HistoryStorage,
     /// A dependency needed to serve the request is unavailable (answer model not
     /// loaded, capture off for `capture_now`) → 503.
     Unavailable(String),
@@ -39,6 +45,21 @@ impl ApiError {
                 StatusCode::UNAUTHORIZED,
                 "unauthorized",
                 "missing or invalid bearer token".to_string(),
+            ),
+            ApiError::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "forbidden",
+                "bearer token does not grant the required permission".to_string(),
+            ),
+            ApiError::HistoryChanged => (
+                StatusCode::CONFLICT,
+                "history_changed",
+                "history changed; restart the traversal".to_string(),
+            ),
+            ApiError::HistoryStorage => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "history storage error".to_string(),
             ),
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, "bad_request", m.clone()),
             ApiError::NotFound(m) => (StatusCode::NOT_FOUND, "not_found", m.clone()),

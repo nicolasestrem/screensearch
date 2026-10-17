@@ -30,6 +30,8 @@ import type { HotkeyStatus } from "../../bindings/HotkeyStatus";
 import type { Mark } from "../../bindings/Mark";
 import type { UiResumeContext } from "../../bindings/UiResumeContext";
 import type { ApiStatus } from "../../bindings/ApiStatus";
+import type { ApiReadTokenStatus } from "../../bindings/ApiReadTokenStatus";
+import type { ApiReadTokenSecret } from "../../bindings/ApiReadTokenSecret";
 import type { ExportRequest } from "../../bindings/ExportRequest";
 import type { ExportResult } from "../../bindings/ExportResult";
 import type { UpdateStatus } from "../../bindings/UpdateStatus";
@@ -282,6 +284,26 @@ export const getApiStatus = (): Promise<ApiStatus> =>
 /** Regenerate the bearer token (no server restart — the middleware reads it live). */
 export const regenerateApiToken = (): Promise<ApiStatus> =>
   invoke<ApiStatus>("regenerate_api_token");
+
+/** Passive read-credential availability; never returns the credential. */
+export const getApiReadTokenStatus = (): Promise<ApiReadTokenStatus> =>
+  invoke<ApiReadTokenStatus>("get_api_read_token_status");
+
+/** Create only when absent. Never enables or rebinds the listener. */
+export const createApiReadToken = (): Promise<ApiReadTokenStatus> =>
+  invoke<ApiReadTokenStatus>("create_api_read_token");
+
+/** Rotate an existing read token, independently of the legacy credential. */
+export const rotateApiReadToken = (): Promise<ApiReadTokenStatus> =>
+  invoke<ApiReadTokenStatus>("rotate_api_read_token");
+
+/** Idempotently revoke only the read credential. */
+export const revokeApiReadToken = (): Promise<ApiReadTokenStatus> =>
+  invoke<ApiReadTokenStatus>("revoke_api_read_token");
+
+/** Explicit reveal/copy only. Do not place the result in any Query cache. */
+export const revealApiReadToken = (): Promise<ApiReadTokenSecret> =>
+  invoke<ApiReadTokenSecret>("reveal_api_read_token");
 
 /** Export frames + content text + marks to a JSON file in Downloads (`03 §7c`, D12).
  *  Works with the API disabled; returns the written path + counts. */
