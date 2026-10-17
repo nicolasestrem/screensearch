@@ -728,6 +728,66 @@ async fn coverage_records_observed_worker_errors_without_claiming_capture_health
 }
 
 #[tokio::test]
+async fn stop_capture_after_source_shutdown_does_not_relabel_worker_error() {
+    // A source that self-terminates (monitor disconnect, driver reset) clears the capture
+    // slot and records an open-ended worker error. A later user stop (capture_control(Stop),
+    // tray stop, quit) has no handle to stop, so it must not close that error interval and
+    // relabel it as a deliberate `capture_stopped` observation (03 §7f.2/§7f.6: reasons are
+    // observed, never inferred; actual observed endpoints are preserved).
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let factory: CaptureFactory = Arc::new(|_cfg, _rx| {
+        Ok(Box::new(FakeCapture {
+            frames: VecDeque::new(),
+            after_frames: AfterFrames::Shutdown,
+        }) as Box<dyn CaptureSource>)
+    });
+    let kernel = Kernel::new(
+        db.clone(),
+        Arc::new(FakeOcr),
+        factory,
+        tmp.path().join("frames"),
+        Readiness::default(),
+    );
+    kernel.start_capture().await.unwrap();
+
+    // Wait until the shutdown watcher has cleared the capture slot and recorded the
+    // worker error; both happen under the capture lock, so observing the error proves
+    // the slot is already empty.
+    let before = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let snapshot = kernel
+                .capture_observations(i64::MIN, i64::MAX)
+                .await
+                .unwrap();
+            if snapshot.1.intervals.last().is_some_and(|interval| {
+                interval.reason == kernel::CaptureInterruptionReason::WorkerError
+            }) {
+                break snapshot;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("source shutdown observed by the watcher");
+    assert!(!kernel.is_capturing().await);
+    assert_eq!(before.1.intervals.last().unwrap().end, None);
+
+    kernel.stop_capture().await;
+    let after = kernel
+        .capture_observations(i64::MIN, i64::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        after, before,
+        "a no-handle stop must not fabricate a capture_stopped observation"
+    );
+    let last = after.1.intervals.last().unwrap();
+    assert_eq!(last.end, None);
+    assert_eq!(last.reason, kernel::CaptureInterruptionReason::WorkerError);
+}
+
+#[tokio::test]
 async fn coverage_observes_capture_worker_startup_failure_without_private_diagnostics() {
     let tmp = tempfile::tempdir().unwrap();
     let store: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().unwrap());

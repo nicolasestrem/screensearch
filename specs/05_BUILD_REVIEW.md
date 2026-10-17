@@ -264,6 +264,46 @@ These are affected native regressions, not a rerun or extension of the historica
 receipt. No app was launched and no UI, clipboard, capture, live-profile or network-policy
 acceptance is inferred; the existing GUI/network/P3 gates remain open.
 
+### Review follow-up: truthful stop observation
+
+The claude[bot] review finding on PR #128 (bounded memory evidence / read-only credentials)
+showed `Kernel::stop_capture()` recording `Interrupted(CaptureStopped)` unconditionally —
+outside the `if let Some(h) = handle` branch — so the observation also fired when
+`capture.take()` returned `None` and no capture task was running. When the capture source
+self-terminates, the shutdown watcher in `start_capture` clears the capture slot and records an
+open-ended `Interrupted(WorkerError)`; a later user stop (capture_control(Stop), tray stop,
+quit path) then had no handle to stop yet still recorded `CaptureStopped`, so
+`CaptureObservationBuffer::record` closed the open error interval and opened a
+`capture_stopped` one. `GET /v1/coverage` / `kernel.capture_observations()` consequently
+presented an unresolved worker error as a deliberate user stop, contradicting `03 §7f.2` and
+`§7f.6` (reasons are observed, never inferred; actual observed endpoints are preserved; an
+idempotent stop of already-stopped capture must not churn). The observation now fires only when
+a live capture handle existed; a no-handle stop is a pure no-op. The regression
+`stop_capture_after_source_shutdown_does_not_relabel_worker_error` first failed against the
+unfixed code (`reason: CaptureStopped` on the open interval) and passes with the fix. Full
+kernel suite on Linux x86_64 / Rust 1.95.0:
+
+```text
+     Running unittests src/lib.rs (target/debug/deps/kernel-ecea33f7a04539a9)
+test result: ok. 93 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.79s
+     Running tests/enrichment.rs (target/debug/deps/enrichment-423258413faa7b3b)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+     Running tests/pipeline.rs (target/debug/deps/pipeline-5fcaa3ae1dbb5a69)
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+     Running tests/sessions_intel.rs (target/debug/deps/sessions_intel-773b00b46a392ad5)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/settings.rs (target/debug/deps/settings-9c9f9acd5452a677)
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+     Running tests/throttle.rs (target/debug/deps/throttle-f34053ac2968a7eb)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.58s
+   Doc-tests kernel
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+`cargo fmt --all -- --check` and `cargo clippy --locked -p kernel --all-targets -- -D warnings`
+both exit 0. This is kernel-crate evidence on Linux, not native Windows app acceptance; the
+existing GUI/network/P3 gates remain open.
+
 > **Populated during the build**, after each meaningful pass (`04 §7`). Record what actually
 > happened — honestly. Empty until P0 begins.
 
