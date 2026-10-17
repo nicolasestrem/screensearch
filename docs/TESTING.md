@@ -102,9 +102,62 @@ Still pending unless separately receipted: rendered credential UI states (the na
 acceptance run is prepared but not executed — its isolated launch is blocked on the session-0
 safety question), separate-machine frame traversal/consumer resume, supported native
 wrapper/archive execution (Windows/Linux/macOS legs) and real paging/latency measurements.
-P3 saved-report reads are **blocked pending Nico's retry-result visibility decision**.
-Generation/retry/scheduling/delivery remain deferred. No merge, publication, installer
-replacement or release is implied.
+P3 saved-report reads are **resolved** (Nico GO, stored-presence visibility — see the
+[P3 verification status](#p3-saved-report-reads--verification-status)), but their runtime is still
+being implemented, so **no P3 result is claimed here**. Generation/retry/scheduling/delivery
+remain deferred. No merge, publication, installer replacement or release is implied.
+
+### P3 saved-report reads — verification status
+
+P3's retry-result visibility question is **resolved** (Nico GO): saved output is exposed by
+persisted presence even while a run is queued/retrying; absent output stays explicit `null`, stored
+`NO_DATA` stays factual, and a malformed saved payload is a read error. The contract is
+`03 §7f.5–7` / `§7f.10`; the endpoints are documented in
+[API saved reports](API.md#saved-reports). **The runtime is being implemented on
+`feat/agent-memory-saved-reports`; nothing below is a passed result — these are the required
+receipts, pending until the parent records observed output.** Do not reuse the P2 old-head CI run
+(or any base build) as P3 evidence.
+
+Three evidence layers, which must not be conflated:
+
+- **Genuine producer fixture — `crates/api/examples/memory_consumer_fixture.rs`.** A test-only
+  runner that composes the real `ApiServer` router over a real isolated `SqliteStore` (no mock
+  HTTP; capture disabled, schedules off, answer providers unavailable). A P3 extension seeds real
+  `ReportRun`/`SavedReport`/delivery rows through the production store writers and reads them back
+  through the real routes. Because this fixture never starts the app's `MemoryRuntime` scheduler or
+  worker, queued/running delivery cases are **inert** here. **Never launch the real app against a
+  queued-delivery fixture** — app startup can process those rows even with schedules off. Any
+  genuine-app smoke fixture, if ever prepared, must use only finished saved rows with no pending
+  deliveries.
+- **Raw-HTTP protocol fixtures — `crates/mcp/tests/memory_tools.rs`.** The MCP wrapper's own
+  loopback fixture with a hand-authored `Responder` speaking the frozen wire. These are
+  **protocol-fixture evidence, not real-product acceptance**: they prove the MCP passes the wire
+  through unchanged, not that the producer routes exist on that branch.
+- **Independent expected manifest — the acceptance driver.** `examples/mcp_memory_acceptance.py`
+  (non-Windows, read-only MCP→HTTP) gains a `reports` block produced by the operator **from the
+  app/DB, never scraped from a tool response**: `expected_summaries` (complete public
+  `ReportSummary` objects, newest first for the manifest window) and `expected_details` (complete
+  public `ReportDetail` objects with a present `result.markdown` replaced by `markdown_sha256`;
+  absent result is literal `null`). The driver validates exact field sets/nulls/types/order and
+  page exhaustion, compares each detail, Markdown digest and full provenance arrays, and adds a
+  bounded `--report-page-size` to force paging without auto-draining past the manifest window.
+  Driver order: coverage → frame pages/restart/resume → report pages/detail → frame source details.
+  A frame-only manifest stays usable but must report P3 `not_exercised`, never full P4 acceptance.
+
+Required P3 assertions (all pending observed output):
+
+- Read a persisted fixture run with the **model unloaded and schedules off**, assert the exact wire
+  bytes, and assert **no** generator/scheduler/file-writer/Telegram call and **no** store mutation
+  (phase/`updated_at`/`result` unchanged; a panicking provider/writer host is never invoked).
+- SQL-side overlap/status/keyset filters before `limit`; ties and revisions; mutable statuses
+  re-listed; precise `null` vs `NO_DATA`; internal-field exclusion (no
+  `schedule_id`/`config_snapshot`/delivery/path/credential keys); and unchanged stored
+  markdown/evidence/session provenance after source deletion/resegmentation.
+
+Report tuple tie-group sorting and sparse-filter costs are **measured-only**: no latency budget is
+promised and no index or schema change is introduced. GUI/native and separate-machine
+(cross-machine) acceptance remain **blocked** until their own observed receipts; a future run on
+the same host is not a cross-machine result.
 
 ## ✅ The one command
 

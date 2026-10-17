@@ -32,12 +32,18 @@ Retire the selector-parser override when upstream ranges resolve patched copies.
 
 ## 2026-10-16 — External-agent memory API P0
 
-- **Open, P3 only:** the approved plan asks for null results for unfinished runs, but
-  `src-tauri/src/memory.rs` at `cd9f5fe` (lines 613–617, 786–788) retains immutable
-  saved output during queued/running delivery retries. `03 §7f.10` records the
-  contradiction. Nico was asked whether reads should expose that existing output;
-  recommended resolution is stored-presence projection. Do not implement either
-  visibility policy until answered. P1/P2 are independently authorized.
+- **Resolved (Nico GO), P3 only — historical record preserved:** the approved plan asked for
+  null results for unfinished runs, but `src-tauri/src/memory.rs` at `cd9f5fe` (lines 613–617,
+  786–788) retains immutable saved output during queued/running delivery retries. `03 §7f.10`
+  recorded the contradiction and Nico was asked whether reads should expose that existing output;
+  the recommendation was stored-presence projection. **Nico resolved it in favour of stored-presence
+  projection:** expose an immutable saved result immediately whenever it exists, including while
+  delivery is queued or retrying; absent output is explicit null; stored `NO_DATA` stays factual; a
+  malformed saved payload is a read error. The earlier "do not implement either visibility policy
+  until answered" hold is **superseded** for P3; P1/P2 were independently authorized and are
+  unaffected. P3 implementation is in progress on `feat/agent-memory-saved-reports`; runtime
+  verification is pending and no P3 result is claimed. Remote generation/retry/delivery remain
+  deferred.
 - Remote-wrapper scope is a separately reviewable boundary amendment before runtime
   changes. Capture/app remain Windows-native; inference remains loopback-only.
   No listener-default change, schema migration, main merge or release is authorized.
