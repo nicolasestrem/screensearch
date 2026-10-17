@@ -1,7 +1,7 @@
 //! Opt-in Telegram adapter. Tokens are held only in Credential Manager and call-local memory.
 use std::sync::OnceLock;
 use std::time::Duration;
-use traits::{ReportOutcome, ReportRun};
+use traits::{ReportOutcome, ReportRun, ReportRunKind};
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Security::Credentials::{
     CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
@@ -216,6 +216,7 @@ mod tests {
         ReportRun {
             run_id: "report-fixture".into(),
             source_id: "source-fixture".into(),
+            kind: ReportRunKind::Daily,
             schedule_id: None,
             revision_of: None,
             requested_range: None,

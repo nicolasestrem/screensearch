@@ -2,7 +2,13 @@
 import type { MemoryReportRange } from "./MemoryReportRange";
 import type { ReportError } from "./ReportError";
 import type { ReportOutcome } from "./ReportOutcome";
+import type { ReportRunKind } from "./ReportRunKind";
 import type { ReportRunPhase } from "./ReportRunPhase";
 import type { SavedReport } from "./SavedReport";
 
-export type ReportRun = { requested_range: MemoryReportRange | null, run_id: string, source_id: string, schedule_id: string | null, revision_of: string | null, window_start: number, window_end: number, timezone: string, local_date: string, phase: ReportRunPhase, outcome: ReportOutcome | null, error: ReportError | null, result: SavedReport | null, config_snapshot: string, created_at: number, updated_at: number, };
+export type ReportRun = { requested_range: MemoryReportRange | null, run_id: string, source_id: string, 
+/**
+ * The persisted run-kind discriminator (`03 §8e`). Defaults to `daily` for
+ * payloads written before the schema 12 → 13 migration added the column.
+ */
+kind: ReportRunKind, schedule_id: string | null, revision_of: string | null, window_start: number, window_end: number, timezone: string, local_date: string, phase: ReportRunPhase, outcome: ReportOutcome | null, error: ReportError | null, result: SavedReport | null, config_snapshot: string, created_at: number, updated_at: number, };

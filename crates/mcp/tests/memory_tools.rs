@@ -481,6 +481,7 @@ fn report_summary(run_id: &str, phase: &str, outcome: Value) -> Value {
     json!({
         "run_id": run_id,
         "source_id": "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+        "kind": "daily",
         "revision_of": null,
         "requested_range": { "start_date": "2026-10-12", "end_date": "2026-10-17" },
         "window_start": 1_000,

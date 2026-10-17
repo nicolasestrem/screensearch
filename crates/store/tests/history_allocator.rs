@@ -65,7 +65,7 @@ async fn preserves_existing_ids() {
     let path = dir.path().join("upgrade.db");
     drop(SqliteStore::open_path(&path).unwrap());
     let conn = Connection::open(&path).unwrap();
-    // Simulate a schema-12 database produced before API identity/allocator setup.
+    // Simulate a current-schema database produced before API identity/allocator setup.
     conn.execute(
         "DELETE FROM settings WHERE key IN (?1,?2)",
         params![HISTORY_ID_KEY, FRAME_ID_HIGH_WATER_KEY],
@@ -97,7 +97,10 @@ async fn preserves_existing_ids() {
     assert_eq!(store.get_frame(7).await.unwrap().unwrap().captured_at, 20);
     assert_eq!(store.get_frame(900).await.unwrap().unwrap().captured_at, 10);
     assert_eq!(store.insert_frame(frame(1)).await.unwrap(), 901);
-    assert_eq!(store.schema_version().unwrap(), 12);
+    assert_eq!(
+        store.schema_version().unwrap(),
+        store::LATEST_SCHEMA_VERSION
+    );
     let conn = Connection::open(&path).unwrap();
     let schema_after: String = conn
         .query_row(

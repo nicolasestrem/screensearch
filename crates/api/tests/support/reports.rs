@@ -5,7 +5,8 @@
 use super::*;
 use traits::{
     EvidenceWindow, MemoryReportRange, ReportError, ReportOutcome, ReportPosition, ReportRun,
-    ReportRunPhase, ReportSummary, SavedReport, StoredReportPage, REPORT_CURSOR_MAX_BYTES,
+    ReportRunKind, ReportRunPhase, ReportSummary, SavedReport, StoredReportPage,
+    REPORT_CURSOR_MAX_BYTES,
 };
 
 /// Answer provider that aborts the test if any report read reaches generation.
@@ -57,6 +58,7 @@ fn run(
         run_id: run_id.into(),
         // A source id that does not correspond to any current profile/source.
         source_id: format!("source-absent-{run_id}"),
+        kind: ReportRunKind::Daily,
         schedule_id: None,
         revision_of: None,
         window_start,
@@ -188,6 +190,7 @@ fn summary_keys() -> Vec<&'static str> {
     vec![
         "created_at",
         "error_code",
+        "kind",
         "local_date",
         "outcome",
         "phase",
@@ -278,6 +281,9 @@ async fn reports_list_serves_exact_saved_projection_in_descending_order() {
     );
     assert_eq!(by_id("run-a")["requested_range"]["end_date"], "2026-01-02");
     assert_eq!(by_id("run-a")["source_id"], "source-absent-run-a");
+    // The persisted kind discriminator is a required projection field (`03 §8e`).
+    assert_eq!(by_id("run-a")["kind"], "daily");
+    assert_eq!(by_id("run-f")["kind"], "daily");
     server.stop().await;
 }
 
@@ -520,7 +526,7 @@ async fn reports_missing_is_404_and_unavailable_and_storage_are_fixed_safe_error
 #[tokio::test]
 async fn reports_reads_never_mutate_stored_state_or_invoke_the_provider() {
     let store = seeded_store().await;
-    let before: Vec<ReportRun> = store.list_report_runs(1000).await.unwrap();
+    let before: Vec<ReportRun> = store.list_report_runs(1000, None).await.unwrap();
     let (base, server, _) = start_server(report_host(store.clone(), None)).await;
     let (status, _) = get(&base, &format!("/v1/reports?{WINDOW}&limit=2")).await;
     assert_eq!(status, 200);
@@ -529,7 +535,7 @@ async fn reports_reads_never_mutate_stored_state_or_invoke_the_provider() {
     server.stop().await;
     // The stored runs are byte-for-byte unchanged: no phase/updated_at/result writes and
     // no new delivery rows. The panicking provider was never reached.
-    let after: Vec<ReportRun> = store.list_report_runs(1000).await.unwrap();
+    let after: Vec<ReportRun> = store.list_report_runs(1000, None).await.unwrap();
     assert_eq!(before, after);
 }
 
@@ -540,6 +546,7 @@ async fn reports_next_position_without_snapshot_is_a_storage_failure_not_empty_s
     let summary = ReportSummary {
         run_id: "run-a".into(),
         source_id: "source-absent-run-a".into(),
+        kind: ReportRunKind::Daily,
         revision_of: None,
         requested_range: None,
         window_start: 1_000,

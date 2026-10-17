@@ -313,8 +313,12 @@ impl Store for SqliteStore {
     async fn get_report_run(&self, id: &str) -> Result<Option<traits::ReportRun>> {
         SqliteStore::get_report_run(self, id).await
     }
-    async fn list_report_runs(&self, limit: u32) -> Result<Vec<traits::ReportRun>> {
-        SqliteStore::list_report_runs(self, limit).await
+    async fn list_report_runs(
+        &self,
+        limit: u32,
+        kind: Option<traits::ReportRunKind>,
+    ) -> Result<Vec<traits::ReportRun>> {
+        SqliteStore::list_report_runs(self, limit, kind).await
     }
     async fn update_report_run(&self, run: traits::ReportRun) -> Result<()> {
         SqliteStore::update_report_run(self, run).await
@@ -590,7 +594,10 @@ mod migration_tests {
     use super::{bootstrap_and_migrate, register_vec_extension, schema, SqliteStore};
     use rusqlite::Connection;
     use std::sync::Arc;
-    use traits::{Embedding, EmbeddingProvider, SearchQuery};
+    use traits::{
+        Embedding, EmbeddingProvider, EvidenceWindow, ReportFilters, ReportPageRequest,
+        ReportRunKind, SearchQuery,
+    };
 
     /// Applies migrations `v1..=through` to a fresh connection exactly as an older build
     /// would (each in its own transaction, foreign keys ON), leaving the DB at
@@ -632,7 +639,8 @@ mod migration_tests {
             conn.query_row("SELECT version FROM schema_version", [], |r| r
                 .get::<_, i32>(0))
                 .unwrap(),
-            12
+            schema::LATEST_SCHEMA_VERSION,
+            "the runner reaches the latest schema (12 added the report tables, 13 the kind column)"
         );
         assert_eq!(
             conn.query_row("SELECT session_id FROM frames WHERE id=1", [], |r| r
@@ -654,6 +662,187 @@ mod migration_tests {
             0
         );
         assert_eq!(fk_violation_count(&conn), 0);
+    }
+
+    /// 13 (`03 §8e`): the `kind` discriminator is added forward-only. A populated
+    /// schema-12 DB — a saved report run with a pre-`kind` payload, its delivery, a
+    /// session-linked frame and settings rows — must migrate cleanly: existing runs
+    /// read back as `daily` (column default + payload serde default), the run listing
+    /// and the `GET /v1/reports` projections carry it, a bogus token is rejected, and
+    /// every other row survives untouched.
+    #[tokio::test]
+    async fn migration_12_to_13_defaults_existing_runs_to_daily() {
+        let conn = open_at_version(12);
+        conn.execute("INSERT INTO frames(id,captured_at,monitor_index,width,height,image_path,content_hash) VALUES(1,1000,0,10,10,'fixture.webp','hash')", []).unwrap();
+        conn.execute("INSERT INTO sessions(id,started_at,kind,context_key,confidence) VALUES(1,1000,'focus','focus',1.0)", []).unwrap();
+        conn.execute("UPDATE frames SET session_id=1 WHERE id=1", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('fixture','preserve')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('memory.source_id','legacy-source')",
+            [],
+        )
+        .unwrap();
+        // A genuine pre-migration run payload: no `kind` key anywhere in the JSON.
+        let payload = r#"{"requested_range":null,"run_id":"legacy-run","source_id":"legacy-source","schedule_id":"schedule","revision_of":null,"window_start":0,"window_end":86400000,"timezone":"UTC","local_date":"1970-01-01","phase":"finished","outcome":"OK","error":null,"result":null,"config_snapshot":"{}","created_at":1,"updated_at":2}"#;
+        conn.execute(
+            "INSERT INTO report_runs(run_id,schedule_id,revision_of,window_start,window_end,phase,created_at,updated_at,payload) \
+             VALUES('legacy-run','schedule',NULL,0,86400000,'finished',1,2,?1)",
+            [payload],
+        )
+        .unwrap();
+        let delivery_payload = r#"{"id":"legacy-delivery","run_id":"legacy-run","destination":"vault","state":"succeeded","revision_of":null,"destination_snapshot":"{}","path":null,"hash":null,"recovery_path":null,"chunk_index":null,"chunk_count":null,"message_id":null,"error":null,"next_attempt_at":null,"attempt":0,"created_at":1,"updated_at":2}"#;
+        conn.execute(
+            "INSERT INTO report_deliveries(id,run_id,state,next_attempt_at,payload) \
+             VALUES('legacy-delivery','legacy-run','succeeded',NULL,?1)",
+            [delivery_payload],
+        )
+        .unwrap();
+
+        let mut conn = conn;
+        bootstrap_and_migrate(&mut conn).expect("migrate 12 -> 13");
+
+        let version: i32 = conn
+            .query_row("SELECT version FROM schema_version", [], |r| r.get(0))
+            .expect("read version");
+        assert_eq!(version, schema::LATEST_SCHEMA_VERSION);
+
+        // Existing rows read `daily` through the column default; the payload is untouched.
+        let kind: String = conn
+            .query_row(
+                "SELECT kind FROM report_runs WHERE run_id='legacy-run'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read kind");
+        assert_eq!(kind, "daily");
+        let stored: String = conn
+            .query_row(
+                "SELECT payload FROM report_runs WHERE run_id='legacy-run'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read payload");
+        assert_eq!(
+            stored, payload,
+            "the migration must not rewrite stored payloads"
+        );
+
+        // The CHECK pins exactly the two frozen tokens.
+        assert!(
+            conn.execute(
+                "UPDATE report_runs SET kind='bogus' WHERE run_id='legacy-run'",
+                []
+            )
+            .is_err(),
+            "an unknown kind must violate the CHECK"
+        );
+
+        // The kind index exists and the schedule-window unique key is unchanged.
+        let kind_index: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_report_runs_kind_created'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("kind index");
+        assert_eq!(kind_index, 1);
+        let schedule_index: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_report_schedule_window'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("schedule index");
+        assert_eq!(schedule_index, 1);
+
+        // Frames, sessions, settings and the run's delivery are all preserved.
+        assert_eq!(
+            conn.query_row("SELECT session_id FROM frames WHERE id=1", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row("SELECT kind FROM sessions WHERE id=1", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            "focus"
+        );
+        assert_eq!(
+            conn.query_row("SELECT value FROM settings WHERE key='fixture'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            "preserve"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT value FROM settings WHERE key='memory.source_id'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "legacy-source"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT payload FROM report_deliveries WHERE id='legacy-delivery'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            delivery_payload
+        );
+        assert_eq!(fk_violation_count(&conn), 0);
+
+        // Read back through the real store: the pre-`kind` payload deserializes as
+        // `daily`, the listing filter separates kinds, and both `GET /v1/reports`
+        // projections carry it (summary from the column, detail from the payload).
+        let store = SqliteStore::from_conn(conn);
+        let run = store
+            .get_report_run("legacy-run")
+            .await
+            .expect("get run")
+            .expect("run present");
+        assert_eq!(run.kind, ReportRunKind::Daily);
+        let daily_ids: Vec<String> = store
+            .list_report_runs(10, Some(ReportRunKind::Daily))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.run_id)
+            .collect();
+        assert_eq!(daily_ids, vec!["legacy-run"]);
+        assert!(store
+            .list_report_runs(10, Some(ReportRunKind::WeeklySynthesis))
+            .await
+            .unwrap()
+            .is_empty());
+        let page = store
+            .report_page(ReportPageRequest {
+                window: EvidenceWindow {
+                    from: 0,
+                    to: 86_400_000,
+                },
+                filters: ReportFilters::default(),
+                limit: 10,
+                continuation: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].kind, ReportRunKind::Daily);
+        let detail = store
+            .report_detail("legacy-run")
+            .await
+            .unwrap()
+            .expect("detail present");
+        assert_eq!(detail.kind, ReportRunKind::Daily);
     }
 
     fn fk_violation_count(conn: &Connection) -> i64 {
