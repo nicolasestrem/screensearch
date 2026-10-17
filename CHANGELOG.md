@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- `CLAUDE.md` names the two Claude GitHub workflows (`claude-code-review.yml` auto-reviews PRs;
+  `claude.yml` answers `@claude` mentions).
+
 ## Older versions
 
 Releases 0.4.1 and earlier are archived in [CHANGELOG-ARCHIVE.md](./CHANGELOG-ARCHIVE.md).
