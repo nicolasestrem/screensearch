@@ -1086,18 +1086,41 @@ fn accepted_connection_blocks_until_a_delayed_request_arrives() {
         .expect("send delayed request");
     client.flush().expect("flush request");
 
-    let mut response = Vec::new();
-    client
-        .read_to_end(&mut response)
-        .expect("read fixture response");
-    let response = String::from_utf8(response).expect("utf8 response");
-    assert!(
-        response.starts_with("HTTP/1.1 200 OK"),
-        "fixture must answer the delayed request: {response}"
+    // Read the response as a Content-Length-framed HTTP message instead of waiting for
+    // connection close. `Content-Length` is the message boundary, so a client must not
+    // depend on a graceful EOF: Windows can surface the fixture's post-response close as
+    // WSAECONNRESET (10054) on the extra read `read_to_end` issues after the body, which
+    // would fail a complete, correctly-framed response. Reading exactly the header block
+    // plus the declared body never issues that extra read, and asserting the parsed JSON
+    // equals `sample_coverage()` is stronger than a substring check — every field,
+    // including `retention_scope`, must match.
+    let mut reader = BufReader::new(client);
+    let mut status_line = String::new();
+    reader.read_line(&mut status_line).expect("status line");
+    assert_eq!(
+        status_line.trim_end(),
+        "HTTP/1.1 200 OK",
+        "fixture must answer the delayed request"
     );
-    assert!(
-        response.contains("\"retention_scope\""),
-        "fixture must serve the coverage body: {response}"
+    let mut content_length = None;
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("response header line");
+        if line.trim().is_empty() {
+            break;
+        }
+        if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+            content_length = Some(value.trim().parse::<usize>().expect("content-length"));
+        }
+    }
+    let content_length = content_length.expect("response declares Content-Length");
+    let mut body = vec![0u8; content_length];
+    reader.read_exact(&mut body).expect("response body");
+    let body: Value = serde_json::from_slice(&body).expect("coverage body json");
+    assert_eq!(
+        body,
+        sample_coverage(),
+        "fixture must serve the full coverage body"
     );
 
     let recorded = fixture.wait_for_requests(1, Duration::from_secs(10));
