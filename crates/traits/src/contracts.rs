@@ -279,7 +279,9 @@ pub trait Store: Send + Sync {
     /// A queued/running/blocked/failed run, a finished run without a stored
     /// result and a saved weekly synthesis are not saved dailies; a range
     /// containing none is an empty list, never an error (`03 §8c`; unsupported
-    /// stores fail explicitly).
+    /// stores fail explicitly). This is the storage-level set: manual range runs and
+    /// dailies saved under another zone are included, and the weekly engine narrows it
+    /// to dailies that own their local date (`kernel::reports::weekly_consumed_dailies`).
     async fn saved_daily_runs(&self, _start: i64, _end: i64) -> Result<Vec<crate::ReportRun>> {
         anyhow::bail!("durable report storage is unsupported")
     }

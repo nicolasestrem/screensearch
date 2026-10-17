@@ -924,9 +924,18 @@ pub(crate) fn weekly_consumed_dailies(
 /// `03 §8e` citation rule: a weekly report citing no daily run for a day it describes is
 /// a defect. Whether the generated markdown actually cites at least one consumed daily
 /// run ID — the post-generation check the service enforces as `GENERATION_FAILED`, so
-/// uncited prose is never persisted as a successful synthesis.
+/// uncited prose is never persisted as a successful synthesis. An ID counts only as a
+/// whole token: a match embedded in a longer identifier is not a citation.
 pub(crate) fn weekly_cites_consumed_daily(markdown: &str, consumed: &[ReportRun]) -> bool {
-    consumed.iter().any(|run| markdown.contains(&run.run_id))
+    let is_id_char = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    consumed.iter().any(|run| {
+        !run.run_id.is_empty()
+            && markdown.match_indices(run.run_id.as_str()).any(|(at, id)| {
+                let before = markdown[..at].chars().next_back();
+                let after = markdown[at + id.len()..].chars().next();
+                !before.is_some_and(is_id_char) && !after.is_some_and(is_id_char)
+            })
+    })
 }
 
 /// Every local calendar date in `[start, end)` (`03 §8e` missing-day signal) that has no
@@ -2229,6 +2238,34 @@ mod tests {
     // ---- Weekly synthesis engine (`03 §8e`) ----
 
     /// A saved daily run fixture: finished, with a result whose provenance is `frame_ids`.
+    #[test]
+    fn weekly_citation_check_matches_whole_run_ids_only() {
+        let run = |id: &str| {
+            weekly_run(
+                id,
+                0,
+                DAY_MS,
+                "1970-01-01",
+                vec![],
+                false,
+                ReportOutcome::Ok,
+            )
+        };
+        let consumed = vec![run("daily-7")];
+        assert!(weekly_cites_consumed_daily(
+            "Shipped the parser (daily run daily-7).",
+            &consumed
+        ));
+        assert!(weekly_cites_consumed_daily("daily-7", &consumed));
+        assert!(!weekly_cites_consumed_daily(
+            "See daily-70 and xdaily-7.",
+            &consumed
+        ));
+        assert!(!weekly_cites_consumed_daily("daily-7_b", &consumed));
+        assert!(!weekly_cites_consumed_daily("", &consumed));
+        assert!(!weekly_cites_consumed_daily("anything", &[run("")]));
+    }
+
     fn weekly_run(
         run_id: &str,
         start: i64,

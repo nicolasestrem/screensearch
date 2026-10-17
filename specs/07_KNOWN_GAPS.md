@@ -25,8 +25,12 @@
   that date, and its window lies entirely inside that local day. Multi-day range runs and dailies
   saved under a previous zone are not consumed and leave their dates missing; a week whose only
   dailies are of that kind is refused like a week with none.
-- **Weekly prose must cite at least one consumed daily run id**, or the run fails with
-  `GENERATION_FAILED`. The check cannot detect additional invented ids in the prose.
+- **Weekly prose must cite at least one consumed daily run id** (matched as a whole token),
+  or the run fails with `GENERATION_FAILED`. `§8e` asks for the daily run of **every** day the
+  prose describes; enforcing that per day would require knowing which days a passage
+  describes, so G2 enforces only the existence of a real citation. The check also cannot detect
+  additional invented ids. Per-day enforcement is a G3 review item when the note structure makes
+  day sections explicit.
 - **`missing_local_dates` counts a partial or truncated daily as a missing day**, since only
   complete saved coverage establishes a covered date (`§8e` PARTIAL).
 - **Dailies and their revisions are all consumed** and all recorded in `daily_run_ids`; `§8e`
