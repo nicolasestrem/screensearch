@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Note frontmatter parsing now accepts only schema `1` or `2`; any other value is rejected as
+  invalid provenance metadata (`FILE_CONFLICT`), where previously an unknown schema number was
+  accepted. Affects hand-edited notes and notes written by a future build (`03 §8e`).
+
 ### Added
 
 - **F3 G1 (internal):** report runs carry a `kind` (`daily` | `weekly_synthesis`) persisted by
