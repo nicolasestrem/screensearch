@@ -1,5 +1,17 @@
 # 07 — Known Gaps
 
+- **`SavedReport.daily_run_ids` rides the saved-result wire surface.** `ReportDetail.result` embeds
+  `SavedReport` verbatim, so the new field also appears on `GET /v1/reports` detail and the IPC
+  run payload, alongside the `kind` addition `§8e` names as the deliberate migration change. It is
+  report provenance about what the run consumed and no gate was needed to read it, but the
+  surface change is recorded here rather than left implicit; if the projections must carry only
+  the `§8e`-named fields, the fix is to strip it when building `ReportDetail`.
+- **Weekly PARTIAL banner names the sampling cause even when retention caused the gap.** The
+  `truncated` flag mixes context-budget cuts with recorded evidence that could no longer be read,
+  so a week whose daily reports recorded evidence since pruned is told sampling was bounded while
+  its status and missing-day list stay correct. The banner cause should come from the unreadable
+  evidence count if this wording is worth another pass.
+
 ## 2026-10-17 — F3 G2 implementation readings (owner: agent; maintainer may override)
 
 - **Evidence without saved dailies is refused, not reported.** `§8e` defines `NO_DATA` only for
@@ -7,6 +19,14 @@
   nothing about a week that has raw evidence and zero saved dailies. The engine stops that case
   with `GENERATION_FAILED` (before `resolve`) rather than labelling it `NO_DATA` or synthesising
   an uncited narrative. One branch to change if the contract later defines it.
+- **A weekly input is a single-local-day daily that owns its date.** A saved daily credits a date
+  only when it is not a manual date-range run, was saved in the weekly run's own zone (persisted
+  zone string equality, so `UTC` and `Etc/UTC` are not unified), its persisted `local_date` is
+  that date, and its window lies entirely inside that local day. Multi-day range runs and dailies
+  saved under a previous zone are not consumed and leave their dates missing; a week whose only
+  dailies are of that kind is refused like a week with none.
+- **Weekly prose must cite at least one consumed daily run id**, or the run fails with
+  `GENERATION_FAILED`. The check cannot detect additional invented ids in the prose.
 - **`missing_local_dates` counts a partial or truncated daily as a missing day**, since only
   complete saved coverage establishes a covered date (`§8e` PARTIAL).
 - **Dailies and their revisions are all consumed** and all recorded in `daily_run_ids`; `§8e`

@@ -535,15 +535,19 @@ enum WeeklyMaterial {
 /// Weekly synthesis (`03 §8e`): one report over a week's saved daily reports, running
 /// through the same map → reduce → final machinery and the same prompts as every other
 /// report — no second engine, no second model path. Inputs are exactly the saved dailies
-/// the caller consumed (via `Store::saved_daily_runs`): their recorded evidence IDs are
-/// re-read in one bulk hydration (`Store::ocr_texts`) — never a fresh sample of the raw
-/// window — and a day whose recorded evidence is gone (retention) contributes its saved
-/// prose as a pre-computed section node, so a pruned frame can never silently drop a day.
-/// Each day is labelled with its local date, its daily run ID and its recorded session
-/// IDs, so every item the model writes can cite the daily run, frame and session IDs the
-/// framing requires. A window whose saved dailies yield no material at all returns the
-/// honest empty output; the service layer decides that a positive probe with no material
-/// is a generation failure.
+/// that own a local day of the week in this run's saved zone (via
+/// `Store::saved_daily_runs` and [`weekly_consumed_with_dates`]: a multi-day or explicit
+/// range run and a daily saved under another zone are never consumed, so a date is never
+/// credited by a run that does not own it): their recorded evidence IDs are re-read in one
+/// bulk hydration (`Store::ocr_texts`) — never a fresh sample of the raw window — and a
+/// day whose recorded evidence is gone (retention) contributes its saved prose as a
+/// pre-computed section node, so a pruned frame can never silently drop a day. Each day is
+/// labelled with its own persisted local date, its daily run ID and its recorded session
+/// IDs, and the consumed manifest rides the collapse/final framing, so every item the
+/// model writes can cite the daily run, frame and session IDs the framing requires — on
+/// the single-pass collapse too, where day labels never reach the model as nodes. A window
+/// whose saved dailies yield no material at all returns the honest empty output; the
+/// service layer decides that a positive probe with no material is a generation failure.
 #[allow(clippy::too_many_arguments)]
 pub async fn generate_weekly_synthesis(
     store: &dyn Store,
@@ -567,8 +571,8 @@ pub async fn generate_weekly_synthesis(
     let zone: chrono_tz::Tz = timezone
         .parse()
         .map_err(|_| anyhow!("unknown IANA time zone"))?;
-    let periods_total =
-        crate::memory_schedule::local_day_grid(timezone, start, end, MAX_PERIODS)?.len() as u32;
+    let days = weekly_day_periods(timezone, start, end)?;
+    let periods_total = days.len() as u32;
     let week = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(start)
         .ok_or_else(|| anyhow!("timestamp outside supported calendar"))?
         .with_timezone(&zone)
@@ -576,12 +580,16 @@ pub async fn generate_weekly_synthesis(
         .iso_week();
     let week_label = format!("{}-W{:02}", week.year(), week.week());
 
+    // --- Weekly inputs (`03 §8e`): the saved dailies that own a local day of this week in
+    // this run's own zone, paired with the date they own and kept in persisted (day) order.
+    let consumed = weekly_consumed_with_dates(dailies, start, end, timezone)?;
+
     // One bulk hydration of every consumed daily's recorded evidence IDs (deduplicated,
     // first occurrence wins). This is the only evidence read — the weekly never re-samples
     // the raw window.
     let mut evidence_ids: Vec<i64> = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
-    for run in dailies {
+    for (run, _) in &consumed {
         if let Some(result) = &run.result {
             for id in &result.frame_ids {
                 if seen_ids.insert(*id) {
@@ -592,14 +600,17 @@ pub async fn generate_weekly_synthesis(
     }
     let texts = store.ocr_texts(&evidence_ids).await?;
 
-    // Day materials in persisted order (the store returns runs oldest first).
+    // Day materials in persisted order (the store returns runs oldest first); every day is
+    // labelled by its own persisted provenance, and the same labels form the consumed
+    // manifest the collapse/final framing carries.
     let mut materials: Vec<WeeklyMaterial> = Vec::new();
+    let mut manifest: Vec<String> = Vec::new();
     let mut frame_dates: std::collections::BTreeMap<i64, String> =
         std::collections::BTreeMap::new();
-    for run in dailies {
+    for (run, date) in &consumed {
         let Some(result) = &run.result else { continue };
-        let date = local_date(zone, run.window_start)?;
-        let label = weekly_day_label(&date, &run.run_id, &result.session_ids);
+        let label = weekly_day_label(date, &run.run_id, &result.session_ids);
+        manifest.push(label.clone());
         let chunks: Vec<RetrievedChunk> = result
             .frame_ids
             .iter()
@@ -619,7 +630,7 @@ pub async fn generate_weekly_synthesis(
             let prose = result.markdown.trim();
             if !prose.is_empty() {
                 materials.push(WeeklyMaterial::Saved {
-                    date,
+                    date: date.clone(),
                     text: format!("{label}: {prose}"),
                 });
             }
@@ -630,20 +641,37 @@ pub async fn generate_weekly_synthesis(
             materials.push(WeeklyMaterial::Group(Group { label, chunks }));
         }
     }
-    let frames_sampled: usize = materials
-        .iter()
-        .map(|material| match material {
-            WeeklyMaterial::Group(group) => group.chunks.len(),
-            WeeklyMaterial::Saved { .. } => 0,
-        })
-        .sum();
+    // Sampled evidence is measured in distinct frame IDs — the same unit as
+    // `frames_summarized` — so a base daily and its regenerate revision consuming the same
+    // frames neither inflates the recorded total nor fakes a sampling shortfall.
+    let frames_sampled: usize = {
+        let mut sampled = std::collections::BTreeSet::new();
+        for material in &materials {
+            if let WeeklyMaterial::Group(group) = material {
+                for chunk in &group.chunks {
+                    sampled.insert(chunk.frame_id);
+                }
+            }
+        }
+        sampled.len()
+    };
     if materials.is_empty() {
         return Ok(empty_output(periods_total));
     }
     // Recorded evidence that could not be read back (retention) or carried no text is
     // unsummarized evidence, not a mere filter — the same honest truncation rule as the
-    // daily coverage path.
+    // daily coverage path, over distinct frame IDs on both sides.
     let mut truncated = (frames_sampled as u64) < (evidence_ids.len() as u64);
+
+    // The consumed manifest rides the collapse/final framing: the citation demand names the
+    // daily run of every day described, and the manifest makes it satisfiable on both paths
+    // (the collapse flattens day labels away; the reduce path is where the user-facing
+    // prose is written).
+    let final_prompt = format!(
+        "{}\n\n{}",
+        weekly_final_instruction(&week_label, start, end),
+        weekly_manifest(&manifest)
+    );
 
     // --- Single-pass fast path (mirrors the daily coverage path) ---
     // Collapse only when every day contributes live evidence: a lone group always
@@ -679,12 +707,7 @@ pub async fn generate_weekly_synthesis(
             .collect();
         all.sort_by_key(|chunk| chunk.captured_at); // the week narrates in day order
         let (markdown, cited) = answer
-            .summarize(
-                FINAL_SYSTEM_PROMPT,
-                &weekly_final_instruction(&week_label, start, end),
-                &all,
-                opts,
-            )
+            .summarize(FINAL_SYSTEM_PROMPT, &final_prompt, &all, opts)
             .await?;
         let (cited, frame_ids) = report_citations(cited);
         let summarized = frame_ids.len() as u32;
@@ -796,7 +819,7 @@ pub async fn generate_weekly_synthesis(
     let (markdown, _) = answer
         .summarize(
             FINAL_SYSTEM_PROMPT,
-            &weekly_final_instruction(&week_label, start, end),
+            &final_prompt,
             &nodes_as_chunks(&nodes),
             opts,
         )
@@ -821,32 +844,114 @@ pub async fn generate_weekly_synthesis(
     })
 }
 
+/// The week's local-day periods with their `YYYY-MM-DD` dates (`03 §8e`): the weekly
+/// window is an ISO week, so the shared local-day grid is exactly one period per local
+/// date (a DST-transition day stays one period).
+fn weekly_day_periods(timezone: &str, start: i64, end: i64) -> Result<Vec<(String, i64, i64)>> {
+    let zone: chrono_tz::Tz = timezone
+        .parse()
+        .map_err(|_| anyhow!("unknown IANA time zone"))?;
+    crate::memory_schedule::local_day_grid(timezone, start, end, MAX_PERIODS)?
+        .into_iter()
+        .map(|(period_start, period_end)| {
+            Ok((local_date(zone, period_start)?, period_start, period_end))
+        })
+        .collect()
+}
+
+/// Whether a saved daily owns one local date of the week (`03 §8e` weekly inputs and
+/// coverage): saved in the weekly run's own zone, not an explicit range run, its
+/// **persisted** `local_date` is that date, and its own window lies **entirely inside**
+/// that date's local period. A manual multi-day or date-range run spans more than one
+/// local day and never covers one; a daily saved under another zone is never silently
+/// re-labelled into this zone — it credits nothing, so its dates stay missing/partial.
+fn daily_owns_local_date(
+    run: &ReportRun,
+    date: &str,
+    day_start: i64,
+    day_end: i64,
+    timezone: &str,
+) -> bool {
+    run.requested_range.is_none()
+        && run.timezone == timezone
+        && run.local_date == date
+        && run.window_start >= day_start
+        && run.window_end <= day_end
+}
+
+/// Every weekly-consumable saved daily paired with the local date it owns (`03 §8e`
+/// inputs), in the given order. A multi-day or explicit range run, a run saved under
+/// another zone, and a finished run without a saved result are not consumed — they are
+/// not "the saved daily reports in the window".
+fn weekly_consumed_with_dates<'a>(
+    dailies: &'a [ReportRun],
+    start: i64,
+    end: i64,
+    timezone: &str,
+) -> Result<Vec<(&'a ReportRun, String)>> {
+    let days = weekly_day_periods(timezone, start, end)?;
+    Ok(dailies
+        .iter()
+        .filter(|run| run.result.is_some())
+        .filter_map(|run| {
+            days.iter()
+                .find_map(|(date, day_start, day_end)| {
+                    daily_owns_local_date(run, date, *day_start, *day_end, timezone)
+                        .then(|| date.clone())
+                })
+                .map(|date| (run, date))
+        })
+        .collect())
+}
+
+/// The saved dailies a weekly synthesis may consume (`03 §8e` inputs), as owned runs:
+/// exactly those that own a local date of `[start, end)` in `timezone` — see
+/// [`daily_owns_local_date`]. Multi-day and explicit range runs and dailies saved under
+/// another zone are excluded; their dates are never credited, so the week cannot be
+/// saved as complete coverage.
+pub(crate) fn weekly_consumed_dailies(
+    dailies: &[ReportRun],
+    start: i64,
+    end: i64,
+    timezone: &str,
+) -> Result<Vec<ReportRun>> {
+    Ok(weekly_consumed_with_dates(dailies, start, end, timezone)?
+        .into_iter()
+        .map(|(run, _)| run.clone())
+        .collect())
+}
+
+/// `03 §8e` citation rule: a weekly report citing no daily run for a day it describes is
+/// a defect. Whether the generated markdown actually cites at least one consumed daily
+/// run ID — the post-generation check the service enforces as `GENERATION_FAILED`, so
+/// uncited prose is never persisted as a successful synthesis.
+pub(crate) fn weekly_cites_consumed_daily(markdown: &str, consumed: &[ReportRun]) -> bool {
+    consumed.iter().any(|run| markdown.contains(&run.run_id))
+}
+
 /// Every local calendar date in `[start, end)` (`03 §8e` missing-day signal) that has no
-/// saved daily report overlapping its local day, or whose overlapping saved dailies are
-/// all marked partial/truncated (run outcome `PARTIAL`, or the saved report's `truncated`
-/// flag — a run without a saved result is never complete coverage). Oldest-first. The
-/// weekly window is an ISO week, so the shared local-day grid is exactly one period per
-/// local date. Base runs and revisions are consumed exactly as returned: no revision
-/// precedence is defined, so the date counts as covered when at least one overlapping
-/// saved daily is complete.
+/// weekly-consumable saved daily covering it, or whose covering dailies are all marked
+/// partial/truncated (run outcome `PARTIAL`, or the saved report's `truncated` flag — a
+/// run without a saved result is never complete coverage). A daily covers a date only
+/// when its own window lies entirely inside that date's local period and it was saved in
+/// this run's zone (see [`daily_owns_local_date`]); multi-day/range runs and dailies from
+/// another zone never credit a date. Oldest-first. Base runs and revisions are consumed
+/// exactly as returned: no revision precedence is defined, so the date counts as covered
+/// when at least one covering saved daily is complete.
 pub(crate) fn weekly_missing_local_dates(
     dailies: &[ReportRun],
     start: i64,
     end: i64,
     timezone: &str,
 ) -> Result<Vec<String>> {
-    let zone: chrono_tz::Tz = timezone
-        .parse()
-        .map_err(|_| anyhow!("unknown IANA time zone"))?;
     let mut missing = Vec::new();
-    for (period_start, period_end) in
-        crate::memory_schedule::local_day_grid(timezone, start, end, MAX_PERIODS)?
-    {
+    for (date, period_start, period_end) in weekly_day_periods(timezone, start, end)? {
         let complete = dailies.iter().any(|run| {
-            run.window_start < period_end && run.window_end > period_start && !daily_is_partial(run)
+            daily_owns_local_date(run, &date, period_start, period_end, timezone)
+                && !daily_is_partial(run)
         });
         if !complete {
-            missing.push(local_date(zone, period_start)?);
+            missing.push(date);
         }
     }
     Ok(missing)
@@ -884,6 +989,23 @@ fn weekly_day_label(date: &str, run_id: &str, session_ids: &[i64]) -> String {
             sessions.join(", ")
         )
     }
+}
+
+/// The consumed saved dailies' provenance for the weekly framing — one
+/// [`weekly_day_label`] per consumed run in day order — so the framing's citation demand
+/// ("the daily run ID of each day it describes") is satisfiable from the material the
+/// model actually has, on the single-pass collapse too, where day labels never reach the
+/// model as nodes.
+fn weekly_manifest(labels: &[String]) -> String {
+    let mut out = String::from(
+        "Consumed saved daily reports (the daily run of every day you describe must be \
+         cited; these are the runs this week consumed):",
+    );
+    for label in labels {
+        out.push_str("\n- ");
+        out.push_str(label);
+    }
+    out
 }
 
 /// The weekly synthesis framing (`03 §8e`): fixed headings, exact ISO-week bounds, the
@@ -1255,8 +1377,8 @@ mod tests {
     use std::sync::Arc;
     use store::SqliteStore;
     use traits::{
-        AnswerDelta, NewFrame, NewSession, OcrResult, ReportError, ReportRunKind, ReportRunPhase,
-        SavedReport, SessionHost, SessionKind,
+        AnswerDelta, MemoryReportRange, NewFrame, NewSession, OcrResult, ReportError,
+        ReportRunKind, ReportRunPhase, SavedReport, SessionHost, SessionKind,
     };
 
     use crate::report_service::{execute_weekly, WeeklyExecutionRequest};
@@ -2469,6 +2591,411 @@ mod tests {
         };
         assert_eq!(err.code, "GENERATION_FAILED");
         assert!(err.message.contains("no usable text"));
+    }
+
+    /// Records every summarize call's full model input (system + instruction + context
+    /// texts/ids) and answers with prose that cites the fixture daily runs it was given —
+    /// a stand-in for a model that follows the weekly citation rule.
+    struct WeeklyCaptureAnswer {
+        seen: std::sync::Mutex<Vec<String>>,
+        cite: Vec<String>,
+    }
+
+    impl WeeklyCaptureAnswer {
+        /// Everything the provider received across its calls, joined.
+        fn input(&self) -> String {
+            self.seen.lock().unwrap().join("\n---\n")
+        }
+    }
+
+    #[async_trait]
+    impl AnswerProvider for WeeklyCaptureAnswer {
+        async fn answer(
+            &self,
+            _query: &str,
+            _context: &[RetrievedChunk],
+            _opts: AnswerOpts,
+            _tx: tokio::sync::mpsc::Sender<AnswerDelta>,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn summarize(
+            &self,
+            system: &str,
+            instruction: &str,
+            context: &[RetrievedChunk],
+            _opts: AnswerOpts,
+        ) -> Result<(String, Vec<i64>)> {
+            let cited: Vec<i64> = context.iter().map(|c| c.frame_id).collect();
+            let rendered: Vec<String> = context
+                .iter()
+                .map(|c| format!("[{}] {}", c.frame_id, c.text))
+                .collect();
+            self.seen
+                .lock()
+                .unwrap()
+                .push(format!("{system}\n{instruction}\n{}", rendered.join("\n")));
+            Ok((
+                format!("Weekly synthesis citing {}.", self.cite.join(", ")),
+                cited,
+            ))
+        }
+    }
+
+    /// Adversarial prose: cites no consumed daily run at all.
+    struct UncitedAnswer;
+
+    #[async_trait]
+    impl AnswerProvider for UncitedAnswer {
+        async fn answer(
+            &self,
+            _query: &str,
+            _context: &[RetrievedChunk],
+            _opts: AnswerOpts,
+            _tx: tokio::sync::mpsc::Sender<AnswerDelta>,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn summarize(
+            &self,
+            _system: &str,
+            _instruction: &str,
+            _context: &[RetrievedChunk],
+            _opts: AnswerOpts,
+        ) -> Result<(String, Vec<i64>)> {
+            Ok((
+                "The week had activity and next steps, supported by no cited run.".to_string(),
+                Vec::new(),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn weekly_collapse_path_carries_daily_run_provenance() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        // A light week — two frames a day, 14 total, below `map_reduce_min_frames` — takes
+        // the single-pass collapse, where per-day labels are never sent as model nodes.
+        let mut run_ids = Vec::new();
+        for offset in 0..7usize {
+            let day_start = start + offset as i64 * DAY_MS;
+            let date = week_dates()[offset].clone();
+            let frames = seed_day(&store, day_start + 1_000, 2).await;
+            let run_id = format!("daily-{date}");
+            store
+                .create_report_run(weekly_run(
+                    &run_id,
+                    day_start,
+                    day_start + DAY_MS,
+                    &date,
+                    frames,
+                    false,
+                    ReportOutcome::Ok,
+                ))
+                .await
+                .unwrap();
+            run_ids.push(run_id);
+        }
+        let capture = Arc::new(WeeklyCaptureAnswer {
+            seen: std::sync::Mutex::new(Vec::new()),
+            cite: vec![run_ids[0].clone(), run_ids[6].clone()],
+        });
+        let provider = capture.clone();
+        let execution = execute_weekly(
+            &store,
+            WeeklyExecutionRequest {
+                start,
+                end,
+                timezone: "Etc/UTC",
+                config: cfg(),
+            },
+            move || {
+                let provider = provider.clone();
+                async move { Ok(provider as Arc<dyn AnswerProvider>) }
+            },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await
+        .unwrap();
+        // The collapse path ran (one pass, no map nodes)...
+        assert_eq!(execution.output.mode, ReportMode::SinglePass);
+        // ...and the model input the provider received carries every consumed day's local
+        // date and daily run id, so the framing's citation demand is satisfiable.
+        let input = capture.input();
+        for (offset, run_id) in run_ids.iter().enumerate() {
+            assert!(
+                input.contains(&week_dates()[offset]),
+                "model input must carry consumed day {offset}"
+            );
+            assert!(
+                input.contains(run_id.as_str()),
+                "model input must carry consumed daily run id {run_id}"
+            );
+        }
+        // A synthesis citing no consumed daily run (adversarial prose) is refused on the
+        // §8c generation-failure path — never persisted as OK.
+        let result = execute_weekly(
+            &store,
+            WeeklyExecutionRequest {
+                start,
+                end,
+                timezone: "Etc/UTC",
+                config: cfg(),
+            },
+            || async { Ok(Arc::new(UncitedAnswer) as Arc<dyn AnswerProvider>) },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await;
+        let Err(err) = result else {
+            panic!("uncited weekly prose must not be saved as a successful synthesis");
+        };
+        assert_eq!(err.code, "GENERATION_FAILED");
+        assert!(err.message.contains("did not cite"));
+    }
+
+    #[tokio::test]
+    async fn weekly_multiday_range_run_does_not_cover_days() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        // Captured evidence exists (a positive probe), and one manual multi-day range run
+        // is saved over the whole week — enqueued as kind Daily, but spanning every local
+        // day, so it is no day's own saved daily.
+        seed_day(&store, start + 3_600_000, 2).await;
+        let mut range_run = weekly_run(
+            "range-2026-10-12_to_2026-10-18",
+            start,
+            end,
+            "2026-10-12",
+            Vec::new(),
+            false,
+            ReportOutcome::Ok,
+        );
+        range_run.requested_range = Some(MemoryReportRange {
+            start_date: "2026-10-12".to_string(),
+            end_date: "2026-10-18".to_string(),
+        });
+        // Manual range runs are not scheduled runs (`03 §8c`).
+        range_run.schedule_id = None;
+        store.create_report_run(range_run.clone()).await.unwrap();
+
+        // The range run overlaps every local date of the week — the old overlap predicate
+        // would have credited all seven — yet it owns none of them (computed here from the
+        // seeded window and the week bounds, independently of the engine).
+        for offset in 0..7usize {
+            let day_start = start + offset as i64 * DAY_MS;
+            let day_end = day_start + DAY_MS;
+            assert!(
+                range_run.window_start < day_end && range_run.window_end > day_start,
+                "fixture must overlap day {offset} to exercise the defect"
+            );
+        }
+        // Every date is missing: none has its own single-day saved daily.
+        let expected_missing = week_dates();
+        assert_eq!(
+            weekly_missing_local_dates(&[range_run], start, end, "Etc/UTC").unwrap(),
+            expected_missing
+        );
+        // The week is not complete coverage: the execution refuses (after the positive
+        // probe) instead of synthesizing prose about days with no consumed daily run.
+        let result = execute_weekly(
+            &store,
+            WeeklyExecutionRequest {
+                start,
+                end,
+                timezone: "Etc/UTC",
+                config: cfg(),
+            },
+            || async { panic!("a week without a consumable saved daily must not resolve a model") },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await;
+        let Err(err) = result else {
+            panic!("a range run must not let the week be saved as complete coverage");
+        };
+        assert_eq!(err.code, "GENERATION_FAILED");
+    }
+
+    #[tokio::test]
+    async fn weekly_base_and_revision_do_not_inflate_truncation() {
+        let (start, end) = week_bounds();
+        let day = start; // the 2026-10-12 local day (Etc/UTC)
+        for pruned in [None, Some(9_000_001i64)] {
+            let store = SqliteStore::open_in_memory().unwrap();
+            let frames = seed_day(&store, day + 1_000, 5).await;
+            // The base daily and its Regenerate revision are both consumed (no revision
+            // precedence) and their recorded evidence overlaps; the pruned variant records
+            // one frame id whose evidence is gone (retention).
+            let revision_ids: Vec<i64> = frames[2..].iter().copied().chain(pruned).collect();
+            store
+                .create_report_run(weekly_run(
+                    "daily-base",
+                    day,
+                    day + DAY_MS,
+                    "2026-10-12",
+                    frames.clone(),
+                    false,
+                    ReportOutcome::Ok,
+                ))
+                .await
+                .unwrap();
+            let mut revision = weekly_run(
+                "daily-rev",
+                day,
+                day + DAY_MS,
+                "2026-10-12",
+                revision_ids.clone(),
+                false,
+                ReportOutcome::Ok,
+            );
+            revision.revision_of = Some("daily-base".to_string());
+            store.create_report_run(revision).await.unwrap();
+
+            // Expected counts computed from the fixture: the distinct readable union of
+            // both runs' recorded ids, and the distinct recorded ids including the pruned
+            // one.
+            let expected_readable: usize = {
+                let mut ids: Vec<i64> = frames.clone();
+                for id in &revision_ids {
+                    if !ids.contains(id) {
+                        ids.push(*id);
+                    }
+                }
+                ids.retain(|id| frames.contains(id));
+                ids.len()
+            };
+            let expected_recorded: usize = frames.len() + usize::from(pruned.is_some());
+
+            let execution = execute_weekly(
+                &store,
+                WeeklyExecutionRequest {
+                    start,
+                    end,
+                    timezone: "Etc/UTC",
+                    config: cfg(),
+                },
+                || async {
+                    Ok(Arc::new(FakeAnswer {
+                        calls: Arc::new(AtomicUsize::new(0)),
+                        big: false,
+                    }) as Arc<dyn AnswerProvider>)
+                },
+                None,
+                &AtomicBool::new(false),
+            )
+            .await
+            .unwrap();
+            // Both runs were consumed as inputs (per-run consumption stays intact).
+            let mut consumed = execution.daily_run_ids.clone();
+            consumed.sort();
+            assert_eq!(
+                consumed,
+                vec!["daily-base".to_string(), "daily-rev".to_string()]
+            );
+            // Duplicate overlap does not inflate the recorded sampled count (it is a
+            // distinct-frame count, the same unit as frames_summarized) ...
+            assert_eq!(execution.output.frames_sampled, expected_readable as u32);
+            assert_eq!(execution.output.frames_summarized, expected_readable as u32);
+            // ... and truncation tracks recorded-but-unreadable evidence only.
+            assert_eq!(
+                execution.output.truncated,
+                expected_readable < expected_recorded,
+                "truncation must track unreadable recorded evidence, not base+revision duplicates"
+            );
+            if pruned.is_none() {
+                assert!(
+                    !execution.output.truncated,
+                    "a fully read week with base+revision overlap is not truncated"
+                );
+            } else {
+                assert!(
+                    execution.output.truncated,
+                    "a pruned recorded frame id must still mark the week truncated"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn weekly_attributes_days_by_their_own_local_date() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        // One normal UTC daily owns 2026-10-14, so the week still has a consumable daily
+        // and the execution completes.
+        let owned = "2026-10-14";
+        let frames = seed_day(&store, stamp(&format!("{owned}T01:00:00Z")), 2).await;
+        store
+            .create_report_run(weekly_run(
+                &format!("daily-{owned}"),
+                stamp(&format!("{owned}T00:00:00Z")),
+                stamp("2026-10-15T00:00:00Z"),
+                owned,
+                frames,
+                false,
+                ReportOutcome::Ok,
+            ))
+            .await
+            .unwrap();
+        // A daily saved under another zone (a supported zone edit happened since) whose
+        // persisted local date is 2026-10-13, while its window lies inside the UTC day
+        // 2026-10-12 — re-computing from the window in the weekly zone would silently
+        // relabel it to the neighbouring date.
+        let mut foreign = weekly_run(
+            "daily-tokyo-2026-10-13",
+            stamp("2026-10-12T16:00:00Z"),
+            stamp("2026-10-12T23:00:00Z"),
+            "2026-10-13",
+            Vec::new(),
+            false,
+            ReportOutcome::Ok,
+        );
+        foreign.timezone = "Asia/Tokyo".to_string();
+        store.create_report_run(foreign.clone()).await.unwrap();
+        // Fixture check, independent of the engine: the foreign window lies entirely inside
+        // the weekly zone's 2026-10-12, so containment alone would credit the wrong date.
+        assert!(foreign.window_start >= start && foreign.window_end <= start + DAY_MS);
+
+        let execution = execute_weekly(
+            &store,
+            WeeklyExecutionRequest {
+                start,
+                end,
+                timezone: "Etc/UTC",
+                config: cfg(),
+            },
+            || async {
+                Ok(Arc::new(FakeAnswer {
+                    calls: Arc::new(AtomicUsize::new(0)),
+                    big: false,
+                }) as Arc<dyn AnswerProvider>)
+            },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await
+        .unwrap();
+        // Expected dates computed in the test: only the UTC daily owns its own date.
+        let expected_missing: Vec<String> = week_dates()
+            .into_iter()
+            .filter(|date| date != owned)
+            .collect();
+        assert_eq!(execution.missing_local_dates, expected_missing);
+        assert!(
+            execution
+                .missing_local_dates
+                .contains(&"2026-10-12".to_string()),
+            "the neighbouring date the foreign daily would be relabelled to must stay missing"
+        );
+        assert!(
+            execution
+                .missing_local_dates
+                .contains(&"2026-10-13".to_string()),
+            "the foreign daily's own persisted date is missing, not silently credited"
+        );
+        // The other-zone daily is not consumed: it is not this week's saved daily report.
+        assert_eq!(execution.daily_run_ids, vec![format!("daily-{owned}")]);
     }
 
     /// The `Etc/UTC` local date for a day offset of [`week_bounds`] — test-side only.
