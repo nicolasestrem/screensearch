@@ -965,16 +965,20 @@ impl Kernel {
 
     /// Stops the capture loop (idempotent). Signals the loop, waits for it to drop
     /// the capture source (releasing OS resources), and flips `capture` → Disabled.
+    /// The `CaptureStopped` observation is recorded only when a live capture handle
+    /// existed; a no-handle stop is a pure no-op and must not relabel an
+    /// already-observed worker error.
     pub async fn stop_capture(&self) {
         let handle = {
             let mut capture = self.capture.lock().await;
-            let handle = capture.take();
+            capture.take()
+        };
+        if let Some(h) = handle {
+            // Only a stop with a live capture task is an observed stop; a no-handle stop
+            // must not relabel an already-observed worker error (`03 §7f.2`/`§7f.6`).
             self.observe_capture(CaptureObservation::Interrupted(
                 CaptureInterruptionReason::CaptureStopped,
             ));
-            handle
-        };
-        if let Some(h) = handle {
             let _ = h.stop.send(true);
             if let Err(e) = h.join.await {
                 tracing::warn!(error = %e, "capture task join failed");
