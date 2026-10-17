@@ -1,6 +1,6 @@
 //! The HTTP client for the ScreenSearch local API and its error mapping.
 //!
-//! A pure client of `127.0.0.1:<port>` (D13: no store, no app coupling). Every failure is
+//! A pure HTTP client (loopback by default; D13: no store, no app coupling). Every failure is
 //! mapped to a guided, human-actionable message — the not-reachable and no-token cases both
 //! carry the exact phrase **"enable the API in ScreenSearch Settings"** (`03 §7c`), because
 //! those are the states a first-time user hits.
@@ -30,6 +30,10 @@ pub enum ApiFailure {
     NoToken,
     /// The token was rejected (HTTP 401).
     Unauthorized,
+    /// Valid credential without the permission required by this route.
+    Forbidden,
+    /// Redirect refused before inspecting/following Location, even on the same origin.
+    Redirect { status: u16 },
     /// The API returned a structured error body (`{error, message}`) — e.g. 404/503/400/500.
     Api { code: String, message: String },
     /// A transport/parse failure that isn't one of the above.
@@ -42,21 +46,23 @@ impl ApiFailure {
         match self {
             ApiFailure::NotReachable { url } => format!(
                 "ScreenSearch's local API is not responding at {url} — enable the API in \
-                 ScreenSearch Settings (Settings -> Local API), then set \
+                 ScreenSearch Settings (Settings -> HTTP API), then set \
                  SCREENSEARCH_API_TOKEN to the token shown there."
             ),
             ApiFailure::NoToken => {
                 "No API token is configured. Copy the token from ScreenSearch Settings -> \
-                 Local API and set SCREENSEARCH_API_TOKEN (or pass --token). If the API is \
+                 HTTP API and set SCREENSEARCH_API_TOKEN (or pass --token). If the API is \
                  off, enable the API in ScreenSearch Settings first."
                     .to_string()
             }
             ApiFailure::Unauthorized => {
                 "The API token was rejected (401). Copy the current token from ScreenSearch \
-                 Settings -> Local API — it may have been regenerated — and update \
+                 Settings -> HTTP API — it may have been regenerated — and update \
                  SCREENSEARCH_API_TOKEN."
                     .to_string()
             }
+            ApiFailure::Forbidden => "Permission denied (403): this API token lacks permission for the requested operation. A read-only token cannot create marks, request capture or run Ask. Use read tools (--read-only hides unsupported tools), or explicitly configure an appropriately authorized token from ScreenSearch Settings -> HTTP API.".to_string(),
+            ApiFailure::Redirect { status } => format!("API redirect refused (HTTP {status}); no redirect destination was visited. Configure --api-url with the final HTTP/HTTPS API root. The bearer token was not forwarded."),
             ApiFailure::Api { code, message } => format!("{code}: {message}"),
             ApiFailure::Transport(e) => format!("Local API request failed: {e}"),
         }
@@ -78,16 +84,35 @@ pub struct ApiClient {
     base: String,
     token: Option<String>,
     http: reqwest::Client,
+    read_only: bool,
 }
 
 impl ApiClient {
-    pub fn new(base: String, token: Option<String>) -> Self {
+    /// Validates the base regardless of whether it came from the CLI or a library caller.
+    pub fn new(base: String, token: Option<String>) -> Result<Self, String> {
+        let base = crate::config::validate_api_url(&base)?;
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(3))
-            .no_proxy() // loopback must never route through a corporate proxy
+            .no_proxy() // no environment proxy, for local AND explicit remote destinations
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .expect("build reqwest client");
-        Self { base, token, http }
+            .map_err(|_| "could not construct API HTTP client".to_string())?;
+        Ok(Self {
+            base,
+            token,
+            http,
+            read_only: false,
+        })
+    }
+
+    /// Restricts the MCP registry/dispatcher, not raw HTTP authorization.
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     fn require_token(&self) -> Result<&str, ApiFailure> {
@@ -113,6 +138,14 @@ impl ApiClient {
         }
         if status.as_u16() == 401 {
             return Err(ApiFailure::Unauthorized);
+        }
+        if status.as_u16() == 403 {
+            return Err(ApiFailure::Forbidden);
+        }
+        if status.is_redirection() {
+            return Err(ApiFailure::Redirect {
+                status: status.as_u16(),
+            });
         }
         let fallback = status
             .canonical_reason()

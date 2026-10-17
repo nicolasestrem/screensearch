@@ -30,9 +30,18 @@ pub fn negotiate_version(requested: Option<&str>) -> &'static str {
 /// Dispatches one request to its handler, returning the JSON-RPC response to send.
 pub async fn dispatch(client: &ApiClient, req: Request) -> Value {
     match req.method.as_str() {
-        "initialize" => rpc::success(req.id, initialize_result(&req.params)),
+        "initialize" => {
+            let mut result = initialize_result(&req.params);
+            if client.is_read_only() {
+                result["instructions"] = json!("Read the user's ScreenSearch history through the configured HTTP API. Read-only tool mode excludes marks/capture and Ask; the API independently enforces token permissions.");
+            }
+            rpc::success(req.id, result)
+        }
         "ping" => rpc::success(req.id, json!({})),
-        "tools/list" => rpc::success(req.id, json!({ "tools": tools::definitions() })),
+        "tools/list" => rpc::success(
+            req.id,
+            json!({ "tools": tools::definitions_for(client.is_read_only()) }),
+        ),
         "tools/call" => tools::call(client, req.id, req.params).await,
         other => rpc::error(
             req.id,
@@ -62,7 +71,7 @@ fn initialize_result(params: &Value) -> Value {
             "title": "ScreenSearch screen history",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "Search, ask about, and mark the user's local ScreenSearch screen-capture history. Requires the local API enabled in ScreenSearch Settings -> Local API."
+        "instructions": "Search, ask about, and mark the user's ScreenSearch screen-capture history through the configured HTTP API (loopback by default). Requires the API enabled in ScreenSearch Settings -> HTTP API."
     })
 }
 

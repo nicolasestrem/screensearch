@@ -1,0 +1,129 @@
+name: MCP native packages
+
+# P2.4 standalone packaging (agent-memory arc): build the `mcp` crate package-scoped on
+# each named native target, archive the standalone wrapper, then UNPACK the archive and
+# actually run the packaged binary on that OS — `--version`, stdio `initialize` +
+# `tools/list`, and an authenticated HTTP read (`list_marks`) through the packaged binary
+# against the real `ApiServer` + `SqliteStore` fixture
+# (`crates/mcp/examples/api_fixture.rs`) over a disposable SQLite file.
+# Each matrix target (x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, aarch64-apple-darwin)
+# runs the full loop.
+#
+# Archives + sha256 checksums are workflow artifacts only. This workflow never creates
+# tags or releases and never uploads to GitHub Releases, and it leaves the Windows
+# NSIS/staging path (scripts/stage-mcp.mjs, src-tauri/) completely untouched.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "crates/mcp/**"
+      - "crates/api/**"
+      - "crates/store/**"
+      - "crates/traits/**"
+      - "scripts/package-mcp.mjs"
+      - "scripts/verify-mcp-package.mjs"
+      - ".github/workflows/mcp-native.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+    paths:
+      - "crates/mcp/**"
+      - "crates/api/**"
+      - "crates/store/**"
+      - "crates/traits/**"
+      - "scripts/package-mcp.mjs"
+      - "scripts/verify-mcp-package.mjs"
+      - ".github/workflows/mcp-native.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+
+concurrency:
+  group: mcp-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-and-verify:
+    name: package & verify (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          # macOS leg: package-mcp.mjs enforces target == host triple at run time, so a
+          # runner whose architecture differs from the target fails the leg rather than
+          # mislabelling the archive.
+          - os: macos-15
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Package-scoped checks only: the standalone wrapper's own crate, never the
+      # whole Windows workspace and never the NSIS/staging path.
+      - name: Build mcp (package-scoped)
+        run: cargo build --locked -p mcp
+
+      - name: Test mcp (package-scoped)
+        run: cargo test --locked -p mcp
+
+      # The packaged-verification fixture: a real ApiServer over a real SqliteStore on a
+      # disposable file, built from the mcp package's existing dev-dependencies only.
+      - name: Build packaged-verification fixture (example)
+        run: cargo build --locked -p mcp --example api_fixture
+
+      - name: Package archive + checksums
+        id: package
+        shell: bash
+        run: |
+          out=$(node scripts/package-mcp.mjs --target "${{ matrix.target }}")
+          echo "$out"
+          archive=$(printf '%s\n' "$out" | sed -n 's/^\[package-mcp\] archive=//p')
+          checksums=$(printf '%s\n' "$out" | sed -n 's/^\[package-mcp\] checksums=//p')
+          if [ -z "$archive" ] || [ -z "$checksums" ]; then
+            echo "::error::package-mcp.mjs did not report archive/checksums paths"
+            exit 1
+          fi
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "checksums=$checksums" >> "$GITHUB_OUTPUT"
+
+      # Unpack the archive and actually execute the packaged binary on this OS.
+      - name: Verify archive (unpack + run on this OS)
+        shell: bash
+        run: |
+          fixture="${CARGO_TARGET_DIR:-target}/debug/examples/api_fixture"
+          if [ -f "${fixture}.exe" ]; then fixture="${fixture}.exe"; fi
+          if [ ! -f "$fixture" ]; then
+            echo "::error::fixture example not found at ${fixture}"
+            exit 1
+          fi
+          node scripts/verify-mcp-package.mjs \
+            --archive "${{ steps.package.outputs.archive }}" \
+            --checksums "${{ steps.package.outputs.checksums }}" \
+            --fixture-bin "$fixture"
+
+      - name: Upload archives & checksums (CI artifacts only)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-package-${{ matrix.target }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.checksums }}
+          if-no-files-found: error

@@ -37,7 +37,13 @@ fn run(cfg: config::Config) {
         .build()
         .expect("build tokio runtime");
 
-    let client = ApiClient::new(cfg.url, cfg.token);
+    let client = match ApiClient::new(cfg.url, cfg.token) {
+        Ok(client) => client.with_read_only(cfg.read_only),
+        Err(message) => {
+            eprintln!("screensearch-mcp: {message}");
+            std::process::exit(2);
+        }
+    };
     let stdin = io::stdin();
     let stdout = io::stdout();
     mcp::run(stdin.lock(), stdout.lock(), &rt, &client);
