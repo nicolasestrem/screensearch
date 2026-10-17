@@ -1,5 +1,26 @@
 # 07 — Known Gaps
 
+## 2026-10-17 — F3 G2 implementation readings (owner: agent; maintainer may override)
+
+- **Evidence without saved dailies is refused, not reported.** `§8e` defines `NO_DATA` only for
+  "no saved dailies **and** no usable evidence" and PARTIAL for a partly covered week, but says
+  nothing about a week that has raw evidence and zero saved dailies. The engine stops that case
+  with `GENERATION_FAILED` (before `resolve`) rather than labelling it `NO_DATA` or synthesising
+  an uncited narrative. One branch to change if the contract later defines it.
+- **`missing_local_dates` counts a partial or truncated daily as a missing day**, since only
+  complete saved coverage establishes a covered date (`§8e` PARTIAL).
+- **Dailies and their revisions are all consumed** and all recorded in `daily_run_ids`; `§8e`
+  does not define revision precedence for the weekly input, so none was invented. G3/G5 should
+  decide whether a weekly may cite a revision rather than the base run of the same day.
+- **`daily_run_ids` is persisted on `SavedReport`** (new optional field, no schema change), so a
+  weekly report can be audited against the dailies it consumed.
+- **Weekly runs write no note and send no Telegram digest in this increment**: the app records a
+  skip receipt instead of emitting a daily-shaped note or a daily-format digest. G3 owns the
+  weekly note/index and G6 the weekly digest format.
+- **No user-visible weekly surface yet**: enqueue exists internally with `kind` =
+  `weekly_synthesis` and the explicit UTC window; Settings controls, Run now and catch-up remain
+  G5.
+
 ## 2026-10-17 — F3 G1 implementation readings (owner: agent; maintainer may override)
 
 - **Daily notes keep frontmatter schema 1.** `03 §8e` requires weekly notes to write schema 2

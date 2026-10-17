@@ -1,5 +1,15 @@
 # 08 — AI Changelog
 
+## 2026-10-17 — F3 G2: weekly synthesis engine over saved dailies
+
+- **Change:** `Store::saved_daily_runs`; kernel `execute_weekly` + weekly synthesis through the
+  shared report service and model policy; truthful weekly statuses; `SavedReport.daily_run_ids`;
+  weekly runs orchestrated in `src-tauri` with a missing-days PARTIAL banner.
+- **Why:** `03 §8e` G2 — a weekly report is a synthesis of that week's **saved** daily reports,
+  never a raw re-scan, and its status must be derivable from persisted data.
+- **Verification:** full `04 §1c` Windows chain on tbx at `09d63a3`, all exit 0, all suites
+  0 failed; raw output in `05`.
+
 ## 2026-10-17 — F3 G1: report-run kind, 12 → 13 migration, weekly window, frontmatter v2
 
 - **Change:** `ReportRunKind` on runs and `/v1/reports` projections; forward-only
