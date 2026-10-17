@@ -11,6 +11,17 @@
   #134 was merged before its checks finished — process miss; wait for checks before merging.
 - **Verification:** `actionlint 1.7.7` exit 0; CodeQL re-scan on the fix PR.
 
+## 2026-10-17 — F3 deeper-memory plan corrected after review (docs only)
+
+- **Change:** corrected `docs/deeper-memory-f3-plan.md` (PR #131): renamed the proposed kind
+  away from the existing `ReportKind::Weekly`; stated that `kind` is new persisted/wire surface,
+  not an existing field; scoped the slice to one project note; described the index/path/provenance
+  writer work; fixed heading names, the symlink-rule citation and the retention wording. Logged the
+  open decisions in `07`.
+- **Why:** two valid review threads (r4303787850, r4303788563) and a citation check against code
+  and specs at `e55f2cc`. `02`/`03` untouched; no schema or code change.
+- **Verification:** docs only; each cited `path:line` was re-read at the PR head. No build run.
+
 ## 2026-10-17 — Claude cost reduction: on-demand PR review + targeted spec reads (CI/docs)
 
 - **Change:** `claude-code-review.yml` no longer runs on `pull_request`; it runs only on a
