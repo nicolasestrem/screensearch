@@ -8,49 +8,19 @@ A standalone, **Windows-only**, local-first desktop app (Rust + Tauri 2) that ca
 makes it searchable by text and meaning, and answers questions about it — fully on-device. This is
 a **clean-slate** project; it shares no code or data with any prior version.
 
-**Current state: v0.1.0 shipped 2026-06-24; the 0.2.x arc (attention-first text signal + recall
-reports) is shipped; the 0.3.0 arc — "P7: surface reduction + flow recall + local API"
-(`docs/0.3.0.md`, `02 §5c`) — shipped as v0.3.0 (2026-07-04); the 0.3.1 patch — "P7.1: post-0.3.0
-triage" (`docs/0.3.1.md`) — is complete (PR1 specs contract; PR2 fixed the #64 vision-throughput
-regression profile-first — `VISION_MAX_EDGE` back to 1280 px, 102 % of the pre-WebP baseline;
-PR3 polish — #59 inline Moment text, #65 report filename/footer, #57-partial version link;
-PR4 audited + released v0.3.1). The **0.3.2 arc — "P7.2: product shell mini-arc"**
-(`docs/0.3.2.md`) — **shipped as v0.3.2 (2026-07-06)**: lifecycle — **auto-update #69**
-(`tauri-plugin-updater` + a signed GitHub-Releases `latest.json`, pull-based passive UX per D1;
-v0.3.2 is the updater's **genesis release** — every release after it reaches installs
-automatically) and **systray #56 + quick actions #57** (native Tauri tray in
-`src-tauri/src/tray.rs`, passive state icon, close-to-tray default-on, run-at-startup via
-`tauri-plugin-autostart` default-off, Load/Unload-model + Start/Stop-vision incl. `cancel_vision`,
-all pull-based/non-shaming per D4) — and interface — **shell-layout hardening** (D9: one scroll
-context per route, no-CLS skeleton parity, NavRail layer isolation as the WebView2 ghost-rail
-mitigation `07` #106) and the **Settings two-tier IA** (D6: Essentials + seven collapsed Advanced
-expanders; the gap-#100 cross-chord conflict warning; the two dead settings retired via
-`RETIRED_SETTINGS_KEYS` tolerate-and-drop, D8). Zero DB schema migrations (D10, schema stays 10);
-PR6 audited D1–D12 (all PASS), fixed #89 (daily/weekly report filenames carry the kind), and
-released with the signed updater manifest. The **0.3.3 hotfix shipped** (`v0.3.3`, 2026-07-07 — UIA
-skips Chromium/Electron windows to stop browser freezes, `07` #93). **The 0.4.0 sessions arc (P8,
-"frames → sessions reframe") shipped as v0.4.0 (2026-07-11)** (`docs/0.4.0.md`, `02 §5d`, `03 §7e`):
-the specs contract, the ground-truth harness, the arc's **one** schema migration (10 → 11, PR3
-only, D4), the pure-heuristic segmentation engine + recognition, the Timeline sessions surface, the
-read-only API/MCP session tools, and the PR7 audit. Sessions are **additive** (D10, zero frame-level
-behavior change), **pull-based/non-shaming** (D11), **no audio** (D14), **no new NavRail route**
-(D13). v0.4.0 is the **first auto-delivered release** (D16): the live update gate passed before the
-tag (0.3.3 install, auto-update, restart, first-boot 10 → 11 migration, sessions over pre-existing
-history), and it reaches 0.3.2+ installs automatically. `#88` (AI-tool recall) closed at the release.
-The full app exists —
-a 15-crate Rust workspace + a React/TS UI. The specs remain the contract; the build-loop docs
-(`05`/`06`/`07`/`08`) are the live status of record. Code-signing is the lone packaging follow-up
-(the 0.3.2 minisign updater signature is not Authenticode — `03 §11b`).
+**Current state:** latest release v0.4.1 (2026-10-15), DB schema 12, auto-update live since v0.3.2.
+The full app exists — a 15-crate Rust workspace + a React/TS UI. Active work is tracked in the live
+build-loop docs (`05`/`06`/`07`/`08`); shipped history is in `CHANGELOG-ARCHIVE.md` and
+`specs/archive/`. Code-signing is the lone packaging follow-up (`03 §11b`).
 
-## ⛔ Read the spec before doing anything (mandatory order)
-1. `specs/01_PROJECT_CONTEXT.md` — what is true today (env, constraints, non-goals)
-2. `specs/02_STRATEGIC_PLAN.md` — what to build, in what phase order (P0→P5)
-3. `specs/03_MASTER_PRODUCTION_SPEC.md` — exactly how (schema, traits, protocols, DoD)
-4. `specs/UI_REFERENCE.md` — the frontend contract (identity, tokens, screens, states) — for P5
-5. `specs/04_CLAUDE_CODE_BUILD_PROMPT.md` — how to operate (this is your operating manual)
-Consult `specs/00_PROJECT_INTAKE.md` and `specs/MODEL_REGISTRY.md` for facts (models, license).
-
-Re-read each session — the files are the source of truth, not your memory.
+## ⛔ Read the spec before changing anything (targeted, not exhaustive)
+The specs are large (`03` alone is ~150 KB) — **do not read them end to end**. Each session:
+1. Read `specs/01_PROJECT_CONTEXT.md` (short: env, constraints, non-goals).
+2. Read only the `specs/04_CLAUDE_CODE_BUILD_PROMPT.md` §1 pointer for the current arc/task.
+3. For `02` / `03` / `UI_REFERENCE.md`, grep the headings (`^#`) and read only the sections the
+   task touches (e.g. `03 §7f`), plus anything those sections cross-reference.
+Consult `specs/00_PROJECT_INTAKE.md` and `specs/MODEL_REGISTRY.md` only for model/license facts.
+The files are the source of truth, not your memory — re-read the relevant section, never recall it.
 
 ## Source of truth
 - *Why / scope / phases* → `02` · *Constraints / non-goals* → `01` · *How (schema, traits, job
@@ -116,10 +86,12 @@ Re-read each session — the files are the source of truth, not your memory.
 - **Schema changes = forward-only migration** with a `schema_version` bump. No schema drift.
 - **Branches, not main.** New work on a feature branch; no force-push; no commit to `main` without
   review. Never commit models, secrets, or DB files (see `.gitignore`).
-- **PR review is automatic.** Opening or updating a PR triggers the configured reviewers; do not
-  `@`-mention review bots for routine review or post ritual "do not merge" reminders. Mention a
-  reviewer only when the maintainer explicitly asks for a targeted follow-up on a specific area.
-  Address actionable bot feedback in code; bot-thread replies are unnecessary.
+- **PR review is on-demand only (cost).** Nothing reviews a PR automatically. Never trigger a
+  review yourself — no `/claude-review` or `@claude` comments, no manual workflow runs, no ritual
+  "do not merge" reminders — unless the maintainer explicitly asks. Address actionable review
+  feedback in code; bot-thread replies are unnecessary. Workflows:
+  `.github/workflows/claude-code-review.yml` runs on a `/claude-review` PR comment or a manual
+  dispatch; `.github/workflows/claude.yml` runs on an `@claude` mention.
 - **UI:** typed IPC via `ts-rs` only; every view defines all states (loading/empty/error/partial/
   populated); Rules-of-Hooks is an error-level gate; tokens only (no hardcoded hex/font/spacing).
 

@@ -1,24 +1,29 @@
 name: Claude Code Review
 
+# On-demand only — there are no automatic PR reviews (cost). Trigger a review by commenting
+# `/claude-review` on a PR (repo owner/member/collaborator only), or run this workflow manually
+# from the Actions tab with a PR number. The trigger deliberately does not contain `@claude`, so
+# it never also fires `claude.yml`. Comment-triggered runs use this file from the default branch.
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to review"
+        required: true
+        type: number
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '/claude-review') &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
+    env:
+      PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
     permissions:
       contents: read
       pull-requests: read
@@ -26,9 +31,10 @@ jobs:
       id-token: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout pull request head
         uses: actions/checkout@v4
         with:
+          ref: refs/pull/${{ env.PR_NUMBER }}/head
           fetch-depth: 1
 
       - name: Run Claude Code Review
@@ -38,8 +44,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
+          prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ env.PR_NUMBER }}'
+          claude_args: '--model claude-sonnet-5-5 --allowedTools "mcp__github_inline_comment__create_inline_comment"'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-

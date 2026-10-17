@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **CI cost:** Claude PR review is no longer automatic. `claude-code-review.yml` runs only on a
+  `/claude-review` PR comment (owner/member/collaborator) or a manual dispatch, reviews the PR
+  head, and uses Sonnet (`claude-sonnet-5-5`). `claude.yml` (`@claude` mentions) is unchanged.
+
+### Documentation
+- **Agent token cost:** `CLAUDE.md` and `specs/04` §1 switch from "read 01–04 + UI_REFERENCE end
+  to end every session" (~60k tokens) to targeted section reads; the CLAUDE.md release-history
+  paragraph is condensed to a pointer (history stays in `CHANGELOG-ARCHIVE.md` /
+  `specs/archive/`). CLAUDE.md documents the on-demand review triggers.
+
 ## Older versions
 
 Releases 0.4.1 and earlier are archived in [CHANGELOG-ARCHIVE.md](./CHANGELOG-ARCHIVE.md).
