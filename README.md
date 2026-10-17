@@ -1,4 +1,4 @@
-# ScreenSearch V2c
+# ScreenSearch
 
 A local-first **Windows** desktop app that continuously captures your screen, makes it
 searchable by **text and meaning**, and answers questions about what you've seen — fully
