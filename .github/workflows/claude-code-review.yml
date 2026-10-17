@@ -31,10 +31,12 @@ jobs:
       id-token: write
 
     steps:
-      - name: Checkout pull request head
+      # Trusted checkout only: this job has secrets, so it must never check out PR code (a fork
+      # PR could plant `.claude/settings.json` hooks or a CLAUDE.md). The review reads the PR
+      # diff through the GitHub API instead (CodeQL actions/untrusted-checkout).
+      - name: Checkout default branch
         uses: actions/checkout@v4
         with:
-          ref: refs/pull/${{ env.PR_NUMBER }}/head
           fetch-depth: 1
 
       - name: Run Claude Code Review
