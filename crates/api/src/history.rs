@@ -1,4 +1,8 @@
 //! Strict read adapters for `03 §7f`: no search, capture, inference or filesystem reads.
+//!
+//! The strict query parser (`bad_query`/`query_fields`/`parse_integer`) and the shared
+//! `HistoryReadError` → [`ApiError`] map are `pub(crate)` so the report read adapter
+//! (`reports.rs`) reuses exactly the same decoding/validation rather than a second copy.
 use std::collections::BTreeMap;
 
 use axum::extract::{RawQuery, State};
@@ -12,12 +16,12 @@ use traits::{
 
 use crate::{error::ApiError, ApiState};
 
-fn bad_query() -> ApiError {
+pub(crate) fn bad_query() -> ApiError {
     // Never echo a cursor, filter, query payload or underlying private diagnostic.
     ApiError::BadRequest("invalid history query or cursor".to_string())
 }
 
-fn history_error(error: HistoryReadError) -> ApiError {
+pub(crate) fn history_error(error: HistoryReadError) -> ApiError {
     match error {
         HistoryReadError::InvalidRequest => bad_query(),
         HistoryReadError::HistoryChanged => ApiError::HistoryChanged,
@@ -105,7 +109,10 @@ fn decode_component(input: &str) -> Result<String, ApiError> {
     String::from_utf8(bytes).map_err(|_| bad_query())
 }
 
-fn query_fields(raw: Option<&str>, allowed: &[&str]) -> Result<BTreeMap<String, String>, ApiError> {
+pub(crate) fn query_fields(
+    raw: Option<&str>,
+    allowed: &[&str],
+) -> Result<BTreeMap<String, String>, ApiError> {
     let mut fields = BTreeMap::new();
     for pair in raw.unwrap_or("").split('&').filter(|pair| !pair.is_empty()) {
         let (key, value) = pair.split_once('=').ok_or_else(bad_query)?;
@@ -121,7 +128,7 @@ fn query_fields(raw: Option<&str>, allowed: &[&str]) -> Result<BTreeMap<String, 
     Ok(fields)
 }
 
-fn parse_integer(value: &str, signed: bool) -> Result<i64, ApiError> {
+pub(crate) fn parse_integer(value: &str, signed: bool) -> Result<i64, ApiError> {
     let digits = if signed {
         value.strip_prefix('-').unwrap_or(value)
     } else {

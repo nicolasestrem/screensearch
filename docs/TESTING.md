@@ -103,8 +103,8 @@ acceptance run is prepared but not executed — its isolated launch is blocked o
 safety question), separate-machine frame traversal/consumer resume, supported native
 wrapper/archive execution (Windows/Linux/macOS legs) and real paging/latency measurements.
 P3 saved-report reads are **resolved** (Nico GO, stored-presence visibility — see the
-[P3 verification status](#p3-saved-report-reads--verification-status)), but their runtime is still
-being implemented, so **no P3 result is claimed here**. Generation/retry/scheduling/delivery
+[P3 verification status](#p3-saved-report-reads--verification-status)); local producer and
+packaged-client and native Windows checks now pass; fresh hosted P3 gates remain open. Generation/retry/scheduling/delivery
 remain deferred. No merge, publication, installer replacement or release is implied.
 
 ### P3 saved-report reads — verification status
@@ -113,10 +113,24 @@ P3's retry-result visibility question is **resolved** (Nico GO): saved output is
 persisted presence even while a run is queued/retrying; absent output stays explicit `null`, stored
 `NO_DATA` stays factual, and a malformed saved payload is a read error. The contract is
 `03 §7f.5–7` / `§7f.10`; the endpoints are documented in
-[API saved reports](API.md#saved-reports). **The runtime is being implemented on
-`feat/agent-memory-saved-reports`; nothing below is a passed result — these are the required
-receipts, pending until the parent records observed output.** Do not reuse the P2 old-head CI run
+[API saved reports](API.md#saved-reports). The source branches are
+`feat/agent-memory-saved-reports` and `feat/agent-memory-saved-report-mcp`. Parent observed the
+following local/native results; fresh hosted gates remain open. Do not reuse P2 old-head CI
 (or any base build) as P3 evidence.
+
+The final unpacked Linux release client passed **21 checks** against the genuine API/SQLite
+fixture: 1035 frames/details (zero mismatches), restart/resume, 11 report summaries/details,
+queued/running saved output, null/NO_DATA distinction and full historical provenance. The
+independent seed-vs-SQL manifest agreed; report/delivery/file state stayed unchanged,
+provider calls and credential leaks were zero. The archive also passed checksum/unpack/version,
+13 normal/10 read-only registry and an actual authenticated Store read. See `05_BUILD_REVIEW`
+for the final source/archive hashes. This local archive script used Node 26.8.1/Rust 1.95.0;
+Native Windows checks subsequently passed under Node22/Rust1.95: API library 23/0,
+HTTP 51/0 with one retained ignore, Tauri lifecycle 25/0, the full MCP package and
+workspace-unified TLS suite, plus actual Windows ZIP execution/registry/auth-read verification.
+Parent verified 20/20 remote source hashes and all raw command exits. Independent review
+round1 found no security/logic issues. Fresh P3 CI remains pending; GUI and direct cross-machine
+acceptance are not inferred.
 
 Three evidence layers, which must not be conflated:
 
@@ -144,7 +158,7 @@ Three evidence layers, which must not be conflated:
   Driver order: coverage → frame pages/restart/resume → report pages/detail → frame source details.
   A frame-only manifest stays usable but must report P3 `not_exercised`, never full P4 acceptance.
 
-Required P3 assertions (all pending observed output):
+Required P3 assertions (local fixture checks observed above; native/application boundaries remain separate):
 
 - Read a persisted fixture run with the **model unloaded and schedules off**, assert the exact wire
   bytes, and assert **no** generator/scheduler/file-writer/Telegram call and **no** store mutation

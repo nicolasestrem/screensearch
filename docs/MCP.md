@@ -90,8 +90,8 @@ The current committed transport registry (`409d380`, draft PR
 `get_session`, `list_frames`, `get_capture_coverage`. The earlier committed HEAD (`7831e84`)
 had only the first six. The stacked P3 report-tool branch
 (`feat/agent-memory-saved-report-mcp`, a child of this P2 branch) adds `list_reports` and
-`get_report` for **ten** read tools / **thirteen** normal once integrated; those two are **not**
-in the committed transport registry, any released binary or the P1 bundled wrapper. None of the P2 additions are in the P1 bundled wrapper or any released
+`get_report` for **ten** read tools / **thirteen** normal on that source branch. Those two are
+not in the P2 baseline registry, any released binary or the P1 bundled wrapper. None of the P2 additions are in the P1 bundled wrapper or any released
 binary (see [Tools](#tools)). Ask tools and `add_mark` are excluded; unknown/future names
 default-deny. This is tool-selection ergonomics,
 **not authorization**: omitting the flag does not elevate a read token, and enabling it does
@@ -101,10 +101,10 @@ requests, not guaranteed cancellation of authorized streams.
 
 The standalone wrapper can be built package-scoped with Rust 1.95.0 (`cargo build --locked
 -p mcp --release`); it does not need Windows app crates on Linux. Intended first archive
-targets are the three native wrappers — Windows x86_64, Linux x86_64 and macOS arm64 — but
-archive availability and native execution are **not claimed here**: each of the three targets
-needs its own packaged-archive build-and-run receipt, plus a separate release authorization,
-before any portable-release or supported-platform claim. Packaging is staged, not released.
+targets are the three native wrappers — Windows x86_64, Linux x86_64 and macOS arm64. Local
+P3 archive execution is verified on Windows and Linux; fresh three-target hosted checks remain
+pending. Each target needs its own receipt plus separate release authorization before any
+portable-release or supported-platform claim. Packaging is verified, not released.
 The Windows NSIS staging contract remains unchanged.
 
 ## Claude Desktop
@@ -146,17 +146,20 @@ mode, eight in read-only mode**. The earlier committed HEAD (`7831e84`) had nine
 read-only. The two additions (`list_frames`, `get_capture_coverage`) are **not** in the P1
 bundled wrapper or any released binary, and the base API on that branch does not serve
 `/v1/frames` or `/v1/coverage` — the P1 routes live on `feat/agent-memory-http` — so they are
-exercised only by protocol-fixture tests, not a real end-to-end read. Until they are released
+tested separately from the P1 producer source. A current packaged-client integration against
+the real P1/P3 fixture has now passed (see verification status). Until they are released
 and integrated, use the [HTTP frame/coverage reads](API.md#chronological-frames) and the
 [reference consumer](MEMORY_CONSUMER.md) directly. Do not infer their presence from the
 specification or from this page.
 
 **P3 report tools (`list_reports`, `get_report`) are resolved** (Nico GO, stored-presence
-visibility) and are being added on the **stacked report-tool branch**
+visibility) and implemented on the **stacked report-tool branch**
 `feat/agent-memory-saved-report-mcp` — a separate child of this P2 transport branch. They are
 HTTP-only `Value` passthrough tools (no producer-crate import); the producer's `/v1/reports`
-routes live on `feat/agent-memory-saved-reports`, so on this branch they are exercised by
-protocol fixtures only, never a real end-to-end read. They are **not** in the committed transport
+routes live on `feat/agent-memory-saved-reports`. In addition to protocol fixtures, the
+unpacked Linux release client passed 21 genuine API/SQLite checks with full saved-report
+details, unchanged state and zero provider calls; native Windows unit/archive checks passed.
+Fresh hosted P3 checks remain pending. These tools are not in the P2 baseline
 registry, any released binary or the P1 bundled wrapper. Remote report generation, retry,
 scheduling and delivery remain deferred; the report tools add no phase/`result` logic of their own
 — the producer's projection is passed through verbatim.

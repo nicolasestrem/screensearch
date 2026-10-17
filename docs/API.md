@@ -12,14 +12,14 @@ portable MCP transport is a separate change; see [MCP configuration](MCP.md#conf
 and the [verification status](TESTING.md#external-agent-memory-api-p1p2--verification-status).
 The approved contract is [spec 03 §7f](../specs/03_MASTER_PRODUCTION_SPEC.md).
 
-**P3 saved-report reads (resolved; implementation in progress).** Nico resolved the earlier
+**P3 saved-report reads (implemented on the source branches, unreleased).** Nico resolved the earlier
 retry-result visibility question in favour of **stored-presence exposure** (`spec 03 §7f.10`,
 GO): an immutable saved result is exposed immediately whenever it exists, including while
 delivery is queued or retrying. `GET /v1/reports` and `GET /v1/reports/{run_id}` are the
-approved contract (see [Saved reports](#saved-reports)); the runtime is being implemented on
-`feat/agent-memory-saved-reports` and **actual verification is still pending parent receipts** —
-this page documents the frozen wire contract, not a claim that the routes are integrated, passing
-or released. Remote report generation, retry, scheduling and delivery remain deferred; neither
+approved contract (see [Saved reports](#saved-reports)), implemented on
+`feat/agent-memory-saved-reports`. Parent verified real API/SQLite packaged-client integration
+and native Windows affected checks; fresh hosted P3 checks remain pending. This is not
+installed-app, GUI or direct cross-machine acceptance. Remote report generation, retry, scheduling and delivery remain deferred; neither
 credential grants `reports.generate`.
 
 > **Threat model — read this before enabling.** The API uses plain HTTP without transport
@@ -113,7 +113,7 @@ no response body. A valid token on an unknown path gets **404**; a valid read to
 classified write/Ask gets **403 before side effects**, not an API-off/401 error. An unsupported
 method on a classified path gets **405** with `Allow`; an unclassified registered route is
 denied, not inherited by either credential. P3 report routes (`GET /v1/reports`,
-`GET /v1/reports/{run_id}`) are specified under `§7f` and being implemented on the P3 branch; they are
+`GET /v1/reports/{run_id}`) are implemented under `§7f` on the P3 source branch; they are
 not yet present in an integrated or released build.
 
 `--read-only` in MCP only filters listed/accepted tools. Use the independent API read token

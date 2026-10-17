@@ -20,8 +20,9 @@ use traits::{
     AnswerProvider, ApiReadTokenSecret, ApiReadTokenStatus, ApiStatus, CaptureCoverage,
     CaptureInterruption, CaptureInterruptionReason, CaptureObservations, EvidenceWindow,
     ExportFrameRow, ExportRequest, ExportResult, FrameDetail, FramePageRequest, HistoryReadError,
-    ReportDeliveryState, ReportRunPhase, ResumeContext, RetentionScope, RetrievedChunk,
-    SavedReportRetention, Settings, Store, StoredFramePage, Toast, ToastLevel,
+    ReportDeliveryState, ReportDetail, ReportPageRequest, ReportRunPhase, ResumeContext,
+    RetentionScope, RetrievedChunk, SavedReportRetention, Settings, Store, StoredFramePage,
+    StoredReportPage, Toast, ToastLevel,
 };
 
 use api::{ApiHost, ApiServer, FrameImage, SharedToken, DEFAULT_BIND_ADDRESS, DEFAULT_PORT};
@@ -224,6 +225,23 @@ impl ApiHost for TauriApiHost {
             .export_frames_page(after_id, from, to, limit)
             .await
     }
+
+    /// Saved-report reads forward straight to the concrete Store's transactional page
+    /// adapter (`03 §7f.5/.6`) — the same `dyn Store` seam the HTTP crate reuses. Never
+    /// generation, retry, capture, scheduling, delivery, file write or current-source
+    /// overlay.
+    async fn report_page(
+        &self,
+        request: ReportPageRequest,
+    ) -> Result<StoredReportPage, HistoryReadError> {
+        compose_report_page(self.store.as_ref(), request).await
+    }
+
+    /// One saved run's complete public projection, forwarded to the concrete Store; a
+    /// missing/pruned run is `None` (→404), never reconstructed or regenerated.
+    async fn report_detail(&self, run_id: &str) -> Result<Option<ReportDetail>, HistoryReadError> {
+        compose_report_detail(self.store.as_ref(), run_id).await
+    }
 }
 
 /// The production frame-page adapter (`03 §7f.1`): one validated, bounded-membership
@@ -236,6 +254,28 @@ async fn compose_frame_page(
 ) -> Result<StoredFramePage, HistoryReadError> {
     let store: &dyn Store = store;
     store.frame_page(request).await
+}
+
+/// The production saved-report page adapter (`03 §7f.5/.6`): one validated, bounded
+/// overlap/status Store page forwarded through the `dyn Store` seam. Reads never
+/// generate, retry, capture, schedule, deliver, write files or overlay current sources.
+async fn compose_report_page(
+    store: &SqliteStore,
+    request: ReportPageRequest,
+) -> Result<StoredReportPage, HistoryReadError> {
+    let store: &dyn Store = store;
+    store.report_page(request).await
+}
+
+/// The production saved-report detail adapter (`03 §7f.6`): the complete stored
+/// projection for one opaque run id, or `None` (→404). Never reconstructs a missing run
+/// or regenerates prose.
+async fn compose_report_detail(
+    store: &SqliteStore,
+    run_id: &str,
+) -> Result<Option<ReportDetail>, HistoryReadError> {
+    let store: &dyn Store = store;
+    store.report_detail(run_id).await
 }
 
 /// The production coverage adapter (`03 §7f.2`): factual Store aggregates + observed
@@ -2071,5 +2111,243 @@ mod tests {
                 "policy disagrees with prune behavior for {run_id}"
             );
         }
+    }
+
+    // --- P3 saved-report read composition (`03 §7f.5/.6`, §8c) ---------------------
+
+    /// Answer provider that aborts the test if a report read ever reaches generation.
+    struct PanicAnswer;
+
+    #[async_trait]
+    impl AnswerProvider for PanicAnswer {
+        async fn answer(
+            &self,
+            _query: &str,
+            _context: &[RetrievedChunk],
+            _opts: traits::AnswerOpts,
+            _tx: tokio::sync::mpsc::Sender<traits::AnswerDelta>,
+        ) -> anyhow::Result<()> {
+            panic!("saved-report reads must never invoke the answer model");
+        }
+    }
+
+    fn saved_report_fixture(markdown: &str) -> traits::SavedReport {
+        traits::SavedReport {
+            markdown: markdown.into(),
+            model: Some("fixture-model".into()),
+            frame_ids: vec![11, 12, 13],
+            session_ids: vec![5],
+            cited_frame_ids: vec![11],
+            frames_sampled: 9,
+            frames_summarized: 3,
+            periods_total: 2,
+            periods_covered: 2,
+            passes: 1,
+            truncated: false,
+        }
+    }
+
+    fn saved_run_fixture(
+        run_id: &str,
+        created_at: i64,
+        window_start: i64,
+        phase: ReportRunPhase,
+        result: Option<traits::SavedReport>,
+    ) -> traits::ReportRun {
+        traits::ReportRun {
+            requested_range: None,
+            run_id: run_id.into(),
+            source_id: "profile-fixture".into(),
+            schedule_id: None,
+            revision_of: None,
+            window_start,
+            window_end: window_start + 500,
+            timezone: "Europe/Paris".into(),
+            local_date: "2026-01-01".into(),
+            phase,
+            outcome: Some(traits::ReportOutcome::Ok),
+            error: None,
+            result,
+            config_snapshot: "{\"PRIVATE\":true}".into(),
+            created_at,
+            updated_at: created_at + 1,
+        }
+    }
+
+    /// A host whose report reads forward to the concrete `SqliteStore` exactly like
+    /// `TauriApiHost`, with provider/search/write spies that abort if ever reached.
+    struct ReportHost {
+        store: Arc<SqliteStore>,
+    }
+
+    #[async_trait]
+    impl ApiHost for ReportHost {
+        fn version(&self) -> String {
+            "report-composition".into()
+        }
+        fn started_at_ms(&self) -> i64 {
+            0
+        }
+        async fn is_capturing(&self) -> bool {
+            false
+        }
+        fn store(&self) -> Arc<dyn Store> {
+            self.store.clone()
+        }
+        async fn settings(&self) -> Settings {
+            Settings::default()
+        }
+        async fn frame_detail(&self, _frame_id: i64) -> anyhow::Result<Option<FrameDetail>> {
+            Ok(None)
+        }
+        async fn frame_image(&self, _frame_id: i64) -> anyhow::Result<Option<FrameImage>> {
+            Ok(None)
+        }
+        async fn ask_context(
+            &self,
+            _query: &str,
+            _top_k: u32,
+            _session_id: Option<i64>,
+        ) -> anyhow::Result<Vec<RetrievedChunk>> {
+            panic!("report reads must never search")
+        }
+        async fn answer_provider(&self) -> Option<Arc<dyn AnswerProvider>> {
+            Some(Arc::new(PanicAnswer) as Arc<dyn AnswerProvider>)
+        }
+        async fn add_mark(
+            &self,
+            _frame_id: Option<i64>,
+            _capture_now: bool,
+            _note: Option<String>,
+        ) -> anyhow::Result<i64> {
+            panic!("report reads must never write")
+        }
+        async fn resolve_mark(&self, _mark_id: i64) -> anyhow::Result<()> {
+            panic!("report reads must never write")
+        }
+        async fn where_was_i(&self) -> anyhow::Result<Option<ResumeContext>> {
+            Ok(None)
+        }
+        async fn export_frames_page(
+            &self,
+            _after_id: i64,
+            _from: Option<i64>,
+            _to: Option<i64>,
+            _limit: u32,
+        ) -> anyhow::Result<Vec<ExportFrameRow>> {
+            Ok(vec![])
+        }
+        async fn report_page(
+            &self,
+            request: ReportPageRequest,
+        ) -> Result<StoredReportPage, HistoryReadError> {
+            compose_report_page(self.store.as_ref(), request).await
+        }
+        async fn report_detail(
+            &self,
+            run_id: &str,
+        ) -> Result<Option<ReportDetail>, HistoryReadError> {
+            compose_report_detail(self.store.as_ref(), run_id).await
+        }
+    }
+
+    #[tokio::test]
+    async fn report_reads_compose_real_store_without_generation_or_mutation() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let saved = saved_report_fixture("# saved markdown\nprovenance");
+        let run = saved_run_fixture(
+            "run-a",
+            100,
+            1_000,
+            ReportRunPhase::Queued,
+            Some(saved.clone()),
+        );
+        store.create_report_run(run.clone()).await.unwrap();
+
+        let page = compose_report_page(
+            &store,
+            ReportPageRequest {
+                window: EvidenceWindow {
+                    from: 0,
+                    to: i64::MAX,
+                },
+                filters: traits::ReportFilters::default(),
+                limit: 100,
+                continuation: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].run_id, "run-a");
+        assert!(page.next_position.is_none());
+        assert!(
+            page.snapshot.is_some(),
+            "a non-empty page carries the frozen max tuple"
+        );
+
+        // A saved result is exposed independent of phase; a missing run is None (→404).
+        let detail = compose_report_detail(&store, "run-a")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(detail.result, Some(saved));
+        assert!(compose_report_detail(&store, "absent")
+            .await
+            .unwrap()
+            .is_none());
+        // The read is side-effect free: the stored run is byte-for-byte unchanged.
+        assert_eq!(store.get_report_run("run-a").await.unwrap().unwrap(), run);
+    }
+
+    #[tokio::test]
+    async fn report_routes_serve_real_store_over_http_without_generation() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let saved = saved_report_fixture("# http saved markdown");
+        store
+            .create_report_run(saved_run_fixture(
+                "run-http",
+                100,
+                1_000,
+                ReportRunPhase::Running,
+                Some(saved),
+            ))
+            .await
+            .unwrap();
+        let token: SharedToken = Arc::new(RwLock::new("report-composition-token".into()));
+        let server = ApiServer::start(
+            Arc::new(ReportHost {
+                store: store.clone(),
+            }),
+            token,
+            0,
+        )
+        .await
+        .unwrap();
+        let base = format!("http://127.0.0.1:{}", server.local_addr().port());
+        let client = reqwest::Client::new();
+        let list = client
+            .get(format!("{base}/v1/reports?from=0&to={}", i64::MAX))
+            .bearer_auth("report-composition-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(list.status(), 200);
+        let body: serde_json::Value = list.json().await.unwrap();
+        assert_eq!(body["items"][0]["run_id"], "run-http");
+        assert!(body["items"][0].get("config_snapshot").is_none());
+        let detail = client
+            .get(format!("{base}/v1/reports/run-http"))
+            .bearer_auth("report-composition-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(detail.status(), 200);
+        let body: serde_json::Value = detail.json().await.unwrap();
+        assert_eq!(body["result"]["markdown"], "# http saved markdown");
+        assert!(body.get("config_snapshot").is_none());
+        server.stop().await;
+        // No state mutation: still exactly the one seeded run.
+        assert_eq!(store.list_report_runs(1000).await.unwrap().len(), 1);
     }
 }

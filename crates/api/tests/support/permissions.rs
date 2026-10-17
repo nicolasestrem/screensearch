@@ -21,6 +21,7 @@ async fn read_token_route_matrix_including_head_image_cached_summary_and_methods
             "/v1/sessions/1",
             "/v1/sessions/1?include_summary=1",
             "/v1/export",
+            "/v1/reports?from=0&to=1",
         ] {
             for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
                 let r = c
@@ -46,6 +47,8 @@ async fn read_token_route_matrix_including_head_image_cached_summary_and_methods
             ("/v1/export", "GET,HEAD"),
             ("/v1/marks/1/resolve", "POST"),
             ("/v1/ask", "POST"),
+            ("/v1/reports", "GET,HEAD"),
+            ("/v1/reports/1", "GET,HEAD"),
         ] {
             for method in [
                 reqwest::Method::PUT,
@@ -78,12 +81,7 @@ async fn read_token_route_matrix_including_head_image_cached_summary_and_methods
                 assert_eq!(r.headers()[reqwest::header::ALLOW], "POST");
             }
         }
-        for path in [
-            "/v1/future",
-            "/outside-v1",
-            "/v1/frames/1/extra",
-            "/v1/reports/generate",
-        ] {
+        for path in ["/v1/future", "/outside-v1", "/v1/frames/1/extra"] {
             for method in [
                 reqwest::Method::GET,
                 reqwest::Method::HEAD,
@@ -105,6 +103,36 @@ async fn read_token_route_matrix_including_head_image_cached_summary_and_methods
                 }
             }
         }
+        // The saved-report detail route matches any opaque single segment, so
+        // `/v1/reports/generate` is now a *read* path — never a generation route: GET/HEAD
+        // read (404: no such run), every other method is a terminal 405 allowing GET,HEAD.
+        for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
+            let r = c
+                .request(method.clone(), format!("{base}/v1/reports/generate"))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 404, "{method} /v1/reports/generate");
+        }
+        for method in [
+            reqwest::Method::POST,
+            reqwest::Method::PUT,
+            reqwest::Method::PATCH,
+            reqwest::Method::DELETE,
+            reqwest::Method::OPTIONS,
+            reqwest::Method::TRACE,
+            reqwest::Method::from_bytes(b"FUTURE").unwrap(),
+        ] {
+            let r = c
+                .request(method.clone(), format!("{base}/v1/reports/generate"))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 405, "{method} /v1/reports/generate");
+            assert_eq!(r.headers()[reqwest::header::ALLOW], "GET,HEAD");
+        }
     }
     // Authentication precedes method/path dispatch for every route, HEAD and future method too.
     for path in [
@@ -118,6 +146,8 @@ async fn read_token_route_matrix_including_head_image_cached_summary_and_methods
         "/v1/marks/1/resolve",
         "/v1/ask",
         "/v1/export",
+        "/v1/reports",
+        "/v1/reports/1",
         "/outside-v1",
     ] {
         for method in [
