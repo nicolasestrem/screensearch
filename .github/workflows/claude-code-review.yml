@@ -3,81 +3,43 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
-
-concurrency:
-  group: claude-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+    # Optional: Only run on specific file changes
+    # paths:
+    #   - "src/**/*.ts"
+    #   - "src/**/*.tsx"
+    #   - "src/**/*.js"
+    #   - "src/**/*.jsx"
 
 jobs:
   claude-review:
+    # Optional: Filter by PR author
+    # if: |
+    #   github.event.pull_request.user.login == 'external-contributor' ||
+    #   github.event.pull_request.user.login == 'new-developer' ||
+    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
-      issues: write
+      pull-requests: read
+      issues: read
       id-token: write
-      # actions: read lets the action install its github_ci MCP server, which
-      # reads CI / check-run status so the review can reference failing checks.
-      # Without it the action logs "Skipping CI server installation".
-      actions: read
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-
-          # In plain automation mode the action does NOT inject its GitHub
-          # comment MCP servers, so mcp__github_inline_comment__create_inline_comment
-          # does not exist, the agent falls back to `gh api` from Bash, and the
-          # CI Bash sandbox blocks it -> silence. track_progress makes the action
-          # own the PR comment, which wires up those MCP servers AND posts the
-          # review itself, so the review lands even if the inline tool fails to
-          # load. See:
-          #   https://github.com/anthropics/claude-code-action/blob/main/docs/solutions.md
-          #   https://github.com/anthropics/claude-code-action/issues/548
-          track_progress: true
-
-          prompt: |
-            Review pull request #${{ github.event.pull_request.number }} in
-            ${{ github.repository }}.
-
-            Scope: report only high-confidence, real issues. Logic errors,
-            security problems, broken edge cases, regressions, and clear,
-            quotable violations of this repo's CLAUDE.md. Skip style nits and
-            anything speculative. If unsure an issue is real, do not raise it.
-
-            How to read the PR:
-            1. gh pr view ${{ github.event.pull_request.number }}   (intent)
-            2. gh pr diff ${{ github.event.pull_request.number }}   (changes)
-            3. Use the Read tool to open any file needed to confirm a finding.
-               Verify; do not guess from naming.
-
-            How to post (read carefully):
-            - For line-specific findings, IF the tool
-              mcp__github_inline_comment__create_inline_comment is available,
-              use it (one call per issue).
-            - If that tool is NOT available, do NOT try to work around it with
-              gh api, heredocs, or python. Those are blocked in CI. Instead,
-              fold every finding (with file:line references) into your final
-              review summary. The action posts that summary as the PR comment.
-            - End with a concise summary of findings. If there are none, the
-              summary must be exactly:
-              No issues found. Checked for bugs and CLAUDE.md compliance.
-
-            Cite file and line for every claim. When linking to code, use the
-            full commit SHA in the URL or the Markdown preview will not render.
-
-          claude_args: |
-            --model claude-sonnet-5
-            --max-turns 50
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep"
-
-          show_full_output: true
+          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
+          plugins: 'code-review@claude-code-plugins'
+          prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+          # or https://code.claude.com/docs/en/cli-reference for available options
+
