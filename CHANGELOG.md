@@ -24,10 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to end every session" (~60k tokens) to targeted section reads; the CLAUDE.md release-history
   paragraph is condensed to a pointer (history stays in `CHANGELOG-ARCHIVE.md` /
   `specs/archive/`). CLAUDE.md documents the on-demand review triggers.
-- Proposed F3 deeper-memory planning increment (`docs/deeper-memory-f3-plan.md`): weekly
-  index-linked synthesis and user-confirmed promotion into one accumulating project note. Planning
-  artifact only — contingent on F1 pilot review, no spec amendment or implementation yet; open
-  decisions logged in `specs/07_KNOWN_GAPS.md`.
+- **F3 deeper-memory contract (GO):** Nico's decisions for the deeper-memory slice are final and
+  the plan (`docs/deeper-memory-f3-plan.md`) is approved (F1-pilot contingency waived) — weekly
+  index-linked synthesis plus user-confirmed promotion into one accumulating project note. Kind
+  token `weekly_synthesis`; persisted `kind` column (migration 12 → 13) exposed on
+  `GET /v1/reports`; 4-complete-ISO-week catch-up cap; fixed weekly headings; one project note;
+  weekly Telegram digest under `03 §8d` (increment G6). Normative text `02 §5i` + `03 §8e`;
+  decisions ledger `specs/07_KNOWN_GAPS.md`.
 
 ## Older versions
 

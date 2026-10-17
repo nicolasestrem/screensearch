@@ -1,5 +1,21 @@
 # 08 — AI Changelog
 
+## 2026-10-17 — F3 deeper-memory contract (02 §5i, 03 §8e)
+
+- **Change:** recorded Nico's FINAL F3 deeper-memory decisions (GO, 2026-10-17; the F1-pilot
+  contingency is waived) across the ledgers: `docs/deeper-memory-f3-plan.md` approved — kind token
+  `weekly_synthesis`; `kind` as an indexed `report_runs` column (`kind TEXT NOT NULL DEFAULT
+  'daily'`, forward-only 12 → 13 migration) exposed on `GET /v1/reports`; catch-up cap 4 complete
+  ISO weeks; weekly headings `Activity` / `Explicitly evidenced decisions` / `Open questions` /
+  `Next steps`; exactly one project note; weekly Telegram digest with its own weekly-specific
+  format under `03 §8d` as increment G6. The `07` F3 open-decisions entry is marked resolved with
+  the original questions preserved as history; `CHANGELOG.md` carries the contract entry.
+  Normative contract text: `02 §5i` + `03 §8e`.
+- **Why:** maintainer decisions (Nico, 2026-10-17) after review of the corrected plan (#131);
+  listing/filtering needs the persisted `kind`, and the 12 → 13 migration is already required.
+- **Verification:** documentation-only edit (no runtime, schema, code or build change; no `02`/`03`
+  text authored here). Edited files re-read after writing; relative links checked; no build run.
+
 ## 2026-10-17 — Fix untrusted PR checkout in on-demand Claude review (CI security)
 
 - **Change:** `claude-code-review.yml` checks out the default branch instead of

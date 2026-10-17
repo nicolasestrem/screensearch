@@ -293,6 +293,67 @@ Archives/checksums publication, NSIS release/updater actions, merge and tags req
 authorization. Rollback revokes the read token/disables API without deleting local history,
 reports or notes; restoring/using older writers invalidates client checkpoints explicitly.
 
+## 5i. Deeper memory (F3) — approved increment (2026-10-17)
+
+Nico approved the deeper-memory F3 contract ("GO", 2026-10-17), explicitly waiving the direction
+plan's F1-pilot contingency (`docs/memory-api-direction-plan.md` §5, F3). The normative contract
+is fully recorded in `03 §8e`, not delegated back to the draft plan
+(`docs/deeper-memory-f3-plan.md` remains context). Approval is contract-only: it authorizes
+neither merge nor release, and G1–G6 each still require real per-unit verification, independent
+review and separate merge authorization before landing.
+
+**Outcome:** the daily report stays the atomic unit; F3 adds exactly two layers above it — one
+index-linked weekly synthesis per source week, citing that week's saved daily reports and the
+underlying evidence, and one user-created project note accumulating source-backed decisions,
+open questions and next steps across days. Loop: daily reports → weekly synthesis → explicit
+user-confirmed promotion → durable project note. This promotes the deeper weekly/project memory
+deferral recorded in `§5f`; no second engine and no second model path — weekly runs execute
+through the shared report application service.
+
+**Frozen choices:** kind token `weekly_synthesis`, deliberately distinct from the existing
+on-demand `ReportKind::Weekly` (`03 §8b`), which keeps its name, label and filename stem; the
+discriminator is an indexed `kind` column on `report_runs` (`kind TEXT NOT NULL DEFAULT 'daily'`)
+carried by one forward-only migration 12 → 13 with a `schema_version` bump, exposed on
+`GET /v1/reports` projections as a deliberate wire-contract change; weekly run identity is
+schedule ID + ISO-week UTC window (Monday 00:00 local → next Monday 00:00 local in the selected
+IANA timezone; DST weeks are 167/169 hours, never 24·7 UTC hours), uniqueness
+`(schedule_id, window)`, retries reuse the run and Regenerate creates a linked revision; truthful
+statuses reuse the daily set (`NO_DATA`/`PARTIAL`/`BLOCKED`/`FAILED`/`OK`, `03 §8c`); the weekly
+note is `ScreenSearch/Weekly/YYYY-Www.md` with entries added to the existing
+`ScreenSearch/Index.md`, frontmatter v1 → v2 (`kind`, `daily_run_ids`, `window_local_dates`; v1
+daily notes must still parse) under headings `Activity`, `Explicitly evidenced decisions`,
+`Open questions`, `Next steps`, every item citing frame/session/daily-run IDs; exactly one
+user-created project note (`ScreenSearch/Projects/<slug>.md`), written only through explicit
+user-confirmed promotion as an append-only ledger (never invented, renamed or deleted; user edits
+surface as conflicts, rejected proposals are not persisted); the first eligible weekly window is
+the first complete ISO week after activation, and catch-up processes missed complete ISO weeks
+oldest-first, capped at the 4 most recent, with older gaps left visible and never claimed covered.
+
+**Order:** G1 contract + 12 → 13 migration (frozen in `03 §8e`) → G2 weekly engine through the
+shared report service → G3 weekly note + index/path/provenance writer branches → G4
+promotion/append → G5 weekly scheduler + catch-up → G6 weekly Telegram digest with its own
+weekly-specific format under the existing `03 §8d` exception. G1–G6 are separately reviewable;
+no repeated blanket GO.
+
+**Fences:** no automatic edits to personal identity or existing knowledge pages; no promotion
+without explicit user confirmation; no multiple project notes in this slice; no report generation
+over HTTP/MCP (C3 stays deferred) and no new capture, audio, cloud inference or scoring/nags
+(pull-based, D4/D11); weekly runs are local, scheduled and default-off, same as daily; `Weekly`
+and `weekly_synthesis` never share a token, label or filename stem; weekly and project notes are
+user-owned output and are never pruned by the 90-day run retention; no schema change beyond the
+single 12 → 13 migration; no Telegram send without an explicitly approved test recipient.
+
+**Evidence:** native acceptance mirrors the daily arc — a real weekly run over a real week of
+saved dailies, the rendered note inspected in Obsidian with working links, and one promotion
+performed in the running app. Per-unit checks include `weekly_window_handles_dst`,
+`weekly_run_identity_reuses_schedule_window`,
+`migration_12_to_13_defaults_existing_runs_to_daily`, `frontmatter_v1_still_parses`,
+`promotion_requires_explicit_confirm`, `edited_weekly_note_is_preserved` and
+`weekly_catchup_oldest_first`; missing native evidence is blocked acceptance, never inferred from
+fixtures or compile success. Review focus: week-boundary/DST correctness, synthesis over-claiming
+(uncited claims are a defect, not style), promotion races and kind separation. Rollback disables
+the weekly schedule without deleting local history, reports or notes.
+
 ## 6. Risks & mitigations
 
 | Risk | Mitigation |

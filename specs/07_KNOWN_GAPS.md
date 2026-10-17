@@ -1,20 +1,27 @@
 # 07 — Known Gaps
 
-## 2026-10-17 — F3 deeper-memory plan: open decisions (owner: maintainer; PROPOSED, no GO)
+## 2026-10-17 — F3 deeper-memory plan: open decisions (owner: maintainer) — **Resolved (Nico, 2026-10-17)**
 
-Source: `docs/deeper-memory-f3-plan.md` §6. Specs `02`/`03` are silent on all of these; none is
-resolved and no implementation is authorized.
+Source: `docs/deeper-memory-f3-plan.md` §6. Specs `02`/`03` were silent on all of these; each was
+answered by Nico (2026-10-17, GO — the F1-pilot contingency is waived). The original questions are
+preserved below as history; the normative contract text is `02 §5i` + `03 §8e`.
 
 - **Weekly kind token.** `ReportKind::Weekly` already exists (`crates/traits/src/ipc.rs:158`,
   `03 §8b`: on-demand trailing 7 local days). The scheduled ISO-week synthesis needs a distinct
-  token; proposal `weekly_synthesis`.
+  token; proposal `weekly_synthesis`. **Resolved:** the token is `weekly_synthesis`.
 - **Persisted `kind`.** No discriminator exists on `ReportRun` (`crates/traits/src/memory.rs:110-132`),
   `report_runs` (`crates/store/src/schema.rs:455-469`) or the `GET /v1/reports` projections. Column
   vs payload field, and its default for existing daily runs, is a 12 → 13 migration decision.
-- **Weekly catch-up cap:** 4 complete weeks proposed.
+  **Resolved:** an indexed column `kind TEXT NOT NULL DEFAULT 'daily'` on `report_runs`, via the
+  forward-only 12 → 13 migration, exposed on `GET /v1/reports` — listing/filtering needs it and the
+  migration is already required.
+- **Weekly catch-up cap:** 4 complete weeks proposed. **Resolved:** 4 complete ISO weeks.
 - **Weekly note headings:** reuse daily `Activity` / `Explicitly evidenced decisions` or new names.
+  **Resolved:** `Activity`, `Explicitly evidenced decisions`, `Open questions`, `Next steps`.
 - **Project notes:** one user-selected note (direction-plan F3 minimum); more than one is out of scope.
-- **Weekly Telegram digest** under `03 §8d`: later increment or never.
+  **Resolved:** exactly one project note in this slice.
+- **Weekly Telegram digest** under `03 §8d`: later increment or never. **Resolved:** a weekly digest
+  with its own weekly-specific format under `03 §8d` — increment G6.
 
 ## 2026-10-16 — External-agent memory API P0 decisions and gates
 

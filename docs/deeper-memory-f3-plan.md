@@ -1,10 +1,12 @@
 # Deeper memory — F3 planning increment (weekly synthesis + accumulating project note)
 
-Status (2026-10-17): **PROPOSED.** This is the planning artifact for the F3 gate named in
+Status (2026-10-17): **APPROVED** — Nico GO (2026-10-17); the F1-pilot contingency is waived. The
+normative contract text is now `02 §5i` + `03 §8e`; this document is context for it. It is the
+planning artifact for the F3 gate named in
 [memory-api-direction-plan.md](memory-api-direction-plan.md) §5 ("only after F1 passes and F2 is
-reviewed, separately plan a minimum deeper-memory slice …"). It grants **no** implementation,
-spec-amendment, schema-migration or merge authorization. On maintainer GO its §3 becomes the
-contract entry (`02 §5i` + `03 §8e`) reviewed per Gate A before any code.
+reviewed, separately plan a minimum deeper-memory slice …"). Per the plan's gate, the contract
+entry is reviewed per Gate A before any code; each increment (G1–G6) remains separately reviewable
+and verified, and approval of this plan is not by itself implementation or merge authorization.
 
 Author provenance: drafted by the maintainer's second-brain librarian agent from the external
 consumer side, after live second-machine verification of the P1–P3 read surfaces (frames, coverage,
@@ -33,19 +35,17 @@ durable project note`.
 - No report generation over HTTP/MCP (C3 stays deferred); weekly runs are local, scheduled,
   default-off, same as daily.
 - No new capture, no audio, no cross-platform capture, no cloud inference.
-- No Telegram change in this slice; a weekly digest would reuse the `03 §8d` exception as a
-  separate later increment, separately flagged.
 - No scoring, nags, or unsolicited automation (pull-based, D4/D11).
 - No multiple project notes in the first slice (see §6).
 - Schema changes only as one forward-only migration in the increment that needs it (12 → 13), never
   guessed or downgraded.
 
-## 3. Contract surfaces (to become normative on GO)
+## 3. Contract surfaces (normative text: `02 §5i` + `03 §8e`; this doc is context)
 
 ### 3.1 Weekly synthesis runs
 
-- New report kind, proposed token `weekly_synthesis` (pending the §6 naming decision; logged in
-  `specs/07_KNOWN_GAPS.md`), executed through the shared report application service (C1) —
+- New report kind `weekly_synthesis` (decided 2026-10-17; logged in `specs/07_KNOWN_GAPS.md`),
+  executed through the shared report application service (C1) —
   no second engine, no second model path. It is deliberately distinct from the existing on-demand
   `ReportKind::Weekly` (`crates/traits/src/ipc.rs:158`, `03 §8b`: trailing 7 local days, frame-based
   map-reduce), which keeps its name, label ("Weekly") and `screensearch-report-weekly-…` filenames
@@ -66,8 +66,9 @@ durable project note`.
   not on `ReportRun` (`crates/traits/src/memory.rs:110-132`), not on the `report_runs` table
   (`crates/store/src/schema.rs:455-469`). Adding an explicit `kind` (daily vs the new kind)
   and window granularity is new persisted surface, carried by the single forward-only 12 → 13
-  migration with a `schema_version` bump (§2); the maintainer decides at G1 (§6) whether `kind` is a column (needed if uniqueness or listing filters on
-  it) or a payload field with a default for existing daily runs.
+  migration with a `schema_version` bump (§2); decided 2026-10-17: `kind` is an indexed column
+  `kind TEXT NOT NULL DEFAULT 'daily'` on `report_runs`, exposed on `GET /v1/reports` —
+  listing/filtering needs it and the migration is already required.
 
 ### 3.2 Weekly note and index
 
@@ -85,7 +86,7 @@ durable project note`.
   `daily_run_ids`, `window_local_dates`, with the same coverage counts. Daily frontmatter has no
   `kind` field today (`memory_files.rs:62-83`, schema 1), so note-frontmatter schema bumps v1 → v2
   with a typed parse/serialization roundtrip test; v1 daily notes must still parse.
-- Fixed headings (proposed; §6): reuse the daily headings `Activity` and `Explicitly evidenced decisions`
+- Fixed headings (decided 2026-10-17): reuse the daily headings `Activity` and `Explicitly evidenced decisions`
   (`crates/kernel/src/reports.rs:786`) and add `Open questions` and `Next steps`. Every item cites
   frame/session/daily-run IDs. Tentative screen text is never stated as commitment.
 
@@ -101,23 +102,23 @@ durable project note`.
   entry carries its date, source `run_id`(s) and frame/session IDs, and is additive forever — the
   note is an append-only ledger, not a summary the app maintains.
 - No HTTP/MCP surface in the first slice. `GET /v1/reports` projections (`ReportSummary` /
-  `ReportDetail`, `crates/traits/src/reports.rs:125-181`) carry no `kind` today; if weekly runs
-  appear in that listing, exposing `kind` is a deliberate wire-contract change reviewed with the
-  §3.1 persistence change, not an existing field that surfaces automatically.
+  `ReportDetail`, `crates/traits/src/reports.rs:125-181`) carry no `kind` today; exposing `kind` there is a deliberate wire-contract change (decided
+  2026-10-17: `kind` is exposed on `GET /v1/reports`), reviewed with the §3.1 persistence change —
+  not an existing field that surfaces automatically.
 
 ### 3.4 Scheduling
 
 - Default-off weekly schedule beside the daily one; Settings controls mirror D4 (schedule, time,
   timezone, folder implied by the daily choice, Run now, last-run status).
 - First eligible window = the first complete ISO week after activation. Restart catch-up processes
-  missed weeks oldest-first, capped at the 4 most recent complete weeks (proposed; §6);
+  missed weeks oldest-first, capped at the 4 most recent complete ISO weeks (decided 2026-10-17);
   older gaps stay visible and are never claimed as covered.
 - Timezone selection is fixed while travelling; DST transitions follow the daily rules (missing
   local time → first valid instant, overlapping → earlier instant; `03 §8c`).
 
 ## 4. Increments and proposed checks
 
-Each increment is separately reviewable; names are proposals unless marked existing.
+Each increment is separately reviewable; names are working labels unless marked existing.
 
 - **G1 Contract + migration:** freeze run identity, window, statuses, the `weekly_synthesis` kind,
   the persisted `kind` discriminator (12 → 13), promotion and note-frontmatter schema v2 in
@@ -133,10 +134,15 @@ Each increment is separately reviewable; names are proposals unless marked exist
   `promotion_to_edited_note_surfaces_conflict`.
 - **G5 Scheduler:** weekly schedule, catch-up, visible gaps. `weekly_catchup_oldest_first`,
   `weekly_backfill_cap_reports_gap`.
+- **G6 Telegram:** weekly digest with its own weekly-specific format, under the existing `03 §8d`
+  exception (opt-in, user-selected destination; never raw OCR/screenshots).
+  `weekly_digest_uses_saved_weekly_report`, `weekly_digest_renders_weekly_format`,
+  `weekly_digest_chunks_fit_telegram_limit`.
 
 Native acceptance mirrors the daily arc: a real weekly run over a real week of saved dailies, the
 rendered note inspected in Obsidian with working links, and one promotion performed in the running
-app. No Telegram step in this slice.
+app. The G6 weekly digest adds its own `03 §8d` Telegram acceptance (explicitly enabled,
+user-selected destination).
 
 ## 5. Review focus
 
@@ -153,24 +159,27 @@ app. No Telegram step in this slice.
 6. **Index growth** — `Index.md` grows by design; flag a split rule (e.g. per-month sections) at
    review instead of silently bounding history.
 
-## 6. Decisions needed from the maintainer
+## 6. Decisions (resolved 2026-10-17)
 
-The specs are silent on every item below. Per `04 §5` each is an open question for the maintainer,
-recorded in `specs/07_KNOWN_GAPS.md`; nothing here resolves it, and implementation stops until it is
-answered.
+Nico's decisions are recorded below (GO, 2026-10-17; the F1-pilot contingency is waived). The
+original open questions were logged in `specs/07_KNOWN_GAPS.md` and are preserved there as history;
+the normative contract text is `02 §5i` + `03 §8e`.
 
-
-- GO/NO-GO, contingent on F1 pilot outcome review per the direction plan.
-- Weekly kind naming: `weekly_synthesis` proposed, kept distinct from the on-demand
-  `ReportKind::Weekly` in the typed model, run store, note frontmatter, labels and filenames.
-- `kind` placement: indexed column vs payload field with default (G1).
-- Weekly note headings: reuse daily `Activity` / `Explicitly evidenced decisions` plus
-  `Open questions` / `Next steps`, or new names.
-- Weekly catch-up cap: 4 complete weeks proposed.
-- Whether a weekly Telegram digest rides the existing `03 §8d` exception as a later increment.
-- Project-note location and naming: `ScreenSearch/Projects/<slug>.md` proposed.
-- Multiple project notes: out of the first slice per the direction-plan minimum; a later increment
-  only if the single-note pilot holds up.
+- **GO/NO-GO:** GO; the contingency (F1 pilot outcome review per the direction plan) is waived.
+- **Weekly kind naming:** `weekly_synthesis`, kept distinct from the on-demand `ReportKind::Weekly`
+  in the typed model, run store, note frontmatter, labels and filenames.
+- **`kind` placement:** an indexed column `kind TEXT NOT NULL DEFAULT 'daily'` on `report_runs`,
+  carried by the forward-only 12 → 13 migration, exposed on `GET /v1/reports` — listing/filtering
+  needs it and the migration is already required.
+- **Weekly note headings:** `Activity`, `Explicitly evidenced decisions`, `Open questions`,
+  `Next steps`.
+- **Weekly catch-up cap:** 4 complete ISO weeks.
+- **Weekly Telegram digest:** a weekly digest with its own weekly-specific format under the
+  existing `03 §8d` exception — increment G6.
+- **Project-note location and naming:** `ScreenSearch/Projects/<slug>.md` (per this approved plan;
+  the normative text is `03 §8e`).
+- **Multiple project notes:** exactly one note in this slice; a later increment only if the
+  single-note pilot holds up.
 
 ## 7. Verification strategy
 
