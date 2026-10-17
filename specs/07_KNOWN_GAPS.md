@@ -4,10 +4,15 @@
 
 - Nico authorized execution of the attached plan, replacing its draft/no-GO labels.
   The new contract is `03 §7f`; it describes authorized behavior, not completed work.
-- **Awaiting Nico, P3 only:** expose saved output while an existing run is queued/
-  running for delivery retry, or suppress it under the plan's unfinished-null rule.
-  Recommendation: mirror immutable saved-result presence. Evidence/contradiction:
-  `06` external-agent P0 entry; implementation of that projection remains blocked.
+- **Resolved (Nico GO), P3 only — historical record preserved:** the question was whether to
+  expose saved output while an existing run is queued/running for delivery retry, or to suppress it
+  under the plan's unfinished-null rule; the recommendation was to mirror immutable saved-result
+  presence. **Nico approved stored-presence exposure:** an immutable saved result is exposed
+  immediately whenever it exists, including while delivery is queued or retrying; absent output is
+  explicit null; stored `NO_DATA` stays factual; a malformed saved payload is a read error. The
+  earlier "implementation remains blocked" hold is **superseded** for P3. Evidence/contradiction:
+  `06` external-agent P0 entry. P3 runtime is being implemented on
+  `feat/agent-memory-saved-reports`; verification pending, no P3 result claimed.
 - Wire normalization is explicit in `03 §7f.6`: signed integral timestamps, present
   nullable fields, absent versus empty text, chronological global coverage extrema,
   duplicate query rejection, safe fixed new-read errors and unknown saved error-code

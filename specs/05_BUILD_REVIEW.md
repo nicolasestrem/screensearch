@@ -264,6 +264,86 @@ These are affected native regressions, not a rerun or extension of the historica
 receipt. No app was launched and no UI, clipboard, capture, live-profile or network-policy
 acceptance is inferred; the existing GUI/network/P3 gates remain open.
 
+### P3 saved-report reads: local and packaged-client evidence
+
+Nico's GO resolved the former delivery-visibility hold: valid persisted saved output is
+readable immediately, including queued/running delivery. Absent output remains explicit null;
+stored NO_DATA remains factual. The policy is committed on both feature branches.
+
+Parent independently executed the affected portable checks on the final candidate bytes:
+
+```text
+Store report_pages: 17 passed; 0 failed
+API library: 23 passed; 0 failed
+API report HTTP: 9 passed; 0 failed
+MCP dot-ID wire regression: 1 passed; 0 failed
+Python driver validators: 38 tests, OK
+Existing real consumer suite: 23 tests, OK (zero skips)
+```
+
+Scoped formatting and warnings-denied clippy passed. The dot-ID regression proves exact
+`.`/`..`/empty identifiers fail locally before HTTP; percent-encoding alone was not sufficient
+because URL reparsing normalized those segments to another route.
+
+The final Linux release archive was checksummed, unpacked and actually executed: version,
+MCP initialization, 13 normal/10 read-only tools and an authenticated real-Store read passed.
+Parent then replayed the same independent-manifest integration using that **unpacked archive
+binary**, not only a debug client, against the actual `ApiServer` + `SqliteStore` + `Kernel`
+fixture. Expected values were cross-checked between seed constants and direct read-only SQL,
+not copied from endpoint responses:
+
+```text
+PACKAGED_REAL_DRIVER_STATUS=ok
+PACKAGED_REAL_P3_REPORTS=ok
+PACKAGED_REAL_CHECKS=21
+STATE_CORE_UNCHANGED=TRUE
+TOKEN_LEAKS=0
+SOURCE_HASHES_ALL_FINAL_UNCHANGED=TRUE
+PARENT_PACKAGED_NO_PROVIDER_NO_MUTATION=PASS
+```
+
+The run consumed 1035 frames over five pages with process restart/resume and zero detail
+mismatches, then 11 report summaries over four pages and 11 matching report details. Eight
+saved results and three null results included queued/running saved output, factual NO_DATA,
+250 historical source IDs and allowlisted/null error codes. A saved-report source resolved
+to a real frame; a missing historical frame returned not-found without rewriting provenance.
+Report/delivery/file state fingerprints were unchanged, OCR/answer-provider calls were zero,
+capture was off, and privacy canaries were absent from public projections.
+
+Archive SHA256: `bfa24ebcc82b1740c0f3f6fecf3ed72e8fbdf0978472b74f35aacfbd97ac47a1`;
+unpacked binary SHA256: `ce9658f7d3aba82edfec02aa7001922f1b8e9a0e86412066b2eba636eb623eeb`.
+Source binding: Store report pages `6efd95ff…`, API reports `b7880cf2…`, MCP tools `62bceaa4…`,
+driver `084bc9eb…`, producer fixture `4adb84e5…`; all 22 frozen source hashes stayed unchanged.
+The local archive script ran under Node 26.8.1/Rust 1.95.0; this is not a Node22/native-CI receipt.
+
+Native Windows Rust 1.95.0/Node22 checks subsequently passed. Parent downloaded the raw
+logs, required every per-command RC to be zero, and independently read back all native inputs:
+
+```text
+PRODUCER_GATES_OVERALL_RC=0
+MCP_GATES_OVERALL_RC=0
+PARENT_P3_NATIVE_SOURCE_HASHES=20/20 PASS
+API library: 23 passed; 0 failed; 0 ignored
+API HTTP: 51 passed; 0 failed; 1 ignored
+Tauri local_api: 25 passed; 0 failed
+MCP: 47 library + 13 memory + 8 remote + 22 stdio; 0 failed
+Workspace-unified remote TLS: 8 passed; 0 failed
+NATIVE_WINDOWS_ARCHIVE_REGISTRY_AUTH_SMOKE=PASS
+```
+
+The retained IPv6 test executed. Store report/full packages, full traits, scoped formatting,
+affected all-target clippy, fixture build and bindings guard passed; existing Store ignores
+were retained. The actual Windows ZIP was checksummed, unpacked and executed with 13 normal/
+10 read-only tools plus a genuine authenticated Store read. No app was launched. Independent
+review round1 passed with no security/logic findings against the 22 frozen inputs. Its four
+nonblocking hardening notes do not imply signed cursors, support for oversized non-UUID IDs,
+or extra runtime-schema validation. No extra review was requested for these docs-only receipts.
+
+**Still open:** fresh hosted checks for the published P3 revisions. These are same-host
+fixture/packaged-client and native build/test results, not
+GUI, direct Linux-to-Windows-app, release or merge acceptance. The queued fixture is inert
+and must not be used to launch the real app. No generator/scheduler/delivery worker was started.
+
 ### Review follow-up: truthful stop observation
 
 The claude[bot] review finding on PR #128 (bounded memory evidence / read-only credentials)

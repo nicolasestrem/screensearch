@@ -88,7 +88,10 @@ The current committed transport registry (`409d380`, draft PR
 [#127](https://github.com/nicolasestrem/screensearch/pull/127)) allows eight read tools:
 `search_screen_history`, `get_moment`, `where_was_i`, `list_marks`, `list_sessions`,
 `get_session`, `list_frames`, `get_capture_coverage`. The earlier committed HEAD (`7831e84`)
-had only the first six. None of the P2 additions are in the P1 bundled wrapper or any released
+had only the first six. The stacked P3 report-tool branch
+(`feat/agent-memory-saved-report-mcp`, a child of this P2 branch) adds `list_reports` and
+`get_report` for **ten** read tools / **thirteen** normal on that source branch. Those two are
+not in the P2 baseline registry, any released binary or the P1 bundled wrapper. None of the P2 additions are in the P1 bundled wrapper or any released
 binary (see [Tools](#tools)). Ask tools and `add_mark` are excluded; unknown/future names
 default-deny. This is tool-selection ergonomics,
 **not authorization**: omitting the flag does not elevate a read token, and enabling it does
@@ -98,10 +101,10 @@ requests, not guaranteed cancellation of authorized streams.
 
 The standalone wrapper can be built package-scoped with Rust 1.95.0 (`cargo build --locked
 -p mcp --release`); it does not need Windows app crates on Linux. Intended first archive
-targets are the three native wrappers — Windows x86_64, Linux x86_64 and macOS arm64 — but
-archive availability and native execution are **not claimed here**: each of the three targets
-needs its own packaged-archive build-and-run receipt, plus a separate release authorization,
-before any portable-release or supported-platform claim. Packaging is staged, not released.
+targets are the three native wrappers — Windows x86_64, Linux x86_64 and macOS arm64. Local
+P3 archive execution is verified on Windows and Linux; fresh three-target hosted checks remain
+pending. Each target needs its own receipt plus separate release authorization before any
+portable-release or supported-platform claim. Packaging is verified, not released.
 The Windows NSIS staging contract remains unchanged.
 
 ## Claude Desktop
@@ -143,12 +146,23 @@ mode, eight in read-only mode**. The earlier committed HEAD (`7831e84`) had nine
 read-only. The two additions (`list_frames`, `get_capture_coverage`) are **not** in the P1
 bundled wrapper or any released binary, and the base API on that branch does not serve
 `/v1/frames` or `/v1/coverage` — the P1 routes live on `feat/agent-memory-http` — so they are
-exercised only by protocol-fixture tests, not a real end-to-end read. Until they are released
+tested separately from the P1 producer source. A current packaged-client integration against
+the real P1/P3 fixture has now passed (see verification status). Until they are released
 and integrated, use the [HTTP frame/coverage reads](API.md#chronological-frames) and the
 [reference consumer](MEMORY_CONSUMER.md) directly. Do not infer their presence from the
-specification or from this page. P3 `list_reports` / `get_report` remain blocked pending
-Nico's retry-result visibility decision; remote report generation/retry/scheduling/delivery
-remain deferred.
+specification or from this page.
+
+**P3 report tools (`list_reports`, `get_report`) are resolved** (Nico GO, stored-presence
+visibility) and implemented on the **stacked report-tool branch**
+`feat/agent-memory-saved-report-mcp` — a separate child of this P2 transport branch. They are
+HTTP-only `Value` passthrough tools (no producer-crate import); the producer's `/v1/reports`
+routes live on `feat/agent-memory-saved-reports`. In addition to protocol fixtures, the
+unpacked Linux release client passed 21 genuine API/SQLite checks with full saved-report
+details, unchanged state and zero provider calls; native Windows unit/archive checks passed.
+Fresh hosted P3 checks remain pending. These tools are not in the P2 baseline
+registry, any released binary or the P1 bundled wrapper. Remote report generation, retry,
+scheduling and delivery remain deferred; the report tools add no phase/`result` logic of their own
+— the producer's projection is passed through verbatim.
 
 | Tool | Wraps | Arguments | Returns |
 |---|---|---|---|
@@ -163,6 +177,8 @@ remain deferred.
 | `ask_session` | `POST /v1/ask` (`session_id`) | `session_id` (required); `query` (required); `top_k`; `thinking`; `max_tokens` | A grounded answer that cites **only** frames owned by that session. |
 | `list_frames` *(committed P2 `409d380`; draft PR #127)* | `GET /v1/frames` | `from`+`to` (first page) **or** `cursor` (continuation); optional `app`, `window_title`, `limit` (1–1000) | One chronological page over the half-open UTC window, with full `raw_text`/`content_text`/`vision_description` and the exact `next_cursor`. |
 | `get_capture_coverage` *(committed P2 `409d380`; draft PR #127)* | `GET /v1/coverage` | `from`, `to` (both required, unix ms) | Bounded coverage counts plus allocator/retention facts and capture observations with explicit unknowns. |
+| `list_reports` *(P3, stacked report-tool branch `feat/agent-memory-saved-report-mcp`)* | `GET /v1/reports` | `from`+`to` (first page) **or** `cursor` (continuation); optional `phase`, `outcome`, `limit` (1–1000) | One page of saved-report summaries over the half-open UTC window, newest first, with the exact `next_cursor`; rows omit `markdown`/full evidence. |
+| `get_report` *(P3, stacked report-tool branch `feat/agent-memory-saved-report-mcp`)* | `GET /v1/reports/{run_id}` | `run_id` (required, opaque UUID string) | One saved report's public detail — summary fields plus the saved `result` (markdown/model/coverage/provenance) or explicit `null`. |
 
 The API's `health`, `export`, and mark-`resolve` surfaces are intentionally **not** exposed as
 tools. Normal mode includes reads, Ask generation and add-a-mark. `list_sessions` and

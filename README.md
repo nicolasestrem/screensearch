@@ -91,9 +91,11 @@ need their own build-and-run receipt before any portable-release or supported-pl
 See
 [completed versus pending evidence](docs/TESTING.md#external-agent-memory-api-p1p2--verification-status).
 
-P3 saved-report reads are **blocked pending Nico's retry-result visibility decision** for
-queued/running retries with already saved output. Remote report generation, retry, scheduling
-and delivery remain deferred; shipped local Memory reports are a separate surface.
+P3 saved-report reads are **resolved** (Nico GO): saved output is exposed by persisted presence,
+including while a run is queued or retrying for delivery; absent output stays explicit `null`. The
+runtime is being implemented on `feat/agent-memory-saved-reports` and **verification is still
+pending** — no P3 result is claimed here. Remote report generation, retry, scheduling and delivery
+remain deferred; shipped local Memory reports are a separate surface.
 
 ## Screenshots
 

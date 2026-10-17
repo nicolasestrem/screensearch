@@ -27,8 +27,9 @@ roots with no proxies/redirects and verified TLS, now including `list_frames` /
 `get_capture_coverage` (eleven normal / eight read-only). It is not released and not in the P1
 bundled wrapper (still the baseline nine-tool `--url`-only registry), and the new tools run
 against controlled fixtures only. Standalone native archives are not claimed.
-P3 saved-report reads remain **blocked pending Nico's retry-result visibility decision**;
-remote generation/retry/scheduling/delivery stay deferred. No merge/release is authorized.
+P3 saved-report reads are **resolved** (Nico GO, stored-presence visibility; `03 §7f.10`) and are
+being implemented on `feat/agent-memory-saved-reports`; verification remains pending. Remote
+generation/retry/scheduling/delivery stay deferred. No merge/release is authorized.
 Active repository: https://github.com/nicolasestrem/screensearch .
 
 ## 1. Goal and scope

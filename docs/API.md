@@ -4,7 +4,7 @@ The **HTTP API** exposes ScreenSearch's search, ask, frames, sessions, where-was
 marks to scripts and agents. It is **opt-in and off by default** (0.3.0
 PR7; the sessions surface added in 0.4.0 PR6, specs `03 §7c` / `§7e`).
 
-**External-agent increment (P1/P2, unreleased):** this guide also describes the implemented
+**External-agent increment (P1/P2/P3, unreleased):** this guide also describes the implemented
 chronological frame/coverage adapters and independent read credential on
 `feat/agent-memory-http`, against `crates/api/src/history.rs` and `crates/traits/src/history.rs`.
 Source presence and focused component checks are not integrated Windows-app acceptance. The
@@ -12,11 +12,15 @@ portable MCP transport is a separate change; see [MCP configuration](MCP.md#conf
 and the [verification status](TESTING.md#external-agent-memory-api-p1p2--verification-status).
 The approved contract is [spec 03 §7f](../specs/03_MASTER_PRODUCTION_SPEC.md).
 
-P3 saved-report reads are **blocked pending Nico's retry-result visibility decision**: a
-queued/running delivery retry can already retain immutable saved output. Neither hiding that
-output by phase nor exposing it by stored presence has been approved. `/v1/reports` and
-`/v1/reports/{run_id}` are not registered in the inspected router. Remote report generation,
-retry, scheduling and delivery remain deferred; neither credential grants `reports.generate`.
+**P3 saved-report reads (implemented on the source branches, unreleased).** Nico resolved the earlier
+retry-result visibility question in favour of **stored-presence exposure** (`spec 03 §7f.10`,
+GO): an immutable saved result is exposed immediately whenever it exists, including while
+delivery is queued or retrying. `GET /v1/reports` and `GET /v1/reports/{run_id}` are the
+approved contract (see [Saved reports](#saved-reports)), implemented on
+`feat/agent-memory-saved-reports`. Parent verified real API/SQLite packaged-client integration
+and native Windows affected checks; fresh hosted P3 checks remain pending. This is not
+installed-app, GUI or direct cross-machine acceptance. Remote report generation, retry, scheduling and delivery remain deferred; neither
+credential grants `reports.generate`.
 
 > **Threat model — read this before enabling.** The API uses plain HTTP without transport
 > encryption. The default bind is `127.0.0.1` (local access). If you choose a network address,
@@ -96,9 +100,9 @@ unchanged. Rotation/revocation affects subsequent requests without restart, not 
 cancellation of a request or stream already authorized. No credential-management HTTP route
 is exposed. Keep credentials out of URLs, logs and ordinary settings/export/report payloads.
 
-| Registered operation | Legacy | Read |
+| Operation (P3 rows describe the approved contract) | Legacy | Read |
 |---|---|---|
-| `GET`/`HEAD` health, search, frame listing, coverage, frame detail/image, context, marks, sessions/detail/cached summary, export | allow | allow |
+| `GET`/`HEAD` health, search, frame listing, coverage, frame detail/image, context, marks, sessions/detail/cached summary, export, report listing/detail | allow | allow |
 | `POST /v1/marks` for a stored frame; `POST /v1/marks/{id}/resolve` | allow (`marks.write`) | 403 |
 | `POST /v1/marks` with `now:true` | allow (`marks.write` **and** `capture.request`) | 403 |
 | `POST /v1/ask`, including session Ask | allow (`answer.generate`) | 403 |
@@ -108,7 +112,9 @@ safe. **HEAD has the same authentication, permission, validation and read path a
 no response body. A valid token on an unknown path gets **404**; a valid read token on a
 classified write/Ask gets **403 before side effects**, not an API-off/401 error. An unsupported
 method on a classified path gets **405** with `Allow`; an unclassified registered route is
-denied, not inherited by either credential. P3 report routes are not yet registered.
+denied, not inherited by either credential. P3 report routes (`GET /v1/reports`,
+`GET /v1/reports/{run_id}`) are implemented under `§7f` on the P3 source branch; they are
+not yet present in an integrated or released build.
 
 `--read-only` in MCP only filters listed/accepted tools. Use the independent API read token
 for authorization, even when calling raw HTTP or running MCP without that flag.
@@ -296,6 +302,96 @@ health record. Unobserved sleep, lock, privacy exclusion, crash or internal capt
 are not reconstructed from frame gaps. Policy, counts and observations cannot establish
 work duration or percentage of a person's day. Empty success means **no recorded frames in
 this query**, not “nothing happened”; HTTP/storage failure is never `NO_DATA`.
+
+### Saved reports
+
+`GET /v1/reports` and `GET /v1/reports/{run_id}` expose **already saved** report output — never
+generation, retry, scheduling or delivery. Both are read routes requiring `history.read` (legacy
+**and** read token allowed; the implicit `HEAD` variant is classified with `GET`). `reports.generate`
+is reserved and granted to **no** credential. See the
+[P3 verification status](TESTING.md#p3-saved-report-reads--verification-status) for the evidence
+boundary — these routes are the frozen contract and are **not yet integrated or verified**.
+
+#### `GET /v1/reports` — list
+
+Two mutually-exclusive query forms:
+
+| Input | Exact contract |
+|---|---|
+| Initial `from`, `to` | Both required signed `i64` UTC epoch milliseconds; `from < to`; half-open `[from,to)`. Same strict ASCII-integer rules as `/v1/frames`. A run is listed when it **overlaps** the window: `window_start < to AND window_end > from`. |
+| `phase` | Optional; one of `queued` \| `running` \| `blocked` \| `finished`. An unknown value is **400**, never ignored. |
+| `outcome` | Optional; one of `OK` \| `PARTIAL` \| `NO_DATA` \| `BLOCKED` \| `FAILED`. Unknown value → **400**. |
+| `limit` | Default **100**, valid **1–1000**, rejected rather than clamped outside that range. |
+| Continuation | `cursor` plus optional `limit` **only**; do not repeat `from`/`to`/`phase`/`outcome`. Mixing `cursor` with those filters or any unknown parameter is **400**; changing `limit` is allowed. Cursor input is capped at **4096 encoded bytes** before decoding. |
+
+Unknown/duplicate parameter names, malformed percent escapes, invalid UTF-8, invalid integers and
+invalid cursors return JSON 400. Order is **`created_at DESC, run_id DESC`**. The opaque v1 cursor
+freezes the maximum ordering tuple plus the normalized window/filters; later pages admit no tuple
+above that frozen maximum and seek strictly **below** the last tuple. This bounds tuples, not a
+frozen membership snapshot: equal-millisecond lower UUIDs, backdated inserts and clock rollback can
+admit newly created rows below the frozen tuple, and `phase`/`outcome` are **current observations**
+— a filtered re-list is not a status-update feed. Re-list the window to discover transitions.
+
+Response (`ReportPage`; illustrative, not live output):
+
+```json
+{
+  "items": [{
+    "run_id": "12345678-1234-4123-8123-123456789abc",
+    "source_id": "9c8b7a6d-0000-4000-8000-000000000000", "revision_of": null,
+    "requested_range": {"start_date": "2026-10-14", "end_date": "2026-10-14"},
+    "window_start": 1791928800000, "window_end": 1792015200000,
+    "timezone": "Europe/Paris", "local_date": "2026-10-14",
+    "created_at": 1792015201000, "updated_at": 1792015205000,
+    "phase": "finished", "outcome": "OK", "error_code": null
+  }],
+  "next_cursor": null
+}
+```
+
+List rows **omit** `markdown` and the full evidence arrays; fetch the detail for those. Every
+optional field is present as JSON `null`; `items` is always present (empty allowed); `next_cursor`
+is an explicit `null` only at exhaustion.
+
+#### `GET /v1/reports/{run_id}` — detail
+
+`run_id` is an **opaque UUID string** (never an integer), URL-encoded in the path. The detail is
+**all** `ReportSummary` fields **plus** `result: SavedReport | null`:
+
+```
+SavedReport {
+  markdown: String, model: String|null,
+  frame_ids: [i64...], session_ids: [i64...], cited_frame_ids: [i64...],
+  frames_sampled: u32, frames_summarized: u32,
+  periods_total: u32, periods_covered: u32, passes: u32, truncated: bool
+}
+```
+
+**Visibility and nullability (resolved).** `result` mirrors **actual persisted saved output**,
+independent of `phase`: an immutable saved result is exposed **immediately whenever it exists**,
+including while delivery is queued or retrying. A run with no saved result returns `result: null`
+(any phase) — never generated replacement prose. A stored `NO_DATA` run keeps its factual saved
+result (its markdown carries the no-data note). A malformed persisted saved payload is a read
+error, never `null`. `frame_ids` is the full distinct summarized union (no 200-item cap);
+`cited_frame_ids` may keep the display cap; `session_ids` is the generation-time ownership
+snapshot, preserved even if the current frames/sessions are gone — existing frame/session reads
+resolve references and may 404, and the report read never invents availability or re-segments.
+
+**Privacy.** Neither projection exposes delivery internals, folder/recovery paths, configuration or
+`config_snapshot`, Telegram chat/receipt, `schedule_id`, credentials or arbitrary stored error
+messages. `error_code` is emitted **only** from the [§8c](../specs/03_MASTER_PRODUCTION_SPEC.md)
+allowlist; any other code or `None` projects to `null`. Report reads serve stored error/provenance
+only — they do **not** apply the in-app current-evidence overlay.
+
+**Errors.** The same JSON envelope as the rest of the API, with fixed safe messages: malformed
+query/cursor/enum/limit → **400**; missing or pruned run → **404** (never reconstructed from a
+folder or regenerated); storage/decode failure → **500**; feed-readiness unavailable → **503**. A
+report cursor carries no history identity, so an invalid report cursor is **400** — `409
+history_changed` is frame-cursor only. Failures are explicit, never empty data or `NO_DATA`. The
+saved uppercase `error_code` is distinct from HTTP errors.
+
+**Read-only, model-free.** These reads work with schedules off and **no loaded answer model**. They
+cannot claim, queue or retry a run, write an index, send a message or repair missing content.
 
 ### `POST /v1/ask`
 

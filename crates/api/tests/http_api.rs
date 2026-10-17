@@ -22,6 +22,8 @@ use traits::{
 mod history_reads;
 #[path = "support/permissions.rs"]
 mod permission_cases;
+#[path = "support/reports.rs"]
+mod reports;
 
 const TEST_TOKEN: &str = "test-token-000000000000000000000000000000000000000000000000000000";
 
@@ -64,6 +66,9 @@ struct TestHost {
     started_at_ms: i64,
     capture_kernel: Option<Arc<kernel::Kernel>>,
     history_fault: Option<history_reads::HistoryFault>,
+    /// When set, `report_page` returns this page verbatim — the only way to exercise the
+    /// handler's internal-consistency guard (a next position without a snapshot).
+    report_page_override: Option<traits::StoredReportPage>,
 }
 
 #[async_trait]
@@ -174,6 +179,27 @@ impl ApiHost for TestHost {
             .export_frames_page(after_id, from, to, limit)
             .await
     }
+    async fn report_page(
+        &self,
+        request: traits::ReportPageRequest,
+    ) -> Result<traits::StoredReportPage, traits::HistoryReadError> {
+        if let Some(page) = &self.report_page_override {
+            return Ok(page.clone());
+        }
+        if let Some(fault) = self.history_fault {
+            return Err(fault.error());
+        }
+        self.store.report_page(request).await
+    }
+    async fn report_detail(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<traits::ReportDetail>, traits::HistoryReadError> {
+        if let Some(fault) = self.history_fault {
+            return Err(fault.error());
+        }
+        self.store.report_detail(run_id).await
+    }
 }
 
 /// Live manual-verification harness (ignored by default). Serves the real API over an
@@ -239,6 +265,7 @@ async fn fixture_host(with_answer: bool) -> Arc<TestHost> {
         started_at_ms: 500,
         capture_kernel: None,
         history_fault: None,
+        report_page_override: None,
     })
 }
 
@@ -916,6 +943,7 @@ async fn sessions_fixture_host(with_answer: bool) -> Arc<TestHost> {
         started_at_ms: 500,
         capture_kernel: None,
         history_fault: None,
+        report_page_override: None,
     })
 }
 
@@ -1360,6 +1388,7 @@ async fn fixture_host_with_slow_answer() -> Arc<TestHost> {
         started_at_ms: 500,
         capture_kernel: None,
         history_fault: None,
+        report_page_override: None,
     })
 }
 

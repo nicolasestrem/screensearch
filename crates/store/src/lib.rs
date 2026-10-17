@@ -39,6 +39,7 @@ mod jobs;
 mod marks;
 mod memory;
 mod records;
+mod report_pages;
 mod schema;
 mod search;
 mod sessions;
@@ -255,6 +256,20 @@ impl Store for SqliteStore {
         window: traits::EvidenceWindow,
     ) -> std::result::Result<traits::StoredCoverage, traits::HistoryReadError> {
         SqliteStore::stored_coverage(self, window).await
+    }
+
+    async fn report_page(
+        &self,
+        request: traits::ReportPageRequest,
+    ) -> std::result::Result<traits::StoredReportPage, traits::HistoryReadError> {
+        SqliteStore::report_page(self, request).await
+    }
+
+    async fn report_detail(
+        &self,
+        run_id: &str,
+    ) -> std::result::Result<Option<traits::ReportDetail>, traits::HistoryReadError> {
+        SqliteStore::report_detail(self, run_id).await
     }
 
     async fn list_report_family_deliveries(

@@ -24,6 +24,7 @@ pub mod export;
 pub mod extract;
 mod history;
 mod permissions;
+mod reports;
 pub mod routes;
 pub mod sessions;
 
@@ -201,6 +202,30 @@ pub trait ApiHost: Send + Sync + 'static {
         to: Option<i64>,
         limit: u32,
     ) -> anyhow::Result<Vec<ExportFrameRow>>;
+
+    /// Bounded overlap listing of saved reports (`GET /v1/reports`, `03 §7f.5/.6`). Never
+    /// generation, scheduling, delivery or current-source overlay. Legacy hosts that
+    /// cannot reach durable report storage keep the safe `UnsupportedStore` default (→503);
+    /// the composition root overrides this with the concrete Store adapter.
+    async fn report_page(
+        &self,
+        _request: traits::ReportPageRequest,
+    ) -> Result<traits::StoredReportPage, traits::HistoryReadError> {
+        Err(traits::HistoryReadError::Unavailable(
+            traits::HistoryUnavailableReason::UnsupportedStore,
+        ))
+    }
+
+    /// One saved report's complete public projection (`GET /v1/reports/{run_id}`); `None`
+    /// is 404. Same no-generation rule and safe default as [`ApiHost::report_page`].
+    async fn report_detail(
+        &self,
+        _run_id: &str,
+    ) -> Result<Option<traits::ReportDetail>, traits::HistoryReadError> {
+        Err(traits::HistoryReadError::Unavailable(
+            traits::HistoryUnavailableReason::UnsupportedStore,
+        ))
+    }
 }
 
 /// The axum handler state: the app seam + the live bearer token.
@@ -546,6 +571,10 @@ pub fn build_router(state: ApiState) -> Router {
         .post("/v1/marks/{id}/resolve", routes::resolve_mark, MarksWrite)
         .post("/v1/ask", routes::ask, AnswerGenerate)
         .get("/v1/export", export::export, HistoryRead)
+        // P3 saved-report reads (`03 §7f.5/.6`): history.read only, exactly like the
+        // other read routes — no new permission, generation or mutation route.
+        .get("/v1/reports", reports::list_reports, HistoryRead)
+        .get("/v1/reports/{run_id}", reports::report_detail, HistoryRead)
         .finish(state)
 }
 

@@ -20,6 +20,7 @@ pub mod ipc;
 pub mod jobs;
 pub mod memory;
 pub mod privacy;
+pub mod reports;
 pub mod sessions;
 
 pub use contracts::{
@@ -32,6 +33,7 @@ pub use ipc::*;
 pub use jobs::*;
 pub use memory::*;
 pub use privacy::is_excluded;
+pub use reports::*;
 pub use sessions::*;
 
 /// Workspace-wide fallible result type (`03 §3`).

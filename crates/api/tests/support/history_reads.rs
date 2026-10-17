@@ -54,6 +54,7 @@ pub(super) fn history_host(store: Arc<SqliteStore>) -> Arc<TestHost> {
         started_at_ms: 500,
         capture_kernel: Some(Arc::new(controller)),
         history_fault: None,
+        report_page_override: None,
     })
 }
 
