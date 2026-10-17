@@ -120,6 +120,174 @@ where
     Ok(ReportExecution { output, model })
 }
 
+/// Inputs for one weekly synthesis execution (`03 §8e`): the schedule's explicit UTC
+/// `[start, end)` ISO-week window plus the saved IANA zone used for local calendar dates.
+pub struct WeeklyExecutionRequest<'a> {
+    pub start: i64,
+    pub end: i64,
+    pub timezone: &'a str,
+    pub config: ReportConfig,
+}
+
+/// Result of [`execute_weekly`]: the same output shape the daily path returns, plus the
+/// weekly provenance the note writer and run outcome need (`03 §8e`).
+pub struct WeeklyExecution {
+    pub output: ReportOutput,
+    pub model: Option<String>,
+    /// Exactly the saved daily runs consumed, in store order (oldest first). Base runs and
+    /// linked revisions are both consumed, as returned — no revision precedence is defined.
+    pub daily_run_ids: Vec<String>,
+    /// Local `YYYY-MM-DD` dates in `[start, end)` with no saved daily report or only
+    /// partial/truncated coverage — the PARTIAL signal the caller maps to the run outcome.
+    pub missing_local_dates: Vec<String>,
+}
+
+/// Executes one weekly synthesis through the same shared service and model path as
+/// [`execute`]: the week's saved daily reports are inspected *before* a model is
+/// resolved, so a store failure is never an empty report and a genuinely no-data week
+/// acquires no model. Only per-day dailies saved in the run's own zone are consumed
+/// (`03 §8e` inputs); a week represented only by multi-day/range runs or other-zone
+/// dailies is consumed-empty and refused the same way a week with no saved dailies is.
+/// A week with no saved dailies and no usable evidence returns [`ReportMode::Empty`] with
+/// `model: None`; a week that has captured frames but no saved dailies is refused (see
+/// below) rather than mislabelled or synthesized without daily-run provenance. After
+/// saved dailies are found, the same positive-probe rules as [`execute`] apply: a blank
+/// or empty generation is `GENERATION_FAILED`, a non-blank synthesis that cites no
+/// consumed daily run is `GENERATION_FAILED` (uncited prose is never persisted as OK),
+/// and a resolver failure propagates unchanged.
+pub async fn execute_weekly<F, Fut>(
+    store: &dyn Store,
+    request: WeeklyExecutionRequest<'_>,
+    resolve: F,
+    progress: Option<&crate::reports::ReportProgress<'_>>,
+    cancel: &AtomicBool,
+) -> Result<WeeklyExecution, ReportError>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<Arc<dyn AnswerProvider>, ReportError>>,
+{
+    if request.end <= request.start {
+        return Err(error(
+            "INVALID_CONFIG",
+            "Report window must have a positive duration.",
+        ));
+    }
+    // Weekly inputs are exactly the saved daily reports in the window (`03 §8e`) — never
+    // a fresh scan of raw frames. A failed read is a store failure, not an empty week.
+    let dailies = store
+        .saved_daily_runs(request.start, request.end)
+        .await
+        .map_err(|_| {
+            error(
+                "STORE_ERROR",
+                "Could not inspect the saved daily reports for this week.",
+            )
+        })?;
+    // Only per-day dailies saved in this run's own zone are consumed (`03 §8e` inputs): a
+    // manual multi-day/date-range run and a daily saved under another zone are not "the
+    // saved daily reports in the window" and never credit a date, so a week of nothing
+    // but those is consumed-empty and refused below instead of being saved as complete.
+    let consumed = crate::reports::weekly_consumed_dailies(
+        &dailies,
+        request.start,
+        request.end,
+        request.timezone,
+    )
+    .map_err(|_| error("INVALID_CONFIG", "Invalid weekly report time zone."))?;
+    // Local calendar dates resolve before the model: an invalid zone is a configuration
+    // error, never a reason to load one.
+    let missing_local_dates = crate::reports::weekly_missing_local_dates(
+        &consumed,
+        request.start,
+        request.end,
+        request.timezone,
+    )
+    .map_err(|_| error("INVALID_CONFIG", "Invalid weekly report time zone."))?;
+    if consumed.is_empty() {
+        // `03 §8e` permits NO_DATA only when the week has neither saved dailies nor
+        // usable evidence.
+        let has_evidence = store
+            .report_has_usable_content(request.start, request.end)
+            .await
+            .map_err(|_| {
+                error(
+                    "STORE_ERROR",
+                    "Could not inspect the report evidence window.",
+                )
+            })?;
+        if has_evidence {
+            // The contract defines neither an output nor an outcome for captured frames
+            // without saved dailies, and a weekly report that describes days without
+            // citing their daily runs is a defect (`03 §8e`). Stop explicitly instead of
+            // guessing: no NO_DATA claim, no uncited raw-frame narrative.
+            return Err(error(
+                "GENERATION_FAILED",
+                "No saved daily reports cover this week; the weekly synthesis is built from saved daily reports and none were consumable for its local days, so none was generated.",
+            ));
+        }
+        return Ok(WeeklyExecution {
+            output: ReportOutput {
+                markdown: "No captured content in this time range.".into(),
+                cited_frame_ids: Vec::new(),
+                frame_ids: Vec::new(),
+                mode: ReportMode::Empty,
+                periods_total: 0,
+                periods_covered: 0,
+                frames_sampled: 0,
+                frames_summarized: 0,
+                passes: 0,
+                truncated: false,
+            },
+            model: None,
+            daily_run_ids: Vec::new(),
+            missing_local_dates,
+        });
+    }
+    let answer = resolve().await?;
+    let output = crate::reports::generate_weekly_synthesis(
+        store,
+        answer.as_ref(),
+        &consumed,
+        request.start,
+        request.end,
+        request.timezone,
+        request.config,
+        progress,
+        cancel,
+    )
+    .await
+    .map_err(|_| {
+        error(
+            "GENERATION_FAILED",
+            "Weekly synthesis failed or was cancelled; retry after checking the local model.",
+        )
+    })?;
+    // Saved dailies were found: an empty generation cannot truthfully claim NO_DATA and
+    // blank prose must not become a successful note.
+    if output.mode == ReportMode::Empty || output.markdown.trim().is_empty() {
+        return Err(error(
+            "GENERATION_FAILED",
+            "Weekly synthesis produced no usable text despite saved daily reports; check the local model or retry.",
+        ));
+    }
+    // `03 §8e`: a weekly report citing no daily run for a day it describes is a defect.
+    // After the positive saved-dailies probe, prose that cites none of the consumed daily
+    // runs cannot be trusted — never persisted as a successful synthesis (`03 §8c`).
+    if !crate::reports::weekly_cites_consumed_daily(&output.markdown, &consumed) {
+        return Err(error(
+            "GENERATION_FAILED",
+            "Weekly synthesis did not cite any consumed daily run; prose that cannot be traced to a saved daily report is not saved.",
+        ));
+    }
+    let model = answer.answer_model_label().await;
+    Ok(WeeklyExecution {
+        output,
+        model,
+        daily_run_ids: consumed.into_iter().map(|run| run.run_id).collect(),
+        missing_local_dates,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

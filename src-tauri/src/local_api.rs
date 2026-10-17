@@ -2145,6 +2145,7 @@ mod tests {
             periods_covered: 2,
             passes: 1,
             truncated: false,
+            daily_run_ids: Vec::new(),
         }
     }
 

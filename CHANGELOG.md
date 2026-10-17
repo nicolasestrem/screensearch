@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **F3 G2 (internal):** weekly synthesis runs are generated from that week's saved daily
+  reports through the shared report engine, with truthful NO_DATA / PARTIAL / OK statuses that
+  name any local date missing complete daily coverage. Still no user-visible weekly surface —
+  the writer, promotion, scheduler and digest follow (`03 §8e`).
+
 ### Changed
 
 - Note frontmatter parsing now accepts only schema `1` or `2`; any other value is rejected as

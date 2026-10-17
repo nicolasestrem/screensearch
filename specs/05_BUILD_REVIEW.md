@@ -1,5 +1,37 @@
 # 05 — Build Review
 
+## 2026-10-17 — F3 G2 weekly synthesis engine (`03 §8e`)
+
+- **Scope:** weekly run through the shared report service over **saved daily** reports:
+  `Store::saved_daily_runs`, kernel `execute_weekly` + synthesis, truthful
+  `NO_DATA`/`PARTIAL`/`OK`/`BLOCKED`/`FAILED` statuses, `SavedReport.daily_run_ids`.
+  No note writer, promotion, scheduler or Telegram digest (G3–G6).
+- **Windows (tbx), `04 §1c` order, branch `feat/f3-g2-weekly-engine` at `09d63a3`:**
+
+  ```text
+  head=09d63a3
+  EXIT ui npm ci = 0
+  EXIT ui npm run lint = 0
+  EXIT ui npm run build = 0
+  EXIT stage-mcp = 0
+  EXIT cargo fmt = 0
+  EXIT cargo clippy = 0
+  EXIT cargo build = 0
+  EXIT cargo test = 0          (all suites 0 failed)
+  EXIT bindings guard = 0
+  ```
+
+  Named checks observed `ok`: `weekly_requires_saved_dailies` (kernel and app layers),
+  `partial_week_reports_missing_days` (both layers), `weekly_no_model_is_blocked` (both),
+  `weekly_statuses_are_truthful`, `daily_run_partial_wording_is_unchanged`,
+  `weekly_runs_skip_note_and_index_with_receipts`,
+  `saved_daily_runs_returns_only_finished_saved_dailies_inside_the_window_oldest_first`,
+  `saved_daily_runs_empty_window_is_an_empty_vec_not_an_error`.
+- **Linux:** everything except `crates/api/tests/http_api.rs::explicit_ipv4_and_ipv6_listeners_require_authentication`,
+  which cannot bind `::1` on this host (no IPv6 loopback); it passes on Windows above.
+- **Not run:** native weekly acceptance (a real weekly run over a real week of saved dailies) —
+  it needs the G3 writer to produce an inspectable note.
+
 ## 2026-10-17 — F3 G1 contract + migration (`03 §8e`)
 
 - **Scope:** `ReportRunKind` (`daily` | `weekly_synthesis`) on `ReportRun`,

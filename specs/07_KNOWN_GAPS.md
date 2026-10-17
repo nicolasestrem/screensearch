@@ -1,5 +1,50 @@
 # 07 — Known Gaps
 
+- **`SavedReport.daily_run_ids` rides the saved-result wire surface.** `ReportDetail.result` embeds
+  `SavedReport` verbatim, so the new field also appears on `GET /v1/reports` detail and the IPC
+  run payload, alongside the `kind` addition `§8e` names as the deliberate migration change. It is
+  report provenance about what the run consumed and no gate was needed to read it, but the
+  surface change is recorded here rather than left implicit; if the projections must carry only
+  the `§8e`-named fields, the fix is to strip it when building `ReportDetail`.
+- **Weekly PARTIAL banner names the sampling cause even when retention caused the gap.** The
+  `truncated` flag mixes context-budget cuts with recorded evidence that could no longer be read,
+  so a week whose daily reports recorded evidence since pruned is told sampling was bounded while
+  its status and missing-day list stay correct. The banner cause should come from the unreadable
+  evidence count if this wording is worth another pass.
+
+## 2026-10-17 — F3 G2 implementation readings (owner: agent; maintainer may override)
+
+- **Evidence without saved dailies is refused, not reported.** `§8e` defines `NO_DATA` only for
+  "no saved dailies **and** no usable evidence" and PARTIAL for a partly covered week, but says
+  nothing about a week that has raw evidence and zero saved dailies. The engine stops that case
+  with `GENERATION_FAILED` (before `resolve`) rather than labelling it `NO_DATA` or synthesising
+  an uncited narrative. One branch to change if the contract later defines it.
+- **A weekly input is a single-local-day daily that owns its date.** A saved daily credits a date
+  only when it is not a manual date-range run, was saved in the weekly run's own zone (persisted
+  zone string equality, so `UTC` and `Etc/UTC` are not unified), its persisted `local_date` is
+  that date, and its window lies entirely inside that local day. Multi-day range runs and dailies
+  saved under a previous zone are not consumed and leave their dates missing; a week whose only
+  dailies are of that kind is refused like a week with none.
+- **Weekly prose must cite at least one consumed daily run id** (matched as a whole token),
+  or the run fails with `GENERATION_FAILED`. `§8e` asks for the daily run of **every** day the
+  prose describes; enforcing that per day would require knowing which days a passage
+  describes, so G2 enforces only the existence of a real citation. The check also cannot detect
+  additional invented ids. Per-day enforcement is a G3 review item when the note structure makes
+  day sections explicit.
+- **`missing_local_dates` counts a partial or truncated daily as a missing day**, since only
+  complete saved coverage establishes a covered date (`§8e` PARTIAL).
+- **Dailies and their revisions are all consumed** and all recorded in `daily_run_ids`; `§8e`
+  does not define revision precedence for the weekly input, so none was invented. G3/G5 should
+  decide whether a weekly may cite a revision rather than the base run of the same day.
+- **`daily_run_ids` is persisted on `SavedReport`** (new optional field, no schema change), so a
+  weekly report can be audited against the dailies it consumed.
+- **Weekly runs write no note and send no Telegram digest in this increment**: the app records a
+  skip receipt instead of emitting a daily-shaped note or a daily-format digest. G3 owns the
+  weekly note/index and G6 the weekly digest format.
+- **No user-visible weekly surface yet**: enqueue exists internally with `kind` =
+  `weekly_synthesis` and the explicit UTC window; Settings controls, Run now and catch-up remain
+  G5.
+
 ## 2026-10-17 — F3 G1 implementation readings (owner: agent; maintainer may override)
 
 - **Daily notes keep frontmatter schema 1.** `03 §8e` requires weekly notes to write schema 2

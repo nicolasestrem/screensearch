@@ -320,6 +320,9 @@ impl Store for SqliteStore {
     ) -> Result<Vec<traits::ReportRun>> {
         SqliteStore::list_report_runs(self, limit, kind).await
     }
+    async fn saved_daily_runs(&self, start: i64, end: i64) -> Result<Vec<traits::ReportRun>> {
+        SqliteStore::saved_daily_runs(self, start, end).await
+    }
     async fn update_report_run(&self, run: traits::ReportRun) -> Result<()> {
         SqliteStore::update_report_run(self, run).await
     }

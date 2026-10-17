@@ -111,6 +111,10 @@ pub struct SavedReport {
     pub periods_covered: u32,
     pub passes: u32,
     pub truncated: bool,
+    /// Saved daily runs this report consumed (`03 §8e`). Weekly syntheses cite them;
+    /// daily reports leave it empty. Absent in pre-G2 payloads.
+    #[serde(default)]
+    pub daily_run_ids: Vec<String>,
 }
 
 /// Inclusive local calendar dates in the report's selected IANA time zone.
