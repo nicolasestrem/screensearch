@@ -1,5 +1,18 @@
 # 08 — AI Changelog
 
+## 2026-10-17 — Claude cost reduction: on-demand PR review + targeted spec reads (CI/docs)
+
+- **Change:** `claude-code-review.yml` no longer runs on `pull_request`; it runs only on a
+  `/claude-review` PR comment from an owner/member/collaborator or a manual `workflow_dispatch`
+  (PR number input), checks out the PR head, and pins `--model claude-sonnet-5-5`. `CLAUDE.md` and
+  `04 §1` replace the "read 01–04 + UI_REFERENCE end to end every session" rule with targeted
+  section reads; the CLAUDE.md release-history paragraph is condensed to a pointer to
+  `CHANGELOG-ARCHIVE.md` / `specs/archive/` (no history lost).
+- **Why:** Nico approved (A–D) after cost review: ~50 automatic multi-agent reviews in 3 days
+  (every push, Dependabot, docs-only PRs) and ~60k tokens of mandatory spec reading per session.
+- **Verification:** `actionlint 1.7.7` on both Claude workflows exit 0. The comment trigger only
+  takes effect once the workflow is on `main` (`issue_comment` uses the default-branch file).
+
 ## 2026-10-17 — P3 saved-report read contract and visibility resolution (docs/policy ledger)
 
 - **Change:** resolved the stale "awaiting Nico / P3 only" saved-output visibility hold across the
