@@ -1,5 +1,16 @@
 # 08 — AI Changelog
 
+## 2026-10-17 — Fix untrusted PR checkout in on-demand Claude review (CI security)
+
+- **Change:** `claude-code-review.yml` checks out the default branch instead of
+  `refs/pull/<n>/head`; the review reads the diff via the GitHub API.
+- **Why:** #134 made the review comment/dispatch-triggered, which runs with secrets
+  (`CLAUDE_CODE_OAUTH_TOKEN`, `id-token: write`); checking out fork PR code there let a PR plant
+  `.claude/settings.json` hooks or CLAUDE.md instructions that Claude Code would load. CodeQL flagged
+  `actions/untrusted-checkout/high` + `actions/untrusted-checkout-toctou/high` (alerts #3, #4).
+  #134 was merged before its checks finished — process miss; wait for checks before merging.
+- **Verification:** `actionlint 1.7.7` exit 0; CodeQL re-scan on the fix PR.
+
 ## 2026-10-17 — Claude cost reduction: on-demand PR review + targeted spec reads (CI/docs)
 
 - **Change:** `claude-code-review.yml` no longer runs on `pull_request`; it runs only on a
