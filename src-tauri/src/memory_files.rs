@@ -630,7 +630,7 @@ pub fn merged_content(existing: &str, entries: &[(String, String)]) -> String {
         }
     }
     // Descending so inserting at a later boundary never shifts an earlier one.
-    insertions.sort_by(|left, right| right.0.cmp(&left.0));
+    insertions.sort_by_key(|(boundary, _)| std::cmp::Reverse(*boundary));
     for (boundary, blocks) in insertions {
         insert_blocks(&mut lines, boundary, &blocks, newline);
     }
