@@ -46,6 +46,10 @@ import type { ReportRun } from "../../bindings/ReportRun";
 import type { MemoryReportRange } from "../../bindings/MemoryReportRange";
 import type { ReportDelivery } from "../../bindings/ReportDelivery";
 import type { TelegramDeliveryResolution } from "../../bindings/TelegramDeliveryResolution";
+import type { ProjectNoteStatus } from "../../bindings/ProjectNoteStatus";
+import type { PromotionProposal } from "../../bindings/PromotionProposal";
+import type { PromotionReceipt } from "../../bindings/PromotionReceipt";
+import type { PromotionSelection } from "../../bindings/PromotionSelection";
 
 /** Liveness probe for the IPC bridge. */
 export const ping = (): Promise<string> => invoke<string>("ping");
@@ -351,3 +355,17 @@ export const resolveTelegramDelivery = (args: {
   attemptId: string;
   resolution: TelegramDeliveryResolution;
 }): Promise<ReportRun> => invoke("resolve_telegram_delivery", args);
+
+// Promotion into the single project note (`03 §8e`, G4). Preparation writes nothing;
+// confirmation is the only write path and re-checks the selection-time note hash.
+export const getProjectNoteStatus = (): Promise<ProjectNoteStatus> =>
+  invoke("project_note_status");
+export const createProjectNote = (slug: string): Promise<ProjectNoteStatus> =>
+  invoke("create_project_note", { slug });
+export const preparePromotion = (
+  selection: PromotionSelection,
+): Promise<PromotionProposal> => invoke("prepare_promotion", { selection });
+export const confirmPromotion = (
+  proposal: PromotionProposal,
+): Promise<PromotionReceipt> => invoke("confirm_promotion", { proposal });
+

@@ -1,15 +1,19 @@
 import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import { handleExternalLinkClick } from "../../lib/openExternal";
+import { useNavigate } from "react-router-dom";
+import { ReportView } from "./ReportView";
 import { Button, Chip, Field, Panel, Toggle } from "../primitives";
 import type { MemorySettings } from "../../bindings/MemorySettings";
 import type { ReportDelivery } from "../../bindings/ReportDelivery";
+import type { ReportResponse } from "../../bindings/ReportResponse";
 import type { ReportRun } from "../../bindings/ReportRun";
 import * as cmd from "../../lib/ipc/commands";
 import {
   memoryError, useMemoryDeliveries, useMemoryMutation, useMemoryRun,
   useMemoryRuns, useMemorySchedulePreview, useMemoryStatus,
 } from "../../lib/ipc/memory";
+import {
+  promotionError, useCreateProjectNote, useProjectNoteStatus,
+} from "../../lib/ipc/promotion";
 
 const forwardPath = (value: string) => value.replaceAll("\\", "/");
 const displaySettings = (settings: MemorySettings): MemorySettings => ({
@@ -26,6 +30,27 @@ function timestamp(value: number, timeZone?: string) {
 function reportDates(run: ReportRun) {
   const range = run.requested_range;
   return range ? range.start_date === range.end_date ? range.start_date : `${range.start_date} – ${range.end_date}` : run.local_date;
+}
+
+/**
+ * SavedReport → the shared `ReportView` response shape. Coverage counts and the body
+ * stay exactly as persisted; the run's own window supplies the range label.
+ */
+function savedReportResponse(run: ReportRun): ReportResponse | null {
+  const saved = run.result;
+  if (!saved) return null;
+  return {
+    markdown: saved.markdown,
+    cited_frame_ids: saved.cited_frame_ids,
+    range_label: reportDates(run),
+    periods_total: saved.periods_total,
+    periods_covered: saved.periods_covered,
+    frames_sampled: saved.frames_sampled,
+    frames_summarized: saved.frames_summarized,
+    passes: saved.passes,
+    truncated: saved.truncated,
+    model: saved.model,
+  };
 }
 
 function todayInZone(timeZone?: string | null) {
@@ -99,7 +124,9 @@ function RunDetails({ runId }: { runId: string }) {
   const retry = useMemoryMutation(cmd.retryMemoryReport);
   const regenerate = useMemoryMutation(cmd.regenerateMemoryReport);
   const [confirmRegenerate, setConfirmRegenerate] = useState(false);
+  const navigate = useNavigate();
   const run = detail.data;
+  const savedReport = run ? savedReportResponse(run) : null;
   const active = run?.phase === "queued" || run?.phase === "running";
   return (
     <section aria-label="Selected report" className="flex flex-col gap-3 border border-line rounded-panel p-4">
@@ -126,7 +153,7 @@ function RunDetails({ runId }: { runId: string }) {
           </div>
         )}
         {(retry.isError || regenerate.isError) && <p role="alert" className="text-warn">{memoryError(retry.error ?? regenerate.error)}</p>}
-        {run.result && <>
+        {savedReport && run.result && <>
           <p className={run.outcome === "PARTIAL" ? "text-warn" : "text-ink-muted"}>
             {run.outcome === "PARTIAL" && "Partial coverage. "}
             {run.result.frames_summarized} of {run.result.frames_sampled} sampled frames summarized;
@@ -135,16 +162,26 @@ function RunDetails({ runId }: { runId: string }) {
           </p>
           <p className="text-caption">Model: {run.result.model ?? "none — no model ran"}</p>
           <details>
-            <summary className="cursor-pointer min-h-hit-min">Saved report and evidence IDs</summary>
-            <div className="prose prose-deck max-w-none break-words">
-              <ReactMarkdown components={{
-                a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, href)}>{children}</a>,
-                img: ({ alt }) => <span>{alt ? `[Image omitted: ${alt}]` : "[Image omitted]"}</span>,
-              }}>{run.result.markdown}</ReactMarkdown>
+            <summary className="cursor-pointer min-h-hit-min">Saved report, promotion and evidence IDs</summary>
+            <div className="flex flex-col gap-3 pt-2">
+              {/* The single saved-report renderer: it carries the report footer, the
+                  source-frame chips and — because this is a persisted run — the
+                  promotion surface (`03 §8e`, G4). */}
+              <ReportView
+                report={savedReport}
+                request={null}
+                run={run}
+                showFooter={false}
+                footerScope={{
+                  timeRange: { start: run.window_start, end: run.window_end },
+                  activeFilter: run.kind === "weekly_synthesis" ? "weekly synthesis" : "daily report",
+                }}
+                onOpenFrame={(frameId) => navigate(`/timeline/${frameId}`)}
+              />
+              <p className="text-caption break-words">Frames: {run.result.frame_ids.join(", ") || "none"}</p>
+              <p className="text-caption break-words">Sessions: {run.result.session_ids.join(", ") || "none"}</p>
+              <p className="text-caption text-ink-muted">IDs record generation-time evidence; retention may have removed the original frames.</p>
             </div>
-            <p className="text-caption break-words">Frames: {run.result.frame_ids.join(", ") || "none"}</p>
-            <p className="text-caption break-words">Sessions: {run.result.session_ids.join(", ") || "none"}</p>
-            <p className="text-caption text-ink-muted">IDs record generation-time evidence; retention may have removed the original frames.</p>
           </details>
         </>}
       </>}
@@ -153,6 +190,112 @@ function RunDetails({ runId }: { runId: string }) {
       {deliveries.isError && <div><p role="alert">{memoryError(deliveries.error)}</p><Button onClick={() => deliveries.refetch()}>Reload receipts</Button></div>}
       {deliveries.data?.length === 0 && <p className="text-ink-muted">No delivery attempts recorded.</p>}
       <ul className="flex flex-col gap-2">{deliveries.data?.map((receipt) => <DeliveryReceipt key={receipt.id} receipt={receipt} />)}</ul>
+    </section>
+  );
+}
+
+/**
+ * The single project note (`03 §8e`, G4): status, the unsupported multiple-notes
+ * state, and the one manual create action. Creation makes an EMPTY note — nothing is
+ * written into it until a promotion is confirmed — and the app never renames or
+ * deletes the file afterwards.
+ */
+function ProjectNoteSection() {
+  const status = useProjectNoteStatus();
+  const create = useCreateProjectNote();
+  const [slug, setSlug] = useState("");
+  const trimmed = slug.trim();
+  const slugError =
+    trimmed.length > 0 && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(trimmed)
+      ? "Use lowercase letters, numbers, - or _, starting with a letter or number."
+      : null;
+  const canCreate = trimmed.length > 0 && !slugError && !create.isPending;
+
+  return (
+    <section aria-label="Project note" className="flex flex-col gap-3 border border-line rounded-panel p-4">
+      <h3 className="font-display text-subtitle">Project note</h3>
+      <p className="text-caption text-ink-muted">
+        Promotion appends dated entries from a saved report into this one note. The app
+        never creates, renames or deletes it for you, and it never rewrites existing
+        lines.
+      </p>
+
+      <div className="min-h-12 text-caption" aria-live="polite">
+        {status.isLoading ? (
+          <p className="text-ink-muted">Checking for a project note…</p>
+        ) : status.isError ? (
+          <div className="flex flex-col items-start gap-2">
+            <p role="alert" className="text-warn">
+              Couldn't check the project note — {promotionError(status.error)}
+            </p>
+            <Button size="sm" onClick={() => status.refetch()}>Retry</Button>
+          </div>
+        ) : status.data?.count === 0 ? (
+          <p className="text-ink-muted">No project note yet.</p>
+        ) : status.data && status.data.count > 1 ? (
+          <div role="alert" className="flex flex-col gap-1 text-warn">
+            <p>
+              More than one project note was found ({status.data.count}). Promotion
+              needs exactly one.
+            </p>
+            <p>
+              Keep one file in ScreenSearch/Projects/ and move or remove the others.
+              ScreenSearch will not delete or rename them.
+            </p>
+          </div>
+        ) : status.data?.path ? (
+          <p className="text-ink-muted">
+            Project note:{" "}
+            <span className="break-all font-mono text-data">
+              {forwardPath(status.data.path)}
+            </span>
+          </p>
+        ) : null}
+      </div>
+
+      {status.data?.count === 0 && (
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!canCreate) return;
+            create.mutate(trimmed, { onSuccess: () => setSlug("") });
+          }}
+        >
+          <Field
+            label="Project note name"
+            value={slug}
+            onChange={(event) => setSlug(event.currentTarget.value)}
+            placeholder="project-alpha"
+            disabled={create.isPending}
+            error={slugError}
+            hint="Creates an empty note at ScreenSearch/Projects/<name>.md (no .md needed). Lowercase letters, numbers, - and _ only; the note stays empty until you promote and confirm."
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="submit" disabled={!canCreate} aria-busy={create.isPending}>
+              {create.isPending ? "Creating…" : "Create project note"}
+            </Button>
+            <span className="text-caption text-ink-muted">
+              The app never names, renames or deletes this file for you.
+            </span>
+          </div>
+        </form>
+      )}
+
+      {create.isError && (
+        <p role="alert" className="text-caption text-warn">
+          Couldn't create the note — {promotionError(create.error)}
+        </p>
+      )}
+      {create.isSuccess && (
+        <p role="status" className="text-caption text-ok">
+          Empty note created
+          {create.data?.path ? ` at ${forwardPath(create.data.path)}` : ""}. Open a
+          saved report to promote items into it.
+        </p>
+      )}
     </section>
   );
 }
@@ -256,6 +399,7 @@ export function MemoryPanel() {
             <Button disabled={!canRun} onClick={() => runNow.mutate(undefined, { onSuccess: (run) => setSelectedRun(run.run_id) })}>Run previous day{yesterday ? ` (${yesterday})` : ""}</Button>
           </div>
         </section>
+        <ProjectNoteSection />
         {actionError !== null && <p role="alert" className="text-warn">{memoryError(actionError)}</p>}
         {status.data?.missed_windows.length ? <div><h3 className="font-display text-subtitle">Older missed windows</h3><p>These windows were outside the automatic backfill cap and are not reported as covered.</p><ul>{status.data.missed_windows.map((window) => <li key={`${window.start}-${window.end}`}>{timestamp(window.start)} – {timestamp(window.end)}</li>)}</ul></div> : null}
         <details>
