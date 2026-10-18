@@ -1,5 +1,26 @@
 # 08 — AI Changelog
 
+## 2026-10-18 — PR #139 promotion and writer review corrections
+
+- **Change:** enforce same-source persisted ownership/hash at both promotion preparation and
+  confirmation; re-resolve the one existing target and require a selection-time hash; serialize
+  project-note creation and confirmed writes; reject reserved DOS device slugs without blocking
+  ordinary near-misses; preserve selected duplicate occurrences with a saved-multiplicity bound.
+  Source parsing and destination insertion share proper fence-marker/length tracking, tolerate
+  case/closing hashes, preserve duplicate destination sections, and avoid inserting inside an
+  unclosed fence. Document the ownership row as the latest-write guard, not a run attribution or
+  garbage-collection index. Saving memory settings invalidates and awaits mounted project-note
+  state; stale/error status no longer traps first setup. Error copy preserves user edits and does
+  not promise re-preparing can authorize an owned-file edit. Retry is not disabled by a stale
+  proposal's missing-note flag. Regenerated actual ts-rs output removes the interrupted WIP field.
+- **Why:** all five Claude and three Codex findings at `fc39c65`, enforcing the existing `03 §8e`
+  contract without changing product policy, schema, network surfaces, G5 or G6.
+- **Verification:** full Windows `04 §1c` chain at `1636a4f` on tbx, Rust 1.95.0 / Node 22.23.3:
+  `CHAIN_EXIT=0`; UI 35 passed / 0 failed; Rust 1069 passed / 0 failed / 15 existing ignored;
+  regenerated-binding guard clean. Exact output and named regressions are in `05`, implementation
+  readings in `07`, remaining native acceptance/publication boundaries in `06`. No installed-app
+  restart, live-history access, Telegram send, review request or merge.
+
 ## 2026-10-18 — F3 G3+G4: weekly note writer, index entries, project-note promotion
 
 - **Change:** weekly runs write `Weekly/YYYY-Www.md` from the persisted run (schema-2 frontmatter

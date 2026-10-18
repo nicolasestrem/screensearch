@@ -1,5 +1,79 @@
 # 05 — Build Review
 
+## 2026-10-18 — PR #139 review corrections (G3+G4)
+
+- **All eight findings addressed locally:** reject reserved Windows device slugs (without
+  rejecting ordinary `com0`/`lpt0` near-misses); confirm re-resolves exactly one existing note and
+  rejects absent hashes/forged targets; source parsing and destination insertion share fence
+  marker/length rules and tolerate case/closing hashes; preserve duplicate selected occurrences;
+  document the latest-write ownership row; enforce persisted source/hash guards at prepare and
+  confirm; refresh mounted project-note state after saving settings; serialize scan/create.
+  Conflict copy distinguishes rechecking a stale preview from authorizing an owned-file edit,
+  without parsing backend message strings or changing the wire schema.
+- **Exact tested revision:** `1636a4fbae0b73d76f49b92091385ecb98b01f12`, branch
+  `feat/f3-g3-g4-writer-promotion`, ONE native checkout on tbx. Checkpoint `c71e87a` was partial,
+  not a verified revision. The spurious generated `note_edited` field was removed by actual
+  Windows ts-rs generation, not hand editing. Windows worktree was clean before and after the run.
+- **Observed Windows output (Rust 1.95.0, Node 22.23.3, CI order):**
+
+  ```text
+  head=1636a4fbae0b73d76f49b92091385ecb98b01f12
+  rust=rustc 1.95.0 (59807616e 2026-04-14)
+  node=v22.23.3
+  EXIT npm ci = 0
+  EXIT npm run lint = 0
+  EXIT npm run build = 0
+  # tests 35
+  # pass 35
+  # fail 0
+  EXIT npm test = 0
+  EXIT quinn security = 0
+  EXIT stage-mcp = 0
+  EXIT cargo fmt = 0
+  EXIT cargo clippy = 0
+  EXIT cargo build = 0
+  EXIT cargo test = 0
+  EXIT bindings = 0
+  CHAIN_EXIT=0
+  ```
+
+- **Named regressions observed in that same workspace test log:**
+
+  ```text
+  test promotion::tests::concurrent_create_project_note_yields_exactly_one_note ... ok
+  test promotion::tests::create_project_note_rejects_reserved_slug_names ... ok
+  test promotion::tests::confirm_refuses_a_forged_or_stale_note_target ... ok
+  test promotion::tests::duplicate_selected_items_are_all_promoted ... ok
+  test promotion::tests::excess_duplicate_selected_items_are_rejected ... ok
+  test promotion::tests::ownership_blocks_prepare_after_a_user_edit ... ok
+  test promotion::tests::ownership_blocks_confirm_after_an_edit_or_forged_hash ... ok
+  test promotion::tests::ownership_requires_same_source_and_allows_a_new_run ... ok
+  test promotion::tests::promotion_requires_explicit_confirm ... ok
+  test promotion::tests::promotion_to_edited_note_surfaces_conflict ... ok
+  test memory_files::tests::promotion_appends_without_rewrite ... ok
+  test memory_files::tests::merged_content_ignores_fake_headings_in_mixed_fences ... ok
+  test memory_files::tests::merged_content_handles_four_backtick_fences ... ok
+  test memory_files::tests::merged_content_uses_the_first_duplicate_section ... ok
+  test memory_files::tests::merged_content_preserves_crlf_and_a_missing_final_newline ... ok
+  test memory_files::tests::merged_content_does_not_insert_inside_an_unclosed_fence ... ok
+  test memory_files::tests::weekly_note_contains_provenance ... ok
+  test memory::tests::weekly_index_links_daily_and_weekly ... ok
+  test memory::tests::weekly_note_path_passes_provenance_check ... ok
+  test memory::tests::edited_weekly_note_is_preserved ... ok
+  ```
+
+- **Totals and limits:** parsed Rust results: 1069 passed, 0 failed, 15 existing ignored checks
+  (interactive desktop/WGC/UIA, OCR language pack, model downloads, live migration, perf/demo and
+  manual server). UI: 35 passed, 0 failed, including real QueryClient/QueryObserver settings
+  invalidation and pending-state tests; rendering tests use the unit harness, not the running
+  WebView2 bridge. A preliminary UI run caught a test-only strict object-identity assertion:
+  TanStack structural sharing preserves values, not necessarily object identity; fixed to deep
+  equality and rerun in the full chain. No Linux test/build results substitute for this run.
+- **Still not claimed:** a real-week synthesis, Obsidian link inspection, or an interactive
+  promotion in a freshly built isolated app. The installed app and live history were untouched;
+  no schedule, Telegram send, model download, push, merge or review-bot request was performed.
+  Documentation-only follow-up records this tested revision; it does not change runtime inputs.
+
 ## 2026-10-18 — F3 G3+G4 weekly note writer and project-note promotion (`03 §8e`)
 
 - **Scope:** G3 writes `Weekly/YYYY-Www.md` from the persisted run (frontmatter schema 2 with

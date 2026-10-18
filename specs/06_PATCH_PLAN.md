@@ -21,6 +21,19 @@
 
 When the spec contradicts itself, stop, ask the user, and log the resolution here before coding.
 
+## 2026-10-18 — PR #139 review corrections
+
+- Addressed Claude's five findings and Codex's three inline findings on `fc39c65` within G3/G4:
+  slug safety, current single-note confirmation, fenced/case-tolerant section handling,
+  duplicate-selection multiplicity, ownership semantics, persisted ownership checks,
+  settings-dependent note-status refresh and concurrent creation exclusion.
+- `03 §8c`/`§8e` already require the ownership guard: restoring that behaviour is a bug fix, not
+  a new adoption policy. An edited owned note remains a conflict; only an initially unowned note
+  may be adopted. No product contract, schema, generation surface or G5/G6 scope changed.
+- Full Windows CI-order verification passed at `1636a4f` (`05`); runtime source is frozen at that
+  tested commit. Native real-week/Obsidian/interactive promotion acceptance remains open and
+  publication/merge require their own authorization. Existing ordered rows remain unchanged.
+
 ## 2026-10-18 — F3 G3+G4 decisions closed (no new rows)
 
 - **`YYYY-Www` position in `Index.md` (left open by `03 §8e`):** resolved to a chronological
