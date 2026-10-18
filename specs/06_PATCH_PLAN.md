@@ -1,5 +1,19 @@
 # 06 — Patch Plan
 
+## 2026-10-18 — PR #139 review batch 3
+
+- Four findings fixed in `fe72af8` (note path identity, per-item weekly citations with
+  retained-frame provenance, saved-run timezone in the export footer) plus one
+  integration-found coverage-wording defect. Full native Windows chain at `fe72af8`:
+  `CHAIN_EXIT=0`, Rust 1094/0/15 ignored, UI 42/0; raw output in `05`.
+- Two product decisions recorded rather than guessed (`07`): a missing note has no
+  canonical identity (case-only respellings of a nonexistent note get distinct fallback
+  keys), and a weekly `frame_ids` entry from a retained day means "frames the synthesis
+  rests on", not frames re-read. No new schema, dependency or wire field.
+- Documentation/publication authorized. New-head hosted checks, the supplementary
+  `@claude`/`@codex` round and native interactive acceptance are separate from this
+  record. Merge not performed by this work record.
+
 ## 2026-10-18 — PR #139 post-install conflict reporting
 
 - Codex `r4307200508` is valid: a writer conflict can follow a successful install.

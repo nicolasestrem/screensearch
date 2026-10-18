@@ -1,5 +1,58 @@
 # 05 — Build Review
 
+## 2026-10-18 — PR #139 review batch 3: note identity, weekly citations, export timezone (Claude + Codex)
+
+- Runtime verified: `fe72af8f83bf43007567703ac4ad152b336af608` in the existing native
+  Windows checkout; Rust 1.95.0, Node 22.23.3. A subsequent documentation-only commit
+  inherits this result, not a claim of another runtime run.
+- Findings fixed: Codex "Normalize the note path before ownership lookup"
+  (`r4307321378`) and "Format exported dates in the saved run timezone"
+  (`r4307321383`); Claude's two `reports.rs` findings — the weekly citation check was
+  document-level rather than per item, and the retained-prose fallback dropped the day's
+  frame IDs. One unreported defect found and fixed at integration: the widened
+  `frames_summarized` (retained provenance) could exceed `frames_sampled`, so the
+  `N of M sampled frames summarized` coverage line could read `5 of 2`; coverage is now
+  reported as two independent counts.
+- Verbatim native output:
+
+```text
+head=fe72af8f83bf43007567703ac4ad152b336af608
+rust=rustc 1.95.0 (59807616e 2026-04-14)
+node=v22.23.3
+EXIT npm ci = 0
+EXIT npm run lint = 0
+EXIT npm run build = 0
+# tests 42
+# pass 42
+# fail 0
+EXIT npm test = 0
+EXIT quinn security = 0
+EXIT stage-mcp = 0
+EXIT cargo fmt = 0
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+test reports::tests::weekly_citation_check_accepts_each_item_carrying_day_provenance ... ok
+test reports::tests::weekly_citation_check_matches_whole_run_ids_only ... ok
+test reports::tests::weekly_saved_prose_carries_frame_ids_without_sampling_them ... ok
+test reports::tests::weekly_uncited_item_is_generation_failed ... ok
+test promotion::tests::different_project_notes_do_not_collide ... ok
+test promotion::tests::respelled_folder_finds_the_committed_receipt_without_appending ... ok
+test promotion::tests::respelled_folder_finds_the_ownership_row_and_still_conflicts ... ok
+test promotion::tests::unresolved_note_identity_falls_back_to_the_lexical_spelling ... ok
+test promotion::tests::writer_conflict_without_the_append_installed_appends_nothing ... ok
+test promotion::tests::writer_conflict_after_install_reports_the_append_and_records_it ... ok
+EXIT cargo test = 0
+EXIT bindings = 0
+CHAIN_EXIT=0
+```
+
+- Parsed Rust totals: 1094 passed, 0 failed, 15 existing ignored. UI: 42 passed, 0 failed.
+  Note-identity tests exercise real respelled paths (case, `/.`, separators,
+  `\\?\`-style prefixes) against a real store; the identity rule is Windows-resolved
+  canonicalization with a documented lexical fallback for a note that does not exist yet.
+  Hosted checks at this head are pending publication; green checks at `176b567` do not
+  verify this batch. Native interactive acceptance remains open.
+
 ## 2026-10-18 — PR #139 post-install conflict receipt (Codex r4307200508)
 
 - Runtime verified: `e69ee1f9d9702693e71e1085b2c457f03fcc5ad3` in the existing

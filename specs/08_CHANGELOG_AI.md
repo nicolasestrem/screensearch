@@ -1,5 +1,24 @@
 # 08 — AI Changelog
 
+## 2026-10-18 — PR #139 review batch 3: identity, citations, timezone
+
+- Fixed Codex `r4307321378` (note path not normalized before ownership lookup: a
+  respelled folder could silently adopt an edited/owned note) and `r4307321383` (export
+  footer dated in the browser's timezone instead of the saved run's), and Claude's two
+  `reports.rs` findings: the weekly citation check now requires a consumed
+  run/frame/session token per promotable item and per named-day claim (uncited items are
+  `GENERATION_FAILED`), and a retained-prose day keeps its recorded frame IDs in the
+  weekly's cited set without inflating `frames_sampled`. No wire field, schema,
+  dependency or generated-binding change.
+- Found at integration and fixed here: since retained provenance now joins
+  `frames_summarized`, it can exceed `frames_sampled`, and the coverage line's
+  `N of M sampled frames summarized` could read `5 of 2`; both the report panel and the
+  export footer now report the two counts separately.
+- Native Windows full chain at `fe72af8`: `CHAIN_EXIT=0`, Rust 1094 passed / 0 failed /
+  15 existing ignored; UI 42 passed / 0 failed. Named regressions in `05`. New hosted CI
+  pending publication; no merge, installed-app change or live-history access in this
+  record.
+
 ## 2026-10-18 — PR #139 truthful receipt after a concurrent note swap
 
 - Fixed Codex `r4307200508`: when the writer reports a conflict after the append

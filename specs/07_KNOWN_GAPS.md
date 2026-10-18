@@ -1,5 +1,33 @@
 # 07 — Known Gaps
 
+## 2026-10-18 — PR #139 review batch 3 readings
+
+- **Note identity is the OS-resolved canonical path, never case-folded.** The ownership
+  row and the promotion intent/receipt KV slots key on `std::fs::canonicalize` rendered
+  with forward slashes and without verbatim/device prefixes (restored only at the I/O
+  boundary), so `C:/Vault`, `c:/vault` and `C:/Vault/.` share one identity. Two distinct
+  files cannot collide because the key is the file the OS actually resolved; case folding
+  was rejected because it is the one way to make distinct NTFS entries collide.
+- **A note that does not exist yet has no canonical identity.** Two case-only spellings of
+  a missing note get different fallback keys (the fallback keeps the requested spelling's
+  case and `..`). That cannot adopt bytes — every promotion path reads the note first —
+  but the alternative (fold ASCII case in the fallback) could make two distinct
+  case-sensitive NTFS entries share one row, which `03 §8c`/`§8e` forbid. Recorded as the
+  one unspecified decision rather than guessed.
+- **A weekly "day claim" is a top-level `- ` item naming a consumed local date.** Every
+  such item under the four promotable headings must cite a consumed daily run ID or a
+  frame/session ID from that day's saved report; prose lines (window bounds, banners) are
+  not items and are not checked, so a section with no evidence says so in prose.
+  `03 §8e` does not define citation syntax, so a whole-number frame/session match counts
+  (`frame 101`, `[101]`, `101, 102`) and a bare number is accepted even when it was not
+  meant as a citation.
+- **A retained-prose day keeps its recorded frame IDs.** They join the weekly's
+  `frame_ids`/`cited_frame_ids` (the frontmatter invariant requires `frame_ids.len() ==
+  frames_summarized`) but are not re-read evidence: `frames_sampled` still counts only
+  frames actually read. For weekly runs `frame_ids` therefore reads "frames the synthesis
+  rests on", including a retained day's recorded frames it did not re-read — which is why
+  the coverage line reports the two counts separately instead of as a `N of M` ratio.
+
 ## 2026-10-18 — Project-note ownership identity: open product decision (owner: agent; maintainer may override)
 
 - **A note that does not exist yet has no canonical identity.** `ReportFileOwnership` rows and the
