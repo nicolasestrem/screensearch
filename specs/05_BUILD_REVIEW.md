@@ -1,5 +1,75 @@
 # 05 — Build Review
 
+## 2026-10-18 — F3 G3+G4 weekly note writer and project-note promotion (`03 §8e`)
+
+- **Scope:** G3 writes `Weekly/YYYY-Www.md` from the persisted run (frontmatter schema 2 with
+  `kind`, `daily_run_ids` and every `window_local_dates` date) through the daily writer's
+  atomic/owned pipeline, adds weekly `Index.md` entries linking the week's note and the owned
+  daily notes it consumed, gives the index folder filter and provenance re-derivation weekly
+  branches with kind separation both ways, and keeps honest skip receipts for a `NO_DATA` week.
+  Kernel gains `window_local_dates` (the single date-enumeration source, consumed by
+  `weekly_missing_local_dates`), `week_label` and `parse_week_label`. G4 adds
+  `project_note_status` / `create_project_note` / `prepare_promotion` / `confirm_promotion`,
+  `memory_files::merged_content` + `append_entries_owned`, and the `PromotionPanel` /
+  `PromotionDialog` surface in `ReportView` with project-note state in `MemoryPanel`. No
+  scheduler, catch-up or weekly Telegram digest (G5–G6); promotion has no HTTP/MCP surface.
+- **Windows (tbx) — branch `feat/f3-g3-g4-writer-promotion` at `193ea68`, full `04 §1c`
+  chain in order, `CHAIN_EXIT=0` (all 10 steps green):**
+
+  ```text
+  npm ci / npm run lint / npm run build     exit 0 (vite build 3.3 s)
+  npm test                                  23 passed, 0 failed
+  node scripts/stage-mcp.mjs                exit 0
+  cargo fmt --all -- --check                exit 0
+  cargo clippy --locked --workspace --all-targets -- -D warnings   exit 0
+  cargo build --locked --workspace          exit 0
+  cargo test --locked --workspace           every suite 0 failed
+  git diff --exit-code -- ui/src/bindings   clean
+  ```
+
+  Named app tests observed passing on Windows (`screensearch` lib):
+  `weekly_note_contains_provenance ok`, `weekly_index_links_daily_and_weekly ok`,
+  `weekly_note_path_passes_provenance_check ok`, `edited_weekly_note_is_preserved ok`,
+  `promotion_requires_explicit_confirm ok`, `promotion_appends_without_rewrite ok`,
+  `promotion_to_edited_note_surfaces_conflict ok`,
+  `weekly_runs_write_note_and_index_or_skip_no_data ok`.
+  Two integration fixes were required during the chain runs and are part of this branch:
+  `5771b16` (promotion fixtures must match the store's provenance invariant — the first
+  chain run failed on a fixture-only duplicate `frame_ids`) and `193ea68`
+  (`clippy::unnecessary_sort_by` in the section splice).
+- **Linux (this host, same branch and head) — completed:**
+
+  ```text
+  cargo test -p kernel    113 lib + 9 enrichment + 17 pipeline + 3 sessions_intel
+                          + 22 settings + 2 throttle, 0 failed
+  cargo test -p traits    106 + 4, 0 failed
+  cargo test -p store     all suites 0 failed
+  cargo clippy -p kernel -p traits -p store --all-targets -- -D warnings   clean
+  cargo fmt --all -- --check                                               exit 0
+  ui npm run lint                                                          exit 0
+  ui npm run build                                                         exit 0 (3.3 s)
+  ui npm test                                                              23 passed, 0 failed
+  ```
+
+- **New kernel checks observed passing (inside the 113 lib count):**
+  `window_local_dates_lists_every_local_day_through_dst`,
+  `window_local_dates_handles_normal_partial_and_iso_year_windows`,
+  `week_label_and_parse_week_label_roundtrip`,
+  `parse_week_label_rejects_malformed_and_missing_weeks`,
+  `weekly_missing_local_dates_uses_the_shared_window_enumeration`. The 23 UI checks include the new
+  `ui/test/promotion.test.mjs` suite (parser selection and ordering, command names and argument
+  keys, populated/empty/conflict/success panel states).
+- **Named app-layer checks (Windows chain only):** `weekly_runs_write_note_and_index_or_skip_no_data`
+  (replaces the G2-era `weekly_runs_skip_note_and_index_with_receipts`),
+  `weekly_index_links_daily_and_weekly`, `weekly_note_path_passes_provenance_check`,
+  `edited_weekly_note_is_preserved`, `weekly_note_contains_provenance`,
+  `promotion_requires_explicit_confirm`, `promotion_appends_without_rewrite`,
+  `promotion_to_edited_note_surfaces_conflict`.
+- **Not run / not claimed here:** `src-tauri` does not compile on Linux by design, so its unit
+  tests and the `04 §1c` native acceptance (a real weekly run over a real week of saved dailies, the
+  note inspected with working links, and one promotion in the running app) are not claimed. `crates/api`
+  and `crates/mcp` are untouched — no new network surface.
+
 ## 2026-10-17 — F3 G2 weekly synthesis engine (`03 §8e`)
 
 - **Scope:** weekly run through the shared report service over **saved daily** reports:

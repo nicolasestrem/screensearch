@@ -1,5 +1,31 @@
 # 08 — AI Changelog
 
+## 2026-10-18 — F3 G3+G4: weekly note writer, index entries, project-note promotion
+
+- **Change:** weekly runs write `Weekly/YYYY-Www.md` from the persisted run (schema-2 frontmatter
+  with `kind`, `daily_run_ids` and `window_local_dates`) through the daily writer's atomic/owned
+  pipeline, and appear in `Index.md` with a `days:` list linking the owned daily notes they
+  consumed; the index folder filter and provenance re-derivation gain weekly branches with kind
+  separation both ways, and a `NO_DATA` week writes neither output. Kernel adds
+  `window_local_dates` (the single date-enumeration source, also consumed by
+  `weekly_missing_local_dates`), `week_label` and `parse_week_label`. Promotion adds
+  `prepare_promotion` / `confirm_promotion` / `project_note_status` / `create_project_note` over
+  bullet-level selections, `memory_files::merged_content` + `append_entries_owned` (one atomic
+  multi-section append under the selection-time hash), `PromotionPanel` / `PromotionDialog` in the
+  report view and project-note create/status in `MemoryPanel`.
+- **Why:** `03 §8e` G3 (the weekly note, index entry and provenance branches under the daily
+  writer's atomic, hash-tracked and ownership guarantees) and G4 (explicitly confirmed, append-only
+  promotion into the single user-created project note, so generated prose never enters a project
+  note unreviewed and a selection-time edit is never overwritten).
+- **Verification:** Linux `cargo test -p kernel` (113 lib + 9 enrichment + 17 pipeline + 3
+  sessions_intel + 22 settings + 2 throttle), `-p traits` (106 + 4) and `-p store` all 0 failed;
+  `cargo clippy -p kernel -p traits -p store --all-targets -- -D warnings` clean;
+  `cargo fmt --all -- --check` exit 0; `ui` lint and build exit 0, `npm test` 23 passed / 0 failed.
+  Windows 04 §1c chain on tbx at `193ea68`: every step green (`CHAIN_EXIT=0`) —
+  npm ci/lint/build, npm test 23/0, stage-mcp, fmt, clippy `-D warnings`, workspace
+  build, workspace tests (all named G3/G4 tests passing), bindings guard clean.
+  Raw output in `05`; decisions and edge cases in `06` and `07`.
+
 ## 2026-10-17 — F3 G2: weekly synthesis engine over saved dailies
 
 - **Change:** `Store::saved_daily_runs`; kernel `execute_weekly` + weekly synthesis through the

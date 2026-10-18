@@ -21,6 +21,29 @@
 
 When the spec contradicts itself, stop, ask the user, and log the resolution here before coding.
 
+## 2026-10-18 — F3 G3+G4 decisions closed (no new rows)
+
+- **`YYYY-Www` position in `Index.md` (left open by `03 §8e`):** resolved to a chronological
+  interleave with daily entries, newest first, the weekly row keyed on the window's last local date
+  so it opens its own week's block. `src-tauri/src/memory.rs` sorts descending on
+  `{date}/{relative_path}` and never on the week label. The spec's silence was filled rather than
+  contradicted, so this is a resolution, not an ordered fix.
+- **Weekly note content and `NO_DATA` output:** the note carries no second banner (the saved
+  synthesis already has its PARTIAL banner), and a `NO_DATA` week writes neither note nor index,
+  keeping its skip receipts. G2-era skip receipts are not retro-written; Regenerate makes a linked
+  revision.
+- **Promotion granularity, date and write shape (spec silent on all three):** one selectable unit is
+  an individual bullet mapped `Explicitly evidenced decisions` → `Decisions`, `Open questions` →
+  `Open questions`, `Next steps` → `Next steps`, `Activity` → `Log`; the entry date is the promotion
+  date computed at prepare in the run's saved timezone and carried in the confirmed proposal; one
+  promotion writes one `### date` block per touched section in a single atomic write. Implemented in
+  `src-tauri/src/promotion.rs` and `src-tauri/src/memory_files.rs`.
+- **No patch rows opened.** None of the above contradicts `02 §5i` or `03 §8e`, so rows #15 and #23
+  stand unchanged and this increment adds no ordered fix. The one implementation edge — a consumed
+  day whose daily note was rewritten by a linked revision rendering as a plain-text date — is
+  recorded in `07`, because no fix is pending. No acceptance or merge is claimed here: the `04 §1c`
+  Windows chain is still in progress (`05`).
+
 ## 2026-10-15 — Security maintenance
 
 All six current alerts are triaged in `05`: five targeted dependency fixes and

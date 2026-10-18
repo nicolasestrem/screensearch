@@ -12,6 +12,69 @@
   its status and missing-day list stay correct. The banner cause should come from the unreadable
   evidence count if this wording is worth another pass.
 
+## 2026-10-18 — F3 G3+G4 implementation readings (owner: agent; maintainer may override)
+
+- **`window_local_dates` describes the window, not the covered days.** A weekly note's frontmatter
+  lists every local date whose day period intersects `[window_start, window_end)` — seven for a
+  complete ISO week, DST weeks (167/169 h) included. A day without complete saved coverage stays in
+  `missing_local_dates` and the PARTIAL banner; the field itself never claims a day was covered.
+- **A `NO_DATA` week writes neither note nor index.** Both destinations get a skip receipt reading
+  "A week without saved daily evidence writes no weekly note (NO_DATA)." G2-era runs that already
+  carry skip receipts are not retro-written: Regenerate on such a run creates a linked revision,
+  which is the only way that week acquires a note.
+- **An index entry links only owned, hash-verified daily notes.** `days:` resolves the frontmatter
+  `daily_run_ids` to local dates oldest-first and links a date only when that run's owned note
+  passed the scan's hash and provenance checks; otherwise the date stays plain text. The whole line
+  reads `- [2026-W42](Weekly/2026-W42.md) — OK — <topic> — days: [2026-10-12](Daily/2026-10-12.md),
+  2026-10-13`. A pruned run leaves the day list entirely (it can no longer name a date) but its id
+  stays in the weekly note's `daily_run_ids`, which is never rewritten to match the index.
+- **Index ordering (the open `YYYY-Www` position) is chronological, newest first.** Entries sort
+  descending on `{date}/{relative_path}`; a weekly row's date is the window's **last** local date, so
+  the week's row opens its own block, and the `Weekly/` > `Daily/` path comparison keeps it above a
+  daily entry of that same date. The week label is never a sort key.
+- **The weekly note adds no banner of its own.** `weekly_note` writes the saved markdown verbatim
+  under `# YYYY-Www`; `save_weekly_execution` already prepended `weekly_partial_banner`, so a second
+  banner would state the week's gaps twice.
+- **Promotion works at bullet granularity.** One selectable unit is a top-level `- ` bullet of the
+  saved report, mapped by source heading: `Explicitly evidenced decisions` → `Decisions`,
+  `Open questions` → `Open questions`, `Next steps` → `Next steps`, `Activity` → `Log`. Items are
+  copied verbatim (the text after `- `); a selection that no longer matches the saved markdown is an
+  error, never a silent drop. UI and backend share that reading of the markdown (headings matched
+  case-insensitively, closing hashes tolerated, fenced code skipped), so backend validation cannot
+  reject an item the UI offered.
+- **The entry date is the promotion date, fixed at prepare.** `prepare_promotion` renders the local
+  date in the run's own saved timezone and the confirmed proposal carries it; `confirm_promotion`
+  rebuilds the blocks from that carried date (canonical `YYYY-MM-DD`) rather than the clock, so the
+  heading written is exactly the heading previewed.
+- **One `### date` block per touched section, in one atomic write.** A single promotion contributes
+  one block per touched section, all items for that section sharing one provenance footer; the
+  blocks are spliced by `merged_content` and written once by `write_owned` under the selection-time
+  hash. A block is `### YYYY-MM-DD`, a blank line, the verbatim items, a blank line, then one italic
+  footer, e.g. `*Source: weekly synthesis run R; daily runs A, B; frames 101, 102; sessions 7, 8.*`
+  — the `daily runs` clause appears only for a weekly source, ids are sorted and deduped, `—` stands
+  in for an empty list, and beyond 20 ids the list ends `, … (N total)`. There is no per-section
+  write and no delivery row, so a stopped app leaves either the old note or the complete promotion,
+  and untouched sections keep their bytes.
+- **The project note is user-created and default-empty.** `create_project_note` writes a zero-byte
+  `<slug>.md` (slug `^[a-z0-9][a-z0-9_-]{0,63}$`) and refuses when any note already exists; the four
+  `## ` headings are created lazily at EOF in canonical order (Decisions, Open questions, Next
+  steps, Log) by the first append. Zero notes is "create one first"; more than one `Projects/*.md`
+  is an unsupported state naming the paths, never a silent pick.
+- **Known edge, documented not fixed:** a consumed day whose daily note was later rewritten by a
+  linked revision renders as a plain-text date. The scan keys owned daily notes by the note's
+  frontmatter `run_id` — the revision's id — while the weekly note records the base run it consumed,
+  so the lookup misses and the day is not linked. The date and the run id stay correct; only the
+  link is lost.
+- **`WRITE_FAILED` is the weekly writer's guard, not a reachable status.** `weekly_note` exports only
+  `OK`/`PARTIAL`, so a hypothetical `BLOCKED`/`FAILED` weekly run that somehow carried a saved result
+  would surface as a write failure rather than a skip receipt. The engine never saves a result for
+  those outcomes, so the branch is unreachable today and kept as a guard.
+- **Promotion validates its target and records ownership only on success.** `confirm_promotion`
+  requires the note's parent to be exactly `<output folder>/ScreenSearch/Projects` with a `.md`
+  extension, and returns a `FILE_CONFLICT` receipt without writing if the folder or note changed
+  since the preview; `ReportFileOwnership` is saved only after a successful write, so a conflict
+  leaves the previous row untouched.
+
 ## 2026-10-17 — F3 G2 implementation readings (owner: agent; maintainer may override)
 
 - **Evidence without saved dailies is refused, not reported.** `§8e` defines `NO_DATA` only for
