@@ -1,5 +1,54 @@
 # 05 — Build Review
 
+## 2026-10-18 — PR #139 additional review batch, native Windows verified
+
+- **Frozen runtime:** `aba0c28587dab9346dd869bc8a1dea75ca0bc4db`, isolated local branch
+  `fix/pr139-review-followup`; ONE existing tbx checkout on `feat/f3-g3-g4-writer-promotion`.
+  Concurrent G5/G6 edits in the shared coordinator checkout were excluded, not reverted.
+- **Findings:** `4305601207` — persist a confirmed-write intent before append and reconcile
+  original ownership/retry identity after a storage failure; `4305709131` — no hierarchy creation
+  before the guarded writer checks reparse ancestors; `4305709134` — use verified surviving
+  daily-note paths to retain weekly index links after run pruning. No schema/wire/public-setting
+  change. `rusqlite` is an existing workspace dependency added only to app dev-dependencies for
+  real SQLite-trigger failure injection; the lockfile changes only that dependency edge.
+- **Native full chain:** Rust `1.95.0`, Node `22.23.3`; fresh npm ci → lint → build → tests →
+  Quinn security → stage-mcp → fmt → clippy `-D warnings` → workspace build → workspace tests →
+  generated-bindings guard. Every exit was 0. Parsed across the actual Rust suite summaries:
+  **1084 passed, 0 failed, 15 existing ignored**. UI **35 passed, 0 failed**. No new ignored test.
+  Native and isolated coordinator worktrees were clean after the run.
+- **Verbatim excerpts:**
+
+  ```text
+  head=aba0c28587dab9346dd869bc8a1dea75ca0bc4db
+  # tests 35
+  # pass 35
+  # fail 0
+  test memory::tests::weekly_index_keeps_consumed_link_after_daily_run_pruned ... ok
+  test promotion::tests::owned_note_recovers_after_append_when_ownership_update_fails ... ok
+  test promotion::tests::detached_confirmation_finishes_its_file_and_metadata ... ok
+  test promotion::tests::create_project_note_rejects_a_junction_without_external_mutation ... ok
+  test promotion::tests::lost_success_response_retry_returns_the_committed_receipt_without_appending ... ok
+  EXIT cargo fmt = 0
+  EXIT cargo clippy = 0
+  EXIT cargo build = 0
+  EXIT cargo test = 0
+  EXIT bindings = 0
+  CHAIN_EXIT=0
+  ```
+
+- **Discriminating coverage:** real SQLite failure before intent insertion and after append;
+  previously owned and initially unowned notes; exact retry vs changed date; lost
+  response; restart, pruned source and folder switch; unrelated edits remain conflicts; detached
+  confirmed work finishes file + ownership + receipt. The Windows junction test actually creates
+  a junction and asserts no external `Projects` directory is created. The index test uses real
+  retention, asserts two daily runs were deleted while their notes/ownership survive, and rebuilds
+  through a persisted linked weekly revision (not a reused scheduled identity).
+- **Raw log:** `/home/hermes/.hermes/profiles/brian/checkpoints/pr139-followup-20261018/windows-aba0c28.log`.
+  Targeted promotion run separately passed all 26 tests; the full app suite passed 122 tests.
+- **Boundary:** no push/hosted verification of this batch yet; PR #139 remains open/unmerged at
+  `42cf13d`. Real-week synthesis, rendered Obsidian links and interactive promotion remain separate
+  acceptance gates. No live-history/installed-app access, Telegram send, bot reply or thread resolution.
+
 ## 2026-10-18 — PR #139 CodeQL test-only follow-up
 
 - Hosted Windows build/tests and all three wrapper package jobs passed at `66980b3`, as did all

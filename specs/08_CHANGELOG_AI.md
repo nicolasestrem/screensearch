@@ -1,5 +1,24 @@
 # 08 — AI Changelog
 
+## 2026-10-18 — PR #139 additional promotion/index review fixes
+
+- **Change:** confirmed promotion intent and last receipt in existing internal per-note settings
+  KV, without selected/note text, recover ownership after a landed append, restart or source-run
+  pruning and answer exact lost-response retries without duplicating content. Selection/date
+  identity is hashed; unrelated edits stay conflicts. IPC critical work owns its lifetime through
+  filesystem and SQLite bookkeeping. Creation delegates hierarchy changes to the guarded writer
+  before any junction can create external directories. Weekly indexing retains links from verified
+  owned daily-note paths after daily runs are pruned, falling back to plain dates only when needed.
+- **Why:** relevant new Codex findings `4305601207`, `4305709131`, `4305709134`; existing `03 §8c/8e`
+  persistence and ownership guarantees. No schema/wire/public-setting change or G5/G6 scope.
+  Existing workspace `rusqlite` is an app test-only dependency for actual SQLite failure injection.
+- **Verification:** full native Windows `04 §1c` chain at `aba0c28`, Rust1.95.0 / Node22.23.3,
+  `CHAIN_EXIT=0`: Rust1084 passed / 0 failed / 15 existing ignored; UI35 passed / 0 failed;
+  fmt/clippy/build/security/binding checks all exit0. Includes a real junction, actual retention
+  with a production index rebuild, owned/unowned storage-failure recovery and detached confirmation.
+  Raw output in `05`. Isolated local worktree excludes concurrent G5/G6 changes; no second tbx
+  checkout. Not yet pushed; fresh hosted checks and native interactive acceptance are not claimed.
+
 ## 2026-10-18 — PR #139 CodeQL test assertion
 
 - Replaced a dynamically constructed, incompletely escaped regex in the promotion error-render

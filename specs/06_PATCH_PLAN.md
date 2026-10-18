@@ -34,8 +34,10 @@ When the spec contradicts itself, stop, ask the user, and log the resolution her
   note's canonical path date before a run-record fallback. Implementation readings are in `07`.
 - Native targeted checks: 26 promotion tests passed, including real SQLite-trigger failures,
   owned/unowned-note recovery, lost response, restart/pruning, detached work and an actual Windows
-  junction. The production-path retention/index regression passed separately. Full frozen-head
-  Windows verification remains pending; its final evidence belongs in `05`.
+  junction. Full Windows `04 §1c` verification at `aba0c28` then passed with `CHAIN_EXIT=0`:
+  Rust 1084 passed / 0 failed / 15 existing ignored; UI 35 passed / 0 failed. Bindings stayed
+  clean. Exact output and the production-path retention/index regression are recorded in `05`;
+  subsequent changes in this batch are documentation only.
 - No product/schema/public-setting/wire change, G5/G6 work, installed-app access or live data.
   The shared checkout moved to a concurrent G5/G6 branch during execution; this batch is isolated
   on `fix/pr139-review-followup` in a local worktree. Only the ONE existing tbx checkout is used
