@@ -1,5 +1,41 @@
 # 05 — Build Review
 
+## 2026-10-18 — PR #140 review: disabled weekly periods recorded as missed (Codex + Claude)
+
+- Runtime verified: `62c38adee440f612c6e3b956075cf68b88fd1e2a` in the existing native Windows checkout (Rust 1.95.0, Node
+  22.23.3). This docs-only commit inherits that result.
+- Fixed Codex `PRRT_kwDOTAuCtM6tuHtd` (confirmed by Claude's review): a disable keeps the weekly
+  state, time and zone, so re-enabling synthesized a gap over the whole disabled interval.
+  `activation_values` now records prior-lane gaps only when the old weekly schedule was
+  enabled (`03 §8c`: re-enable starts a future activation period; disabled periods are not
+  backfilled), matching the daily lane. Time/zone changes while enabled still record overdue
+  weeks.
+- Regression `weekly_reenable_does_not_record_disabled_weeks_as_missed` was RED on the unfixed
+  code (`8c4bbef`, test only: panicked at `src-tauri\src\memory_weekly.rs:682:9`,
+  `test result: FAILED. 35 passed; 1 failed`) and GREEN on the fix.
+- Verbatim native output:
+
+```text
+head=62c38adee440f612c6e3b956075cf68b88fd1e2a
+EXIT npm ci = 0
+EXIT npm run lint = 0
+EXIT npm run build = 0
+EXIT npm test = 0
+EXIT quinn security = 0
+EXIT stage-mcp = 0
+EXIT cargo fmt = 0
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+test memory::weekly::tests::weekly_reenable_does_not_record_disabled_weeks_as_missed ... ok
+test memory::weekly::tests::weekly_timing_change_records_skipped_closed_weeks_as_gap ... ok
+EXIT cargo test = 0
+EXIT bindings = 0
+CHAIN_EXIT=0
+```
+
+- Parsed Rust totals: 1130 passed, 0 failed, 15 ignored across 62 suites. UI: 50 passed,
+  0 failed. Hosted checks at this head are pending; green checks at `34c7372` do not verify it.
+
 ## 2026-10-18 — F3 G5/G6 review-or-redo, rebuilt on main
 
 - Runtime verified: `1ce4d66bcadd2d46ccf9367be565183f9e218c5c` in the existing native Windows checkout (Rust 1.95.0, Node

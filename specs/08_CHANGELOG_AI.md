@@ -1,5 +1,10 @@
 # 08 — AI Changelog
 
+## 2026-10-18 — PR #140: re-enabling weekly no longer marks the disabled period as missed
+
+- Fixed Codex `PRRT_kwDOTAuCtM6tuHtd`: gap synthesis on weekly re-activation now requires the
+  previous weekly schedule to have been enabled. Native chain green at `62c38adee440f612c6e3b956075cf68b88fd1e2a` (see `05`).
+
 ## 2026-10-18 — F3 G5/G6 rebuilt on main with review follow-ups
 
 - Rebuilt the G5/G6 work onto `main` with PR-139 batch-3 preserved; added the future-cursor
