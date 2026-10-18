@@ -280,7 +280,7 @@ test("prepare rejection shows the backend error and offers a retry, never a conf
     }),
   );
   // The backend's own message is shown verbatim, never a stringified exception.
-  assert.match(html, new RegExp(backendError.replace(/[.]/g, "\\.")));
+  assert.ok(html.includes(backendError), "the backend error should be shown verbatim");
   assert.doesNotMatch(html, /\[object Object\]/);
   // Re-preparing only rechecks: an edited note stays protected until the user
   // restores the app-written version or picks another output folder.

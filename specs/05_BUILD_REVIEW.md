@@ -1,5 +1,29 @@
 # 05 — Build Review
 
+## 2026-10-18 — PR #139 CodeQL test-only follow-up
+
+- Hosted Windows build/tests and all three wrapper package jobs passed at `66980b3`, as did all
+  three CodeQL analysis jobs. The separate CodeQL alert gate failed: check `117577648747`
+  annotated `ui/test/promotion.test.mjs:283`, "Incomplete string escaping or encoding" /
+  "This does not escape backslash characters in the input."
+- The assertion built a regex after escaping only periods. Replaced it with literal
+  `html.includes(backendError)`: this test needs literal containment, not regex matching. No
+  production source, generated type or dependency changed; no alert suppression/dismissal.
+- Real Windows follow-up: base `66980b30d350978c16c61c38874f65e313b3e3b4` plus the copied test
+  file, SHA-256 `cf21c4624ea92a144e9edd057cfb4623852488a83b03277994807a339b6b2fcf`, matched
+  on both hosts. `npm run lint` exited 0; observed output:
+
+  ```text
+  # tests 35
+  # pass 35
+  # fail 0
+  TEST_ONLY_FOLLOWUP_EXIT=0
+  ```
+
+- Hosted CodeQL verification of this follow-up is pending publication and a fresh scan. The
+  earlier full native Rust/runtime verification remains applicable to unchanged production bytes;
+  this focused follow-up does not claim a new workspace run or native GUI acceptance.
+
 ## 2026-10-18 — PR #139 review corrections (G3+G4)
 
 - **All eight findings addressed locally:** reject reserved Windows device slugs (without

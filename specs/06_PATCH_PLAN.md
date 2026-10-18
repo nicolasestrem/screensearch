@@ -21,6 +21,13 @@
 
 When the spec contradicts itself, stop, ask the user, and log the resolution here before coding.
 
+## 2026-10-18 — PR #139 hosted scanner follow-up
+
+- CodeQL's alert gate (not the passing analysis jobs) flagged incomplete regex escaping in a UI
+  test at `66980b3`. The test now uses literal substring containment; native Windows lint and all
+  35 UI tests pass (`05`). No production changes or new policy/schema decision. Publication and
+  a fresh hosted scan remain pending; do not mark the old red alert gate as cleared.
+
 ## 2026-10-18 — PR #139 review corrections
 
 - Addressed Claude's five findings and Codex's three inline findings on `fc39c65` within G3/G4:

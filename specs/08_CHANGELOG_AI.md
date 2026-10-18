@@ -1,5 +1,14 @@
 # 08 — AI Changelog
 
+## 2026-10-18 — PR #139 CodeQL test assertion
+
+- Replaced a dynamically constructed, incompletely escaped regex in the promotion error-render
+  test with literal substring containment. Resolves the source of CodeQL check `117577648747`
+  without weakening the assertion, suppressing the finding or changing production code.
+- Native Windows lint exited 0; all 35 UI tests passed. Copied-test SHA and exact output are in
+  `05`. Publication and the new hosted scan remain pending; old successful analysis jobs do not
+  certify that the failing alert gate is clear.
+
 ## 2026-10-18 — PR #139 promotion and writer review corrections
 
 - **Change:** enforce same-source persisted ownership/hash at both promotion preparation and
