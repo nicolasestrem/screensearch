@@ -31,6 +31,8 @@ export interface PromotionDialogProps {
   confirming: boolean;
   /** Failure to build the preview (shown only in the preview view). */
   prepareError: string | null;
+  /** Backend error code for `prepareError`, when the failure carried one. */
+  prepareErrorCode?: string | null;
   /** Failure thrown by `confirm_promotion`. */
   confirmError: string | null;
   onConfirm: () => void;
@@ -45,6 +47,7 @@ export function PromotionDialog({
   preparing,
   confirming,
   prepareError,
+  prepareErrorCode = null,
   confirmError,
   onConfirm,
   onCancel,
@@ -196,8 +199,12 @@ export function PromotionDialog({
                 </p>
               )}
               <p className="text-caption text-ink-muted">
-                Preparing again rebuilds the preview against the note as it is now.
-                Review the entries before confirming.
+                Preparing again only rechecks the note. It cannot clear a conflict on a
+                note you edited: the app appends only to the version it last wrote for
+                this profile. Restore the last app-written version of the note, or
+                choose a different output folder in Settings · Memory reports. If the
+                folder or note location changed instead, preparing again previews the
+                note that is there now.
               </p>
               {prepareError && (
                 <p role="alert" className="text-caption text-danger">
@@ -260,9 +267,21 @@ export function PromotionDialog({
               )}
 
               {prepareError ? (
-                <p role="alert" className="text-caption text-danger">
-                  Couldn't build the preview: {prepareError}
-                </p>
+                <div className="flex flex-col gap-2 text-body">
+                  <p role="alert" className="text-caption text-danger">
+                    Couldn't build the preview: {prepareError}
+                  </p>
+                  {prepareErrorCode === "FILE_CONFLICT" && (
+                    <p className="text-caption text-ink-muted">
+                      Preparing again only rechecks the note. The app appends only to
+                      exactly one project note, and only to the version it last wrote for
+                      this profile. An edited note or more than one note in Projects/
+                      keeps reporting a conflict: restore the last app-written version,
+                      keep one note, or choose a different output folder in Settings ·
+                      Memory reports.
+                    </p>
+                  )}
+                </div>
               ) : (
                 <div className="flex flex-col gap-4">
                   {proposal.entries.map((entry) => (

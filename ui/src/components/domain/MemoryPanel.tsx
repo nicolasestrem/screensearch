@@ -9,7 +9,7 @@ import type { ReportRun } from "../../bindings/ReportRun";
 import * as cmd from "../../lib/ipc/commands";
 import {
   memoryError, useMemoryDeliveries, useMemoryMutation, useMemoryRun,
-  useMemoryRuns, useMemorySchedulePreview, useMemoryStatus,
+  useMemoryRuns, useMemorySchedulePreview, useMemoryStatus, useSetMemorySettings,
 } from "../../lib/ipc/memory";
 import {
   promotionError, useCreateProjectNote, useProjectNoteStatus,
@@ -309,7 +309,7 @@ export function MemoryPanel() {
   const [confirmReset, setConfirmReset] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const save = useMemoryMutation(cmd.setMemorySettings);
+  const save = useSetMemorySettings();
   const runNow = useMemoryMutation(cmd.runMemoryReport);
   const saveToken = useMemoryMutation(cmd.setTelegramToken);
   const clearToken = useMemoryMutation(cmd.clearTelegramToken);

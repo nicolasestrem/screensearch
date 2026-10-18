@@ -577,12 +577,95 @@ pub fn write_owned(
     Ok(WriteReceipt { hash })
 }
 
-/// The `## ` heading that opens a project-note section (`03 §8e`). `###` entry
-/// headings are content, not sections.
-fn section_heading(line: &str) -> Option<&str> {
-    line.trim_end_matches('\n')
-        .trim_end_matches('\r')
+/// ATX heading text without the closing hashes Markdown permits (`## Activity ##`),
+/// shared by the source parser (`promotion.rs`) and the destination splice so both
+/// read the same headings; the UI parser (`ui/src/lib/promotion.ts`) mirrors it.
+/// Callers compare the returned title case-insensitively.
+pub(crate) fn heading_title(line: &str) -> Option<&str> {
+    let rest = line
         .strip_prefix("## ")
+        .or_else(|| line.strip_prefix("##\t"))?;
+    let trimmed = rest.trim_end();
+    let without_hashes = trimmed.trim_end_matches('#');
+    if without_hashes.len() == trimmed.len() {
+        return Some(trimmed);
+    }
+    let head = without_hashes.trim_end();
+    if head.len() == without_hashes.len() {
+        // No whitespace before the hashes: they are part of the title, not a close.
+        return Some(trimmed);
+    }
+    Some(head)
+}
+
+/// A Markdown fenced-code region. A fence opens on a run of at least three
+/// backticks or tildes indented at most three spaces; it closes only on the same
+/// character, a run at least as long, with nothing but whitespace after it. A
+/// delimiter-looking line inside the region is content, never a close, so a
+/// `## ` heading inside a fence is never a section boundary (`03 §8e`).
+///
+/// The UI parser mirrors these rules; keep the two in step.
+#[derive(Default)]
+pub(crate) struct MarkdownFence {
+    open: Option<(char, usize)>,
+}
+
+impl MarkdownFence {
+    /// True for a delimiter line and for every line inside the fenced region,
+    /// false for ordinary lines outside it. The opener is a delimiter too.
+    pub(crate) fn contains_line(&mut self, line: &str) -> bool {
+        let Some((character, length, rest)) = fence_delimiter(line) else {
+            return self.open.is_some();
+        };
+        match self.open {
+            None => {
+                // A backtick fence's info string cannot contain a backtick
+                // (CommonMark), so such a line is an inline code span, not an opener.
+                if character == '`' && rest.contains('`') {
+                    return false;
+                }
+                self.open = Some((character, length));
+                true
+            }
+            Some((opened, opened_length)) => {
+                if character == opened && length >= opened_length && rest.trim().is_empty() {
+                    self.open = None;
+                }
+                true
+            }
+        }
+    }
+
+    fn is_open(&self) -> bool {
+        self.open.is_some()
+    }
+}
+
+/// `(fence character, run length, text after the run)` for a line that could
+/// open or close a fenced block; `None` for every other line.
+fn fence_delimiter(line: &str) -> Option<(char, usize, &str)> {
+    let line = line.trim_end_matches(|character| character == '\r' || character == '\n');
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    if indent > 3 {
+        return None;
+    }
+    let rest = &line[indent..];
+    let character = rest.chars().next()?;
+    if character != '`' && character != '~' {
+        return None;
+    }
+    let length = rest.chars().take_while(|c| *c == character).count();
+    if length < 3 {
+        return None;
+    }
+    Some((character, length, &rest[length..]))
+}
+
+/// Legacy boolean helper retained only while `promotion.rs` still uses it; the
+/// source parser must switch to [`MarkdownFence`], after which this is removed.
+pub(crate) fn fence_line(line: &str) -> bool {
+    let indented = line.trim_start_matches(' ');
+    line.len() - indented.len() <= 3 && (indented.starts_with("```") || indented.starts_with("~~~"))
 }
 
 fn is_blank_line(line: &str) -> bool {
@@ -592,6 +675,16 @@ fn is_blank_line(line: &str) -> bool {
 /// Append each entry block to the end of its `## <section>` section, before the
 /// next `## ` heading or EOF; missing sections are created at EOF in the given
 /// order. Existing lines are copied byte-for-byte — the splice only inserts.
+///
+/// Section headings are matched like the source parser: closing hashes and case
+/// are ignored, and a `## ` line inside a fenced block is content, never a
+/// boundary. When the user repeated a heading, the first matching section wins;
+/// the duplicate and its contents are left exactly as written.
+///
+/// An unclosed fence at EOF turns every following line into code. Appending at
+/// EOF there would write the entry inside the user's code block, so the last
+/// safe boundary is the fence opener: blocks and any missing sections are
+/// inserted before it and the user's bytes stay untouched.
 pub fn merged_content(existing: &str, entries: &[(String, String)]) -> String {
     let newline = if existing.contains("\r\n") {
         "\r\n"
@@ -599,28 +692,42 @@ pub fn merged_content(existing: &str, entries: &[(String, String)]) -> String {
         "\n"
     };
     let mut lines: Vec<String> = existing.split_inclusive('\n').map(str::to_owned).collect();
-    // (heading, line index that ends the section) — the boundary is the next `## `
-    // heading line or EOF.
+    // (lower-case heading, line index that ends the section) — the boundary is the
+    // next heading line outside a fence, or EOF.
     let mut sections: Vec<(String, usize)> = Vec::new();
+    let mut fence = MarkdownFence::default();
+    let mut open_fence_start = None;
     for (index, line) in lines.iter().enumerate() {
-        if let Some(heading) = section_heading(line) {
+        let was_open = fence.is_open();
+        if fence.contains_line(line) {
+            if !was_open && fence.is_open() {
+                open_fence_start = Some(index);
+            } else if was_open && !fence.is_open() {
+                open_fence_start = None;
+            }
+            continue;
+        }
+        if let Some(heading) = heading_title(line) {
             if let Some(previous) = sections.last_mut() {
                 previous.1 = index;
             }
-            sections.push((heading.trim().to_owned(), lines.len()));
+            sections.push((heading.trim().to_lowercase(), lines.len()));
         }
     }
-    let mut insertions: Vec<(usize, Vec<&str>)> = Vec::new();
+    let safe_end = open_fence_start.unwrap_or(lines.len());
+    let mut insertions: Vec<(usize, Vec<String>)> = Vec::new();
     let mut missing: Vec<(String, Vec<&str>)> = Vec::new();
     for (heading, block) in entries {
         let block = block.trim_end_matches('\n');
         if block.is_empty() {
             continue;
         }
-        if let Some((_, boundary)) = sections.iter().find(|(name, _)| name == heading) {
-            match insertions.iter_mut().find(|(at, _)| *at == *boundary) {
-                Some((_, blocks)) => blocks.push(block),
-                None => insertions.push((*boundary, vec![block])),
+        let key = heading.trim().to_lowercase();
+        if let Some((_, boundary)) = sections.iter().find(|(name, _)| name.as_str() == key) {
+            let boundary = (*boundary).min(safe_end);
+            match insertions.iter_mut().find(|(at, _)| *at == boundary) {
+                Some((_, blocks)) => blocks.push(block.to_string()),
+                None => insertions.push((boundary, vec![block.to_string()])),
             }
         } else {
             match missing.iter_mut().find(|(name, _)| name == heading) {
@@ -628,6 +735,29 @@ pub fn merged_content(existing: &str, entries: &[(String, String)]) -> String {
                 None => missing.push((heading.clone(), vec![block])),
             }
         }
+    }
+    if safe_end < lines.len() {
+        // Missing sections cannot go at EOF either — that is inside the unclosed
+        // fence. Render them as normal section blocks and put them at the opener,
+        // after any entry blocks already destined for the same boundary.
+        let blocks: Vec<String> = missing
+            .iter()
+            .map(|(heading, section_blocks)| {
+                let mut section = format!("## {heading}");
+                for block in section_blocks {
+                    section.push_str("\n\n");
+                    section.push_str(block);
+                }
+                section
+            })
+            .collect();
+        if !blocks.is_empty() {
+            match insertions.iter_mut().find(|(at, _)| *at == safe_end) {
+                Some((_, existing_blocks)) => existing_blocks.extend(blocks),
+                None => insertions.push((safe_end, blocks)),
+            }
+        }
+        missing.clear();
     }
     // Descending so inserting at a later boundary never shifts an earlier one.
     insertions.sort_by_key(|(boundary, _)| std::cmp::Reverse(*boundary));
@@ -638,7 +768,7 @@ pub fn merged_content(existing: &str, entries: &[(String, String)]) -> String {
     lines.concat()
 }
 
-fn insert_blocks(lines: &mut Vec<String>, boundary: usize, blocks: &[&str], newline: &str) {
+fn insert_blocks(lines: &mut Vec<String>, boundary: usize, blocks: &[String], newline: &str) {
     let at_eof = boundary >= lines.len();
     let mut chunk: Vec<String> = Vec::new();
     match boundary.checked_sub(1).and_then(|index| lines.get(index)) {
@@ -1128,6 +1258,223 @@ body
                 .unwrap_or_else(|| panic!("existing line was rewritten: {line:?}"));
             from += offset + line.len();
         }
+    }
+
+    #[test]
+    fn merged_content_splices_into_user_sections_safely() {
+        let existing = "# Project\n\n## decisions ##\n\n- user decision, keep\n\n```text\n## Log\n\n- fenced fake, never a section\n```\n\n- trailing user line\n";
+        let entries = vec![
+            (
+                "Decisions".to_string(),
+                "### 2026-10-18\n\n- promote decision".to_string(),
+            ),
+            (
+                "Log".to_string(),
+                "### 2026-10-18\n\n- promote log".to_string(),
+            ),
+        ];
+        let merged = merged_content(existing, &entries);
+        // Case-insensitive match with closing hashes: the entry extends the user's
+        // own section instead of appending a second `## Decisions` at EOF.
+        assert_eq!(merged.matches("## decisions ##").count(), 1);
+        assert!(!merged.contains("## Decisions"));
+        let decisions_headings = merged
+            .split_inclusive('\n')
+            .filter(|line| {
+                heading_title(line)
+                    .is_some_and(|title| title.trim().eq_ignore_ascii_case("decisions"))
+            })
+            .count();
+        assert_eq!(decisions_headings, 1);
+        // The fenced `## Log` is content, not a boundary: the decision block lands
+        // after the fence closes, and only the missing Log section is created at EOF.
+        let fence_close = merged
+            .find("```\n\n- trailing user line")
+            .expect("the fence and the user's trailing line survive");
+        let decision_block = merged.find("- promote decision").unwrap();
+        assert!(
+            decision_block > fence_close,
+            "the entry must not be spliced into the fence: {merged}"
+        );
+        let log_heading = merged.rfind("## Log").unwrap();
+        let log_block = merged.find("- promote log").unwrap();
+        assert!(
+            log_heading < log_block,
+            "the Log entry needs its own section"
+        );
+        assert!(merged[..log_heading].contains("- trailing user line"));
+        assert_lines_preserved(existing, &merged);
+    }
+
+    #[test]
+    fn markdown_fence_tracks_character_length_and_whitespace_close() {
+        let mut fence = MarkdownFence::default();
+        assert!(fence.contains_line("```rust"));
+        assert!(fence.is_open());
+        assert!(fence.contains_line("## fake heading"));
+        assert!(fence.contains_line("``` not a close"));
+        assert!(fence.contains_line("``"));
+        assert!(fence.contains_line("~~~"));
+        assert!(fence.contains_line("````"));
+        assert!(!fence.is_open());
+        assert!(!fence.contains_line("## real heading"));
+
+        let mut tilde = MarkdownFence::default();
+        assert!(tilde.contains_line("~~~"));
+        assert!(tilde.contains_line("```"));
+        assert!(tilde.contains_line("## Log"));
+        assert!(tilde.contains_line("~~~ not a close"));
+        assert!(tilde.contains_line("~~"));
+        assert!(tilde.is_open());
+        assert!(tilde.contains_line("~~~~"));
+        assert!(!tilde.contains_line("## Log"));
+    }
+
+    #[test]
+    fn markdown_fence_requires_a_long_enough_whitespace_close() {
+        let mut fence = MarkdownFence::default();
+        assert!(fence.contains_line("````markdown"));
+        assert!(fence.contains_line("```"));
+        assert!(fence.contains_line("## Next steps"));
+        assert!(fence.is_open());
+        assert!(fence.contains_line("````"));
+        assert!(!fence.is_open());
+    }
+
+    #[test]
+    fn merged_content_ignores_fake_headings_in_mixed_fences() {
+        let existing = "# Project\n\n## Log\n\n- real log\n\n~~~markdown\n## Decisions\n\n- fenced decision\n\n```\n## Next steps\n\n- fenced next\n\n~~\n\n~~~ not a close\n\n- still fenced\n~~~\n\n## Next steps\n\n- real next\n";
+        let entries = vec![
+            (
+                "Log".to_string(),
+                "### 2026-10-18\n\n- promote log".to_string(),
+            ),
+            (
+                "Decisions".to_string(),
+                "### 2026-10-18\n\n- promote decision".to_string(),
+            ),
+            (
+                "Next steps".to_string(),
+                "### 2026-10-18\n\n- promote next".to_string(),
+            ),
+        ];
+        let merged = merged_content(existing, &entries);
+        let fence_close = "- still fenced\n~~~\n";
+        let after_fence = merged.find(fence_close).expect("tilde fence closes") + fence_close.len();
+        let log_block = merged.find("- promote log").unwrap();
+        assert!(
+            log_block > after_fence,
+            "Log must close only at the real heading after the fence: {merged}"
+        );
+        let real_next = merged.rfind("## Next steps").unwrap();
+        assert!(log_block < real_next);
+        assert!(merged.find("- promote next").unwrap() > real_next);
+        // The fenced `## Decisions` is content: the real section is created at EOF
+        // instead of splicing into the fence.
+        assert!(merged.find("- promote decision").unwrap() > real_next);
+        assert_eq!(merged.matches("## Decisions").count(), 2);
+        assert_lines_preserved(existing, &merged);
+    }
+
+    #[test]
+    fn merged_content_handles_four_backtick_fences() {
+        let existing = "## Decisions\n\n- real decision\n\n````markdown\n```\n## Log\n\n- fenced fake\n```\n````\n\n## Log\n\n- real log\n";
+        let entries = vec![
+            (
+                "Decisions".to_string(),
+                "### 2026-10-18\n\n- promote decision".to_string(),
+            ),
+            (
+                "Log".to_string(),
+                "### 2026-10-18\n\n- promote log".to_string(),
+            ),
+        ];
+        let merged = merged_content(existing, &entries);
+        let fence_close = merged.find("```\n````\n").expect("four-backtick close");
+        let decision_block = merged.find("- promote decision").unwrap();
+        assert!(
+            decision_block > fence_close,
+            "a three-backtick line must not close a four-backtick fence: {merged}"
+        );
+        let real_log = merged.rfind("## Log").unwrap();
+        assert!(decision_block < real_log);
+        assert!(merged.find("- promote log").unwrap() > real_log);
+        assert!(merged[..real_log].contains("## Log\n\n- fenced fake"));
+        assert_lines_preserved(existing, &merged);
+    }
+
+    #[test]
+    fn merged_content_uses_the_first_duplicate_section() {
+        let existing = "## Decisions\n\n- first decision\n\n## decisions ###\n\n- duplicate decision\n\n## Log\n\n- log\n";
+        let entries = vec![(
+            "Decisions".to_string(),
+            "### 2026-10-18\n\n- promote decision".to_string(),
+        )];
+        let merged = merged_content(existing, &entries);
+        let first = merged.find("## Decisions").unwrap();
+        let duplicate = merged.find("## decisions ###").unwrap();
+        let block = merged.find("- promote decision").unwrap();
+        assert!(
+            first < block && block < duplicate,
+            "the entry belongs to the first matching section: {merged}"
+        );
+        assert!(merged[duplicate..].contains("- duplicate decision"));
+        assert_eq!(merged.matches("## decisions ###").count(), 1);
+        assert_lines_preserved(existing, &merged);
+    }
+
+    #[test]
+    fn merged_content_does_not_match_renamed_headings() {
+        let existing = "## Decisions archive\n\n- user archive\n";
+        let entries = vec![(
+            "Decisions".to_string(),
+            "### 2026-10-18\n\n- promote decision".to_string(),
+        )];
+        let merged = merged_content(existing, &entries);
+        assert!(
+            merged.find("- promote decision").unwrap()
+                > merged.find("## Decisions archive").unwrap()
+        );
+        assert!(merged.contains("\n## Decisions\n"));
+        assert_lines_preserved(existing, &merged);
+    }
+
+    #[test]
+    fn merged_content_preserves_crlf_and_a_missing_final_newline() {
+        let existing = "## Decisions\r\n\r\n- user decision\r\n\r\n## Log\r\n\r\n- user log";
+        let entries = vec![(
+            "Log".to_string(),
+            "### 2026-10-18\n\n- promote log".to_string(),
+        )];
+        let merged = merged_content(existing, &entries);
+        assert_eq!(merged.matches('\n').count(), merged.matches("\r\n").count());
+        assert!(merged.contains("- user log\r\n\r\n### 2026-10-18\r\n\r\n- promote log\r\n"));
+        assert_lines_preserved(existing, &merged);
+    }
+
+    #[test]
+    fn merged_content_does_not_insert_inside_an_unclosed_fence() {
+        let existing = "## Decisions\n\n- user decision\n\n```text\n## Log\n\n- fenced fake\n";
+        let entries = vec![
+            (
+                "Decisions".to_string(),
+                "### 2026-10-18\n\n- promote decision".to_string(),
+            ),
+            (
+                "Log".to_string(),
+                "### 2026-10-18\n\n- promote log".to_string(),
+            ),
+        ];
+        let merged = merged_content(existing, &entries);
+        let fence = merged.find("```text").unwrap();
+        assert!(
+            merged.find("- promote decision").unwrap() < fence,
+            "the entry must not be written inside the open fence: {merged}"
+        );
+        assert!(merged.find("## Log").unwrap() < fence);
+        assert!(merged.find("- promote log").unwrap() < fence);
+        assert!(merged.ends_with("```text\n## Log\n\n- fenced fake\n"));
+        assert_lines_preserved(existing, &merged);
     }
 
     #[test]

@@ -261,6 +261,59 @@ test("confirm dialog previews entry blocks, note path and promotion date", () =>
   assert.match(html, />Confirm</);
 });
 
+test("prepare rejection shows the backend error and offers a retry, never a confirm", () => {
+  const backendError =
+    "The project note changed since the last app write; restore it or choose a different output folder.";
+  const html = renderToStaticMarkup(
+    React.createElement(PromotionDialog, {
+      proposal: PROPOSAL,
+      receipt: null,
+      preparing: false,
+      confirming: false,
+      prepareError: backendError,
+      prepareErrorCode: "FILE_CONFLICT",
+      confirmError: null,
+      onConfirm: () => {},
+      onCancel: () => {},
+      onReprepare: () => {},
+      onDone: () => {},
+    }),
+  );
+  // The backend's own message is shown verbatim, never a stringified exception.
+  assert.match(html, new RegExp(backendError.replace(/[.]/g, "\\.")));
+  assert.doesNotMatch(html, /\[object Object\]/);
+  // Re-preparing only rechecks: an edited note stays protected until the user
+  // restores the app-written version or picks another output folder.
+  assert.match(html, /Preparing again only rechecks the note/);
+  assert.match(html, /restore the last app-written version/);
+  assert.match(html, /choose a different output folder in Settings/);
+  // The selection is still held by the panel; the dialog offers only retry/cancel.
+  assert.match(html, />Try again</);
+  assert.match(html, />Cancel</);
+  assert.doesNotMatch(html, />Confirm</);
+});
+
+test("non-conflict prepare rejection keeps the conflict guidance out", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PromotionDialog, {
+      proposal: PROPOSAL,
+      receipt: null,
+      preparing: false,
+      confirming: false,
+      prepareError: "The saved report is no longer available.",
+      prepareErrorCode: "NOT_FOUND",
+      confirmError: null,
+      onConfirm: () => {},
+      onCancel: () => {},
+      onReprepare: () => {},
+      onDone: () => {},
+    }),
+  );
+  assert.match(html, /The saved report is no longer available\./);
+  assert.doesNotMatch(html, /Preparing again only rechecks the note/);
+  assert.doesNotMatch(html, />Confirm</);
+});
+
 test("conflict receipt explains the edit race and offers only a re-prepare", () => {
   const html = renderToStaticMarkup(
     React.createElement(PromotionDialog, {
@@ -285,6 +338,13 @@ test("conflict receipt explains the edit race and offers only a re-prepare", () 
   assert.match(html, /The project note changed/);
   assert.match(html, /Nothing was written/);
   assert.match(html, /project-alpha\.conflict-2\.md/);
+  // Truthful recovery: re-preparing rechecks, it does not make an edited note
+  // writable or bypass the append-only guard.
+  assert.match(html, /Preparing again only rechecks the note/);
+  assert.match(html, /appends only to the version it last wrote/);
+  assert.match(html, /Restore the last app-written version of the note/);
+  assert.match(html, /choose a different output folder in Settings/);
+  assert.doesNotMatch(html, /rebuilds the preview against the note as it is now/);
   assert.match(html, />Prepare again</);
   assert.match(html, />Close</);
   assert.doesNotMatch(html, />Confirm</);

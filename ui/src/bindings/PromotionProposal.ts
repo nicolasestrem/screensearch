@@ -21,6 +21,13 @@ note_path: string | null, note_exists: boolean,
  */
 note_hash: string | null, 
 /**
+ * The live note differs from the hash this app last wrote (the persisted
+ * ownership row): the user edited it after the last promotion. The proposal
+ * still adopts the live bytes; this only warns that confirming appends on top
+ * of an edit. `false` for a note the app never wrote.
+ */
+note_edited: boolean, 
+/**
  * `YYYY-MM-DD` promotion date in the run's saved timezone.
  */
 entry_date: string, 

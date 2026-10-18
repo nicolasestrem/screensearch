@@ -26,6 +26,13 @@ import type { PromotionProposal } from "../../bindings/PromotionProposal";
 import type { PromotionReceipt } from "../../bindings/PromotionReceipt";
 import type { ReportRun } from "../../bindings/ReportRun";
 
+/** Backend command errors are `{ code, message }`; transport failures are not. */
+function failureCode(error: unknown): string | null {
+  return error !== null && typeof error === "object" && "code" in error
+    ? String((error as { code: unknown }).code)
+    : null;
+}
+
 export interface PromotionPanelProps {
   /** The persisted run whose saved markdown is being read. */
   run: ReportRun;
@@ -61,7 +68,9 @@ export function PromotionPanel({ run }: PromotionPanelProps) {
   const selection = selectedPromotionItems(items, selectedIds);
   const selectedCount = selection.length;
   const sectionCount = new Set(selection.map((item) => item.section)).size;
-  const noteReady = noteStatus.data?.count === 1;
+  // A stale note-status entry (an old output folder, or the first-run "no folder"
+  // error) must not enable promotion while the settings save refetches it.
+  const noteReady = noteStatus.data?.count === 1 && !noteStatus.isFetching;
   const promotable =
     run.result !== null &&
     run.phase === "finished" &&
@@ -287,11 +296,21 @@ export function PromotionPanel({ run }: PromotionPanelProps) {
           </div>
 
           {prepare.isError && (
-            <div role="alert" className="flex flex-col gap-2 text-caption text-danger">
-              <p>
+            <div role="alert" className="flex flex-col gap-2 text-caption">
+              <p className="text-danger">
                 Couldn't prepare the promotion — {promotionError(prepare.error)}.
                 Nothing was written.
               </p>
+              {failureCode(prepare.error) === "FILE_CONFLICT" && (
+                <p className="text-ink-muted">
+                  Preparing again only rechecks the note. The app appends only to
+                  exactly one project note, and only to the version it last wrote for
+                  this profile. An edited note or more than one note in Projects/ keeps
+                  reporting a conflict: restore the last app-written version, keep one
+                  note, or choose a different output folder in Settings · Memory
+                  reports.
+                </p>
+              )}
               <Button size="sm" onClick={promote}>
                 Try again
               </Button>
@@ -307,6 +326,7 @@ export function PromotionPanel({ run }: PromotionPanelProps) {
           preparing={prepare.isPending}
           confirming={confirm.isPending}
           prepareError={prepare.isError ? promotionError(prepare.error) : null}
+          prepareErrorCode={failureCode(prepare.error)}
           confirmError={confirm.isError ? promotionError(confirm.error) : null}
           onConfirm={confirmProposal}
           onCancel={closeDialog}

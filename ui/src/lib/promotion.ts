@@ -56,6 +56,59 @@ function headingText(line: string): string {
   return line.replace(/^##[ \t]+/, "").replace(/[ \t]+#+[ \t]*$/, "").trim();
 }
 
+type FenceCharacter = "`" | "~";
+
+interface FenceDelimiter {
+  character: FenceCharacter;
+  length: number;
+  rest: string;
+}
+
+/**
+ * A line that can open or close a fenced block: at most three leading spaces,
+ * then a run of at least three backticks or tildes, then an optional info string.
+ */
+function fenceDelimiter(line: string): FenceDelimiter | null {
+  const match = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line.replace(/[\r\n]+$/, ""));
+  if (!match) return null;
+  const run = match[2];
+  return {
+    character: run.startsWith("`") ? "`" : "~",
+    length: run.length,
+    rest: match[3],
+  };
+}
+
+/**
+ * Mirrors the backend `MarkdownFence`: a fence closes only on the same marker,
+ * a run at least as long as the opener, with nothing but whitespace after it.
+ * Every other delimiter-looking line inside the region is content, so a fake
+ * `## heading` in a fence is never a section boundary.
+ */
+function createMarkdownFence(): { containsLine(line: string): boolean } {
+  let open: { character: FenceCharacter; length: number } | null = null;
+  return {
+    containsLine(line: string): boolean {
+      const delimiter = fenceDelimiter(line);
+      if (!delimiter) return open !== null;
+      if (open === null) {
+        // A backtick fence's info string cannot contain a backtick.
+        if (delimiter.character === "`" && delimiter.rest.includes("`")) return false;
+        open = { character: delimiter.character, length: delimiter.length };
+        return true;
+      }
+      if (
+        delimiter.character === open.character &&
+        delimiter.length >= open.length &&
+        delimiter.rest.trim() === ""
+      ) {
+        open = null;
+      }
+      return true;
+    },
+  };
+}
+
 /**
  * Extract every top-level `- ` bullet under the four promotion source headings.
  *
@@ -68,15 +121,11 @@ export function parsePromotableItems(markdown: string): PromotableItem[] {
   const items: PromotableItem[] = [];
   let section: PromotionSection | null = null;
   let heading = "";
-  let inFence = false;
+  const fence = createMarkdownFence();
 
   for (const rawLine of markdown.split(/\r?\n/)) {
-    // Fenced code can contain `- ` lines that are not report bullets.
-    if (/^ {0,3}(?:```|~~~)/.test(rawLine)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
+    // Fenced code can contain `- ` and `## ` lines that are not report content.
+    if (fence.containsLine(rawLine)) continue;
 
     const line = rawLine.trimEnd();
     if (line.startsWith("## ") || line.startsWith("##\t")) {
