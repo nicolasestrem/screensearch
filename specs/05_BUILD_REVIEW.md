@@ -1,5 +1,35 @@
 # 05 — Build Review
 
+## 2026-10-18 — PR #140: failed scheduled weeks recorded as missed (Nico's decision)
+
+- Runtime verified: `ba931e84b274346c1271728fa482b02d50d1c7e8` in the existing native Windows checkout (Rust 1.95.0, Node
+  22.23.3). This docs-only commit inherits that result.
+- Regression `weekly_failed_scheduled_week_is_recorded_as_missed` was RED against a no-op sweep
+  (local probe `69a8fa9`: `left: []` vs the failed window, `test result: FAILED. 0 passed;
+  1 failed`) and GREEN on the implementation.
+- Verbatim native output:
+
+```text
+head=ba931e84b274346c1271728fa482b02d50d1c7e8
+EXIT npm ci = 0
+EXIT npm run lint = 0
+EXIT npm run build = 0
+EXIT npm test = 0
+EXIT quinn security = 0
+EXIT stage-mcp = 0
+EXIT cargo fmt = 0
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+test memory::weekly::tests::weekly_failed_scheduled_week_is_recorded_as_missed ... ok
+test memory::weekly::tests::weekly_reenable_does_not_record_disabled_weeks_as_missed ... ok
+EXIT cargo test = 0
+EXIT bindings = 0
+CHAIN_EXIT=0
+```
+
+- Parsed Rust totals: 1131 passed, 0 failed, 15 ignored across 62 suites. UI: 50 passed,
+  0 failed. Hosted checks at this head are pending.
+
 ## 2026-10-18 — PR #140 review: disabled weekly periods recorded as missed (Codex + Claude)
 
 - Runtime verified: `62c38adee440f612c6e3b956075cf68b88fd1e2a` in the existing native Windows checkout (Rust 1.95.0, Node

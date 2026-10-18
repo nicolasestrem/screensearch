@@ -1,5 +1,10 @@
 # 08 — AI Changelog
 
+## 2026-10-18 — PR #140: failed scheduled weekly syntheses are missed weeks
+
+- Implemented Nico's decision: a scheduler-owned weekly run that settles FAILED is recorded in
+  `memory.weekly.gaps` and shown under "Missed weeks". Native chain green at `ba931e84b274346c1271728fa482b02d50d1c7e8`.
+
 ## 2026-10-18 — PR #140: re-enabling weekly no longer marks the disabled period as missed
 
 - Fixed Codex `PRRT_kwDOTAuCtM6tuHtd`: gap synthesis on weekly re-activation now requires the
