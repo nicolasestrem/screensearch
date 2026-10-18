@@ -1,5 +1,11 @@
 # 08 — AI Changelog
 
+## 2026-10-18 — Weekly time hint describes the fire time
+
+- The weekly local-time hint now says the ISO week closes at Monday 00:00 and the synthesis
+  runs at the selected time that Monday (Codex `PRRT_kwDOTAuCtM6tu-Nu`). Recorded the
+  disable-before-catch-up reading in `07`. No push, PR or merge.
+
 ## 2026-10-18 — PR #140: failed scheduled weekly syntheses are missed weeks
 
 - Implemented Nico's decision: a scheduler-owned weekly run that settles FAILED is recorded in

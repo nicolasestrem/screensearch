@@ -1,5 +1,14 @@
 # 07 — Known Gaps
 
+## 2026-10-18 — Weeks that closed just before a weekly disable are not recorded as missed
+
+- Raised in Claude's PR #140 re-review (non-blocking). If weekly is disabled before catch-up
+  ran for weeks that closed while it was still enabled, re-enabling starts a fresh activation and
+  those weeks are neither backfilled nor listed under "Missed weeks"; they are simply absent,
+  never claimed as covered. `03 §8c`/`§8e` say disabled periods are not backfilled but do not say
+  whether already-closed, never-run weeks before the disable count as missed. Matches the daily
+  lane. Open decision for Nico: keep, or record those closed weeks as missed at disable time.
+
 ## 2026-10-18 — Decided: a failed scheduled weekly synthesis is a missed week (Nico)
 
 - Supersedes the open decision in "Weekly run that fails generation is not retried by catch-up"

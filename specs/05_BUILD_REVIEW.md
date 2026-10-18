@@ -1,5 +1,35 @@
 # 05 — Build Review
 
+## 2026-10-18 — Weekly time hint (Codex `PRRT_kwDOTAuCtM6tu-Nu`, after PR #140 merged)
+
+- PR #140 merged at `eea8184` (`957b234`) before this fix landed; this branch carries it on top
+  of `main`. The weekly window always closes at Monday 00:00 local and the selected time only
+  sets `due_at` (`03 §8e`: fire at the selected local time after the week closes). The hint said
+  the week closed at the selected time.
+- Regression in `ui/test/memory-weekly.test.mjs` was RED on the old hint (`# pass 49`,
+  `# fail 1`, Node 22.20.0) and GREEN on the fix (`# pass 50`, `# fail 0`).
+- Runtime verified at `418c163afef0eb59d7cff4dc23be78d7a2afaa93` (same tree as this branch's code commit `05190d5`; `git diff
+  --stat 418c163 05190d5` is empty) in the existing native Windows checkout:
+
+```text
+head=418c163afef0eb59d7cff4dc23be78d7a2afaa93
+EXIT npm ci = 0
+EXIT npm run lint = 0
+EXIT npm run build = 0
+EXIT npm test = 0
+EXIT quinn security = 0
+EXIT stage-mcp = 0
+EXIT cargo fmt = 0
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+EXIT cargo test = 0
+EXIT bindings = 0
+CHAIN_EXIT=0
+```
+
+- Parsed Rust totals: 1131 passed, 0 failed, 15 ignored across 62 suites. UI: 50 passed,
+  0 failed. Hosted checks pending; nothing pushed.
+
 ## 2026-10-18 — PR #140: failed scheduled weeks recorded as missed (Nico's decision)
 
 - Runtime verified: `ba931e84b274346c1271728fa482b02d50d1c7e8` in the existing native Windows checkout (Rust 1.95.0, Node
