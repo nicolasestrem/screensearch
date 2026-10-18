@@ -658,7 +658,9 @@ mod tests {
             result: Some(SavedReport {
                 markdown: markdown.into(),
                 model: Some("fixture".into()),
-                frame_ids: vec![102, 101, 102],
+                // Unique and count-matched like every persisted run: the store's
+                // provenance invariant rejects duplicates at create_report_run.
+                frame_ids: vec![102, 101],
                 session_ids: vec![8, 7],
                 cited_frame_ids: vec![101],
                 frames_sampled: 2,
