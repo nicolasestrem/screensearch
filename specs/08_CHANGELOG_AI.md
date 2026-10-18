@@ -1,5 +1,21 @@
 # 08 — AI Changelog
 
+## 2026-10-18 — PR #140: failed scheduled weekly syntheses are missed weeks
+
+- Implemented Nico's decision: a scheduler-owned weekly run that settles FAILED is recorded in
+  `memory.weekly.gaps` and shown under "Missed weeks". Native chain green at `ba931e84b274346c1271728fa482b02d50d1c7e8`.
+
+## 2026-10-18 — PR #140: re-enabling weekly no longer marks the disabled period as missed
+
+- Fixed Codex `PRRT_kwDOTAuCtM6tuHtd`: gap synthesis on weekly re-activation now requires the
+  previous weekly schedule to have been enabled. Native chain green at `62c38adee440f612c6e3b956075cf68b88fd1e2a` (see `05`).
+
+## 2026-10-18 — F3 G5/G6 rebuilt on main with review follow-ups
+
+- Rebuilt the G5/G6 work onto `main` with PR-139 batch-3 preserved; added the future-cursor
+  diagnostic, the partial-only banner gate and three regression tests. Native chain green at
+  `1ce4d66bcadd2d46ccf9367be565183f9e218c5c` (see `05`). No push, PR, merge, installed-app change or real send.
+
 ## 2026-10-18 — PR #139 review batch 3: identity, citations, timezone
 
 - Fixed Codex `r4307321378` (note path not normalized before ownership lookup: a
@@ -18,7 +34,22 @@
   15 existing ignored; UI 42 passed / 0 failed. Named regressions in `05`. New hosted CI
   pending publication; no merge, installed-app change or live-history access in this
   record.
+## 2026-10-18 — F3 G5/G6 weekly scheduling and saved-output digest
 
+- Added default-off weekly schedule, time/zone, independent UUID/activation/cursor,
+  Run most recent complete ISO week, separate latest status and visible disjoint
+  older gaps. Catch-up scans six complete weeks, queues four most recent due weeks
+  oldest-first, and safely replays an enqueue-before-cursor interruption.
+- Added separately consented weekly Telegram format from the saved synthesis only:
+  week label, truthful saved-daily coverage/limitations, missing dates, bounded
+  source IDs, masking and existing UTF-16 chunks/intents/retries. Daily digest bytes
+  are protected by a regression. No second model, raw OCR/screenshots or new API.
+- Eight bounded agents; coordinator integrated findings and verified the full
+  native Windows `04 §1c` chain at `7bdef55`: `CHAIN_EXIT=0`, Rust1118/0 (15 existing
+  ignored), UI45/0, bindings unchanged, all 11 source hashes matched. Native owner
+  branch restored clean and shipped temporary files removed. See `05` and
+  `docs/f3-g5-g6-verification.md` for evidence boundaries and rollback.
+- No push, PR, merge, installed-profile mutation, live-history use or real send.
 ## 2026-10-18 — PR #139 truthful receipt after a concurrent note swap
 
 - Fixed Codex `r4307200508`: when the writer reports a conflict after the append

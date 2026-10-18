@@ -15,6 +15,9 @@ use tokio::sync::{Mutex, Notify};
 use traits::*;
 use uuid::Uuid;
 
+#[path = "memory_weekly.rs"]
+mod weekly;
+
 const SCHEDULE_STATE: &str = "memory.schedule.state";
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
@@ -111,6 +114,10 @@ async fn settings(store: &dyn Store) -> Result<MemorySettings, ReportError> {
             .map(|folder| path_string(Path::new(&folder))),
         telegram_enabled: setting(store, "memory.telegram.enabled").await?,
         telegram_chat_id: setting(store, "memory.telegram.chat_id").await?,
+        weekly_enabled: setting(store, "memory.weekly.enabled").await?,
+        weekly_local_time: setting(store, "memory.weekly.local_time").await?,
+        weekly_timezone: setting(store, "memory.weekly.timezone").await?,
+        weekly_telegram_enabled: setting(store, "memory.telegram.weekly_enabled").await?,
     })
 }
 fn validate(config: &MemorySettings, manual: bool) -> Result<(), ReportError> {
@@ -142,7 +149,7 @@ fn validate(config: &MemorySettings, manual: bool) -> Result<(), ReportError> {
     if config.enabled && config.local_time.is_none() {
         return Err(fail("INVALID_CONFIG", "Select a daily report time."));
     }
-    if config.telegram_enabled
+    if (config.telegram_enabled || config.weekly_telegram_enabled)
         && config
             .telegram_chat_id
             .as_deref()
@@ -171,6 +178,7 @@ async fn status(state: &AppState) -> Result<MemoryStatus, ReportError> {
         .clone();
     let config = settings(store.as_ref()).await?;
     let schedule: Option<ReportScheduleState> = setting(store.as_ref(), SCHEDULE_STATE).await?;
+    let (weekly_latest_run, weekly_missed_windows) = weekly::status(store.as_ref()).await?;
     let missed_windows = schedule
         .and_then(|s| s.gap_start.zip(s.gap_end))
         .map(|(start, end)| vec![TimeRange { start, end }])
@@ -190,11 +198,13 @@ async fn status(state: &AppState) -> Result<MemoryStatus, ReportError> {
         settings: config,
         source_id: source_id.clone(),
         latest_run: store
-            .list_report_runs(1, None)
+            .list_report_runs(1, Some(ReportRunKind::Daily))
             .await
             .map_err(storage)?
             .into_iter()
             .next(),
+        weekly_latest_run,
+        weekly_missed_windows,
         missed_windows,
         worker_running: state.memory_runtime.active.load(Ordering::Acquire),
         telegram_credential_available,
@@ -227,6 +237,13 @@ pub async fn preview_memory_schedule(
 }
 
 #[tauri::command]
+pub async fn preview_weekly_memory_schedule(
+    settings: MemorySettings,
+) -> Result<Option<MemorySchedulePreview>, ReportError> {
+    weekly::preview(&settings, now_ms())
+}
+
+#[tauri::command]
 pub async fn set_memory_settings(
     mut settings: MemorySettings,
     state: State<'_, AppState>,
@@ -236,12 +253,13 @@ pub async fn set_memory_settings(
         .output_folder
         .map(|folder| path_string(Path::new(&folder)));
     validate(&settings, false)?;
+    weekly::validate(&settings, false)?;
     let store = db(&state)?;
     let runtime = &state.memory_runtime;
     let _guard = runtime.control.lock().await;
     check_open(runtime)?;
     let old = self::settings(store.as_ref()).await?;
-    if settings.telegram_enabled {
+    if settings.telegram_enabled || settings.weekly_telegram_enabled {
         let profile = source(store.as_ref()).await?;
         if crate::memory_telegram::credential_read(&profile)
             .map_err(|_| {
@@ -284,6 +302,8 @@ pub async fn set_memory_settings(
             serde_json::to_string(&settings.telegram_chat_id).map_err(storage)?,
         ),
     ];
+    values.extend(weekly::settings_values(&settings)?);
+    values.extend(weekly::activation_values(store.as_ref(), &old, &settings, now_ms()).await?);
     if settings.enabled
         && (!old.enabled
             || old.local_time != settings.local_time
@@ -356,10 +376,12 @@ async fn enqueue(
         revision_of: prior.map(|p| p.run_id.clone()),
         window_start: window.start,
         window_end: window.end,
-        timezone: config
-            .timezone
-            .clone()
-            .ok_or_else(|| fail("INVALID_CONFIG", "Select a time zone."))?,
+        timezone: match kind {
+            ReportRunKind::Daily => &config.timezone,
+            ReportRunKind::WeeklySynthesis => &config.weekly_timezone,
+        }
+        .clone()
+        .ok_or_else(|| fail("INVALID_CONFIG", "Select a time zone."))?,
         local_date: window.local_date,
         phase: ReportRunPhase::Queued,
         outcome: None,
@@ -426,6 +448,14 @@ pub async fn run_memory_report(
     notify(&app);
     Ok(run)
 }
+#[tauri::command]
+pub async fn run_weekly_memory_report(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<ReportRun, ReportError> {
+    weekly::run_now(state.inner(), &app).await
+}
+
 async fn lookup(store: &dyn Store, id: &str) -> Result<ReportRun, ReportError> {
     store
         .get_report_run(id)
@@ -661,8 +691,16 @@ pub async fn regenerate_memory_report(
         return Err(fail("BUSY", "This report is already active."));
     }
     let mut config = settings(store.as_ref()).await?;
-    config.timezone = Some(prior.timezone.clone());
-    validate(&config, true)?;
+    match prior.kind {
+        ReportRunKind::Daily => {
+            config.timezone = Some(prior.timezone.clone());
+            validate(&config, true)?;
+        }
+        ReportRunKind::WeeklySynthesis => {
+            config.weekly_timezone = Some(prior.timezone.clone());
+            weekly::validate(&config, true)?;
+        }
+    }
     let window = kernel::memory_schedule::DailyWindow {
         start: prior.window_start,
         end: prior.window_end,
@@ -697,6 +735,7 @@ pub async fn reset_memory_source_identity(
     let config = settings(store.as_ref()).await?;
     if config.enabled
         || config.telegram_enabled
+        || weekly::identity_blocked(&config)
         || runtime.active.load(Ordering::Acquire)
         || store
             .list_pending_report_runs()
@@ -1701,6 +1740,16 @@ async fn process_run(state: &AppState, mut run: ReportRun) -> Result<(), ReportE
     Ok(())
 }
 
+fn order_pending_runs(runs: &mut [ReportRun]) {
+    runs.sort_by_key(|run| {
+        (
+            run.kind == ReportRunKind::WeeklySynthesis,
+            run.window_start,
+            run.created_at,
+        )
+    });
+}
+
 pub fn start(app: &AppHandle) {
     let state = app.state::<AppState>();
     if state.store.is_none() {
@@ -1719,10 +1768,11 @@ pub fn start(app: &AppHandle) {
         loop{
             if runtime.stopping.load(Ordering::Acquire){break;}
             let result=async{
-                schedule_due(&state).await?;
+                let mut batch_error = schedule_due(&state).await.err();
+                if let Err(error) = weekly::schedule_due(&state).await { batch_error.get_or_insert(error); }
                 let store=db(&state)?;
                 let mut runs=store.list_pending_report_runs().await.map_err(storage)?;
-                runs.sort_by_key(|r|(r.window_start,r.created_at));
+                order_pending_runs(&mut runs);
                 for run in runs{
                     if runtime.stopping.load(Ordering::Acquire){break;}
                     let claimed={
@@ -1738,7 +1788,8 @@ pub fn start(app: &AppHandle) {
                     if claimed{
                         runtime.cancel.store(false,Ordering::Release);notify(&handle);
                         let result=process_run(&state,run).await;
-                        runtime.active.store(false,Ordering::Release);notify(&handle);result?;
+                        runtime.active.store(false,Ordering::Release);notify(&handle);
+                        if let Err(error) = result { batch_error.get_or_insert(error); }
                     }else if run.result.is_some(){
                         let receipts=store.list_report_deliveries(&run.run_id).await.map_err(storage)?;
                         let missing=|dest|!receipts.iter().any(|d|d.destination==dest);
@@ -1755,12 +1806,13 @@ pub fn start(app: &AppHandle) {
                                 let telegram_result=deliver_telegram(&state,&run,&config).await;
                                 file_result?;telegram_result?;Ok::<(),ReportError>(())
                             }.await;
-                            runtime.active.store(false,Ordering::Release);notify(&handle);recovered?;
+                            runtime.active.store(false,Ordering::Release);notify(&handle);
+                            if let Err(error) = recovered { batch_error.get_or_insert(error); }
                         }
                     }
                 }
                 store.prune_report_runs(now_ms()-RETENTION_MS).await.map_err(storage)?;
-                Ok::<(),ReportError>(())
+                match batch_error { Some(error) => Err(error), None => Ok(()) }
             }.await;
             *runtime.last_error.lock().expect("memory error")=result.err();notify(&handle);
             tokio::select!{_=runtime.wake.notified()=>{},_=tokio::time::sleep(Duration::from_secs(30))=>{}}
@@ -1868,6 +1920,56 @@ async fn ancestor_delivery_block(
     }
     Ok(None)
 }
+async fn saved_digest_chunks(
+    store: &dyn Store,
+    run: &ReportRun,
+    chat_id: &str,
+) -> Result<Option<Vec<String>>, ReportError> {
+    match crate::memory_telegram::digest_chunks(run) {
+        Ok(chunks) => Ok(Some(chunks)),
+        Err(_) => {
+            // Explicit Retry may have reopened a prior render-failure receipt.
+            // Settle that same attempt rather than leaving it Pending forever.
+            let receipts = store
+                .list_report_deliveries(&run.run_id)
+                .await
+                .map_err(storage)?;
+            if let Some(mut prior) = receipts.into_iter().find(|item| {
+                item.destination == ReportDestination::Telegram
+                    && item.chunk_index.is_none()
+                    && item.state == ReportDeliveryState::Pending
+            }) {
+                prior.state = ReportDeliveryState::Failed;
+                prior.next_attempt_at = None;
+                prior.error = Some(fail(
+                    "DELIVERY_FAILED",
+                    "Could not render the saved report digest.",
+                ));
+                update_delivery(store, &mut prior, ReportDeliveryState::Pending).await?;
+                return Ok(None);
+            }
+            let mut receipt = delivery(run, ReportDestination::Telegram, chat_id.to_owned());
+            receipt.state = ReportDeliveryState::Failed;
+            receipt.error = Some(fail(
+                "DELIVERY_FAILED",
+                "Could not render the saved report digest.",
+            ));
+            store
+                .create_report_delivery(receipt)
+                .await
+                .map_err(storage)?;
+            Ok(None)
+        }
+    }
+}
+
+fn telegram_enabled(config: &MemorySettings, kind: ReportRunKind) -> bool {
+    match kind {
+        ReportRunKind::Daily => config.telegram_enabled,
+        ReportRunKind::WeeklySynthesis => config.weekly_telegram_enabled,
+    }
+}
+
 async fn deliver_telegram(
     state: &AppState,
     run: &ReportRun,
@@ -1881,8 +1983,7 @@ async fn deliver_telegram(
     let has_chunks = receipts
         .iter()
         .any(|d| d.destination == ReportDestination::Telegram && d.chunk_index.is_some());
-    let eligible = config.memory.telegram_enabled
-        && run.kind == ReportRunKind::Daily
+    let eligible = telegram_enabled(&config.memory, run.kind)
         && matches!(
             run.outcome,
             Some(ReportOutcome::Ok | ReportOutcome::Partial)
@@ -1893,12 +1994,11 @@ async fn deliver_telegram(
                 .iter()
                 .any(|d| d.destination == ReportDestination::Telegram))
     {
-        let skip = if !config.memory.telegram_enabled {
-            Some("Telegram was disabled for this report.")
-        } else if run.kind != ReportRunKind::Daily {
-            // `03 §8e`: the weekly digest format is a separate increment (G6); a
-            // weekly synthesis must never be sent as a daily digest.
-            Some("This version sends no Telegram digest for weekly syntheses.")
+        let skip = if !telegram_enabled(&config.memory, run.kind) {
+            Some(match run.kind {
+                ReportRunKind::Daily => "Telegram was disabled for this report.",
+                ReportRunKind::WeeklySynthesis => "Weekly Telegram was disabled for this report.",
+            })
         } else if !matches!(
             run.outcome,
             Some(ReportOutcome::Ok | ReportOutcome::Partial)
@@ -1924,12 +2024,9 @@ async fn deliver_telegram(
             .telegram_chat_id
             .clone()
             .ok_or_else(|| fail("INVALID_CONFIG", "Saved Telegram destination is missing."))?;
-        let chunks = crate::memory_telegram::digest_chunks(run).map_err(|_| {
-            fail(
-                "DELIVERY_FAILED",
-                "Could not render the saved report digest.",
-            )
-        })?;
+        let Some(chunks) = saved_digest_chunks(store.as_ref(), run, &chat_id).await? else {
+            return Ok(());
+        };
         let count = chunks.len() as u32;
         // One transaction persists the full immutable digest before any send.
         let mut intents = Vec::new();
@@ -1958,7 +2055,9 @@ async fn deliver_telegram(
             .map_err(storage)?;
     }
     let current = settings(store.as_ref()).await?;
-    if !current.telegram_enabled || state.memory_runtime.stopping.load(Ordering::Acquire) {
+    if !telegram_enabled(&current, run.kind)
+        || state.memory_runtime.stopping.load(Ordering::Acquire)
+    {
         return Ok(());
     }
     let mut telegram: Vec<_> = receipts
@@ -1992,7 +2091,7 @@ async fn deliver_telegram(
         // A changed recipient never redirects an old intent. Re-enabling the same
         // destination resumes only its previously pending immutable chunks.
         let current = settings(store.as_ref()).await?;
-        if !current.telegram_enabled
+        if !telegram_enabled(&current, run.kind)
             || current.telegram_chat_id.as_deref() != Some(&payload.chat_id)
             || state.memory_runtime.stopping.load(Ordering::Acquire)
         {
@@ -2021,7 +2120,7 @@ async fn deliver_telegram(
         };
         let dispatch_guard = state.memory_runtime.control.lock().await;
         let latest = settings(store.as_ref()).await?;
-        if !latest.telegram_enabled
+        if !telegram_enabled(&latest, run.kind)
             || latest.telegram_chat_id.as_deref() != Some(payload.chat_id.as_str())
             || state.memory_runtime.stopping.load(Ordering::Acquire)
         {
@@ -2164,6 +2263,38 @@ pub async fn resolve_telegram_delivery(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn daily_work_precedes_weekly_catchup_and_weeks_remain_oldest_first() {
+        let daily = run_fixture();
+        let mut older = daily.clone();
+        older.run_id = "older-week".into();
+        older.kind = ReportRunKind::WeeklySynthesis;
+        older.window_start = daily.window_start - 14;
+        let mut newer = older.clone();
+        newer.run_id = "newer-week".into();
+        newer.window_start += 7;
+        let mut runs = vec![newer, older, daily.clone()];
+        order_pending_runs(&mut runs);
+        let ids: Vec<_> = runs.iter().map(|run| run.run_id.as_str()).collect();
+        assert_eq!(ids, [daily.run_id.as_str(), "older-week", "newer-week"]);
+    }
+
+    #[test]
+    fn weekly_telegram_requires_its_own_consent_at_dispatch() {
+        let mut config = MemorySettings::default();
+        assert!(!telegram_enabled(&config, ReportRunKind::Daily));
+        assert!(!telegram_enabled(&config, ReportRunKind::WeeklySynthesis));
+        config.telegram_enabled = true;
+        assert!(telegram_enabled(&config, ReportRunKind::Daily));
+        assert!(!telegram_enabled(&config, ReportRunKind::WeeklySynthesis));
+        config.weekly_telegram_enabled = true;
+        config.telegram_enabled = false;
+        assert!(!telegram_enabled(&config, ReportRunKind::Daily));
+        assert!(telegram_enabled(&config, ReportRunKind::WeeklySynthesis));
+        config.weekly_telegram_enabled = false;
+        assert!(!telegram_enabled(&config, ReportRunKind::WeeklySynthesis));
+    }
+
     #[test]
     fn transient_retries_are_bounded_and_honor_server_delay() {
         assert_eq!(retry_delay(1, 0), Some(Duration::from_secs(30)));
@@ -2843,6 +2974,76 @@ mod tests {
         run.timezone = "Europe/Paris".into();
         run.local_date = "2026-W42".into();
         run
+    }
+
+    #[tokio::test]
+    async fn weekly_digest_render_failure_settles_without_pending_network_intents() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let mut run = saved_weekly_run();
+        store.create_report_run(run.clone()).await.unwrap();
+        run.timezone = "invalid/timezone".into();
+        assert!(saved_digest_chunks(&store, &run, "selected-chat")
+            .await
+            .unwrap()
+            .is_none());
+        let receipts = store.list_report_deliveries(&run.run_id).await.unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].state, ReportDeliveryState::Failed);
+        assert!(receipts[0].next_attempt_at.is_none());
+        assert!(receipts[0].chunk_index.is_none());
+        assert!(receipts[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("render"));
+        let mut reopened = receipts[0].clone();
+        reopened.state = ReportDeliveryState::Pending;
+        update_delivery(&store, &mut reopened, ReportDeliveryState::Failed)
+            .await
+            .unwrap();
+        assert!(saved_digest_chunks(&store, &run, "selected-chat")
+            .await
+            .unwrap()
+            .is_none());
+        let retried = store.list_report_deliveries(&run.run_id).await.unwrap();
+        assert_eq!(
+            retried.len(),
+            1,
+            "render retries do not create endless attempts"
+        );
+        assert_eq!(retried[0].state, ReportDeliveryState::Failed);
+        assert!(retried[0].next_attempt_at.is_none());
+    }
+
+    #[test]
+    fn weekly_digest_discloses_the_producer_missing_daily_dates() {
+        let mut run = weekly_run_fixture();
+        let mut execution = weekly_execution(
+            ReportMode::MapReduce,
+            false,
+            vec!["2026-10-13".into(), "2026-10-15".into()],
+        );
+        execution.output.periods_covered = 5;
+        save_weekly_execution(
+            &mut run,
+            execution,
+            ReportEvidence {
+                session_ids: vec![7],
+                missing_frame_ids: vec![],
+            },
+        )
+        .unwrap();
+        let chunks = crate::memory_telegram::digest_chunks(&run).unwrap();
+        let digest = chunks
+            .iter()
+            .map(|chunk| chunk.split_once('\n').unwrap().1)
+            .collect::<String>();
+        assert!(digest.contains("PARTIAL — incomplete coverage"));
+        assert!(digest.contains(
+            "Coverage: 5/7 days covered; missing or partial saved dailies: 2026-10-13, 2026-10-15"
+        ));
+        assert!(digest.contains("Weekly synthesis body"));
     }
 
     fn weekly_execution(

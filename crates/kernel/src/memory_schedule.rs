@@ -2,6 +2,7 @@
 use anyhow::{bail, Context, Result};
 use chrono::{
     DateTime, Datelike, Days, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+    Weekday,
 };
 use chrono_tz::Tz;
 
@@ -378,6 +379,67 @@ pub fn weekly_previous(timezone: &str, now: i64) -> Result<WeeklyWindow> {
         .checked_sub_days(Days::new(7))
         .context("calendar overflow")?;
     week_window(zone, NaiveTime::MIN, monday)
+}
+
+/// Weekly catch-up result (`03 §8e`, G5): the due ISO-week windows in oldest-first
+/// order, plus the uncovered `[floor, first selected start)` span when catch-up had to
+/// skip weeks.
+#[derive(Debug, Default)]
+pub struct WeeklyScheduleDue {
+    pub windows: Vec<WeeklyWindow>,
+    pub gap: Option<(i64, i64)>,
+}
+
+/// Accepted G5 catch-up defaults: look back six complete ISO weeks, enqueue four.
+const WEEKLY_SCAN_WEEKS: usize = 6;
+const WEEKLY_BACKFILL_CAP: usize = 4;
+
+/// The four most recent due ISO-week windows, oldest first, from at most the six most
+/// recent complete ISO weeks (`03 §8e`, G5). A week is due only once its Monday
+/// `local_time` fire point has passed and it is at or after the activation/cursor floor;
+/// `gap` reports the uncovered span from that floor to the oldest selected window,
+/// including weeks older than the scan bound, so they stay visible and are never claimed
+/// as covered.
+pub fn weekly_due_windows(
+    timezone: &str,
+    local_time: &str,
+    activated_at: i64,
+    cursor_end: Option<i64>,
+    now: i64,
+) -> Result<WeeklyScheduleDue> {
+    if cursor_end.is_some_and(|end| end > now) {
+        anyhow::bail!("weekly cursor is ahead of the current clock; check the system time");
+    }
+    let first = weekly_first_window(timezone, local_time, activated_at)?;
+    let floor = cursor_end.unwrap_or(first.start).max(first.start);
+    let newest = weekly_previous(timezone, now)?;
+    let (iso_year, iso_week) = parse_week_label(&newest.label)?;
+    let mut monday = NaiveDate::from_isoywd_opt(iso_year, iso_week, Weekday::Mon)
+        .context("ISO week does not exist in that ISO year")?;
+    let mut windows = Vec::new();
+    // Bounded lookback: missed weeks older than the scan surface through `gap`, never
+    // through an unbounded walk back to a potentially years-old activation.
+    for _ in 0..WEEKLY_SCAN_WEEKS {
+        let candidate = weekly_window(timezone, local_time, monday)?;
+        if candidate.end <= floor || candidate.start < first.start {
+            break;
+        }
+        // `due_at` gates eligibility: a closed week stays pending until its fire time.
+        if candidate.start >= floor && candidate.due_at <= now {
+            windows.push(candidate);
+            if windows.len() == WEEKLY_BACKFILL_CAP {
+                break;
+            }
+        }
+        monday = monday
+            .checked_sub_days(Days::new(7))
+            .context("calendar overflow")?;
+    }
+    windows.reverse();
+    let gap = windows
+        .first()
+        .and_then(|window| (window.start > floor).then_some((floor, window.start)));
+    Ok(WeeklyScheduleDue { windows, gap })
 }
 
 #[cfg(test)]
@@ -877,5 +939,259 @@ mod tests {
         // Across the fall-back transition the most recent complete week is the 169 h week.
         let dst = weekly_previous("Europe/Paris", stamp("2026-10-26T12:00:00Z")).unwrap();
         assert_eq!(dst.end - dst.start, 169 * 3_600_000);
+    }
+
+    #[test]
+    fn weekly_future_cursor_is_visible() {
+        let error = weekly_due_windows(
+            "Etc/UTC",
+            "08:00",
+            stamp("2026-01-01T00:00:00Z"),
+            Some(stamp("2026-03-02T00:00:00Z")),
+            stamp("2026-02-02T12:00:00Z"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("cursor"));
+        // First activation in a still-open week is normal, not a future-cursor error.
+        assert!(weekly_due_windows(
+            "Etc/UTC",
+            "08:00",
+            stamp("2026-02-02T12:00:00Z"),
+            None,
+            stamp("2026-02-02T12:00:00Z")
+        )
+        .unwrap()
+        .windows
+        .is_empty());
+    }
+
+    #[test]
+    fn weekly_catchup_oldest_first() {
+        // Activation mid-week makes 2026-W01 partial; 2026-W02 is the first eligible week.
+        let activation = stamp("2026-01-01T12:00:00Z");
+        let now = stamp("2026-02-02T12:00:00Z");
+        let due = weekly_due_windows("Etc/UTC", "08:00", activation, None, now).unwrap();
+        let labels = due
+            .windows
+            .iter()
+            .map(|window| window.label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["2026-W02", "2026-W03", "2026-W04", "2026-W05"]);
+        assert_eq!(due.windows[0].start, stamp("2026-01-05T00:00:00Z"));
+        assert_eq!(due.windows[0].due_at, stamp("2026-01-12T08:00:00Z"));
+        assert_eq!(due.windows[3].start, stamp("2026-01-26T00:00:00Z"));
+        assert_eq!(due.windows[3].end, stamp("2026-02-02T00:00:00Z"));
+        assert_eq!(due.windows[3].due_at, stamp("2026-02-02T08:00:00Z"));
+        for pair in due.windows.windows(2) {
+            assert_eq!(pair[0].end, pair[1].start, "windows stay contiguous");
+            assert_eq!(
+                pair[1].due_at - pair[1].end,
+                8 * 3_600_000,
+                "each window fires at local 08:00 after its close"
+            );
+        }
+        assert_eq!(due.gap, None);
+    }
+
+    #[test]
+    fn weekly_backfill_cap_reports_gap() {
+        let activation = stamp("2025-01-01T12:00:00Z");
+        let now = stamp("2026-02-02T12:00:00Z");
+        let due = weekly_due_windows("Etc/UTC", "08:00", activation, None, now).unwrap();
+        let labels = due
+            .windows
+            .iter()
+            .map(|window| window.label.as_str())
+            .collect::<Vec<_>>();
+        // More than four weeks are due, so only the four most recent are selected.
+        assert_eq!(labels, vec!["2026-W02", "2026-W03", "2026-W04", "2026-W05"]);
+        assert_eq!(due.windows[0].start, stamp("2026-01-05T00:00:00Z"));
+        // The gap starts at the first eligible week and reaches the oldest selected one,
+        // including every week older than the six-week scan that was never inspected.
+        assert_eq!(
+            due.gap,
+            Some((stamp("2025-01-06T00:00:00Z"), stamp("2026-01-05T00:00:00Z")))
+        );
+        let oldest_scanned = weekly_window("Etc/UTC", "08:00", ymd(2025, 12, 22)).unwrap();
+        assert!(
+            due.gap.unwrap().0 < oldest_scanned.start,
+            "the gap must expose weeks older than the scan bound"
+        );
+        assert_eq!(due.windows.len(), 4, "the backfill cap stays at four");
+    }
+
+    #[test]
+    fn weekly_due_windows_wait_for_due_at_and_activation() {
+        // Activation mid-week makes 2026-W42 partial; first eligible is 2026-W43.
+        let activation = stamp("2026-10-14T12:00:00Z");
+        // The partial week has closed, but it is never scheduled and invents no gap.
+        let partial = weekly_due_windows(
+            "Etc/UTC",
+            "08:00",
+            activation,
+            None,
+            stamp("2026-10-19T09:00:00Z"),
+        )
+        .unwrap();
+        assert!(partial.windows.is_empty());
+        assert_eq!(partial.gap, None);
+        // 2026-W43 closed at 00:00 but the fire time is 08:00: no early run.
+        let early = weekly_due_windows(
+            "Etc/UTC",
+            "08:00",
+            activation,
+            None,
+            stamp("2026-10-26T07:59:00Z"),
+        )
+        .unwrap();
+        assert!(early.windows.is_empty());
+        assert_eq!(early.gap, None);
+        // Exactly at due_at the closed week becomes due, once, with its full window.
+        let on_time = weekly_due_windows(
+            "Etc/UTC",
+            "08:00",
+            activation,
+            None,
+            stamp("2026-10-26T08:00:00Z"),
+        )
+        .unwrap();
+        assert_eq!(on_time.windows.len(), 1);
+        assert_eq!(on_time.windows[0].label, "2026-W43");
+        assert_eq!(on_time.windows[0].start, stamp("2026-10-19T00:00:00Z"));
+        assert_eq!(on_time.windows[0].end, stamp("2026-10-26T00:00:00Z"));
+        assert_eq!(on_time.windows[0].due_at, stamp("2026-10-26T08:00:00Z"));
+        assert_eq!(on_time.gap, None);
+    }
+
+    #[test]
+    fn weekly_due_windows_respect_cursor_floor() {
+        let activation = stamp("2025-01-01T12:00:00Z");
+        // A cursor from months ago: the scan still looks only six weeks back, and the
+        // gap reports everything since the cursor with older-than-scan weeks included.
+        let cursor = stamp("2025-06-02T00:00:00Z");
+        let due = weekly_due_windows(
+            "Etc/UTC",
+            "08:00",
+            activation,
+            Some(cursor),
+            stamp("2026-02-02T12:00:00Z"),
+        )
+        .unwrap();
+        assert_eq!(due.windows.len(), 4);
+        assert_eq!(due.windows[0].label, "2026-W02");
+        assert_eq!(due.windows[0].start, stamp("2026-01-05T00:00:00Z"));
+        assert_eq!(due.gap, Some((cursor, stamp("2026-01-05T00:00:00Z"))));
+        // A cursor at the end of 2026-W05 leaves only the next week due, with no gap.
+        let next = weekly_due_windows(
+            "Etc/UTC",
+            "08:00",
+            activation,
+            Some(stamp("2026-02-02T00:00:00Z")),
+            stamp("2026-02-09T09:00:00Z"),
+        )
+        .unwrap();
+        assert_eq!(next.windows.len(), 1);
+        assert_eq!(next.windows[0].label, "2026-W06");
+        assert_eq!(next.gap, None);
+        // Once the cursor advances past that week, the same poll is empty.
+        let caught_up = weekly_due_windows(
+            "Etc/UTC",
+            "08:00",
+            activation,
+            Some(stamp("2026-02-09T00:00:00Z")),
+            stamp("2026-02-09T09:00:00Z"),
+        )
+        .unwrap();
+        assert!(caught_up.windows.is_empty());
+        assert_eq!(caught_up.gap, None);
+    }
+
+    #[test]
+    fn weekly_due_windows_clamp_stale_cursor_to_activation() {
+        let activation = stamp("2026-01-01T12:00:00Z");
+        let due = weekly_due_windows(
+            "Etc/UTC",
+            "08:00",
+            activation,
+            Some(stamp("2025-12-01T00:00:00Z")),
+            stamp("2026-02-02T12:00:00Z"),
+        )
+        .unwrap();
+        // The cursor predates activation, so the activation floor wins; the partial
+        // activation week never becomes eligible and no pre-activation gap is invented.
+        assert_eq!(due.windows.len(), 4);
+        assert_eq!(due.windows[0].label, "2026-W02");
+        assert_eq!(due.windows[0].start, stamp("2026-01-05T00:00:00Z"));
+        assert_eq!(due.gap, None);
+    }
+
+    #[test]
+    fn weekly_due_windows_handle_dst_and_iso_year_boundaries() {
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        // 2026-W42..W44 span the fall-back week (169 h); local 08:00 fire times move
+        // from 06:00Z to 07:00Z as the zone leaves CEST.
+        let activation = stamp("2026-10-05T10:00:00Z"); // Monday 12:00 local, mid-week
+        let due = weekly_due_windows(
+            "Europe/Paris",
+            "08:00",
+            activation,
+            None,
+            stamp("2026-11-02T12:00:00Z"),
+        )
+        .unwrap();
+        let labels = due
+            .windows
+            .iter()
+            .map(|window| window.label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["2026-W42", "2026-W43", "2026-W44"]);
+        assert_eq!(due.windows[0].start, local_stamp(paris, 2026, 10, 12, 0, 0));
+        assert_eq!(due.windows[1].start, local_stamp(paris, 2026, 10, 19, 0, 0));
+        assert_eq!(
+            due.windows[1].end - due.windows[1].start,
+            169 * 3_600_000,
+            "the fall-back week keeps its 169 local hours"
+        );
+        assert_eq!(due.windows[2].end, local_stamp(paris, 2026, 11, 2, 0, 0));
+        assert_eq!(
+            due.windows[0].due_at,
+            local_stamp(paris, 2026, 10, 19, 8, 0)
+        );
+        assert_eq!(
+            due.windows[1].due_at,
+            local_stamp(paris, 2026, 10, 26, 8, 0)
+        );
+        assert_eq!(due.windows[2].due_at, local_stamp(paris, 2026, 11, 2, 8, 0));
+        assert_eq!(due.gap, None);
+
+        // 2026-W53 runs into 2027; labels and order follow ISO years, not civil years.
+        let year_end = weekly_due_windows(
+            "Europe/Paris",
+            "08:00",
+            stamp("2026-12-24T12:00:00Z"),
+            None,
+            stamp("2027-01-11T12:00:00Z"),
+        )
+        .unwrap();
+        let year_labels = year_end
+            .windows
+            .iter()
+            .map(|window| window.label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(year_labels, vec!["2026-W53", "2027-W01"]);
+        assert_eq!(
+            year_end.windows[0].start,
+            local_stamp(paris, 2026, 12, 28, 0, 0)
+        );
+        assert_eq!(
+            year_end.windows[0].end,
+            local_stamp(paris, 2027, 1, 4, 0, 0)
+        );
+        assert_eq!(year_end.windows[1].start, year_end.windows[0].end);
+        assert_eq!(
+            year_end.windows[1].due_at,
+            local_stamp(paris, 2027, 1, 11, 8, 0)
+        );
+        assert_eq!(year_end.gap, None);
     }
 }

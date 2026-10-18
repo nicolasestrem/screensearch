@@ -13,7 +13,19 @@
 - Documentation/publication authorized. New-head hosted checks, the supplementary
   `@claude`/`@codex` round and native interactive acceptance are separate from this
   record. Merge not performed by this work record.
+## 2026-10-18 — F3 G5/G6 implementation and remaining sign-off
 
+- Implemented weekly settings/Run now/status, independent activation/cursor/UUID,
+  six-week bounded lookback and four-most-recent-due oldest-first catch-up.
+- Fixed review findings: weekly save/consent round-trip, lane independence/error
+  isolation, daily-first fairness, disjoint gap history and timing-change gaps,
+  frozen weekly timezone, independent live-send gates, terminal render failures,
+  bounded unique source IDs, truthful partial causes and UI preview/save coupling.
+- Full native Windows `04 §1c` at `7bdef55`: `CHAIN_EXIT=0`; Rust1118 passed /
+  0 failed / 15 existing ignored, UI45 passed / 0 failed; bindings unchanged and
+  source hashes matched. Hosted CI/publication and real installed-app/Obsidian/
+  promotion/live-Telegram acceptance are not implied by these automated tests.
+- No schema migration, new HTTP/MCP surface, profile mutation, push or merge.
 ## 2026-10-18 — PR #139 post-install conflict reporting
 
 - Codex `r4307200508` is valid: a writer conflict can follow a successful install.

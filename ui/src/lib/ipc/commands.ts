@@ -334,8 +334,16 @@ export const setMemorySettings = (settings: MemorySettings): Promise<MemoryStatu
   invoke("set_memory_settings", { settings });
 export const previewMemorySchedule = (settings: MemorySettings): Promise<MemorySchedulePreview | null> =>
   invoke("preview_memory_schedule", { settings });
+/** Preview the next weekly synthesis window from the frozen weekly settings. */
+export const previewWeeklyMemorySchedule = (
+  settings: MemorySettings
+): Promise<MemorySchedulePreview | null> =>
+  invoke("preview_weekly_memory_schedule", { settings });
 export const runMemoryReport = (range?: MemoryReportRange | null): Promise<ReportRun> =>
   invoke("run_memory_report", { range: range ?? null });
+/** Run the weekly synthesis over the saved dailies now, regardless of schedule. */
+export const runWeeklyMemoryReport = (): Promise<ReportRun> =>
+  invoke("run_weekly_memory_report");
 export const retryMemoryReport = (runId: string): Promise<ReportRun> =>
   invoke("retry_memory_report", { runId });
 export const regenerateMemoryReport = (runId: string): Promise<ReportRun> =>

@@ -1,5 +1,112 @@
 # 05 — Build Review
 
+## 2026-10-18 — PR #140: failed scheduled weeks recorded as missed (Nico's decision)
+
+- Runtime verified: `ba931e84b274346c1271728fa482b02d50d1c7e8` in the existing native Windows checkout (Rust 1.95.0, Node
+  22.23.3). This docs-only commit inherits that result.
+- Regression `weekly_failed_scheduled_week_is_recorded_as_missed` was RED against a no-op sweep
+  (local probe `69a8fa9`: `left: []` vs the failed window, `test result: FAILED. 0 passed;
+  1 failed`) and GREEN on the implementation.
+- Verbatim native output:
+
+```text
+head=ba931e84b274346c1271728fa482b02d50d1c7e8
+EXIT npm ci = 0
+EXIT npm run lint = 0
+EXIT npm run build = 0
+EXIT npm test = 0
+EXIT quinn security = 0
+EXIT stage-mcp = 0
+EXIT cargo fmt = 0
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+test memory::weekly::tests::weekly_failed_scheduled_week_is_recorded_as_missed ... ok
+test memory::weekly::tests::weekly_reenable_does_not_record_disabled_weeks_as_missed ... ok
+EXIT cargo test = 0
+EXIT bindings = 0
+CHAIN_EXIT=0
+```
+
+- Parsed Rust totals: 1131 passed, 0 failed, 15 ignored across 62 suites. UI: 50 passed,
+  0 failed. Hosted checks at this head are pending.
+
+## 2026-10-18 — PR #140 review: disabled weekly periods recorded as missed (Codex + Claude)
+
+- Runtime verified: `62c38adee440f612c6e3b956075cf68b88fd1e2a` in the existing native Windows checkout (Rust 1.95.0, Node
+  22.23.3). This docs-only commit inherits that result.
+- Fixed Codex `PRRT_kwDOTAuCtM6tuHtd` (confirmed by Claude's review): a disable keeps the weekly
+  state, time and zone, so re-enabling synthesized a gap over the whole disabled interval.
+  `activation_values` now records prior-lane gaps only when the old weekly schedule was
+  enabled (`03 §8c`: re-enable starts a future activation period; disabled periods are not
+  backfilled), matching the daily lane. Time/zone changes while enabled still record overdue
+  weeks.
+- Regression `weekly_reenable_does_not_record_disabled_weeks_as_missed` was RED on the unfixed
+  code (`8c4bbef`, test only: panicked at `src-tauri\src\memory_weekly.rs:682:9`,
+  `test result: FAILED. 35 passed; 1 failed`) and GREEN on the fix.
+- Verbatim native output:
+
+```text
+head=62c38adee440f612c6e3b956075cf68b88fd1e2a
+EXIT npm ci = 0
+EXIT npm run lint = 0
+EXIT npm run build = 0
+EXIT npm test = 0
+EXIT quinn security = 0
+EXIT stage-mcp = 0
+EXIT cargo fmt = 0
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+test memory::weekly::tests::weekly_reenable_does_not_record_disabled_weeks_as_missed ... ok
+test memory::weekly::tests::weekly_timing_change_records_skipped_closed_weeks_as_gap ... ok
+EXIT cargo test = 0
+EXIT bindings = 0
+CHAIN_EXIT=0
+```
+
+- Parsed Rust totals: 1130 passed, 0 failed, 15 ignored across 62 suites. UI: 50 passed,
+  0 failed. Hosted checks at this head are pending; green checks at `34c7372` do not verify it.
+
+## 2026-10-18 — F3 G5/G6 review-or-redo, rebuilt on main
+
+- Runtime verified: `1ce4d66bcadd2d46ccf9367be565183f9e218c5c` in the existing native Windows checkout (Rust 1.95.0, Node
+  22.23.3), branch `feat/f3-g5-g6-weekly-scheduler-digest-v2`. This docs-only commit inherits
+  that result; it is not a claim of another runtime run.
+- Candidate `421ee84` was rebuilt on `main` by applying its net delta from its own base
+  `176b567` (not a merge/rebase: `176b567` is not an ancestor of `main`). PR-139 batch-3 files
+  are byte-identical to `main`; the four ledgers keep both entries.
+- Independent review: G5 and G6 both conform to the plan and `03 §8e/§8d`. Follow-ups: the
+  future-cursor diagnostic now reaches the user; missing-day disclosure parses the producer
+  banner only on partial weeks; long-ID abbreviation gained a regression test.
+- A first native run at `f633312` failed (`CHAIN_EXIT=101`): the new OK-week test asserted
+  over the whole digest, where Highlights reproduce the saved markdown verbatim. The assertion
+  was narrowed to the Coverage line (the actual invariant); production code was unchanged.
+- Verbatim native output:
+
+```text
+head=1ce4d66bcadd2d46ccf9367be565183f9e218c5c
+EXIT npm ci = 0
+EXIT npm run lint = 0
+EXIT npm run build = 0
+EXIT npm test = 0
+EXIT quinn security = 0
+EXIT stage-mcp = 0
+EXIT cargo fmt = 0
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+EXIT cargo test = 0
+EXIT bindings = 0
+CHAIN_EXIT=0
+test memory_schedule::tests::weekly_catchup_oldest_first ... ok
+test memory_schedule::tests::weekly_backfill_cap_reports_gap ... ok
+test memory_telegram::tests::weekly_digest_uses_saved_weekly_report ... ok
+test memory_telegram::tests::weekly_digest_renders_weekly_format ... ok
+test memory_telegram::tests::weekly_digest_chunks_fit_telegram_limit ... ok
+```
+
+- Parsed Rust totals: 1129 passed, 0 failed, 15 ignored across 62 suites. UI: 50 passed,
+  0 failed. Native interactive acceptance (installed app, real week, Obsidian, promotion,
+  live weekly Telegram send) remains open.
+
 ## 2026-10-18 — PR #139 review batch 3: note identity, weekly citations, export timezone (Claude + Codex)
 
 - Runtime verified: `fe72af8f83bf43007567703ac4ad152b336af608` in the existing native
@@ -52,7 +159,36 @@ CHAIN_EXIT=0
   canonicalization with a documented lexical fallback for a note that does not exist yet.
   Hosted checks at this head are pending publication; green checks at `176b567` do not
   verify this batch. Native interactive acceptance remains open.
+## 2026-10-18 — F3 G5/G6 weekly scheduler and Telegram digest
 
+- Code candidate: `7bdef552c5916f6ffcdd4d5f0fb14f264724fcab`; G3/G4 baseline
+  PR #139 through `176b567`. Eight bounded agents plus coordinator integration.
+- Actual Windows app suite (no transport/credential stubs):
+
+```text
+test result: ok. 146 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+EXIT cargo test = 0
+EXIT bindings diff = 0
+CHAIN_EXIT=0
+```
+
+- Real in-memory SQLite catch-up/replay with daily disabled verifies four persisted
+  weekly windows, separate schedule identity, durable disjoint gaps, cursor-after-
+  enqueue recovery and unchanged daily state/snapshots. Timing changes record only
+  previously eligible closed weeks. All digest review regressions pass, including
+  source caps/dedup, partial causes, banner provenance and terminal retry settlement.
+- Coordinator controls: kernel scheduling 22 passed / 0 failed; UI 43 passed / 0
+  failed; kernel clippy `-D warnings`, UI lint/typecheck/build exit 0.
+- Full native Windows `04 §1c` chain passed: Rust **1118 passed / 0 failed /
+  15 existing ignored**, UI **45 passed / 0 failed**. All five spec-named G5/G6
+  gates occur as `... ok` in the raw log. SHA256 of all 11 changed source files
+  matched before/after; Node22 is per-process. Restored owner branch at `176b567`
+  clean; 19 shipped temporary files verified absent; installed PID21660 unchanged.
+- Real installed-app/private-history/Obsidian/promotion and approved live Telegram
+  sign-off remain open. No installed profile/credential/note or app was changed;
+  no push/PR/merge. Detailed evidence and rollback: `docs/f3-g5-g6-verification.md`.
 ## 2026-10-18 — PR #139 post-install conflict receipt (Codex r4307200508)
 
 - Runtime verified: `e69ee1f9d9702693e71e1085b2c457f03fcc5ad3` in the existing

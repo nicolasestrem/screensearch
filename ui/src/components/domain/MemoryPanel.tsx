@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ReportView } from "./ReportView";
 import { Button, Chip, Field, Panel, Toggle } from "../primitives";
@@ -6,6 +7,7 @@ import type { MemorySettings } from "../../bindings/MemorySettings";
 import type { ReportDelivery } from "../../bindings/ReportDelivery";
 import type { ReportResponse } from "../../bindings/ReportResponse";
 import type { ReportRun } from "../../bindings/ReportRun";
+import type { ReportRunKind } from "../../bindings/ReportRunKind";
 import * as cmd from "../../lib/ipc/commands";
 import { savedRunFooterScope } from "../../lib/reportFooter";
 import {
@@ -134,7 +136,7 @@ function RunDetails({ runId }: { runId: string }) {
       {!run && <p>{detail.isError ? memoryError(detail.error) : "Loading report…"}</p>}
       {detail.isError && <Button onClick={() => detail.refetch()}>Reload report</Button>}
       {run && <>
-        <h3 className="font-display text-subtitle">{reportDates(run)} · {run.outcome ?? run.phase}</h3>
+        <h3 className="font-display text-subtitle">{reportDates(run)} · {run.outcome ?? run.phase} · {run.kind === "weekly_synthesis" ? "weekly synthesis" : "daily report"}</h3>
         <p className="text-caption text-ink-muted">{timestamp(run.window_start, run.timezone)} – {timestamp(run.window_end, run.timezone)} · {run.timezone}</p>
         <p className="text-caption font-mono break-all">Run {run.run_id} · source {run.source_id}</p>
         {run.revision_of && <p className="text-caption break-all">Revision of {run.revision_of}</p>}
@@ -299,10 +301,69 @@ function ProjectNoteSection() {
   );
 }
 
-export function MemoryPanel() {
+/**
+ * Report history stays one list, but daily reports and weekly syntheses are
+ * different lanes (`03 §8e`): the filter keeps a weekly run from being read as a
+ * daily one, and the unfiltered list names each kind. `initialFilter` is exposed
+ * for focused rendering/tests; the panel always opens on all runs.
+ */
+export function ReportHistory({
+  runs,
+  selected,
+  onSelect,
+  initialFilter = "all",
+}: {
+  runs: ReportRun[];
+  selected: string | null;
+  onSelect: (runId: string) => void;
+  initialFilter?: ReportRunKind | "all";
+}) {
+  const [filter, setFilter] = useState<ReportRunKind | "all">(initialFilter);
+  const dailyCount = runs.filter((run) => run.kind === "daily").length;
+  const weeklyCount = runs.filter((run) => run.kind === "weekly_synthesis").length;
+  const visible = runs.filter((run) => filter === "all" || run.kind === filter);
+
+  return (
+    <>
+      <div role="group" aria-label="Filter report history by kind" className="flex flex-wrap gap-2">
+        <Button aria-pressed={filter === "all"} onClick={() => setFilter("all")}>
+          All runs ({runs.length})
+        </Button>
+        <Button aria-pressed={filter === "daily"} onClick={() => setFilter("daily")}>
+          Daily reports ({dailyCount})
+        </Button>
+        <Button aria-pressed={filter === "weekly_synthesis"} onClick={() => setFilter("weekly_synthesis")}>
+          Weekly synthesis ({weeklyCount})
+        </Button>
+      </div>
+      {visible.length === 0 ? (
+        <p className="text-ink-muted">No reports for this filter.</p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {visible.map((run) => (
+            <Button key={run.run_id} aria-pressed={selected === run.run_id} onClick={() => onSelect(run.run_id)}>
+              {reportDates(run)} · {run.outcome ?? run.phase}
+              {run.revision_of ? " · revision" : ""}
+              {filter === "all" ? ` · ${run.kind === "weekly_synthesis" ? "weekly synthesis" : "daily report"}` : ""}
+            </Button>
+          ))}
+        </div>
+      )}
+      {runs.length === 100 && <p className="text-caption text-ink-muted">Showing the 100 most recent runs.</p>}
+    </>
+  );
+}
+
+/**
+ * `initialSettings` seeds the editable draft for embedded/test rendering; the
+ * Settings route passes nothing and hydrates the draft from live status.
+ */
+export function MemoryPanel({ initialSettings }: { initialSettings?: MemorySettings } = {}) {
   const status = useMemoryStatus();
   const runs = useMemoryRuns();
-  const [draft, setDraft] = useState<MemorySettings | null>(null);
+  const [draft, setDraft] = useState<MemorySettings | null>(() =>
+    initialSettings ? displaySettings(initialSettings) : null
+  );
   const [token, setToken] = useState("");
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -310,10 +371,17 @@ export function MemoryPanel() {
   const [endDate, setEndDate] = useState("");
   const save = useSetMemorySettings();
   const runNow = useMemoryMutation(cmd.runMemoryReport);
+  const weeklyRunNow = useMemoryMutation(cmd.runWeeklyMemoryReport);
   const saveToken = useMemoryMutation(cmd.setTelegramToken);
   const clearToken = useMemoryMutation(cmd.clearTelegramToken);
   const reset = useMemoryMutation(cmd.resetMemorySourceIdentity);
   const preview = useMemorySchedulePreview(draft);
+  const weeklyPreview = useQuery({
+    queryKey: ["memory-weekly-preview", draft?.weekly_local_time, draft?.weekly_timezone, draft?.output_folder],
+    queryFn: () => cmd.previewWeeklyMemorySchedule({ ...draft!, weekly_enabled: false, weekly_telegram_enabled: false }),
+    enabled: Boolean(draft?.weekly_local_time && draft?.weekly_timezone),
+    retry: false,
+  });
 
   useEffect(() => {
     if (status.data) setDraft((previous) => previous ?? displaySettings(status.data.settings));
@@ -324,9 +392,16 @@ export function MemoryPanel() {
   const busy = save.isPending || saveToken.isPending || clearToken.isPending || reset.isPending;
   const loaded = Boolean(draft && status.data);
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(status.data ? displaySettings(status.data.settings) : undefined);
-  const active = status.data?.worker_running || status.data?.latest_run?.phase === "queued" || status.data?.latest_run?.phase === "running";
-  const selected = selectedRun ?? status.data?.latest_run?.run_id ?? null;
-  const actionError = save.error ?? runNow.error ?? saveToken.error ?? clearToken.error ?? reset.error;
+  const dailyLatest = status.data?.latest_run ?? null;
+  const weeklyLatest = status.data?.weekly_latest_run ?? null;
+  const weeklyMissed = status.data?.weekly_missed_windows ?? [];
+  const active = Boolean(
+    status.data?.worker_running ||
+    dailyLatest?.phase === "queued" || dailyLatest?.phase === "running" ||
+    weeklyLatest?.phase === "queued" || weeklyLatest?.phase === "running"
+  );
+  const selected = selectedRun ?? dailyLatest?.run_id ?? null;
+  const actionError = save.error ?? runNow.error ?? weeklyRunNow.error ?? saveToken.error ?? clearToken.error ?? reset.error;
   const reportTimezone = status.data?.settings.timezone;
   const today = todayInZone(reportTimezone);
   const yesterday = previousDate(today);
@@ -335,27 +410,35 @@ export function MemoryPanel() {
     ? "End date must be on or after the start date."
     : today && (startDate > today || selectedEnd > today) ? "Choose today or an earlier date." : null;
   const canRun = loaded && !dirty && !busy && !active && !runNow.isPending && Boolean(reportTimezone && status.data?.settings.output_folder);
+  const canRunWeekly = loaded && !dirty && !busy && !active && !weeklyRunNow.isPending && Boolean(draft?.weekly_timezone && status.data?.settings.output_folder);
+  const weeklySaveBlocked = Boolean(
+    draft?.weekly_enabled &&
+    (!draft.weekly_local_time || !draft.weekly_timezone || !draft.output_folder)
+  );
+  const savedWeeklyEnabled = Boolean(status.data?.settings.weekly_enabled);
+  const savedWeeklyTimezone = status.data?.settings.weekly_timezone ?? undefined;
 
   return (
-    <Panel group title="Memory reports" action={<Chip tone={active ? "accent" : "neutral"}>{active ? "working" : status.data?.settings.enabled ? "scheduled" : "off"}</Chip>}>
+    <Panel group title="Memory reports" action={<Chip tone={active ? "accent" : "neutral"}>{active ? "working" : status.data?.settings.enabled || savedWeeklyEnabled ? "scheduled" : "off"}</Chip>}>
       <div className="flex flex-col gap-4">
-        <p className="text-caption text-ink-muted">Generate source-backed reports for a day or date range in a selected folder, with optional Telegram digests. Inference stays on this computer; schedules do not download missing models.</p>
+        <p className="text-caption text-ink-muted">Generate source-backed reports for a day or date range in a selected folder, with optional Telegram digests. Weekly synthesis builds a separate report over the latest complete ISO week. Inference stays on this computer; schedules do not download missing models.</p>
         <div className="min-h-12" aria-live="polite">
           {status.isLoading && <p>Loading memory settings…</p>}
           {status.isError && <div><p role="alert" className="text-warn">Could not load memory status: {memoryError(status.error)}</p><Button onClick={() => status.refetch()}>Retry status</Button></div>}
-          {status.data && !status.data.settings.enabled && <p className="text-ink-muted">Daily scheduling is off. Choose a timezone and folder before saving or running a report.</p>}
-          {status.data?.settings.enabled && <p>Scheduled at {status.data.settings.local_time} in {status.data.settings.timezone}.</p>}
+          {status.data && !status.data.settings.enabled && !savedWeeklyEnabled && <p className="text-ink-muted">Daily and weekly scheduling are off. Choose a timezone and folder before saving or running a report.</p>}
+          {status.data?.settings.enabled && <p>Daily schedule: {status.data.settings.local_time} in {status.data.settings.timezone}.</p>}
+          {savedWeeklyEnabled && <p>Weekly schedule: {status.data?.settings.weekly_local_time} in {status.data?.settings.weekly_timezone}. Only complete ISO weeks are scheduled.</p>}
           {status.data?.worker_error && <p role="alert" className="text-warn">Report worker: {status.data.worker_error.message}</p>}
         </div>
         <div className="min-h-12 text-caption" aria-live="polite">
-          {status.data?.latest_run ? (
+          {dailyLatest ? (
             <p>
-              Last run: {reportDates(status.data.latest_run)} · {status.data.latest_run.outcome ?? status.data.latest_run.phase}.
-              {status.data.latest_run.outcome === "NO_DATA" && " No usable report evidence was available for this window, so no Telegram digest was sent."}
-              {status.data.latest_run.error && ` ${status.data.latest_run.error.message}`}
+              Last daily run: {reportDates(dailyLatest)} · {dailyLatest.outcome ?? dailyLatest.phase}.
+              {dailyLatest.outcome === "NO_DATA" && " No usable report evidence was available for this window, so no Telegram digest was sent."}
+              {dailyLatest.error && ` ${dailyLatest.error.message}`}
               {" "}Open report history below for coverage and separate delivery receipts.
             </p>
-          ) : <p className="text-ink-muted">{status.isLoading ? "Checking last run…" : status.data ? "No recorded report runs." : "Last run unavailable."}</p>}
+          ) : <p className="text-ink-muted">{status.isLoading ? "Checking last daily run…" : status.data ? "No recorded daily report runs." : "Last daily run unavailable."}</p>}
         </div>
         <Toggle label="Schedule daily memory" checked={draft?.enabled ?? false} disabled={!loaded || busy} onChange={(v) => set("enabled", v)} hint="Starts with the first full day after activation; changes apply when you save. Disabled periods are not backfilled." />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -376,10 +459,10 @@ export function MemoryPanel() {
           <span className="text-caption text-ink-muted">{!status.data ? "Credential status unavailable" : status.data.telegram_credential_available ? "Saved credential available" : "No saved credential available"}</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button disabled={!draft || !dirty || busy || (draft.enabled && (!preview.data || preview.isFetching || preview.isError))} onClick={() => draft && save.mutate(draft, { onSuccess: (result) => setDraft(displaySettings(result.settings)) })}>{save.isPending ? "Saving…" : "Save memory settings"}</Button>
+          <Button disabled={!draft || !dirty || busy || (draft.enabled && (!preview.data || preview.isFetching || preview.isError)) || weeklySaveBlocked} onClick={() => draft && save.mutate(draft, { onSuccess: (result) => setDraft(displaySettings(result.settings)) })}>{save.isPending ? "Saving…" : "Save memory settings"}</Button>
           <Button disabled={!loaded || busy || !dirty} onClick={() => status.data && setDraft(displaySettings(status.data.settings))}>Discard unsaved changes</Button>
         </div>
-        {dirty && <p className="text-caption text-ink-muted">Unsaved changes. Save before running a report.</p>}
+        {dirty && <p className="text-caption text-ink-muted">Unsaved changes. Save before running a report or weekly synthesis.</p>}
         <section aria-label="Run a memory report" className="flex flex-col gap-3 border border-line rounded-panel p-4">
           <h3 className="font-display text-subtitle">Run a report</h3>
           <p className="text-caption text-ink-muted">Uses the saved timezone, output folder and Telegram settings. Choosing dates does not generate or send anything.</p>
@@ -398,17 +481,142 @@ export function MemoryPanel() {
             <Button disabled={!canRun} onClick={() => runNow.mutate(undefined, { onSuccess: (run) => setSelectedRun(run.run_id) })}>Run previous day{yesterday ? ` (${yesterday})` : ""}</Button>
           </div>
         </section>
+        <section aria-label="Weekly synthesis" className="flex flex-col gap-3 border border-line rounded-panel p-4">
+          <h3 className="font-display text-subtitle">Weekly synthesis</h3>
+          <p className="text-caption text-ink-muted">
+            Builds one synthesis over a complete ISO week from saved daily reports. Weekly notes go into
+            ScreenSearch/Weekly and are linked from the shared ScreenSearch/Index.md. The output folder
+            selected above is shared with daily reports; weekly scheduling and delivery are separate
+            choices. Weekly changes save with the memory settings above.
+          </p>
+          <Toggle
+            label="Schedule weekly synthesis"
+            checked={draft?.weekly_enabled ?? false}
+            disabled={!loaded || busy}
+            onChange={(value) => set("weekly_enabled", value)}
+            hint="Starts with the first complete ISO week after activation; a partial activation week is never scheduled. Disabled periods are not backfilled."
+          />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Field
+              label="Weekly local time"
+              type="time"
+              step={60}
+              value={draft?.weekly_local_time ?? ""}
+              disabled={!loaded || busy}
+              onChange={(event) => set("weekly_local_time", event.currentTarget.value.slice(0, 5) || null)}
+              hint="The week closes at this local time on the following Monday."
+            />
+            <Field
+              label="Weekly timezone (IANA)"
+              value={draft?.weekly_timezone ?? ""}
+              placeholder="Europe/Paris"
+              disabled={!loaded || busy}
+              onChange={(event) => set("weekly_timezone", event.currentTarget.value || null)}
+              hint="Fixed to your selection, even if the computer timezone changes."
+            />
+          </div>
+          <div className="min-h-12 text-caption" aria-live="polite">
+            {!draft?.weekly_local_time || !draft?.weekly_timezone ? (
+              <p>Select a weekly time and timezone to preview the first complete week.</p>
+            ) : weeklyPreview.isError ? (
+              <p className="text-warn">{memoryError(weeklyPreview.error)}</p>
+            ) : weeklyPreview.isFetching ? (
+              <p>Calculating the first eligible week…</p>
+            ) : weeklyPreview.data ? (
+              <p>
+                First eligible week for a new activation: {weeklyPreview.data.local_date}. Window{" "}
+                {timestamp(weeklyPreview.data.window_start, draft.weekly_timezone)} –{" "}
+                {timestamp(weeklyPreview.data.window_end, draft.weekly_timezone)}; due{" "}
+                {timestamp(weeklyPreview.data.due_at, draft.weekly_timezone)} ({draft.weekly_timezone}).
+                Saving unchanged weekly settings preserves the existing activation.
+              </p>
+            ) : (
+              <p>Complete the weekly schedule to preview its first complete week.</p>
+            )}
+          </div>
+          {draft?.weekly_enabled && !draft.output_folder && (
+            <p className="text-caption text-warn">Select the shared output folder above before enabling weekly synthesis.</p>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              disabled={!canRunWeekly}
+              onClick={() => weeklyRunNow.mutate(undefined, { onSuccess: (run) => setSelectedRun(run.run_id) })}
+            >
+              {weeklyRunNow.isPending ? "Starting weekly synthesis…" : "Run most recent complete week"}
+            </Button>
+            <span className="text-caption text-ink-muted">
+              Runs the most recent complete ISO week even while the weekly schedule is off. Uses the saved
+              weekly timezone and the shared output folder.
+            </span>
+          </div>
+          {!draft?.weekly_timezone || !status.data?.settings.output_folder ? (
+            <p className="text-caption text-warn">Select and save a weekly timezone and shared output folder before running a weekly synthesis.</p>
+          ) : null}
+          {draft?.timezone && draft.weekly_timezone && draft.timezone !== draft.weekly_timezone && (
+            <p className="text-caption text-warn">Saved dailies are matched by timezone; a different weekly timezone may leave days uncovered.</p>
+          )}
+          {weeklyRunNow.isError && <p role="alert" className="text-warn">{memoryError(weeklyRunNow.error)}</p>}
+          <div className="min-h-12 text-caption" aria-live="polite">
+            {weeklyLatest ? (
+              <p>
+                Last weekly synthesis: {reportDates(weeklyLatest)} · {weeklyLatest.outcome ?? weeklyLatest.phase}.
+                {weeklyLatest.outcome === "PARTIAL" && " Saved daily coverage, evidence, or output is incomplete; see the saved synthesis for limitations."}
+                {weeklyLatest.outcome === "NO_DATA" && " No usable weekly evidence was available, so no weekly Telegram digest was sent."}
+                {weeklyLatest.error && ` ${weeklyLatest.error.message}`}
+                {" "}Open report history below and filter to weekly synthesis for coverage and separate delivery receipts.
+              </p>
+            ) : (
+              <p className="text-ink-muted">
+                {status.isLoading ? "Checking last weekly synthesis…" : status.data ? "No weekly synthesis has run yet. The latest complete week can be run without enabling the schedule." : "Last weekly synthesis unavailable."}
+              </p>
+            )}
+          </div>
+          {weeklyMissed.length > 0 && (
+            <div>
+              <h4 className="font-display text-body">Missed weeks</h4>
+              <p className="text-caption text-ink-muted">
+                These uncovered spans were skipped by bounded catch-up or a schedule change, or their scheduled synthesis failed, and are not reported as covered. Times use the current weekly timezone.
+              </p>
+              <ul>
+                {weeklyMissed.map((window) => (
+                  <li key={`${window.start}-${window.end}`}>
+                    {timestamp(window.start, savedWeeklyTimezone)} –{" "}
+                    {timestamp(window.end, savedWeeklyTimezone)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <Toggle
+            label="Send weekly Telegram digests"
+            checked={draft?.weekly_telegram_enabled ?? false}
+            disabled={!loaded || busy}
+            onChange={(value) => set("weekly_telegram_enabled", value)}
+            hint="Explicitly permits saved weekly synthesis content to leave this device for Telegram and the selected conversation. Weekly delivery uses the same saved bot credential and chat ID as daily reports. Off by default."
+          />
+          <p className="text-caption text-ink-muted">
+            Shared Telegram destination: {draft?.telegram_chat_id ?? "no chat ID selected"} ·{" "}
+            {status.data?.telegram_credential_available ? "saved bot credential available" : "no saved bot credential"}.
+            Weekly delivery uses these shared values and does not create a second credential.
+          </p>
+          <p className="text-caption text-ink-muted">
+            Weekly digests send saved synthesis text only — no screenshots or raw OCR. Credential-pattern
+            masking is not comprehensive PII detection. NO_DATA, blocked and failed weeks are not sent, and
+            enabling this does not send a test message.
+          </p>
+        </section>
         <ProjectNoteSection />
         {actionError !== null && <p role="alert" className="text-warn">{memoryError(actionError)}</p>}
-        {status.data?.missed_windows.length ? <div><h3 className="font-display text-subtitle">Older missed windows</h3><p>These windows were outside the automatic backfill cap and are not reported as covered.</p><ul>{status.data.missed_windows.map((window) => <li key={`${window.start}-${window.end}`}>{timestamp(window.start)} – {timestamp(window.end)}</li>)}</ul></div> : null}
+        {status.data?.missed_windows.length ? <div><h3 className="font-display text-subtitle">Older missed daily windows</h3><p>These windows were outside the automatic backfill cap and are not reported as covered.</p><ul>{status.data.missed_windows.map((window) => <li key={`${window.start}-${window.end}`}>{timestamp(window.start)} – {timestamp(window.end)}</li>)}</ul></div> : null}
         <details>
           <summary className="cursor-pointer min-h-hit-min font-display text-subtitle">Report history and delivery receipts</summary>
           <section aria-label="Report history" className="flex flex-col gap-3">
           {runs.isLoading && <p>Loading report history…</p>}
           {runs.isError && <div><p role="alert">{memoryError(runs.error)}</p><Button onClick={() => runs.refetch()}>Reload history</Button></div>}
-          {runs.data?.length === 0 && <p className="text-ink-muted">No reports yet. Choose dates to run a report or enable a daily schedule.</p>}
-          <div className="flex flex-wrap gap-2">{runs.data?.map((run) => <Button key={run.run_id} aria-pressed={selected === run.run_id} onClick={() => setSelectedRun(run.run_id)}>{reportDates(run)} · {run.outcome ?? run.phase}{run.revision_of ? " · revision" : ""}</Button>)}</div>
-          {runs.data?.length === 100 && <p className="text-caption text-ink-muted">Showing the 100 most recent runs.</p>}
+          {runs.data?.length === 0 && <p className="text-ink-muted">No reports yet. Choose dates to run a report or enable a daily or weekly schedule.</p>}
+          {runs.data && runs.data.length > 0 && (
+            <ReportHistory runs={runs.data} selected={selected} onSelect={setSelectedRun} />
+          )}
           {selected && <RunDetails key={selected} runId={selected} />}
           </section>
         </details>
@@ -417,7 +625,7 @@ export function MemoryPanel() {
           <div className="flex flex-col gap-3">
             <p className="break-all text-caption font-mono">Source: {status.data?.source_id ?? "unavailable"}</p>
             <p>Moves and restores keep identity. For an independently active clone, disable scheduling and Telegram, wait for active work to finish, then reset identity. Old reports and note ownership stay unchanged; configure a new credential afterward.</p>
-            <Button disabled={!loaded || active || busy || status.data?.settings.enabled || status.data?.settings.telegram_enabled} onClick={() => setConfirmReset(true)}>Reset cloned profile identity…</Button>
+            <Button disabled={!loaded || active || busy || status.data?.settings.enabled || status.data?.settings.telegram_enabled || savedWeeklyEnabled || status.data?.settings.weekly_telegram_enabled} onClick={() => setConfirmReset(true)}>Reset cloned profile identity…</Button>
             {confirmReset && <div role="group" aria-label="Confirm profile identity reset" className="border border-warn p-3 flex flex-col gap-2"><p>Create a new source identity for future reports? Existing notes remain owned by the previous identity and may conflict.</p><div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => reset.mutate(undefined, { onSuccess: () => setConfirmReset(false) })}>Confirm new identity</Button><Button disabled={busy} onClick={() => setConfirmReset(false)}>Cancel</Button></div></div>}
           </div>
         </details>

@@ -1,5 +1,26 @@
 # 07 — Known Gaps
 
+## 2026-10-18 — Decided: a failed scheduled weekly synthesis is a missed week (Nico)
+
+- Supersedes the open decision in "Weekly run that fails generation is not retried by catch-up"
+  below. Nico approved recording failed weeks as missed (PR #140). A week whose scheduler-owned
+  original run settles FAILED is added to `memory.weekly.gaps` and shown under "Missed weeks";
+  it is still not retried automatically (the cursor advanced at enqueue), and the user can
+  regenerate it.
+- Readings (implementation, not settled by `03 §8e`; can be overridden): manual runs do not
+  count as the schedule's coverage; a failed regeneration of an already saved week does not
+  mark it missed; BLOCKED (missing model/source) is a missing prerequisite, not a failed
+  generation, so it is not recorded. Like every other gap entry, the record is history and stays
+  after a later successful regeneration.
+
+## 2026-10-18 — Weekly run that fails generation is not retried by catch-up
+
+- The weekly cursor advances at enqueue (enqueue-before-cursor), not on generation success. A
+  weekly run that settles `GENERATION_FAILED` (for example under the per-day citation rule)
+  stays visible as a FAILED run and can be regenerated manually, but catch-up neither retries it
+  nor records it as a gap. This matches the shipped daily lane. Open decision for Nico: keep,
+  retry, or record failed weeks as gaps.
+
 ## 2026-10-18 — PR #139 review batch 3 readings
 
 - **Note identity is the OS-resolved canonical path, never case-folded.** The ownership
@@ -93,7 +114,34 @@
   Timeline/Insights/CapturesTrend labels. A valid IANA zone is assumed for a saved run: the
   backend validates the identifier before persisting it and the run header already formats
   `window_start`/`window_end` with it.
+## 2026-10-18 — F3 G5/G6 implementation readings
 
+- **Supersedes the G1/G2 transitional no-weekly-surface/no-digest notes below.**
+  Weekly settings, Run now, catch-up and weekly-specific saved-output Telegram
+  digests are implemented; native engineering verification is tracked in `05`.
+- **Catch-up scans six complete ISO weeks, capped at four most recent due weeks.**
+  Windows are queued oldest-first. Older omitted spans persist as disjoint ranges
+  in `memory.weekly.gaps`; enqueue precedes cursor advancement. Time/zone changes
+  preserve history and record skipped previously eligible closed weeks, never an
+  open/future activation week. First-week/DST rules and schema 13 remain unchanged.
+- **Weekly Telegram requires independent explicit opt-in.** It defaults off under
+  `memory.telegram.weekly_enabled`, sharing only the credential and chosen chat.
+  Frozen and current consent are both kind-aware. All opted-in catch-up weeks may
+  deliver; no undocumented newest-only suppression is introduced.
+- **Manual weekly runs do not advance or deduplicate against the schedule cursor.**
+  They remain explicit runs with `schedule_id=None`; a later scheduled run of the
+  same week is still possible, mirroring the daily Run-now contract.
+- **Weekly and daily zones are independent, but G2 matches saved dailies by exact
+  zone string.** Different selections can leave coverage missing; UI warns rather
+  than silently changing either zone or pretending aliases are interchangeable.
+- **Digest provenance is bounded, not rewritten.** Show up to 12 unique saved daily
+  source IDs, visibly abbreviate unusually long IDs, and disclose the exact omitted
+  count; full IDs remain in the saved report. Missing-day metadata is parsed only
+  from the producer's leading persisted banner, not later model prose. No new
+  SavedReport field or schema migration was invented.
+- **Engineering tests are not product acceptance.** Real-week/private-history,
+  Obsidian links, interactive promotion and an explicitly approved live Telegram
+  send remain open. No installed profile or live history is touched by this slice.
 ## 2026-10-18 — Post-install promotion conflict receipt
 
 - `PromotionReceipt.hash` is populated when the promotion's bytes are confirmed
