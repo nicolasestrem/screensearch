@@ -129,9 +129,14 @@ fn daily_digest(run: &ReportRun, r: &traits::SavedReport, outcome: ReportOutcome
 
 /// Local `YYYY-MM-DD` days the saved weekly report itself discloses as lacking a complete
 /// saved daily (`03 §8e`). `save_weekly_execution` prepends that banner to the saved
-/// markdown, so the digest never has to infer missing days from run metadata it does not
-/// carry. Only strict dates are echoed; anything else in the sentence is ignored.
-fn weekly_missing_daily_days(markdown: &str) -> Vec<String> {
+/// markdown of a partial week only, so the digest never has to infer missing days from run
+/// metadata it does not carry. Only strict dates are echoed; anything else in the sentence
+/// is ignored. On a non-partial week a leading banner literal can only be model prose, so
+/// nothing is parsed there and model-implied date markers never leak into the digest.
+fn weekly_missing_daily_days(markdown: &str, outcome: ReportOutcome) -> Vec<String> {
+    if outcome != ReportOutcome::Partial {
+        return Vec::new();
+    }
     let banner = markdown
         .split_once("\n\n")
         .map_or(markdown, |(head, _)| head);
@@ -165,7 +170,7 @@ fn weekly_digest(
 ) -> Result<String, String> {
     let label = kernel::week_label(&run.timezone, run.window_start)
         .map_err(|_| "weekly report has no valid week label".to_string())?;
-    let missing = weekly_missing_daily_days(&r.markdown);
+    let missing = weekly_missing_daily_days(&r.markdown, outcome);
     let complete_days = r.periods_total == 7 && r.periods_covered == 7;
     let status = if outcome == ReportOutcome::Partial {
         if !complete_days || !missing.is_empty() {
@@ -616,6 +621,43 @@ mod tests {
         assert!(!digest.contains(&ids[12]));
         assert!(digest.contains("+88 more"));
         assert!(digest.contains("Saved synthesis stays intact."));
+    }
+
+    #[test]
+    fn weekly_digest_abbreviates_unusually_long_source_ids() {
+        let mut run = weekly_saved_run("Saved synthesis stays intact.".into());
+        let long_id = format!("daily-run-{}", "x".repeat(110));
+        let report = run.result.as_mut().unwrap();
+        report.daily_run_ids = vec![long_id.clone()];
+        let digest = digest_chunks(&run).unwrap().join("");
+        assert!(
+            digest.contains(&format!("{}…", &long_id[..96])),
+            "an unusually long id is visibly abbreviated"
+        );
+        assert!(!digest.contains(&long_id));
+    }
+
+    #[test]
+    fn weekly_digest_ignores_leading_banner_on_ok_week() {
+        let mut run = weekly_saved_run(
+            "**Partial coverage:** the week is missing complete saved daily coverage for \
+             2099-01-01.\n\n## Activity\n\nModel prose opening the report."
+                .into(),
+        );
+        run.outcome = Some(ReportOutcome::Ok);
+        let digest = digest_chunks(&run).unwrap().join("");
+        // The saved synthesis is reproduced verbatim under Highlights; the invariant is
+        // that the disclosure line never turns model prose into claimed missing days.
+        let coverage = digest
+            .lines()
+            .find(|line| line.starts_with("Coverage:"))
+            .unwrap();
+        assert!(
+            !coverage.contains("2099"),
+            "an OK week must not echo model-implied missing-day markers: {coverage}"
+        );
+        assert!(coverage.contains("not enumerated in saved report"));
+        assert!(digest.contains("OK — saved synthesis"));
     }
 
     #[test]

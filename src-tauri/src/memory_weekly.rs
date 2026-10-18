@@ -327,10 +327,12 @@ async fn catch_up(
         weekly.last_window_end,
         now,
     )
-    .map_err(|_| {
+    .map_err(|error| {
+        // Keep the kernel's distinct diagnostics (e.g. the future-cursor clock fault)
+        // visible instead of flattening every window failure into one generic message.
         fail(
             "INVALID_CONFIG",
-            "The weekly schedule window could not be resolved.",
+            &format!("The weekly schedule window could not be resolved: {error}"),
         )
     })?;
     if let Some(gap) = due.gap {
@@ -595,6 +597,35 @@ mod tests {
         );
         assert_eq!(gaps(&store).await.unwrap(), gaps_before);
         assert!(replayed.iter().all(|run| run.config_snapshot == saved));
+    }
+
+    #[tokio::test]
+    async fn weekly_catchup_surfaces_the_future_cursor_message() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let config = weekly_config();
+        let weekly = WeeklyScheduleState {
+            schedule_id: "weekly-future-cursor".into(),
+            activated_at: stamp("2025-01-01T12:00:00Z"),
+            last_window_end: Some(stamp("2099-01-07T23:00:00Z")),
+        };
+        save_state(&store, &weekly).await.unwrap();
+        let saved = serde_json::to_string(&RunSnapshot {
+            version: 1,
+            memory: config.clone(),
+            report_settings: kernel::settings::load_settings(&store).await,
+            model_at_enqueue: None,
+        })
+        .unwrap();
+        let now = stamp("2026-02-02T12:00:00Z");
+        let error = catch_up(&store, &config, &saved, now).await.unwrap_err();
+        assert_eq!(error.code, "INVALID_CONFIG");
+        assert!(
+            error
+                .message
+                .contains("weekly cursor is ahead of the current clock"),
+            "the distinct future-cursor diagnostic must reach the user: {}",
+            error.message
+        );
     }
 
     #[tokio::test]
