@@ -1,5 +1,17 @@
 # 06 — Patch Plan
 
+## 2026-10-18 — PR #139 post-install conflict reporting
+
+- Codex `r4307200508` is valid: a writer conflict can follow a successful install.
+  Fixed in `e69ee1f`: settle the intent/live hash before returning the receipt;
+  record ownership when the append is installed and retain the recovery path.
+  The dialog uses receipt hash to distinguish written from no-append conflicts.
+- Full native Windows chain passed at `e69ee1f`, `CHAIN_EXIT=0`; Rust 1086/0,
+  UI 37/0. Exact outputs and test boundaries are recorded in `05`.
+- Documentation/publication authorized. New-head hosted checks and native
+  interactive acceptance are not implied by the earlier CI result. No additional
+  requested review round; merge not performed by this work record.
+
 > **Ordered fixes required before shipping**, plus any **spec contradictions** found during the
 > build (`04 §5`). Empty until the build surfaces something.
 

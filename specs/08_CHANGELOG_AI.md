@@ -1,5 +1,19 @@
 # 08 — AI Changelog
 
+## 2026-10-18 — PR #139 truthful receipt after a concurrent note swap
+
+- Fixed Codex `r4307200508`: when the writer reports a conflict after the append
+  landed, confirm checks the live hash under the note lock and records ownership
+  before returning the installed hash and recovery path. The dialog reports the
+  append as written with a recovery warning and Done, rather than claiming no
+  write or offering to append it again. Other recovery-copy conflicts no longer
+  claim the note was untouched. No receipt fields or schema were added.
+- Native Windows full chain at `e69ee1f`: `CHAIN_EXIT=0`, Rust 1086 passed /
+  0 failed / 15 existing ignored; UI 37 passed / 0 failed. Two real-file/store
+  settlement regressions plus two UI render regressions; outputs in `05`.
+- New hosted CI is pending publication; no third review request, merge,
+  installed-app change or live-history access is part of this record.
+
 ## 2026-10-18 — PR #139 additional promotion/index review fixes
 
 - **Change:** confirmed promotion intent and last receipt in existing internal per-note settings

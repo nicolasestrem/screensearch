@@ -1,5 +1,18 @@
 # 07 — Known Gaps
 
+## 2026-10-18 — Post-install promotion conflict receipt
+
+- `PromotionReceipt.hash` is populated when the promotion's bytes are confirmed
+  installed. `conflict: true` plus a hash means the append landed despite a
+  concurrent-swap/displaced-version verification conflict (`03 §8c`); the
+  recovery copy is retained and the UI reports written, not nothing written.
+  A conflict without a hash remains a no-append result. Ownership is reconciled
+  before returning the installed receipt, not silently on a later call.
+- A retained recovery `.md` in `Projects/` counts as a second note. The existing
+  exactly-one-note guard therefore blocks another promotion until the user
+  compares and moves/removes that copy; the dialog now makes this explicit.
+  No automatic removal of an unmatched recovery copy is introduced.
+
 - **`SavedReport.daily_run_ids` rides the saved-result wire surface.** `ReportDetail.result` embeds
   `SavedReport` verbatim, so the new field also appears on `GET /v1/reports` detail and the IPC
   run payload, alongside the `kind` addition `§8e` names as the deliberate migration change. It is

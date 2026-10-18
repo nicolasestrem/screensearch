@@ -1,5 +1,47 @@
 # 05 — Build Review
 
+## 2026-10-18 — PR #139 post-install conflict receipt (Codex r4307200508)
+
+- Runtime verified: `e69ee1f9d9702693e71e1085b2c457f03fcc5ad3` in the existing
+  native Windows checkout; Rust 1.95.0, Node 22.23.3. A subsequent documentation-only
+  commit inherits this result, not a claim of another runtime run.
+- `write_owned` can report a conflict after installing the append when the displaced
+  version differs from the prepared hash. Confirm now settles it under `NOTE_LOCK`
+  from the live hash before constructing the receipt: installed promotion bytes get
+  an ownership update and a receipt with hash, conflict and recovery path; otherwise
+  the no-append conflict and pending intent remain. The dialog distinguishes these
+  cases and never says an installed append wrote nothing.
+- Verbatim native output:
+
+```text
+head=e69ee1f9d9702693e71e1085b2c457f03fcc5ad3
+EXIT npm ci = 0
+EXIT npm run lint = 0
+EXIT npm run build = 0
+# tests 37
+# pass 37
+# fail 0
+EXIT npm test = 0
+EXIT quinn security = 0
+EXIT stage-mcp = 0
+EXIT cargo fmt = 0
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+test promotion::tests::writer_conflict_after_install_reports_the_append_and_records_it ... ok
+test promotion::tests::writer_conflict_without_the_append_installed_appends_nothing ... ok
+EXIT cargo test = 0
+EXIT bindings = 0
+CHAIN_EXIT=0
+```
+
+- Parsed Rust totals: 1086 passed, 0 failed, 15 existing ignored. UI: 37 passed,
+  0 failed. Two Rust settlement regressions use real files and a real store,
+  representing the writer's post-swap states; they do not inject a concurrent
+  editor into `ReplaceFileW`. Two UI render regressions check installed-append
+  and recovery-copy conflict wording. Native interactive acceptance remains open.
+- Hosted checks for the new head are pending publication; green checks at
+  `0b621ca` do not verify this fix. No new review round or merge is claimed.
+
 ## 2026-10-18 — PR #139 additional review batch, native Windows verified
 
 - **Frozen runtime:** `aba0c28587dab9346dd869bc8a1dea75ca0bc4db`, isolated local branch
