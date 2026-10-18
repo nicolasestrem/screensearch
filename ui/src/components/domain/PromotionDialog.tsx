@@ -5,7 +5,8 @@
 // a real modal: initial focus on Cancel, Escape/backdrop dismiss while idle, Tab is
 // trapped inside, and focus returns to the Promote button on unmount. A conflict
 // receipt is rendered as an explanation, never as an error the UI "fixes" by
-// rewriting the user's note.
+// rewriting the user's note. The receipt's hash, not its conflict flag, says
+// whether the append is in the note.
 import {
   useEffect,
   useId,
@@ -83,14 +84,24 @@ export function PromotionDialog({
   }, [receipt]);
 
   const busy = confirming || preparing;
-  const conflict = receipt?.conflict === true;
-  const failed = receipt !== null && !receipt.conflict && receipt.error !== null;
-  const succeeded = receipt !== null && !receipt.conflict && receipt.error === null;
+  // `hash` is set exactly when this promotion's bytes are installed in the note.
+  // A conflict can still carry it (a concurrent swap: the append landed and the
+  // displaced version is in the recovery copy), so it is reported as written.
+  const installed = receipt !== null && receipt.hash !== null;
+  const displaced = receipt !== null && receipt.hash !== null && receipt.conflict;
+  const conflict = receipt !== null && receipt.hash === null && receipt.conflict;
+  // Only the writer's post-replacement checks attach a recovery copy; a conflict
+  // without one was caught before any byte moved, so the note is untouched.
+  const touched = conflict && receipt?.recovery_path != null;
+  const failed =
+    receipt !== null && receipt.hash === null && !receipt.conflict && receipt.error !== null;
+  const succeeded =
+    receipt !== null && receipt.hash !== null && !receipt.conflict && receipt.error === null;
   const canConfirm = proposal.note_path !== null && proposal.note_exists;
   const itemCount = proposal.entries.reduce((total, entry) => total + entry.items.length, 0);
   // After a completed write, dismissing means "done": the selection must not stay
   // ticked, or a second Escape-dismiss could promote the same items again.
-  const dismiss = succeeded ? onDone : onCancel;
+  const dismiss = installed ? onDone : onCancel;
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
@@ -123,7 +134,9 @@ export function PromotionDialog({
     }
   };
 
-  const title = conflict
+  const title = displaced
+    ? "Promoted — check the recovery copy"
+    : conflict
     ? "The project note changed"
     : failed
       ? "Promotion failed"
@@ -131,8 +144,12 @@ export function PromotionDialog({
         ? "Promoted to the project note"
         : "Confirm promotion";
 
-  const description = conflict
-    ? "Nothing was written. The note is exactly as you left it."
+  const description = displaced
+    ? "The entries were appended, but the note changed or could not be verified while they were written."
+    : conflict
+    ? touched
+      ? "This promotion is not in the note as previewed."
+      : "Nothing was written. The note is exactly as you left it."
     : failed
       ? "The note was not appended. Your selection is still here."
       : succeeded
@@ -141,8 +158,12 @@ export function PromotionDialog({
           ? "No receipt was returned, so the write is unconfirmed. Check the note before trying again."
           : "Review the entries before they are appended to the note.";
 
-  const chip = conflict
-    ? "nothing written"
+  const chip = displaced
+    ? "written · recovery copy"
+    : conflict
+    ? touched
+      ? "not appended"
+      : "nothing written"
     : failed
       ? "not written"
       : succeeded
@@ -177,19 +198,54 @@ export function PromotionDialog({
               {description}
             </p>
           </div>
-          <Chip tone={conflict || failed ? "warn" : succeeded ? "ok" : "neutral"}>
+          <Chip tone={conflict || failed || displaced ? "warn" : succeeded ? "ok" : "neutral"}>
             {chip}
           </Chip>
         </header>
 
         <div className="flex flex-col gap-4 overflow-y-auto p-4">
-          {conflict ? (
+          {displaced ? (
             <div className="flex flex-col gap-3 text-body">
               <p>
-                This project note changed after you made the selection, so the preview
-                is out of date. Promotion never overwrites: the current note was left
-                untouched and no entries were appended.
+                {itemCount} item{itemCount === 1 ? "" : "s"} appended for{" "}
+                {proposal.entry_date}. The note changed or could not be verified while
+                they were being written.
               </p>
+              <p className="break-all font-mono text-data">{receipt?.path}</p>
+              {receipt?.recovery_path && (
+                <>
+                  <p className="text-caption text-ink-muted">
+                    The version the write replaced is kept as a recovery copy. If the
+                    note was edited during the promotion, that edit is in the copy, not
+                    in the note.
+                  </p>
+                  <p className="break-all text-caption text-ink-muted">
+                    Recovery copy: {receipt.recovery_path}
+                  </p>
+                  <p className="text-caption text-ink-muted">
+                    Promotion needs exactly one note in Projects/, so move or delete the
+                    copy once you have compared it.
+                  </p>
+                </>
+              )}
+            </div>
+          ) : conflict ? (
+            <div className="flex flex-col gap-3 text-body">
+              {touched ? (
+                <p>
+                  This promotion is not in the note as previewed. The note changed, or
+                  its replacement failed, while the promotion was being written, and the
+                  app kept the version it displaced as a recovery copy. Check the note
+                  and the copy before preparing again; promotion needs exactly one note
+                  in Projects/, so move or delete the copy once you have checked it.
+                </p>
+              ) : (
+                <p>
+                  This project note changed after you made the selection, so the preview
+                  is out of date. Promotion never overwrites: the current note was left
+                  untouched and no entries were appended.
+                </p>
+              )}
               <p className="break-all font-mono text-data text-ink-muted">
                 {receipt?.path ?? proposal.note_path ?? "No project note"}
               </p>
@@ -321,7 +377,11 @@ export function PromotionDialog({
         </div>
 
         <footer className="flex flex-wrap justify-end gap-2 border-t border-line px-4 py-3">
-          {conflict ? (
+          {displaced ? (
+            <Button variant="primary" size="sm" onClick={onDone}>
+              Done
+            </Button>
+          ) : conflict ? (
             <>
               <Button size="sm" onClick={onCancel} disabled={preparing}>
                 Close

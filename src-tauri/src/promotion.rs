@@ -997,16 +997,71 @@ async fn confirm(
                 recovery_path: None,
             })
         }
-        Err(error) if error.conflict => {
-            // The intent stays: a conflict can be returned after the writer
-            // installed bytes, so the next call must decide from the live hash.
-            Ok(conflict_receipt(
-                note_path,
-                &error.message,
-                error.recovery_path,
+        // `_guard` still holds NOTE_LOCK while the conflict is settled.
+        Err(error) if error.conflict => settle_conflict(store, note_path, &intent, error).await,
+        Err(error) => Err(fail("WRITE_FAILED", &error.message)),
+    }
+}
+
+const APPENDED_WITH_RECOVERY: &str = "The entries were appended, but the note changed or could not be verified while they were being written. The version the write replaced is kept in the recovery copy.";
+
+/// Settle a writer conflict while the caller still holds `NOTE_LOCK`.
+///
+/// A conflict flag alone does not mean nothing was written. On a concurrent
+/// swap `write_owned` reports a conflict after `ReplaceFileW` installed the new
+/// bytes, because the version it displaced is not the one this promotion was
+/// prepared from (or cannot be verified); that version is preserved in the
+/// recovery copy (`03 §8c`). Decide from the live bytes, exactly as the next
+/// reconcile would: when they are this promotion's bytes, record ownership now
+/// and report the append as written with its recovery copy, so the receipt,
+/// the ownership row and the note agree. Anything else is a conflict that
+/// appended nothing, and the intent stays for the next call to decide.
+async fn settle_conflict(
+    store: &dyn Store,
+    note_path: String,
+    intent: &PromotionIntent,
+    error: WriteFailure,
+) -> Result<PromotionReceipt, ReportError> {
+    let live_hash = match read_owned(Path::new(&note_path)).await {
+        Ok(Some(bytes)) => Some(content_hash(&bytes)),
+        _ => None,
+    };
+    if live_hash.as_deref() != Some(intent.new_hash.as_str()) {
+        return Ok(conflict_receipt(
+            note_path,
+            &error.message,
+            error.recovery_path,
+        ));
+    }
+    match reconcile_intent(store, &note_path, live_hash.as_deref()).await {
+        Ok(Recovery::Applied {
+            new_hash,
+            fingerprint,
+            ..
+        }) if new_hash == intent.new_hash && fingerprint == intent.fingerprint => {
+            Ok(PromotionReceipt {
+                path: note_path,
+                hash: Some(new_hash),
+                conflict: true,
+                error: Some(fail("FILE_CONFLICT", APPENDED_WITH_RECOVERY)),
+                recovery_path: error.recovery_path,
+            })
+        }
+        _ => {
+            // The append is installed but could not be recorded; the pending
+            // intent lets a retry finish it instead of calling it a user edit.
+            let kept = error
+                .recovery_path
+                .as_deref()
+                .map(|path| format!(" The version the write replaced is kept at {path}."))
+                .unwrap_or_default();
+            Err(fail(
+                "STORE_ERROR",
+                &format!(
+                    "The promotion was appended, but its ownership record could not be saved.{kept} Retry the promotion to finish recording it."
+                ),
             ))
         }
-        Err(error) => Err(fail("WRITE_FAILED", &error.message)),
     }
 }
 
@@ -2490,6 +2545,147 @@ mod tests {
     }
 
     #[cfg(windows)]
+    /// The settled state `write_owned` leaves on a concurrent swap: the note
+    /// holds this promotion's bytes, the version the swap put there sits in the
+    /// recovery copy, and the writer reports a conflict. Real files, real store.
+    async fn swap_fixture(
+        live_is_promotion: bool,
+    ) -> (
+        tempfile::TempDir,
+        SqliteStore,
+        PathBuf,
+        PathBuf,
+        PromotionIntent,
+        String,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let note = seed_note(&folder);
+        let store = store_with_folder(&folder).await;
+        let selection = seed_selection(&store).await;
+        let proposal = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        let (merged, new_hash) = merged_for(&store, &selection, &proposal).await;
+        let intent = PromotionIntent {
+            path: path_string(&note),
+            source_id: "source-fixture".into(),
+            run_id: proposal.run_id.clone(),
+            old_hash: proposal.note_hash.clone().unwrap(),
+            new_hash,
+            fingerprint: promotion_fingerprint(&selection, &proposal.entry_date),
+            committed: false,
+        };
+        write_intent(&store, &intent).await.unwrap();
+        let recovery = note.with_file_name(".screensearch-recovery-swap.md");
+        let edit = "edited in another program during the promotion\n".to_string();
+        if live_is_promotion {
+            // ReplaceFileW installed the promotion over the swapped-in edit.
+            std::fs::write(&note, &merged).unwrap();
+            std::fs::write(&recovery, &edit).unwrap();
+        } else {
+            // Another writer replaced the installed promotion again.
+            std::fs::write(&note, &edit).unwrap();
+            std::fs::write(&recovery, "").unwrap();
+        }
+        (dir, store, note, recovery, intent, edit)
+    }
+
+    #[tokio::test]
+    async fn writer_conflict_after_install_reports_the_append_and_records_it() {
+        let (_dir, store, note, recovery, intent, edit) = swap_fixture(true).await;
+        let merged = std::fs::read_to_string(&note).unwrap();
+        let receipt = settle_conflict(
+            &store,
+            path_string(&note),
+            &intent,
+            WriteFailure {
+                message: "note changed during replacement; original retained in recovery copy"
+                    .into(),
+                conflict: true,
+                recovery_path: Some(path_string(&recovery)),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            receipt.hash.as_deref(),
+            Some(intent.new_hash.as_str()),
+            "an installed append must never be reported as nothing written"
+        );
+        assert!(receipt.conflict);
+        assert_eq!(receipt.error.as_ref().unwrap().code, "FILE_CONFLICT");
+        assert_eq!(
+            receipt.recovery_path.as_deref(),
+            Some(path_string(&recovery).as_str())
+        );
+        // Ownership agrees with the disk now, not on a later silent reconcile.
+        let owner = store
+            .get_report_file(&path_string(&note))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(owner.hash, intent.new_hash);
+        assert_eq!(owner.run_id, intent.run_id);
+        assert!(read_intent(&store, &path_string(&note))
+            .await
+            .unwrap()
+            .is_none());
+        assert!(
+            read_receipt(&store, &path_string(&note))
+                .await
+                .unwrap()
+                .unwrap()
+                .committed
+        );
+        // Nothing was deleted or rewritten: the edit survives in the copy.
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), merged);
+        assert_eq!(std::fs::read_to_string(&recovery).unwrap(), edit);
+    }
+
+    #[tokio::test]
+    async fn writer_conflict_without_the_append_installed_appends_nothing() {
+        let (_dir, store, note, recovery, intent, edit) = swap_fixture(false).await;
+        let receipt = settle_conflict(
+            &store,
+            path_string(&note),
+            &intent,
+            WriteFailure {
+                message: "note changed during installation; inspect the destination and retained recovery copy".into(),
+                conflict: true,
+                recovery_path: Some(path_string(&recovery)),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            receipt.hash, None,
+            "the live note does not hold this promotion"
+        );
+        assert!(receipt.conflict);
+        assert_eq!(
+            receipt.recovery_path.as_deref(),
+            Some(path_string(&recovery).as_str())
+        );
+        assert!(
+            store
+                .get_report_file(&path_string(&note))
+                .await
+                .unwrap()
+                .is_none(),
+            "bytes the app did not write are never adopted"
+        );
+        let pending = read_intent(&store, &path_string(&note))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !pending.committed,
+            "the next call still decides from settled bytes"
+        );
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), edit);
+    }
+
     #[tokio::test]
     async fn create_project_note_rejects_a_junction_without_external_mutation() {
         let dir = tempfile::tempdir().unwrap();

@@ -327,7 +327,9 @@ test("persisted ownership conflict says re-preparing cannot clear an edited note
           message:
             "The project note was edited after the app's last promotion; promotion cannot append to it.",
         },
-        recovery_path: "C:/Notes/ScreenSearch/Projects/project-alpha.conflict-2.md",
+        // A guard conflict is caught before any byte moves: the backend attaches
+        // no recovery copy to it.
+        recovery_path: null,
       },
       preparing: false,
       confirming: false,
@@ -341,7 +343,6 @@ test("persisted ownership conflict says re-preparing cannot clear an edited note
   );
   assert.match(html, /The project note changed/);
   assert.match(html, /Nothing was written/);
-  assert.match(html, /project-alpha\.conflict-2\.md/);
   // A note the app already owns stays protected: re-preparing only rechecks it.
   assert.match(html, /cannot clear an\s+ownership conflict/);
   assert.match(html, /appends only to the version it last wrote/);
@@ -438,4 +439,75 @@ test("success receipt states what was written and dismisses as Done", () => {
   assert.match(html, /0123456789ab/);
   assert.match(html, />Done</);
   assert.doesNotMatch(html, />Confirm</);
+});
+
+const RECOVERY = "C:/Notes/ScreenSearch/Projects/.screensearch-recovery-1.md";
+
+function renderReceipt(receipt) {
+  return renderToStaticMarkup(
+    React.createElement(PromotionDialog, {
+      proposal: PROPOSAL,
+      receipt,
+      preparing: false,
+      confirming: false,
+      prepareError: null,
+      confirmError: null,
+      onConfirm: () => {},
+      onCancel: () => {},
+      onReprepare: () => {},
+      onDone: () => {},
+    }),
+  );
+}
+
+test("an installed append that displaced a concurrent version is reported as written", () => {
+  // Concurrent swap (03 §8c): the writer installed the promotion and kept the
+  // version it displaced, so the receipt carries both a hash and a copy.
+  const html = renderReceipt({
+    path: NOTE.path,
+    hash: "0123456789abcdef",
+    conflict: true,
+    error: {
+      code: "FILE_CONFLICT",
+      message:
+        "The entries were appended, but the note changed or could not be verified while they were being written. The version the write replaced is kept in the recovery copy.",
+    },
+    recovery_path: RECOVERY,
+  });
+  assert.match(html, /Promoted — check the recovery copy/);
+  assert.match(html, /2 items appended for 2026-10-18/);
+  assert.match(html, /written · recovery copy/);
+  assert.match(html, /\.screensearch-recovery-1\.md/);
+  assert.match(html, /that edit is in the copy, not\s+in the note/);
+  assert.match(html, /exactly one note in Projects\//);
+  assert.doesNotMatch(html, /Nothing was written/);
+  assert.doesNotMatch(html, /nothing written/);
+  assert.doesNotMatch(html, /left untouched/);
+  // The append is in the note: offering to promote it again would duplicate it.
+  assert.match(html, />Done</);
+  assert.doesNotMatch(html, />Prepare again</);
+  assert.doesNotMatch(html, />Try again</);
+});
+
+test("a conflict that left a recovery copy never claims the note is untouched", () => {
+  const html = renderReceipt({
+    path: NOTE.path,
+    hash: null,
+    conflict: true,
+    error: {
+      code: "FILE_CONFLICT",
+      message:
+        "note changed during installation; inspect the destination and retained recovery copy",
+    },
+    recovery_path: RECOVERY,
+  });
+  assert.match(html, /This promotion is not in the note as previewed/);
+  assert.match(html, /not appended/);
+  assert.match(html, /\.screensearch-recovery-1\.md/);
+  assert.match(html, /Check the note\s+and the copy before preparing again/);
+  assert.doesNotMatch(html, /Nothing was written/);
+  assert.doesNotMatch(html, /exactly as you left it/);
+  assert.doesNotMatch(html, /left\s+untouched/);
+  assert.match(html, />Prepare again</);
+  assert.doesNotMatch(html, />Done</);
 });

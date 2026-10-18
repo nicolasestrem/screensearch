@@ -2,8 +2,11 @@
 import type { ReportError } from "./ReportError";
 
 /**
- * Outcome of one atomic multi-section append (`03 §8e` promotion). A conflict
- * carries the untouched file's identity and the recovery copy's path; the app
- * never rewrites user bytes.
+ * Outcome of one atomic multi-section append (`03 §8e` promotion). `hash` is
+ * set exactly when this promotion's bytes are installed at `path`. A conflict
+ * without `hash` appended nothing. A conflict with `hash` is the concurrent
+ * swap of `03 §8c`: the append is installed and the version the writer
+ * displaced is preserved at `recovery_path`. User bytes are never deleted or
+ * rewritten in place.
  */
 export type PromotionReceipt = { path: string, hash: string | null, conflict: boolean, error: ReportError | null, recovery_path: string | null, };
