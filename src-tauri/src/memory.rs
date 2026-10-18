@@ -1316,31 +1316,53 @@ async fn write_files(
         return Ok(());
     }
     if run.kind == ReportRunKind::WeeklySynthesis {
-        // `03 §8e`: the weekly note and index branches belong to the weekly writer
-        // (G3). A weekly synthesis must never write a daily-shaped note, so it
-        // records honest skipped receipts and leaves note and index untouched.
-        for dest in [ReportDestination::Vault, ReportDestination::Index] {
-            if !store
-                .list_report_deliveries(&run.run_id)
-                .await
-                .map_err(storage)?
-                .iter()
-                .any(|d| d.destination == dest)
-            {
-                let mut item = delivery(
+        // `03 §8e`: a week with no saved daily evidence has nothing truthful to
+        // synthesize, so it writes neither note nor index and records why.
+        if run.outcome == Some(ReportOutcome::NoData) {
+            for dest in [ReportDestination::Vault, ReportDestination::Index] {
+                skip_delivery(
+                    store,
                     run,
                     dest,
-                    serde_json::to_string(&path_string(&root)).map_err(storage)?,
-                );
-                item.state = ReportDeliveryState::Skipped;
-                item.error = Some(fail(
-                    "WRITE_FAILED",
-                    "This version writes no weekly synthesis note.",
-                ));
-                store.create_report_delivery(item).await.map_err(storage)?;
+                    &root,
+                    "A week without saved daily evidence writes no weekly note (NO_DATA).",
+                )
+                .await?;
             }
+            return Ok(());
         }
-        return Ok(());
+        let relative = crate::memory_files::weekly_note_relative_path(run).map_err(|_| {
+            fail(
+                "WRITE_FAILED",
+                "The saved weekly report filename is invalid.",
+            )
+        })?;
+        let note = crate::memory_files::weekly_note(run).map_err(|_| {
+            fail(
+                "WRITE_FAILED",
+                "Could not render the saved weekly report note.",
+            )
+        })?;
+        let receipt = file_delivery(
+            store,
+            run,
+            ReportDestination::Vault,
+            root.join(relative),
+            note,
+        )
+        .await?;
+        if receipt.state != ReportDeliveryState::Succeeded {
+            skip_delivery(
+                store,
+                run,
+                ReportDestination::Index,
+                &root.join("Index.md"),
+                "The index waits for a successfully written weekly note.",
+            )
+            .await?;
+            return Ok(());
+        }
+        return write_index(store, run, &root).await;
     }
     let base_id = base_report_id(store, run).await?;
     let relative = crate::memory_files::note_relative_path(
@@ -1360,32 +1382,142 @@ async fn write_files(
     )
     .await?;
     if receipt.state != ReportDeliveryState::Succeeded {
-        if !store
-            .list_report_deliveries(&run.run_id)
-            .await
-            .map_err(storage)?
-            .iter()
-            .any(|d| d.destination == ReportDestination::Index)
-        {
-            let mut item = delivery(
-                run,
-                ReportDestination::Index,
-                serde_json::to_string(&path_string(&root.join("Index.md"))).map_err(storage)?,
-            );
-            item.state = ReportDeliveryState::Skipped;
-            item.error = Some(fail(
-                "WRITE_FAILED",
-                "The index waits for a successfully written daily note.",
-            ));
-            store.create_report_delivery(item).await.map_err(storage)?;
-        }
+        skip_delivery(
+            store,
+            run,
+            ReportDestination::Index,
+            &root.join("Index.md"),
+            "The index waits for a successfully written daily note.",
+        )
+        .await?;
         return Ok(());
     }
+    write_index(store, run, &root).await
+}
+
+/// Records a skipped file receipt when the destination has none yet. A skipped
+/// receipt is honest: it names why the destination did not run, and it is never
+/// replaced by a later skip for the same destination.
+async fn skip_delivery(
+    store: &dyn Store,
+    run: &ReportRun,
+    destination: ReportDestination,
+    path: &Path,
+    message: &str,
+) -> Result<(), ReportError> {
+    if store
+        .list_report_deliveries(&run.run_id)
+        .await
+        .map_err(storage)?
+        .iter()
+        .any(|d| d.destination == destination)
+    {
+        return Ok(());
+    }
+    let mut item = delivery(
+        run,
+        destination,
+        serde_json::to_string(&path_string(path)).map_err(storage)?,
+    );
+    item.state = ReportDeliveryState::Skipped;
+    item.error = Some(fail("WRITE_FAILED", message));
+    store.create_report_delivery(item).await.map_err(storage)?;
+    Ok(())
+}
+
+/// The week label a weekly note's own provenance demands (`03 §8e`): the ISO week
+/// of its `window_start` in its recorded IANA zone. A note that cannot name its
+/// week is a conflict, never a silently skipped index row.
+fn weekly_label(metadata: &crate::memory_files::Frontmatter) -> Result<String, ReportError> {
+    let at = chrono::DateTime::parse_from_rfc3339(&metadata.window_start)
+        .map(|value| value.timestamp_millis())
+        .map_err(|_| {
+            fail(
+                "FILE_CONFLICT",
+                "An owned weekly note has an invalid window.",
+            )
+        })?;
+    kernel::week_label(&metadata.timezone, at).map_err(|_| {
+        fail(
+            "FILE_CONFLICT",
+            "An owned weekly note has an invalid week label.",
+        )
+    })
+}
+
+/// The strict `YYYY-MM-DD` date of a verified owned daily note path. `daily_paths`
+/// only contains paths this index pass hash-, source-, frontmatter- and filename-
+/// verified, so its stem is a trustworthy date even after run retention deleted the
+/// run record (`03 §8e`). Any other shape yields `None` rather than a guessed date.
+fn verified_daily_date(relative: &str) -> Option<String> {
+    let path = Path::new(relative);
+    if path.parent() != Some(Path::new("Daily"))
+        || path.extension().and_then(|value| value.to_str()) != Some("md")
+    {
+        return None;
+    }
+    let stem = path.file_stem()?.to_str()?;
+    kernel::memory_schedule::parse_date(stem).ok()?;
+    Some(stem.to_owned())
+}
+
+/// The weekly entry's `days:` list (`03 §8e`): the consumed daily runs resolved to
+/// local dates, oldest first, linked to their owned daily notes where one exists.
+/// Pruned runs still stay in the note's frontmatter. Their surviving owned note can
+/// still name and link the day; only a day with no owned note falls back to a plain
+/// date from a surviving run record.
+async fn weekly_day_list(
+    store: &dyn Store,
+    daily_run_ids: &[String],
+    daily_paths: &std::collections::HashMap<String, String>,
+) -> Result<String, ReportError> {
+    let mut days: Vec<(String, Option<String>)> = Vec::new();
+    for run_id in daily_run_ids {
+        // A hash/provenance-verified owned note outlives the run record, so its
+        // strictly parsed path date wins over the (possibly pruned) record.
+        if let Some(day) = daily_paths.get(run_id).and_then(|relative| {
+            verified_daily_date(relative).map(|date| (date, Some(relative.clone())))
+        }) {
+            days.push(day);
+            continue;
+        }
+        // No verified owned note: a surviving record keeps its date as plain text,
+        // never a link to a missing, edited or differently-owned note.
+        if let Some(daily) = store.get_report_run(run_id).await.map_err(storage)? {
+            days.push((daily.local_date, None));
+        }
+    }
+    // Oldest first; at equal dates prefer the entry that can link so dedup keeps it.
+    days.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.is_none().cmp(&b.1.is_none()))
+    });
+    days.dedup_by(|a, b| a.0 == b.0);
+    Ok(days
+        .into_iter()
+        .map(|(date, path)| match path {
+            Some(path) => format!("[{date}]({path})"),
+            None => date,
+        })
+        .collect::<Vec<_>>()
+        .join(", "))
+}
+
+/// Rebuild `ScreenSearch/Index.md` from the hash-verified owned notes (`03 §8e`).
+/// Daily, range and weekly notes share the same provenance re-derivation; a note
+/// whose filename, folder or kind does not match its frontmatter is a
+/// `FILE_CONFLICT`, never an omitted row.
+async fn write_index(store: &dyn Store, run: &ReportRun, root: &Path) -> Result<(), ReportError> {
+    let daily_root = root.join("Daily");
+    let reports_root = root.join("Reports");
+    let weekly_root = root.join("Weekly");
     let mut entries = Vec::new();
+    let mut daily_paths = std::collections::HashMap::new();
+    let mut weekly_notes = Vec::new();
     for owned in store.list_report_files().await.map_err(storage)? {
         let native = native_path(Path::new(&owned.path));
         let path = native.as_path();
-        if ![root.join("Daily"), root.join("Reports")]
+        if ![&daily_root, &reports_root, &weekly_root]
             .iter()
             .any(|folder| path.parent() == Some(folder.as_path()))
             || owned.source_id != run.source_id
@@ -1420,6 +1552,47 @@ async fn write_files(
                 "An owned note does not match its saved provenance.",
             ));
         }
+        let label = serde_json::to_string(&metadata.status)
+            .map_err(storage)?
+            .trim_matches('"')
+            .to_string();
+        let topic = index_topic(&bytes);
+        if metadata.kind == ReportRunKind::WeeklySynthesis {
+            if path.parent() != Some(weekly_root.as_path()) {
+                return Err(fail(
+                    "FILE_CONFLICT",
+                    "An owned weekly note is outside the Weekly folder.",
+                ));
+            }
+            let Some(stem) = path.file_stem().and_then(|v| v.to_str()) else {
+                return Err(fail(
+                    "FILE_CONFLICT",
+                    "An owned weekly note has an invalid filename.",
+                ));
+            };
+            kernel::parse_week_label(stem).map_err(|_| {
+                fail(
+                    "FILE_CONFLICT",
+                    "An owned weekly note has an invalid week label.",
+                )
+            })?;
+            let week = weekly_label(&metadata)?;
+            let expected = PathBuf::from("Weekly").join(format!("{week}.md"));
+            if root.join(&expected) != path {
+                return Err(fail(
+                    "FILE_CONFLICT",
+                    "An owned note filename does not match its provenance.",
+                ));
+            }
+            weekly_notes.push((expected, week, label, topic, metadata));
+            continue;
+        }
+        if path.parent() == Some(weekly_root.as_path()) {
+            return Err(fail(
+                "FILE_CONFLICT",
+                "An owned daily note is inside the Weekly folder.",
+            ));
+        }
         let label_date = match &metadata.requested_range {
             Some(range) if range.start_date != range.end_date => {
                 format!("{} to {}", range.start_date, range.end_date)
@@ -1444,17 +1617,27 @@ async fn write_files(
                 "An owned note filename does not match its provenance.",
             ));
         }
-        let label = serde_json::to_string(&metadata.status)
-            .map_err(storage)?
-            .trim_matches('"')
-            .to_string();
-        let topic = index_topic(&bytes);
+        let relative = path_string(&expected);
+        if path.parent() == Some(daily_root.as_path()) {
+            daily_paths.insert(owned.run_id.clone(), relative.clone());
+        }
         entries.push((
-            format!("{label_date}/{}", path_string(&expected)),
-            format!(
-                "- [{label_date}]({}) — {label}{topic}\n",
-                path_string(&expected)
-            ),
+            format!("{label_date}/{relative}"),
+            format!("- [{label_date}]({relative}) — {label}{topic}\n"),
+        ));
+    }
+    for (expected, week, label, topic, metadata) in weekly_notes {
+        let days = weekly_day_list(store, &metadata.daily_run_ids, &daily_paths).await?;
+        let last = metadata.window_local_dates.last().ok_or_else(|| {
+            fail(
+                "FILE_CONFLICT",
+                "An owned weekly note has no covered dates.",
+            )
+        })?;
+        let relative = path_string(&expected);
+        entries.push((
+            format!("{last}/{relative}"),
+            format!("- [{week}]({relative}) — {label}{topic} — days: {days}\n"),
         ));
     }
     entries.sort_by(|a, b| b.0.cmp(&a.0));
@@ -2609,6 +2792,45 @@ mod tests {
             .timestamp_millis()
     }
 
+    fn file_config(dir: &tempfile::TempDir) -> RunSnapshot {
+        RunSnapshot {
+            version: 1,
+            memory: MemorySettings {
+                output_folder: Some(path_string(dir.path())),
+                ..Default::default()
+            },
+            report_settings: Settings::default(),
+            model_at_enqueue: None,
+        }
+    }
+
+    /// A saved daily run for one local date, so a weekly note's consumed days can be
+    /// resolved back to the daily notes that exist on disk.
+    fn saved_daily_run(run_id: &str, local_date: &str) -> ReportRun {
+        let mut run = run_fixture();
+        run.run_id = run_id.into();
+        run.local_date = local_date.into();
+        run.window_start = stamp(&format!("{local_date}T00:00:00Z"));
+        run.window_end = run.window_start + 86_400_000;
+        run
+    }
+
+    /// A stored weekly run with complete measured coverage, so it is exportable.
+    fn saved_weekly_run() -> ReportRun {
+        let mut run = weekly_run_fixture();
+        save_weekly_execution(
+            &mut run,
+            weekly_execution(ReportMode::MapReduce, false, vec![]),
+            ReportEvidence {
+                session_ids: vec![7],
+                missing_frame_ids: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(run.outcome, Some(ReportOutcome::Ok));
+        run
+    }
+
     /// A weekly synthesis run fixture (`03 §8e`): ISO week 2026-W42 in Europe/Paris,
     /// scheduled, with a saved result so delivery paths can be exercised.
     fn weekly_run_fixture() -> ReportRun {
@@ -2845,21 +3067,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn weekly_runs_skip_note_and_index_with_receipts() {
-        // `03 §8e`: weekly notes are the weekly writer's (G3) surface. Until they
-        // exist, a weekly run records skipped vault/index receipts and touches no
-        // files — it must never write a daily-shaped note.
-        let dir = tempfile::tempdir().unwrap();
+    async fn weekly_runs_write_note_and_index_or_skip_no_data() {
+        // `03 §8e`: a NO_DATA week writes nothing and keeps honest skip receipts;
+        // a saved weekly synthesis writes its own `Weekly/` note and an index entry,
+        // PARTIAL included. It must never write a daily-shaped note.
+        let no_data_dir = tempfile::tempdir().unwrap();
         let store = SqliteStore::open_in_memory().unwrap();
-        let config = RunSnapshot {
-            version: 1,
-            memory: MemorySettings {
-                output_folder: Some(path_string(dir.path())),
-                ..Default::default()
-            },
-            report_settings: Settings::default(),
-            model_at_enqueue: None,
-        };
+        let config = file_config(&no_data_dir);
         let run = weekly_run_fixture();
         store.create_report_run(run.clone()).await.unwrap();
         write_files(&store, &run, &config).await.unwrap();
@@ -2868,15 +3082,14 @@ mod tests {
         assert!(receipts
             .iter()
             .all(|item| item.state == ReportDeliveryState::Skipped));
-        assert!(receipts
-            .iter()
-            .any(|item| item.destination == ReportDestination::Vault));
-        assert!(receipts
-            .iter()
-            .any(|item| item.destination == ReportDestination::Index));
+        assert!(receipts.iter().all(|item| item
+            .error
+            .as_ref()
+            .map(|error| error.message.as_str())
+            == Some("A week without saved daily evidence writes no weekly note (NO_DATA).")));
         assert!(
-            !dir.path().join("ScreenSearch").exists(),
-            "a weekly run must not write note files"
+            !no_data_dir.path().join("ScreenSearch").exists(),
+            "a NO_DATA week must not write note files"
         );
         assert!(store.list_report_files().await.unwrap().is_empty());
         // A second recovery pass stays idempotent.
@@ -2889,6 +3102,316 @@ mod tests {
                 .len(),
             2
         );
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteStore::open_in_memory().unwrap();
+        let config = file_config(&dir);
+        let run = saved_weekly_run();
+        store.create_report_run(run.clone()).await.unwrap();
+        write_files(&store, &run, &config).await.unwrap();
+        let receipts = store.list_report_deliveries(&run.run_id).await.unwrap();
+        for destination in [ReportDestination::Vault, ReportDestination::Index] {
+            let receipt = receipts
+                .iter()
+                .find(|item| item.destination == destination)
+                .expect("a weekly file receipt exists");
+            assert_eq!(receipt.state, ReportDeliveryState::Succeeded);
+            assert!(receipt.error.is_none());
+        }
+        assert!(dir.path().join("ScreenSearch/Weekly/2026-W42.md").exists());
+        let index = std::fs::read_to_string(dir.path().join("ScreenSearch/Index.md")).unwrap();
+        assert!(
+            index.contains("- [2026-W42](Weekly/2026-W42.md) — OK"),
+            "index: {index}"
+        );
+
+        let partial_dir = tempfile::tempdir().unwrap();
+        let store = SqliteStore::open_in_memory().unwrap();
+        let config = file_config(&partial_dir);
+        let mut partial = weekly_run_fixture();
+        save_weekly_execution(
+            &mut partial,
+            weekly_execution(ReportMode::MapReduce, true, vec![]),
+            ReportEvidence {
+                session_ids: vec![7],
+                missing_frame_ids: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(partial.outcome, Some(ReportOutcome::Partial));
+        store.create_report_run(partial.clone()).await.unwrap();
+        write_files(&store, &partial, &config).await.unwrap();
+        let index =
+            std::fs::read_to_string(partial_dir.path().join("ScreenSearch/Index.md")).unwrap();
+        assert!(
+            index.contains("- [2026-W42](Weekly/2026-W42.md) — PARTIAL — "),
+            "index: {index}"
+        );
+    }
+
+    #[tokio::test]
+    async fn weekly_index_links_daily_and_weekly() {
+        // `03 §8e`: the weekly entry links the week to its note and to the owned
+        // daily notes it consumed, oldest-first; a consumed day without a note stays
+        // plain text, and a pruned run leaves the day list but stays in frontmatter.
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteStore::open_in_memory().unwrap();
+        let config = file_config(&dir);
+        let linked = [
+            saved_daily_run("daily-run-a", "2026-10-12"),
+            saved_daily_run("daily-run-b", "2026-10-13"),
+        ];
+        let absent_note = saved_daily_run("daily-run-c", "2026-10-14");
+        for run in linked.iter().chain(std::iter::once(&absent_note)) {
+            store.create_report_run(run.clone()).await.unwrap();
+        }
+        for run in &linked {
+            write_files(&store, run, &config).await.unwrap();
+        }
+        let mut run = weekly_run_fixture();
+        let mut execution = weekly_execution(ReportMode::MapReduce, false, vec![]);
+        execution.daily_run_ids = vec![
+            "daily-run-c".into(),
+            "daily-run-a".into(),
+            "pruned-daily-run".into(),
+            "daily-run-b".into(),
+        ];
+        save_weekly_execution(
+            &mut run,
+            execution,
+            ReportEvidence {
+                session_ids: vec![7],
+                missing_frame_ids: vec![],
+            },
+        )
+        .unwrap();
+        store.create_report_run(run.clone()).await.unwrap();
+        write_files(&store, &run, &config).await.unwrap();
+
+        let note =
+            std::fs::read_to_string(dir.path().join("ScreenSearch/Weekly/2026-W42.md")).unwrap();
+        assert!(note.contains("# 2026-W42"));
+        let metadata = crate::memory_files::parse_frontmatter(&note).unwrap();
+        assert_eq!(metadata.kind, ReportRunKind::WeeklySynthesis);
+        assert_eq!(
+            metadata
+                .daily_run_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec![
+                "daily-run-c",
+                "daily-run-a",
+                "pruned-daily-run",
+                "daily-run-b"
+            ],
+            "pruned provenance is never rewritten out of the note"
+        );
+        assert_eq!(
+            metadata.window_local_dates.first().map(String::as_str),
+            Some("2026-10-12")
+        );
+        assert_eq!(
+            metadata.window_local_dates.last().map(String::as_str),
+            Some("2026-10-18")
+        );
+
+        let index = std::fs::read_to_string(dir.path().join("ScreenSearch/Index.md")).unwrap();
+        assert!(
+            index.contains(
+                "- [2026-W42](Weekly/2026-W42.md) — OK — Weekly synthesis body — days: \
+                 [2026-10-12](Daily/2026-10-12.md), [2026-10-13](Daily/2026-10-13.md), 2026-10-14\n"
+            ),
+            "index: {index}"
+        );
+        assert!(!index.contains("pruned-daily-run"));
+    }
+
+    #[tokio::test]
+    async fn weekly_index_keeps_consumed_link_after_daily_run_pruned() {
+        // `03 §8e`: retention deletes the daily run record but never its owned note.
+        // A rebuilt index must keep linking the verified surviving note — and keep a
+        // plain date for a consumed day whose note was never written — instead of
+        // dropping every day whose run is gone.
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteStore::open_in_memory().unwrap();
+        let config = file_config(&dir);
+        let exported = [
+            saved_daily_run("daily-run-a", "2026-10-13"),
+            saved_daily_run("daily-run-b", "2026-10-12"),
+        ];
+        for run in &exported {
+            store.create_report_run(run.clone()).await.unwrap();
+            write_files(&store, run, &config).await.unwrap();
+            // A confirmed Telegram receipt makes the finished run retention-eligible.
+            let mut receipt = delivery(run, ReportDestination::Telegram, "{}".into());
+            receipt.state = ReportDeliveryState::Succeeded;
+            store.create_report_delivery(receipt).await.unwrap();
+        }
+        let absent_note = saved_daily_run("daily-run-c", "2026-10-14");
+        store.create_report_run(absent_note.clone()).await.unwrap();
+        // A surviving record for an already-linked date must not displace the link.
+        let duplicate = saved_daily_run("daily-run-d", "2026-10-13");
+        store.create_report_run(duplicate.clone()).await.unwrap();
+        let mut run = weekly_run_fixture();
+        let mut execution = weekly_execution(ReportMode::MapReduce, false, vec![]);
+        execution.daily_run_ids = vec![
+            "daily-run-d".into(),
+            "daily-run-a".into(),
+            "daily-run-c".into(),
+            "daily-run-b".into(),
+        ];
+        save_weekly_execution(
+            &mut run,
+            execution,
+            ReportEvidence {
+                session_ids: vec![7],
+                missing_frame_ids: vec![],
+            },
+        )
+        .unwrap();
+        store.create_report_run(run.clone()).await.unwrap();
+        write_files(&store, &run, &config).await.unwrap();
+
+        let root = dir.path().join("ScreenSearch");
+        let daily_a = path_string(&root.join("Daily/2026-10-12.md"));
+        assert!(Path::new(&daily_a).is_file());
+        assert!(store.get_report_file(&daily_a).await.unwrap().is_some());
+
+        assert_eq!(store.prune_report_runs(i64::MAX).await.unwrap(), 2);
+        for pruned in ["daily-run-a", "daily-run-b"] {
+            assert!(store.get_report_run(pruned).await.unwrap().is_none());
+        }
+        assert!(Path::new(&daily_a).is_file(), "retention keeps the note");
+        assert!(
+            store.get_report_file(&daily_a).await.unwrap().is_some(),
+            "retention keeps the note ownership"
+        );
+
+        // Rebuild as a linked revision through the production writer. The scheduled
+        // window identity reuses a base run, so a fresh id alone is not a new run.
+        let mut rebuild = weekly_run_fixture();
+        rebuild.run_id = "weekly-rebuild".into();
+        rebuild.revision_of = Some(run.run_id.clone());
+        let mut rebuild_execution = weekly_execution(ReportMode::MapReduce, false, vec![]);
+        rebuild_execution.daily_run_ids = vec![
+            "daily-run-d".into(),
+            "daily-run-a".into(),
+            "daily-run-c".into(),
+            "daily-run-b".into(),
+        ];
+        save_weekly_execution(
+            &mut rebuild,
+            rebuild_execution,
+            ReportEvidence {
+                session_ids: vec![7],
+                missing_frame_ids: vec![],
+            },
+        )
+        .unwrap();
+        let persisted = store.create_report_run(rebuild.clone()).await.unwrap();
+        assert_eq!(persisted.run_id, rebuild.run_id);
+        write_files(&store, &rebuild, &config).await.unwrap();
+
+        let index = std::fs::read_to_string(root.join("Index.md")).unwrap();
+        assert!(
+            index.contains(
+                "days: [2026-10-12](Daily/2026-10-12.md), [2026-10-13](Daily/2026-10-13.md), \
+                 2026-10-14\n"
+            ),
+            "index: {index}"
+        );
+    }
+
+    #[tokio::test]
+    async fn weekly_note_path_passes_provenance_check() {
+        // `03 §8e`: a `Weekly/YYYY-Www.md` note passes the same provenance
+        // re-derivation as daily notes; a renamed or misplaced weekly note conflicts.
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteStore::open_in_memory().unwrap();
+        let config = file_config(&dir);
+        let run = saved_weekly_run();
+        store.create_report_run(run.clone()).await.unwrap();
+        write_files(&store, &run, &config).await.unwrap();
+        let written = dir.path().join("ScreenSearch/Weekly/2026-W42.md");
+        let bytes = std::fs::read(&written).unwrap();
+        let index = std::fs::read_to_string(dir.path().join("ScreenSearch/Index.md")).unwrap();
+        assert!(index.contains("(Weekly/2026-W42.md)"));
+
+        let own = |path: &Path| ReportFileOwnership {
+            path: path_string(path),
+            source_id: run.source_id.clone(),
+            run_id: run.run_id.clone(),
+            hash: format!("{:x}", Sha256::digest(&bytes)),
+            updated_at: 1,
+        };
+        // A renamed weekly note no longer matches the week its frontmatter records.
+        let renamed = dir.path().join("ScreenSearch/Weekly/2026-W41.md");
+        std::fs::write(&renamed, &bytes).unwrap();
+        std::fs::remove_file(&written).unwrap();
+        store.save_report_file(own(&renamed)).await.unwrap();
+        let error = write_files(&store, &run, &config).await.unwrap_err();
+        assert_eq!(error.code, "FILE_CONFLICT");
+        assert!(std::fs::read(&renamed).is_ok());
+
+        // A weekly note misplaced into Daily/ is a conflict even with a valid label.
+        let misplaced = dir.path().join("ScreenSearch/Daily/2026-W42.md");
+        std::fs::create_dir_all(misplaced.parent().unwrap()).unwrap();
+        std::fs::write(&misplaced, &bytes).unwrap();
+        std::fs::remove_file(&renamed).unwrap();
+        store.save_report_file(own(&misplaced)).await.unwrap();
+        let error = write_files(&store, &run, &config).await.unwrap_err();
+        assert_eq!(error.code, "FILE_CONFLICT");
+        assert!(std::fs::read(&misplaced).is_ok());
+    }
+
+    #[tokio::test]
+    async fn edited_weekly_note_is_preserved() {
+        // `03 §8e`: the weekly note is user-owned after first write. A retry must
+        // report the conflict and leave the user's bytes untouched.
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteStore::open_in_memory().unwrap();
+        let config = file_config(&dir);
+        let run = saved_weekly_run();
+        store.create_report_run(run.clone()).await.unwrap();
+        write_files(&store, &run, &config).await.unwrap();
+        let path = dir.path().join("ScreenSearch/Weekly/2026-W42.md");
+        let original = std::fs::read_to_string(&path).unwrap();
+        let edited = format!("{original}\nA user-owned addition.\n");
+        std::fs::write(&path, &edited).unwrap();
+
+        // Model a rework attempt: terminal receipts stay immutable, so a new
+        // pending attempt supersedes the settled Vault receipt and re-runs the write.
+        let receipts = store.list_report_deliveries(&run.run_id).await.unwrap();
+        let prior = receipts
+            .iter()
+            .find(|item| item.destination == ReportDestination::Vault)
+            .expect("vault receipt")
+            .clone();
+        let mut retry = delivery(
+            &run,
+            ReportDestination::Vault,
+            prior.destination_snapshot.clone(),
+        );
+        retry.revision_of = Some(prior.id.clone());
+        retry.path = prior.path.clone();
+        retry.created_at = prior.created_at + 1;
+        retry.updated_at = retry.created_at;
+        store.create_report_delivery(retry).await.unwrap();
+
+        write_files(&store, &run, &config).await.unwrap();
+        let receipts = store.list_report_deliveries(&run.run_id).await.unwrap();
+        let vault = receipts
+            .iter()
+            .filter(|item| item.destination == ReportDestination::Vault)
+            .max_by_key(|item| item.created_at)
+            .expect("vault receipt");
+        assert_eq!(vault.state, ReportDeliveryState::Conflict);
+        assert_eq!(
+            vault.error.as_ref().map(|error| error.code.as_str()),
+            Some("FILE_CONFLICT")
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
     }
 
     #[tokio::test]

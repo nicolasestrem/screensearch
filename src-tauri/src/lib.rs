@@ -39,6 +39,7 @@ mod memory;
 mod memory_files;
 mod memory_telegram;
 mod overlay;
+mod promotion;
 mod tray;
 mod update;
 
@@ -1718,6 +1719,10 @@ pub fn run() {
             memory::set_telegram_token,
             memory::clear_telegram_token,
             memory::resolve_telegram_delivery,
+            promotion::project_note_status,
+            promotion::create_project_note,
+            promotion::prepare_promotion,
+            promotion::confirm_promotion,
             update::get_update_status,
             update::check_for_updates,
             update::restart_to_apply_update

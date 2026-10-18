@@ -1,5 +1,112 @@
 # 07 — Known Gaps
 
+## 2026-10-18 — PR #139 review batch 3 readings
+
+- **Note identity is the OS-resolved canonical path, never case-folded.** The ownership
+  row and the promotion intent/receipt KV slots key on `std::fs::canonicalize` rendered
+  with forward slashes and without verbatim/device prefixes (restored only at the I/O
+  boundary), so `C:/Vault`, `c:/vault` and `C:/Vault/.` share one identity. Two distinct
+  files cannot collide because the key is the file the OS actually resolved; case folding
+  was rejected because it is the one way to make distinct NTFS entries collide.
+- **A note that does not exist yet has no canonical identity.** Two case-only spellings of
+  a missing note get different fallback keys (the fallback keeps the requested spelling's
+  case and `..`). That cannot adopt bytes — every promotion path reads the note first —
+  but the alternative (fold ASCII case in the fallback) could make two distinct
+  case-sensitive NTFS entries share one row, which `03 §8c`/`§8e` forbid. Recorded as the
+  one unspecified decision rather than guessed.
+- **A weekly "day claim" is a top-level `- ` item naming a consumed local date.** Every
+  such item under the four promotable headings must cite a consumed daily run ID or a
+  frame/session ID from that day's saved report; prose lines (window bounds, banners) are
+  not items and are not checked, so a section with no evidence says so in prose.
+  `03 §8e` does not define citation syntax, so a whole-number frame/session match counts
+  (`frame 101`, `[101]`, `101, 102`) and a bare number is accepted even when it was not
+  meant as a citation.
+- **A retained-prose day keeps its recorded frame IDs.** They join the weekly's
+  `frame_ids`/`cited_frame_ids` (the frontmatter invariant requires `frame_ids.len() ==
+  frames_summarized`) but are not re-read evidence: `frames_sampled` still counts only
+  frames actually read. For weekly runs `frame_ids` therefore reads "frames the synthesis
+  rests on", including a retained day's recorded frames it did not re-read — which is why
+  the coverage line reports the two counts separately instead of as a `N of M` ratio.
+
+## 2026-10-18 — Project-note ownership identity: open product decision (owner: agent; maintainer may override)
+
+- **A note that does not exist yet has no canonical identity.** `ReportFileOwnership` rows and the
+  internal promotion intent/receipt slots for the one project note are now keyed by
+  `promotion::note_identity`: the note's canonical Windows path, rendered with forward slashes and
+  without verbatim/device syntax, so every equivalent respelling of an existing note (`C:/Vault`,
+  `c:/vault`, `C:/Vault/.`, `C:\Vault`, `\\?\C:\Vault`) resolves to the same row and the same KV
+  slot. When `std::fs::canonicalize` fails — the note is absent, or the volume cannot be opened —
+  the identity falls back to the same rendering of the requested spelling, which removes duplicate
+  and trailing separators and `.` components but does **not** fold case and does **not** resolve
+  `..`. Two case-only spellings of a *missing* note therefore get different fallback identities.
+  That is the one unspecified product decision here, recorded instead of guessed: the alternative
+  (fold ASCII case in the fallback) could make two distinct files in an NTFS directory marked
+  case-sensitive share one ownership row, which `03 §8c`/`§8e` forbid. No promotion can adopt bytes
+  through the fallback: `prepare`/`confirm` read the note (or fail) before any ownership or intent
+  decision, and a note that cannot be read is never appended to. Decide only if a real flow needs an
+  identity for a note that does not exist yet.
+- **Pre-identity row and record keys are read only under the unchanged spelling.** A row or record
+  written by the previous build is keyed by the forward-slash path spelling, so `ownership` reads the
+  identity key first and then that exact spelling, and `read_record` does the same before checking
+  the record's stored path against the identity. That still finds a legacy key while the output
+  folder keeps its spelling (the common upgrade), but a legacy row keyed by an *old* spelling is
+  unreachable once the user respells the folder, and only the identity-keyed row this build writes
+  covers the note from then on. Closing that would need a table-wide rescan of `report_files` or a
+  one-time rewrite of legacy rows, neither of which this review fix introduces; it is deferred rather
+  than guessed. The stale spelling-keyed row is also left in place (no store-level delete exists and
+  no schema change is introduced). `owner_conflict` still compares source and live hash either way,
+  so a row that does not describe the live bytes refuses an append rather than authorizing one.
+
+## 2026-10-18 — Weekly per-item citation check and retention provenance
+
+- **A weekly "day claim" is a top-level `- ` item naming a consumed local date.** Every
+  top-level `- ` item under `Activity`, `Explicitly evidenced decisions`, `Open questions` and
+  `Next steps` must cite at least one token: a consumed daily run ID, or a frame or session ID
+  recorded by that day's saved report. An item naming a consumed date must cite *that* day's
+  token, not another day's. Prose lines (window bounds, banners) are not items and are not
+  checked. Items are the promotable unit, so a section with no evidence must say so in prose,
+  not as a bullet; the weekly framing now states that. `03 §8e` does not define citation syntax,
+  so a whole-number frame/session match counts (`frame 101`, `[101]`, `101, 102`) and a bare
+  number is accepted even when it was not meant as a citation.
+- **A retained-prose day keeps its recorded frame IDs.** `WeeklyMaterial::Saved` carries the
+  saved daily's `frame_ids` into the weekly's `frame_ids`/`frames_summarized` (the frontmatter
+  invariant requires `frame_ids.len() == frames_summarized`), so the note and a later
+  promotion's `frames —` line keep provenance the source daily still records. Those IDs are not
+  re-read evidence: `frames_sampled` still counts only Group frames, and `truncated` stays true
+  when recorded evidence could not be read. The `SavedReport` field shape is unchanged; for
+  weekly runs `frame_ids` reads as "frames the synthesis rests on", including a consumed day's
+  recorded frames it did not re-read.
+
+## 2026-10-18 — Saved-report export footer dates use the run's persisted zone
+
+- **A saved run's exported footer dates its window in `run.timezone`, not the computer's
+  current zone.** `MemoryPanel` builds the footer scope with `savedRunFooterScope(run)`, so
+  the half-open UTC `[window_start, window_end)` is labeled in the zone persisted with the
+  run (`03 §8c`: a later machine-timezone change does not move it) and the last covered
+  instant stays `window_end - 1`. A Tokyo daily window therefore exports the one
+  Tokyo-local date in the copied/downloaded markdown, not the two UTC-local dates the
+  machine happens to be in. The persisted `local_date` stays the source for the report
+  header's date, and `requested_range`/`window_local_dates` are not re-derived.
+- **On-demand reports and Session recap keep the browser-local span.** Their footer scope
+  carries no persisted run zone (`ReportFooterScope.timeZone` is absent), so
+  `absoluteDate` without a zone is unchanged for them and for the
+  Timeline/Insights/CapturesTrend labels. A valid IANA zone is assumed for a saved run: the
+  backend validates the identifier before persisting it and the run header already formats
+  `window_start`/`window_end` with it.
+
+## 2026-10-18 — Post-install promotion conflict receipt
+
+- `PromotionReceipt.hash` is populated when the promotion's bytes are confirmed
+  installed. `conflict: true` plus a hash means the append landed despite a
+  concurrent-swap/displaced-version verification conflict (`03 §8c`); the
+  recovery copy is retained and the UI reports written, not nothing written.
+  A conflict without a hash remains a no-append result. Ownership is reconciled
+  before returning the installed receipt, not silently on a later call.
+- A retained recovery `.md` in `Projects/` counts as a second note. The existing
+  exactly-one-note guard therefore blocks another promotion until the user
+  compares and moves/removes that copy; the dialog now makes this explicit.
+  No automatic removal of an unmatched recovery copy is introduced.
+
 - **`SavedReport.daily_run_ids` rides the saved-result wire surface.** `ReportDetail.result` embeds
   `SavedReport` verbatim, so the new field also appears on `GET /v1/reports` detail and the IPC
   run payload, alongside the `kind` addition `§8e` names as the deliberate migration change. It is
@@ -11,6 +118,99 @@
   so a week whose daily reports recorded evidence since pruned is told sampling was bounded while
   its status and missing-day list stay correct. The banner cause should come from the unreadable
   evidence count if this wording is worth another pass.
+
+## 2026-10-18 — F3 G3+G4 implementation readings (owner: agent; maintainer may override)
+
+- **`window_local_dates` describes the window, not the covered days.** A weekly note's frontmatter
+  lists every local date whose day period intersects `[window_start, window_end)` — seven for a
+  complete ISO week, DST weeks (167/169 h) included. A day without complete saved coverage stays in
+  `missing_local_dates` and the PARTIAL banner; the field itself never claims a day was covered.
+- **A `NO_DATA` week writes neither note nor index.** Both destinations get a skip receipt reading
+  "A week without saved daily evidence writes no weekly note (NO_DATA)." G2-era runs that already
+  carry skip receipts are not retro-written: Regenerate on such a run creates a linked revision,
+  which is the only way that week acquires a note.
+- **An index entry links only owned, hash-verified daily notes.** `days:` resolves the frontmatter
+  `daily_run_ids` to local dates oldest-first and links a date only when that run's owned note
+  passed the scan's hash and provenance checks; otherwise the date stays plain text. The whole line
+  reads `- [2026-W42](Weekly/2026-W42.md) — OK — <topic> — days: [2026-10-12](Daily/2026-10-12.md),
+  2026-10-13`. A retention-pruned run keeps its link when its hash/provenance-verified owned
+  daily note survives: the canonical `Daily/YYYY-MM-DD.md` path supplies the date before any run
+  lookup. A surviving run without a verified note contributes only a plain-text date; if both
+  are absent, there is no day to display. Equal-date dedup prefers a verified link over plain
+  text. The weekly note's `daily_run_ids` is never rewritten to match the index.
+- **Index ordering (the open `YYYY-Www` position) is chronological, newest first.** Entries sort
+  descending on `{date}/{relative_path}`; a weekly row's date is the window's **last** local date, so
+  the week's row opens its own block, and the `Weekly/` > `Daily/` path comparison keeps it above a
+  daily entry of that same date. The week label is never a sort key.
+- **The weekly note adds no banner of its own.** `weekly_note` writes the saved markdown verbatim
+  under `# YYYY-Www`; `save_weekly_execution` already prepended `weekly_partial_banner`, so a second
+  banner would state the week's gaps twice.
+- **Promotion works at bullet granularity.** One selectable unit is a top-level `- ` bullet of the
+  saved report, mapped by source heading: `Explicitly evidenced decisions` → `Decisions`,
+  `Open questions` → `Open questions`, `Next steps` → `Next steps`, `Activity` → `Log`. Items are
+  copied verbatim (the text after `- `); a selection that no longer matches the saved markdown is an
+  error, never a silent drop. UI and backend share that reading of the markdown (headings matched
+  case-insensitively, closing hashes tolerated, fenced code skipped), so backend validation cannot
+  reject an item the UI offered.
+- **The entry date is the promotion date, fixed at prepare.** `prepare_promotion` renders the local
+  date in the run's own saved timezone and the confirmed proposal carries it; `confirm_promotion`
+  rebuilds the blocks from that carried date (canonical `YYYY-MM-DD`) rather than the clock, so the
+  heading written is exactly the heading previewed.
+- **One `### date` block per touched section, in one atomic write.** A single promotion contributes
+  one block per touched section, all items for that section sharing one provenance footer; the
+  blocks are spliced by `merged_content` and written once by `write_owned` under the selection-time
+  hash. A block is `### YYYY-MM-DD`, a blank line, the verbatim items, a blank line, then one italic
+  footer, e.g. `*Source: weekly synthesis run R; daily runs A, B; frames 101, 102; sessions 7, 8.*`
+  — the `daily runs` clause appears only for a weekly source, ids are sorted and deduped, `—` stands
+  in for an empty list, and beyond 20 ids the list ends `, … (N total)`. There is no per-section
+  write and no delivery row, so a stopped app leaves either the old note or the complete promotion,
+  and untouched sections keep their bytes.
+- **The project note is user-created and default-empty.** `create_project_note` writes a zero-byte
+  `<slug>.md` (slug `^[a-z0-9][a-z0-9_-]{0,63}$`) and refuses when any note already exists; the four
+  `## ` headings are created lazily at EOF in canonical order (Decisions, Open questions, Next
+  steps, Log) by the first append. Zero notes is "create one first"; more than one `Projects/*.md`
+  is an unsupported state naming the paths, never a silent pick.
+- **Known edge, documented not fixed:** a consumed day whose daily note was later rewritten by a
+  linked revision renders as a plain-text date. The scan keys owned daily notes by the note's
+  frontmatter `run_id` — the revision's id — while the weekly note records the base run it consumed,
+  so the lookup misses and the day is not linked. The date and the run id stay correct; only the
+  link is lost.
+- **`WRITE_FAILED` is the weekly writer's guard, not a reachable status.** `weekly_note` exports only
+  `OK`/`PARTIAL`, so a hypothetical `BLOCKED`/`FAILED` weekly run that somehow carried a saved result
+  would surface as a write failure rather than a skip receipt. The engine never saves a result for
+  those outcomes, so the branch is unreachable today and kept as a guard.
+- **Promotion validates the current single-note target, not a client-selected filename.**
+  `confirm_promotion` re-scans `ScreenSearch/Projects`, requires exactly one existing note and
+  requires the proposal's path to match it, with a nonnull selection-time hash. It never creates
+  a missing target. Missing/multiple notes and stale paths are explicit errors/conflicts;
+  `ReportFileOwnership` is saved only after a successful write, so a conflict leaves the previous
+  row untouched. Creation and confirmation share an in-process async lock spanning scan/create
+  and ownership-check/append/save respectively; the existing single-instance app is the boundary.
+- **Confirmed promotion recovery uses bounded per-note metadata, not stored previews.** Before
+  appending, confirmation durably records the exact path, source/run, old/new hashes and a digest
+  of the selected items/date in internal settings KV. It contains no selected or note text. A
+  landed append is reconciled to its original ownership identity before normal hash checks or
+  loading a possibly pruned run; unchanged pre-write bytes discard an interrupted intent, while
+  unrelated bytes stay a conflict. One last committed receipt per target makes an exact retry
+  idempotent, including a lost response; a new explicit promotion with a fresh snapshot remains
+  allowed. Folder changes cannot replace another target's pending intent. Preview may settle
+  metadata from a previously confirmed append, but never appends note bytes. IPC work runs in an
+  owned task so cancellation of its response does not abandon the file/SQLite critical section.
+  No schema migration, public setting, HTTP/MCP surface or persistence of rejected proposals.
+- **Ownership is a write guard, not a history or garbage-collection key.** An initially unowned
+  note may be adopted on the first confirmed promotion. Both prepare and confirm compare an
+  already-owned note's current bytes against its persisted hash and require the same source
+  identity; an edit before prepare, a forged proposal hash or a source reset does not re-adopt
+  it. Such cases stay `FILE_CONFLICT`. The row's `run_id` names the most recent successful
+  promotion, not the only report represented in the ledger; the row outlives run pruning.
+- **Section matching ignores fenced content and tolerates case/closing hashes.** Source parsing
+  and destination insertion track the fence marker and opening-run length: a shorter run, a
+  different marker or a marker followed by non-whitespace does not close it. Destination entries
+  use the first matching real section when headings repeat; renamed sections remain distinct.
+  If EOF is inside an unclosed fence, insertion is before its opener, never inside the code.
+  Existing bytes, line endings and duplicate headings remain untouched. Duplicate saved bullets
+  remain independently selectable and are preserved up to their persisted occurrence count;
+  requesting more copies is an error, not fabrication or silent deduplication.
 
 ## 2026-10-17 — F3 G2 implementation readings (owner: agent; maintainer may override)
 

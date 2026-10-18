@@ -20,6 +20,7 @@ pub mod ipc;
 pub mod jobs;
 pub mod memory;
 pub mod privacy;
+pub mod promotion;
 pub mod reports;
 pub mod sessions;
 
@@ -33,6 +34,7 @@ pub use ipc::*;
 pub use jobs::*;
 pub use memory::*;
 pub use privacy::is_excluded;
+pub use promotion::*;
 pub use reports::*;
 pub use sessions::*;
 

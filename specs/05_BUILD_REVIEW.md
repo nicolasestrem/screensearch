@@ -1,5 +1,317 @@
 # 05 — Build Review
 
+## 2026-10-18 — PR #139 review batch 3: note identity, weekly citations, export timezone (Claude + Codex)
+
+- Runtime verified: `fe72af8f83bf43007567703ac4ad152b336af608` in the existing native
+  Windows checkout; Rust 1.95.0, Node 22.23.3. A subsequent documentation-only commit
+  inherits this result, not a claim of another runtime run.
+- Findings fixed: Codex "Normalize the note path before ownership lookup"
+  (`r4307321378`) and "Format exported dates in the saved run timezone"
+  (`r4307321383`); Claude's two `reports.rs` findings — the weekly citation check was
+  document-level rather than per item, and the retained-prose fallback dropped the day's
+  frame IDs. One unreported defect found and fixed at integration: the widened
+  `frames_summarized` (retained provenance) could exceed `frames_sampled`, so the
+  `N of M sampled frames summarized` coverage line could read `5 of 2`; coverage is now
+  reported as two independent counts.
+- Verbatim native output:
+
+```text
+head=fe72af8f83bf43007567703ac4ad152b336af608
+rust=rustc 1.95.0 (59807616e 2026-04-14)
+node=v22.23.3
+EXIT npm ci = 0
+EXIT npm run lint = 0
+EXIT npm run build = 0
+# tests 42
+# pass 42
+# fail 0
+EXIT npm test = 0
+EXIT quinn security = 0
+EXIT stage-mcp = 0
+EXIT cargo fmt = 0
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+test reports::tests::weekly_citation_check_accepts_each_item_carrying_day_provenance ... ok
+test reports::tests::weekly_citation_check_matches_whole_run_ids_only ... ok
+test reports::tests::weekly_saved_prose_carries_frame_ids_without_sampling_them ... ok
+test reports::tests::weekly_uncited_item_is_generation_failed ... ok
+test promotion::tests::different_project_notes_do_not_collide ... ok
+test promotion::tests::respelled_folder_finds_the_committed_receipt_without_appending ... ok
+test promotion::tests::respelled_folder_finds_the_ownership_row_and_still_conflicts ... ok
+test promotion::tests::unresolved_note_identity_falls_back_to_the_lexical_spelling ... ok
+test promotion::tests::writer_conflict_without_the_append_installed_appends_nothing ... ok
+test promotion::tests::writer_conflict_after_install_reports_the_append_and_records_it ... ok
+EXIT cargo test = 0
+EXIT bindings = 0
+CHAIN_EXIT=0
+```
+
+- Parsed Rust totals: 1094 passed, 0 failed, 15 existing ignored. UI: 42 passed, 0 failed.
+  Note-identity tests exercise real respelled paths (case, `/.`, separators,
+  `\\?\`-style prefixes) against a real store; the identity rule is Windows-resolved
+  canonicalization with a documented lexical fallback for a note that does not exist yet.
+  Hosted checks at this head are pending publication; green checks at `176b567` do not
+  verify this batch. Native interactive acceptance remains open.
+
+## 2026-10-18 — PR #139 post-install conflict receipt (Codex r4307200508)
+
+- Runtime verified: `e69ee1f9d9702693e71e1085b2c457f03fcc5ad3` in the existing
+  native Windows checkout; Rust 1.95.0, Node 22.23.3. A subsequent documentation-only
+  commit inherits this result, not a claim of another runtime run.
+- `write_owned` can report a conflict after installing the append when the displaced
+  version differs from the prepared hash. Confirm now settles it under `NOTE_LOCK`
+  from the live hash before constructing the receipt: installed promotion bytes get
+  an ownership update and a receipt with hash, conflict and recovery path; otherwise
+  the no-append conflict and pending intent remain. The dialog distinguishes these
+  cases and never says an installed append wrote nothing.
+- Verbatim native output:
+
+```text
+head=e69ee1f9d9702693e71e1085b2c457f03fcc5ad3
+EXIT npm ci = 0
+EXIT npm run lint = 0
+EXIT npm run build = 0
+# tests 37
+# pass 37
+# fail 0
+EXIT npm test = 0
+EXIT quinn security = 0
+EXIT stage-mcp = 0
+EXIT cargo fmt = 0
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+test promotion::tests::writer_conflict_after_install_reports_the_append_and_records_it ... ok
+test promotion::tests::writer_conflict_without_the_append_installed_appends_nothing ... ok
+EXIT cargo test = 0
+EXIT bindings = 0
+CHAIN_EXIT=0
+```
+
+- Parsed Rust totals: 1086 passed, 0 failed, 15 existing ignored. UI: 37 passed,
+  0 failed. Two Rust settlement regressions use real files and a real store,
+  representing the writer's post-swap states; they do not inject a concurrent
+  editor into `ReplaceFileW`. Two UI render regressions check installed-append
+  and recovery-copy conflict wording. Native interactive acceptance remains open.
+- Hosted checks for the new head are pending publication; green checks at
+  `0b621ca` do not verify this fix. No new review round or merge is claimed.
+
+## 2026-10-18 — PR #139 additional review batch, native Windows verified
+
+- **Frozen runtime:** `aba0c28587dab9346dd869bc8a1dea75ca0bc4db`, isolated local branch
+  `fix/pr139-review-followup`; ONE existing tbx checkout on `feat/f3-g3-g4-writer-promotion`.
+  Concurrent G5/G6 edits in the shared coordinator checkout were excluded, not reverted.
+- **Findings:** `4305601207` — persist a confirmed-write intent before append and reconcile
+  original ownership/retry identity after a storage failure; `4305709131` — no hierarchy creation
+  before the guarded writer checks reparse ancestors; `4305709134` — use verified surviving
+  daily-note paths to retain weekly index links after run pruning. No schema/wire/public-setting
+  change. `rusqlite` is an existing workspace dependency added only to app dev-dependencies for
+  real SQLite-trigger failure injection; the lockfile changes only that dependency edge.
+- **Native full chain:** Rust `1.95.0`, Node `22.23.3`; fresh npm ci → lint → build → tests →
+  Quinn security → stage-mcp → fmt → clippy `-D warnings` → workspace build → workspace tests →
+  generated-bindings guard. Every exit was 0. Parsed across the actual Rust suite summaries:
+  **1084 passed, 0 failed, 15 existing ignored**. UI **35 passed, 0 failed**. No new ignored test.
+  Native and isolated coordinator worktrees were clean after the run.
+- **Verbatim excerpts:**
+
+  ```text
+  head=aba0c28587dab9346dd869bc8a1dea75ca0bc4db
+  # tests 35
+  # pass 35
+  # fail 0
+  test memory::tests::weekly_index_keeps_consumed_link_after_daily_run_pruned ... ok
+  test promotion::tests::owned_note_recovers_after_append_when_ownership_update_fails ... ok
+  test promotion::tests::detached_confirmation_finishes_its_file_and_metadata ... ok
+  test promotion::tests::create_project_note_rejects_a_junction_without_external_mutation ... ok
+  test promotion::tests::lost_success_response_retry_returns_the_committed_receipt_without_appending ... ok
+  EXIT cargo fmt = 0
+  EXIT cargo clippy = 0
+  EXIT cargo build = 0
+  EXIT cargo test = 0
+  EXIT bindings = 0
+  CHAIN_EXIT=0
+  ```
+
+- **Discriminating coverage:** real SQLite failure before intent insertion and after append;
+  previously owned and initially unowned notes; exact retry vs changed date; lost
+  response; restart, pruned source and folder switch; unrelated edits remain conflicts; detached
+  confirmed work finishes file + ownership + receipt. The Windows junction test actually creates
+  a junction and asserts no external `Projects` directory is created. The index test uses real
+  retention, asserts two daily runs were deleted while their notes/ownership survive, and rebuilds
+  through a persisted linked weekly revision (not a reused scheduled identity).
+- **Raw log:** `/home/hermes/.hermes/profiles/brian/checkpoints/pr139-followup-20261018/windows-aba0c28.log`.
+  Targeted promotion run separately passed all 26 tests; the full app suite passed 122 tests.
+- **Boundary:** no push/hosted verification of this batch yet; PR #139 remains open/unmerged at
+  `42cf13d`. Real-week synthesis, rendered Obsidian links and interactive promotion remain separate
+  acceptance gates. No live-history/installed-app access, Telegram send, bot reply or thread resolution.
+
+## 2026-10-18 — PR #139 CodeQL test-only follow-up
+
+- Hosted Windows build/tests and all three wrapper package jobs passed at `66980b3`, as did all
+  three CodeQL analysis jobs. The separate CodeQL alert gate failed: check `117577648747`
+  annotated `ui/test/promotion.test.mjs:283`, "Incomplete string escaping or encoding" /
+  "This does not escape backslash characters in the input."
+- The assertion built a regex after escaping only periods. Replaced it with literal
+  `html.includes(backendError)`: this test needs literal containment, not regex matching. No
+  production source, generated type or dependency changed; no alert suppression/dismissal.
+- Real Windows follow-up: base `66980b30d350978c16c61c38874f65e313b3e3b4` plus the copied test
+  file, SHA-256 `cf21c4624ea92a144e9edd057cfb4623852488a83b03277994807a339b6b2fcf`, matched
+  on both hosts. `npm run lint` exited 0; observed output:
+
+  ```text
+  # tests 35
+  # pass 35
+  # fail 0
+  TEST_ONLY_FOLLOWUP_EXIT=0
+  ```
+
+- Hosted CodeQL verification of this follow-up is pending publication and a fresh scan. The
+  earlier full native Rust/runtime verification remains applicable to unchanged production bytes;
+  this focused follow-up does not claim a new workspace run or native GUI acceptance.
+
+## 2026-10-18 — PR #139 review corrections (G3+G4)
+
+- **All eight findings addressed locally:** reject reserved Windows device slugs (without
+  rejecting ordinary `com0`/`lpt0` near-misses); confirm re-resolves exactly one existing note and
+  rejects absent hashes/forged targets; source parsing and destination insertion share fence
+  marker/length rules and tolerate case/closing hashes; preserve duplicate selected occurrences;
+  document the latest-write ownership row; enforce persisted source/hash guards at prepare and
+  confirm; refresh mounted project-note state after saving settings; serialize scan/create.
+  Conflict copy distinguishes rechecking a stale preview from authorizing an owned-file edit,
+  without parsing backend message strings or changing the wire schema.
+- **Exact tested revision:** `1636a4fbae0b73d76f49b92091385ecb98b01f12`, branch
+  `feat/f3-g3-g4-writer-promotion`, ONE native checkout on tbx. Checkpoint `c71e87a` was partial,
+  not a verified revision. The spurious generated `note_edited` field was removed by actual
+  Windows ts-rs generation, not hand editing. Windows worktree was clean before and after the run.
+- **Observed Windows output (Rust 1.95.0, Node 22.23.3, CI order):**
+
+  ```text
+  head=1636a4fbae0b73d76f49b92091385ecb98b01f12
+  rust=rustc 1.95.0 (59807616e 2026-04-14)
+  node=v22.23.3
+  EXIT npm ci = 0
+  EXIT npm run lint = 0
+  EXIT npm run build = 0
+  # tests 35
+  # pass 35
+  # fail 0
+  EXIT npm test = 0
+  EXIT quinn security = 0
+  EXIT stage-mcp = 0
+  EXIT cargo fmt = 0
+  EXIT cargo clippy = 0
+  EXIT cargo build = 0
+  EXIT cargo test = 0
+  EXIT bindings = 0
+  CHAIN_EXIT=0
+  ```
+
+- **Named regressions observed in that same workspace test log:**
+
+  ```text
+  test promotion::tests::concurrent_create_project_note_yields_exactly_one_note ... ok
+  test promotion::tests::create_project_note_rejects_reserved_slug_names ... ok
+  test promotion::tests::confirm_refuses_a_forged_or_stale_note_target ... ok
+  test promotion::tests::duplicate_selected_items_are_all_promoted ... ok
+  test promotion::tests::excess_duplicate_selected_items_are_rejected ... ok
+  test promotion::tests::ownership_blocks_prepare_after_a_user_edit ... ok
+  test promotion::tests::ownership_blocks_confirm_after_an_edit_or_forged_hash ... ok
+  test promotion::tests::ownership_requires_same_source_and_allows_a_new_run ... ok
+  test promotion::tests::promotion_requires_explicit_confirm ... ok
+  test promotion::tests::promotion_to_edited_note_surfaces_conflict ... ok
+  test memory_files::tests::promotion_appends_without_rewrite ... ok
+  test memory_files::tests::merged_content_ignores_fake_headings_in_mixed_fences ... ok
+  test memory_files::tests::merged_content_handles_four_backtick_fences ... ok
+  test memory_files::tests::merged_content_uses_the_first_duplicate_section ... ok
+  test memory_files::tests::merged_content_preserves_crlf_and_a_missing_final_newline ... ok
+  test memory_files::tests::merged_content_does_not_insert_inside_an_unclosed_fence ... ok
+  test memory_files::tests::weekly_note_contains_provenance ... ok
+  test memory::tests::weekly_index_links_daily_and_weekly ... ok
+  test memory::tests::weekly_note_path_passes_provenance_check ... ok
+  test memory::tests::edited_weekly_note_is_preserved ... ok
+  ```
+
+- **Totals and limits:** parsed Rust results: 1069 passed, 0 failed, 15 existing ignored checks
+  (interactive desktop/WGC/UIA, OCR language pack, model downloads, live migration, perf/demo and
+  manual server). UI: 35 passed, 0 failed, including real QueryClient/QueryObserver settings
+  invalidation and pending-state tests; rendering tests use the unit harness, not the running
+  WebView2 bridge. A preliminary UI run caught a test-only strict object-identity assertion:
+  TanStack structural sharing preserves values, not necessarily object identity; fixed to deep
+  equality and rerun in the full chain. No Linux test/build results substitute for this run.
+- **Still not claimed:** a real-week synthesis, Obsidian link inspection, or an interactive
+  promotion in a freshly built isolated app. The installed app and live history were untouched;
+  no schedule, Telegram send, model download, push, merge or review-bot request was performed.
+  Documentation-only follow-up records this tested revision; it does not change runtime inputs.
+
+## 2026-10-18 — F3 G3+G4 weekly note writer and project-note promotion (`03 §8e`)
+
+- **Scope:** G3 writes `Weekly/YYYY-Www.md` from the persisted run (frontmatter schema 2 with
+  `kind`, `daily_run_ids` and every `window_local_dates` date) through the daily writer's
+  atomic/owned pipeline, adds weekly `Index.md` entries linking the week's note and the owned
+  daily notes it consumed, gives the index folder filter and provenance re-derivation weekly
+  branches with kind separation both ways, and keeps honest skip receipts for a `NO_DATA` week.
+  Kernel gains `window_local_dates` (the single date-enumeration source, consumed by
+  `weekly_missing_local_dates`), `week_label` and `parse_week_label`. G4 adds
+  `project_note_status` / `create_project_note` / `prepare_promotion` / `confirm_promotion`,
+  `memory_files::merged_content` + `append_entries_owned`, and the `PromotionPanel` /
+  `PromotionDialog` surface in `ReportView` with project-note state in `MemoryPanel`. No
+  scheduler, catch-up or weekly Telegram digest (G5–G6); promotion has no HTTP/MCP surface.
+- **Windows (tbx) — branch `feat/f3-g3-g4-writer-promotion` at `193ea68`, full `04 §1c`
+  chain in order, `CHAIN_EXIT=0` (all 10 steps green):**
+
+  ```text
+  npm ci / npm run lint / npm run build     exit 0 (vite build 3.3 s)
+  npm test                                  23 passed, 0 failed
+  node scripts/stage-mcp.mjs                exit 0
+  cargo fmt --all -- --check                exit 0
+  cargo clippy --locked --workspace --all-targets -- -D warnings   exit 0
+  cargo build --locked --workspace          exit 0
+  cargo test --locked --workspace           every suite 0 failed
+  git diff --exit-code -- ui/src/bindings   clean
+  ```
+
+  Named app tests observed passing on Windows (`screensearch` lib):
+  `weekly_note_contains_provenance ok`, `weekly_index_links_daily_and_weekly ok`,
+  `weekly_note_path_passes_provenance_check ok`, `edited_weekly_note_is_preserved ok`,
+  `promotion_requires_explicit_confirm ok`, `promotion_appends_without_rewrite ok`,
+  `promotion_to_edited_note_surfaces_conflict ok`,
+  `weekly_runs_write_note_and_index_or_skip_no_data ok`.
+  Two integration fixes were required during the chain runs and are part of this branch:
+  `5771b16` (promotion fixtures must match the store's provenance invariant — the first
+  chain run failed on a fixture-only duplicate `frame_ids`) and `193ea68`
+  (`clippy::unnecessary_sort_by` in the section splice).
+- **Linux (this host, same branch and head) — completed:**
+
+  ```text
+  cargo test -p kernel    113 lib + 9 enrichment + 17 pipeline + 3 sessions_intel
+                          + 22 settings + 2 throttle, 0 failed
+  cargo test -p traits    106 + 4, 0 failed
+  cargo test -p store     all suites 0 failed
+  cargo clippy -p kernel -p traits -p store --all-targets -- -D warnings   clean
+  cargo fmt --all -- --check                                               exit 0
+  ui npm run lint                                                          exit 0
+  ui npm run build                                                         exit 0 (3.3 s)
+  ui npm test                                                              23 passed, 0 failed
+  ```
+
+- **New kernel checks observed passing (inside the 113 lib count):**
+  `window_local_dates_lists_every_local_day_through_dst`,
+  `window_local_dates_handles_normal_partial_and_iso_year_windows`,
+  `week_label_and_parse_week_label_roundtrip`,
+  `parse_week_label_rejects_malformed_and_missing_weeks`,
+  `weekly_missing_local_dates_uses_the_shared_window_enumeration`. The 23 UI checks include the new
+  `ui/test/promotion.test.mjs` suite (parser selection and ordering, command names and argument
+  keys, populated/empty/conflict/success panel states).
+- **Named app-layer checks (Windows chain only):** `weekly_runs_write_note_and_index_or_skip_no_data`
+  (replaces the G2-era `weekly_runs_skip_note_and_index_with_receipts`),
+  `weekly_index_links_daily_and_weekly`, `weekly_note_path_passes_provenance_check`,
+  `edited_weekly_note_is_preserved`, `weekly_note_contains_provenance`,
+  `promotion_requires_explicit_confirm`, `promotion_appends_without_rewrite`,
+  `promotion_to_edited_note_surfaces_conflict`.
+- **Not run / not claimed here:** `src-tauri` does not compile on Linux by design, so its unit
+  tests and the `04 §1c` native acceptance (a real weekly run over a real week of saved dailies, the
+  note inspected with working links, and one promotion in the running app) are not claimed. `crates/api`
+  and `crates/mcp` are untouched — no new network surface.
+
 ## 2026-10-17 — F3 G2 weekly synthesis engine (`03 §8e`)
 
 - **Scope:** weekly run through the shared report service over **saved daily** reports:

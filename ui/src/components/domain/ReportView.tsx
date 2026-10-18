@@ -12,6 +12,7 @@ import remarkGfm from "remark-gfm";
 import { isTauri } from "@tauri-apps/api/core";
 
 import { CitationTile } from "./CitationTile";
+import { PromotionPanel } from "./PromotionPanel";
 import { Button } from "../primitives";
 import { toast } from "../../state/toastStore";
 import { saveReportMarkdown } from "../../lib/ipc/commands";
@@ -23,6 +24,7 @@ import { handleExternalLinkClick } from "../../lib/openExternal";
 import type { ReportKind } from "../../bindings/ReportKind";
 import type { ReportResponse } from "../../bindings/ReportResponse";
 import type { ReportRequest } from "../../bindings/ReportRequest";
+import type { ReportRun } from "../../bindings/ReportRun";
 
 export interface ReportViewProps {
   report: ReportResponse;
@@ -33,6 +35,13 @@ export interface ReportViewProps {
   /** Optional non-Recall scope. Session Recap uses the same renderer/footer while
    *  naming its stable session id as the active filter. */
   footerScope?: ReportFooterScope;
+  /** The persisted run this report belongs to, when it has one. A finished run with
+   *  OK/partial coverage makes the saved report promotable into the project note
+   *  (`03 §8e`, G4); on-demand reports have no run and stay read-only. */
+  run?: ReportRun | null;
+  /** Suppress the on-screen footer where the surrounding surface already states the
+   *  same coverage (the copied/saved markdown still carries it). */
+  showFooter?: boolean;
 }
 
 /** How many citation chips to render before collapsing the rest into a count. */
@@ -86,6 +95,8 @@ export function ReportView({
   request,
   onOpenFrame,
   footerScope,
+  run = null,
+  showFooter = true,
 }: ReportViewProps) {
   const appVersion = useAppVersion();
   const cited = report.cited_frame_ids;
@@ -117,7 +128,7 @@ export function ReportView({
         </div>
       </div>
 
-      <div className="prose prose-deck max-w-none">
+      <div className="prose prose-deck max-w-none break-words">
         <Markdown
           remarkPlugins={[remarkGfm]}
           components={{
@@ -135,11 +146,19 @@ export function ReportView({
                 {children}
               </a>
             ),
+            // Saved reports can embed images; never fetch them inside the app shell.
+            img: ({ alt }) => (
+              <span>{alt ? `[Image omitted: ${alt}]` : "[Image omitted]"}</span>
+            ),
           }}
         >
           {report.markdown}
         </Markdown>
       </div>
+
+      {/* A persisted run makes this saved report promotable (`03 §8e`, G4).
+          On-demand reports (Recall, Session recap) never show this surface. */}
+      {run && <PromotionPanel key={run.run_id} run={run} />}
 
       {cited.length > 0 && (
         <div className="flex flex-col gap-2">
@@ -159,7 +178,7 @@ export function ReportView({
         </div>
       )}
 
-      {footer && (
+      {showFooter && footer && (
         <div className="whitespace-pre-wrap break-words border-t border-line pt-2 text-caption text-ink-faint font-body">
           {footer}
         </div>

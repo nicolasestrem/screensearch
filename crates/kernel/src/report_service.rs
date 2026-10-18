@@ -152,9 +152,9 @@ pub struct WeeklyExecution {
 /// `model: None`; a week that has captured frames but no saved dailies is refused (see
 /// below) rather than mislabelled or synthesized without daily-run provenance. After
 /// saved dailies are found, the same positive-probe rules as [`execute`] apply: a blank
-/// or empty generation is `GENERATION_FAILED`, a non-blank synthesis that cites no
-/// consumed daily run is `GENERATION_FAILED` (uncited prose is never persisted as OK),
-/// and a resolver failure propagates unchanged.
+/// or empty generation is `GENERATION_FAILED`, a non-blank synthesis with an uncited
+/// promotable item or day claim is `GENERATION_FAILED` (untraceable prose is never
+/// persisted as OK), and a resolver failure propagates unchanged.
 pub async fn execute_weekly<F, Fut>(
     store: &dyn Store,
     request: WeeklyExecutionRequest<'_>,
@@ -270,13 +270,14 @@ where
             "Weekly synthesis produced no usable text despite saved daily reports; check the local model or retry.",
         ));
     }
-    // `03 §8e`: a weekly report citing no daily run for a day it describes is a defect.
-    // After the positive saved-dailies probe, prose that cites none of the consumed daily
-    // runs cannot be trusted — never persisted as a successful synthesis (`03 §8c`).
+    // `03 §8e`: a weekly report citing no daily run for a day it describes is a defect,
+    // and every promotable item must be traceable. After the positive saved-dailies
+    // probe, an uncited item or day claim cannot be trusted — never persisted as a
+    // successful synthesis (`03 §8c`).
     if !crate::reports::weekly_cites_consumed_daily(&output.markdown, &consumed) {
         return Err(error(
             "GENERATION_FAILED",
-            "Weekly synthesis did not cite any consumed daily run; prose that cannot be traced to a saved daily report is not saved.",
+            "Weekly synthesis did not cite a consumed daily run for every item or day claim; prose that cannot be traced to a saved daily report is not saved.",
         ));
     }
     let model = answer.answer_model_label().await;

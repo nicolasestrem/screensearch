@@ -1,5 +1,113 @@
 # 08 — AI Changelog
 
+## 2026-10-18 — PR #139 review batch 3: identity, citations, timezone
+
+- Fixed Codex `r4307321378` (note path not normalized before ownership lookup: a
+  respelled folder could silently adopt an edited/owned note) and `r4307321383` (export
+  footer dated in the browser's timezone instead of the saved run's), and Claude's two
+  `reports.rs` findings: the weekly citation check now requires a consumed
+  run/frame/session token per promotable item and per named-day claim (uncited items are
+  `GENERATION_FAILED`), and a retained-prose day keeps its recorded frame IDs in the
+  weekly's cited set without inflating `frames_sampled`. No wire field, schema,
+  dependency or generated-binding change.
+- Found at integration and fixed here: since retained provenance now joins
+  `frames_summarized`, it can exceed `frames_sampled`, and the coverage line's
+  `N of M sampled frames summarized` could read `5 of 2`; both the report panel and the
+  export footer now report the two counts separately.
+- Native Windows full chain at `fe72af8`: `CHAIN_EXIT=0`, Rust 1094 passed / 0 failed /
+  15 existing ignored; UI 42 passed / 0 failed. Named regressions in `05`. New hosted CI
+  pending publication; no merge, installed-app change or live-history access in this
+  record.
+
+## 2026-10-18 — PR #139 truthful receipt after a concurrent note swap
+
+- Fixed Codex `r4307200508`: when the writer reports a conflict after the append
+  landed, confirm checks the live hash under the note lock and records ownership
+  before returning the installed hash and recovery path. The dialog reports the
+  append as written with a recovery warning and Done, rather than claiming no
+  write or offering to append it again. Other recovery-copy conflicts no longer
+  claim the note was untouched. No receipt fields or schema were added.
+- Native Windows full chain at `e69ee1f`: `CHAIN_EXIT=0`, Rust 1086 passed /
+  0 failed / 15 existing ignored; UI 37 passed / 0 failed. Two real-file/store
+  settlement regressions plus two UI render regressions; outputs in `05`.
+- New hosted CI is pending publication; no third review request, merge,
+  installed-app change or live-history access is part of this record.
+
+## 2026-10-18 — PR #139 additional promotion/index review fixes
+
+- **Change:** confirmed promotion intent and last receipt in existing internal per-note settings
+  KV, without selected/note text, recover ownership after a landed append, restart or source-run
+  pruning and answer exact lost-response retries without duplicating content. Selection/date
+  identity is hashed; unrelated edits stay conflicts. IPC critical work owns its lifetime through
+  filesystem and SQLite bookkeeping. Creation delegates hierarchy changes to the guarded writer
+  before any junction can create external directories. Weekly indexing retains links from verified
+  owned daily-note paths after daily runs are pruned, falling back to plain dates only when needed.
+- **Why:** relevant new Codex findings `4305601207`, `4305709131`, `4305709134`; existing `03 §8c/8e`
+  persistence and ownership guarantees. No schema/wire/public-setting change or G5/G6 scope.
+  Existing workspace `rusqlite` is an app test-only dependency for actual SQLite failure injection.
+- **Verification:** full native Windows `04 §1c` chain at `aba0c28`, Rust1.95.0 / Node22.23.3,
+  `CHAIN_EXIT=0`: Rust1084 passed / 0 failed / 15 existing ignored; UI35 passed / 0 failed;
+  fmt/clippy/build/security/binding checks all exit0. Includes a real junction, actual retention
+  with a production index rebuild, owned/unowned storage-failure recovery and detached confirmation.
+  Raw output in `05`. Isolated local worktree excludes concurrent G5/G6 changes; no second tbx
+  checkout. Not yet pushed; fresh hosted checks and native interactive acceptance are not claimed.
+
+## 2026-10-18 — PR #139 CodeQL test assertion
+
+- Replaced a dynamically constructed, incompletely escaped regex in the promotion error-render
+  test with literal substring containment. Resolves the source of CodeQL check `117577648747`
+  without weakening the assertion, suppressing the finding or changing production code.
+- Native Windows lint exited 0; all 35 UI tests passed. Copied-test SHA and exact output are in
+  `05`. Publication and the new hosted scan remain pending; old successful analysis jobs do not
+  certify that the failing alert gate is clear.
+
+## 2026-10-18 — PR #139 promotion and writer review corrections
+
+- **Change:** enforce same-source persisted ownership/hash at both promotion preparation and
+  confirmation; re-resolve the one existing target and require a selection-time hash; serialize
+  project-note creation and confirmed writes; reject reserved DOS device slugs without blocking
+  ordinary near-misses; preserve selected duplicate occurrences with a saved-multiplicity bound.
+  Source parsing and destination insertion share proper fence-marker/length tracking, tolerate
+  case/closing hashes, preserve duplicate destination sections, and avoid inserting inside an
+  unclosed fence. Document the ownership row as the latest-write guard, not a run attribution or
+  garbage-collection index. Saving memory settings invalidates and awaits mounted project-note
+  state; stale/error status no longer traps first setup. Error copy preserves user edits and does
+  not promise re-preparing can authorize an owned-file edit. Retry is not disabled by a stale
+  proposal's missing-note flag. Regenerated actual ts-rs output removes the interrupted WIP field.
+- **Why:** all five Claude and three Codex findings at `fc39c65`, enforcing the existing `03 §8e`
+  contract without changing product policy, schema, network surfaces, G5 or G6.
+- **Verification:** full Windows `04 §1c` chain at `1636a4f` on tbx, Rust 1.95.0 / Node 22.23.3:
+  `CHAIN_EXIT=0`; UI 35 passed / 0 failed; Rust 1069 passed / 0 failed / 15 existing ignored;
+  regenerated-binding guard clean. Exact output and named regressions are in `05`, implementation
+  readings in `07`, remaining native acceptance/publication boundaries in `06`. No installed-app
+  restart, live-history access, Telegram send, review request or merge.
+
+## 2026-10-18 — F3 G3+G4: weekly note writer, index entries, project-note promotion
+
+- **Change:** weekly runs write `Weekly/YYYY-Www.md` from the persisted run (schema-2 frontmatter
+  with `kind`, `daily_run_ids` and `window_local_dates`) through the daily writer's atomic/owned
+  pipeline, and appear in `Index.md` with a `days:` list linking the owned daily notes they
+  consumed; the index folder filter and provenance re-derivation gain weekly branches with kind
+  separation both ways, and a `NO_DATA` week writes neither output. Kernel adds
+  `window_local_dates` (the single date-enumeration source, also consumed by
+  `weekly_missing_local_dates`), `week_label` and `parse_week_label`. Promotion adds
+  `prepare_promotion` / `confirm_promotion` / `project_note_status` / `create_project_note` over
+  bullet-level selections, `memory_files::merged_content` + `append_entries_owned` (one atomic
+  multi-section append under the selection-time hash), `PromotionPanel` / `PromotionDialog` in the
+  report view and project-note create/status in `MemoryPanel`.
+- **Why:** `03 §8e` G3 (the weekly note, index entry and provenance branches under the daily
+  writer's atomic, hash-tracked and ownership guarantees) and G4 (explicitly confirmed, append-only
+  promotion into the single user-created project note, so generated prose never enters a project
+  note unreviewed and a selection-time edit is never overwritten).
+- **Verification:** Linux `cargo test -p kernel` (113 lib + 9 enrichment + 17 pipeline + 3
+  sessions_intel + 22 settings + 2 throttle), `-p traits` (106 + 4) and `-p store` all 0 failed;
+  `cargo clippy -p kernel -p traits -p store --all-targets -- -D warnings` clean;
+  `cargo fmt --all -- --check` exit 0; `ui` lint and build exit 0, `npm test` 23 passed / 0 failed.
+  Windows 04 §1c chain on tbx at `193ea68`: every step green (`CHAIN_EXIT=0`) —
+  npm ci/lint/build, npm test 23/0, stage-mcp, fmt, clippy `-D warnings`, workspace
+  build, workspace tests (all named G3/G4 tests passing), bindings guard clean.
+  Raw output in `05`; decisions and edge cases in `06` and `07`.
+
 ## 2026-10-17 — F3 G2: weekly synthesis engine over saved dailies
 
 - **Change:** `Store::saved_daily_runs`; kernel `execute_weekly` + weekly synthesis through the
