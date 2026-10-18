@@ -21,6 +21,26 @@
 
 When the spec contradicts itself, stop, ask the user, and log the resolution here before coding.
 
+## 2026-10-18 — PR #139 additional review findings
+
+- Three new relevant Codex findings: `4305601207` (append/ownership persistence gap),
+  `4305709131` (creation through a junction before writer validation), and `4305709134`
+  (daily links lost after run retention). The older findings remain fixed; no third bot review
+  or thread resolution is requested.
+- Confirmed writes now use a per-note intent and last receipt in existing internal settings KV;
+  recover the original identity before run lookup, distinguish selection/date, preserve edited
+  bytes and keep IPC critical work alive independently of its response. Creation defers all
+  parent creation to the existing guarded writer. Weekly indexing prefers the verified daily
+  note's canonical path date before a run-record fallback. Implementation readings are in `07`.
+- Native targeted checks: 26 promotion tests passed, including real SQLite-trigger failures,
+  owned/unowned-note recovery, lost response, restart/pruning, detached work and an actual Windows
+  junction. The production-path retention/index regression passed separately. Full frozen-head
+  Windows verification remains pending; its final evidence belongs in `05`.
+- No product/schema/public-setting/wire change, G5/G6 work, installed-app access or live data.
+  The shared checkout moved to a concurrent G5/G6 branch during execution; this batch is isolated
+  on `fix/pr139-review-followup` in a local worktree. Only the ONE existing tbx checkout is used
+  for native validation. Publication requires a fresh authorization; no merge is authorized.
+
 ## 2026-10-18 — PR #139 hosted scanner follow-up
 
 - CodeQL's alert gate (not the passing analysis jobs) flagged incomplete regex escaping in a UI

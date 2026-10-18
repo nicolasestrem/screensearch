@@ -26,8 +26,11 @@
   `daily_run_ids` to local dates oldest-first and links a date only when that run's owned note
   passed the scan's hash and provenance checks; otherwise the date stays plain text. The whole line
   reads `- [2026-W42](Weekly/2026-W42.md) — OK — <topic> — days: [2026-10-12](Daily/2026-10-12.md),
-  2026-10-13`. A pruned run leaves the day list entirely (it can no longer name a date) but its id
-  stays in the weekly note's `daily_run_ids`, which is never rewritten to match the index.
+  2026-10-13`. A retention-pruned run keeps its link when its hash/provenance-verified owned
+  daily note survives: the canonical `Daily/YYYY-MM-DD.md` path supplies the date before any run
+  lookup. A surviving run without a verified note contributes only a plain-text date; if both
+  are absent, there is no day to display. Equal-date dedup prefers a verified link over plain
+  text. The weekly note's `daily_run_ids` is never rewritten to match the index.
 - **Index ordering (the open `YYYY-Www` position) is chronological, newest first.** Entries sort
   descending on `{date}/{relative_path}`; a weekly row's date is the window's **last** local date, so
   the week's row opens its own block, and the `Weekly/` > `Daily/` path comparison keeps it above a
@@ -76,6 +79,17 @@
   `ReportFileOwnership` is saved only after a successful write, so a conflict leaves the previous
   row untouched. Creation and confirmation share an in-process async lock spanning scan/create
   and ownership-check/append/save respectively; the existing single-instance app is the boundary.
+- **Confirmed promotion recovery uses bounded per-note metadata, not stored previews.** Before
+  appending, confirmation durably records the exact path, source/run, old/new hashes and a digest
+  of the selected items/date in internal settings KV. It contains no selected or note text. A
+  landed append is reconciled to its original ownership identity before normal hash checks or
+  loading a possibly pruned run; unchanged pre-write bytes discard an interrupted intent, while
+  unrelated bytes stay a conflict. One last committed receipt per target makes an exact retry
+  idempotent, including a lost response; a new explicit promotion with a fresh snapshot remains
+  allowed. Folder changes cannot replace another target's pending intent. Preview may settle
+  metadata from a previously confirmed append, but never appends note bytes. IPC work runs in an
+  owned task so cancellation of its response does not abandon the file/SQLite critical section.
+  No schema migration, public setting, HTTP/MCP surface or persistence of rejected proposals.
 - **Ownership is a write guard, not a history or garbage-collection key.** An initially unowned
   note may be adopted on the first confirmed promotion. Both prepare and confirm compare an
   already-owned note's current bytes against its persisted hash and require the same source

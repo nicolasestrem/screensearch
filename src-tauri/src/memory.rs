@@ -1445,22 +1445,53 @@ fn weekly_label(metadata: &crate::memory_files::Frontmatter) -> Result<String, R
     })
 }
 
+/// The strict `YYYY-MM-DD` date of a verified owned daily note path. `daily_paths`
+/// only contains paths this index pass hash-, source-, frontmatter- and filename-
+/// verified, so its stem is a trustworthy date even after run retention deleted the
+/// run record (`03 §8e`). Any other shape yields `None` rather than a guessed date.
+fn verified_daily_date(relative: &str) -> Option<String> {
+    let path = Path::new(relative);
+    if path.parent() != Some(Path::new("Daily"))
+        || path.extension().and_then(|value| value.to_str()) != Some("md")
+    {
+        return None;
+    }
+    let stem = path.file_stem()?.to_str()?;
+    kernel::memory_schedule::parse_date(stem).ok()?;
+    Some(stem.to_owned())
+}
+
 /// The weekly entry's `days:` list (`03 §8e`): the consumed daily runs resolved to
 /// local dates, oldest first, linked to their owned daily notes where one exists.
-/// Pruned runs still stay in the note's frontmatter; they just cannot name a day.
+/// Pruned runs still stay in the note's frontmatter. Their surviving owned note can
+/// still name and link the day; only a day with no owned note falls back to a plain
+/// date from a surviving run record.
 async fn weekly_day_list(
     store: &dyn Store,
     daily_run_ids: &[String],
     daily_paths: &std::collections::HashMap<String, String>,
 ) -> Result<String, ReportError> {
-    let mut days = Vec::new();
+    let mut days: Vec<(String, Option<String>)> = Vec::new();
     for run_id in daily_run_ids {
-        let Some(daily) = store.get_report_run(run_id).await.map_err(storage)? else {
+        // A hash/provenance-verified owned note outlives the run record, so its
+        // strictly parsed path date wins over the (possibly pruned) record.
+        if let Some(day) = daily_paths.get(run_id).and_then(|relative| {
+            verified_daily_date(relative).map(|date| (date, Some(relative.clone())))
+        }) {
+            days.push(day);
             continue;
-        };
-        days.push((daily.local_date, daily_paths.get(run_id).cloned()));
+        }
+        // No verified owned note: a surviving record keeps its date as plain text,
+        // never a link to a missing, edited or differently-owned note.
+        if let Some(daily) = store.get_report_run(run_id).await.map_err(storage)? {
+            days.push((daily.local_date, None));
+        }
     }
-    days.sort_by(|a, b| a.0.cmp(&b.0));
+    // Oldest first; at equal dates prefer the entry that can link so dedup keeps it.
+    days.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.is_none().cmp(&b.1.is_none()))
+    });
     days.dedup_by(|a, b| a.0 == b.0);
     Ok(days
         .into_iter()
@@ -3194,6 +3225,102 @@ mod tests {
             "index: {index}"
         );
         assert!(!index.contains("pruned-daily-run"));
+    }
+
+    #[tokio::test]
+    async fn weekly_index_keeps_consumed_link_after_daily_run_pruned() {
+        // `03 §8e`: retention deletes the daily run record but never its owned note.
+        // A rebuilt index must keep linking the verified surviving note — and keep a
+        // plain date for a consumed day whose note was never written — instead of
+        // dropping every day whose run is gone.
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteStore::open_in_memory().unwrap();
+        let config = file_config(&dir);
+        let exported = [
+            saved_daily_run("daily-run-a", "2026-10-13"),
+            saved_daily_run("daily-run-b", "2026-10-12"),
+        ];
+        for run in &exported {
+            store.create_report_run(run.clone()).await.unwrap();
+            write_files(&store, run, &config).await.unwrap();
+            // A confirmed Telegram receipt makes the finished run retention-eligible.
+            let mut receipt = delivery(run, ReportDestination::Telegram, "{}".into());
+            receipt.state = ReportDeliveryState::Succeeded;
+            store.create_report_delivery(receipt).await.unwrap();
+        }
+        let absent_note = saved_daily_run("daily-run-c", "2026-10-14");
+        store.create_report_run(absent_note.clone()).await.unwrap();
+        // A surviving record for an already-linked date must not displace the link.
+        let duplicate = saved_daily_run("daily-run-d", "2026-10-13");
+        store.create_report_run(duplicate.clone()).await.unwrap();
+        let mut run = weekly_run_fixture();
+        let mut execution = weekly_execution(ReportMode::MapReduce, false, vec![]);
+        execution.daily_run_ids = vec![
+            "daily-run-d".into(),
+            "daily-run-a".into(),
+            "daily-run-c".into(),
+            "daily-run-b".into(),
+        ];
+        save_weekly_execution(
+            &mut run,
+            execution,
+            ReportEvidence {
+                session_ids: vec![7],
+                missing_frame_ids: vec![],
+            },
+        )
+        .unwrap();
+        store.create_report_run(run.clone()).await.unwrap();
+        write_files(&store, &run, &config).await.unwrap();
+
+        let root = dir.path().join("ScreenSearch");
+        let daily_a = path_string(&root.join("Daily/2026-10-12.md"));
+        assert!(Path::new(&daily_a).is_file());
+        assert!(store.get_report_file(&daily_a).await.unwrap().is_some());
+
+        assert_eq!(store.prune_report_runs(i64::MAX).await.unwrap(), 2);
+        for pruned in ["daily-run-a", "daily-run-b"] {
+            assert!(store.get_report_run(pruned).await.unwrap().is_none());
+        }
+        assert!(Path::new(&daily_a).is_file(), "retention keeps the note");
+        assert!(
+            store.get_report_file(&daily_a).await.unwrap().is_some(),
+            "retention keeps the note ownership"
+        );
+
+        // Rebuild as a linked revision through the production writer. The scheduled
+        // window identity reuses a base run, so a fresh id alone is not a new run.
+        let mut rebuild = weekly_run_fixture();
+        rebuild.run_id = "weekly-rebuild".into();
+        rebuild.revision_of = Some(run.run_id.clone());
+        let mut rebuild_execution = weekly_execution(ReportMode::MapReduce, false, vec![]);
+        rebuild_execution.daily_run_ids = vec![
+            "daily-run-d".into(),
+            "daily-run-a".into(),
+            "daily-run-c".into(),
+            "daily-run-b".into(),
+        ];
+        save_weekly_execution(
+            &mut rebuild,
+            rebuild_execution,
+            ReportEvidence {
+                session_ids: vec![7],
+                missing_frame_ids: vec![],
+            },
+        )
+        .unwrap();
+        let persisted = store.create_report_run(rebuild.clone()).await.unwrap();
+        assert_eq!(persisted.run_id, rebuild.run_id);
+        write_files(&store, &rebuild, &config).await.unwrap();
+
+        let index = std::fs::read_to_string(root.join("Index.md")).unwrap();
+        assert!(
+            index.contains(
+                "days: [2026-10-12](Daily/2026-10-12.md), [2026-10-13](Daily/2026-10-13.md), \
+                 2026-10-14\n"
+            ),
+            "index: {index}"
+        );
     }
 
     #[tokio::test]

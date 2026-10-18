@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
 tempfile = "3"
+rusqlite.workspace = true
 
 [dependencies]
 # `tray-icon` unlocks the native Tauri tray + menu APIs (0.3.2 PR3, #56/#57 — `03 §7d`);

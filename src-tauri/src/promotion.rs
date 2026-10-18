@@ -3,25 +3,45 @@
 //! The note at `<selected folder>/ScreenSearch/Projects/<slug>.md` is created
 //! empty by the user and is the only accumulation target. Promotion is the only
 //! write path: `prepare_promotion` reads and validates a saved weekly synthesis
-//! or daily report and previews dated entry blocks without writing anything;
-//! `confirm_promotion` rebuilds those blocks and appends them in one atomic
-//! write. There is no proposal persistence and no HTTP/MCP surface.
+//! or daily report and previews dated entry blocks without appending note bytes;
+//! it may finish metadata for a previously confirmed append. `confirm_promotion`
+//! rebuilds those blocks and appends them in one atomic write. Unconfirmed
+//! proposals are never persisted, and there is no HTTP/MCP surface.
+//!
+//! A confirmed append and its ownership-row update cannot be one atomic
+//! operation across the filesystem and SQLite. `confirm_promotion` therefore
+//! persists a bounded write intent (exact target, source/run identity and the
+//! old/new hashes) in the existing settings KV before writing. If the append
+//! lands but the ownership save or cleanup fails, the next `prepare`/`confirm`
+//! reconciles the live bytes against that intent instead of mistaking the
+//! app's own write for a user edit. The intent never contains selected text.
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, Utc};
+use serde::{Deserialize, Serialize};
 use store::SqliteStore;
 use tauri::State;
 use traits::*;
 
 use crate::memory_files::{
-    append_entries_owned, content_hash, heading_title, native_path, path_string, safe_read_owned,
-    write_owned, MarkdownFence, WriteFailure,
+    append_entries_owned, content_hash, heading_title, merged_content, native_path, path_string,
+    safe_read_owned, write_owned, MarkdownFence, WriteFailure,
 };
 use crate::{now_ms, AppState};
 
 /// Persisted memory setting holding the selected output folder (`03 §8c`).
 const OUTPUT_FOLDER: &str = "memory.schedule.output_folder";
+
+/// Internal KV prefix for one compact confirmed-write record per exact note:
+/// `memory.promotion.pending.<sha256(normalized path)>`. `"null"` means no
+/// pending intent; the keys are not settings/API surface and are never exposed
+/// to the UI or HTTP reads.
+const PROMOTION_INTENT: &str = "memory.promotion.pending";
+/// Last committed receipt per note. Kept after the pending intent is cleared so
+/// a lost success response can be answered without a second append.
+const PROMOTION_RECEIPT: &str = "memory.promotion.receipt";
+
 const MAX_LISTED_IDS: usize = 20;
 
 /// Reserved DOS device names resolve to a device even with an extension
@@ -38,9 +58,231 @@ const RESERVED_SLUGS: [&str; 22] = [
 /// scan-then-create window, and the confirm ownership-check/write/save sequence.
 /// Without it two creates can both observe an empty Projects folder, or two
 /// confirms can append and replace the ownership row from the same stale state.
+/// A confirm moves its guard into the blocking writer and holds it until the
+/// writer returns, so cancelling the async caller cannot release the lock while
+/// the non-cancellable native write can still land.
 /// This is a tokio lock (never held across a blocking mutex wait); the app is
 /// single-instance, so a second process is outside this boundary.
 static NOTE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Durable evidence of the one confirmed append whose ownership update has not
+/// been proven. It deliberately carries no selected text, preview or proposal:
+/// only the exact note path, source/run identity and the old/new SHA-256 values
+/// needed to decide whether the app's own write landed.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct PromotionIntent {
+    path: String,
+    source_id: String,
+    run_id: String,
+    old_hash: String,
+    new_hash: String,
+    /// Digest of the exact selection plus its promotion date. Hashes and run
+    /// identity alone cannot distinguish two different selections from the same
+    /// snapshot; recovery success requires this to match too.
+    #[serde(default)]
+    fingerprint: String,
+    /// False while the append may still need its ownership row; true after the
+    /// ownership row is durable. The committed record is the compact last-receipt
+    /// tombstone used to answer a lost-response retry without appending again.
+    #[serde(default)]
+    committed: bool,
+}
+
+/// Canonical digest of the user's exact selection and promotion date. This is
+/// stored instead of the text, so a same-hash retry cannot be mistaken for a
+/// different selection that happened to start from the same note bytes.
+fn promotion_fingerprint(selection: &PromotionSelection, entry_date: &str) -> String {
+    // Structured encoding preserves item boundaries even when text contains
+    // newlines or delimiter characters. Only this digest is persisted.
+    let canonical = serde_json::json!([selection, entry_date]).to_string();
+    content_hash(canonical.as_bytes())
+}
+
+/// Per-target internal KV slot, keyed by the normalized note path. One compact
+/// latest intent/receipt per note means switching output folders cannot
+/// overwrite an unresolved append for the previous exact target.
+fn record_key(prefix: &str, note_path: &str) -> String {
+    let normalized = note_path.replace('\\', "/");
+    format!("{prefix}.{}", content_hash(normalized.as_bytes()))
+}
+
+async fn read_record(
+    store: &dyn Store,
+    prefix: &str,
+    note_path: &str,
+) -> Result<Option<PromotionIntent>, ReportError> {
+    let Some(raw) = store
+        .get_setting(&record_key(prefix, note_path))
+        .await
+        .map_err(storage)?
+    else {
+        return Ok(None);
+    };
+    let raw = raw.trim();
+    if raw.is_empty() || raw == "null" {
+        return Ok(None);
+    }
+    let intent: PromotionIntent = serde_json::from_str(raw).map_err(storage)?;
+    // A collision or a hand-edited key must never apply another note's record.
+    Ok((intent.path.as_str() == note_path).then_some(intent))
+}
+
+async fn read_intent(
+    store: &dyn Store,
+    note_path: &str,
+) -> Result<Option<PromotionIntent>, ReportError> {
+    read_record(store, PROMOTION_INTENT, note_path).await
+}
+
+async fn read_receipt(
+    store: &dyn Store,
+    note_path: &str,
+) -> Result<Option<PromotionIntent>, ReportError> {
+    read_record(store, PROMOTION_RECEIPT, note_path).await
+}
+
+async fn write_record(
+    store: &dyn Store,
+    prefix: &str,
+    intent: &PromotionIntent,
+) -> Result<(), ReportError> {
+    let value = serde_json::to_string(intent).map_err(storage)?;
+    store
+        .set_setting(&record_key(prefix, &intent.path), &value)
+        .await
+        .map_err(storage)
+}
+
+async fn write_intent(store: &dyn Store, intent: &PromotionIntent) -> Result<(), ReportError> {
+    write_record(store, PROMOTION_INTENT, intent).await
+}
+
+/// Promote a pending intent to the last committed receipt. Failure is harmless:
+/// the ownership row is already durable, and the next reconcile repeats this.
+async fn commit_intent(store: &dyn Store, intent: &PromotionIntent) {
+    let committed = PromotionIntent {
+        committed: true,
+        ..intent.clone()
+    };
+    if write_record(store, PROMOTION_RECEIPT, &committed)
+        .await
+        .is_ok()
+    {
+        clear_intent(store, &intent.path).await;
+    }
+}
+
+/// Clear a pre-write intent. Failure is harmless and idempotent: the next
+/// reconcile sees the same old bytes and repeats the clear.
+async fn clear_intent(store: &dyn Store, note_path: &str) {
+    let _ = store
+        .set_setting(&record_key(PROMOTION_INTENT, note_path), "null")
+        .await;
+}
+
+/// What a pending intent proves about the live note.
+enum Recovery {
+    None,
+    /// The confirmed append is installed and its ownership row is saved. The
+    /// carried identity lets confirm distinguish its own retry from a different
+    /// proposal that merely happened to run afterwards.
+    Applied {
+        old_hash: String,
+        new_hash: String,
+        run_id: String,
+        fingerprint: String,
+    },
+    /// A confirmed append is associated with this note, but the live bytes are
+    /// neither the pre-write nor the intended post-write hash. Never adopt them.
+    Edited,
+}
+
+/// Resolve a pending confirmed-write intent against the live note, before any
+/// ownership guard can call the app's own bytes a user edit.
+///
+/// Callers hold `NOTE_LOCK`, and a writer keeps that same guard inside its
+/// blocking closure until the native write returns. Therefore a live hash that
+/// still equals `old_hash` here cannot belong to an in-flight writer: it is a
+/// pre-write interruption (safe to drop) rather than a race with an append that
+/// might still complete. Store calls are individually durable and every step is
+/// idempotent, so cancellation inside the async ownership/commit sequence is
+/// repaired by the next reconcile.
+async fn reconcile_intent(
+    store: &dyn Store,
+    note_path: &str,
+    current_hash: Option<&str>,
+) -> Result<Recovery, ReportError> {
+    let pending = read_intent(store, note_path).await?;
+    let record = match pending {
+        Some(intent)
+            if !intent.committed
+                && current_hash == Some(intent.old_hash.as_str())
+                && intent.old_hash != intent.new_hash =>
+        {
+            // No writer can still be running under this guard. Discard a
+            // pre-write interruption, but retain the prior successful receipt:
+            // the caller may be retrying that earlier, already-landed append.
+            clear_intent(store, note_path).await;
+            read_receipt(store, note_path).await?
+        }
+        Some(intent) => Some(intent),
+        None => read_receipt(store, note_path).await?,
+    };
+    let Some(intent) = record else {
+        return Ok(Recovery::None);
+    };
+    match current_hash {
+        Some(current) if current == intent.new_hash.as_str() => {
+            match store.get_report_file(note_path).await.map_err(storage)? {
+                Some(owner) if owner.source_id != intent.source_id => {
+                    // Never move an intent across the ownership source boundary.
+                    return Ok(Recovery::Edited);
+                }
+                Some(owner)
+                    if owner.hash == intent.new_hash
+                        && owner.run_id == intent.run_id
+                        && owner.source_id == intent.source_id => {}
+                _ => {
+                    store
+                        .save_report_file(ReportFileOwnership {
+                            path: note_path.to_string(),
+                            source_id: intent.source_id.clone(),
+                            run_id: intent.run_id.clone(),
+                            hash: intent.new_hash.clone(),
+                            updated_at: now_ms(),
+                        })
+                        .await
+                        .map_err(storage)?;
+                }
+            }
+            if !intent.committed {
+                // The append landed but its ownership save did not finish. The
+                // last committed receipt lets a lost-response retry succeed.
+                commit_intent(store, &intent).await;
+            }
+            Ok(Recovery::Applied {
+                old_hash: intent.old_hash,
+                new_hash: intent.new_hash,
+                run_id: intent.run_id,
+                fingerprint: intent.fingerprint,
+            })
+        }
+        Some(current) if !intent.committed && current == intent.old_hash.as_str() => {
+            // The append never became visible. With the writer lock held, no
+            // blocking append can still install these bytes, so the intent is
+            // stale evidence and can be discarded without touching the note.
+            clear_intent(store, note_path).await;
+            Ok(Recovery::None)
+        }
+        // A committed receipt whose note was edited/reverted has no recovery
+        // claim: the normal ownership guard owns that conflict. A pending intent
+        // with unknown bytes is never adopted.
+        _ if intent.committed => Ok(Recovery::None),
+        _ => Ok(Recovery::Edited),
+    }
+}
+
+const EDITED_AFTER_CONFIRM: &str = "The project note changed after a confirmed promotion whose ownership update did not finish; nothing was appended. Reconcile the note before promoting again.";
 
 /// A promotable section: the report heading it comes from and the project-note
 /// heading it is appended under (`03 §8e`, fixed note sections).
@@ -494,17 +736,17 @@ fn build_entries(
     Ok(blocks)
 }
 
-/// Read-and-validate only: no file, note or ownership row is touched.
+/// Never appends note bytes. It may settle metadata for a previously confirmed
+/// append (finish its ownership row / last-receipt tombstone, or discard stale
+/// pre-write evidence) before either the ownership guard or `load_run` runs, so
+/// recovery still works after the source run was pruned.
 async fn prepare(
     store: &dyn Store,
     selection: &PromotionSelection,
     at: i64,
 ) -> Result<PromotionProposal, ReportError> {
-    let (run, result) = load_run(store, &selection.run_id).await?;
-    let date = local_date(&run.timezone, at)?;
-    let source_line = provenance(&run, &result);
-    let blocks = build_entries(&result, selection, &date, &source_line)?;
     let folder = output_folder(store).await?;
+    let _guard = NOTE_LOCK.lock().await;
     let notes = project_notes(&folder)?;
     let note = single_note(&notes)?;
     let note_path = path_string(note);
@@ -512,6 +754,19 @@ async fn prepare(
         .await
         .map_err(read_error)?
         .map(|bytes| content_hash(&bytes));
+    // A confirmed append may have landed before its ownership row was saved.
+    // Reconcile that app-owned write from the intent first; otherwise the old
+    // row would permanently reject the retry as if the user had edited the note.
+    if matches!(
+        reconcile_intent(store, &note_path, note_hash.as_deref()).await?,
+        Recovery::Edited
+    ) {
+        return Err(fail("FILE_CONFLICT", EDITED_AFTER_CONFIRM));
+    }
+    let (run, result) = load_run(store, &selection.run_id).await?;
+    let date = local_date(&run.timezone, at)?;
+    let source_line = provenance(&run, &result);
+    let blocks = build_entries(&result, selection, &date, &source_line)?;
     // Fail closed before previewing when the note is already owned: the row's
     // source identity and hash must still describe the live bytes. An unowned
     // note remains adoptable on its first promotion.
@@ -564,15 +819,14 @@ async fn confirm(
             "The promotion proposal has no selection-time note hash; prepare the promotion again.",
         ));
     };
-    let (run, result) = load_run(store, &proposal.selection.run_id).await?;
     let date = entry_date(&proposal.entry_date)?;
-    let source_line = provenance(&run, &result);
-    let blocks = build_entries(&result, &proposal.selection, &date, &source_line)?;
+    let fingerprint = promotion_fingerprint(&proposal.selection, &date);
     let folder = output_folder(store).await?;
     // Serialize the scan, ownership check, append and ownership-row save: two
     // confirms must not both append from the same stale bytes and then race the
-    // row replacement.
-    let _guard = NOTE_LOCK.lock().await;
+    // row replacement. The guard is moved into the native writer below, so a
+    // dropped caller cannot release it while the append can still complete.
+    let guard = NOTE_LOCK.lock().await;
     let notes = project_notes(&folder)?;
     let note_path = path_string(single_note(&notes)?);
     if proposal.note_path.as_deref() != Some(note_path.as_str()) {
@@ -597,6 +851,38 @@ async fn confirm(
         Err(error) => return Err(read_error(error)),
     };
     let current_hash = current.as_ref().map(|bytes| content_hash(bytes));
+    // Recover a confirmed append before loading its source run: ownership and the
+    // last-receipt tombstone must still settle after the run has been pruned.
+    match reconcile_intent(store, &note_path, current_hash.as_deref()).await? {
+        Recovery::Edited => {
+            return Ok(conflict_receipt(note_path, EDITED_AFTER_CONFIRM, None));
+        }
+        Recovery::Applied {
+            old_hash,
+            new_hash,
+            run_id,
+            fingerprint: intent_fingerprint,
+            ..
+        } if old_hash.as_str() == selection_hash
+            && intent_fingerprint == fingerprint
+            && run_id == proposal.selection.run_id =>
+        {
+            // This is a retry (including a lost-response retry) of the exact
+            // confirmed append that already landed. Report its durable result
+            // instead of appending the selection twice.
+            return Ok(PromotionReceipt {
+                path: note_path,
+                hash: Some(new_hash),
+                conflict: false,
+                error: None,
+                recovery_path: None,
+            });
+        }
+        Recovery::None | Recovery::Applied { .. } => {}
+    }
+    let (run, result) = load_run(store, &proposal.selection.run_id).await?;
+    let source_line = provenance(&run, &result);
+    let blocks = build_entries(&result, &proposal.selection, &date, &source_line)?;
     // The persisted row, not the client-supplied hash, decides whether this note
     // is still appendable. A forged proposal cannot adopt an edited note by
     // presenting the edited bytes' hash: the row's stored hash must match too.
@@ -616,24 +902,71 @@ async fn confirm(
         .into_iter()
         .map(|block| (block.target.to_string(), block.block))
         .collect();
+    let Some(current_bytes) = current.as_deref() else {
+        return Ok(conflict_receipt(
+            note_path,
+            "The project note disappeared before it could be written; prepare the promotion again.",
+            None,
+        ));
+    };
+    let existing = match std::str::from_utf8(current_bytes) {
+        Ok(existing) => existing,
+        Err(_) => {
+            return Ok(conflict_receipt(
+                note_path,
+                "The project note is not valid UTF-8; it was not changed.",
+                None,
+            ))
+        }
+    };
+    // Compute the exact bytes the writer will install so the intent can name the
+    // post-write hash before the append becomes visible. This stores no text.
+    let intended_hash = content_hash(merged_content(existing, &entries).as_bytes());
+    let intent = PromotionIntent {
+        path: note_path.clone(),
+        source_id: run.source_id.clone(),
+        run_id: run.run_id.clone(),
+        old_hash: expected.clone(),
+        new_hash: intended_hash,
+        fingerprint,
+        committed: false,
+    };
+    if write_intent(store, &intent).await.is_err() {
+        // Fail before the filesystem has any side effect.
+        return Err(fail(
+            "STORE_ERROR",
+            "The promotion could not be recorded before writing; nothing was written.",
+        ));
+    }
     let target = Path::new(&note_path).to_owned();
-    // Native filesystem I/O is not cancellable; a stopped writer cannot leave a
-    // persisted intent behind because promotion keeps no delivery state. The
-    // writer re-checks `expected` atomically under its own file handle.
-    let write = tokio::task::spawn_blocking(move || {
-        append_entries_owned(&target, &entries, Some(expected.as_str()))
+    // Native filesystem I/O is not cancellable. The blocking closure returns the
+    // NOTE_LOCK guard with its result, so if this caller is dropped the detached
+    // writer keeps the lock until it finishes; only then can the next
+    // prepare/confirm reconcile the intent against settled bytes.
+    let (_guard, write) = tokio::task::spawn_blocking(move || {
+        let write = append_entries_owned(&target, &entries, Some(expected.as_str()));
+        (guard, write)
     })
     .await
     .map_err(|_| fail("WRITE_FAILED", "The file writer stopped unexpectedly."))?;
     match write {
         Ok(receipt) => {
+            if receipt.hash != intent.new_hash {
+                // The writer's own installed hash is authoritative; keep the
+                // intent aligned with reality if they ever differ.
+                let corrected = PromotionIntent {
+                    new_hash: receipt.hash.clone(),
+                    ..intent.clone()
+                };
+                let _ = write_intent(store, &corrected).await;
+            }
             // The ownership row is the note's write guard, not an attribution log
             // or a garbage-collection key: it stores the source identity and the
             // SHA-256 of the bytes this app last wrote for this one note. Prepare
             // and confirm both require the same source and a matching live hash,
             // so an edit or another source's ownership is never silently adopted;
             // the row survives run pruning and is replaced on every promotion.
-            store
+            if store
                 .save_report_file(ReportFileOwnership {
                     path: note_path.clone(),
                     source_id: run.source_id.clone(),
@@ -642,7 +975,20 @@ async fn confirm(
                     updated_at: now_ms(),
                 })
                 .await
-                .map_err(storage)?;
+                .is_err()
+            {
+                // The append is durable; the intent makes the retry finish this
+                // row instead of treating the app's write as a user edit.
+                return Err(fail(
+                    "STORE_ERROR",
+                    "The promotion was appended, but its ownership record could not be saved. Retry the promotion to finish recording it.",
+                ));
+            }
+            // Keep the compact last committed receipt. A lost success response
+            // can then answer the same-old-hash/same-fingerprint retry without
+            // appending again; a genuinely new explicit promotion has a new
+            // snapshot hash and proceeds normally.
+            commit_intent(store, &intent).await;
             Ok(PromotionReceipt {
                 path: note_path,
                 hash: Some(receipt.hash),
@@ -651,11 +997,15 @@ async fn confirm(
                 recovery_path: None,
             })
         }
-        Err(error) if error.conflict => Ok(conflict_receipt(
-            note_path,
-            &error.message,
-            error.recovery_path,
-        )),
+        Err(error) if error.conflict => {
+            // The intent stays: a conflict can be returned after the writer
+            // installed bytes, so the next call must decide from the live hash.
+            Ok(conflict_receipt(
+                note_path,
+                &error.message,
+                error.recovery_path,
+            ))
+        }
         Err(error) => Err(fail("WRITE_FAILED", &error.message)),
     }
 }
@@ -678,7 +1028,7 @@ pub async fn create_project_note(
     state: State<'_, AppState>,
 ) -> Result<ProjectNoteStatus, ReportError> {
     let store = db(&state)?;
-    create_note(store.as_ref(), &slug).await
+    owned_create(store, slug).await
 }
 
 /// Validate and create the note default-empty. The app never invents, renames or
@@ -717,11 +1067,12 @@ async fn create_note(store: &dyn Store, slug: &str) -> Result<ProjectNoteStatus,
         };
         return Err(fail("FILE_CONFLICT", &detail));
     }
-    let dir = projects_dir(&folder);
-    std::fs::create_dir_all(&dir)
-        .map_err(|_| fail("WRITE_FAILED", "Could not create the Projects folder."))?;
-    let path = dir.join(format!("{slug}.md"));
+    let path = projects_dir(&folder).join(format!("{slug}.md"));
     let target = path.clone();
+    // Do not create the hierarchy eagerly: `write_owned` validates every existing
+    // ancestor (including reparse points) before creating the next missing
+    // directory, so a junction under ScreenSearch is rejected before any external
+    // `Projects` directory can be created through it.
     let write = tokio::task::spawn_blocking(move || write_owned(&target, "", None))
         .await
         .map_err(|_| fail("WRITE_FAILED", "The file writer stopped unexpectedly."))?;
@@ -729,20 +1080,60 @@ async fn create_note(store: &dyn Store, slug: &str) -> Result<ProjectNoteStatus,
         Ok(_) => Ok(status_of(&project_notes(&folder)?)),
         Err(error) if error.conflict => Err(fail(
             "FILE_CONFLICT",
-            "A project note already exists; the app never overwrites it.",
+            "The project note could not be created safely; a note or redirected folder already occupies that path.",
         )),
         Err(error) => Err(fail("WRITE_FAILED", &error.message)),
     }
 }
 
-/// Preview the exact blocks a confirmation would append. Writes nothing.
+/// Run the whole prepare core in an owned task. A dropped command await (window
+/// close, IPC cancellation) detaches the task instead of the work, so any
+/// recovery metadata it is settling still completes.
+async fn owned_prepare(
+    store: Arc<SqliteStore>,
+    selection: PromotionSelection,
+    at: i64,
+) -> Result<PromotionProposal, ReportError> {
+    tokio::spawn(async move { prepare(store.as_ref(), &selection, at).await })
+        .await
+        .map_err(|_| fail("STORE_ERROR", "The promotion task stopped unexpectedly."))?
+}
+
+/// Same ownership rule for confirm: the detached task keeps the NOTE_LOCK guard
+/// and completes the native append plus every durable metadata step.
+fn spawn_confirm(
+    store: Arc<SqliteStore>,
+    proposal: PromotionProposal,
+) -> tokio::task::JoinHandle<Result<PromotionReceipt, ReportError>> {
+    tokio::spawn(async move { confirm(store.as_ref(), &proposal).await })
+}
+
+async fn owned_confirm(
+    store: Arc<SqliteStore>,
+    proposal: PromotionProposal,
+) -> Result<PromotionReceipt, ReportError> {
+    spawn_confirm(store, proposal)
+        .await
+        .map_err(|_| fail("WRITE_FAILED", "The promotion task stopped unexpectedly."))?
+}
+
+async fn owned_create(
+    store: Arc<SqliteStore>,
+    slug: String,
+) -> Result<ProjectNoteStatus, ReportError> {
+    tokio::spawn(async move { create_note(store.as_ref(), &slug).await })
+        .await
+        .map_err(|_| fail("WRITE_FAILED", "The note task stopped unexpectedly."))?
+}
+
+/// Preview the exact blocks a confirmation would append. Writes no note bytes.
 #[tauri::command]
 pub async fn prepare_promotion(
     selection: PromotionSelection,
     state: State<'_, AppState>,
 ) -> Result<PromotionProposal, ReportError> {
     let store = db(&state)?;
-    prepare(store.as_ref(), &selection, now_ms()).await
+    owned_prepare(store, selection, now_ms()).await
 }
 
 /// Append the previewed selection in one atomic multi-section write.
@@ -752,7 +1143,7 @@ pub async fn confirm_promotion(
     state: State<'_, AppState>,
 ) -> Result<PromotionReceipt, ReportError> {
     let store = db(&state)?;
-    confirm(store.as_ref(), &proposal).await
+    owned_confirm(store, proposal).await
 }
 
 #[cfg(test)]
@@ -806,6 +1197,73 @@ mod tests {
             .await
             .unwrap();
         store
+    }
+
+    /// File-backed store so a test can install a real SQLite trigger from a
+    /// second connection (and reopen it to model a process restart).
+    async fn file_store_with_folder(db: &Path, folder: &Path) -> SqliteStore {
+        let store = SqliteStore::open_path(db).unwrap();
+        store
+            .set_setting(
+                OUTPUT_FOLDER,
+                &serde_json::to_string(&Some(path_string(folder))).unwrap(),
+            )
+            .await
+            .unwrap();
+        store
+    }
+
+    fn sql(db: &Path, statement: &str) {
+        rusqlite::Connection::open(db)
+            .unwrap()
+            .execute_batch(statement)
+            .unwrap();
+    }
+
+    fn seed_note(folder: &Path) -> PathBuf {
+        let note_dir = folder.join("ScreenSearch").join("Projects");
+        std::fs::create_dir_all(&note_dir).unwrap();
+        let note = note_dir.join("launch.md");
+        std::fs::write(&note, "").unwrap();
+        note
+    }
+
+    async fn seed_selection(store: &dyn Store) -> PromotionSelection {
+        let markdown = "## Explicitly evidenced decisions\n\n- Adopt the weekly cadence\n";
+        let run = run_fixture(ReportRunKind::Daily, markdown);
+        store.create_report_run(run.clone()).await.unwrap();
+        PromotionSelection {
+            run_id: run.run_id,
+            items: vec![PromotionItem {
+                section: PromotionSection::Decisions,
+                text: "Adopt the weekly cadence".into(),
+            }],
+        }
+    }
+
+    /// The exact bytes the writer installs for a proposal, plus their hash.
+    async fn merged_for(
+        store: &dyn Store,
+        selection: &PromotionSelection,
+        proposal: &PromotionProposal,
+    ) -> (String, String) {
+        let (run, result) = load_run(store, &selection.run_id).await.unwrap();
+        let blocks = build_entries(
+            &result,
+            selection,
+            &proposal.entry_date,
+            &provenance(&run, &result),
+        )
+        .unwrap();
+        let entries: Vec<(String, String)> = blocks
+            .into_iter()
+            .map(|block| (block.target.to_string(), block.block))
+            .collect();
+        let path = Path::new(proposal.note_path.as_deref().unwrap());
+        let existing = std::fs::read_to_string(path).unwrap();
+        let merged = merged_content(&existing, &entries);
+        let hash = content_hash(merged.as_bytes());
+        (merged, hash)
     }
 
     #[tokio::test]
@@ -1417,5 +1875,651 @@ mod tests {
             Some(path_string(&notes[0]).as_str()),
             "the winner's status names the one note"
         );
+    }
+
+    #[tokio::test]
+    async fn intent_persist_failure_leaves_note_and_ownership_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let db = dir.path().join("memory.sqlite");
+        let note = seed_note(&folder);
+        let store = file_store_with_folder(&db, &folder).await;
+        let selection = seed_selection(&store).await;
+        let proposal = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        // Real SQLite fault: the pre-write intent cannot be inserted.
+        sql(
+            &db,
+            r#"CREATE TRIGGER fail_intent_insert BEFORE INSERT ON settings
+               WHEN NEW.key LIKE 'memory.promotion.pending.%'
+               BEGIN SELECT RAISE(ABORT, 'injected intent failure'); END;"#,
+        );
+        let error = confirm(&store, &proposal).await.unwrap_err();
+        assert_eq!(error.code, "STORE_ERROR");
+        assert_eq!(
+            std::fs::read(&note).unwrap(),
+            Vec::<u8>::new(),
+            "a pre-write persistence failure must not touch the note"
+        );
+        assert!(store.list_report_files().await.unwrap().is_empty());
+        assert!(read_intent(&store, &path_string(&note))
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn landed_append_with_failed_ownership_is_finished_by_a_retry_without_duplicate() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let db = dir.path().join("memory.sqlite");
+        let note = seed_note(&folder);
+        let store = file_store_with_folder(&db, &folder).await;
+        let selection = seed_selection(&store).await;
+        let proposal = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        sql(
+            &db,
+            r#"CREATE TRIGGER fail_owner_write BEFORE INSERT ON report_files
+               BEGIN SELECT RAISE(ABORT, 'injected ownership failure'); END;"#,
+        );
+        let error = confirm(&store, &proposal).await.unwrap_err();
+        assert_eq!(error.code, "STORE_ERROR");
+        let written = std::fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            written.matches("Adopt the weekly cadence").count(),
+            1,
+            "the append itself landed once: {written}"
+        );
+        assert!(store.list_report_files().await.unwrap().is_empty());
+        let pending = read_intent(&store, &path_string(&note))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.old_hash, proposal.note_hash.clone().unwrap());
+        assert_eq!(pending.new_hash, content_hash(written.as_bytes()));
+        assert_eq!(pending.run_id, proposal.run_id);
+        // Restore the real store, then retry the exact confirmed proposal. The
+        // intent proves the app's own bytes landed; recovery must finish the
+        // ownership row instead of rejecting them or appending again.
+        sql(&db, "DROP TRIGGER fail_owner_write;");
+        let receipt = confirm(&store, &proposal).await.unwrap();
+        assert!(!receipt.conflict);
+        assert_eq!(receipt.hash.as_deref(), Some(pending.new_hash.as_str()));
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), written);
+        assert_eq!(
+            written.matches("Adopt the weekly cadence").count(),
+            1,
+            "the retry must not append the same selection twice"
+        );
+        let owner = store
+            .get_report_file(&path_string(&note))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(owner.hash, pending.new_hash);
+        assert_eq!(owner.run_id, pending.run_id);
+        let committed = read_receipt(&store, &path_string(&note))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            committed.committed,
+            "success leaves a last-receipt tombstone"
+        );
+    }
+
+    #[tokio::test]
+    async fn owned_note_recovers_after_append_when_ownership_update_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let db = dir.path().join("memory.sqlite");
+        let note = seed_note(&folder);
+        let path = path_string(&note);
+        let store = file_store_with_folder(&db, &folder).await;
+        let selection = seed_selection(&store).await;
+        let first = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        assert!(!confirm(&store, &first).await.unwrap().conflict);
+        let proposal = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        let old_owner = store.get_report_file(&path).await.unwrap().unwrap();
+        sql(
+            &db,
+            r#"CREATE TRIGGER fail_owner_write BEFORE INSERT ON report_files
+               BEGIN SELECT RAISE(ABORT, 'injected ownership failure'); END;"#,
+        );
+        assert_eq!(
+            confirm(&store, &proposal).await.unwrap_err().code,
+            "STORE_ERROR"
+        );
+        let written = std::fs::read_to_string(&note).unwrap();
+        assert_eq!(written.matches("Adopt the weekly cadence").count(), 2);
+        assert_eq!(
+            store.get_report_file(&path).await.unwrap().unwrap().hash,
+            old_owner.hash
+        );
+        assert_ne!(old_owner.hash, content_hash(written.as_bytes()));
+        sql(&db, "DROP TRIGGER fail_owner_write;");
+        let retry = confirm(&store, &proposal).await.unwrap();
+        assert!(!retry.conflict);
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), written);
+        let preview = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        assert_eq!(preview.note_hash, retry.hash);
+        assert_eq!(
+            store.get_report_file(&path).await.unwrap().unwrap().hash,
+            content_hash(written.as_bytes())
+        );
+    }
+
+    #[tokio::test]
+    async fn detached_confirmation_finishes_its_file_and_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let note = seed_note(&folder);
+        let store = Arc::new(store_with_folder(&folder).await);
+        let selection = seed_selection(store.as_ref()).await;
+        let proposal = prepare(store.as_ref(), &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        let held = NOTE_LOCK.lock().await;
+        // This is the same owned task the IPC command awaits. Dropping its
+        // response handle must not cancel confirmed work, even before it locks.
+        drop(spawn_confirm(Arc::clone(&store), proposal));
+        drop(held);
+        let receipt = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                if let Some(receipt) = read_receipt(store.as_ref(), &path_string(&note))
+                    .await
+                    .unwrap()
+                {
+                    break receipt;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("detached confirmation must finish its committed receipt");
+        let _settled = NOTE_LOCK.lock().await;
+        assert!(receipt.committed);
+        let written = std::fs::read_to_string(&note).unwrap();
+        assert_eq!(written.matches("Adopt the weekly cadence").count(), 1);
+        assert_eq!(content_hash(written.as_bytes()), receipt.new_hash);
+        assert_eq!(
+            store
+                .get_report_file(&path_string(&note))
+                .await
+                .unwrap()
+                .unwrap()
+                .hash,
+            receipt.new_hash
+        );
+    }
+
+    #[tokio::test]
+    async fn success_cleanup_failure_is_idempotent_and_does_not_block_prepare() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let db = dir.path().join("memory.sqlite");
+        let note = seed_note(&folder);
+        let store = file_store_with_folder(&db, &folder).await;
+        let selection = seed_selection(&store).await;
+        let proposal = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        let (merged, new_hash) = merged_for(&store, &selection, &proposal).await;
+        // The intent insert must work; only the later cleanup UPDATE fails.
+        sql(
+            &db,
+            r#"CREATE TRIGGER fail_intent_clear BEFORE UPDATE ON settings
+               WHEN NEW.key LIKE 'memory.promotion.pending.%'
+               BEGIN SELECT RAISE(ABORT, 'injected cleanup failure'); END;"#,
+        );
+        let receipt = confirm(&store, &proposal).await.unwrap();
+        assert!(!receipt.conflict);
+        assert_eq!(receipt.hash.as_deref(), Some(new_hash.as_str()));
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), merged);
+        assert_eq!(
+            store
+                .get_report_file(&path_string(&note))
+                .await
+                .unwrap()
+                .unwrap()
+                .hash,
+            new_hash
+        );
+        assert!(
+            read_intent(&store, &path_string(&note))
+                .await
+                .unwrap()
+                .is_some(),
+            "the failed cleanup leaves the intent for the idempotent next pass"
+        );
+        // A later preview repeats the same no-op reconciliation and still works.
+        let next = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        assert_eq!(next.note_hash.as_deref(), Some(new_hash.as_str()));
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), merged);
+    }
+
+    #[tokio::test]
+    async fn confirmed_write_interrupted_before_ownership_survives_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let db = dir.path().join("memory.sqlite");
+        let note = seed_note(&folder);
+        let store = file_store_with_folder(&db, &folder).await;
+        let selection = seed_selection(&store).await;
+        let proposal = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        let (merged, new_hash) = merged_for(&store, &selection, &proposal).await;
+        write_intent(
+            &store,
+            &PromotionIntent {
+                path: path_string(&note),
+                source_id: "source-fixture".into(),
+                run_id: proposal.run_id.clone(),
+                old_hash: proposal.note_hash.clone().unwrap(),
+                new_hash: new_hash.clone(),
+                fingerprint: promotion_fingerprint(&selection, &proposal.entry_date),
+                committed: false,
+            },
+        )
+        .await
+        .unwrap();
+        std::fs::write(&note, &merged).unwrap();
+        drop(store);
+        // A fresh store models the restart: the intent and note are durable.
+        let store = SqliteStore::open_path(&db).unwrap();
+        let receipt = confirm(&store, &proposal).await.unwrap();
+        assert!(!receipt.conflict);
+        assert_eq!(receipt.hash.as_deref(), Some(new_hash.as_str()));
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), merged);
+        assert_eq!(
+            store
+                .get_report_file(&path_string(&note))
+                .await
+                .unwrap()
+                .unwrap()
+                .hash,
+            new_hash
+        );
+        assert!(
+            read_receipt(&store, &path_string(&note))
+                .await
+                .unwrap()
+                .unwrap()
+                .committed
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_prewrite_intent_is_discarded_without_touching_the_note() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let db = dir.path().join("memory.sqlite");
+        let note = seed_note(&folder);
+        let store = file_store_with_folder(&db, &folder).await;
+        let selection = seed_selection(&store).await;
+        let first = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        let old_hash = first.note_hash.clone().unwrap();
+        write_intent(
+            &store,
+            &PromotionIntent {
+                path: path_string(&note),
+                source_id: "source-fixture".into(),
+                run_id: first.run_id.clone(),
+                old_hash: old_hash.clone(),
+                new_hash: content_hash(b"never installed"),
+                fingerprint: promotion_fingerprint(&selection, &first.entry_date),
+                committed: false,
+            },
+        )
+        .await
+        .unwrap();
+        drop(store);
+        let store = SqliteStore::open_path(&db).unwrap();
+        let again = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        assert_eq!(again.note_hash.as_deref(), Some(old_hash.as_str()));
+        assert_eq!(std::fs::read(&note).unwrap(), Vec::<u8>::new());
+        assert!(store.list_report_files().await.unwrap().is_empty());
+        assert!(read_intent(&store, &path_string(&note))
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn unrelated_edit_after_a_landed_append_still_conflicts() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let db = dir.path().join("memory.sqlite");
+        let note = seed_note(&folder);
+        let store = file_store_with_folder(&db, &folder).await;
+        let selection = seed_selection(&store).await;
+        let proposal = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        sql(
+            &db,
+            r#"CREATE TRIGGER fail_owner_write BEFORE INSERT ON report_files
+               BEGIN SELECT RAISE(ABORT, 'injected ownership failure'); END;"#,
+        );
+        assert_eq!(
+            confirm(&store, &proposal).await.unwrap_err().code,
+            "STORE_ERROR"
+        );
+        sql(&db, "DROP TRIGGER fail_owner_write;");
+        let written = std::fs::read_to_string(&note).unwrap();
+        let edited = format!("{written}\n- my own line\n");
+        std::fs::write(&note, &edited).unwrap();
+        let error = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "FILE_CONFLICT");
+        let receipt = confirm(&store, &proposal).await.unwrap();
+        assert!(receipt.conflict, "a user edit must never be adopted");
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), edited);
+        assert!(store.list_report_files().await.unwrap().is_empty());
+        assert!(
+            read_intent(&store, &path_string(&note))
+                .await
+                .unwrap()
+                .is_some(),
+            "the unresolved edit keeps the evidence instead of guessing"
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_waits_for_the_writer_guard_before_reconciling() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let note = seed_note(&folder);
+        let store = Arc::new(store_with_folder(&folder).await);
+        let selection = seed_selection(store.as_ref()).await;
+        let proposal = prepare(store.as_ref(), &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        // Model a detached native writer that still owns NOTE_LOCK.
+        let held = NOTE_LOCK.lock().await;
+        let task_store = Arc::clone(&store);
+        let task_selection = selection.clone();
+        let mut task = tokio::spawn(async move {
+            prepare(task_store.as_ref(), &task_selection, 1_760_000_000_000).await
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), &mut task)
+                .await
+                .is_err(),
+            "prepare must wait while the non-cancellable writer can still land"
+        );
+        let (merged, new_hash) = merged_for(store.as_ref(), &selection, &proposal).await;
+        write_intent(
+            store.as_ref(),
+            &PromotionIntent {
+                path: path_string(&note),
+                source_id: "source-fixture".into(),
+                run_id: proposal.run_id.clone(),
+                old_hash: proposal.note_hash.clone().unwrap(),
+                new_hash: new_hash.clone(),
+                fingerprint: promotion_fingerprint(&selection, &proposal.entry_date),
+                committed: false,
+            },
+        )
+        .await
+        .unwrap();
+        std::fs::write(&note, &merged).unwrap();
+        drop(held);
+        let prepared = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(prepared.note_hash.as_deref(), Some(new_hash.as_str()));
+        assert_eq!(
+            store
+                .get_report_file(&path_string(&note))
+                .await
+                .unwrap()
+                .unwrap()
+                .hash,
+            new_hash
+        );
+        assert!(
+            read_receipt(store.as_ref(), &path_string(&note))
+                .await
+                .unwrap()
+                .unwrap()
+                .committed
+        );
+    }
+
+    #[tokio::test]
+    async fn lost_success_response_retry_returns_the_committed_receipt_without_appending() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let db = dir.path().join("memory.sqlite");
+        let note = seed_note(&folder);
+        let store = Arc::new(file_store_with_folder(&db, &folder).await);
+        let selection = seed_selection(store.as_ref()).await;
+        let proposal = prepare(store.as_ref(), &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        let first = owned_confirm(Arc::clone(&store), proposal.clone())
+            .await
+            .unwrap();
+        assert!(!first.conflict);
+        let written = std::fs::read_to_string(&note).unwrap();
+        // The caller lost the first response; the same proposal is retried.
+        let retry = owned_confirm(Arc::clone(&store), proposal).await.unwrap();
+        assert!(!retry.conflict);
+        assert_eq!(retry.hash, first.hash);
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), written);
+        assert_eq!(written.matches("Adopt the weekly cadence").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn recovery_does_not_false_success_a_different_selection_or_date() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let db = dir.path().join("memory.sqlite");
+        let note = seed_note(&folder);
+        let store = file_store_with_folder(&db, &folder).await;
+        let selection = seed_selection(&store).await;
+        let proposal = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        sql(
+            &db,
+            r#"CREATE TRIGGER fail_owner_write BEFORE INSERT ON report_files
+               BEGIN SELECT RAISE(ABORT, 'injected ownership failure'); END;"#,
+        );
+        assert_eq!(
+            confirm(&store, &proposal).await.unwrap_err().code,
+            "STORE_ERROR"
+        );
+        sql(&db, "DROP TRIGGER fail_owner_write;");
+        let written = std::fs::read_to_string(&note).unwrap();
+        let mut different = proposal.clone();
+        different.entry_date = "2026-10-13".into();
+        let receipt = confirm(&store, &different).await.unwrap();
+        assert!(
+            receipt.conflict,
+            "same old hash and run but a different date/selection must not inherit success"
+        );
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), written);
+        assert_eq!(written.matches("Adopt the weekly cadence").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn switching_output_folder_keeps_the_other_target_intent_recoverable() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder_a = dir.path().join("vault-a");
+        let folder_b = dir.path().join("vault-b");
+        let db = dir.path().join("memory.sqlite");
+        let note_a = seed_note(&folder_a);
+        seed_note(&folder_b);
+        let store = file_store_with_folder(&db, &folder_a).await;
+        let selection = seed_selection(&store).await;
+        let proposal_a = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        let (merged_a, new_a) = merged_for(&store, &selection, &proposal_a).await;
+        write_intent(
+            &store,
+            &PromotionIntent {
+                path: path_string(&note_a),
+                source_id: "source-fixture".into(),
+                run_id: proposal_a.run_id.clone(),
+                old_hash: proposal_a.note_hash.clone().unwrap(),
+                new_hash: new_a.clone(),
+                fingerprint: promotion_fingerprint(&selection, &proposal_a.entry_date),
+                committed: false,
+            },
+        )
+        .await
+        .unwrap();
+        std::fs::write(&note_a, &merged_a).unwrap();
+        // Switch to another folder and confirm a new promotion there. It must
+        // not overwrite the unresolved intent for the first exact target.
+        store
+            .set_setting(
+                OUTPUT_FOLDER,
+                &serde_json::to_string(&Some(path_string(&folder_b))).unwrap(),
+            )
+            .await
+            .unwrap();
+        let proposal_b = prepare(&store, &selection, 1_760_000_000_000)
+            .await
+            .unwrap();
+        assert!(!confirm(&store, &proposal_b).await.unwrap().conflict);
+        let pending_a = read_intent(&store, &path_string(&note_a))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!pending_a.committed);
+        // Return to the first folder: the original intent still recovers.
+        store
+            .set_setting(
+                OUTPUT_FOLDER,
+                &serde_json::to_string(&Some(path_string(&folder_a))).unwrap(),
+            )
+            .await
+            .unwrap();
+        let receipt = confirm(&store, &proposal_a).await.unwrap();
+        assert!(!receipt.conflict);
+        assert_eq!(receipt.hash.as_deref(), Some(new_a.as_str()));
+        assert_eq!(std::fs::read_to_string(&note_a).unwrap(), merged_a);
+        assert_eq!(
+            store
+                .get_report_file(&path_string(&note_a))
+                .await
+                .unwrap()
+                .unwrap()
+                .hash,
+            new_a
+        );
+    }
+
+    #[tokio::test]
+    async fn confirmed_intent_recovers_before_a_pruned_source_run_is_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let db = dir.path().join("memory.sqlite");
+        let note = seed_note(&folder);
+        let store = file_store_with_folder(&db, &folder).await;
+        let selection = PromotionSelection {
+            run_id: "pruned-run".into(),
+            items: vec![PromotionItem {
+                section: PromotionSection::Decisions,
+                text: "Already promoted".into(),
+            }],
+        };
+        let proposal = PromotionProposal {
+            selection: selection.clone(),
+            run_id: selection.run_id.clone(),
+            note_path: Some(path_string(&note)),
+            note_exists: true,
+            note_hash: Some(content_hash(b"")),
+            entry_date: "2026-10-12".into(),
+            entries: vec![],
+        };
+        let landed = "# Launch\n\n## Decisions\n\n### 2026-10-12\n\n- Already promoted\n";
+        let landed_hash = content_hash(landed.as_bytes());
+        write_intent(
+            &store,
+            &PromotionIntent {
+                path: path_string(&note),
+                source_id: "source-fixture".into(),
+                run_id: selection.run_id.clone(),
+                old_hash: content_hash(b""),
+                new_hash: landed_hash.clone(),
+                fingerprint: promotion_fingerprint(&selection, &proposal.entry_date),
+                committed: false,
+            },
+        )
+        .await
+        .unwrap();
+        std::fs::write(&note, landed).unwrap();
+        // No report_runs row exists: only the durable intent can settle this.
+        let receipt = confirm(&store, &proposal).await.unwrap();
+        assert!(!receipt.conflict);
+        assert_eq!(receipt.hash.as_deref(), Some(landed_hash.as_str()));
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), landed);
+        assert_eq!(
+            store
+                .get_report_file(&path_string(&note))
+                .await
+                .unwrap()
+                .unwrap()
+                .hash,
+            landed_hash
+        );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn create_project_note_rejects_a_junction_without_external_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let external = dir.path().join("outside");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        std::fs::write(external.join("keep.txt"), "untouched").unwrap();
+        let link = folder.join("ScreenSearch");
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&external)
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "the regression needs a real junction, not a skipped test"
+        );
+        let store = store_with_folder(&folder).await;
+        let error = create_note(&store, "launch").await.unwrap_err();
+        assert_eq!(error.code, "FILE_CONFLICT");
+        assert!(
+            !external.join("Projects").exists(),
+            "the absent Projects directory must not be created through the junction"
+        );
+        assert_eq!(
+            std::fs::read(external.join("keep.txt")).unwrap(),
+            b"untouched"
+        );
+        assert!(project_notes(&folder).unwrap().is_empty());
     }
 }
