@@ -188,6 +188,11 @@ pub(super) async fn activation_values(
         return Ok(vec![]);
     };
     let mut values = vec![reset];
+    // Only an enabled prior lane can have missed weeks: a re-enable starts a future
+    // activation period and never backfills or claims the disabled interval (`03 §8c`).
+    if !old.weekly_enabled {
+        return Ok(values);
+    }
     if let (Some(previous), Some(zone), Some(time)) = (
         load_state(store).await?,
         old.weekly_timezone.as_deref(),
@@ -655,6 +660,33 @@ mod tests {
         assert!(
             missed[0].end <= now,
             "the open activation week is not already missed"
+        );
+        let reset = load_state(&store).await.unwrap().unwrap();
+        assert_ne!(reset.schedule_id, previous.schedule_id);
+        assert_eq!(reset.activated_at, now);
+        assert!(reset.last_window_end.is_none());
+    }
+
+    #[tokio::test]
+    async fn weekly_reenable_does_not_record_disabled_weeks_as_missed() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let mut old = weekly_config();
+        old.weekly_enabled = false;
+        // A disable keeps the prior state, time and zone; only the enable flag changes.
+        let previous = WeeklyScheduleState {
+            schedule_id: "disabled-weekly".into(),
+            activated_at: stamp("2026-08-03T00:00:00Z"),
+            last_window_end: Some(stamp("2026-08-30T22:00:00Z")),
+        };
+        save_state(&store, &previous).await.unwrap();
+        let new = weekly_config();
+        let now = stamp("2026-10-28T12:00:00Z");
+        let mut values = settings_values(&new).unwrap();
+        values.extend(activation_values(&store, &old, &new, now).await.unwrap());
+        store.set_settings_batch(&values).await.unwrap();
+        assert!(
+            gaps(&store).await.unwrap().is_empty(),
+            "weeks inside an intentionally disabled period are not missed"
         );
         let reset = load_state(&store).await.unwrap().unwrap();
         assert_ne!(reset.schedule_id, previous.schedule_id);
