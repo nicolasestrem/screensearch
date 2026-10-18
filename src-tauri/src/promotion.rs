@@ -2459,7 +2459,25 @@ mod tests {
         let folder = dir.path().join("vault");
         let db = dir.path().join("memory.sqlite");
         let note = seed_note(&folder);
-        let path = path_string(&note);
+        let identity = note_identity(&note);
+        // Look the row up through a spelling that is deliberately NOT the key
+        // (a case change plus a `.` component). Relying on the tempdir's own
+        // spelling differing from its canonical form is what let this test pass
+        // on a host where the two coincide and fail on one where they do not:
+        // the identity lookup must be exercised, never assumed.
+        let respelled_note = Path::new(&format!("{}/.", path_string(&folder).to_lowercase()))
+            .join("ScreenSearch")
+            .join("Projects")
+            .join("launch.md");
+        let respelled = NoteTarget::resolve(&respelled_note);
+        assert_eq!(
+            respelled.identity, identity,
+            "an equivalent spelling must resolve to one identity"
+        );
+        assert_ne!(
+            respelled.path, respelled.identity,
+            "this test must exercise the identity lookup, not the spelling"
+        );
         let store = file_store_with_folder(&db, &folder).await;
         let selection = seed_selection(&store).await;
         let first = prepare(&store, &selection, 1_760_000_000_000)
@@ -2469,7 +2487,11 @@ mod tests {
         let proposal = prepare(&store, &selection, 1_760_000_000_000)
             .await
             .unwrap();
-        let old_owner = store.get_report_file(&path).await.unwrap().unwrap();
+        let old_owner = store
+            .get_report_file(&respelled.identity)
+            .await
+            .unwrap()
+            .unwrap();
         sql(
             &db,
             r#"CREATE TRIGGER fail_owner_write BEFORE INSERT ON report_files
@@ -2482,7 +2504,12 @@ mod tests {
         let written = std::fs::read_to_string(&note).unwrap();
         assert_eq!(written.matches("Adopt the weekly cadence").count(), 2);
         assert_eq!(
-            store.get_report_file(&path).await.unwrap().unwrap().hash,
+            store
+                .get_report_file(&respelled.identity)
+                .await
+                .unwrap()
+                .unwrap()
+                .hash,
             old_owner.hash
         );
         assert_ne!(old_owner.hash, content_hash(written.as_bytes()));
@@ -2495,7 +2522,12 @@ mod tests {
             .unwrap();
         assert_eq!(preview.note_hash, retry.hash);
         assert_eq!(
-            store.get_report_file(&path).await.unwrap().unwrap().hash,
+            store
+                .get_report_file(&respelled.identity)
+                .await
+                .unwrap()
+                .unwrap()
+                .hash,
             content_hash(written.as_bytes())
         );
     }
