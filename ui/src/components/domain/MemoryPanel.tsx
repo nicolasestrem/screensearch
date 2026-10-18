@@ -7,6 +7,7 @@ import type { ReportDelivery } from "../../bindings/ReportDelivery";
 import type { ReportResponse } from "../../bindings/ReportResponse";
 import type { ReportRun } from "../../bindings/ReportRun";
 import * as cmd from "../../lib/ipc/commands";
+import { savedRunFooterScope } from "../../lib/reportFooter";
 import {
   memoryError, useMemoryDeliveries, useMemoryMutation, useMemoryRun,
   useMemoryRuns, useMemorySchedulePreview, useMemoryStatus, useSetMemorySettings,
@@ -156,7 +157,8 @@ function RunDetails({ runId }: { runId: string }) {
         {savedReport && run.result && <>
           <p className={run.outcome === "PARTIAL" ? "text-warn" : "text-ink-muted"}>
             {run.outcome === "PARTIAL" && "Partial coverage. "}
-            {run.result.frames_summarized} of {run.result.frames_sampled} sampled frames summarized;
+            {run.result.frames_summarized} frames summarized;{" "}
+            {run.result.frames_sampled} frames sampled;
             {" "}{run.result.periods_covered}/{run.result.periods_total} periods covered.
             {run.result.truncated && " Output was bounded or truncated."} Sampling is not exhaustive capture.
           </p>
@@ -172,10 +174,7 @@ function RunDetails({ runId }: { runId: string }) {
                 request={null}
                 run={run}
                 showFooter={false}
-                footerScope={{
-                  timeRange: { start: run.window_start, end: run.window_end },
-                  activeFilter: run.kind === "weekly_synthesis" ? "weekly synthesis" : "daily report",
-                }}
+                footerScope={savedRunFooterScope(run)}
                 onOpenFrame={(frameId) => navigate(`/timeline/${frameId}`)}
               />
               <p className="text-caption break-words">Frames: {run.result.frame_ids.join(", ") || "none"}</p>

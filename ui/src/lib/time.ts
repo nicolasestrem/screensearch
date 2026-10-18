@@ -25,6 +25,27 @@ const dateFmt = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
 });
+
+// One date formatter per explicitly requested zone, built on demand. A saved report's
+// window belongs to the zone persisted with the run (`03 §8c`: a later machine-timezone
+// change does not move it), so its footer must not be dated in whatever zone the
+// computer is in now.
+const zonedDateFmts = new Map<string, Intl.DateTimeFormat>();
+
+function dateFmtFor(timeZone?: string): Intl.DateTimeFormat {
+  if (!timeZone) return dateFmt;
+  const cached = zonedDateFmts.get(timeZone);
+  if (cached) return cached;
+  const fmt = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone,
+  });
+  zonedDateFmts.set(timeZone, fmt);
+  return fmt;
+}
+
 const clockFmt = new Intl.DateTimeFormat(undefined, {
   hour: "2-digit",
   minute: "2-digit",
@@ -53,9 +74,13 @@ export function absoluteTime(ms: number): string {
   return dateTimeFmt.format(new Date(ms));
 }
 
-/** Date only, e.g. "Jun 22, 2026". */
-export function absoluteDate(ms: number): string {
-  return dateFmt.format(new Date(ms));
+/**
+ * Date only, e.g. "Jun 22, 2026". `timeZone` (an IANA identifier) dates the instant in
+ * that zone instead of the browser's; omitting it keeps the local-time behaviour every
+ * non-saved-report caller relies on.
+ */
+export function absoluteDate(ms: number, timeZone?: string): string {
+  return dateFmtFor(timeZone).format(new Date(ms));
 }
 
 /** Clock time only, e.g. "14:32" — compact timeline / tile labels (mono). */

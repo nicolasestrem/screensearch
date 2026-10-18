@@ -525,10 +525,16 @@ async fn generate_report_scoped(
 
 /// One day of weekly synthesis material (`03 §8e`): either a group to summarize from that
 /// day's recorded evidence, or — when none of it is still readable — the saved daily
-/// prose carried as a pre-computed section node.
+/// prose carried as a pre-computed section node, together with the evidence IDs that
+/// daily still records. The carried IDs keep the day's provenance in the week's cited
+/// set after retention removed the raw frames.
 enum WeeklyMaterial {
     Group(Group),
-    Saved { date: String, text: String },
+    Saved {
+        date: String,
+        text: String,
+        frame_ids: Vec<i64>,
+    },
 }
 
 /// Weekly synthesis (`03 §8e`): one report over a week's saved daily reports, running
@@ -623,6 +629,7 @@ pub async fn generate_weekly_synthesis(
                 materials.push(WeeklyMaterial::Saved {
                     date: date.clone(),
                     text: format!("{label}: {prose}"),
+                    frame_ids: result.frame_ids.clone(),
                 });
             }
         } else {
@@ -729,8 +736,22 @@ pub async fn generate_weekly_synthesis(
     let mut done: u32 = 0;
     for material in materials {
         match material {
-            WeeklyMaterial::Saved { date, text } => {
+            WeeklyMaterial::Saved {
+                date,
+                text,
+                frame_ids,
+            } => {
                 consumed_saved_dates.insert(date);
+                // `03 §8e`: the week consumed this daily's synthesis, so the evidence IDs
+                // that daily still records stay in the week's full frame-ID union even
+                // though retention removed the text. They are provenance carried by the
+                // saved prose, not re-read evidence: `frames_sampled` below stays
+                // Group-only.
+                for id in frame_ids {
+                    if !union.contains(&id) {
+                        union.push(id);
+                    }
+                }
                 nodes.push(text);
             }
             WeeklyMaterial::Group(group) => {
@@ -905,20 +926,291 @@ pub(crate) fn weekly_consumed_dailies(
         .collect())
 }
 
-/// `03 §8e` citation rule: a weekly report citing no daily run for a day it describes is
-/// a defect. Whether the generated markdown actually cites at least one consumed daily
-/// run ID — the post-generation check the service enforces as `GENERATION_FAILED`, so
-/// uncited prose is never persisted as a successful synthesis. An ID counts only as a
-/// whole token: a match embedded in a longer identifier is not a citation.
-pub(crate) fn weekly_cites_consumed_daily(markdown: &str, consumed: &[ReportRun]) -> bool {
+/// The four promotable weekly headings (`03 §8e`), in report order. Promotion reads
+/// top-level `- ` items under exactly these headings (`src-tauri/src/promotion.rs`),
+/// so the citation check validates the same items the user can later promote.
+const WEEKLY_PROMOTABLE_HEADINGS: [&str; 4] = [
+    "Activity",
+    "Explicitly evidenced decisions",
+    "Open questions",
+    "Next steps",
+];
+
+/// One consumed day's provenance tokens: the daily run IDs that own the day (a base run
+/// and its revisions all own it) plus the frame and session IDs their saved reports
+/// record. A saved daily whose raw evidence was pruned still contributes its recorded
+/// IDs — retention must not erase provenance the source daily still carries.
+#[derive(Default)]
+struct WeeklyDayProvenance<'a> {
+    run_ids: Vec<&'a str>,
+    frame_ids: Vec<i64>,
+    session_ids: Vec<i64>,
+}
+
+impl WeeklyDayProvenance<'_> {
+    /// Whether `text` cites at least one of this day's provenance tokens.
+    fn cited_in(&self, text: &str) -> bool {
+        self.run_ids.iter().any(|id| mentions_run_id(text, id))
+            || self
+                .frame_ids
+                .iter()
+                .any(|id| mentions_numeric_id(text, *id))
+            || self
+                .session_ids
+                .iter()
+                .any(|id| mentions_numeric_id(text, *id))
+    }
+}
+
+/// The consumed dailies' provenance, keyed by the local date each run owns.
+fn weekly_day_provenance(
+    consumed: &[ReportRun],
+) -> std::collections::BTreeMap<String, WeeklyDayProvenance<'_>> {
+    let mut days: std::collections::BTreeMap<String, WeeklyDayProvenance<'_>> =
+        std::collections::BTreeMap::new();
+    for run in consumed {
+        let Some(result) = &run.result else {
+            continue;
+        };
+        let day = days.entry(run.local_date.clone()).or_default();
+        if !run.run_id.is_empty() && !day.run_ids.contains(&run.run_id.as_str()) {
+            day.run_ids.push(run.run_id.as_str());
+        }
+        for id in &result.frame_ids {
+            if !day.frame_ids.contains(id) {
+                day.frame_ids.push(*id);
+            }
+        }
+        for id in &result.session_ids {
+            if !day.session_ids.contains(id) {
+                day.session_ids.push(*id);
+            }
+        }
+    }
+    days
+}
+
+/// Whole-token match for an opaque ID (daily run ID, UUID): a match embedded in a
+/// longer identifier (`xdaily-7`, `daily-70`) is not a citation.
+fn mentions_run_id(text: &str, id: &str) -> bool {
     let is_id_char = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
-    consumed.iter().any(|run| {
-        !run.run_id.is_empty()
-            && markdown.match_indices(run.run_id.as_str()).any(|(at, id)| {
-                let before = markdown[..at].chars().next_back();
-                let after = markdown[at + id.len()..].chars().next();
-                !before.is_some_and(is_id_char) && !after.is_some_and(is_id_char)
-            })
+    text.match_indices(id).any(|(at, matched)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + matched.len()..].chars().next();
+        !before.is_some_and(is_id_char) && !after.is_some_and(is_id_char)
+    })
+}
+
+/// Whole-number match for a frame or session ID: only an adjacent digit makes it part
+/// of a larger number, so `frame 101`, `[101]` and `101, 102` all cite 101.
+fn mentions_numeric_id(text: &str, id: i64) -> bool {
+    let id = id.to_string();
+    text.match_indices(id.as_str()).any(|(at, matched)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + matched.len()..].chars().next();
+        !before.is_some_and(|c| c.is_ascii_digit()) && !after.is_some_and(|c| c.is_ascii_digit())
+    })
+}
+
+/// Whether `text` names a consumed local date as a date token — `2026-10-12` but not the
+/// date part of an RFC3339 timestamp (`2026-10-12T…`) or a longer word.
+fn mentions_local_date(text: &str, date: &str) -> bool {
+    text.match_indices(date).any(|(at, matched)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + matched.len()..].chars().next();
+        !before.is_some_and(|c| c.is_ascii_alphanumeric())
+            && !after.is_some_and(|c| c.is_ascii_alphanumeric())
+    })
+}
+
+/// ATX heading text without the closing hashes Markdown permits (`## Activity ##`),
+/// matching the promotion parser (`src-tauri/src/memory_files.rs::heading_title`).
+fn weekly_heading_title(line: &str) -> Option<&str> {
+    let rest = line
+        .strip_prefix("## ")
+        .or_else(|| line.strip_prefix("##\t"))?;
+    let trimmed = rest.trim_end();
+    let without_hashes = trimmed.trim_end_matches('#');
+    if without_hashes.len() == trimmed.len() {
+        return Some(trimmed);
+    }
+    let head = without_hashes.trim_end();
+    if head.len() == without_hashes.len() {
+        // No whitespace before the hashes: they are part of the title, not a close.
+        return Some(trimmed);
+    }
+    Some(head)
+}
+
+/// A Markdown fenced-code region, with the same delimiter rules as the promotion and UI
+/// parsers: a `## heading` or `- item` inside a fence is content, never a boundary.
+#[derive(Default)]
+struct WeeklyFence {
+    open: Option<(char, usize)>,
+}
+
+impl WeeklyFence {
+    /// True for a delimiter line and for every line inside the fenced region.
+    fn contains_line(&mut self, line: &str) -> bool {
+        let Some((character, length, rest)) = weekly_fence_delimiter(line) else {
+            return self.open.is_some();
+        };
+        match self.open {
+            None => {
+                // A backtick fence's info string cannot contain a backtick
+                // (CommonMark), so such a line is an inline code span, not an opener.
+                if character == '`' && rest.contains('`') {
+                    return false;
+                }
+                self.open = Some((character, length));
+                true
+            }
+            Some((opened, opened_length)) => {
+                if character == opened && length >= opened_length && rest.trim().is_empty() {
+                    self.open = None;
+                }
+                true
+            }
+        }
+    }
+}
+
+/// `(fence character, run length, text after the run)` for a line that could open or
+/// close a fenced block; `None` for every other line.
+fn weekly_fence_delimiter(line: &str) -> Option<(char, usize, &str)> {
+    let line = line.trim_end_matches(['\r', '\n']);
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    if indent > 3 {
+        return None;
+    }
+    let rest = &line[indent..];
+    let character = rest.chars().next()?;
+    if character != '`' && character != '~' {
+        return None;
+    }
+    let length = rest.chars().take_while(|c| *c == character).count();
+    if length < 3 {
+        return None;
+    }
+    Some((character, length, &rest[length..]))
+}
+
+/// The generated markdown's non-fenced lines — the only lines a claim can live on.
+fn weekly_body_lines(markdown: &str) -> Vec<&str> {
+    let mut fence = WeeklyFence::default();
+    markdown
+        .lines()
+        .filter(|line| !fence.contains_line(line))
+        .collect()
+}
+
+/// Every top-level `- ` item in the generated markdown, fence-aware — the unit a weekly
+/// claim is written as (and the unit promotion can carry).
+fn weekly_items(markdown: &str) -> Vec<String> {
+    let mut fence = WeeklyFence::default();
+    markdown
+        .lines()
+        .filter_map(|line| {
+            if fence.contains_line(line) {
+                return None;
+            }
+            line.trim_end()
+                .strip_prefix("- ")
+                .filter(|text| !text.is_empty())
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// The top-level `- ` items under the four promotable headings, read exactly like the
+/// promotion parser: headings case-insensitive with closing hashes tolerated, fenced
+/// content skipped, a top-level `# ` heading ending the section.
+fn weekly_promotable_items(markdown: &str) -> Vec<String> {
+    let mut current = false;
+    let mut fence = WeeklyFence::default();
+    let mut items = Vec::new();
+    for line in markdown.lines() {
+        let line = line.trim_end();
+        if fence.contains_line(line) {
+            continue;
+        }
+        if let Some(title) = weekly_heading_title(line) {
+            current = WEEKLY_PROMOTABLE_HEADINGS
+                .iter()
+                .any(|heading| title.trim().eq_ignore_ascii_case(heading));
+            continue;
+        }
+        if line == "#" || line.starts_with("# ") {
+            current = false;
+            continue;
+        }
+        if !current {
+            continue;
+        }
+        if let Some(text) = line.strip_prefix("- ") {
+            if !text.is_empty() {
+                items.push(text.to_string());
+            }
+        }
+    }
+    items
+}
+
+/// Whether one promotable item is traceable (`03 §8e`): an item that names a consumed
+/// local date must cite that day's provenance; an item that names no date must cite at
+/// least one consumed day's. An item naming a date that no consumed daily owns has no
+/// token to demand and falls back to the general rule.
+fn weekly_item_is_traceable(
+    item: &str,
+    days: &std::collections::BTreeMap<String, WeeklyDayProvenance<'_>>,
+) -> bool {
+    let mut names_day = false;
+    for (date, day) in days {
+        if mentions_local_date(item, date) {
+            names_day = true;
+            if !day.cited_in(item) {
+                return false;
+            }
+        }
+    }
+    names_day || days.values().any(|day| day.cited_in(item))
+}
+
+/// `03 §8e` citation rule: a weekly report citing no daily run for a day it describes is
+/// a defect. Every top-level item under the four promotable headings (`Activity`,
+/// `Explicitly evidenced decisions`, `Open questions`, `Next steps`) must cite at least
+/// one consumed provenance token — a daily run ID, or a frame or session ID recorded by
+/// that day's saved report — and an item naming a day must cite that day's token. Any
+/// top-level item naming a consumed local date is a day claim and must cite the same day.
+/// The service enforces the result as `GENERATION_FAILED`, so uncited prose is never
+/// persisted as a successful synthesis. Run IDs count only as whole tokens; frame and
+/// session IDs only when not part of a larger number.
+pub(crate) fn weekly_cites_consumed_daily(markdown: &str, consumed: &[ReportRun]) -> bool {
+    let days = weekly_day_provenance(consumed);
+    if days.is_empty() {
+        return false;
+    }
+    let body = weekly_body_lines(markdown);
+    // The note as a whole still cites at least one consumed daily run: frame/session
+    // tokens alone must not let a synthesis with no promotable items pass.
+    if !days.values().any(|day| {
+        day.run_ids
+            .iter()
+            .any(|id| body.iter().any(|line| mentions_run_id(line, id)))
+    }) {
+        return false;
+    }
+    if weekly_promotable_items(markdown)
+        .iter()
+        .any(|item| !weekly_item_is_traceable(item, &days))
+    {
+        return false;
+    }
+    // Each day claim: an item that names a consumed local date must cite that day. Prose
+    // (a window-bounds line, a section banner) is not an item and cannot be promoted.
+    !weekly_items(markdown).iter().any(|item| {
+        days.iter()
+            .any(|(date, day)| mentions_local_date(item, date) && !day.cited_in(item))
     })
 }
 
@@ -1007,8 +1299,9 @@ fn weekly_final_instruction(label: &str, start: i64, end: i64) -> String {
          Open questions, and Next steps. Every item must cite the IDs it rests on — the daily run \
          ID of each day it describes, plus the frame and session IDs it relied on — and never \
          describe a day without citing that day's daily run. Include only supported facts; never \
-         state tentative screen text as a commitment. If a section has no evidence, say so. Use \
-         the exact week bounds rather than relative claims about this week.",
+         state tentative screen text as a commitment. If a section has no evidence, say so in a \
+         plain sentence rather than a bullet item. Use the exact week bounds rather than relative \
+         claims about this week.",
         timestamp(start),
         timestamp(end)
     )
@@ -2241,6 +2534,132 @@ mod tests {
         assert!(!weekly_cites_consumed_daily("anything", &[run("")]));
     }
 
+    /// Two saved dailies with distinct run, frame and session provenance, one on each of
+    /// the week's first two local dates. Expectations are derived from the fixture, never
+    /// restated as literals.
+    fn two_cited_days() -> (Vec<ReportRun>, Vec<String>) {
+        let (start, _) = week_bounds();
+        let dates = week_dates();
+        let mut first = weekly_run(
+            "daily-first",
+            start,
+            start + DAY_MS,
+            &dates[0],
+            vec![101, 102],
+            false,
+            ReportOutcome::Ok,
+        );
+        first.result.as_mut().unwrap().session_ids = vec![7_701, 7_702];
+        let mut second = weekly_run(
+            "daily-second",
+            start + DAY_MS,
+            start + 2 * DAY_MS,
+            &dates[1],
+            vec![201, 202],
+            false,
+            ReportOutcome::Ok,
+        );
+        second.result.as_mut().unwrap().session_ids = vec![7_801];
+        (vec![first, second], dates)
+    }
+
+    /// `03 §8e`: every top-level item under the four promotable headings must cite a
+    /// consumed provenance token — a daily run ID, or a frame or session ID from that
+    /// day's saved report — and an item naming a day must cite that day.
+    #[test]
+    fn weekly_citation_check_accepts_each_item_carrying_day_provenance() {
+        let (consumed, dates) = two_cited_days();
+        let first = &consumed[0];
+        let second = &consumed[1];
+        let second_frames = &second.result.as_ref().unwrap().frame_ids;
+        let second_sessions = &second.result.as_ref().unwrap().session_ids;
+        let markdown = format!(
+            "## Activity\n\n\
+             - shipped the parser (daily run {})\n\
+             - reviewed the queue (frame {})\n\n\
+             ## Explicitly evidenced decisions\n\n\
+             - {}: adopt the weekly cadence (daily run {})\n\n\
+             ## Open questions\n\n\
+             - {}: keep exports local (session {})\n\n\
+             ## Next steps\n\n\
+             - wire promotion (daily run {})\n",
+            first.run_id,
+            second_frames[0],
+            dates[0],
+            first.run_id,
+            dates[1],
+            second_sessions[0],
+            second.run_id,
+        );
+        assert!(weekly_cites_consumed_daily(&markdown, &consumed));
+
+        // A day claim citing only another day's run is still uncited: the token must
+        // come from the day the item names.
+        let wrong_day = format!(
+            "## Activity\n\n- {}: adopt the cadence (daily run {})\n",
+            dates[1], first.run_id
+        );
+        assert!(!weekly_cites_consumed_daily(&wrong_day, &consumed));
+    }
+
+    /// `03 §8e`: one cited item does not license the rest. A document-level match is not
+    /// enough — the service must refuse the synthesis as `GENERATION_FAILED`.
+    #[tokio::test]
+    async fn weekly_uncited_item_is_generation_failed() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        let dates = week_dates();
+        // No live evidence, so both days are carried as saved prose; the answer below is
+        // the markdown the final pass produces, and only its first item is cited.
+        let runs: Vec<ReportRun> = (0..2)
+            .map(|offset| {
+                let day_start = start + offset as i64 * DAY_MS;
+                weekly_run(
+                    &format!("daily-{}", dates[offset]),
+                    day_start,
+                    day_start + DAY_MS,
+                    &dates[offset],
+                    Vec::new(),
+                    false,
+                    ReportOutcome::Ok,
+                )
+            })
+            .collect();
+        for run in &runs {
+            store.create_report_run(run.clone()).await.unwrap();
+        }
+        let markdown = format!(
+            "## Activity\n\n- shipped the parser (daily run {})\n- reviewed the queue\n",
+            runs[0].run_id
+        );
+        assert!(
+            !weekly_cites_consumed_daily(&markdown, &runs),
+            "one cited item must not satisfy the check for the whole document"
+        );
+        let answer = Arc::new(FixedMarkdownAnswer(markdown));
+        let result = execute_weekly(
+            &store,
+            WeeklyExecutionRequest {
+                start,
+                end,
+                timezone: "Etc/UTC",
+                config: cfg(),
+            },
+            move || {
+                let answer = answer.clone();
+                async move { Ok(answer as Arc<dyn AnswerProvider>) }
+            },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await;
+        let Err(err) = result else {
+            panic!("an uncited promotable item must not be saved as a successful synthesis");
+        };
+        assert_eq!(err.code, "GENERATION_FAILED");
+        assert!(err.message.contains("did not cite"));
+    }
+
     fn weekly_run(
         run_id: &str,
         start: i64,
@@ -2630,6 +3049,88 @@ mod tests {
         assert!(err.message.contains("no usable text"));
     }
 
+    /// `03 §8e`: a consumed day whose OCR text is gone is carried by its saved prose, but
+    /// the frame IDs that saved report still records must stay in the week's cited set.
+    /// `frames_sampled` deliberately keeps counting only the Group frames the week read.
+    #[tokio::test]
+    async fn weekly_saved_prose_carries_frame_ids_without_sampling_them() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        let dates = week_dates();
+        // Day one has readable evidence, so the week samples it as a Group.
+        let sampled = seed_day(&store, start + 1_000, 3).await;
+        store
+            .create_report_run(weekly_run(
+                "daily-sampled",
+                start,
+                start + DAY_MS,
+                &dates[0],
+                sampled.clone(),
+                false,
+                ReportOutcome::Ok,
+            ))
+            .await
+            .unwrap();
+        // Day two's frames are recorded by its saved daily, then retention removes them:
+        // no OCR text survives, so only the saved prose can carry the day's provenance.
+        let retained = seed_day(&store, start + DAY_MS + 1_000, 2).await;
+        store
+            .create_report_run(weekly_run(
+                "daily-retained",
+                start + DAY_MS,
+                start + 2 * DAY_MS,
+                &dates[1],
+                retained.clone(),
+                false,
+                ReportOutcome::Ok,
+            ))
+            .await
+            .unwrap();
+        for id in &retained {
+            store.delete_frame(*id).await.unwrap();
+        }
+        let answer = FakeAnswer {
+            calls: Arc::new(AtomicUsize::new(0)),
+            big: false,
+        };
+        let execution = execute_weekly(
+            &store,
+            WeeklyExecutionRequest {
+                start,
+                end,
+                timezone: "Etc/UTC",
+                config: cfg(),
+            },
+            || async { Ok(Arc::new(answer) as Arc<dyn AnswerProvider>) },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await
+        .unwrap();
+        // Sampling counts only the day whose text was actually read.
+        assert_eq!(execution.output.frames_sampled as usize, sampled.len());
+        // The saved daily's recorded frames stay in the full provenance set, and the
+        // frontmatter invariant still holds for the union.
+        assert_eq!(
+            execution.output.frames_summarized as usize,
+            execution.output.frame_ids.len()
+        );
+        for id in &retained {
+            assert!(
+                execution.output.frame_ids.contains(id),
+                "retention must not drop frame {id} from the weekly's frame IDs"
+            );
+            assert!(
+                execution.output.cited_frame_ids.contains(id),
+                "retention must not drop frame {id} from the weekly's cited set"
+            );
+        }
+        for id in &sampled {
+            assert!(execution.output.frame_ids.contains(id));
+        }
+        assert_eq!(execution.daily_run_ids.len(), 2);
+    }
+
     /// Records every summarize call's full model input (system + instruction + context
     /// texts/ids) and answers with prose that cites the fixture daily runs it was given —
     /// a stand-in for a model that follows the weekly citation rule.
@@ -2681,6 +3182,32 @@ mod tests {
 
     /// Adversarial prose: cites no consumed daily run at all.
     struct UncitedAnswer;
+
+    /// Returns a fixed markdown body from every summarization pass, so a test can put an
+    /// exact synthesis under the service-level citation check.
+    struct FixedMarkdownAnswer(String);
+
+    #[async_trait]
+    impl AnswerProvider for FixedMarkdownAnswer {
+        async fn answer(
+            &self,
+            _query: &str,
+            _context: &[RetrievedChunk],
+            _opts: AnswerOpts,
+            _tx: tokio::sync::mpsc::Sender<AnswerDelta>,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn summarize(
+            &self,
+            _system: &str,
+            _instruction: &str,
+            _context: &[RetrievedChunk],
+            _opts: AnswerOpts,
+        ) -> Result<(String, Vec<i64>)> {
+            Ok((self.0.clone(), Vec::new()))
+        }
+    }
 
     #[async_trait]
     impl AnswerProvider for UncitedAnswer {

@@ -1,5 +1,71 @@
 # 07 — Known Gaps
 
+## 2026-10-18 — Project-note ownership identity: open product decision (owner: agent; maintainer may override)
+
+- **A note that does not exist yet has no canonical identity.** `ReportFileOwnership` rows and the
+  internal promotion intent/receipt slots for the one project note are now keyed by
+  `promotion::note_identity`: the note's canonical Windows path, rendered with forward slashes and
+  without verbatim/device syntax, so every equivalent respelling of an existing note (`C:/Vault`,
+  `c:/vault`, `C:/Vault/.`, `C:\Vault`, `\\?\C:\Vault`) resolves to the same row and the same KV
+  slot. When `std::fs::canonicalize` fails — the note is absent, or the volume cannot be opened —
+  the identity falls back to the same rendering of the requested spelling, which removes duplicate
+  and trailing separators and `.` components but does **not** fold case and does **not** resolve
+  `..`. Two case-only spellings of a *missing* note therefore get different fallback identities.
+  That is the one unspecified product decision here, recorded instead of guessed: the alternative
+  (fold ASCII case in the fallback) could make two distinct files in an NTFS directory marked
+  case-sensitive share one ownership row, which `03 §8c`/`§8e` forbid. No promotion can adopt bytes
+  through the fallback: `prepare`/`confirm` read the note (or fail) before any ownership or intent
+  decision, and a note that cannot be read is never appended to. Decide only if a real flow needs an
+  identity for a note that does not exist yet.
+- **Pre-identity row and record keys are read only under the unchanged spelling.** A row or record
+  written by the previous build is keyed by the forward-slash path spelling, so `ownership` reads the
+  identity key first and then that exact spelling, and `read_record` does the same before checking
+  the record's stored path against the identity. That still finds a legacy key while the output
+  folder keeps its spelling (the common upgrade), but a legacy row keyed by an *old* spelling is
+  unreachable once the user respells the folder, and only the identity-keyed row this build writes
+  covers the note from then on. Closing that would need a table-wide rescan of `report_files` or a
+  one-time rewrite of legacy rows, neither of which this review fix introduces; it is deferred rather
+  than guessed. The stale spelling-keyed row is also left in place (no store-level delete exists and
+  no schema change is introduced). `owner_conflict` still compares source and live hash either way,
+  so a row that does not describe the live bytes refuses an append rather than authorizing one.
+
+## 2026-10-18 — Weekly per-item citation check and retention provenance
+
+- **A weekly "day claim" is a top-level `- ` item naming a consumed local date.** Every
+  top-level `- ` item under `Activity`, `Explicitly evidenced decisions`, `Open questions` and
+  `Next steps` must cite at least one token: a consumed daily run ID, or a frame or session ID
+  recorded by that day's saved report. An item naming a consumed date must cite *that* day's
+  token, not another day's. Prose lines (window bounds, banners) are not items and are not
+  checked. Items are the promotable unit, so a section with no evidence must say so in prose,
+  not as a bullet; the weekly framing now states that. `03 §8e` does not define citation syntax,
+  so a whole-number frame/session match counts (`frame 101`, `[101]`, `101, 102`) and a bare
+  number is accepted even when it was not meant as a citation.
+- **A retained-prose day keeps its recorded frame IDs.** `WeeklyMaterial::Saved` carries the
+  saved daily's `frame_ids` into the weekly's `frame_ids`/`frames_summarized` (the frontmatter
+  invariant requires `frame_ids.len() == frames_summarized`), so the note and a later
+  promotion's `frames —` line keep provenance the source daily still records. Those IDs are not
+  re-read evidence: `frames_sampled` still counts only Group frames, and `truncated` stays true
+  when recorded evidence could not be read. The `SavedReport` field shape is unchanged; for
+  weekly runs `frame_ids` reads as "frames the synthesis rests on", including a consumed day's
+  recorded frames it did not re-read.
+
+## 2026-10-18 — Saved-report export footer dates use the run's persisted zone
+
+- **A saved run's exported footer dates its window in `run.timezone`, not the computer's
+  current zone.** `MemoryPanel` builds the footer scope with `savedRunFooterScope(run)`, so
+  the half-open UTC `[window_start, window_end)` is labeled in the zone persisted with the
+  run (`03 §8c`: a later machine-timezone change does not move it) and the last covered
+  instant stays `window_end - 1`. A Tokyo daily window therefore exports the one
+  Tokyo-local date in the copied/downloaded markdown, not the two UTC-local dates the
+  machine happens to be in. The persisted `local_date` stays the source for the report
+  header's date, and `requested_range`/`window_local_dates` are not re-derived.
+- **On-demand reports and Session recap keep the browser-local span.** Their footer scope
+  carries no persisted run zone (`ReportFooterScope.timeZone` is absent), so
+  `absoluteDate` without a zone is unchanged for them and for the
+  Timeline/Insights/CapturesTrend labels. A valid IANA zone is assumed for a saved run: the
+  backend validates the identifier before persisting it and the run header already formats
+  `window_start`/`window_end` with it.
+
 ## 2026-10-18 — Post-install promotion conflict receipt
 
 - `PromotionReceipt.hash` is populated when the promotion's bytes are confirmed

@@ -33,8 +33,8 @@ use crate::{now_ms, AppState};
 /// Persisted memory setting holding the selected output folder (`03 §8c`).
 const OUTPUT_FOLDER: &str = "memory.schedule.output_folder";
 
-/// Internal KV prefix for one compact confirmed-write record per exact note:
-/// `memory.promotion.pending.<sha256(normalized path)>`. `"null"` means no
+/// Internal KV prefix for one compact confirmed-write record per note:
+/// `memory.promotion.pending.<sha256(note identity)>`. `"null"` means no
 /// pending intent; the keys are not settings/API surface and are never exposed
 /// to the UI or HTTP reads.
 const PROMOTION_INTENT: &str = "memory.promotion.pending";
@@ -71,6 +71,10 @@ static NOTE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// needed to decide whether the app's own write landed.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct PromotionIntent {
+    /// The note's stable identity (`NoteTarget::identity`), never the user's
+    /// spelling: the record slot, its read guard and the ownership row share it.
+    /// Records written by a previous build may still hold a path spelling; the
+    /// read guard resolves it to the same identity.
     path: String,
     source_id: String,
     run_id: String,
@@ -98,24 +102,127 @@ fn promotion_fingerprint(selection: &PromotionSelection, entry_date: &str) -> St
     content_hash(canonical.as_bytes())
 }
 
-/// Per-target internal KV slot, keyed by the normalized note path. One compact
-/// latest intent/receipt per note means switching output folders cannot
-/// overwrite an unresolved append for the previous exact target.
-fn record_key(prefix: &str, note_path: &str) -> String {
-    let normalized = note_path.replace('\\', "/");
-    format!("{prefix}.{}", content_hash(normalized.as_bytes()))
+/// The one project-note target, resolved once per call from the live scan.
+///
+/// `path` is the forward-slash spelling the selected output folder produces;
+/// proposals and receipts name the note that way (`03 §8c` path spelling).
+/// `identity` is the stable file identity that keys the note's ownership row and
+/// its internal promotion records, so an equivalent respelling of the same
+/// physical note resolves to the same row and the same KV slot instead of
+/// looking like a different, unowned note (PR #139 review).
+struct NoteTarget {
+    /// The live path as the scan returned it, used for every filesystem call so an
+    /// unusual (non-UTF-8) name is never re-spelled through a display string.
+    file: PathBuf,
+    path: String,
+    identity: String,
+}
+
+impl NoteTarget {
+    fn resolve(note: &Path) -> Self {
+        Self {
+            file: note.to_owned(),
+            path: path_string(note),
+            identity: note_identity(note),
+        }
+    }
+}
+
+/// The one path-identity rule for a project note (`03 §8c` memory path
+/// normalization correction, `03 §8e` project-note ownership).
+///
+/// The identity is the note's canonical path rendered with forward slashes and
+/// without verbatim/device syntax. `std::fs::canonicalize` resolves the request
+/// through the filesystem, so every spelling of the same directory entry —
+/// character case, `.`/`..` components, `/` vs `\`, a trailing separator, a
+/// `\\?\` or `\\.\` prefix — yields one identical string. The spelling the user
+/// typed is therefore never the key, and a respelled output folder cannot make
+/// the app's own note look unowned.
+///
+/// Case is deliberately not folded here: the canonical name already is the name
+/// the filesystem stores, so two distinct directory entries that differ only by
+/// case (possible only in a directory marked case-sensitive, e.g. through WSL)
+/// keep two distinct identities instead of silently sharing one ownership row.
+/// The note's own file name is lower-case by construction (`valid_slug`).
+/// Nothing else in the rule merges names either: the string is the final path of
+/// the file the OS actually opened, and the rendering below only re-spells
+/// separators and prefixes, so two different files cannot collapse into one
+/// identity.
+///
+/// A path that cannot be canonicalized falls back to the same rendering of the
+/// requested spelling: duplicate/trailing separators and `.` components are
+/// removed, while case and `..` are preserved. That branch is only reachable when
+/// the note does not resolve — absent, or unreadable — and every promotion path
+/// reads the note's bytes (or fails) before any ownership or intent decision, so a
+/// miss there can never adopt bytes. Which identity a note that does not exist yet
+/// should use is recorded in `specs/07_KNOWN_GAPS.md`.
+fn note_identity(path: &Path) -> String {
+    match std::fs::canonicalize(path) {
+        Ok(resolved) => identity_text(&path_string(&resolved)),
+        Err(_) => identity_text(&path_string(path)),
+    }
+}
+
+/// Render one path spelling as its identity. The rule is applied in this one
+/// place, so the canonical and fallback branches cannot drift apart.
+fn identity_text(text: &str) -> String {
+    let text = match text.strip_prefix("//?/UNC/") {
+        // `\\?\UNC\server\share` is `\\server\share`.
+        Some(rest) => format!("//{rest}"),
+        // `\\?\C:\...` and `\\.\C:\...` are the ordinary drive path.
+        None => match text
+            .strip_prefix("//?/")
+            .or_else(|| text.strip_prefix("//./"))
+        {
+            Some(rest) if is_drive_path(rest) => rest.to_string(),
+            _ => text.to_string(),
+        },
+    };
+    let root = if text.starts_with("//") {
+        "//"
+    } else if text.starts_with('/') {
+        "/"
+    } else {
+        ""
+    };
+    let components: Vec<&str> = text
+        .split('/')
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect();
+    format!("{root}{}", components.join("/"))
+}
+
+fn is_drive_path(text: &str) -> bool {
+    text.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+        && text.as_bytes().get(1) == Some(&b':')
+}
+
+/// Per-target internal KV slot, keyed by the note identity. One compact latest
+/// intent/receipt per note means switching output folders cannot overwrite an
+/// unresolved append for the previous target.
+fn record_key(prefix: &str, identity: &str) -> String {
+    format!("{prefix}.{}", content_hash(identity.as_bytes()))
 }
 
 async fn read_record(
     store: &dyn Store,
     prefix: &str,
-    note_path: &str,
+    target: &NoteTarget,
 ) -> Result<Option<PromotionIntent>, ReportError> {
-    let Some(raw) = store
-        .get_setting(&record_key(prefix, note_path))
+    let mut raw = store
+        .get_setting(&record_key(prefix, &target.identity))
         .await
-        .map_err(storage)?
-    else {
+        .map_err(storage)?;
+    if raw.is_none() && target.path != target.identity {
+        // A record written before the identity existed hashed the forward-slash
+        // spelling. It is still this note's record when it names the same file;
+        // every write below goes to the identity slot, which shadows it.
+        raw = store
+            .get_setting(&record_key(prefix, &target.path))
+            .await
+            .map_err(storage)?;
+    }
+    let Some(raw) = raw else {
         return Ok(None);
     };
     let raw = raw.trim();
@@ -124,60 +231,95 @@ async fn read_record(
     }
     let intent: PromotionIntent = serde_json::from_str(raw).map_err(storage)?;
     // A collision or a hand-edited key must never apply another note's record.
-    Ok((intent.path.as_str() == note_path).then_some(intent))
+    Ok(record_names_note(&intent, target).then_some(intent))
+}
+
+/// The record's stored path must name this note. A record written under an
+/// equivalent spelling resolves to the same identity; a different file never
+/// does, so a record can never be applied across notes.
+fn record_names_note(intent: &PromotionIntent, target: &NoteTarget) -> bool {
+    intent.path == target.identity || note_identity(Path::new(&intent.path)) == target.identity
 }
 
 async fn read_intent(
     store: &dyn Store,
-    note_path: &str,
+    target: &NoteTarget,
 ) -> Result<Option<PromotionIntent>, ReportError> {
-    read_record(store, PROMOTION_INTENT, note_path).await
+    read_record(store, PROMOTION_INTENT, target).await
 }
 
 async fn read_receipt(
     store: &dyn Store,
-    note_path: &str,
+    target: &NoteTarget,
 ) -> Result<Option<PromotionIntent>, ReportError> {
-    read_record(store, PROMOTION_RECEIPT, note_path).await
+    read_record(store, PROMOTION_RECEIPT, target).await
 }
 
 async fn write_record(
     store: &dyn Store,
     prefix: &str,
+    target: &NoteTarget,
     intent: &PromotionIntent,
 ) -> Result<(), ReportError> {
     let value = serde_json::to_string(intent).map_err(storage)?;
     store
-        .set_setting(&record_key(prefix, &intent.path), &value)
+        .set_setting(&record_key(prefix, &target.identity), &value)
         .await
         .map_err(storage)
 }
 
-async fn write_intent(store: &dyn Store, intent: &PromotionIntent) -> Result<(), ReportError> {
-    write_record(store, PROMOTION_INTENT, intent).await
+async fn write_intent(
+    store: &dyn Store,
+    target: &NoteTarget,
+    intent: &PromotionIntent,
+) -> Result<(), ReportError> {
+    write_record(store, PROMOTION_INTENT, target, intent).await
 }
 
 /// Promote a pending intent to the last committed receipt. Failure is harmless:
 /// the ownership row is already durable, and the next reconcile repeats this.
-async fn commit_intent(store: &dyn Store, intent: &PromotionIntent) {
+async fn commit_intent(store: &dyn Store, target: &NoteTarget, intent: &PromotionIntent) {
     let committed = PromotionIntent {
         committed: true,
         ..intent.clone()
     };
-    if write_record(store, PROMOTION_RECEIPT, &committed)
+    if write_record(store, PROMOTION_RECEIPT, target, &committed)
         .await
         .is_ok()
     {
-        clear_intent(store, &intent.path).await;
+        clear_intent(store, target).await;
     }
 }
 
 /// Clear a pre-write intent. Failure is harmless and idempotent: the next
 /// reconcile sees the same old bytes and repeats the clear.
-async fn clear_intent(store: &dyn Store, note_path: &str) {
+async fn clear_intent(store: &dyn Store, target: &NoteTarget) {
     let _ = store
-        .set_setting(&record_key(PROMOTION_INTENT, note_path), "null")
+        .set_setting(&record_key(PROMOTION_INTENT, &target.identity), "null")
         .await;
+}
+
+/// The persisted ownership row for this note (`03 §8c`/`§8e`). The identity key
+/// is authoritative; the spelling key is read only for a row written before the
+/// identity existed, or by a build that stored the user's spelling. Reading that
+/// row cannot widen the guard: `owner_conflict` compares the row's source and the
+/// live hash, never the path, so a row that does not describe this note refuses an
+/// append instead of authorizing one.
+async fn ownership(
+    store: &dyn Store,
+    target: &NoteTarget,
+) -> Result<Option<ReportFileOwnership>, ReportError> {
+    if let Some(owner) = store
+        .get_report_file(&target.identity)
+        .await
+        .map_err(storage)?
+    {
+        return Ok(Some(owner));
+    }
+    if target.path == target.identity {
+        return Ok(None);
+    }
+    store.get_report_file(&target.path).await.map_err(storage)
 }
 
 /// What a pending intent proves about the live note.
@@ -209,10 +351,10 @@ enum Recovery {
 /// repaired by the next reconcile.
 async fn reconcile_intent(
     store: &dyn Store,
-    note_path: &str,
+    target: &NoteTarget,
     current_hash: Option<&str>,
 ) -> Result<Recovery, ReportError> {
-    let pending = read_intent(store, note_path).await?;
+    let pending = read_intent(store, target).await?;
     let record = match pending {
         Some(intent)
             if !intent.committed
@@ -222,18 +364,18 @@ async fn reconcile_intent(
             // No writer can still be running under this guard. Discard a
             // pre-write interruption, but retain the prior successful receipt:
             // the caller may be retrying that earlier, already-landed append.
-            clear_intent(store, note_path).await;
-            read_receipt(store, note_path).await?
+            clear_intent(store, target).await;
+            read_receipt(store, target).await?
         }
         Some(intent) => Some(intent),
-        None => read_receipt(store, note_path).await?,
+        None => read_receipt(store, target).await?,
     };
     let Some(intent) = record else {
         return Ok(Recovery::None);
     };
     match current_hash {
         Some(current) if current == intent.new_hash.as_str() => {
-            match store.get_report_file(note_path).await.map_err(storage)? {
+            match ownership(store, target).await? {
                 Some(owner) if owner.source_id != intent.source_id => {
                     // Never move an intent across the ownership source boundary.
                     return Ok(Recovery::Edited);
@@ -245,7 +387,7 @@ async fn reconcile_intent(
                 _ => {
                     store
                         .save_report_file(ReportFileOwnership {
-                            path: note_path.to_string(),
+                            path: target.identity.clone(),
                             source_id: intent.source_id.clone(),
                             run_id: intent.run_id.clone(),
                             hash: intent.new_hash.clone(),
@@ -258,7 +400,7 @@ async fn reconcile_intent(
             if !intent.committed {
                 // The append landed but its ownership save did not finish. The
                 // last committed receipt lets a lost-response retry succeed.
-                commit_intent(store, &intent).await;
+                commit_intent(store, target, &intent).await;
             }
             Ok(Recovery::Applied {
                 old_hash: intent.old_hash,
@@ -271,7 +413,7 @@ async fn reconcile_intent(
             // The append never became visible. With the writer lock held, no
             // blocking append can still install these bytes, so the intent is
             // stale evidence and can be discarded without touching the note.
-            clear_intent(store, note_path).await;
+            clear_intent(store, target).await;
             Ok(Recovery::None)
         }
         // A committed receipt whose note was edited/reverted has no recovery
@@ -748,9 +890,8 @@ async fn prepare(
     let folder = output_folder(store).await?;
     let _guard = NOTE_LOCK.lock().await;
     let notes = project_notes(&folder)?;
-    let note = single_note(&notes)?;
-    let note_path = path_string(note);
-    let note_hash = read_owned(note)
+    let target = NoteTarget::resolve(single_note(&notes)?);
+    let note_hash = read_owned(&target.file)
         .await
         .map_err(read_error)?
         .map(|bytes| content_hash(&bytes));
@@ -758,7 +899,7 @@ async fn prepare(
     // Reconcile that app-owned write from the intent first; otherwise the old
     // row would permanently reject the retry as if the user had edited the note.
     if matches!(
-        reconcile_intent(store, &note_path, note_hash.as_deref()).await?,
+        reconcile_intent(store, &target, note_hash.as_deref()).await?,
         Recovery::Edited
     ) {
         return Err(fail("FILE_CONFLICT", EDITED_AFTER_CONFIRM));
@@ -770,7 +911,7 @@ async fn prepare(
     // Fail closed before previewing when the note is already owned: the row's
     // source identity and hash must still describe the live bytes. An unowned
     // note remains adoptable on its first promotion.
-    if let Some(owner) = store.get_report_file(&note_path).await.map_err(storage)? {
+    if let Some(owner) = ownership(store, &target).await? {
         if let Some(error) = owner_conflict(&owner, &run, note_hash.as_deref()) {
             return Err(error);
         }
@@ -787,7 +928,7 @@ async fn prepare(
     Ok(PromotionProposal {
         selection: selection.clone(),
         run_id: run.run_id.clone(),
-        note_path: Some(note_path),
+        note_path: Some(target.path),
         note_exists: note_hash.is_some(),
         note_hash,
         entry_date: date,
@@ -828,22 +969,29 @@ async fn confirm(
     // dropped caller cannot release it while the append can still complete.
     let guard = NOTE_LOCK.lock().await;
     let notes = project_notes(&folder)?;
-    let note_path = path_string(single_note(&notes)?);
-    if proposal.note_path.as_deref() != Some(note_path.as_str()) {
+    let target = NoteTarget::resolve(single_note(&notes)?);
+    // The proposal is client-supplied, so its target is compared by identity: an
+    // equivalent respelling of the same note still matches, any other file (or a
+    // path that no longer resolves to this note) does not.
+    let proposed = proposal
+        .note_path
+        .as_deref()
+        .map(|path| note_identity(Path::new(path)));
+    if proposed.as_deref() != Some(target.identity.as_str()) {
         // The folder or the note changed since the preview (an honest delete race
         // lands here as a zero-note error above): the user re-prepares against the
         // current note instead of this call inventing or writing anywhere else.
         return Ok(conflict_receipt(
-            note_path,
+            target.path,
             "The project note changed since the preview; prepare the promotion again.",
             None,
         ));
     }
-    let current = match read_owned(Path::new(&note_path)).await {
+    let current = match read_owned(&target.file).await {
         Ok(current) => current,
         Err(error) if error.conflict => {
             return Ok(conflict_receipt(
-                note_path,
+                target.path,
                 &error.message,
                 error.recovery_path,
             ))
@@ -853,9 +1001,9 @@ async fn confirm(
     let current_hash = current.as_ref().map(|bytes| content_hash(bytes));
     // Recover a confirmed append before loading its source run: ownership and the
     // last-receipt tombstone must still settle after the run has been pruned.
-    match reconcile_intent(store, &note_path, current_hash.as_deref()).await? {
+    match reconcile_intent(store, &target, current_hash.as_deref()).await? {
         Recovery::Edited => {
-            return Ok(conflict_receipt(note_path, EDITED_AFTER_CONFIRM, None));
+            return Ok(conflict_receipt(target.path, EDITED_AFTER_CONFIRM, None));
         }
         Recovery::Applied {
             old_hash,
@@ -871,7 +1019,7 @@ async fn confirm(
             // confirmed append that already landed. Report its durable result
             // instead of appending the selection twice.
             return Ok(PromotionReceipt {
-                path: note_path,
+                path: target.path,
                 hash: Some(new_hash),
                 conflict: false,
                 error: None,
@@ -886,14 +1034,14 @@ async fn confirm(
     // The persisted row, not the client-supplied hash, decides whether this note
     // is still appendable. A forged proposal cannot adopt an edited note by
     // presenting the edited bytes' hash: the row's stored hash must match too.
-    if let Some(owner) = store.get_report_file(&note_path).await.map_err(storage)? {
+    if let Some(owner) = ownership(store, &target).await? {
         if let Some(error) = owner_conflict(&owner, &run, current_hash.as_deref()) {
-            return Ok(conflict_receipt(note_path, &error.message, None));
+            return Ok(conflict_receipt(target.path, &error.message, None));
         }
     }
     let Some(expected) = current_hash.filter(|hash| selection_hash == hash.as_str()) else {
         return Ok(conflict_receipt(
-            note_path,
+            target.path,
             "The project note changed since the preview; prepare the promotion again.",
             None,
         ));
@@ -904,7 +1052,7 @@ async fn confirm(
         .collect();
     let Some(current_bytes) = current.as_deref() else {
         return Ok(conflict_receipt(
-            note_path,
+            target.path,
             "The project note disappeared before it could be written; prepare the promotion again.",
             None,
         ));
@@ -913,7 +1061,7 @@ async fn confirm(
         Ok(existing) => existing,
         Err(_) => {
             return Ok(conflict_receipt(
-                note_path,
+                target.path,
                 "The project note is not valid UTF-8; it was not changed.",
                 None,
             ))
@@ -923,7 +1071,9 @@ async fn confirm(
     // post-write hash before the append becomes visible. This stores no text.
     let intended_hash = content_hash(merged_content(existing, &entries).as_bytes());
     let intent = PromotionIntent {
-        path: note_path.clone(),
+        // The identity, never the user's spelling: the record slot, its read
+        // guard and the ownership row all agree on this one key.
+        path: target.identity.clone(),
         source_id: run.source_id.clone(),
         run_id: run.run_id.clone(),
         old_hash: expected.clone(),
@@ -931,20 +1081,20 @@ async fn confirm(
         fingerprint,
         committed: false,
     };
-    if write_intent(store, &intent).await.is_err() {
+    if write_intent(store, &target, &intent).await.is_err() {
         // Fail before the filesystem has any side effect.
         return Err(fail(
             "STORE_ERROR",
             "The promotion could not be recorded before writing; nothing was written.",
         ));
     }
-    let target = Path::new(&note_path).to_owned();
+    let note_file = target.file.clone();
     // Native filesystem I/O is not cancellable. The blocking closure returns the
     // NOTE_LOCK guard with its result, so if this caller is dropped the detached
     // writer keeps the lock until it finishes; only then can the next
     // prepare/confirm reconcile the intent against settled bytes.
     let (_guard, write) = tokio::task::spawn_blocking(move || {
-        let write = append_entries_owned(&target, &entries, Some(expected.as_str()));
+        let write = append_entries_owned(&note_file, &entries, Some(expected.as_str()));
         (guard, write)
     })
     .await
@@ -958,7 +1108,7 @@ async fn confirm(
                     new_hash: receipt.hash.clone(),
                     ..intent.clone()
                 };
-                let _ = write_intent(store, &corrected).await;
+                let _ = write_intent(store, &target, &corrected).await;
             }
             // The ownership row is the note's write guard, not an attribution log
             // or a garbage-collection key: it stores the source identity and the
@@ -968,7 +1118,7 @@ async fn confirm(
             // the row survives run pruning and is replaced on every promotion.
             if store
                 .save_report_file(ReportFileOwnership {
-                    path: note_path.clone(),
+                    path: target.identity.clone(),
                     source_id: run.source_id.clone(),
                     run_id: run.run_id.clone(),
                     hash: receipt.hash.clone(),
@@ -988,9 +1138,9 @@ async fn confirm(
             // can then answer the same-old-hash/same-fingerprint retry without
             // appending again; a genuinely new explicit promotion has a new
             // snapshot hash and proceeds normally.
-            commit_intent(store, &intent).await;
+            commit_intent(store, &target, &intent).await;
             Ok(PromotionReceipt {
-                path: note_path,
+                path: target.path,
                 hash: Some(receipt.hash),
                 conflict: false,
                 error: None,
@@ -998,7 +1148,7 @@ async fn confirm(
             })
         }
         // `_guard` still holds NOTE_LOCK while the conflict is settled.
-        Err(error) if error.conflict => settle_conflict(store, note_path, &intent, error).await,
+        Err(error) if error.conflict => settle_conflict(store, &target, &intent, error).await,
         Err(error) => Err(fail("WRITE_FAILED", &error.message)),
     }
 }
@@ -1018,29 +1168,29 @@ const APPENDED_WITH_RECOVERY: &str = "The entries were appended, but the note ch
 /// appended nothing, and the intent stays for the next call to decide.
 async fn settle_conflict(
     store: &dyn Store,
-    note_path: String,
+    target: &NoteTarget,
     intent: &PromotionIntent,
     error: WriteFailure,
 ) -> Result<PromotionReceipt, ReportError> {
-    let live_hash = match read_owned(Path::new(&note_path)).await {
+    let live_hash = match read_owned(&target.file).await {
         Ok(Some(bytes)) => Some(content_hash(&bytes)),
         _ => None,
     };
     if live_hash.as_deref() != Some(intent.new_hash.as_str()) {
         return Ok(conflict_receipt(
-            note_path,
+            target.path.clone(),
             &error.message,
             error.recovery_path,
         ));
     }
-    match reconcile_intent(store, &note_path, live_hash.as_deref()).await {
+    match reconcile_intent(store, target, live_hash.as_deref()).await {
         Ok(Recovery::Applied {
             new_hash,
             fingerprint,
             ..
         }) if new_hash == intent.new_hash && fingerprint == intent.fingerprint => {
             Ok(PromotionReceipt {
-                path: note_path,
+                path: target.path.clone(),
                 hash: Some(new_hash),
                 conflict: true,
                 error: Some(fail("FILE_CONFLICT", APPENDED_WITH_RECOVERY)),
@@ -1395,7 +1545,11 @@ mod tests {
         );
         let owned = store.list_report_files().await.unwrap();
         assert_eq!(owned.len(), 1);
-        assert_eq!(owned[0].path, receipt.path);
+        assert_eq!(
+            owned[0].path,
+            note_identity(&note),
+            "the row persists the canonical note identity, not the folder spelling"
+        );
         assert_eq!(owned[0].run_id, run.run_id);
         assert_eq!(owned[0].source_id, run.source_id);
         assert_eq!(Some(owned[0].hash.clone()), receipt.hash);
@@ -1685,7 +1839,7 @@ mod tests {
         let receipt = confirm(&store, &first).await.unwrap();
         assert!(!receipt.conflict);
         let row = store
-            .get_report_file(&path_string(&note))
+            .get_report_file(&note_identity(&note))
             .await
             .unwrap()
             .expect("the first promotion records ownership");
@@ -1701,7 +1855,7 @@ mod tests {
         assert_eq!(std::fs::read(&note).unwrap(), edited.as_bytes().to_vec());
         assert_eq!(
             store
-                .get_report_file(&path_string(&note))
+                .get_report_file(&note_identity(&note))
                 .await
                 .unwrap()
                 .unwrap(),
@@ -1734,7 +1888,7 @@ mod tests {
             .await
             .unwrap();
         let row = store
-            .get_report_file(&path_string(&note))
+            .get_report_file(&note_identity(&note))
             .await
             .unwrap()
             .unwrap();
@@ -1754,7 +1908,7 @@ mod tests {
         assert_eq!(std::fs::read(&note).unwrap(), edited.as_bytes().to_vec());
         assert_eq!(
             store
-                .get_report_file(&path_string(&note))
+                .get_report_file(&note_identity(&note))
                 .await
                 .unwrap()
                 .unwrap(),
@@ -1776,7 +1930,7 @@ mod tests {
         assert_eq!(std::fs::read(&note).unwrap(), edited.as_bytes().to_vec());
         assert_eq!(
             store
-                .get_report_file(&path_string(&note))
+                .get_report_file(&note_identity(&note))
                 .await
                 .unwrap()
                 .unwrap(),
@@ -1825,7 +1979,7 @@ mod tests {
         let receipt = confirm(&store, &proposal).await.unwrap();
         assert!(!receipt.conflict);
         let row_after_second = store
-            .get_report_file(&path_string(&note))
+            .get_report_file(&note_identity(&note))
             .await
             .unwrap()
             .unwrap();
@@ -1861,12 +2015,285 @@ mod tests {
         assert_eq!(std::fs::read(&note).unwrap(), bytes_after_second);
         assert_eq!(
             store
-                .get_report_file(&path_string(&note))
+                .get_report_file(&note_identity(&note))
                 .await
                 .unwrap()
                 .unwrap(),
             row_after_second,
             "the owner's row and bytes survive the foreign attempt"
+        );
+    }
+
+    /// PR #139 review: the same physical note respelled (`C:/Vault` →
+    /// `c:/vault/.`) must resolve to the row the first promotion wrote, so the
+    /// app's own note never looks unowned — and a user edit made through that
+    /// spelling must still conflict instead of being adopted.
+    #[tokio::test]
+    async fn respelled_folder_finds_the_ownership_row_and_still_conflicts() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Vault");
+        let store = store_with_folder(&folder).await;
+        let note = seed_note(&folder);
+        let selection = seed_selection(&store).await;
+        let at = 1_760_000_000_000;
+        let first = prepare(&store, &selection, at).await.unwrap();
+        assert!(!confirm(&store, &first).await.unwrap().conflict);
+        let row = store
+            .get_report_file(&note_identity(&note))
+            .await
+            .unwrap()
+            .expect("the first promotion records ownership");
+
+        // The same directory entry, respelled with a case change and a trailing
+        // `.` component — both equivalent Windows spellings of one folder.
+        let respelled = format!("{}/.", path_string(&folder).to_lowercase());
+        let respelled_note = Path::new(&respelled)
+            .join("ScreenSearch")
+            .join("Projects")
+            .join("launch.md");
+        let respelled_target = NoteTarget::resolve(&respelled_note);
+        assert_eq!(
+            respelled_target.identity,
+            note_identity(&note),
+            "an equivalent spelling must resolve to one identity"
+        );
+        assert_ne!(
+            respelled_target.path, respelled_target.identity,
+            "the respelled spelling is not the key"
+        );
+        assert_eq!(
+            store
+                .get_report_file(&respelled_target.identity)
+                .await
+                .unwrap()
+                .expect("the respelled note is found as owned"),
+            row
+        );
+        // A verbatim (`\\?\`) spelling names the same file too.
+        assert_eq!(
+            note_identity(Path::new(&format!("\\\\?\\{}", note.to_string_lossy()))),
+            note_identity(&note)
+        );
+
+        // Point the app at the respelled folder and edit the note through it.
+        store
+            .set_setting(
+                OUTPUT_FOLDER,
+                &serde_json::to_string(&Some(respelled.clone())).unwrap(),
+            )
+            .await
+            .unwrap();
+        let edited = format!(
+            "{}\n- my own line\n",
+            std::fs::read_to_string(&note).unwrap()
+        );
+        std::fs::write(&respelled_note, edited.as_bytes()).unwrap();
+        let error = prepare(&store, &selection, at).await.unwrap_err();
+        assert_eq!(error.code, "FILE_CONFLICT", "{}", error.message);
+        assert_eq!(std::fs::read(&note).unwrap(), edited.as_bytes().to_vec());
+        assert_eq!(
+            store
+                .get_report_file(&note_identity(&note))
+                .await
+                .unwrap()
+                .unwrap(),
+            row,
+            "a rejected prepare must not rewrite the row"
+        );
+    }
+
+    /// A row written before the identity existed is keyed by the forward-slash
+    /// spelling. It still guards the note while that spelling is the one in use,
+    /// and the hash comparison (not the key) is what refuses an edit.
+    #[tokio::test]
+    async fn spelling_keyed_row_still_guards_the_note_and_is_read_once_by_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Vault");
+        let note = seed_note(&folder);
+        let lower = path_string(&folder).to_lowercase();
+        let legacy_note = Path::new(&lower)
+            .join("ScreenSearch")
+            .join("Projects")
+            .join("launch.md");
+        assert_ne!(
+            note_identity(&note),
+            path_string(&legacy_note),
+            "the fixture needs a spelling that differs from the canonical identity"
+        );
+        let store = store_with_folder(&folder).await;
+        store
+            .set_setting(OUTPUT_FOLDER, &serde_json::to_string(&Some(lower)).unwrap())
+            .await
+            .unwrap();
+        store
+            .save_report_file(ReportFileOwnership {
+                path: path_string(&legacy_note),
+                source_id: "source-fixture".into(),
+                run_id: "run-fixture".into(),
+                hash: content_hash(b""),
+                updated_at: 1,
+            })
+            .await
+            .unwrap();
+        let selection = seed_selection(&store).await;
+        let at = 1_760_000_000_000;
+        // Same source, unchanged bytes: the legacy row is found through the
+        // spelling key and the promotion proceeds.
+        let proposal = prepare(&store, &selection, at).await.unwrap();
+        assert_eq!(
+            proposal.note_hash.as_deref(),
+            Some(content_hash(b"").as_str())
+        );
+        assert!(!confirm(&store, &proposal).await.unwrap().conflict);
+        // From here the note is covered by its identity row.
+        assert!(store
+            .get_report_file(&note_identity(&note))
+            .await
+            .unwrap()
+            .is_some());
+        std::fs::write(&note, b"my own text\n").unwrap();
+        let error = prepare(&store, &selection, at).await.unwrap_err();
+        assert_eq!(error.code, "FILE_CONFLICT", "{}", error.message);
+    }
+
+    /// The internal intent/receipt slot is keyed by the same identity: a retry
+    /// issued after the folder was respelled is recognized as the promotion that
+    /// already landed, instead of appending the selection a second time.
+    #[tokio::test]
+    async fn respelled_folder_finds_the_committed_receipt_without_appending() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Vault");
+        let store = store_with_folder(&folder).await;
+        let note = seed_note(&folder);
+        let selection = seed_selection(&store).await;
+        let at = 1_760_000_000_000;
+        let proposal = prepare(&store, &selection, at).await.unwrap();
+        let receipt = confirm(&store, &proposal).await.unwrap();
+        assert!(!receipt.conflict);
+        let written = std::fs::read(&note).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&written)
+                .matches("Adopt the weekly cadence")
+                .count(),
+            1
+        );
+
+        let respelled = format!("{}/.", path_string(&folder).to_lowercase());
+        store
+            .set_setting(
+                OUTPUT_FOLDER,
+                &serde_json::to_string(&Some(respelled)).unwrap(),
+            )
+            .await
+            .unwrap();
+        // Same proposal, same bytes, different folder spelling: the committed
+        // receipt is found under the identity and reports the landed result.
+        let retry = confirm(&store, &proposal).await.unwrap();
+        assert!(!retry.conflict, "{:?}", retry.error);
+        assert_eq!(retry.hash, receipt.hash);
+        assert_eq!(
+            std::fs::read(&note).unwrap(),
+            written,
+            "a retry through the respelled folder must not append again"
+        );
+    }
+
+    /// A genuinely different note keeps its own identity and its own row: the
+    /// normalization never lets one note inherit another's ownership.
+    #[tokio::test]
+    async fn different_project_notes_do_not_collide() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder_a = dir.path().join("Vault");
+        let folder_b = dir.path().join("Vault2");
+        let note_a = seed_note(&folder_a);
+        let note_b = seed_note(&folder_b);
+        assert_ne!(note_identity(&note_a), note_identity(&note_b));
+        let store = store_with_folder(&folder_a).await;
+        let selection = seed_selection(&store).await;
+        let at = 1_760_000_000_000;
+        let first = prepare(&store, &selection, at).await.unwrap();
+        assert!(!confirm(&store, &first).await.unwrap().conflict);
+        assert!(
+            store
+                .get_report_file(&note_identity(&note_b))
+                .await
+                .unwrap()
+                .is_none(),
+            "another note's row must never be found for this one"
+        );
+        // The second note is a different file and is still unowned: it is
+        // adoptable on its own first promotion, and keeps a separate row.
+        store
+            .set_setting(
+                OUTPUT_FOLDER,
+                &serde_json::to_string(&Some(path_string(&folder_b))).unwrap(),
+            )
+            .await
+            .unwrap();
+        let second = prepare(&store, &selection, at).await.unwrap();
+        assert_eq!(
+            second.note_hash.as_deref(),
+            Some(content_hash(b"").as_str())
+        );
+        assert!(!confirm(&store, &second).await.unwrap().conflict);
+        let mut rows = store
+            .list_report_files()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| row.path)
+            .collect::<Vec<_>>();
+        rows.sort();
+        assert_eq!(
+            rows,
+            vec![note_identity(&note_a), note_identity(&note_b)],
+            "each note owns exactly one row"
+        );
+    }
+
+    /// A note that does not resolve has no canonical identity: the fallback keeps
+    /// the requested case (and does not resolve `..`) while removing separator and
+    /// `.` noise. This is recorded in `specs/07_KNOWN_GAPS.md`; the pin here is the
+    /// fallback's tested contract.
+    #[test]
+    fn unresolved_note_identity_falls_back_to_the_lexical_spelling() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir
+            .path()
+            .join("Vault")
+            .join("ScreenSearch")
+            .join("Projects");
+        let missing = parent.join("launch.md");
+        let identity = note_identity(&missing);
+        assert_eq!(identity, identity_text(&path_string(&missing)));
+        assert_eq!(
+            note_identity(Path::new(&format!("{}/./launch.md", path_string(&parent)))),
+            identity,
+            "a `.` component is not part of the identity"
+        );
+        assert_eq!(
+            note_identity(Path::new(&format!(
+                "{}/launch.md",
+                path_string(&parent).replace('/', "\\")
+            ))),
+            identity,
+            "the separator style is not part of the identity"
+        );
+        assert_ne!(
+            note_identity(Path::new(&format!(
+                "{}/screensearch/projects/launch.md",
+                path_string(&dir.path().join("Vault"))
+            ))),
+            identity,
+            "no case folding is invented when there is no file to resolve"
+        );
+        assert_ne!(
+            note_identity(Path::new(&format!(
+                "{}/../Projects/launch.md",
+                path_string(&parent)
+            ))),
+            identity,
+            "`..` is not resolved lexically"
         );
     }
 
@@ -1958,7 +2385,7 @@ mod tests {
             "a pre-write persistence failure must not touch the note"
         );
         assert!(store.list_report_files().await.unwrap().is_empty());
-        assert!(read_intent(&store, &path_string(&note))
+        assert!(read_intent(&store, &NoteTarget::resolve(&note))
             .await
             .unwrap()
             .is_none());
@@ -1989,7 +2416,7 @@ mod tests {
             "the append itself landed once: {written}"
         );
         assert!(store.list_report_files().await.unwrap().is_empty());
-        let pending = read_intent(&store, &path_string(&note))
+        let pending = read_intent(&store, &NoteTarget::resolve(&note))
             .await
             .unwrap()
             .unwrap();
@@ -2010,13 +2437,13 @@ mod tests {
             "the retry must not append the same selection twice"
         );
         let owner = store
-            .get_report_file(&path_string(&note))
+            .get_report_file(&note_identity(&note))
             .await
             .unwrap()
             .unwrap();
         assert_eq!(owner.hash, pending.new_hash);
         assert_eq!(owner.run_id, pending.run_id);
-        let committed = read_receipt(&store, &path_string(&note))
+        let committed = read_receipt(&store, &NoteTarget::resolve(&note))
             .await
             .unwrap()
             .unwrap();
@@ -2090,7 +2517,7 @@ mod tests {
         drop(held);
         let receipt = tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
-                if let Some(receipt) = read_receipt(store.as_ref(), &path_string(&note))
+                if let Some(receipt) = read_receipt(store.as_ref(), &NoteTarget::resolve(&note))
                     .await
                     .unwrap()
                 {
@@ -2108,7 +2535,7 @@ mod tests {
         assert_eq!(content_hash(written.as_bytes()), receipt.new_hash);
         assert_eq!(
             store
-                .get_report_file(&path_string(&note))
+                .get_report_file(&note_identity(&note))
                 .await
                 .unwrap()
                 .unwrap()
@@ -2142,7 +2569,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&note).unwrap(), merged);
         assert_eq!(
             store
-                .get_report_file(&path_string(&note))
+                .get_report_file(&note_identity(&note))
                 .await
                 .unwrap()
                 .unwrap()
@@ -2150,7 +2577,7 @@ mod tests {
             new_hash
         );
         assert!(
-            read_intent(&store, &path_string(&note))
+            read_intent(&store, &NoteTarget::resolve(&note))
                 .await
                 .unwrap()
                 .is_some(),
@@ -2178,6 +2605,7 @@ mod tests {
         let (merged, new_hash) = merged_for(&store, &selection, &proposal).await;
         write_intent(
             &store,
+            &NoteTarget::resolve(&note),
             &PromotionIntent {
                 path: path_string(&note),
                 source_id: "source-fixture".into(),
@@ -2200,7 +2628,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&note).unwrap(), merged);
         assert_eq!(
             store
-                .get_report_file(&path_string(&note))
+                .get_report_file(&note_identity(&note))
                 .await
                 .unwrap()
                 .unwrap()
@@ -2208,7 +2636,7 @@ mod tests {
             new_hash
         );
         assert!(
-            read_receipt(&store, &path_string(&note))
+            read_receipt(&store, &NoteTarget::resolve(&note))
                 .await
                 .unwrap()
                 .unwrap()
@@ -2230,6 +2658,7 @@ mod tests {
         let old_hash = first.note_hash.clone().unwrap();
         write_intent(
             &store,
+            &NoteTarget::resolve(&note),
             &PromotionIntent {
                 path: path_string(&note),
                 source_id: "source-fixture".into(),
@@ -2250,7 +2679,7 @@ mod tests {
         assert_eq!(again.note_hash.as_deref(), Some(old_hash.as_str()));
         assert_eq!(std::fs::read(&note).unwrap(), Vec::<u8>::new());
         assert!(store.list_report_files().await.unwrap().is_empty());
-        assert!(read_intent(&store, &path_string(&note))
+        assert!(read_intent(&store, &NoteTarget::resolve(&note))
             .await
             .unwrap()
             .is_none());
@@ -2289,7 +2718,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&note).unwrap(), edited);
         assert!(store.list_report_files().await.unwrap().is_empty());
         assert!(
-            read_intent(&store, &path_string(&note))
+            read_intent(&store, &NoteTarget::resolve(&note))
                 .await
                 .unwrap()
                 .is_some(),
@@ -2323,6 +2752,7 @@ mod tests {
         let (merged, new_hash) = merged_for(store.as_ref(), &selection, &proposal).await;
         write_intent(
             store.as_ref(),
+            &NoteTarget::resolve(&note),
             &PromotionIntent {
                 path: path_string(&note),
                 source_id: "source-fixture".into(),
@@ -2345,7 +2775,7 @@ mod tests {
         assert_eq!(prepared.note_hash.as_deref(), Some(new_hash.as_str()));
         assert_eq!(
             store
-                .get_report_file(&path_string(&note))
+                .get_report_file(&note_identity(&note))
                 .await
                 .unwrap()
                 .unwrap()
@@ -2353,7 +2783,7 @@ mod tests {
             new_hash
         );
         assert!(
-            read_receipt(store.as_ref(), &path_string(&note))
+            read_receipt(store.as_ref(), &NoteTarget::resolve(&note))
                 .await
                 .unwrap()
                 .unwrap()
@@ -2434,6 +2864,7 @@ mod tests {
         let (merged_a, new_a) = merged_for(&store, &selection, &proposal_a).await;
         write_intent(
             &store,
+            &NoteTarget::resolve(&note_a),
             &PromotionIntent {
                 path: path_string(&note_a),
                 source_id: "source-fixture".into(),
@@ -2460,7 +2891,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!confirm(&store, &proposal_b).await.unwrap().conflict);
-        let pending_a = read_intent(&store, &path_string(&note_a))
+        let pending_a = read_intent(&store, &NoteTarget::resolve(&note_a))
             .await
             .unwrap()
             .unwrap();
@@ -2479,7 +2910,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&note_a).unwrap(), merged_a);
         assert_eq!(
             store
-                .get_report_file(&path_string(&note_a))
+                .get_report_file(&note_identity(&note_a))
                 .await
                 .unwrap()
                 .unwrap()
@@ -2515,6 +2946,7 @@ mod tests {
         let landed_hash = content_hash(landed.as_bytes());
         write_intent(
             &store,
+            &NoteTarget::resolve(&note),
             &PromotionIntent {
                 path: path_string(&note),
                 source_id: "source-fixture".into(),
@@ -2535,7 +2967,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&note).unwrap(), landed);
         assert_eq!(
             store
-                .get_report_file(&path_string(&note))
+                .get_report_file(&note_identity(&note))
                 .await
                 .unwrap()
                 .unwrap()
@@ -2576,7 +3008,9 @@ mod tests {
             fingerprint: promotion_fingerprint(&selection, &proposal.entry_date),
             committed: false,
         };
-        write_intent(&store, &intent).await.unwrap();
+        write_intent(&store, &NoteTarget::resolve(&note), &intent)
+            .await
+            .unwrap();
         let recovery = note.with_file_name(".screensearch-recovery-swap.md");
         let edit = "edited in another program during the promotion\n".to_string();
         if live_is_promotion {
@@ -2597,7 +3031,7 @@ mod tests {
         let merged = std::fs::read_to_string(&note).unwrap();
         let receipt = settle_conflict(
             &store,
-            path_string(&note),
+            &NoteTarget::resolve(&note),
             &intent,
             WriteFailure {
                 message: "note changed during replacement; original retained in recovery copy"
@@ -2621,18 +3055,18 @@ mod tests {
         );
         // Ownership agrees with the disk now, not on a later silent reconcile.
         let owner = store
-            .get_report_file(&path_string(&note))
+            .get_report_file(&note_identity(&note))
             .await
             .unwrap()
             .unwrap();
         assert_eq!(owner.hash, intent.new_hash);
         assert_eq!(owner.run_id, intent.run_id);
-        assert!(read_intent(&store, &path_string(&note))
+        assert!(read_intent(&store, &NoteTarget::resolve(&note))
             .await
             .unwrap()
             .is_none());
         assert!(
-            read_receipt(&store, &path_string(&note))
+            read_receipt(&store, &NoteTarget::resolve(&note))
                 .await
                 .unwrap()
                 .unwrap()
@@ -2648,7 +3082,7 @@ mod tests {
         let (_dir, store, note, recovery, intent, edit) = swap_fixture(false).await;
         let receipt = settle_conflict(
             &store,
-            path_string(&note),
+            &NoteTarget::resolve(&note),
             &intent,
             WriteFailure {
                 message: "note changed during installation; inspect the destination and retained recovery copy".into(),
@@ -2669,13 +3103,13 @@ mod tests {
         );
         assert!(
             store
-                .get_report_file(&path_string(&note))
+                .get_report_file(&note_identity(&note))
                 .await
                 .unwrap()
                 .is_none(),
             "bytes the app did not write are never adopted"
         );
-        let pending = read_intent(&store, &path_string(&note))
+        let pending = read_intent(&store, &NoteTarget::resolve(&note))
             .await
             .unwrap()
             .unwrap();
