@@ -1,5 +1,19 @@
 # 06 — Patch Plan
 
+## 2026-10-18 — PR #140 follow-ups and weekly time hint
+
+- PR #140 merged at `eea8184` (`957b234`) with: G5/G6 rebuilt on `main` (PR-139 batch-3
+  preserved), the future-cursor diagnostic, the partial-only coverage banner gate, the
+  re-enable fix (Codex `PRRT_kwDOTAuCtM6tuHtd`) and Nico's decision that failed scheduled weeks
+  are missed weeks. Native chain green at `ba931e8`; hosted CI green at `eea8184`.
+- Still to ship: the weekly time hint (Codex `PRRT_kwDOTAuCtM6tu-Nu`) on
+  `fix/weekly-time-hint` (`05190d5`, native chain green at the identical tree `418c163`).
+- Pending Nico (`07`): the failed-week edge cases (a)–(d) and the disable-before-catch-up
+  reading. A changed answer becomes its own patch here. No contradiction with `03` found.
+- Not done: running-app screenshot of the changed Settings hint (`04` UI guardrails), native
+  acceptance (`04 §1c`: `npm run dev` isolated profile, real week, Obsidian, promotion) and an
+  approved Telegram test send.
+
 ## 2026-10-18 — PR #139 review batch 3
 
 - Four findings fixed in `fe72af8` (note path identity, per-item weekly citations with

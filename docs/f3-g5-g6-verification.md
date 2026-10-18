@@ -2,8 +2,13 @@
 
 ## Candidate
 
-Branch: `feat/f3-g5-g6-weekly-scheduler-digest`.
-Verified code candidate: `7bdef552c5916f6ffcdd4d5f0fb14f264724fcab`.
+Landed as PR #140 (`957b234`, merged head `eea8184`). This document was first written for
+the pre-rebuild candidate below; later revisions and their native evidence are recorded in
+`specs/05_BUILD_REVIEW.md` (rebuild `1ce4d66`, re-enable fix `62c38ad`, failed-week decision
+`ba931e8`, weekly time hint `418c163`/`05190d5`).
+
+Original branch: `feat/f3-g5-g6-weekly-scheduler-digest`.
+Original verified code candidate: `7bdef552c5916f6ffcdd4d5f0fb14f264724fcab`.
 G3/G4 baseline: PR #139 through `176b567f5af8b7ba4036f26c740c015843adb8f2`.
 Eight bounded agents handled contract audit, calendar scheduling, digest rendering,
 traits/IPC, UI, Windows preparation, runtime persistence, and independent review.
@@ -117,7 +122,7 @@ history in the running installed app, Obsidian inspection with working links,
 interactive promotion in that app, or a live weekly Telegram send. They remain the
 separate `03 §8e` product sign-off; SQLite/SSR/native test output is not substituted
 for them. No installed profile, credentials, live notes or running app were changed.
-No push, PR creation/update or merge was performed.
+The original candidate was not pushed; PR #140 was later opened and merged by Nico.
 
 Rollback: turn off the weekly schedule and weekly Telegram opt-in independently;
 keep saved reports, notes, receipts and gap history. No schema rollback or deletion

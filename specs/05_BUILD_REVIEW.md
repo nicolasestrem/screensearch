@@ -28,7 +28,8 @@ CHAIN_EXIT=0
 ```
 
 - Parsed Rust totals: 1131 passed, 0 failed, 15 ignored across 62 suites. UI: 50 passed,
-  0 failed. Hosted checks pending; nothing pushed.
+  0 failed. Hosted checks pending; nothing pushed. The changed Settings hint has not been run
+  and screenshotted in the app (`04` UI guardrails); SSR test output is not that evidence.
 
 ## 2026-10-18 — PR #140: failed scheduled weeks recorded as missed (Nico's decision)
 

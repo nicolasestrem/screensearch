@@ -7,7 +7,8 @@
   those weeks are neither backfilled nor listed under "Missed weeks"; they are simply absent,
   never claimed as covered. `03 §8c`/`§8e` say disabled periods are not backfilled but do not say
   whether already-closed, never-run weeks before the disable count as missed. Matches the daily
-  lane. Open decision for Nico: keep, or record those closed weeks as missed at disable time.
+  lane. Open decision (owner: Nico, raised 2026-10-18): keep, or record those closed weeks as
+  missed at disable time. Current behaviour stays until answered.
 
 ## 2026-10-18 — Decided: a failed scheduled weekly synthesis is a missed week (Nico)
 
@@ -16,11 +17,12 @@
   original run settles FAILED is added to `memory.weekly.gaps` and shown under "Missed weeks";
   it is still not retried automatically (the cursor advanced at enqueue), and the user can
   regenerate it.
-- Readings (implementation, not settled by `03 §8e`; can be overridden): manual runs do not
-  count as the schedule's coverage; a failed regeneration of an already saved week does not
-  mark it missed; BLOCKED (missing model/source) is a missing prerequisite, not a failed
-  generation, so it is not recorded. Like every other gap entry, the record is history and stays
-  after a later successful regeneration.
+- Edge cases `03 §8e` does not settle. These were implemented as readings without first asking,
+  contrary to `04 §5`; they shipped in PR #140 and are now open decisions (owner: Nico, raised
+  2026-10-18), not settled product rules: (a) manual runs do not count as the schedule's
+  coverage; (b) a failed regeneration of an already saved week does not mark it missed;
+  (c) BLOCKED (missing model/source) is not recorded as missed; (d) a missed record stays as
+  history after a later successful regeneration. Any changed answer is a follow-up patch (`06`).
 
 ## 2026-10-18 — Weekly run that fails generation is not retried by catch-up
 
