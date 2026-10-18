@@ -62,7 +62,7 @@ test("saving settings refetches the mounted note status and stays pending until 
   });
   const unsubscribe = note.subscribe(() => {});
   await waitFor(() => note.getCurrentResult().isSuccess, "the first note status");
-  assert.equal(note.getCurrentResult().data, OLD_NOTE);
+  assert.deepEqual(note.getCurrentResult().data, OLD_NOTE);
 
   // The folder moves; hold the refetch open so the save's pending state is visible.
   next = deferred();
@@ -81,14 +81,14 @@ test("saving settings refetches the mounted note status and stays pending until 
   await waitFor(() => fetches === 2, "the note-status refetch");
   // The reader still holds the old folder's note until the refetch resolves, and
   // the mutation is not allowed to report success in the meantime.
-  assert.equal(note.getCurrentResult().data, OLD_NOTE);
+  assert.deepEqual(note.getCurrentResult().data, OLD_NOTE);
   assert.equal(note.getCurrentResult().isFetching, true);
   assert.equal(save.getCurrentResult().isPending, true);
   assert.equal(settled, false);
 
   next.resolve(NEW_NOTE);
   await saving;
-  assert.equal(note.getCurrentResult().data, NEW_NOTE);
+  assert.deepEqual(note.getCurrentResult().data, NEW_NOTE);
   assert.equal(note.getCurrentResult().isSuccess, true);
   unsubscribe();
   client.clear();
@@ -120,7 +120,7 @@ test("saving settings clears a previous note-status error without a manual retry
   assert.equal(fetches, 2);
   assert.equal(note.getCurrentResult().isSuccess, true);
   assert.equal(note.getCurrentResult().error, null);
-  assert.equal(note.getCurrentResult().data, NEW_NOTE);
+  assert.deepEqual(note.getCurrentResult().data, NEW_NOTE);
   unsubscribe();
   client.clear();
 });

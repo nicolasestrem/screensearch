@@ -644,7 +644,7 @@ impl MarkdownFence {
 /// `(fence character, run length, text after the run)` for a line that could
 /// open or close a fenced block; `None` for every other line.
 fn fence_delimiter(line: &str) -> Option<(char, usize, &str)> {
-    let line = line.trim_end_matches(|character| character == '\r' || character == '\n');
+    let line = line.trim_end_matches(['\r', '\n']);
     let indent = line.len() - line.trim_start_matches(' ').len();
     if indent > 3 {
         return None;
@@ -659,13 +659,6 @@ fn fence_delimiter(line: &str) -> Option<(char, usize, &str)> {
         return None;
     }
     Some((character, length, &rest[length..]))
-}
-
-/// Legacy boolean helper retained only while `promotion.rs` still uses it; the
-/// source parser must switch to [`MarkdownFence`], after which this is removed.
-pub(crate) fn fence_line(line: &str) -> bool {
-    let indented = line.trim_start_matches(' ');
-    line.len() - indented.len() <= 3 && (indented.starts_with("```") || indented.starts_with("~~~"))
 }
 
 fn is_blank_line(line: &str) -> bool {

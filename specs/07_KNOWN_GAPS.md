@@ -69,11 +69,27 @@
   `OK`/`PARTIAL`, so a hypothetical `BLOCKED`/`FAILED` weekly run that somehow carried a saved result
   would surface as a write failure rather than a skip receipt. The engine never saves a result for
   those outcomes, so the branch is unreachable today and kept as a guard.
-- **Promotion validates its target and records ownership only on success.** `confirm_promotion`
-  requires the note's parent to be exactly `<output folder>/ScreenSearch/Projects` with a `.md`
-  extension, and returns a `FILE_CONFLICT` receipt without writing if the folder or note changed
-  since the preview; `ReportFileOwnership` is saved only after a successful write, so a conflict
-  leaves the previous row untouched.
+- **Promotion validates the current single-note target, not a client-selected filename.**
+  `confirm_promotion` re-scans `ScreenSearch/Projects`, requires exactly one existing note and
+  requires the proposal's path to match it, with a nonnull selection-time hash. It never creates
+  a missing target. Missing/multiple notes and stale paths are explicit errors/conflicts;
+  `ReportFileOwnership` is saved only after a successful write, so a conflict leaves the previous
+  row untouched. Creation and confirmation share an in-process async lock spanning scan/create
+  and ownership-check/append/save respectively; the existing single-instance app is the boundary.
+- **Ownership is a write guard, not a history or garbage-collection key.** An initially unowned
+  note may be adopted on the first confirmed promotion. Both prepare and confirm compare an
+  already-owned note's current bytes against its persisted hash and require the same source
+  identity; an edit before prepare, a forged proposal hash or a source reset does not re-adopt
+  it. Such cases stay `FILE_CONFLICT`. The row's `run_id` names the most recent successful
+  promotion, not the only report represented in the ledger; the row outlives run pruning.
+- **Section matching ignores fenced content and tolerates case/closing hashes.** Source parsing
+  and destination insertion track the fence marker and opening-run length: a shorter run, a
+  different marker or a marker followed by non-whitespace does not close it. Destination entries
+  use the first matching real section when headings repeat; renamed sections remain distinct.
+  If EOF is inside an unclosed fence, insertion is before its opener, never inside the code.
+  Existing bytes, line endings and duplicate headings remain untouched. Duplicate saved bullets
+  remain independently selectable and are preserved up to their persisted occurrence count;
+  requesting more copies is an error, not fabrication or silent deduplication.
 
 ## 2026-10-17 — F3 G2 implementation readings (owner: agent; maintainer may override)
 

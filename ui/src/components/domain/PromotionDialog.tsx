@@ -199,12 +199,12 @@ export function PromotionDialog({
                 </p>
               )}
               <p className="text-caption text-ink-muted">
-                Preparing again only rechecks the note. It cannot clear a conflict on a
-                note you edited: the app appends only to the version it last wrote for
-                this profile. Restore the last app-written version of the note, or
-                choose a different output folder in Settings · Memory reports. If the
-                folder or note location changed instead, preparing again previews the
-                note that is there now.
+                Preparing again rechecks a stale preview. It cannot clear an
+                ownership conflict: the app appends only to the version it last
+                wrote for this profile. Restore that version, keep exactly one
+                note in Projects/, or choose a different output folder in
+                Settings · Memory reports. If the app had not adopted this note
+                yet, preparing again previews its current bytes instead.
               </p>
               {prepareError && (
                 <p role="alert" className="text-caption text-danger">
@@ -364,7 +364,7 @@ export function PromotionDialog({
                 variant="primary"
                 size="sm"
                 onClick={onReprepare}
-                disabled={preparing || !canConfirm}
+                disabled={preparing}
                 aria-busy={preparing}
               >
                 {preparing ? "Preparing…" : "Try again"}

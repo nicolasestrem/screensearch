@@ -27,9 +27,11 @@ const MAX_LISTED_IDS: usize = 20;
 /// Reserved DOS device names resolve to a device even with an extension
 /// (`con.md` opens the console), so no project note may be named one. Slugs are
 /// lower-case only, so the comparison is exact; `valid_slug` rejects them too.
-const RESERVED_SLUGS: [&str; 24] = [
-    "con", "prn", "aux", "nul", "com0", "com1", "com2", "com3", "com4", "com5", "com6", "com7",
-    "com8", "com9", "lpt0", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+/// Microsoft's documented list is CON, PRN, AUX, NUL, COM1–COM9 and LPT1–LPT9;
+/// `COM0`/`LPT0` are not reserved file names, so they stay ordinary slugs.
+const RESERVED_SLUGS: [&str; 22] = [
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
 ];
 
 /// Serializes every project-note mutation in this process: the create
@@ -965,6 +967,10 @@ mod tests {
         assert!(valid_slug("console"));
         assert!(valid_slug("com10"));
         assert!(valid_slug("lpt10"));
+        // `COM0`/`LPT0` are absent from Microsoft's reserved-name list, so the
+        // denylist must not widen beyond COM1–COM9/LPT1–LPT9.
+        assert!(valid_slug("com0"));
+        assert!(valid_slug("lpt0"));
         // A normal slug still works, so the denylist is not a blanket refusal.
         assert_eq!(create_note(&store, "console").await.unwrap().count, 1);
     }

@@ -314,7 +314,7 @@ test("non-conflict prepare rejection keeps the conflict guidance out", () => {
   assert.doesNotMatch(html, />Confirm</);
 });
 
-test("conflict receipt explains the edit race and offers only a re-prepare", () => {
+test("persisted ownership conflict says re-preparing cannot clear an edited note", () => {
   const html = renderToStaticMarkup(
     React.createElement(PromotionDialog, {
       proposal: PROPOSAL,
@@ -322,7 +322,11 @@ test("conflict receipt explains the edit race and offers only a re-prepare", () 
         path: NOTE.path,
         hash: null,
         conflict: true,
-        error: { code: "file_changed", message: "The note changed" },
+        error: {
+          code: "FILE_CONFLICT",
+          message:
+            "The project note was edited after the app's last promotion; promotion cannot append to it.",
+        },
         recovery_path: "C:/Notes/ScreenSearch/Projects/project-alpha.conflict-2.md",
       },
       preparing: false,
@@ -338,16 +342,74 @@ test("conflict receipt explains the edit race and offers only a re-prepare", () 
   assert.match(html, /The project note changed/);
   assert.match(html, /Nothing was written/);
   assert.match(html, /project-alpha\.conflict-2\.md/);
-  // Truthful recovery: re-preparing rechecks, it does not make an edited note
-  // writable or bypass the append-only guard.
-  assert.match(html, /Preparing again only rechecks the note/);
+  // A note the app already owns stays protected: re-preparing only rechecks it.
+  assert.match(html, /cannot clear an\s+ownership conflict/);
   assert.match(html, /appends only to the version it last wrote/);
-  assert.match(html, /Restore the last app-written version of the note/);
+  assert.match(html, /Restore that version/);
   assert.match(html, /choose a different output folder in Settings/);
-  assert.doesNotMatch(html, /rebuilds the preview against the note as it is now/);
+  assert.doesNotMatch(html, /re-reads the note as it is now/);
+  assert.doesNotMatch(html, /current text/);
   assert.match(html, />Prepare again</);
   assert.match(html, />Close</);
   assert.doesNotMatch(html, />Confirm</);
+});
+
+test("stale preview conflict explains re-preparing without bypassing ownership", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PromotionDialog, {
+      proposal: PROPOSAL,
+      receipt: {
+        path: NOTE.path,
+        hash: null,
+        conflict: true,
+        error: {
+          code: "FILE_CONFLICT",
+          message:
+            "The project note changed since the preview; prepare the promotion again.",
+        },
+        recovery_path: null,
+      },
+      preparing: false,
+      confirming: false,
+      prepareError: null,
+      confirmError: null,
+      onConfirm: () => {},
+      onCancel: () => {},
+      onReprepare: () => {},
+      onDone: () => {},
+    }),
+  );
+  // Re-preparing is useful for a stale preview, but never authorizes edits to
+  // an already-owned note. Both cases use typed conflict handling, not message parsing.
+  assert.match(html, /Preparing again rechecks a stale preview/);
+  assert.match(html, /had not adopted this note yet/);
+  assert.match(html, /previews its current bytes instead/);
+  assert.match(html, /cannot clear an\s+ownership conflict/);
+  assert.match(html, /appends only to the version it last wrote/);
+  assert.match(html, />Prepare again</);
+  assert.doesNotMatch(html, />Confirm</);
+});
+
+test("prepare retry stays clickable even when the stale proposal lost its note", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PromotionDialog, {
+      proposal: { ...PROPOSAL, note_path: null, note_exists: false, note_hash: null },
+      receipt: null,
+      preparing: false,
+      confirming: false,
+      prepareError: "Create a project note first.",
+      prepareErrorCode: "NOT_FOUND",
+      confirmError: null,
+      onConfirm: () => {},
+      onCancel: () => {},
+      onReprepare: () => {},
+      onDone: () => {},
+    }),
+  );
+  // The fresh prepare call re-resolves the note; the old proposal's note state
+  // must not suppress the retry button.
+  assert.match(html, />Try again<\/button>/);
+  assert.doesNotMatch(html, /<button[^>]*\sdisabled(?:=""|\s|>)/);
 });
 
 test("success receipt states what was written and dismisses as Done", () => {
