@@ -203,6 +203,8 @@ test("latest weekly status and older missed weeks stay distinct from the daily s
   assert.doesNotMatch(html, /Last daily run: 2026-W41/);
   assert.match(html, /Older missed daily windows/);
   assert.match(html, /Missed weeks/);
+  assert.match(html, /The ISO week closes at Monday 00:00; its synthesis runs at this local time that Monday\./);
+  assert.doesNotMatch(html, /closes at this local time/);
   assert.doesNotMatch(html, /Older missed weeks/);
   assert.match(html, /or their scheduled synthesis failed/);
   assert.match(html, /not reported as covered/);

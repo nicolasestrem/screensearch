@@ -504,7 +504,7 @@ export function MemoryPanel({ initialSettings }: { initialSettings?: MemorySetti
               value={draft?.weekly_local_time ?? ""}
               disabled={!loaded || busy}
               onChange={(event) => set("weekly_local_time", event.currentTarget.value.slice(0, 5) || null)}
-              hint="The week closes at this local time on the following Monday."
+              hint="The ISO week closes at Monday 00:00; its synthesis runs at this local time that Monday."
             />
             <Field
               label="Weekly timezone (IANA)"
