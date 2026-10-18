@@ -52,7 +52,36 @@ CHAIN_EXIT=0
   canonicalization with a documented lexical fallback for a note that does not exist yet.
   Hosted checks at this head are pending publication; green checks at `176b567` do not
   verify this batch. Native interactive acceptance remains open.
+## 2026-10-18 — F3 G5/G6 weekly scheduler and Telegram digest
 
+- Code candidate: `7bdef552c5916f6ffcdd4d5f0fb14f264724fcab`; G3/G4 baseline
+  PR #139 through `176b567`. Eight bounded agents plus coordinator integration.
+- Actual Windows app suite (no transport/credential stubs):
+
+```text
+test result: ok. 146 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+EXIT cargo test = 0
+EXIT bindings diff = 0
+CHAIN_EXIT=0
+```
+
+- Real in-memory SQLite catch-up/replay with daily disabled verifies four persisted
+  weekly windows, separate schedule identity, durable disjoint gaps, cursor-after-
+  enqueue recovery and unchanged daily state/snapshots. Timing changes record only
+  previously eligible closed weeks. All digest review regressions pass, including
+  source caps/dedup, partial causes, banner provenance and terminal retry settlement.
+- Coordinator controls: kernel scheduling 22 passed / 0 failed; UI 43 passed / 0
+  failed; kernel clippy `-D warnings`, UI lint/typecheck/build exit 0.
+- Full native Windows `04 §1c` chain passed: Rust **1118 passed / 0 failed /
+  15 existing ignored**, UI **45 passed / 0 failed**. All five spec-named G5/G6
+  gates occur as `... ok` in the raw log. SHA256 of all 11 changed source files
+  matched before/after; Node22 is per-process. Restored owner branch at `176b567`
+  clean; 19 shipped temporary files verified absent; installed PID21660 unchanged.
+- Real installed-app/private-history/Obsidian/promotion and approved live Telegram
+  sign-off remain open. No installed profile/credential/note or app was changed;
+  no push/PR/merge. Detailed evidence and rollback: `docs/f3-g5-g6-verification.md`.
 ## 2026-10-18 — PR #139 post-install conflict receipt (Codex r4307200508)
 
 - Runtime verified: `e69ee1f9d9702693e71e1085b2c457f03fcc5ad3` in the existing

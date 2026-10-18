@@ -18,7 +18,22 @@
   15 existing ignored; UI 42 passed / 0 failed. Named regressions in `05`. New hosted CI
   pending publication; no merge, installed-app change or live-history access in this
   record.
+## 2026-10-18 — F3 G5/G6 weekly scheduling and saved-output digest
 
+- Added default-off weekly schedule, time/zone, independent UUID/activation/cursor,
+  Run most recent complete ISO week, separate latest status and visible disjoint
+  older gaps. Catch-up scans six complete weeks, queues four most recent due weeks
+  oldest-first, and safely replays an enqueue-before-cursor interruption.
+- Added separately consented weekly Telegram format from the saved synthesis only:
+  week label, truthful saved-daily coverage/limitations, missing dates, bounded
+  source IDs, masking and existing UTF-16 chunks/intents/retries. Daily digest bytes
+  are protected by a regression. No second model, raw OCR/screenshots or new API.
+- Eight bounded agents; coordinator integrated findings and verified the full
+  native Windows `04 §1c` chain at `7bdef55`: `CHAIN_EXIT=0`, Rust1118/0 (15 existing
+  ignored), UI45/0, bindings unchanged, all 11 source hashes matched. Native owner
+  branch restored clean and shipped temporary files removed. See `05` and
+  `docs/f3-g5-g6-verification.md` for evidence boundaries and rollback.
+- No push, PR, merge, installed-profile mutation, live-history use or real send.
 ## 2026-10-18 — PR #139 truthful receipt after a concurrent note swap
 
 - Fixed Codex `r4307200508`: when the writer reports a conflict after the append

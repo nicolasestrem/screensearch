@@ -78,6 +78,18 @@ pub struct MemorySettings {
     pub output_folder: Option<String>,
     pub telegram_enabled: bool,
     pub telegram_chat_id: Option<String>,
+    // `serde(default)` keeps pre-G5 settings loading with weekly features off.
+    #[serde(default)]
+    pub weekly_enabled: bool,
+    // Local `HH:MM` the weekly synthesis is due, in weekly_timezone.
+    #[serde(default)]
+    pub weekly_local_time: Option<String>,
+    // Independent IANA zone: changing daily settings must not retime weekly runs.
+    #[serde(default)]
+    pub weekly_timezone: Option<String>,
+    // Weekly Telegram consent is independent of telegram_enabled.
+    #[serde(default)]
+    pub weekly_telegram_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -211,6 +223,12 @@ pub struct MemoryStatus {
     pub worker_running: bool,
     pub worker_error: Option<ReportError>,
     pub telegram_credential_available: bool,
+    // Separate latest weekly run; older status payloads remain readable.
+    #[serde(default)]
+    pub weekly_latest_run: Option<ReportRun>,
+    // Weekly windows skipped by bounded catch-up; never claimed as covered.
+    #[serde(default)]
+    pub weekly_missed_windows: Vec<crate::TimeRange>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -231,4 +249,192 @@ pub struct MemorySchedulePreview {
 pub enum TelegramDeliveryResolution {
     Reviewed,
     Resend,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::de::value::{
+        BoolDeserializer, Error, MapAccessDeserializer, StrDeserializer, UnitDeserializer,
+    };
+    use serde::de::{DeserializeSeed, MapAccess, Visitor};
+    use serde::Deserialize;
+    use ts_rs::TS;
+
+    /// The six `MemorySettings` keys that existed before the weekly layer. A stored
+    /// payload with exactly these keys is the compatibility case `serde(default)`
+    /// must absorb.
+    const LEGACY_SETTINGS_KEYS: [&str; 6] = [
+        "enabled",
+        "local_time",
+        "timezone",
+        "output_folder",
+        "telegram_enabled",
+        "telegram_chat_id",
+    ];
+
+    /// The seven `MemoryStatus` keys that existed before the weekly layer.
+    const LEGACY_STATUS_KEYS: [&str; 7] = [
+        "settings",
+        "source_id",
+        "latest_run",
+        "missed_windows",
+        "worker_running",
+        "worker_error",
+        "telegram_credential_available",
+    ];
+
+    struct LegacySettingsMap {
+        index: usize,
+    }
+
+    impl<'de> MapAccess<'de> for LegacySettingsMap {
+        type Error = Error;
+
+        fn next_key_seed<K: DeserializeSeed<'de>>(
+            &mut self,
+            seed: K,
+        ) -> Result<Option<K::Value>, Self::Error> {
+            let Some(key) = LEGACY_SETTINGS_KEYS.get(self.index) else {
+                return Ok(None);
+            };
+            seed.deserialize(StrDeserializer::<Error>::new(key))
+                .map(Some)
+        }
+
+        fn next_value_seed<V: DeserializeSeed<'de>>(
+            &mut self,
+            seed: V,
+        ) -> Result<V::Value, Self::Error> {
+            let value = match self.index {
+                0 => seed.deserialize(BoolDeserializer::new(true)),
+                1 => seed.deserialize(SomeStr("07:30")),
+                2 => seed.deserialize(SomeStr("Europe/Paris")),
+                3 => seed.deserialize(UnitDeserializer::new()),
+                4 => seed.deserialize(BoolDeserializer::new(true)),
+                5 => seed.deserialize(SomeStr("1234")),
+                _ => panic!("value requested without a key"),
+            };
+            self.index += 1;
+            value
+        }
+    }
+
+    struct LegacyStatusMap {
+        index: usize,
+    }
+
+    impl<'de> MapAccess<'de> for LegacyStatusMap {
+        type Error = Error;
+
+        fn next_key_seed<K: DeserializeSeed<'de>>(
+            &mut self,
+            seed: K,
+        ) -> Result<Option<K::Value>, Self::Error> {
+            let Some(key) = LEGACY_STATUS_KEYS.get(self.index) else {
+                return Ok(None);
+            };
+            seed.deserialize(StrDeserializer::<Error>::new(key))
+                .map(Some)
+        }
+
+        fn next_value_seed<V: DeserializeSeed<'de>>(
+            &mut self,
+            seed: V,
+        ) -> Result<V::Value, Self::Error> {
+            let value = match self.index {
+                0 => seed.deserialize(MapAccessDeserializer::new(LegacySettingsMap { index: 0 })),
+                1 => seed.deserialize(StrDeserializer::<Error>::new("source-1")),
+                2 | 5 => seed.deserialize(UnitDeserializer::new()),
+                3 => seed.deserialize(serde::de::value::SeqDeserializer::<_, Error>::new(
+                    std::iter::empty::<UnitDeserializer<Error>>(),
+                )),
+                4 | 6 => seed.deserialize(BoolDeserializer::new(false)),
+                _ => panic!("value requested without a key"),
+            };
+            self.index += 1;
+            value
+        }
+    }
+
+    /// `Option<String>` needs `visit_some`, while serde's `StrDeserializer`
+    /// forwards `deserialize_option` to `visit_str`.
+    struct SomeStr(&'static str);
+
+    impl<'de> serde::Deserializer<'de> for SomeStr {
+        type Error = Error;
+
+        fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+            visitor.visit_str(self.0)
+        }
+
+        fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+            visitor.visit_some(self)
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+            bytes byte_buf unit unit_struct newtype_struct seq tuple tuple_struct map
+            struct enum identifier ignored_any
+        }
+    }
+
+    #[test]
+    fn pre_g5_memory_settings_default_the_weekly_fields() {
+        let settings =
+            MemorySettings::deserialize(MapAccessDeserializer::new(LegacySettingsMap { index: 0 }))
+                .expect("pre-G5 settings payload must still deserialize");
+
+        assert!(settings.enabled);
+        assert_eq!(settings.local_time.as_deref(), Some("07:30"));
+        assert_eq!(settings.timezone.as_deref(), Some("Europe/Paris"));
+        assert_eq!(settings.output_folder, None);
+        assert!(settings.telegram_enabled);
+        assert_eq!(settings.telegram_chat_id.as_deref(), Some("1234"));
+        assert!(!settings.weekly_enabled);
+        assert_eq!(settings.weekly_local_time, None);
+        assert_eq!(settings.weekly_timezone, None);
+        assert!(!settings.weekly_telegram_enabled);
+    }
+
+    #[test]
+    fn pre_g6_memory_status_defaults_the_weekly_fields() {
+        let status =
+            MemoryStatus::deserialize(MapAccessDeserializer::new(LegacyStatusMap { index: 0 }))
+                .expect("pre-G6 status payload must still deserialize");
+
+        assert_eq!(status.source_id, "source-1");
+        assert!(status.latest_run.is_none());
+        assert!(status.missed_windows.is_empty());
+        assert!(!status.worker_running);
+        assert!(!status.settings.weekly_enabled);
+        assert_eq!(status.settings.weekly_local_time, None);
+        assert_eq!(status.settings.weekly_timezone, None);
+        assert!(!status.settings.weekly_telegram_enabled);
+        assert_eq!(status.weekly_latest_run, None);
+        assert!(status.weekly_missed_windows.is_empty());
+    }
+
+    #[test]
+    fn ts_contract_carries_the_weekly_fields() {
+        let settings = MemorySettings::inline();
+        for field in [
+            "weekly_enabled",
+            "weekly_local_time",
+            "weekly_timezone",
+            "weekly_telegram_enabled",
+        ] {
+            assert!(
+                settings.contains(field),
+                "MemorySettings binding is missing {field}: {settings}"
+            );
+        }
+        let status = MemoryStatus::inline();
+        for field in ["weekly_latest_run", "weekly_missed_windows"] {
+            assert!(
+                status.contains(field),
+                "MemoryStatus binding is missing {field}: {status}"
+            );
+        }
+    }
 }

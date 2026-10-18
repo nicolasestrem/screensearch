@@ -1,7 +1,7 @@
 //! Opt-in Telegram adapter. Tokens are held only in Credential Manager and call-local memory.
 use std::sync::OnceLock;
 use std::time::Duration;
-use traits::{ReportOutcome, ReportRun};
+use traits::{ReportOutcome, ReportRun, ReportRunKind};
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Security::Credentials::{
     CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
@@ -102,17 +102,9 @@ fn bounded(text: &str, max: usize) -> String {
         })
         .collect()
 }
-pub fn digest_chunks(run: &ReportRun) -> Result<Vec<String>, String> {
-    let outcome = run
-        .outcome
-        .ok_or_else(|| "report has no outcome".to_string())?;
-    if !matches!(outcome, ReportOutcome::Ok | ReportOutcome::Partial) {
-        return Ok(vec![]);
-    }
-    let r = run
-        .result
-        .as_ref()
-        .ok_or_else(|| "report has no saved output".to_string())?;
+/// The frozen daily digest (`03 §8d`). Any edit here changes what users already receive;
+/// weekly rendering lives in [`weekly_digest`] and must not leak into this path.
+fn daily_digest(run: &ReportRun, r: &traits::SavedReport, outcome: ReportOutcome) -> String {
     let status = if outcome == ReportOutcome::Partial {
         "PARTIAL — incomplete coverage"
     } else {
@@ -120,7 +112,7 @@ pub fn digest_chunks(run: &ReportRun) -> Result<Vec<String>, String> {
     };
     let body = mask(&r.markdown);
     let shortened = bounded(&body, 10_000);
-    let text = format!(
+    format!(
         "ScreenSearch {}\n{}\n{} frames summarized; {} periods covered\n\n{}{}",
         crate::memory_files::report_label(run),
         status,
@@ -132,7 +124,140 @@ pub fn digest_chunks(run: &ReportRun) -> Result<Vec<String>, String> {
         } else {
             ""
         }
+    )
+}
+
+/// Local `YYYY-MM-DD` days the saved weekly report itself discloses as lacking a complete
+/// saved daily (`03 §8e`). `save_weekly_execution` prepends that banner to the saved
+/// markdown, so the digest never has to infer missing days from run metadata it does not
+/// carry. Only strict dates are echoed; anything else in the sentence is ignored.
+fn weekly_missing_daily_days(markdown: &str) -> Vec<String> {
+    let banner = markdown
+        .split_once("\n\n")
+        .map_or(markdown, |(head, _)| head);
+    if !banner.starts_with("**Partial coverage:** ") {
+        return Vec::new();
+    }
+    const MARKER: &str = "the week is missing complete saved daily coverage for ";
+    let Some((_, rest)) = banner.split_once(MARKER) else {
+        return Vec::new();
+    };
+    let list = rest.split(['.', ';', '\n']).next().unwrap_or_default();
+    let mut days: Vec<String> = Vec::new();
+    for candidate in list.split(',') {
+        let day = candidate.trim();
+        if kernel::memory_schedule::parse_date(day).is_ok() && !days.iter().any(|seen| seen == day)
+        {
+            days.push(day.to_owned());
+        }
+    }
+    days
+}
+
+/// The weekly Telegram digest (`03 §8e` / G6): the ISO week label, the saved run's
+/// truthful status and measured coverage, the missing-daily disclosure the saved report
+/// carries, the saved daily-run source IDs, then the saved synthesis (masked, bounded).
+/// Pure rendering: no model call, no store read, no re-inference.
+fn weekly_digest(
+    run: &ReportRun,
+    r: &traits::SavedReport,
+    outcome: ReportOutcome,
+) -> Result<String, String> {
+    let label = kernel::week_label(&run.timezone, run.window_start)
+        .map_err(|_| "weekly report has no valid week label".to_string())?;
+    let missing = weekly_missing_daily_days(&r.markdown);
+    let complete_days = r.periods_total == 7 && r.periods_covered == 7;
+    let status = if outcome == ReportOutcome::Partial {
+        if !complete_days || !missing.is_empty() {
+            "PARTIAL — incomplete coverage"
+        } else {
+            "PARTIAL — saved synthesis has limitations"
+        }
+    } else if complete_days {
+        "OK — complete saved-daily coverage"
+    } else {
+        "OK — saved synthesis"
+    };
+    let mut coverage = format!(
+        "Coverage: {}/{} days covered",
+        r.periods_covered, r.periods_total
     );
+    if !missing.is_empty() {
+        coverage.push_str(&format!(
+            "; missing or partial saved dailies: {}",
+            missing.join(", ")
+        ));
+    } else if r.periods_covered < r.periods_total {
+        coverage.push_str("; missing or partial saved dailies: not enumerated in saved report");
+    }
+    let mut seen = std::collections::HashSet::new();
+    let ids: Vec<_> = r
+        .daily_run_ids
+        .iter()
+        .filter(|id| seen.insert(id.as_str()))
+        .collect();
+    let sources = if ids.is_empty() {
+        "Sources: no saved daily reports recorded".to_string()
+    } else {
+        format!(
+            "Sources: {} saved daily {} — {}",
+            ids.len(),
+            if ids.len() == 1 { "report" } else { "reports" },
+            {
+                let mut text = ids
+                    .iter()
+                    .take(12)
+                    .map(|id| {
+                        let masked = mask(id);
+                        let prefix = bounded(&masked, 96);
+                        if prefix.len() < masked.len() {
+                            format!("{prefix}…")
+                        } else {
+                            prefix
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if ids.len() > 12 {
+                    text.push_str(&format!(
+                        "; +{} more (full source list in saved report)",
+                        ids.len() - 12
+                    ));
+                }
+                text
+            }
+        )
+    };
+    let body = mask(&r.markdown);
+    let shortened = bounded(&body, 10_000);
+    let cut = shortened.encode_utf16().count() < body.encode_utf16().count();
+    Ok(format!(
+        "ScreenSearch {label}\n{status}\n{coverage}\n{sources}\n{} frames summarized\n\nHighlights\n{}{}",
+        r.frames_summarized,
+        shortened,
+        if cut {
+            "\n[Digest shortened; full report saved locally]"
+        } else {
+            ""
+        }
+    ))
+}
+
+pub fn digest_chunks(run: &ReportRun) -> Result<Vec<String>, String> {
+    let outcome = run
+        .outcome
+        .ok_or_else(|| "report has no outcome".to_string())?;
+    if !matches!(outcome, ReportOutcome::Ok | ReportOutcome::Partial) {
+        return Ok(vec![]);
+    }
+    let r = run
+        .result
+        .as_ref()
+        .ok_or_else(|| "report has no saved output".to_string())?;
+    let text = match run.kind {
+        ReportRunKind::Daily => daily_digest(run, r, outcome),
+        ReportRunKind::WeeklySynthesis => weekly_digest(run, r, outcome)?,
+    };
     let mut chunks = Vec::new();
     let mut current = String::new();
     let mut units = 0;
@@ -338,5 +463,171 @@ mod tests {
         let digest = digest_chunks(&run).unwrap().join("");
         assert!(digest.contains("2026-10-01 to 2026-10-15"));
         assert!(!digest.contains("1970-01-01"));
+    }
+
+    /// A saved weekly synthesis (`03 §8e`) over Europe/Paris ISO week 2026-W42.
+    fn weekly_saved_run(markdown: String) -> ReportRun {
+        let mut run = saved_run(markdown);
+        run.kind = traits::ReportRunKind::WeeklySynthesis;
+        run.window_start = chrono::DateTime::parse_from_rfc3339("2026-10-11T22:00:00Z")
+            .unwrap()
+            .timestamp_millis();
+        run.window_end = chrono::DateTime::parse_from_rfc3339("2026-10-18T22:00:00Z")
+            .unwrap()
+            .timestamp_millis();
+        run.timezone = "Europe/Paris".into();
+        run.local_date = "2026-10-12".into();
+        run.outcome = Some(ReportOutcome::Partial);
+        let result = run.result.as_mut().unwrap();
+        result.periods_total = 7;
+        result.periods_covered = 5;
+        result.frames_summarized = 12;
+        result.daily_run_ids = vec![
+            "11111111-1111-4111-8111-111111111111".into(),
+            "22222222-2222-4222-8222-222222222222".into(),
+        ];
+        run
+    }
+
+    #[test]
+    fn weekly_digest_uses_saved_weekly_report() {
+        let markdown = "**Partial coverage:** the week is missing complete saved daily coverage for 2026-10-15.\n\n## Saved synthesis\n\nShipped the weekly digest [frame 101]; reviewed 東京 😀 notes.";
+        let run = weekly_saved_run(markdown.into());
+        let digest = digest_chunks(&run).unwrap().join("");
+
+        // The digest is rendered from the saved synthesis, never re-inferred.
+        assert!(digest.contains("Saved synthesis"));
+        assert!(digest.contains("Shipped the weekly digest [frame 101]"));
+        assert!(digest.contains("reviewed 東京 😀 notes"));
+        // Provenance comes from the saved report's own daily-run IDs.
+        assert!(digest.contains("11111111-1111-4111-8111-111111111111"));
+        assert!(digest.contains("22222222-2222-4222-8222-222222222222"));
+        assert_eq!(
+            run.result.as_ref().unwrap().markdown,
+            markdown,
+            "rendering must preserve the saved weekly report"
+        );
+    }
+
+    #[test]
+    fn weekly_digest_renders_weekly_format() {
+        let markdown = "**Partial coverage:** the week is missing complete saved daily coverage for 2026-10-15.\n\n## Activity\n\nShipped the weekly digest [frame 101].";
+        let run = weekly_saved_run(markdown.into());
+        let chunks = digest_chunks(&run).unwrap();
+        let digest = chunks
+            .iter()
+            .map(|chunk| chunk.split_once('\n').unwrap().1)
+            .collect::<String>();
+
+        assert!(
+            digest.starts_with(
+                "ScreenSearch 2026-W42\nPARTIAL — incomplete coverage\nCoverage: 5/7 days covered; missing or partial saved dailies: 2026-10-15\n"
+            ),
+            "weekly header must carry the ISO week, truthful status, coverage and missing day: {digest}"
+        );
+        assert!(digest.contains(
+            "Sources: 2 saved daily reports — 11111111-1111-4111-8111-111111111111, 22222222-2222-4222-8222-222222222222"
+        ));
+        assert!(digest.contains("12 frames summarized\n\nHighlights\n"));
+        assert!(digest.contains("Shipped the weekly digest [frame 101]"));
+        // A weekly run never borrows the daily local-date label.
+        assert!(!digest.starts_with("ScreenSearch 2026-10-12"));
+
+        // Complete measured coverage is stated as such, with no invented gaps.
+        let mut complete = weekly_saved_run("## Activity\n\nAll seven days saved.".into());
+        complete.outcome = Some(ReportOutcome::Ok);
+        complete.result.as_mut().unwrap().periods_covered = 7;
+        let complete_digest = digest_chunks(&complete)
+            .unwrap()
+            .iter()
+            .map(|chunk| chunk.split_once('\n').unwrap().1)
+            .collect::<String>();
+        assert!(complete_digest.starts_with(
+            "ScreenSearch 2026-W42\nOK — complete saved-daily coverage\nCoverage: 7/7 days covered\n"
+        ));
+        assert!(!complete_digest.contains("missing or partial saved dailies"));
+    }
+
+    #[test]
+    fn weekly_digest_chunks_fit_telegram_limit() {
+        let text = format!(
+            "Week notes: café 東京 😀\npassword=weekly-secret\n{}",
+            "😀é東".repeat(4000)
+        );
+        let run = weekly_saved_run(text.clone());
+        let chunks = digest_chunks(&run).unwrap();
+        assert!(chunks.len() > 1);
+        for (index, chunk) in chunks.iter().enumerate() {
+            assert!(chunk.encode_utf16().count() <= 4096);
+            assert!(chunk.starts_with(&format!("[{}/{}]\n", index + 1, chunks.len())));
+            assert!(!chunk.contains('\u{fffd}'));
+            assert!(!chunk.contains("weekly-secret"));
+        }
+        let digest = chunks
+            .iter()
+            .map(|chunk| chunk.split_once('\n').unwrap().1)
+            .collect::<String>();
+        assert!(digest.contains("ScreenSearch 2026-W42"));
+        assert!(digest.contains("Week notes: café 東京 😀"));
+        assert!(digest.contains("[credential redacted]"));
+        assert!(digest.ends_with("[Digest shortened; full report saved locally]"));
+        assert_eq!(
+            run.result.as_ref().unwrap().markdown,
+            text,
+            "rendering must preserve the saved weekly report"
+        );
+    }
+
+    #[test]
+    fn weekly_digest_partial_truncation_does_not_claim_missing_days() {
+        let mut run = weekly_saved_run("Saved synthesis has bounded sampling.".into());
+        let report = run.result.as_mut().unwrap();
+        report.periods_covered = 7;
+        report.truncated = true;
+        let digest = digest_chunks(&run).unwrap().join("");
+        assert!(digest.contains("PARTIAL — saved synthesis has limitations"));
+        assert!(digest.contains("Coverage: 7/7 days covered"));
+        assert!(!digest.contains("missing or partial saved dailies"));
+    }
+
+    #[test]
+    fn weekly_digest_ignores_model_echoed_missing_day_markers() {
+        let run = weekly_saved_run("**Partial coverage:** sampling was bounded.\n\nModel echo: the week is missing complete saved daily coverage for 2099-01-01.".into());
+        let digest = digest_chunks(&run).unwrap().join("");
+        let coverage = digest
+            .lines()
+            .find(|line| line.starts_with("Coverage:"))
+            .unwrap();
+        assert!(coverage.contains("not enumerated in saved report"));
+        assert!(!coverage.contains("2099"));
+    }
+
+    #[test]
+    fn weekly_digest_bounds_and_deduplicates_source_ids() {
+        let mut run = weekly_saved_run("Saved synthesis stays intact.".into());
+        let ids: Vec<String> = (0..100).map(|i| format!("daily-run-{i:03}")).collect();
+        let report = run.result.as_mut().unwrap();
+        report.daily_run_ids = ids.clone();
+        report.daily_run_ids.push(ids[0].clone());
+        let digest = digest_chunks(&run).unwrap().join("");
+        assert!(digest.contains("Sources: 100 saved daily reports"));
+        assert_eq!(digest.matches(&ids[0]).count(), 1);
+        assert!(digest.contains(&ids[11]));
+        assert!(!digest.contains(&ids[12]));
+        assert!(digest.contains("+88 more"));
+        assert!(digest.contains("Saved synthesis stays intact."));
+    }
+
+    #[test]
+    fn daily_digest_output_is_unchanged() {
+        let run = saved_run("Observed activity".into());
+        assert_eq!(
+            digest_chunks(&run).unwrap(),
+            vec![
+                "[1/1]\nScreenSearch 1970-01-01\nPARTIAL — incomplete coverage\n1 frames summarized; 1 periods covered\n\nObserved activity"
+                    .to_string()
+            ],
+            "the daily digest format is frozen"
+        );
     }
 }

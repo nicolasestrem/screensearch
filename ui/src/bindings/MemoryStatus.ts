@@ -4,4 +4,4 @@ import type { ReportError } from "./ReportError";
 import type { ReportRun } from "./ReportRun";
 import type { TimeRange } from "./TimeRange";
 
-export type MemoryStatus = { settings: MemorySettings, source_id: string, latest_run: ReportRun | null, missed_windows: Array<TimeRange>, worker_running: boolean, worker_error: ReportError | null, telegram_credential_available: boolean, };
+export type MemoryStatus = { settings: MemorySettings, source_id: string, latest_run: ReportRun | null, missed_windows: Array<TimeRange>, worker_running: boolean, worker_error: ReportError | null, telegram_credential_available: boolean, weekly_latest_run: ReportRun | null, weekly_missed_windows: Array<TimeRange>, };

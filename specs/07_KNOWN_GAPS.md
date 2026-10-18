@@ -93,7 +93,34 @@
   Timeline/Insights/CapturesTrend labels. A valid IANA zone is assumed for a saved run: the
   backend validates the identifier before persisting it and the run header already formats
   `window_start`/`window_end` with it.
+## 2026-10-18 — F3 G5/G6 implementation readings
 
+- **Supersedes the G1/G2 transitional no-weekly-surface/no-digest notes below.**
+  Weekly settings, Run now, catch-up and weekly-specific saved-output Telegram
+  digests are implemented; native engineering verification is tracked in `05`.
+- **Catch-up scans six complete ISO weeks, capped at four most recent due weeks.**
+  Windows are queued oldest-first. Older omitted spans persist as disjoint ranges
+  in `memory.weekly.gaps`; enqueue precedes cursor advancement. Time/zone changes
+  preserve history and record skipped previously eligible closed weeks, never an
+  open/future activation week. First-week/DST rules and schema 13 remain unchanged.
+- **Weekly Telegram requires independent explicit opt-in.** It defaults off under
+  `memory.telegram.weekly_enabled`, sharing only the credential and chosen chat.
+  Frozen and current consent are both kind-aware. All opted-in catch-up weeks may
+  deliver; no undocumented newest-only suppression is introduced.
+- **Manual weekly runs do not advance or deduplicate against the schedule cursor.**
+  They remain explicit runs with `schedule_id=None`; a later scheduled run of the
+  same week is still possible, mirroring the daily Run-now contract.
+- **Weekly and daily zones are independent, but G2 matches saved dailies by exact
+  zone string.** Different selections can leave coverage missing; UI warns rather
+  than silently changing either zone or pretending aliases are interchangeable.
+- **Digest provenance is bounded, not rewritten.** Show up to 12 unique saved daily
+  source IDs, visibly abbreviate unusually long IDs, and disclose the exact omitted
+  count; full IDs remain in the saved report. Missing-day metadata is parsed only
+  from the producer's leading persisted banner, not later model prose. No new
+  SavedReport field or schema migration was invented.
+- **Engineering tests are not product acceptance.** Real-week/private-history,
+  Obsidian links, interactive promotion and an explicitly approved live Telegram
+  send remain open. No installed profile or live history is touched by this slice.
 ## 2026-10-18 — Post-install promotion conflict receipt
 
 - `PromotionReceipt.hash` is populated when the promotion's bytes are confirmed
