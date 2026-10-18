@@ -15,7 +15,8 @@
 //! - `memory.weekly.state` — this schedule's own `schedule_id`, activation instant
 //!   and oldest-first cursor. It is independent of the daily `memory.schedule.state`.
 //! - `memory.weekly.gaps` — a disjoint, sorted `Vec<TimeRange>` of complete weeks
-//!   skipped by the backfill cap. It is a separate key so re-activation or a time/
+//!   the schedule missed: skipped by the backfill cap, or whose scheduled run
+//!   settled FAILED. It is a separate key so re-activation or a time/
 //!   timezone change never erases gap history, and it is never flattened into one
 //!   `[min(start), max(end)]` span that would falsely include covered weeks.
 //!
@@ -292,12 +293,48 @@ pub(super) async fn schedule_due(state: &AppState) -> Result<(), ReportError> {
     let store = db(state)?;
     let _guard = state.memory_runtime.control.lock().await;
     check_open(&state.memory_runtime)?;
+    // Failed scheduled weeks are recorded whether or not the schedule is still on, so
+    // disabling right after a failure cannot hide it.
+    record_failed_weeks(store.as_ref()).await?;
     let config = settings(store.as_ref()).await?;
     if !config.weekly_enabled {
         return Ok(());
     }
     let config_snapshot = snapshot(state, config.clone()).await?;
     catch_up(store.as_ref(), &config, &config_snapshot, now_ms()).await
+}
+
+/// A scheduled week whose original run settled FAILED was not covered, so it is a
+/// missed week in the same durable gap history as weeks skipped by the backfill cap
+/// (Nico's decision on PR #140). Only the scheduler's original run decides: a manual
+/// run is not the schedule's coverage, a failed regeneration leaves an earlier saved
+/// result standing, and BLOCKED is a missing prerequisite, not a failed generation.
+/// The cursor already advanced at enqueue, so catch-up never retries the week; the
+/// user can still regenerate it, and the gap stays as history like every other gap.
+/// This idempotent sweep runs every worker turn, so a crash between settling the run
+/// and recording its gap cannot lose the gap; weekly runs live for the 90-day
+/// retention, well inside the scan bound.
+async fn record_failed_weeks(store: &dyn Store) -> Result<(), ReportError> {
+    let runs = store
+        .list_report_runs(1000, Some(ReportRunKind::WeeklySynthesis))
+        .await
+        .map_err(storage)?;
+    let mut history: Vec<TimeRange> = setting(store, GAPS_KEY).await?;
+    let mut changed = false;
+    for run in runs.iter().filter(|run| {
+        run.schedule_id.is_some()
+            && run.revision_of.is_none()
+            && run.outcome == Some(ReportOutcome::Failed)
+    }) {
+        changed |= merge_gap(&mut history, (run.window_start, run.window_end));
+    }
+    if changed {
+        store
+            .set_setting(GAPS_KEY, &serde_json::to_string(&history).map_err(storage)?)
+            .await
+            .map_err(storage)?;
+    }
+    Ok(())
 }
 
 // The caller holds the control lock. This real Store path queues but never generates or sends.
@@ -692,6 +729,64 @@ mod tests {
         assert_ne!(reset.schedule_id, previous.schedule_id);
         assert_eq!(reset.activated_at, now);
         assert!(reset.last_window_end.is_none());
+    }
+
+    #[tokio::test]
+    async fn weekly_failed_scheduled_week_is_recorded_as_missed() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let week = |run_id: &str, start: &str, end: &str, outcome: ReportOutcome| {
+            let mut run = run_fixture(run_id, ReportRunKind::WeeklySynthesis, 100);
+            run.schedule_id = Some("weekly-schedule".into());
+            run.window_start = stamp(start);
+            run.window_end = stamp(end);
+            run.outcome = Some(outcome);
+            run
+        };
+        // The scheduler's own run failed: the week was not covered.
+        let failed = week(
+            "failed-week",
+            "2026-10-11T22:00:00Z",
+            "2026-10-18T22:00:00Z",
+            ReportOutcome::Failed,
+        );
+        // A saved week whose later regeneration failed is still covered.
+        let saved = week(
+            "saved-week",
+            "2026-10-04T22:00:00Z",
+            "2026-10-11T22:00:00Z",
+            ReportOutcome::Ok,
+        );
+        let mut failed_revision = saved.clone();
+        failed_revision.run_id = "failed-revision".into();
+        failed_revision.revision_of = Some(saved.run_id.clone());
+        failed_revision.outcome = Some(ReportOutcome::Failed);
+        // A manual run is not the schedule's coverage; BLOCKED is not a failed generation.
+        let mut manual = week(
+            "manual-week",
+            "2026-09-27T22:00:00Z",
+            "2026-10-04T22:00:00Z",
+            ReportOutcome::Failed,
+        );
+        manual.schedule_id = None;
+        let blocked = week(
+            "blocked-week",
+            "2026-09-20T22:00:00Z",
+            "2026-09-27T22:00:00Z",
+            ReportOutcome::Blocked,
+        );
+        for run in [failed, saved, failed_revision, manual, blocked] {
+            store.create_report_run(run).await.unwrap();
+        }
+
+        record_failed_weeks(&store).await.unwrap();
+        let expected = vec![TimeRange {
+            start: stamp("2026-10-11T22:00:00Z"),
+            end: stamp("2026-10-18T22:00:00Z"),
+        }];
+        assert_eq!(gaps(&store).await.unwrap(), expected);
+        // Idempotent: every worker turn sweeps again without duplicating the week.
+        record_failed_weeks(&store).await.unwrap();
+        assert_eq!(gaps(&store).await.unwrap(), expected);
     }
 
     fn notes_folder() -> String {

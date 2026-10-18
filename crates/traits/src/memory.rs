@@ -226,7 +226,8 @@ pub struct MemoryStatus {
     // Separate latest weekly run; older status payloads remain readable.
     #[serde(default)]
     pub weekly_latest_run: Option<ReportRun>,
-    // Weekly windows skipped by bounded catch-up; never claimed as covered.
+    // Weekly windows the schedule missed — skipped by bounded catch-up or a schedule
+    // change, or whose scheduled synthesis failed; never claimed as covered.
     #[serde(default)]
     pub weekly_missed_windows: Vec<crate::TimeRange>,
 }

@@ -1,5 +1,18 @@
 # 07 — Known Gaps
 
+## 2026-10-18 — Decided: a failed scheduled weekly synthesis is a missed week (Nico)
+
+- Supersedes the open decision in "Weekly run that fails generation is not retried by catch-up"
+  below. Nico approved recording failed weeks as missed (PR #140). A week whose scheduler-owned
+  original run settles FAILED is added to `memory.weekly.gaps` and shown under "Missed weeks";
+  it is still not retried automatically (the cursor advanced at enqueue), and the user can
+  regenerate it.
+- Readings (implementation, not settled by `03 §8e`; can be overridden): manual runs do not
+  count as the schedule's coverage; a failed regeneration of an already saved week does not
+  mark it missed; BLOCKED (missing model/source) is a missing prerequisite, not a failed
+  generation, so it is not recorded. Like every other gap entry, the record is history and stays
+  after a later successful regeneration.
+
 ## 2026-10-18 — Weekly run that fails generation is not retried by catch-up
 
 - The weekly cursor advances at enqueue (enqueue-before-cursor), not on generation success. A

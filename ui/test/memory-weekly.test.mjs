@@ -202,7 +202,9 @@ test("latest weekly status and older missed weeks stay distinct from the daily s
   assert.match(html, /Saved daily coverage, evidence, or output is incomplete; see the saved synthesis for limitations/);
   assert.doesNotMatch(html, /Last daily run: 2026-W41/);
   assert.match(html, /Older missed daily windows/);
-  assert.match(html, /Older missed weeks/);
+  assert.match(html, /Missed weeks/);
+  assert.doesNotMatch(html, /Older missed weeks/);
+  assert.match(html, /or their scheduled synthesis failed/);
   assert.match(html, /not reported as covered/);
 });
 

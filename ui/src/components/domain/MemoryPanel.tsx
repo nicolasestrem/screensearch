@@ -573,9 +573,9 @@ export function MemoryPanel({ initialSettings }: { initialSettings?: MemorySetti
           </div>
           {weeklyMissed.length > 0 && (
             <div>
-              <h4 className="font-display text-body">Older missed weeks</h4>
+              <h4 className="font-display text-body">Missed weeks</h4>
               <p className="text-caption text-ink-muted">
-                These uncovered spans were skipped by bounded catch-up or a schedule change and are not reported as covered. Times use the current weekly timezone.
+                These uncovered spans were skipped by bounded catch-up or a schedule change, or their scheduled synthesis failed, and are not reported as covered. Times use the current weekly timezone.
               </p>
               <ul>
                 {weeklyMissed.map((window) => (
