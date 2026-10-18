@@ -1,5 +1,46 @@
 # 05 — Build Review
 
+## 2026-10-18 — F3 G5/G6 review-or-redo, rebuilt on main
+
+- Runtime verified: `1ce4d66bcadd2d46ccf9367be565183f9e218c5c` in the existing native Windows checkout (Rust 1.95.0, Node
+  22.23.3), branch `feat/f3-g5-g6-weekly-scheduler-digest-v2`. This docs-only commit inherits
+  that result; it is not a claim of another runtime run.
+- Candidate `421ee84` was rebuilt on `main` by applying its net delta from its own base
+  `176b567` (not a merge/rebase: `176b567` is not an ancestor of `main`). PR-139 batch-3 files
+  are byte-identical to `main`; the four ledgers keep both entries.
+- Independent review: G5 and G6 both conform to the plan and `03 §8e/§8d`. Follow-ups: the
+  future-cursor diagnostic now reaches the user; missing-day disclosure parses the producer
+  banner only on partial weeks; long-ID abbreviation gained a regression test.
+- A first native run at `f633312` failed (`CHAIN_EXIT=101`): the new OK-week test asserted
+  over the whole digest, where Highlights reproduce the saved markdown verbatim. The assertion
+  was narrowed to the Coverage line (the actual invariant); production code was unchanged.
+- Verbatim native output:
+
+```text
+head=1ce4d66bcadd2d46ccf9367be565183f9e218c5c
+EXIT npm ci = 0
+EXIT npm run lint = 0
+EXIT npm run build = 0
+EXIT npm test = 0
+EXIT quinn security = 0
+EXIT stage-mcp = 0
+EXIT cargo fmt = 0
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+EXIT cargo test = 0
+EXIT bindings = 0
+CHAIN_EXIT=0
+test memory_schedule::tests::weekly_catchup_oldest_first ... ok
+test memory_schedule::tests::weekly_backfill_cap_reports_gap ... ok
+test memory_telegram::tests::weekly_digest_uses_saved_weekly_report ... ok
+test memory_telegram::tests::weekly_digest_renders_weekly_format ... ok
+test memory_telegram::tests::weekly_digest_chunks_fit_telegram_limit ... ok
+```
+
+- Parsed Rust totals: 1129 passed, 0 failed, 15 ignored across 62 suites. UI: 50 passed,
+  0 failed. Native interactive acceptance (installed app, real week, Obsidian, promotion,
+  live weekly Telegram send) remains open.
+
 ## 2026-10-18 — PR #139 review batch 3: note identity, weekly citations, export timezone (Claude + Codex)
 
 - Runtime verified: `fe72af8f83bf43007567703ac4ad152b336af608` in the existing native

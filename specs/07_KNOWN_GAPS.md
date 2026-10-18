@@ -1,5 +1,13 @@
 # 07 — Known Gaps
 
+## 2026-10-18 — Weekly run that fails generation is not retried by catch-up
+
+- The weekly cursor advances at enqueue (enqueue-before-cursor), not on generation success. A
+  weekly run that settles `GENERATION_FAILED` (for example under the per-day citation rule)
+  stays visible as a FAILED run and can be regenerated manually, but catch-up neither retries it
+  nor records it as a gap. This matches the shipped daily lane. Open decision for Nico: keep,
+  retry, or record failed weeks as gaps.
+
 ## 2026-10-18 — PR #139 review batch 3 readings
 
 - **Note identity is the OS-resolved canonical path, never case-folded.** The ownership

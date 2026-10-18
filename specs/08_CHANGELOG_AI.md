@@ -1,5 +1,11 @@
 # 08 — AI Changelog
 
+## 2026-10-18 — F3 G5/G6 rebuilt on main with review follow-ups
+
+- Rebuilt the G5/G6 work onto `main` with PR-139 batch-3 preserved; added the future-cursor
+  diagnostic, the partial-only banner gate and three regression tests. Native chain green at
+  `1ce4d66bcadd2d46ccf9367be565183f9e218c5c` (see `05`). No push, PR, merge, installed-app change or real send.
+
 ## 2026-10-18 — PR #139 review batch 3: identity, citations, timezone
 
 - Fixed Codex `r4307321378` (note path not normalized before ownership lookup: a
