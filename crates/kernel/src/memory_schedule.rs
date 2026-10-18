@@ -201,6 +201,55 @@ fn midnight(zone: Tz, first: NaiveDate, offset: i64) -> Result<i64> {
     resolve(zone, date.and_time(NaiveTime::MIN))
 }
 
+/// The local-day periods of `[start, end)` with their `YYYY-MM-DD` dates (`03 §8e`): one
+/// period per local date, with the first and last periods clipped to the window like
+/// [`local_day_grid`]. This is the single date-enumeration source — weekly coverage and
+/// note frontmatter both derive their dates here, never from a 24 h-offset walk.
+pub(crate) fn window_local_day_periods(
+    timezone: &str,
+    start: i64,
+    end: i64,
+) -> Result<Vec<(String, i64, i64)>> {
+    if end <= start {
+        return Ok(Vec::new());
+    }
+    let zone: Tz = timezone.parse().context("unknown IANA time zone")?;
+    let first = utc(start)?.with_timezone(&zone).date_naive();
+    let last = utc(end - 1)?.with_timezone(&zone).date_naive();
+    let mut periods = Vec::new();
+    let mut date = first;
+    loop {
+        let tomorrow = next(date)?;
+        let day_start = resolve(zone, date.and_time(NaiveTime::MIN))?;
+        let next_midnight = resolve(zone, tomorrow.and_time(NaiveTime::MIN))?;
+        let period_start = if date == first { start } else { day_start };
+        let period_end = if date == last {
+            end.min(next_midnight)
+        } else {
+            next_midnight
+        };
+        // A whole civil date can be skipped (e.g. Pacific/Apia); it has no period.
+        if period_end > period_start {
+            periods.push((date.to_string(), period_start, period_end));
+        }
+        if date == last {
+            break;
+        }
+        date = tomorrow;
+    }
+    Ok(periods)
+}
+
+/// Every local calendar date (`YYYY-MM-DD`, oldest first) whose local-day period has a
+/// non-empty intersection with the UTC window `[start, end)` (`03 §8e`). A full ISO week
+/// yields exactly its seven dates even across DST (167/169 h) weeks.
+pub fn window_local_dates(timezone: &str, start: i64, end: i64) -> Result<Vec<String>> {
+    Ok(window_local_day_periods(timezone, start, end)?
+        .into_iter()
+        .map(|(date, _, _)| date)
+        .collect())
+}
+
 /// Return the seven most recent eligible overdue windows oldest first, exposing older gaps.
 /// Caller durably enqueues each unique window before advancing its persisted cursor.
 pub fn due_windows(
@@ -246,6 +295,40 @@ fn week_start(date: NaiveDate) -> Result<NaiveDate> {
         .context("calendar overflow")
 }
 
+/// `2026-W42` — one local date's ISO year and zero-padded ISO week (`03 §8e`).
+fn iso_week_label(date: NaiveDate) -> String {
+    let week = date.iso_week();
+    format!("{}-W{:02}", week.year(), week.week())
+}
+
+/// `2026-W42` (ISO year, zero-padded ISO week) for the instant `at` (UTC millis) in
+/// `timezone` (`03 §8e`): the label follows that zone's local date, never the UTC one.
+pub fn week_label(timezone: &str, at: i64) -> Result<String> {
+    let zone: Tz = timezone.parse().context("unknown IANA time zone")?;
+    Ok(iso_week_label(utc(at)?.with_timezone(&zone).date_naive()))
+}
+
+/// Strict `YYYY-Www` parse (`03 §8e`): exactly four year digits, `-W`, two week digits,
+/// and the ISO week must exist in that ISO year — `2025-W53` is invalid because 2025 has
+/// 52 ISO weeks, while `2020-W53` and `2026-W53` are real.
+pub fn parse_week_label(label: &str) -> Result<(i32, u32)> {
+    let bytes = label.as_bytes();
+    let well_formed = bytes.len() == 8
+        && bytes[4] == b'-'
+        && bytes[5] == b'W'
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[6..].iter().all(u8::is_ascii_digit);
+    if !well_formed {
+        bail!("week label must be YYYY-Www");
+    }
+    let year: i32 = label[..4].parse().context("week label must be YYYY-Www")?;
+    let week: u32 = label[6..].parse().context("week label must be YYYY-Www")?;
+    if NaiveDate::from_isoywd_opt(year, week, chrono::Weekday::Mon).is_none() {
+        bail!("ISO week does not exist in that ISO year");
+    }
+    Ok((year, week))
+}
+
 /// ISO-week window (`03 §8e`): Monday 00:00 → next Monday 00:00 local, resolved with
 /// the shared DST rules (missing wall time → first valid instant; ambiguous → earlier
 /// instant once), so DST-shortened/lengthened weeks are 167/169-hour windows, never
@@ -255,12 +338,11 @@ fn week_window(zone: Tz, time: NaiveTime, monday: NaiveDate) -> Result<WeeklyWin
     let next_monday = monday
         .checked_add_days(Days::new(7))
         .context("calendar overflow")?;
-    let week = monday.iso_week();
     Ok(WeeklyWindow {
         start: resolve(zone, monday.and_time(NaiveTime::MIN))?,
         end: resolve(zone, next_monday.and_time(NaiveTime::MIN))?,
         due_at: resolve(zone, next_monday.and_time(time))?,
-        label: format!("{}-W{:02}", week.year(), week.week()),
+        label: iso_week_label(monday),
     })
 }
 
@@ -501,6 +583,151 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(local_day_grid("Not/AZone", start, end, 31).is_err());
+    }
+
+    #[test]
+    fn window_local_dates_lists_every_local_day_through_dst() {
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        // 2026-W13, the spring-forward week: 167 h, still exactly its seven dates.
+        let spring_start = local_stamp(paris, 2026, 3, 23, 0, 0);
+        let spring_end = local_stamp(paris, 2026, 3, 30, 0, 0);
+        assert_eq!(spring_end - spring_start, 167 * 3_600_000);
+        assert_eq!(
+            window_local_dates("Europe/Paris", spring_start, spring_end).unwrap(),
+            vec![
+                "2026-03-23",
+                "2026-03-24",
+                "2026-03-25",
+                "2026-03-26",
+                "2026-03-27",
+                "2026-03-28",
+                "2026-03-29",
+            ]
+        );
+        // 2026-W43, the fall-back week: 169 h, also exactly seven dates.
+        let fall_start = local_stamp(paris, 2026, 10, 19, 0, 0);
+        let fall_end = local_stamp(paris, 2026, 10, 26, 0, 0);
+        assert_eq!(fall_end - fall_start, 169 * 3_600_000);
+        assert_eq!(
+            window_local_dates("Europe/Paris", fall_start, fall_end).unwrap(),
+            vec![
+                "2026-10-19",
+                "2026-10-20",
+                "2026-10-21",
+                "2026-10-22",
+                "2026-10-23",
+                "2026-10-24",
+                "2026-10-25",
+            ]
+        );
+    }
+
+    #[test]
+    fn window_local_dates_handles_normal_partial_and_iso_year_windows() {
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        let normal = window_local_dates(
+            "Europe/Paris",
+            local_stamp(paris, 2026, 1, 5, 0, 0),
+            local_stamp(paris, 2026, 1, 12, 0, 0),
+        )
+        .unwrap();
+        assert_eq!(normal.len(), 7);
+        assert_eq!(normal.first().unwrap(), "2026-01-05");
+        assert_eq!(normal.last().unwrap(), "2026-01-11");
+        // 2026-W53 crosses the civil-year boundary; every date keeps its own year.
+        assert_eq!(
+            window_local_dates(
+                "Europe/Paris",
+                local_stamp(paris, 2026, 12, 28, 0, 0),
+                local_stamp(paris, 2027, 1, 4, 0, 0),
+            )
+            .unwrap(),
+            vec![
+                "2026-12-28",
+                "2026-12-29",
+                "2026-12-30",
+                "2026-12-31",
+                "2027-01-01",
+                "2027-01-02",
+                "2027-01-03",
+            ]
+        );
+        // A window starting and ending inside local days still names every touched date.
+        assert_eq!(
+            window_local_dates(
+                "Europe/Paris",
+                stamp("2026-03-30T08:00:00Z"),
+                stamp("2026-03-31T08:00:00Z"),
+            )
+            .unwrap(),
+            vec!["2026-03-30", "2026-03-31"]
+        );
+        // Degenerate and invalid windows stay explicit, never a panic.
+        assert!(window_local_dates("Europe/Paris", 10, 10)
+            .unwrap()
+            .is_empty());
+        assert!(window_local_dates("Europe/Paris", 20, 10)
+            .unwrap()
+            .is_empty());
+        assert!(window_local_dates("Not/AZone", 0, 10).is_err());
+    }
+
+    #[test]
+    fn week_label_and_parse_week_label_roundtrip() {
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        for date in [
+            ymd(2026, 10, 17),
+            ymd(2026, 3, 25),
+            ymd(2020, 12, 31),
+            ymd(2027, 1, 1),
+        ] {
+            let at = local_stamp(paris, date.year(), date.month(), date.day(), 12, 0);
+            let week = date.iso_week();
+            let label = week_label("Europe/Paris", at).unwrap();
+            assert_eq!(label, format!("{}-W{:02}", week.year(), week.week()));
+            assert_eq!(
+                parse_week_label(&label).unwrap(),
+                (week.year(), week.week())
+            );
+        }
+        // The label follows the local date: 2026-12-31 23:30 UTC is already 2027-01-01 in
+        // Paris, and that Friday still belongs to 2026-W53.
+        assert_eq!(
+            week_label("Europe/Paris", stamp("2026-12-31T23:30:00Z")).unwrap(),
+            "2026-W53"
+        );
+        assert_eq!(
+            week_label("Etc/UTC", stamp("2026-10-17T12:00:00Z")).unwrap(),
+            "2026-W42"
+        );
+        assert!(week_label("Not/AZone", 0).is_err());
+        assert!(week_label("Etc/UTC", i64::MAX).is_err());
+    }
+
+    #[test]
+    fn parse_week_label_rejects_malformed_and_missing_weeks() {
+        for label in [
+            "",
+            "2026-42",
+            "2026-W4",
+            "2026-W042",
+            "2026W42",
+            "2026-w42",
+            "26-W42",
+            "abcd-W42",
+            "2026-W4x",
+            " 2026-W42",
+            "+2026-W42",
+            "2026-W00",
+            "2026-W54",
+        ] {
+            assert!(parse_week_label(label).is_err(), "must reject {label:?}");
+        }
+        // 53-week ISO years are real; 2025 has 52, so 2025-W53 (and 2027-W53) do not exist.
+        assert_eq!(parse_week_label("2020-W53").unwrap(), (2020, 53));
+        assert_eq!(parse_week_label("2026-W53").unwrap(), (2026, 53));
+        assert!(parse_week_label("2025-W53").is_err());
+        assert!(parse_week_label("2027-W53").is_err());
     }
 
     #[test]

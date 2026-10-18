@@ -615,6 +615,7 @@ pub use capture_observations::{
     CaptureInterruption, CaptureInterruptionReason, CaptureObservations,
 };
 pub use events::KernelEvent;
+pub use memory_schedule::{parse_week_label, week_label, window_local_dates};
 
 use capture_observations::{CaptureObservation, CaptureObservationBuffer};
 pub use worker_pool::process_job;

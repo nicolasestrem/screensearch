@@ -228,6 +228,94 @@ pub fn daily_note(run: &ReportRun, base_run_id: Option<&str>) -> anyhow::Result<
     Ok(text)
 }
 
+/// `Weekly/2026-W42.md` from the run's ISO week (`03 §8e`). Weekly notes live in
+/// their own filename space: a daily run never writes here and a weekly run never
+/// writes a `Daily/` note.
+pub fn weekly_note_relative_path(run: &ReportRun) -> anyhow::Result<PathBuf> {
+    anyhow::ensure!(
+        run.kind == ReportRunKind::WeeklySynthesis,
+        "weekly note requires a weekly synthesis run"
+    );
+    let label = kernel::week_label(&run.timezone, run.window_start)?;
+    Ok(PathBuf::from("Weekly").join(format!("{label}.md")))
+}
+
+/// Render the weekly note from the persisted run only (`03 §8e`). The body is the
+/// saved synthesis verbatim: `save_weekly_execution` already prepended the weekly
+/// PARTIAL banner, so a second banner here would double-state the week's gaps.
+pub fn weekly_note(run: &ReportRun) -> anyhow::Result<String> {
+    weekly_note_relative_path(run)?;
+    let r = run
+        .result
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("report has no saved output"))?;
+    let status = run
+        .outcome
+        .ok_or_else(|| anyhow::anyhow!("report has no outcome"))?;
+    // G3 writes no note for a NO_DATA week (`03 §8e`); only saved evidence exports.
+    anyhow::ensure!(
+        matches!(status, ReportOutcome::Ok | ReportOutcome::Partial),
+        "weekly report is not exportable"
+    );
+    let mut ids = r.frame_ids.clone();
+    ids.sort_unstable();
+    ids.dedup();
+    // `generate_weekly_synthesis` records `frames_summarized` as the distinct frame
+    // count of `frame_ids` on both engine paths, so the daily check holds here too.
+    anyhow::ensure!(
+        ids.len() == r.frames_summarized as usize,
+        "report evidence count mismatch"
+    );
+    let mut session_ids = r.session_ids.clone();
+    session_ids.sort_unstable();
+    session_ids.dedup();
+    let mut daily_run_ids: Vec<String> = Vec::new();
+    for id in &r.daily_run_ids {
+        if !daily_run_ids.contains(id) {
+            daily_run_ids.push(id.clone());
+        }
+    }
+    let timestamp = |ms| {
+        DateTime::<Utc>::from_timestamp_millis(ms)
+            .map(|d| d.to_rfc3339())
+            .ok_or_else(|| anyhow::anyhow!("invalid report timestamp"))
+    };
+    let metadata = Frontmatter {
+        requested_range: run.requested_range.clone(),
+        base_run_id: None,
+        schema: 2,
+        run_id: run.run_id.clone(),
+        source_id: run.source_id.clone(),
+        window_start: timestamp(run.window_start)?,
+        window_end: timestamp(run.window_end)?,
+        timezone: run.timezone.clone(),
+        status,
+        model: r.model.clone(),
+        frames_sampled: r.frames_sampled,
+        frames_summarized: r.frames_summarized,
+        periods_total: r.periods_total,
+        periods_covered: r.periods_covered,
+        truncated: r.truncated,
+        frame_ids: ids,
+        session_ids,
+        kind: run.kind,
+        daily_run_ids,
+        window_local_dates: kernel::window_local_dates(
+            &run.timezone,
+            run.window_start,
+            run.window_end,
+        )?,
+    };
+    let mut text = format!(
+        "---\n{}\n---\n\n# {}\n\n",
+        serialize_frontmatter(&metadata)?,
+        kernel::week_label(&run.timezone, run.window_start)?
+    );
+    text.push_str(&r.markdown);
+    text.push_str("\n\nEvidence IDs identify captured sources at generation time; later retention may remove them.\n");
+    Ok(text)
+}
+
 /// Serialize the frontmatter JSON body written between a note's `---` fences.
 /// The schema number is stamped from the carried fields (`03 §8e`): notes with v2
 /// fields are written as schema 2, schema-1 notes stay schema 1.
@@ -487,6 +575,157 @@ pub fn write_owned(
         let _ = fs::remove_file(&backup);
     }
     Ok(WriteReceipt { hash })
+}
+
+/// The `## ` heading that opens a project-note section (`03 §8e`). `###` entry
+/// headings are content, not sections.
+fn section_heading(line: &str) -> Option<&str> {
+    line.trim_end_matches('\n')
+        .trim_end_matches('\r')
+        .strip_prefix("## ")
+}
+
+fn is_blank_line(line: &str) -> bool {
+    line.trim().is_empty()
+}
+
+/// Append each entry block to the end of its `## <section>` section, before the
+/// next `## ` heading or EOF; missing sections are created at EOF in the given
+/// order. Existing lines are copied byte-for-byte — the splice only inserts.
+pub fn merged_content(existing: &str, entries: &[(String, String)]) -> String {
+    let newline = if existing.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut lines: Vec<String> = existing.split_inclusive('\n').map(str::to_owned).collect();
+    // (heading, line index that ends the section) — the boundary is the next `## `
+    // heading line or EOF.
+    let mut sections: Vec<(String, usize)> = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if let Some(heading) = section_heading(line) {
+            if let Some(previous) = sections.last_mut() {
+                previous.1 = index;
+            }
+            sections.push((heading.trim().to_owned(), lines.len()));
+        }
+    }
+    let mut insertions: Vec<(usize, Vec<&str>)> = Vec::new();
+    let mut missing: Vec<(String, Vec<&str>)> = Vec::new();
+    for (heading, block) in entries {
+        let block = block.trim_end_matches('\n');
+        if block.is_empty() {
+            continue;
+        }
+        if let Some((_, boundary)) = sections.iter().find(|(name, _)| name == heading) {
+            match insertions.iter_mut().find(|(at, _)| *at == *boundary) {
+                Some((_, blocks)) => blocks.push(block),
+                None => insertions.push((*boundary, vec![block])),
+            }
+        } else {
+            match missing.iter_mut().find(|(name, _)| name == heading) {
+                Some((_, blocks)) => blocks.push(block),
+                None => missing.push((heading.clone(), vec![block])),
+            }
+        }
+    }
+    // Descending so inserting at a later boundary never shifts an earlier one.
+    insertions.sort_by(|left, right| right.0.cmp(&left.0));
+    for (boundary, blocks) in insertions {
+        insert_blocks(&mut lines, boundary, &blocks, newline);
+    }
+    append_missing_sections(&mut lines, &missing, newline);
+    lines.concat()
+}
+
+fn insert_blocks(lines: &mut Vec<String>, boundary: usize, blocks: &[&str], newline: &str) {
+    let at_eof = boundary >= lines.len();
+    let mut chunk: Vec<String> = Vec::new();
+    match boundary.checked_sub(1).and_then(|index| lines.get(index)) {
+        Some(line) if is_blank_line(line) => {}
+        Some(line) if line.ends_with('\n') => chunk.push(newline.to_string()),
+        // The final line has no terminator: terminate it and open the blank line in
+        // one insertion so the block still starts on its own line.
+        Some(_) => chunk.push(format!("{newline}{newline}")),
+        None => {}
+    }
+    for (index, block) in blocks.iter().enumerate() {
+        for line in block.lines() {
+            chunk.push(format!("{line}{newline}"));
+        }
+        if index + 1 < blocks.len() || !at_eof {
+            chunk.push(newline.to_string());
+        }
+    }
+    lines.splice(boundary..boundary, chunk);
+}
+
+fn append_missing_sections(
+    lines: &mut Vec<String>,
+    missing: &[(String, Vec<&str>)],
+    newline: &str,
+) {
+    for (heading, blocks) in missing {
+        if let Some(last) = lines.last() {
+            if !last.ends_with('\n') {
+                lines.push(newline.to_string());
+                lines.push(newline.to_string());
+            } else if !is_blank_line(last) {
+                lines.push(newline.to_string());
+            }
+        }
+        lines.push(format!("## {heading}{newline}"));
+        lines.push(newline.to_string());
+        for (index, block) in blocks.iter().enumerate() {
+            for line in block.lines() {
+                lines.push(format!("{line}{newline}"));
+            }
+            if index + 1 < blocks.len() {
+                lines.push(newline.to_string());
+            }
+        }
+    }
+}
+
+/// One atomic append for every touched section (`03 §8e`). The selection-time hash
+/// is the adoption rule: a note that appeared, disappeared or changed since the
+/// user prepared the promotion is a conflict and is never overwritten.
+pub fn append_entries_owned(
+    path: &Path,
+    entries: &[(String, String)],
+    selection_hash: Option<&str>,
+) -> Result<WriteReceipt, WriteFailure> {
+    let current = safe_read_owned(path)?;
+    let current_hash = current.as_deref().map(content_hash);
+    match (current_hash.as_deref(), selection_hash) {
+        (None, Some(_)) => {
+            return Err(failure(
+                "note was removed since the promotion was prepared",
+                true,
+            ))
+        }
+        (Some(found), Some(expected)) if found != expected => {
+            return Err(failure(
+                "note changed since the promotion was prepared",
+                true,
+            ))
+        }
+        (Some(_), None) => {
+            return Err(failure(
+                "note appeared since the promotion was prepared",
+                true,
+            ))
+        }
+        _ => {}
+    }
+    let existing = match current {
+        Some(bytes) => {
+            String::from_utf8(bytes).map_err(|_| failure("note is not valid UTF-8", true))?
+        }
+        None => String::new(),
+    };
+    let merged = merged_content(&existing, entries);
+    write_owned(path, &merged, current_hash.as_deref())
 }
 
 #[cfg(test)]
@@ -766,5 +1005,200 @@ body
         assert!(note_relative_path("2026-10-01", Some(&range), Some("../bad")).is_err());
         assert!(note_relative_path("2026-10-01", Some(&range), None).is_err());
         assert!(note_relative_path("../bad", None, None).is_err());
+    }
+
+    fn stamp(value: &str) -> i64 {
+        DateTime::parse_from_rfc3339(value)
+            .expect("fixture timestamp")
+            .timestamp_millis()
+    }
+
+    /// A saved weekly synthesis over ISO week 2026-W42 (Europe/Paris), with duplicate
+    /// frame and daily-run IDs so provenance dedup is exercised.
+    fn weekly_note_run(outcome: ReportOutcome, markdown: &str) -> ReportRun {
+        ReportRun {
+            requested_range: None,
+            run_id: "9b1f3d4e-5a6c-4f70-8a9b-0c1d2e3f4a5b".into(),
+            source_id: "6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f".into(),
+            kind: ReportRunKind::WeeklySynthesis,
+            schedule_id: Some("weekly-schedule-fixture".into()),
+            revision_of: None,
+            window_start: stamp("2026-10-11T22:00:00Z"),
+            window_end: stamp("2026-10-18T22:00:00Z"),
+            timezone: "Europe/Paris".into(),
+            local_date: "2026-10-18".into(),
+            phase: traits::ReportRunPhase::Finished,
+            outcome: Some(outcome),
+            error: None,
+            result: Some(traits::SavedReport {
+                markdown: markdown.into(),
+                model: Some("ministral-3-3b-reasoning".into()),
+                frame_ids: vec![103, 101, 102, 101],
+                session_ids: vec![9, 7, 8],
+                cited_frame_ids: vec![101, 102],
+                frames_sampled: 40,
+                // `generate_weekly_synthesis` records the distinct frame count here.
+                frames_summarized: 3,
+                periods_total: 7,
+                periods_covered: 7,
+                passes: 2,
+                truncated: false,
+                daily_run_ids: vec![
+                    "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d".into(),
+                    "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d".into(),
+                    "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e".into(),
+                ],
+            }),
+            config_snapshot: "{}".into(),
+            created_at: 1,
+            updated_at: 1,
+        }
+    }
+
+    #[test]
+    fn weekly_note_contains_provenance() {
+        let markdown = "**Partial coverage:** the week is missing complete saved daily coverage for 2026-10-15.\n\n## Activity\n\n- shipped the weekly writer [frame 101]";
+        let run = weekly_note_run(ReportOutcome::Partial, markdown);
+        assert_eq!(
+            path_string(&weekly_note_relative_path(&run).unwrap()),
+            "Weekly/2026-W42.md"
+        );
+        let text = weekly_note(&run).unwrap();
+        let metadata = parse_frontmatter(&text).unwrap();
+        assert_eq!(metadata.schema, 2);
+        assert_eq!(metadata.kind, ReportRunKind::WeeklySynthesis);
+        assert_eq!(metadata.status, ReportOutcome::Partial);
+        assert_eq!(metadata.window_start, "2026-10-11T22:00:00+00:00");
+        assert_eq!(metadata.window_end, "2026-10-18T22:00:00+00:00");
+        assert_eq!(metadata.timezone, "Europe/Paris");
+        assert!(metadata.requested_range.is_none());
+        assert!(metadata.base_run_id.is_none());
+        assert_eq!(
+            metadata.window_local_dates,
+            vec![
+                "2026-10-12",
+                "2026-10-13",
+                "2026-10-14",
+                "2026-10-15",
+                "2026-10-16",
+                "2026-10-17",
+                "2026-10-18",
+            ]
+        );
+        // Persisted order, duplicate dropped.
+        assert_eq!(
+            metadata.daily_run_ids,
+            vec![
+                "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+                "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e",
+            ]
+        );
+        assert_eq!(metadata.frame_ids, vec![101, 102, 103]);
+        assert_eq!(metadata.session_ids, vec![7, 8, 9]);
+        assert_eq!(metadata.frames_summarized, 3);
+        // Body: `# <week label>` then the saved synthesis verbatim, one banner only,
+        // and the same evidence footnote the daily note writes.
+        assert!(text.contains(&format!("# 2026-W42\n\n{markdown}")));
+        assert_eq!(text.matches("**Partial coverage:**").count(), 1);
+        assert!(!text.contains("> PARTIAL"));
+        assert_eq!(
+            text.matches("Evidence IDs identify captured sources at generation time")
+                .count(),
+            1
+        );
+        assert!(text.ends_with(
+            "\n\nEvidence IDs identify captured sources at generation time; later retention may remove them.\n"
+        ));
+        // Kind separation: a daily run never renders a weekly note, and a NO_DATA
+        // week writes no note at all (`03 §8e`).
+        let mut daily = run.clone();
+        daily.kind = ReportRunKind::Daily;
+        assert!(weekly_note_relative_path(&daily).is_err());
+        assert!(weekly_note(&daily).is_err());
+        let mut no_data = run.clone();
+        no_data.outcome = Some(ReportOutcome::NoData);
+        assert!(weekly_note(&no_data).is_err());
+    }
+
+    fn assert_lines_preserved(original: &str, merged: &str) {
+        let mut from = 0;
+        for line in original.split_inclusive('\n') {
+            let offset = merged[from..]
+                .find(line)
+                .unwrap_or_else(|| panic!("existing line was rewritten: {line:?}"));
+            from += offset + line.len();
+        }
+    }
+
+    #[test]
+    fn promotion_appends_without_rewrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ScreenSearch/Projects/project.md");
+        let existing = "# Project\n\n## Decisions\n\n- already decided\n\n## Log\n\n### 2026-10-01\n\n- already logged\n";
+        let original = write_owned(&path, existing, None).unwrap();
+        let source = "*Source: weekly synthesis run weekly-fixture; daily runs daily-fixture; frames 101, 102; sessions 7, 8.*";
+        let entries = vec![
+            (
+                "Decisions".to_string(),
+                format!("### 2026-10-18\n\n- promote decision\n\n{source}"),
+            ),
+            (
+                "Next steps".to_string(),
+                format!("### 2026-10-18\n\n- promote next\n\n{source}"),
+            ),
+            (
+                "Log".to_string(),
+                format!("### 2026-10-18\n\n- promote log\n\n{source}"),
+            ),
+        ];
+        let receipt = append_entries_owned(&path, &entries, Some(&original.hash)).unwrap();
+        let merged = fs::read_to_string(&path).unwrap();
+        let expected = format!(
+            "# Project\n\n## Decisions\n\n- already decided\n\n### 2026-10-18\n\n- promote decision\n\n{source}\n\n## Log\n\n### 2026-10-01\n\n- already logged\n\n### 2026-10-18\n\n- promote log\n\n{source}\n\n## Next steps\n\n### 2026-10-18\n\n- promote next\n\n{source}\n"
+        );
+        assert_eq!(merged, expected);
+        assert_lines_preserved(existing, &merged);
+        // Multi-section promotion is one atomic write: no temporary/recovery files.
+        assert!(fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".screensearch-")));
+        // Re-running with the hash the last write returned appends again; it never
+        // rewrites or dedupes existing lines.
+        let again = append_entries_owned(
+            &path,
+            &[(
+                "Decisions".to_string(),
+                format!("### 2026-10-19\n\n- promote follow-up\n\n{source}"),
+            )],
+            Some(&receipt.hash),
+        )
+        .unwrap();
+        let appended = fs::read_to_string(&path).unwrap();
+        assert_ne!(again.hash, receipt.hash);
+        assert_eq!(appended.matches("### 2026-10-19").count(), 1);
+        assert!(appended.contains("- promote decision"));
+        assert_lines_preserved(&merged, &appended);
+        // A stale selection hash is a conflict; the human edit is preserved.
+        let edited = format!("{appended}user edit\n");
+        fs::write(&path, &edited).unwrap();
+        let conflict = append_entries_owned(&path, &entries, Some(&again.hash)).unwrap_err();
+        assert!(conflict.conflict);
+        assert_eq!(fs::read_to_string(&path).unwrap(), edited);
+        // A note that appeared after a selection that saw none is a conflict too.
+        assert!(
+            append_entries_owned(&path, &entries, None)
+                .unwrap_err()
+                .conflict
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), edited);
+        // A note removed after selection is a conflict and is never recreated.
+        let absent = dir.path().join("ScreenSearch/Projects/removed.md");
+        let removed = append_entries_owned(&absent, &entries, Some(&receipt.hash)).unwrap_err();
+        assert!(removed.conflict);
+        assert!(!absent.exists());
     }
 }

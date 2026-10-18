@@ -28,7 +28,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{anyhow, Result};
-use chrono::Datelike;
 use traits::{
     AnswerOpts, AnswerProvider, ReportConfig, ReportMode, ReportOutcome, ReportOutput, ReportRange,
     ReportRun, RetrievedChunk, SearchHit, SearchQuery, SegmenterFrame, Store, TimeRange,
@@ -568,17 +567,9 @@ pub async fn generate_weekly_synthesis(
         .answer_context_budget()
         .map(|c| c as usize)
         .unwrap_or(REPORT_CTX_TOKENS);
-    let zone: chrono_tz::Tz = timezone
-        .parse()
-        .map_err(|_| anyhow!("unknown IANA time zone"))?;
     let days = weekly_day_periods(timezone, start, end)?;
     let periods_total = days.len() as u32;
-    let week = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(start)
-        .ok_or_else(|| anyhow!("timestamp outside supported calendar"))?
-        .with_timezone(&zone)
-        .date_naive()
-        .iso_week();
-    let week_label = format!("{}-W{:02}", week.year(), week.week());
+    let week_label = crate::memory_schedule::week_label(timezone, start)?;
 
     // --- Weekly inputs (`03 §8e`): the saved dailies that own a local day of this week in
     // this run's own zone, paired with the date they own and kept in persisted (day) order.
@@ -845,18 +836,11 @@ pub async fn generate_weekly_synthesis(
 }
 
 /// The week's local-day periods with their `YYYY-MM-DD` dates (`03 §8e`): the weekly
-/// window is an ISO week, so the shared local-day grid is exactly one period per local
-/// date (a DST-transition day stays one period).
+/// window is an ISO week, so the shared local-day enumeration
+/// ([`crate::memory_schedule::window_local_dates`]) is exactly one period per local date
+/// (a DST-transition day stays one period).
 fn weekly_day_periods(timezone: &str, start: i64, end: i64) -> Result<Vec<(String, i64, i64)>> {
-    let zone: chrono_tz::Tz = timezone
-        .parse()
-        .map_err(|_| anyhow!("unknown IANA time zone"))?;
-    crate::memory_schedule::local_day_grid(timezone, start, end, MAX_PERIODS)?
-        .into_iter()
-        .map(|(period_start, period_end)| {
-            Ok((local_date(zone, period_start)?, period_start, period_end))
-        })
-        .collect()
+    crate::memory_schedule::window_local_day_periods(timezone, start, end)
 }
 
 /// Whether a saved daily owns one local date of the week (`03 §8e` weekly inputs and
@@ -975,15 +959,6 @@ fn daily_is_partial(run: &ReportRun) -> bool {
             Some(result) => result.truncated,
             None => true,
         }
-}
-
-/// The local `YYYY-MM-DD` date of a UTC instant in the report's saved zone.
-fn local_date(zone: chrono_tz::Tz, at: i64) -> Result<String> {
-    Ok(chrono::DateTime::<chrono::Utc>::from_timestamp_millis(at)
-        .ok_or_else(|| anyhow!("timestamp outside supported calendar"))?
-        .with_timezone(&zone)
-        .date_naive()
-        .to_string())
 }
 
 /// `day 2026-10-14 (daily run <id>; sessions 3, 7)` — the day's persisted provenance, so
@@ -2324,6 +2299,31 @@ mod tests {
                 .to_string()
             })
             .collect()
+    }
+
+    /// `03 §8e` missing-day detection enumerates dates through the kernel's single
+    /// `window_local_dates` computation — never a second 24 h-offset walk — so both agree
+    /// for every window shape, including DST weeks where a UTC day count would not.
+    #[test]
+    fn weekly_missing_local_dates_uses_the_shared_window_enumeration() {
+        for (timezone, start, end) in [
+            ("Etc/UTC", week_bounds().0, week_bounds().1),
+            (
+                "Europe/Paris",
+                stamp("2026-03-22T23:00:00Z"),
+                stamp("2026-03-29T22:00:00Z"),
+            ),
+            (
+                "Europe/Paris",
+                stamp("2026-10-18T22:00:00Z"),
+                stamp("2026-10-25T23:00:00Z"),
+            ),
+        ] {
+            assert_eq!(
+                weekly_missing_local_dates(&[], start, end, timezone).unwrap(),
+                crate::memory_schedule::window_local_dates(timezone, start, end).unwrap()
+            );
+        }
     }
 
     #[tokio::test]
