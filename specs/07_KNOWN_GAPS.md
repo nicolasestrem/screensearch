@@ -1,5 +1,15 @@
 # 07 — Known Gaps
 
+## 2026-10-18 — Weeks that closed just before a weekly disable are not recorded as missed
+
+- Raised in Claude's PR #140 re-review (non-blocking). If weekly is disabled before catch-up
+  ran for weeks that closed while it was still enabled, re-enabling starts a fresh activation and
+  those weeks are neither backfilled nor listed under "Missed weeks"; they are simply absent,
+  never claimed as covered. `03 §8c`/`§8e` say disabled periods are not backfilled but do not say
+  whether already-closed, never-run weeks before the disable count as missed. Matches the daily
+  lane. Open decision (owner: Nico, raised 2026-10-18): keep, or record those closed weeks as
+  missed at disable time. Current behaviour stays until answered.
+
 ## 2026-10-18 — Decided: a failed scheduled weekly synthesis is a missed week (Nico)
 
 - Supersedes the open decision in "Weekly run that fails generation is not retried by catch-up"
@@ -7,11 +17,12 @@
   original run settles FAILED is added to `memory.weekly.gaps` and shown under "Missed weeks";
   it is still not retried automatically (the cursor advanced at enqueue), and the user can
   regenerate it.
-- Readings (implementation, not settled by `03 §8e`; can be overridden): manual runs do not
-  count as the schedule's coverage; a failed regeneration of an already saved week does not
-  mark it missed; BLOCKED (missing model/source) is a missing prerequisite, not a failed
-  generation, so it is not recorded. Like every other gap entry, the record is history and stays
-  after a later successful regeneration.
+- Edge cases `03 §8e` does not settle. These were implemented as readings without first asking,
+  contrary to `04 §5`; they shipped in PR #140 and are now open decisions (owner: Nico, raised
+  2026-10-18), not settled product rules: (a) manual runs do not count as the schedule's
+  coverage; (b) a failed regeneration of an already saved week does not mark it missed;
+  (c) BLOCKED (missing model/source) is not recorded as missed; (d) a missed record stays as
+  history after a later successful regeneration. Any changed answer is a follow-up patch (`06`).
 
 ## 2026-10-18 — Weekly run that fails generation is not retried by catch-up
 
@@ -155,12 +166,11 @@
   compares and moves/removes that copy; the dialog now makes this explicit.
   No automatic removal of an unmatched recovery copy is introduced.
 
-- **`SavedReport.daily_run_ids` rides the saved-result wire surface.** `ReportDetail.result` embeds
-  `SavedReport` verbatim, so the new field also appears on `GET /v1/reports` detail and the IPC
-  run payload, alongside the `kind` addition `§8e` names as the deliberate migration change. It is
-  report provenance about what the run consumed and no gate was needed to read it, but the
-  surface change is recorded here rather than left implicit; if the projections must carry only
-  the `§8e`-named fields, the fix is to strip it when building `ReportDetail`.
+- **`SavedReport.daily_run_ids` rides the saved-result wire surface** — FIXED 2026-10-19
+  (PR #141). `ReportDetail.result` now projects through `SavedReportView`, exactly the eleven
+  `§7f.6` fields; the persisted `SavedReport` keeps `daily_run_ids` for store round-trips and the
+  note frontmatter. The IPC run payload still carries it (that is the persisted shape, not the
+  §7f.6 wire). Test: `reports_detail_never_projects_persisted_daily_run_ids_provenance`.
 - **Weekly PARTIAL banner names the sampling cause even when retention caused the gap.** The
   `truncated` flag mixes context-budget cuts with recorded evidence that could no longer be read,
   so a week whose daily reports recorded evidence since pruned is told sampling was bounded while
@@ -376,6 +386,15 @@ preserved below as history; the normative contract text is `02 §5i` + `03 §8e`
   30 s header deadline shipped); sparse-content sampling can need a larger frame budget and must never
   be read as proof of no data; the Windows credential read CodeQL alert was dismissed as a false positive on
   2026-10-15 (evidence in `05`); the remaining dev-tree braces advisory is tracked below.
+- **DISCHARGED 2026-10-19 (G5 landed in #140):** the weekly catch-up scan bound is now
+  `WEEKLY_SCAN_WEEKS = 6` with `WEEKLY_BACKFILL_CAP = 4`, and the weekly schedule has its own
+  schedule ID (`memory.weekly.state`) — `crates/kernel/src/memory_schedule.rs:393-395`.
+- **OPEN, owner decision:** whether a weekly synthesis may cite a revision rather than the base
+  run of the same day. G3 and G5 shipped without deciding; the engine consumes base + revisions
+  (`weekly_consumed_with_dates`), which can narrate one day twice. Needs a maintainer call.
+- **OPEN, hardening:** the dispatch loop parses `TelegramSnapshot` per receipt while
+  `redirect_stale_telegram_deliveries` guards the same parse with `continue`; chunk-less receipts
+  no longer abort dispatch, but the two loops should share one parse contract.
 - Schema 11 → 12 (0.4.1) is forward-only and there is no automatic pre-migration backup in the app;
   the 0.4.1 release notes tell users to back up the data folder first.
 

@@ -206,6 +206,24 @@ fn summary_keys() -> Vec<&'static str> {
     ]
 }
 
+/// The frozen `§7f.6` public saved-result shape: exactly the eleven `§8c` fields, and
+/// deliberately **not** the persisted-only `SavedReport.daily_run_ids` provenance.
+fn result_keys() -> Vec<&'static str> {
+    vec![
+        "cited_frame_ids",
+        "frame_ids",
+        "frames_sampled",
+        "frames_summarized",
+        "markdown",
+        "model",
+        "passes",
+        "periods_covered",
+        "periods_total",
+        "session_ids",
+        "truncated",
+    ]
+}
+
 fn assert_keys(value: &serde_json::Value, mut expected: Vec<&str>) {
     let mut keys: Vec<&str> = value
         .as_object()
@@ -298,6 +316,10 @@ async fn reports_detail_serves_full_saved_markdown_and_provenance_with_explicit_
     let mut expected = summary_keys();
     expected.push("result");
     assert_keys(&value, expected);
+    // The nested saved result is the frozen public shape: exactly eleven keys, no
+    // persisted-only `SavedReport.daily_run_ids` provenance.
+    assert_keys(&value["result"], result_keys());
+    assert!(value["result"].get("daily_run_ids").is_none());
     assert_eq!(value["result"]["markdown"], "# A markdown\nprovenance");
     assert_eq!(value["result"]["model"], "fixture-model");
     assert_eq!(value["result"]["frame_ids"], serde_json::json!([11, 12]));
@@ -310,6 +332,44 @@ async fn reports_detail_serves_full_saved_markdown_and_provenance_with_explicit_
     assert_eq!(value["result"]["frames_summarized"], 2);
     assert_eq!(value["result"]["truncated"], false);
     assert!(!body.contains(ABSENT) && !body.contains("PRIVATE-config-snapshot"));
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn reports_detail_never_projects_persisted_daily_run_ids_provenance() {
+    // A stored `SavedReport` may carry the weekly-consumed `daily_run_ids` provenance
+    // (`03 §8e`). The public saved result is frozen to the eleven `§7f.6` fields, so the
+    // provenance must stay off the wire even though it is persisted and read back.
+    const DAILY: &str = "PRIVATE-daily-run-id-must-not-leak";
+    let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
+    let mut stored = saved("# weekly markdown", vec![11, 12]);
+    stored.daily_run_ids = vec![DAILY.to_string()];
+    let mut weekly = run(
+        "run-weekly",
+        700,
+        1_600,
+        ReportRunPhase::Finished,
+        Some(ReportOutcome::Ok),
+        None,
+        Some(stored),
+    );
+    weekly.kind = ReportRunKind::WeeklySynthesis;
+    store
+        .create_report_run(weekly)
+        .await
+        .expect("seed weekly run");
+
+    let (base, server, _) = start_server(report_host(store, None)).await;
+    let (status, body) = get(&base, "/v1/reports/run-weekly").await;
+    assert_eq!(status, 200, "{body}");
+    let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(value["kind"], "weekly_synthesis");
+    assert_keys(&value["result"], result_keys());
+    assert!(
+        value["result"].get("daily_run_ids").is_none(),
+        "persisted-only provenance must not reach the wire"
+    );
+    assert!(!body.contains(DAILY), "body leaked {DAILY}");
     server.stop().await;
 }
 

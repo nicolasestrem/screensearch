@@ -16,7 +16,7 @@ import { MemoryRouter } from "react-router-dom";
 
 register("./ui-loader.mjs", import.meta.url);
 const { MemoryPanel, ReportHistory } = await import("../src/components/domain/MemoryPanel.tsx");
-const { memoryKeys } = await import("../src/lib/ipc/memory.ts");
+const { memoryKeys, weeklyPreviewKey } = await import("../src/lib/ipc/memory.ts");
 const { promotionKeys } = await import("../src/lib/ipc/promotion.ts");
 
 const BASE_SETTINGS = {
@@ -98,7 +98,7 @@ function renderPanel({ settings = BASE_SETTINGS, status = makeStatus(), runs = [
     exists: true,
     count: 1,
   });
-  if (weeklyPreview !== undefined) client.setQueryData(["memory-weekly-preview", settings.weekly_local_time, settings.weekly_timezone, settings.output_folder], weeklyPreview);
+  if (weeklyPreview !== undefined) client.setQueryData(weeklyPreviewKey({ ...settings, output_folder: settings.output_folder === null ? null : settings.output_folder.replaceAll("\\", "/") }), weeklyPreview);
   const html = renderToStaticMarkup(
     React.createElement(
       QueryClientProvider,
@@ -203,9 +203,11 @@ test("latest weekly status and older missed weeks stay distinct from the daily s
   assert.doesNotMatch(html, /Last daily run: 2026-W41/);
   assert.match(html, /Older missed daily windows/);
   assert.match(html, /Missed weeks/);
+  assert.match(html, /The ISO week closes at Monday 00:00; its synthesis runs at this local time that Monday\./);
+  assert.doesNotMatch(html, /closes at this local time/);
   assert.doesNotMatch(html, /Older missed weeks/);
   assert.match(html, /or their scheduled synthesis failed/);
-  assert.match(html, /not reported as covered/);
+  assert.match(html, /not covered when the schedule reached them/);
 });
 
 test("a NO_DATA weekly run is honest and never claims a weekly Telegram digest was sent", () => {
@@ -299,4 +301,12 @@ test("report history filters daily reports and weekly syntheses by run kind", ()
   assert.match(button(weekly, "Weekly synthesis (1)"), /aria-pressed="true"/);
   assert.match(weekly, /2026-W41 · PARTIAL/);
   assert.doesNotMatch(weekly, /2026-10-17/);
+});
+
+test("weekly preview key changes with the shared Telegram fields the backend validates", () => {
+  const base = weeklyPreviewKey(BASE_SETTINGS);
+  const consented = weeklyPreviewKey({ ...BASE_SETTINGS, telegram_enabled: true, telegram_chat_id: null });
+  assert.notDeepEqual(consented, base);
+  assert.equal(base[1].weekly_enabled, false);
+  assert.equal(base[1].weekly_telegram_enabled, false);
 });

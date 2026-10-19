@@ -854,6 +854,7 @@ pub async fn export_data(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use traits::SavedReportView;
 
     /// A minimal `ApiHost` for config-logic tests — none of its data methods are exercised
     /// by `apply_api_config`, which only needs *something* to hand to `ApiServer::start`.
@@ -2290,11 +2291,17 @@ mod tests {
         );
 
         // A saved result is exposed independent of phase; a missing run is None (→404).
+        // The detail serves the frozen public projection (`SavedReportView`), so the
+        // persisted-only `daily_run_ids` provenance never reaches the wire type.
         let detail = compose_report_detail(&store, "run-a")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(detail.result, Some(saved));
+        assert_eq!(
+            detail.result,
+            Some(SavedReportView::from_saved(&saved)),
+            "the stored saved result projects through the frozen public shape"
+        );
         assert!(compose_report_detail(&store, "absent")
             .await
             .unwrap()

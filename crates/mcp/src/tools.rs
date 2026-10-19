@@ -118,7 +118,7 @@ pub fn definitions() -> Value {
         {
             "name": "list_reports",
             "title": "List saved reports",
-            "description": "One newest-first page of the user's saved recall reports whose run window overlaps the half-open UTC window [from, to). Optionally filter by the run's current phase and/or its stored outcome. Each row is the run's public summary — metadata, phase, outcome and error code only; the saved Markdown and evidence arrays are omitted (use get_report for the full saved result). To continue, pass the returned next_cursor back with only an optional limit; the window, filters and ordering tuple are frozen inside the cursor. Reads work with schedules off and never generate, queue, retry or deliver a run. Local data only — served by the ScreenSearch app on the configured API endpoint.",
+            "description": "One newest-first page of the user's saved recall reports whose run window overlaps the half-open UTC window [from, to). Optionally filter by the run's current phase and/or its stored outcome. Each row is the run's public summary — the required persisted `kind` (`daily` | `weekly_synthesis`, distinct from the on-demand report kind `weekly`), metadata, phase, outcome and error code only; the saved Markdown and evidence arrays are omitted (use get_report for the full saved result). To continue, pass the returned next_cursor back with only an optional limit; the window, filters and ordering tuple are frozen inside the cursor. Reads work with schedules off and never generate, queue, retry or deliver a run. Local data only — served by the ScreenSearch app on the configured API endpoint.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -139,7 +139,7 @@ pub fn definitions() -> Value {
         {
             "name": "get_report",
             "title": "Get a saved report",
-            "description": "Fetch one saved recall report's full public projection by its opaque run_id: the summary metadata plus the immutable saved result (Markdown, model, summarized and cited frame ids, session provenance and coverage counts) whenever one has been stored — the saved output is exposed whenever it exists, regardless of the run's delivery phase. A missing or pruned run is a not_found error; nothing is regenerated. Local data only — served by the ScreenSearch app on the configured API endpoint.",
+            "description": "Fetch one saved recall report's full public projection by its opaque run_id: the summary metadata (including the required persisted kind — daily | weekly_synthesis) plus the immutable saved result (Markdown, model, summarized and cited frame ids, session provenance and coverage counts) whenever one has been stored — the saved output is exposed whenever it exists, regardless of the run's delivery phase. A missing or pruned run is a not_found error; nothing is regenerated. Local data only — served by the ScreenSearch app on the configured API endpoint.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

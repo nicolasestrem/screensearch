@@ -183,10 +183,15 @@ fn weekly_digest(
     } else {
         "OK — saved synthesis"
     };
-    let mut coverage = format!(
-        "Coverage: {}/{} days covered",
-        r.periods_covered, r.periods_total
-    );
+    // A day whose only saved daily is partial has evidence (`periods_covered`) but is
+    // still named below; never count it as covered next to its own name.
+    let covered = if missing.is_empty() {
+        r.periods_covered
+    } else {
+        r.periods_covered
+            .min(r.periods_total.saturating_sub(missing.len() as u32))
+    };
+    let mut coverage = format!("Coverage: {}/{} days covered", covered, r.periods_total);
     if !missing.is_empty() {
         coverage.push_str(&format!(
             "; missing or partial saved dailies: {}",
@@ -551,6 +556,25 @@ mod tests {
             "ScreenSearch 2026-W42\nOK — complete saved-daily coverage\nCoverage: 7/7 days covered\n"
         ));
         assert!(!complete_digest.contains("missing or partial saved dailies"));
+    }
+
+    #[test]
+    fn weekly_digest_never_counts_a_named_partial_day_as_covered() {
+        // Seven days carry evidence, but 2026-10-15's only saved daily was partial.
+        let markdown = "**Partial coverage:** the week is missing complete saved daily coverage for 2026-10-15.\n\n## Activity\n\nShipped [frame 101].";
+        let mut run = weekly_saved_run(markdown.into());
+        run.result.as_mut().unwrap().periods_covered = 7;
+        let digest = digest_chunks(&run)
+            .unwrap()
+            .iter()
+            .map(|chunk| chunk.split_once('\n').unwrap().1)
+            .collect::<String>();
+        assert!(
+            digest.contains(
+                "Coverage: 6/7 days covered; missing or partial saved dailies: 2026-10-15\n"
+            ),
+            "a named incomplete day is not counted as covered: {digest}"
+        );
     }
 
     #[test]

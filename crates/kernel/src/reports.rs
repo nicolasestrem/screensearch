@@ -2773,6 +2773,227 @@ mod tests {
         assert!(execution.output.markdown.contains("No captured content"));
     }
 
+    /// `03 §8e`: NO_DATA is a *measured* day, so a week whose consumable dailies are all
+    /// NO_DATA measured nothing at all. It is an empty week — no model is resolved, no
+    /// synthesis is generated, nothing is saved OK over zero frames — while the consumed
+    /// runs are still recorded as the provenance of what was inspected.
+    #[tokio::test]
+    async fn weekly_all_no_data_dailies_is_no_data() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        // Seven NO_DATA saved dailies (capture paused the whole week). Each is a finished
+        // daily with a saved result, exactly the shape the caller persists for Empty.
+        let mut consumed_ids = Vec::new();
+        for offset in 0..7usize {
+            let day_start = start + offset as i64 * DAY_MS;
+            let date = week_date_of(offset);
+            let run = weekly_run(
+                &format!("daily-{date}"),
+                day_start,
+                day_start + DAY_MS,
+                &date,
+                Vec::new(),
+                false,
+                ReportOutcome::NoData,
+            );
+            store.create_report_run(run).await.unwrap();
+            consumed_ids.push(format!("daily-{date}"));
+        }
+        assert_eq!(consumed_ids.len(), 7);
+        let execution = execute_weekly(
+            &store,
+            WeeklyExecutionRequest {
+                start,
+                end,
+                timezone: "Etc/UTC",
+                config: cfg(),
+            },
+            || async { panic!("a week of all-NO_DATA dailies must not resolve a model") },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await
+        .unwrap();
+        assert_eq!(execution.output.mode, ReportMode::Empty);
+        assert!(execution.model.is_none());
+        assert!(execution.output.markdown.contains("No captured content"));
+        // Provenance of the inspected window: the consumed daily runs, oldest-first, in
+        // the same store order the generating path records.
+        assert_eq!(execution.daily_run_ids, consumed_ids);
+        // A NO_DATA day is covered coverage, so the empty week is not also "missing days".
+        assert!(execution.missing_local_dates.is_empty());
+    }
+
+    /// The all-NO_DATA week that nonetheless holds captured evidence is refused, not
+    /// mislabelled or synthesized: `03 §8e` allows NO_DATA only for a window with no
+    /// usable content either, and a synthesis over days no daily measured would have no
+    /// daily-run provenance to cite.
+    #[tokio::test]
+    async fn weekly_all_no_data_dailies_with_evidence_is_refused() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        // Frames were captured in the week, yet every daily measured nothing.
+        seed_day(&store, start + 3_600_000, 2).await;
+        for offset in 0..7usize {
+            let day_start = start + offset as i64 * DAY_MS;
+            let date = week_date_of(offset);
+            let run = weekly_run(
+                &format!("daily-{date}"),
+                day_start,
+                day_start + DAY_MS,
+                &date,
+                Vec::new(),
+                false,
+                ReportOutcome::NoData,
+            );
+            store.create_report_run(run).await.unwrap();
+        }
+        let result = execute_weekly(
+            &store,
+            WeeklyExecutionRequest {
+                start,
+                end,
+                timezone: "Etc/UTC",
+                config: cfg(),
+            },
+            || async { panic!("an all-NO_DATA week must not resolve a model") },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await;
+        let Err(err) = result else {
+            panic!("a week of all-NO_DATA dailies over captured evidence must not be saved OK");
+        };
+        assert_eq!(err.code, "GENERATION_FAILED");
+        assert!(err.message.contains("saved daily reports"));
+    }
+
+    /// The complement of the rule above: one NO_DATA day among six measured days is a
+    /// covered day, not a missing one. The week is synthesized normally and the quiet
+    /// date never appears in `missing_local_dates`.
+    #[tokio::test]
+    async fn weekly_no_data_day_counts_as_covered() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        // 2026-10-15, offset 3 of the Monday-anchored week, measured nothing.
+        let quiet = 3usize;
+        let mut consumed_ids = Vec::new();
+        for offset in 0..7usize {
+            let day_start = start + offset as i64 * DAY_MS;
+            let date = week_date_of(offset);
+            let (frames, outcome) = if offset == quiet {
+                (Vec::new(), ReportOutcome::NoData)
+            } else {
+                (
+                    seed_day(&store, day_start + 1_000, 2).await,
+                    ReportOutcome::Ok,
+                )
+            };
+            let run = weekly_run(
+                &format!("daily-{date}"),
+                day_start,
+                day_start + DAY_MS,
+                &date,
+                frames,
+                false,
+                outcome,
+            );
+            store.create_report_run(run).await.unwrap();
+            consumed_ids.push(format!("daily-{date}"));
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider_calls = calls.clone();
+        let execution =
+            execute_weekly(
+                &store,
+                WeeklyExecutionRequest {
+                    start,
+                    end,
+                    timezone: "Etc/UTC",
+                    config: cfg(),
+                },
+                || {
+                    let calls = provider_calls.clone();
+                    async move {
+                        Ok(Arc::new(FakeAnswer { calls, big: false }) as Arc<dyn AnswerProvider>)
+                    }
+                },
+                None,
+                &AtomicBool::new(false),
+            )
+            .await
+            .unwrap();
+        assert!(
+            calls.load(Ordering::Relaxed) > 0,
+            "six measured days must still reach the model"
+        );
+        assert_ne!(execution.output.mode, ReportMode::Empty);
+        // (`model` stays `None`: the fake provider leaves its label unset — the point here
+        // is that a provider was resolved and called at all.)
+        assert_eq!(execution.daily_run_ids, consumed_ids);
+        assert!(
+            execution.missing_local_dates.is_empty(),
+            "a NO_DATA day is measured coverage, not a missing day: {:?}",
+            execution.missing_local_dates
+        );
+        assert!(!execution.missing_local_dates.contains(&week_date_of(quiet)));
+    }
+
+    /// `03 §8e`: PARTIAL whenever a day lacks its saved daily report. The all-NO_DATA
+    /// empty-week path is only for a week whose every local date was measured empty; one
+    /// NO_DATA daily beside six days with no saved daily is an incomplete week and must
+    /// never come back as the empty (NO_DATA) shape that would label those days quiet.
+    #[tokio::test]
+    async fn weekly_incomplete_all_no_data_week_is_not_empty() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (start, end) = week_bounds();
+        let date = week_date_of(0);
+        let run = weekly_run(
+            &format!("daily-{date}"),
+            start,
+            start + DAY_MS,
+            &date,
+            Vec::new(),
+            false,
+            ReportOutcome::NoData,
+        );
+        store.create_report_run(run).await.unwrap();
+        let resolved = Arc::new(AtomicBool::new(false));
+        let resolver_flag = resolved.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider_calls = calls.clone();
+        let result = execute_weekly(
+            &store,
+            WeeklyExecutionRequest {
+                start,
+                end,
+                timezone: "Etc/UTC",
+                config: cfg(),
+            },
+            || {
+                let resolved = resolver_flag.clone();
+                let calls = provider_calls.clone();
+                async move {
+                    resolved.store(true, Ordering::Relaxed);
+                    Ok(Arc::new(FakeAnswer { calls, big: false }) as Arc<dyn AnswerProvider>)
+                }
+            },
+            None,
+            &AtomicBool::new(false),
+        )
+        .await;
+        assert!(
+            resolved.load(Ordering::Relaxed),
+            "an incomplete all-NO_DATA week must not take the empty-week NO_DATA path"
+        );
+        let execution = result.expect("the incomplete week is synthesized like any partial week");
+        // Not Empty, so the caller saves PARTIAL with the missing-days banner, never NO_DATA.
+        assert_ne!(execution.output.mode, ReportMode::Empty);
+        assert_eq!(execution.missing_local_dates, week_dates()[1..].to_vec());
+        assert_eq!(execution.daily_run_ids, vec![format!("daily-{date}")]);
+        assert!(calls.load(Ordering::Relaxed) > 0);
+    }
+
     #[tokio::test]
     async fn weekly_evidence_without_saved_dailies_is_refused() {
         let store = SqliteStore::open_in_memory().unwrap();

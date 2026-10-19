@@ -9,7 +9,9 @@
 //!
 //! The new wire types here are HTTP projections, not the IPC `ReportRun` shape:
 //! they omit `schedule_id`, `config_snapshot` and every delivery/path/credential
-//! field, and they never serialize a stored `ReportError.message`.
+//! field, they never serialize a stored `ReportError.message`, and the saved
+//! result is projected through [`SavedReportView`] so persisted-only fields
+//! (`SavedReport.daily_run_ids`) stay off the wire.
 
 use serde::{Deserialize, Serialize};
 
@@ -163,9 +165,67 @@ impl ReportSummary {
     }
 }
 
+/// The frozen public saved-result wire shape (`03 §7f.6`): exactly the eleven
+/// `§8c` fields. `SavedReport` is the persisted shape and may carry further
+/// Store/provenance fields (today `daily_run_ids`, `03 §8e`) that are not part
+/// of the public saved-result contract; this view is the only saved-result type
+/// the report routes and MCP `get_report` serve.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedReportView {
+    pub markdown: String,
+    pub model: Option<String>,
+    pub frame_ids: Vec<i64>,
+    pub session_ids: Vec<i64>,
+    pub cited_frame_ids: Vec<i64>,
+    pub frames_sampled: u32,
+    pub frames_summarized: u32,
+    pub periods_total: u32,
+    pub periods_covered: u32,
+    pub passes: u32,
+    pub truncated: bool,
+}
+impl SavedReportView {
+    /// Projects a persisted `SavedReport` onto the frozen public shape. The
+    /// persisted-only provenance (`daily_run_ids`) is deliberately dropped here,
+    /// not hidden at the serializer: the field never exists on the wire type.
+    /// The destructuring is exhaustive on purpose: a field added to `SavedReport`
+    /// fails to compile here until it is classified as wire or persisted-only.
+    pub fn from_saved(report: &SavedReport) -> Self {
+        let SavedReport {
+            markdown,
+            model,
+            frame_ids,
+            session_ids,
+            cited_frame_ids,
+            frames_sampled,
+            frames_summarized,
+            periods_total,
+            periods_covered,
+            passes,
+            truncated,
+            daily_run_ids: _,
+        } = report;
+        Self {
+            markdown: markdown.clone(),
+            model: model.clone(),
+            frame_ids: frame_ids.clone(),
+            session_ids: session_ids.clone(),
+            cited_frame_ids: cited_frame_ids.clone(),
+            frames_sampled: *frames_sampled,
+            frames_summarized: *frames_summarized,
+            periods_total: *periods_total,
+            periods_covered: *periods_covered,
+            passes: *passes,
+            truncated: *truncated,
+        }
+    }
+}
+
 /// Wire detail = all summary fields plus the stored saved result (`03 §7f.6`).
 /// `result` mirrors actual saved-result presence: `Some` whenever a valid
-/// persisted `SavedReport` exists, in any run/delivery phase (`03 §7f.10`).
+/// persisted `SavedReport` exists, in any run/delivery phase (`03 §7f.10`), and
+/// is projected through [`SavedReportView`] so only the frozen public fields —
+/// never persisted-only provenance such as `daily_run_ids` — reach the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReportDetail {
     pub run_id: String,
@@ -183,11 +243,14 @@ pub struct ReportDetail {
     pub phase: ReportRunPhase,
     pub outcome: Option<ReportOutcome>,
     pub error_code: Option<String>,
-    pub result: Option<SavedReport>,
+    /// Frozen public saved result — [`SavedReportView`], never the persisted
+    /// `SavedReport` (which also carries `daily_run_ids`).
+    pub result: Option<SavedReportView>,
 }
 impl ReportDetail {
-    /// Public projection of a stored run. `result = run.result` — the stored
-    /// presence rule — and never a regenerated or phase-suppressed value.
+    /// Public projection of a stored run. `result` is the stored presence rule
+    /// (`run.result.is_some()`) mapped through [`SavedReportView`] — never a
+    /// regenerated, phase-suppressed or raw persisted value.
     pub fn from_run(run: ReportRun) -> Self {
         let summary = ReportSummary::from_run(&run);
         Self {
@@ -205,7 +268,7 @@ impl ReportDetail {
             phase: summary.phase,
             outcome: summary.outcome,
             error_code: summary.error_code,
-            result: run.result,
+            result: run.result.as_ref().map(SavedReportView::from_saved),
         }
     }
 }

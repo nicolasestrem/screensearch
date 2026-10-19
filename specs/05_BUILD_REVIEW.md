@@ -1,5 +1,116 @@
 # 05 — Build Review
 
+## 2026-10-19 — PR #141 review round: incomplete all-NO_DATA week (Codex P1)
+
+- Finding: Codex `PRRT_kwDOTAuCtM6t3zkf` (P1, at `18cc4c4`), confirmed by the `claude[bot]`
+  review requested on the PR. `execute_weekly` took the empty-week path whenever every consumed
+  daily was `NO_DATA`, ignoring `missing_local_dates`, so 1 `NO_DATA` daily + 6 days without a
+  saved daily was saved `NO_DATA`. `03 §8e` (`PARTIAL` when any day lacks a saved daily;
+  `NO_DATA` only for a week without saved dailies) settles it: valid, introduced by `c62e65a`.
+- Fix `8b4f890`: the all-`NO_DATA` path requires `missing_local_dates.is_empty()`; an
+  incomplete week keeps its pre-PR behavior and is saved `PARTIAL` with the missing-days banner.
+  Regression `weekly_incomplete_all_no_data_week_is_not_empty`: RED on the pre-fix
+  `report_service.rs` (panics at the resolver assertion), GREEN after. The `claude[bot]` minor
+  note is addressed by an exhaustive `SavedReport` destructuring in
+  `SavedReportView::from_saved` (a new persisted field fails to compile until classified).
+- Linux (Rust 1.95.0): `cargo fmt --all -- --check` exit 0; `cargo clippy --locked -p traits
+  -p store -p kernel -p api -p mcp --all-targets -- -D warnings` exit 0; `cargo test --locked
+  -p traits -p kernel` exit 0 (293 passed, 0 failed).
+- **Windows (tbx, Rust 1.95.0, Node 22.23.3), `04 §1c` order, detached at `8b4f890`** (commit
+  transferred by git bundle, SHA asserted before the chain):
+
+  ```text
+  EXIT npm ci = 0 / npm run lint = 0 / npm run build = 0 / npm test = 0
+  EXIT stage-mcp = 0 / cargo fmt = 0 / cargo clippy = 0 / cargo build = 0
+  EXIT cargo test = 0        (62 suites: 1142 passed, 0 failed, 15 ignored)
+  EXIT bindings diff = 0
+  CHAIN_EXIT=0
+  ```
+
+  The docs-only commit on top inherits this result (no code/config/manifest path changed).
+  **Not run:** `npm run dev` app verification and native F3 acceptance.
+
+## 2026-10-19 — F3 G1–G6 review round (PR #141, pending merge)
+
+- 17 parallel reviewers (12 on `7639b25..8b3cf95`, 5 on `8b3cf95..957b234`), read-only, findings
+  by severity with file:line and scenario. 1 HIGH + ~22 lower; G5 scheduler core and kernel
+  scheduling helpers clean (differential probe of `weekly_due_windows`: 1,169,040 cases across
+  8 zones × 4 fire times × 12 activations × 3 date ranges × 4 cursors, 0 mismatches; another
+  reviewer checked `due_at >= end` over 5M+ zone × Monday × time cases across all 486 chrono-tz
+  zones). Fixes are the 5 `fix(memory|api|ui|docs)` commits on `fix/f3-review-findings`.
+- Named regression tests added: `weekly_all_no_data_dailies_is_no_data`,
+  `weekly_all_no_data_dailies_with_evidence_is_refused`, `weekly_no_data_day_counts_as_covered`
+  (kernel), `reports_detail_never_projects_persisted_daily_run_ids_provenance` (api),
+  `weekly_digest_never_counts_a_named_partial_day_as_covered` (src-tauri),
+  `project_notes_skips_hidden_files_but_keeps_recovery_copies`, `promotion_conflicts_when_the_note_was_never_created`,
+  `merged_content_reads_through_a_leading_utf8_bom`, `daily_note_rejects_a_weekly_synthesis_run`,
+  `schema1_daily_frontmatter_is_locked_byte_for_byte` (src-tauri), `report-file-stem.test.mjs`
+  cases and the weekly preview key case (ui).
+- Linux verification (verbatim): `cargo fmt --all -- --check` exit 0; `cargo clippy --locked -p
+  traits -p store -p kernel -p api -p mcp --all-targets -- -D warnings` exit 0;
+  `cargo test --locked --no-fail-fast` over those five crates green except
+  `explicit_ipv4_and_ipv6_listeners_require_authentication` (`AddrNotAvailable` — no IPv6
+  loopback on this host; identical on unmodified `main`); `ui/`: tsc 0, lint 0, `npm test` 55/55,
+  `npm run build` 0.
+- **Not run on Linux: `src-tauri`** (Windows-only: `openssl-sys` + `std::os::windows`). The
+  first Windows CI run then failed on it: clippy E0004 (`file_destination_path` missed
+  `ReportDestination::Telegram`) and an unused production import of `SavedReportView` (fixed in
+  `f51a1be`), then `weekly_runs_write_note_and_index_or_skip_no_data` compared the raw JSON
+  `destination_snapshot` against a path (test fix in `3117aba`).
+- **Windows (tbx, Rust 1.95.0, Node 22.23.3), `04 §1c` order, detached at `3117aba`:**
+
+  ```text
+  EXIT npm ci = 0
+  EXIT npm run lint = 0
+  EXIT npm run build = 0
+  EXIT npm test = 0
+  EXIT stage-mcp = 0
+  EXIT cargo fmt = 0
+  EXIT cargo clippy = 0
+  EXIT cargo build = 0
+  EXIT cargo test = 0        (62 suites: 1141 passed, 0 failed, 15 ignored)
+  EXIT bindings diff = 0
+  CHAIN_EXIT=0
+  ```
+
+  Hosted CI on `3117aba`: `build & test (windows)`, all three `package & verify` targets and
+  CodeQL pass. **Not run:** app verification via `npm run dev` in an isolated profile and the
+  `04 §1c` native acceptance (real weekly run, Obsidian, promotion) — not claimed here.
+- Known docs drift left for a follow-up: `docs/f3-g5-g6-verification.md` pins an older candidate
+  commit and a UI test count (43) matching no tree; committed UI tests at `957b234` are 50 (55
+  after the review-fix tests).
+
+## 2026-10-18 — Weekly time hint (Codex `PRRT_kwDOTAuCtM6tu-Nu`, after PR #140 merged)
+
+- PR #140 merged at `eea8184` (`957b234`) before this fix landed; this branch carries it on top
+  of `main`. The weekly window always closes at Monday 00:00 local and the selected time only
+  sets `due_at` (`03 §8e`: fire at the selected local time after the week closes). The hint said
+  the week closed at the selected time.
+- Regression in `ui/test/memory-weekly.test.mjs` was RED on the old hint (`# pass 49`,
+  `# fail 1`, Node 22.20.0) and GREEN on the fix (`# pass 50`, `# fail 0`).
+- Runtime verified at `418c163afef0eb59d7cff4dc23be78d7a2afaa93` (same tree as this branch's code commit `05190d5`; `git diff
+  --stat 418c163 05190d5` is empty) in the existing native Windows checkout:
+
+```text
+head=418c163afef0eb59d7cff4dc23be78d7a2afaa93
+EXIT npm ci = 0
+EXIT npm run lint = 0
+EXIT npm run build = 0
+EXIT npm test = 0
+EXIT quinn security = 0
+EXIT stage-mcp = 0
+EXIT cargo fmt = 0
+EXIT cargo clippy = 0
+EXIT cargo build = 0
+EXIT cargo test = 0
+EXIT bindings = 0
+CHAIN_EXIT=0
+```
+
+- Parsed Rust totals: 1131 passed, 0 failed, 15 ignored across 62 suites. UI: 50 passed,
+  0 failed. Hosted checks pending; nothing pushed. The changed Settings hint has not been run
+  and screenshotted in the app (`04` UI guardrails); SSR test output is not that evidence.
+
 ## 2026-10-18 — PR #140: failed scheduled weeks recorded as missed (Nico's decision)
 
 - Runtime verified: `ba931e84b274346c1271728fa482b02d50d1c7e8` in the existing native Windows checkout (Rust 1.95.0, Node

@@ -468,6 +468,7 @@ pub async fn list_memory_runs(
     limit: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ReportRun>, ReportError> {
+    // Kind-agnostic: the run list keeps weekly syntheses visible for G4 promotion.
     db(&state)?
         .list_report_runs(limit.unwrap_or(20).clamp(1, 100), None)
         .await
@@ -1322,6 +1323,17 @@ async fn base_report_id(store: &dyn Store, run: &ReportRun) -> Result<Option<Str
     Ok(Some(current.run_id))
 }
 
+/// The path a file receipt names: the index always points at `Index.md`; a vault
+/// skip names the report root, because a skipped run wrote no note file. Only the
+/// file destinations (`Vault`, `Index`) reach here.
+fn file_destination_path(root: &Path, destination: ReportDestination) -> PathBuf {
+    if destination == ReportDestination::Index {
+        root.join("Index.md")
+    } else {
+        root.to_path_buf()
+    }
+}
+
 async fn write_files(
     store: &dyn Store,
     run: &ReportRun,
@@ -1345,7 +1357,8 @@ async fn write_files(
                 let mut item = delivery(
                     run,
                     dest,
-                    serde_json::to_string(&path_string(&root)).map_err(storage)?,
+                    serde_json::to_string(&path_string(&file_destination_path(&root, dest)))
+                        .map_err(storage)?,
                 );
                 item.state = ReportDeliveryState::Skipped;
                 item.error = run.error.clone();
@@ -1359,11 +1372,12 @@ async fn write_files(
         // synthesize, so it writes neither note nor index and records why.
         if run.outcome == Some(ReportOutcome::NoData) {
             for dest in [ReportDestination::Vault, ReportDestination::Index] {
+                let path = file_destination_path(&root, dest);
                 skip_delivery(
                     store,
                     run,
                     dest,
-                    &root,
+                    &path,
                     "A week without saved daily evidence writes no weekly note (NO_DATA).",
                 )
                 .await?;
@@ -2008,6 +2022,15 @@ async fn deliver_telegram(
             ancestor_delivery_block(store.as_ref(), run).await?
         };
         if let Some(reason) = skip {
+            // A revisited run records its skip once, like `skip_delivery` does for files.
+            if receipts.iter().any(|d| {
+                d.destination == ReportDestination::Telegram
+                    && d.chunk_index.is_none()
+                    && d.state == ReportDeliveryState::Skipped
+                    && d.error.as_ref().map(|error| error.message.as_str()) == Some(reason)
+            }) {
+                return Ok(());
+            }
             let mut item = delivery(
                 run,
                 ReportDestination::Telegram,
@@ -2085,6 +2108,11 @@ async fn deliver_telegram(
         }
         if item.next_attempt_at.is_some_and(|at| at > now_ms()) {
             break;
+        }
+        // A chunk-less receipt (a skip or an unrenderable digest) snapshots only the
+        // chat ID and carries no message to send; it must not abort the chunk loop.
+        if item.chunk_index.is_none() {
+            continue;
         }
         let payload: TelegramSnapshot =
             serde_json::from_str(&item.destination_snapshot).map_err(storage)?;
@@ -3288,6 +3316,25 @@ mod tests {
             .as_ref()
             .map(|error| error.message.as_str())
             == Some("A week without saved daily evidence writes no weekly note (NO_DATA).")));
+        // A file receipt snapshots its path as a JSON string.
+        let snapshot_path = |destination: ReportDestination| -> String {
+            let item = receipts
+                .iter()
+                .find(|item| item.destination == destination)
+                .expect("a file skip receipt exists");
+            serde_json::from_str(&item.destination_snapshot).expect("a JSON path snapshot")
+        };
+        let vault_snapshot = snapshot_path(ReportDestination::Vault);
+        let index_snapshot = snapshot_path(ReportDestination::Index);
+        assert!(
+            vault_snapshot.ends_with("ScreenSearch"),
+            "the vault skip names the report root: {vault_snapshot}"
+        );
+        assert_eq!(
+            index_snapshot,
+            format!("{vault_snapshot}/Index.md"),
+            "the index skip names Index.md under the same root, matching the daily paths"
+        );
         assert!(
             !no_data_dir.path().join("ScreenSearch").exists(),
             "a NO_DATA week must not write note files"
