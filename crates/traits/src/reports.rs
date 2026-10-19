@@ -188,19 +188,35 @@ impl SavedReportView {
     /// Projects a persisted `SavedReport` onto the frozen public shape. The
     /// persisted-only provenance (`daily_run_ids`) is deliberately dropped here,
     /// not hidden at the serializer: the field never exists on the wire type.
+    /// The destructuring is exhaustive on purpose: a field added to `SavedReport`
+    /// fails to compile here until it is classified as wire or persisted-only.
     pub fn from_saved(report: &SavedReport) -> Self {
+        let SavedReport {
+            markdown,
+            model,
+            frame_ids,
+            session_ids,
+            cited_frame_ids,
+            frames_sampled,
+            frames_summarized,
+            periods_total,
+            periods_covered,
+            passes,
+            truncated,
+            daily_run_ids: _,
+        } = report;
         Self {
-            markdown: report.markdown.clone(),
-            model: report.model.clone(),
-            frame_ids: report.frame_ids.clone(),
-            session_ids: report.session_ids.clone(),
-            cited_frame_ids: report.cited_frame_ids.clone(),
-            frames_sampled: report.frames_sampled,
-            frames_summarized: report.frames_summarized,
-            periods_total: report.periods_total,
-            periods_covered: report.periods_covered,
-            passes: report.passes,
-            truncated: report.truncated,
+            markdown: markdown.clone(),
+            model: model.clone(),
+            frame_ids: frame_ids.clone(),
+            session_ids: session_ids.clone(),
+            cited_frame_ids: cited_frame_ids.clone(),
+            frames_sampled: *frames_sampled,
+            frames_summarized: *frames_summarized,
+            periods_total: *periods_total,
+            periods_covered: *periods_covered,
+            passes: *passes,
+            truncated: *truncated,
         }
     }
 }
