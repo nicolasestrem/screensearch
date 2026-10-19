@@ -1,5 +1,22 @@
 # 08 — AI Changelog
 
+## 2026-10-19 — llama.cpp bootstrap recovery
+
+- **Change:** `download.rs` now falls back to a pinned, SHA-256-verified Windows Vulkan asset
+  when the anonymous GitHub releases lookup fails, gives the binary zip up to three attempts on
+  transient statuses/transport errors, and exposes `ensure_binary_from_url_verified`
+  plus two `#[ignore]`d real-network checks; `lib.rs` reports the full anyhow chain for an
+  acquisition failure. Docs: `ARCHITECTURE §7.3`, `CHANGELOG [Unreleased]`, this record.
+- **Why:** field evidence showed an installed 0.4.2 permanently without inference because the
+  per-IP anonymous API quota was exhausted (403, remaining 0), and initialization runs once
+  per session. The API-independent pin replaces only the resolution step; a working API still
+  selects the newest release and no token is involved.
+- **Verification:** native tbX Rust 1.95.0 — RED observed before the fix (403 panic), then
+  `cargo test -p inference --lib` 110 passed / 2 ignored, clippy `-D warnings` clean for
+  `inference` + `screensearch`, and both gated real-network checks downloaded the archive and
+  ran `llama-server --help` (verbatim output in `05`).
+- **Not done:** no merge, no release, no change to the installed app or its data.
+
 ## 2026-10-19 — Record v0.4.2 publication and field test
 
 - **Change:** `05` gained the publication evidence (tag run, assets, updater endpoint

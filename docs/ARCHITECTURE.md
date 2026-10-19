@@ -374,6 +374,17 @@ everything downloads on first use, Rust-only (no Python in the runtime):
   recent-releases list rather than `/releases/latest` and takes the **newest release that
   actually carries** the Vulkan asset — llama.cpp's CI sometimes publishes a release with an
   incomplete asset set, which a single-`latest` lookup would fail on outright.
+  The releases API is **anonymous and rate-limited per IP** (60 requests/hour), so a shared
+  address can be exhausted through no fault of the user: on any lookup failure the resolver
+  falls back to a **pinned** Windows x64 Vulkan asset (a GitHub *release-asset* download,
+  which is not subject to the API quota), and that pin is verified against its published
+  SHA-256 before installation. A working API always wins, the pin only replaces the
+  *resolution* step, and `SSV2C_LLAMA_RELEASE_URL` still wins over both. The binary zip fetch
+  is retried within a bounded three attempts on `401`/`403`/`408`/`429`/`5xx` and transport errors (the
+  same single-use signed-CDN failure mode the model chunk downloader already retries).
+  An acquisition failure is reported with its **full** error chain, not just the outer
+  context, so the log names the underlying status.
+
 - **Models** — `ensure_model` lists the tier's HuggingFace repo via `hf-hub`, picks the `Q4_K_M`
   weights (+ the **same-repo** `mmproj` for vision — a mismatched projector crashes the server), and
   copies them into `<app-data>/models/<lane>/<tier>`. Idempotent (skips files already present).

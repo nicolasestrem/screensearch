@@ -122,6 +122,34 @@ const GITHUB_RELEASES: &str =
 /// GitHub requires a User-Agent on API requests.
 const USER_AGENT: &str = "screensearch-v2c";
 
+/// Last-resort Windows x64 Vulkan asset used **only** when the anonymous releases lookup
+/// fails outright. The API quota is per-IP and only 60 requests an hour: a shared/NAT'd
+/// address that a user does not control can exhaust it, and before this fallback existed a
+/// single 403 left the app with no sidecar for the whole session (observed in the field:
+/// `llama.cpp release query returned an error status`, empty `sidecar/` dir, no GGUF).
+/// The resolved asset is the same artifact the API would have selected — a GitHub
+/// *release-asset* download, served from a different host that is not subject to the API
+/// quota — so only the resolution source is pinned, not the download path. The normal
+/// recent-release lookup still wins whenever it works, and `SSV2C_LLAMA_RELEASE_URL`
+/// still wins over both.
+const FALLBACK_VULKAN_ASSET: (&str, &str) = (
+    "https://github.com/ggml-org/llama.cpp/releases/download/b11739/llama-b11739-bin-win-vulkan-x64.zip",
+    "llama-b11739-bin-win-vulkan-x64.zip",
+);
+/// SHA-256 of [`FALLBACK_VULKAN_ASSET`] as reported by the GitHub release metadata. A
+/// pinned artifact must be checked before it is run. GitHub's release JSON does expose a
+/// per-asset `digest`, but this resolver does not parse it yet, so verification covers the
+/// pin — the one download whose digest this code owns (`07` #96 tracks the API path).
+const FALLBACK_VULKAN_SHA256: &str =
+    "2a26916f2db1955b6c836476c60627604cd1d2b04533eacad0c76328c9aba249";
+
+/// Bounded retry for the one binary zip fetch. GitHub's release-asset host can answer a
+/// single-use signed-CDN request with `401`/`403`, or a transient `429`/`5xx`; the zip is
+/// small (~32 MB) and fully re-fetchable, so a straight retry costs far less than a
+/// session with no sidecar. Mirrors the chunked model downloader's retry policy.
+const BINARY_RETRY_MAX_ATTEMPTS: u32 = 3;
+const BINARY_RETRY_BACKOFF: Duration = Duration::from_millis(400);
+
 #[derive(Deserialize)]
 struct GithubRelease {
     assets: Vec<GithubAsset>,
@@ -206,7 +234,9 @@ pub async fn ensure_binary(sidecar_dir: &Path) -> Result<PathBuf> {
         let install = sidecar_dir
             .join("llama-override")
             .join(url_fingerprint(&url));
-        return ensure_binary_from_url(&install, &url, &name).await;
+        // An operator override is trusted, but when it *is* the pin we know its digest, so
+        // verify it like the managed fallback rather than skipping the check.
+        return ensure_binary_from_url_verified(&install, &url, &name, fallback_sha256(&url)).await;
     }
 
     let install = sidecar_dir.join("llama");
@@ -214,17 +244,31 @@ pub async fn ensure_binary(sidecar_dir: &Path) -> Result<PathBuf> {
         return Ok(found);
     }
 
-    let (url, name) = resolve_binary_url().await?;
-    ensure_binary_from_url(&install, &url, &name).await
+    let (url, name) = resolve_binary_url().await;
+    ensure_binary_from_url_verified(&install, &url, &name, fallback_sha256(&url)).await
 }
 
-async fn ensure_binary_from_url(install: &Path, url: &str, name: &str) -> Result<PathBuf> {
+/// The pinned fallback asset is the only download with a known-good digest; the API path
+/// has none in our release JSON, so it stays unverified rather than gaining a fake gate.
+fn fallback_sha256(url: &str) -> Option<&'static str> {
+    (url == FALLBACK_VULKAN_ASSET.0).then_some(FALLBACK_VULKAN_SHA256)
+}
+
+async fn ensure_binary_from_url_verified(
+    install: &Path,
+    url: &str,
+    name: &str,
+    expected_sha256: Option<&str>,
+) -> Result<PathBuf> {
     if let Some(found) = find_file(install, "llama-server.exe") {
         return Ok(found);
     }
 
     tracing::info!(asset = %name, "downloading llama.cpp Vulkan release");
     let bytes = http_get_bytes(url).await?;
+    if let Some(expected) = expected_sha256 {
+        verify_sha256(&bytes, expected).with_context(|| format!("verify sidecar asset {name}"))?;
+    }
     let install = install.to_path_buf();
     let partial = partial_install_dir(&install);
     let install_for_task = install.clone();
@@ -386,13 +430,38 @@ async fn download_into(repo: &ApiRepo, filename: &str, dir: &Path) -> Result<()>
     place_in_clean_layout(&cached, dir, base)
 }
 
-async fn resolve_binary_url() -> Result<(String, String)> {
+async fn resolve_binary_url() -> (String, String) {
+    resolve_binary_url_with_fallback(GITHUB_RELEASES).await
+}
+
+/// Resolves the sidecar asset from the releases API, falling back to the pinned
+/// [`FALLBACK_VULKAN_ASSET`] when that API call fails for any reason (the quota is
+/// per-IP, so an exhausted shared address is not recoverable by retrying here). The
+/// API result always wins when it succeeds, so new builds are still picked up normally.
+async fn resolve_binary_url_with_fallback(releases_url: &str) -> (String, String) {
+    match resolve_binary_url_from(releases_url).await {
+        Ok(asset) => asset,
+        Err(e) => {
+            tracing::warn!(
+                error = %format!("{e:#}"),
+                asset = FALLBACK_VULKAN_ASSET.1,
+                "llama.cpp release lookup failed; using the pinned fallback sidecar asset"
+            );
+            (
+                FALLBACK_VULKAN_ASSET.0.to_string(),
+                FALLBACK_VULKAN_ASSET.1.to_string(),
+            )
+        }
+    }
+}
+
+async fn resolve_binary_url_from(releases_url: &str) -> Result<(String, String)> {
     let client = reqwest::Client::builder()
         .timeout(HTTP_API_TIMEOUT)
         .build()
         .context("build releases http client")?;
     let resp = client
-        .get(GITHUB_RELEASES)
+        .get(releases_url)
         .header(reqwest::header::USER_AGENT, USER_AGENT)
         .send()
         .await
@@ -442,15 +511,79 @@ async fn http_get_bytes(url: &str) -> Result<Vec<u8>> {
         .read_timeout(HTTP_READ_TIMEOUT)
         .build()
         .context("build download http client")?;
+    let mut attempt = 1;
+    loop {
+        match fetch_binary_body(&client, url).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(failure) if failure.retryable && attempt < BINARY_RETRY_MAX_ATTEMPTS => {
+                tracing::warn!(
+                    attempt,
+                    error = %format!("{:#}", failure.error),
+                    "sidecar asset download failed; retrying"
+                );
+                tokio::time::sleep(BINARY_RETRY_BACKOFF * attempt).await;
+                attempt += 1;
+            }
+            Err(failure) => return Err(failure.error),
+        }
+    }
+}
+
+/// One attempt at the binary download. `retryable` marks the failures that a fresh
+/// connection can plausibly fix (transport errors, a single-use signed-CDN `401`/`403`,
+/// `408`/`429`, and `5xx`) — never a URL that simply does not exist.
+struct BinaryFetchError {
+    error: anyhow::Error,
+    retryable: bool,
+}
+
+async fn fetch_binary_body(
+    client: &reqwest::Client,
+    url: &str,
+) -> std::result::Result<Vec<u8>, BinaryFetchError> {
     let resp = client
         .get(url)
         .header(reqwest::header::USER_AGENT, USER_AGENT)
         .send()
         .await
-        .with_context(|| format!("download {url}"))?
-        .error_for_status()
-        .context("download returned an error status")?;
-    Ok(resp.bytes().await.context("read download body")?.to_vec())
+        .map_err(|e| BinaryFetchError {
+            error: anyhow!(e).context(format!("download {url}")),
+            retryable: true,
+        })?;
+    let status = resp.status();
+    if !status.is_success() {
+        let code = status.as_u16();
+        return Err(BinaryFetchError {
+            error: anyhow!("download {url} returned HTTP {status}"),
+            retryable: code == 401
+                || code == 403
+                || code == 408
+                || code == 429
+                || status.is_server_error(),
+        });
+    }
+    let bytes = resp.bytes().await.map_err(|e| BinaryFetchError {
+        error: anyhow!(e).context(format!("read download body for {url}")),
+        retryable: true,
+    })?;
+    Ok(bytes.to_vec())
+}
+
+/// Digest check for a pinned asset: the file is downloaded over TLS from GitHub and then
+/// compared with the digest published in the release metadata. A plain comparison is fine
+/// here — the digest is public, so there is no secret to leak through timing.
+fn verify_sha256(bytes: &[u8], expected_hex: &str) -> Result<()> {
+    let actual: String = Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    if actual.eq_ignore_ascii_case(expected_hex) {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "sha256 mismatch: expected {expected_hex}, got {actual}"
+        ))
+    }
 }
 
 /// Extracts a zip archive into `dest`, preserving its internal structure.
@@ -1778,6 +1911,269 @@ mod tests {
 
     static ENV_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
+    #[tokio::test]
+    async fn rate_limited_release_lookup_uses_direct_fallback() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/releases"))
+            .and(wiremock::matchers::header("user-agent", USER_AGENT))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .insert_header("x-ratelimit-limit", "60")
+                    .insert_header("x-ratelimit-remaining", "0")
+                    .set_body_json(serde_json::json!({"message": "API rate limit exceeded"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let (url, name) =
+            resolve_binary_url_with_fallback(&format!("{}/releases", server.uri())).await;
+        assert_eq!(url, FALLBACK_VULKAN_ASSET.0);
+        assert_eq!(name, FALLBACK_VULKAN_ASSET.1);
+        assert_eq!(pick_vulkan_asset(&[name]), Some(0));
+    }
+
+    /// The fallback is deliberately broad: a 200 response whose recent releases carry no
+    /// matching asset (a run of incomplete upstream releases) must also resolve to the pin
+    /// rather than leave the app without a sidecar.
+    #[tokio::test]
+    async fn release_lookup_without_a_matching_asset_uses_direct_fallback() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/releases"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"assets": [{"name": "llama-b3-bin-win-cpu-x64.zip", "browser_download_url": "https://example.invalid/cpu.zip"}]}
+            ])))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let (url, name) =
+            resolve_binary_url_with_fallback(&format!("{}/releases", server.uri())).await;
+        assert_eq!(url, FALLBACK_VULKAN_ASSET.0);
+        assert_eq!(name, FALLBACK_VULKAN_ASSET.1);
+    }
+
+    #[tokio::test]
+    async fn release_lookup_keeps_newest_matching_asset_when_api_works() {
+        let server = MockServer::start().await;
+        let url = "https://github.com/ggml-org/llama.cpp/releases/download/b2/llama-b2-bin-win-vulkan-x64.zip";
+        Mock::given(method("GET"))
+            .and(path("/releases"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"assets": [{"name": "llama-b3-xcframework.zip", "browser_download_url": "https://example.invalid/mac.zip"}]},
+                {"assets": [{"name": "llama-b2-bin-win-vulkan-x64.zip", "browser_download_url": url}]}
+            ])))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (found, name) =
+            resolve_binary_url_with_fallback(&format!("{}/releases", server.uri())).await;
+        assert_eq!(
+            found, url,
+            "a working API must not be overridden by the pin"
+        );
+        assert_eq!(name, "llama-b2-bin-win-vulkan-x64.zip");
+    }
+
+    #[tokio::test]
+    async fn binary_download_retries_a_transient_status_then_succeeds() {
+        let server = MockServer::start().await;
+        // A single-use signed-CDN style 403, then the real body.
+        Mock::given(method("GET"))
+            .and(path("/llama.zip"))
+            .respond_with(ResponseTemplate::new(403))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/llama.zip"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(zip_with_llama_server(b"retried"), "application/zip"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let root = unique_temp_dir("binary-retry");
+        let install = root.join("llama");
+        let found = ensure_binary_from_url_verified(
+            &install,
+            &format!("{}/llama.zip", server.uri()),
+            "x.zip",
+            None,
+        )
+        .await
+        .expect("a transient 403 must be retried, not fatal");
+        assert_eq!(std::fs::read(&found).unwrap(), b"retried");
+        assert!(!partial_install_dir(&install).exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn binary_download_reports_persistent_failure_after_bounded_attempts() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/llama.zip"))
+            .respond_with(ResponseTemplate::new(403))
+            .expect(u64::from(BINARY_RETRY_MAX_ATTEMPTS))
+            .mount(&server)
+            .await;
+
+        let root = unique_temp_dir("binary-fail");
+        let install = root.join("llama");
+        let err = ensure_binary_from_url_verified(
+            &install,
+            &format!("{}/llama.zip", server.uri()),
+            "x.zip",
+            None,
+        )
+        .await
+        .expect_err("a persistent 403 must fail truthfully");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("download") && message.contains("403"),
+            "error must name the failed download and status, got: {message}"
+        );
+        assert!(
+            !install.exists(),
+            "a failed download must not publish an install dir"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn pinned_asset_digest_is_verified_before_installing() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/pinned.zip"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(zip_with_llama_server(b"tampered"), "application/zip"),
+            )
+            .mount(&server)
+            .await;
+
+        let root = unique_temp_dir("pinned-digest");
+        let install = root.join("llama");
+        let err = ensure_binary_from_url_verified(
+            &install,
+            &format!("{}/pinned.zip", server.uri()),
+            "pinned.zip",
+            Some(FALLBACK_VULKAN_SHA256),
+        )
+        .await
+        .expect_err("a digest mismatch must refuse the download");
+        assert!(
+            format!("{err:#}").contains("sha256 mismatch"),
+            "unexpected error: {err:#}"
+        );
+        assert!(
+            !install.exists(),
+            "an unverified asset must never be installed"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Real first-run acquisition against GitHub (~32 MB). Gated manual check, not part of
+    /// the always-green suite: `SSV2C_BIN_TEST_DIR` keeps the install for inspection.
+    ///
+    /// ```text
+    /// cargo test -p inference --lib downloads_the_real_sidecar_binary -- --ignored --nocapture
+    /// ```
+    #[tokio::test]
+    #[ignore = "downloads the real llama.cpp Vulkan release from GitHub (~32 MB)"]
+    async fn downloads_the_real_sidecar_binary() {
+        // `ensure_binary` reads `SSV2C_LLAMA_RELEASE_URL`; hold the same lock the other
+        // env-mutating test takes so an `--include-ignored` run cannot race it.
+        let _guard = ENV_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let dir = real_binary_test_dir("api-path");
+        let binary = ensure_binary(&dir)
+            .await
+            .expect("ensure the real llama-server binary");
+        assert_sidecar_starts(&binary);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The field failure end-to-end: the releases API errors (a nonexistent repo stands in
+    /// for the exhausted per-IP quota), the pinned fallback is used, its published digest is
+    /// verified, and the extracted `llama-server.exe` actually runs.
+    #[tokio::test]
+    #[ignore = "downloads the real pinned llama.cpp release from GitHub (~32 MB)"]
+    async fn real_api_failure_bootstraps_from_the_pinned_asset() {
+        let (url, name) = resolve_binary_url_with_fallback(
+            "https://api.github.com/repos/ggml-org/definitely-not-a-repo-xyz/releases?per_page=10",
+        )
+        .await;
+        assert_eq!(url, FALLBACK_VULKAN_ASSET.0, "must fall back to the pin");
+        assert_eq!(name, FALLBACK_VULKAN_ASSET.1);
+
+        let dir = real_binary_test_dir("pinned-fallback");
+        let install = dir.join("llama");
+        let binary = ensure_binary_from_url_verified(&install, &url, &name, fallback_sha256(&url))
+            .await
+            .expect("real pinned asset must download and verify");
+        assert_sidecar_starts(&binary);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Each ignored real-network test gets its own subdirectory: the suite runs test
+    /// functions in parallel, and two installs sharing one directory collide on the final
+    /// `llama.partial -> llama` rename (observed as `Access is denied`).
+    fn real_binary_test_dir(tag: &str) -> PathBuf {
+        let dir = std::env::var("SSV2C_BIN_TEST_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir().join("ssv2c-binary-smoke"))
+            .join(tag);
+        std::fs::create_dir_all(&dir).expect("create binary test dir");
+        dir
+    }
+
+    /// A real binary is only useful if the Windows loader can start it and its DLL set is
+    /// complete. Since the b10xxx builds ship `llama-server.exe` as a ~9 KB launcher stub
+    /// with the code in `llama-server-impl.dll`, the install directory — not the .exe — is
+    /// what must be substantial, and `--help` proves both the loader and the DLL set.
+    fn assert_sidecar_starts(binary: &Path) {
+        let install = binary.parent().expect("binary parent dir");
+        let total: u64 = std::fs::read_dir(install)
+            .expect("read install dir")
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.metadata().ok())
+            .map(|meta| meta.len())
+            .sum();
+        assert!(
+            install.join("llama-server-impl.dll").exists() || total > 20 * 1024 * 1024,
+            "{} looks like a partial extraction ({total} bytes total)",
+            install.display()
+        );
+        let output = std::process::Command::new(binary)
+            .arg("--help")
+            .output()
+            .expect("run llama-server --help");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "llama-server --help failed: status={:?} stderr={stderr}",
+            output.status
+        );
+        assert!(
+            stdout.contains("--model") || stderr.contains("--model"),
+            "help output did not look like llama-server: {stdout}{stderr}"
+        );
+        println!(
+            "BINARY OK: {} ({} bytes total install)",
+            binary.display(),
+            total
+        );
+    }
+
     #[test]
     fn picks_win_vulkan_x64_asset() {
         let names = vec![
@@ -1921,9 +2317,14 @@ mod tests {
 
         let root = unique_temp_dir("bad-zip");
         let install = root.join("llama");
-        let err = ensure_binary_from_url(&install, &format!("{}/bad.zip", server.uri()), "bad.zip")
-            .await
-            .expect_err("invalid zip should fail");
+        let err = ensure_binary_from_url_verified(
+            &install,
+            &format!("{}/bad.zip", server.uri()),
+            "bad.zip",
+            None,
+        )
+        .await
+        .expect_err("invalid zip should fail");
 
         assert!(
             err.to_string().contains("extract llama release zip"),

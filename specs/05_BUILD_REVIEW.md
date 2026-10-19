@@ -1,5 +1,76 @@
 # 05 — Build Review
 
+## 2026-10-19 — llama.cpp bootstrap recovery (branch `fix/llama-bootstrap-recovery`)
+
+- **Trigger (field evidence):** installed 0.4.2 on tbx logged
+  `ERROR screensearch_lib: llama-server unavailable error=llama.cpp release query returned an
+  error status` at every start (19:43:37Z and 19:55:24Z), with `sidecar/` empty, no
+  `llama-server*` anywhere and zero `.gguf` files. The app's exact anonymous request
+  (`GET https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=10`, UA
+  `screensearch-v2c`) returned `HTTP 403` with `x-ratelimit-remaining: 0` / `used: 60`; the
+  same host's authenticated probe still resolves assets, so naming/matcher/repo move were
+  ruled out. `init_inference` returns on that error and is spawned once, so the session stays
+  without inference.
+- **Change (`crates/inference/src/download.rs`, `src-tauri/src/lib.rs`):** resolve through the
+  API as before, and on any lookup failure fall back to a pinned Windows Vulkan asset
+  (`b11739`, digest `2a26916f…aba249`, verified before install); bounded three-attempt retry
+  for the binary zip on `401`/`403`/`408`/`429`/`5xx`/transport errors; `init_inference` logs
+  and reports the full `{e:#}` chain. `SSV2C_LLAMA_RELEASE_URL` and an existing install still
+  short-circuit before any network call.
+- **RED (native tbX, Rust 1.95.0, before the fix):**
+
+  ```text
+  thread 'download::tests::rate_limited_release_lookup_uses_direct_fallback' panicked at
+  crates\inference\src\download.rs:1802:34:
+  a rate-limited API must not prevent first-run bootstrap: llama.cpp release query returned an
+  error status
+  Caused by: HTTP status client error (403 Forbidden) for url (http://127.0.0.1:54571/releases)
+  test result: FAILED. 0 passed; 1 failed
+  ```
+
+- **GREEN (same host, after the fix):**
+
+  ```text
+  test result: ok. 110 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out
+  TEST_EXIT=0
+  CLIPPY_EXIT=0            # cargo clippy -p inference -p screensearch --all-targets -D warnings
+  BINARY OK: C:/Users/nicol/Documents/GitHub/ssv2c-bin-smoke\api-path\llama\llama-server.exe
+             (91841309 bytes total install)
+  BINARY OK: C:/Users/nicol/Documents/GitHub/ssv2c-bin-smoke\pinned-fallback\llama\llama-server.exe
+             (91841309 bytes total install)
+  test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 110 filtered out   # --ignored
+  CARGO_EXIT=0
+  ```
+
+  The two `#[ignore]`d real-network checks download the actual archive: one through the live
+  API, one through a deliberately failing API URL (nonexistent repo) that exercises the pin,
+  digest check and extraction; both then run `llama-server --help` so the Windows loader and
+  the DLL set are proven, not assumed. Note: since the b10xxx builds `llama-server.exe` is a
+  ~9 KB launcher stub with the code in `llama-server-impl.dll`, so the install directory — not
+  the `.exe` — is what the check measures.
+- **Independent review (read-only subagent on `b845f7a`):** no P0/P1. Three P2s, all handled:
+  the retry prose said "retried three times" where the code makes three *attempts* (fixed in
+  `CHANGELOG`, `ARCHITECTURE`, `08`); the comment claiming the API has no digest was replaced
+  with the accurate statement (GitHub does publish one; this resolver does not parse it yet —
+  now gap `07` #96); and the `SSV2C_LLAMA_RELEASE_URL` path now also verifies the digest when
+  the override URL *is* the pin. One clippy regression from that last edit (the now-unused
+  non-verifying wrapper) was removed before the re-run. Re-verified on tbx at the final tree:
+  `cargo test -p inference --lib` → `110 passed; 0 failed; 2 ignored` (TEST_EXIT=0) and
+  `cargo clippy -p inference -p screensearch --all-targets -- -D warnings` → `Finished`
+  (CLIPPY_EXIT=0).
+- **Review round 1 (PR #145):** Codex reviewed `fd35571` with **no findings** (0 inline
+  threads, 0 review submissions); `@claude review` returned six non-blocking suggestions as a
+  PR conversation comment. Dispositions: (1) broad fallback trigger — intentional and now
+  covered by `release_lookup_without_a_matching_asset_uses_direct_fallback`; (2) pin staleness
+  — already `07` #95; (3) `verify_sha256` wording — reworded; (4) env-var race in the ignored
+  test — now takes `ENV_LOCK` like the other env-reading test; (5) 32 MB double copy —
+  pre-existing and unchanged (would need a `Bytes`-based signature), left as is; (6) offline
+  start — already `07` #94. Only (1), (3) and (4) changed code/docs; no product contract moved.
+- **Not run / open:** the live installed app was never restarted and its data untouched (the
+  single-instance plugin means an isolated first run would require stopping it); no full
+  `cargo test --workspace` / UI chain was run locally on this branch (CI's Windows job passed
+  on `fd35571`), and no merge/release was made.
+
 ## 2026-10-19 — v0.4.2 published and field-tested
 
 - **Release:** tag `v0.4.2` (annotated, on squash commit `611a4b4`, PR #142); release
