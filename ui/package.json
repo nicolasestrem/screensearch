@@ -1,7 +1,7 @@
 {
   "name": "screensearch-ui",
   "private": true,
-  "version": "0.4.1",
+  "version": "0.4.2",
   "type": "module",
   "description": "ScreenSearch V2c frontend (React 18 + TS + Vite). Full 'Command Deck' UI lands in P5 (see specs/UI_REFERENCE.md).",
   "scripts": {
