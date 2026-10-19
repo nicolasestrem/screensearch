@@ -1,5 +1,15 @@
 # 08 — AI Changelog
 
+## 2026-10-19 — Incomplete all-NO_DATA week stays PARTIAL (PR #141)
+
+- **Change:** the weekly empty-week path for all-`NO_DATA` dailies now requires every local
+  date to be covered; `SavedReportView::from_saved` destructures `SavedReport` exhaustively.
+- **Why:** Codex P1 `PRRT_kwDOTAuCtM6t3zkf` — one `NO_DATA` daily plus missing days was saved
+  `NO_DATA`, labelling unmeasured days as quiet; `03 §8e` requires `PARTIAL`.
+- **Verification:** regression `weekly_incomplete_all_no_data_week_is_not_empty` RED → GREEN;
+  Linux fmt/clippy/tests exit 0; full `04 §1c` chain on tbx at `8b4f890` `CHAIN_EXIT=0`
+  (1142 passed, 0 failed). App verification and native acceptance not run.
+
 ## 2026-10-19 — F3 G1–G6 review round: truthfulness, wire contract and hardening
 
 - 17 reviewers (12 over `7639b25..8b3cf95`, 5 over `8b3cf95..957b234`) found 1 HIGH and ~22

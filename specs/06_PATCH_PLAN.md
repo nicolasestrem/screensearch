@@ -1,5 +1,13 @@
 # 06 — Patch Plan
 
+## 2026-10-19 — PR #141 review round
+
+- Codex `PRRT_kwDOTAuCtM6t3zkf` (P1): an incomplete all-NO_DATA week was saved `NO_DATA`.
+  Fixed in `8b4f890` per `03 §8e` (no contradiction, spec explicit). Also from the
+  `claude[bot]` review: exhaustive `SavedReport` destructuring in `SavedReportView::from_saved`.
+  Earlier on this PR: Windows-only compile errors (`f51a1be`) and a JSON-snapshot test bug
+  (`3117aba`) found by hosted CI. Native chain green at `8b4f890`; merge needs Nico's approval.
+
 ## 2026-10-18 — PR #140 follow-ups and weekly time hint
 
 - PR #140 merged at `eea8184` (`957b234`) with: G5/G6 rebuilt on `main` (PR-139 batch-3

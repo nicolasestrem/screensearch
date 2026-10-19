@@ -1,5 +1,35 @@
 # 05 — Build Review
 
+## 2026-10-19 — PR #141 review round: incomplete all-NO_DATA week (Codex P1)
+
+- Finding: Codex `PRRT_kwDOTAuCtM6t3zkf` (P1, at `18cc4c4`), confirmed by the `claude[bot]`
+  review requested on the PR. `execute_weekly` took the empty-week path whenever every consumed
+  daily was `NO_DATA`, ignoring `missing_local_dates`, so 1 `NO_DATA` daily + 6 days without a
+  saved daily was saved `NO_DATA`. `03 §8e` (`PARTIAL` when any day lacks a saved daily;
+  `NO_DATA` only for a week without saved dailies) settles it: valid, introduced by `c62e65a`.
+- Fix `8b4f890`: the all-`NO_DATA` path requires `missing_local_dates.is_empty()`; an
+  incomplete week keeps its pre-PR behavior and is saved `PARTIAL` with the missing-days banner.
+  Regression `weekly_incomplete_all_no_data_week_is_not_empty`: RED on the pre-fix
+  `report_service.rs` (panics at the resolver assertion), GREEN after. The `claude[bot]` minor
+  note is addressed by an exhaustive `SavedReport` destructuring in
+  `SavedReportView::from_saved` (a new persisted field fails to compile until classified).
+- Linux (Rust 1.95.0): `cargo fmt --all -- --check` exit 0; `cargo clippy --locked -p traits
+  -p store -p kernel -p api -p mcp --all-targets -- -D warnings` exit 0; `cargo test --locked
+  -p traits -p kernel` exit 0 (293 passed, 0 failed).
+- **Windows (tbx, Rust 1.95.0, Node 22.23.3), `04 §1c` order, detached at `8b4f890`** (commit
+  transferred by git bundle, SHA asserted before the chain):
+
+  ```text
+  EXIT npm ci = 0 / npm run lint = 0 / npm run build = 0 / npm test = 0
+  EXIT stage-mcp = 0 / cargo fmt = 0 / cargo clippy = 0 / cargo build = 0
+  EXIT cargo test = 0        (62 suites: 1142 passed, 0 failed, 15 ignored)
+  EXIT bindings diff = 0
+  CHAIN_EXIT=0
+  ```
+
+  The docs-only commit on top inherits this result (no code/config/manifest path changed).
+  **Not run:** `npm run dev` app verification and native F3 acceptance.
+
 ## 2026-10-19 — F3 G1–G6 review round (PR #141, pending merge)
 
 - 17 parallel reviewers (12 on `7639b25..8b3cf95`, 5 on `8b3cf95..957b234`), read-only, findings
