@@ -44,8 +44,17 @@ function main() {
   const dest = join(destDir, `screensearch-mcp-${triple}${ext}`);
 
   // Only rewrite when the bytes differ, to keep mtimes stable and avoid needless rebuilds.
+  // Read the destination once, atomically: an existsSync-then-read/write pattern races
+  // between the check and the use (CodeQL js/file-system-race). A failed read with
+  // ENOENT means the destination is absent; any other error is real and rethrown.
   const srcBytes = readFileSync(src);
-  if (existsSync(dest) && readFileSync(dest).equals(srcBytes)) {
+  let destBytes = null;
+  try {
+    destBytes = readFileSync(dest);
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+  }
+  if (destBytes !== null && destBytes.equals(srcBytes)) {
     console.log(`[stage-mcp] up to date: ${dest}`);
     return;
   }
