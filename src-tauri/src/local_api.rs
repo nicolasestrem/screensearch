@@ -21,8 +21,8 @@ use traits::{
     CaptureInterruption, CaptureInterruptionReason, CaptureObservations, EvidenceWindow,
     ExportFrameRow, ExportRequest, ExportResult, FrameDetail, FramePageRequest, HistoryReadError,
     ReportDeliveryState, ReportDetail, ReportPageRequest, ReportRunPhase, ResumeContext,
-    RetentionScope, RetrievedChunk, SavedReportRetention, Settings, Store, StoredFramePage,
-    StoredReportPage, Toast, ToastLevel,
+    RetentionScope, RetrievedChunk, SavedReportRetention, SavedReportView, Settings, Store,
+    StoredFramePage, StoredReportPage, Toast, ToastLevel,
 };
 
 use api::{ApiHost, ApiServer, FrameImage, SharedToken, DEFAULT_BIND_ADDRESS, DEFAULT_PORT};
@@ -2290,11 +2290,17 @@ mod tests {
         );
 
         // A saved result is exposed independent of phase; a missing run is None (→404).
+        // The detail serves the frozen public projection (`SavedReportView`), so the
+        // persisted-only `daily_run_ids` provenance never reaches the wire type.
         let detail = compose_report_detail(&store, "run-a")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(detail.result, Some(saved));
+        assert_eq!(
+            detail.result,
+            Some(SavedReportView::from_saved(&saved)),
+            "the stored saved result projects through the frozen public shape"
+        );
         assert!(compose_report_detail(&store, "absent")
             .await
             .unwrap()

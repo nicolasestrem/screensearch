@@ -473,7 +473,7 @@ fn empty_page() -> Value {
 
 // ---------------------------------------------------------------------------
 // Report fixture data (03 §7f.5 / §7f.6) — authored from the normative wire types
-// (spec + `traits::SavedReport`/`MemoryReportRange`), never captured from a running API.
+// (spec + `traits::SavedReportView`/`MemoryReportRange`), never captured from a running API.
 // ---------------------------------------------------------------------------
 
 /// One `ReportSummary` list row: metadata only — no saved Markdown/evidence arrays.
@@ -501,8 +501,11 @@ fn report_page(items: Vec<Value>, next_cursor: Value) -> Value {
     json!({ "items": items, "next_cursor": next_cursor })
 }
 
-/// A complete `SavedReport` (spec §7f.6 / `traits::SavedReport`). `frame_ids` deliberately
-/// exceeds the 200-item display cap so a substituted citation cap would be caught.
+/// The frozen public saved-result **wire** shape (`03 §7f.6`): exactly the eleven `§8c`
+/// fields that `ReportDetail.result` serves. The persisted `traits::SavedReport` also
+/// carries the provenance-only `daily_run_ids` (`03 §8e`); the wire projection drops it,
+/// so it must never appear here. `frame_ids` deliberately exceeds the 200-item display cap
+/// so a substituted citation cap would be caught.
 fn saved_report() -> Value {
     json!({
         "markdown": "# Weekly recall\n\nBody line one.\nBody line two with a `code` span.\n",
@@ -519,7 +522,8 @@ fn saved_report() -> Value {
     })
 }
 
-/// The factual saved result a stored NO_DATA run carries: a truthful note and no evidence.
+/// The factual saved result a stored NO_DATA run carries: a truthful note and no evidence
+/// (same frozen eleven-field `§7f.6` wire shape).
 fn no_data_saved_report() -> Value {
     json!({
         "markdown": "No screen activity was recorded for the requested window.",
@@ -536,7 +540,8 @@ fn no_data_saved_report() -> Value {
     })
 }
 
-/// A `ReportDetail`: every `ReportSummary` field plus the optional saved result.
+/// A `ReportDetail`: every `ReportSummary` field plus `result` — the frozen public saved
+/// shape (`traits::SavedReportView`, eleven `§7f.6` fields) or an explicit `null`.
 fn report_detail(run_id: &str, phase: &str, outcome: Value, result: Value) -> Value {
     let mut detail = report_summary(run_id, phase, outcome);
     detail["result"] = result;
@@ -1452,6 +1457,10 @@ fn get_report_preserves_full_saved_result_and_provenance() {
     assert_eq!(detail["result"]["frames_sampled"], json!(250));
     assert_eq!(detail["result"]["passes"], json!(2));
     assert_eq!(detail["result"]["truncated"], json!(false));
+    // The public saved result is the frozen eleven-field shape: the persisted-only
+    // `daily_run_ids` provenance never rides this surface.
+    assert!(detail["result"].get("daily_run_ids").is_none());
+    assert_eq!(detail["result"].as_object().unwrap().len(), 11);
     assert_eq!(detail["revision_of"], json!(null));
     assert_eq!(detail["error_code"], json!(null));
     assert!(text.contains("\"markdown\""));

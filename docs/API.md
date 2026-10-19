@@ -308,9 +308,12 @@ this query**, not “nothing happened”; HTTP/storage failure is never `NO_DATA
 `GET /v1/reports` and `GET /v1/reports/{run_id}` expose **already saved** report output — never
 generation, retry, scheduling or delivery. Both are read routes requiring `history.read` (legacy
 **and** read token allowed; the implicit `HEAD` variant is classified with `GET`). `reports.generate`
-is reserved and granted to **no** credential. See the
+is reserved and granted to **no** credential. Both routes are **implemented**: they are registered
+in the app's router (`crates/api/src/lib.rs`) and served by the desktop host
+(`src-tauri/src/local_api.rs`) over the real store. See the
 [P3 verification status](TESTING.md#p3-saved-report-reads--verification-status) for the evidence
-boundary — these routes are the frozen contract and are **not yet integrated or verified**.
+boundary — the local producer, packaged-client and native checks pass, while fresh hosted P3 gates
+remain open.
 
 #### `GET /v1/reports` — list
 
@@ -339,6 +342,7 @@ Response (`ReportPage`; illustrative, not live output):
   "items": [{
     "run_id": "12345678-1234-4123-8123-123456789abc",
     "source_id": "9c8b7a6d-0000-4000-8000-000000000000", "revision_of": null,
+    "kind": "daily",
     "requested_range": {"start_date": "2026-10-14", "end_date": "2026-10-14"},
     "window_start": 1791928800000, "window_end": 1792015200000,
     "timezone": "Europe/Paris", "local_date": "2026-10-14",
@@ -353,19 +357,33 @@ List rows **omit** `markdown` and the full evidence arrays; fetch the detail for
 optional field is present as JSON `null`; `items` is always present (empty allowed); `next_cursor`
 is an explicit `null` only at exhaustion.
 
+Every summary row — and therefore every detail — carries the **required** `kind` field: the
+persisted run-kind discriminator, one of `daily` | `weekly_synthesis` (`03 §8e`). This is the
+durable report **lane**, not a format: `weekly_synthesis` is a scheduled weekly run over saved
+dailies, and it is deliberately **distinct** from the on-demand report kind `weekly`
+(`ReportKind`, `03 §8b`) — the on-demand token, label and filename stem never appear on this
+surface, and no other value is emitted.
+
 #### `GET /v1/reports/{run_id}` — detail
 
 `run_id` is an **opaque UUID string** (never an integer), URL-encoded in the path. The detail is
-**all** `ReportSummary` fields **plus** `result: SavedReport | null`:
+**all** `ReportSummary` fields (including the required `kind`) **plus** `result` — the frozen
+public saved-result shape, or `null`:
 
 ```
-SavedReport {
+result: {                       // frozen public shape (SavedReportView, 03 §7f.6)
   markdown: String, model: String|null,
   frame_ids: [i64...], session_ids: [i64...], cited_frame_ids: [i64...],
   frames_sampled: u32, frames_summarized: u32,
   periods_total: u32, periods_covered: u32, passes: u32, truncated: bool
-}
+} | null
 ```
+
+These eleven fields are the **complete** public saved-result shape (`03 §7f.6`); they are the only
+keys `result` carries. The persisted `SavedReport` (`traits::SavedReport`) is an internal,
+richer shape — it also stores the weekly-consumed `daily_run_ids` provenance (`03 §8e`) — and that
+provenance is projected away, never hidden at the serializer. The report routes and MCP
+`get_report` serve only the frozen public shape, so `daily_run_ids` never appears on this surface.
 
 **Visibility and nullability (resolved).** `result` mirrors **actual persisted saved output**,
 independent of `phase`: an immutable saved result is exposed **immediately whenever it exists**,
