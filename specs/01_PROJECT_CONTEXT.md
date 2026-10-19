@@ -95,7 +95,8 @@ external-agent planning base is `cd9f5fecfa35970962be0067f76105553b24bfba`, vers
 not features to rebuild. The new chronological feed, allocator continuity, read-only credential,
 coverage and saved-report API/MCP projections are approved contracts in `03 §7f`, not behavior
 verified at that base. Nico authorized plan execution including recommendations; the draft
-attachment's pending-GO text is superseded, but no merge/release is authorized.
+attachment's pending-GO text is superseded, but that approval authorized no merge/release
+(the increment has since merged and ships in v0.4.2, §8).
 
 Local storage/inference and API default-off/default-loopback remain. Explicitly configured
 external API readers may receive full raw and filtered captured text; retrieval/report defaults
@@ -110,14 +111,20 @@ for self-contained contracts and source-inspected inventory.
 ## 8. Status
 
 - **All context items decided.** License is **MIT**. Nothing outstanding.
-- **Current state (2026-10-19):** latest release v0.4.1 (2026-10-15), auto-update live since
-  v0.3.2. `main` is at DB schema 13: the forward-only 12 → 13 migration (`report_runs.kind`,
-  `03 §8e`) landed with F3 G1 (#137) and is unreleased. F3 deeper memory G1–G6 (weekly
-  synthesis, weekly notes and index entries, project-note promotion, weekly scheduler and
-  weekly Telegram digest) is merged; native Windows interactive acceptance is pending
-  (`05_BUILD_REVIEW.md`). The full app is a 15-crate Rust workspace plus a React/TS UI; active
-  work is tracked in `05`–`08`, shipped history in `CHANGELOG-ARCHIVE.md` and `specs/archive/`.
-  Code-signing is the lone packaging follow-up (`03 §11b`).
+- **Current state (2026-10-19):** latest release v0.4.2 (2026-10-19), auto-update live since
+  v0.3.2. DB schema 13 ships in v0.4.2: the forward-only 12 → 13 migration (`report_runs.kind`,
+  `03 §8e`) landed with F3 G1 (#137). v0.4.2 also ships the external-agent memory API (`02 §5h`,
+  `03 §7f`, #126–#130: chronological evidence pages, bounded coverage, independent read-only
+  credentials, saved-report HTTP/MCP reads) and F3 deeper memory G1–G6 (`02 §5i`, `03 §8e`,
+  #136–#141: weekly synthesis, weekly notes and index entries, project-note promotion, weekly
+  scheduler and weekly Telegram digest). Still open (`05_BUILD_REVIEW.md`): F3 native Windows
+  interactive acceptance has not been performed, and the external-agent API's native Settings
+  UI and separate-machine network gates remain open. Only the Windows NSIS installer, its
+  updater `.sig` and `latest.json` are release assets; standalone MCP wrapper archives are not
+  published. No next arc is defined yet (pending maintainer decision). The full app is a
+  15-crate Rust workspace plus a React/TS UI; active work is tracked in `05`–`08`, shipped
+  history in `CHANGELOG-ARCHIVE.md` and `specs/archive/`. Code-signing is the lone packaging
+  follow-up (`03 §11b`).
 
 ---
 

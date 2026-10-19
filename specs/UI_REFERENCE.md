@@ -388,7 +388,7 @@ latter explains duplicate risk. No automatic resend, fake read receipt or implic
 Disabled, loading, credential unavailable, pending, partial, failed, confirmed and unknown states
 use existing tokens/accessible primitives without route layout shift; failures keep the form.
 
-## 12. External-agent read credential (approved contract, not implemented)
+## 12. External-agent read credential (approved contract; shipped in v0.4.2, native UI verification pending)
 
 Settings · HTTP API adds independent read-token controls beside existing legacy-token controls,
 using generated Rust IPC types and TanStack Query. No new NavRail route or hand-written payload

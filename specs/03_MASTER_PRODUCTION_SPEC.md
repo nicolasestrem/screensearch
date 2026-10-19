@@ -1904,7 +1904,7 @@ and MCP staging use `--locked` so verification cannot silently resolve another g
 
 GitHub Actions on `windows-latest`: `cargo fmt --check`, `cargo clippy --workspace -D warnings`,
 `cargo build`, `cargo test` (GPU/WinRT tests `#[ignore]`d), `ui` `npm ci && npm run build`, and a
-`tauri build` artifact job. Release workflow (later): **NSIS** installer (shipped v0.1.0; code-signing pending). Inno/MSI/portable ZIP dropped — `07` #26.
+`tauri build` artifact job. Release workflow (`.github/workflows/release.yml`; tag push publishes a full release since v0.4.1): **NSIS** installer + updater `.sig` + `latest.json` (NSIS shipped v0.1.0; code-signing pending). Inno/MSI/portable ZIP dropped — `07` #26.
 
 ## 11b. Auto-update (0.3.2): signed manifest, passive UX
 

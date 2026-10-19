@@ -9,21 +9,24 @@ capture storage and inference remain local.
 you, ScreenSearch exposes your screen history through an opt-in local **MCP server**
 (`screensearch-mcp`) — so Claude Desktop, Claude Code, or any MCP client can search your captures,
 ask grounded questions with cited frames, and, as of v0.4.0, reason over automatically segmented
-**work sessions** (`list_sessions`, `get_session`, `ask_session`). Every answer is drawn from the
-local database. The shipped MCP wrapper uses loopback; the unreleased P2 wrapper adds
-explicitly configured remote HTTP/HTTPS roots, still loopback by default. The HTTP API defaults
-to `127.0.0.1`; explicit network binding lets authenticated reachable devices read history.
-Plain HTTP exposes tokens/history to network observers. Inference stays on-device.
+**work sessions** (`list_sessions`, `get_session`, `ask_session`). As of v0.4.2, agents can also
+page through history chronologically, check capture coverage and read saved daily/weekly
+reports (`list_frames`, `get_capture_coverage`, `list_reports`, `get_report`). Every answer is
+drawn from the local database. The MCP wrapper uses loopback by default and accepts an
+explicitly configured remote HTTP/HTTPS API root. The HTTP API defaults to `127.0.0.1`;
+explicit network binding lets authenticated reachable devices read history. Plain HTTP exposes
+tokens/history to network observers. Inference stays on-device.
 
 Active source repository: [github.com/nicolasestrem/screensearch](https://github.com/nicolasestrem/screensearch).
 
-> **Status — v0.4.1 shipped (2026-10-15).** The full app is live: capture → OCR/UIA text →
+> **Status — v0.4.2 shipped (2026-10-19).** The full app is live: capture → OCR/UIA text →
 > deferred enrichment → **hybrid search**, a supervised out-of-process **llama.cpp inference
 > sidecar** (Job-Object-bound) for vision tagging and grounded streaming answers, the six-screen
 > **Command Deck** UI, a
 > global-hotkey **Flow overlay**, an opt-in **local HTTP API + MCP server**, **auto-update**,
-> and a native **system tray**. The latest arc groups captured frames into **sessions** with a
-> pure on-device heuristic. **Authenticode code-signing** is the one remaining packaging
+> and a native **system tray**. Captured frames are grouped into **sessions** with a pure
+> on-device heuristic, and the latest releases turn history into daily and weekly **memory
+> reports** that agents can read. **Authenticode code-signing** is the one remaining packaging
 > follow-up — until then the NSIS installer is unsigned and SmartScreen warns ("More info →
 > Run anyway"). Full release history is in
 > [`CHANGELOG.md`](./CHANGELOG.md) / [`CHANGELOG-ARCHIVE.md`](./CHANGELOG-ARCHIVE.md); the
@@ -31,7 +34,39 @@ Active source repository: [github.com/nicolasestrem/screensearch](https://github
 > [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md). A standalone, clean-slate project — it
 > shares no code or data with any prior version.
 
-## New in v0.4.1 — from screen history to memory reports
+## New in v0.4.2 — weekly memory and agent-readable history
+
+Build cross-day memory on top of your saved daily reports, and let your own agents read it.
+These additions shipped in v0.4.2 and reach existing installs through auto-update. The first
+launch upgrades the database one way (schema 12 → 13); back up your data folder first if you
+may want to return to v0.4.1.
+
+| Addition | What you can do |
+|---|---|
+| **Weekly synthesis** | Summarize one complete ISO week from that week's saved daily reports (never a fresh scan of raw captures). Statuses stay truthful: `NO_DATA`, `PARTIAL` with the missing dates named, `OK` only with complete daily coverage, `BLOCKED` or `FAILED`. |
+| **Weekly notes** | Weekly notes land in `ScreenSearch/Weekly/YYYY-Www.md` and in `Index.md`, linked to the daily notes they consumed. Edited notes are preserved as conflicts. |
+| **Weekly schedule** | Off by default, with its own time and timezone. **Run most recent complete week** works while it is off; restart catch-up covers the four most recent due weeks, and older or failed weeks are listed as missed. |
+| **Project note promotion** | Pick decisions, open questions, next steps or activity from a saved report and, after you confirm a preview, append them with provenance to one project note you created under `ScreenSearch/Projects/`. |
+| **Weekly Telegram digest** | Opt in separately (off by default; the daily consent never covers it) to a digest of the saved weekly synthesis. No second model runs. |
+| **Agent memory reads** | Opt-in HTTP API reads for chronological frame pages (`GET /v1/frames`), capture coverage (`GET /v1/coverage`) and saved reports (`GET /v1/reports`). Reads never generate, retry or deliver a report. |
+| **Read-only API token** | Create an independent token in **Settings → HTTP API** that can read history but is refused for marks writes, capture requests and Ask. |
+| **Remote-capable MCP wrapper** | The bundled `screensearch-mcp.exe` adds four read tools and accepts an explicit remote HTTP/HTTPS API root (`--api-url`); it ignores proxies, refuses redirects and verifies certificates. |
+
+Weekly scheduling and the weekly Telegram digest are configured in **Settings → Memory reports**
+and both start **off**. Promotion has no HTTP or MCP surface. MCP `--read-only` only filters
+tools and is **not authorization** — use the read-only token for server-enforced permissions.
+Coverage counts describe stored records; capture intent, empty windows and frame gaps are not
+proof of capture health, inactivity or complete memory. Frame-identity protection covers
+future reuse, not old binaries, clones or restores; known restores need explicit client
+reconciliation. The weekly features have automated and Windows CI/native test-chain coverage;
+a native interactive acceptance run (a real week in the installed app, Obsidian inspection, a
+promotion) is still pending.
+
+See the [Memory reports guide](docs/MEMORY.md#weekly-synthesis), the
+[HTTP API guide](docs/API.md#chronological-frames), the [MCP guide](docs/MCP.md#configuration)
+and the runnable [checkpoint consumer](docs/MEMORY_CONSUMER.md).
+
+## Memory reports (v0.4.1)
 
 Turn captured activity into notes you can revisit in **Obsidian**, with an optional digest in
 **Telegram**. Generate a report when you need it, or set a daily schedule. Capture storage and
@@ -58,44 +93,6 @@ Both are linked from `ScreenSearch/Index.md` inside your chosen folder.
 
 See the [Memory reports guide](docs/MEMORY.md) for setup, scheduling and recovery, or the
 [HTTP API guide](docs/API.md) for binding, authentication and the plain-HTTP network boundary.
-
-## External-agent memory API — unreleased P1/P2
-
-On `feat/agent-memory-http`, chronological `GET /v1/frames` and `GET /v1/coverage`
-provide bounded half-open UTC-window reads, full raw/filtered text (including missing versus
-stored-empty states), allocator/retention facts and bounded process-local capture observations.
-An independent read credential denies marks, capture and Ask; MCP `--read-only` only filters
-tools and is **not authorization**. Capture intent, empty windows and frame gaps are not proof
-of health, inactivity or complete memory. Supported allocation protects future identity reuse,
-not old binaries, clones or restores; known restores require explicit client reconciliation.
-
-Use the [exact HTTP contract](docs/API.md#chronological-frames) and the runnable
-[checkpoint consumer](docs/MEMORY_CONSUMER.md), which requires an explicit timezone for local
-days, handles DST, saves cursor only with processed facts and preserves identity conflicts.
-The [P2 MCP configuration](docs/MCP.md#configuration) documents `--api-url` / `--url`, environment
-precedence, strict root URLs, no proxies/redirects and HTTPS certificate verification. The P2
-change set is now committed at `409d380` (draft PR
-[#127](https://github.com/nicolasestrem/screensearch/pull/127)) and adds `list_frames` /
-`get_capture_coverage` — **eleven** tools in normal mode, **eight** read-only — but it is **not
-released and not bundled**: the shipped v0.4.1 binary and the P1 bundled wrapper still carry
-the baseline nine-tool, `--url`-only wrapper, and the two new tools pass protocol-fixture tests
-only, so the real P1 end-to-end read is still pending. Those MCP reads keep full text, require
-the caller to set page size (no auto-drain) and preserve coverage unknowns; the
-[HTTP contract](docs/API.md#coverage) and [consumer](docs/MEMORY_CONSUMER.md) cover the same
-ground meanwhile. The integrated native Windows build/test gate now passes (Rust 1.95.0 /
-Node 22: fmt, clippy, build, test — 928 passed / 0 failed / 15 hardware-ignored — plus the
-source-hash and binding guards); that is build/test evidence, **not** app/UI acceptance. Native
-archives, integrated Windows UI/app acceptance and successful cross-machine consumption are
-not claimed; the three native wrapper targets (Windows x86_64, Linux x86_64, macOS arm64) each
-need their own build-and-run receipt before any portable-release or supported-platform claim.
-See
-[completed versus pending evidence](docs/TESTING.md#external-agent-memory-api-p1p2--verification-status).
-
-P3 saved-report reads are **resolved** (Nico GO): saved output is exposed by persisted presence,
-including while a run is queued or retrying for delivery; absent output stays explicit `null`. The
-runtime is being implemented on `feat/agent-memory-saved-reports` and **verification is still
-pending** — no P3 result is claimed here. Remote report generation, retry, scheduling and delivery
-remain deferred; shipped local Memory reports are a separate surface.
 
 ## Screenshots
 
@@ -152,8 +149,9 @@ HTTP API exposes history to authenticated clients; see its [network boundary](do
   sidecar**: streaming answers with cited frames, and Daily / Weekly / Custom **Recall reports**
   that cite the frames they used. Vision tagging emits structured output with an honest confidence,
   never a fabricated score.
-- **Memory reports.** Save reports for selected dates or on a daily schedule,
-  browse them as Markdown notes in Obsidian, and optionally receive Telegram digests.
+- **Memory reports.** Save reports for selected dates or on a daily schedule, synthesize each
+  complete week from the saved dailies, browse them as Markdown notes in Obsidian, promote
+  confirmed items into one project note, and optionally receive daily and weekly Telegram digests.
   Coverage and delivery receipts make empty windows, partial reports and failed attempts visible.
 - **Sessions.** A pure on-device heuristic groups frames into focus, meeting, and concurrent
   AI-tool sessions — additively, with no model calls and no change to frame-level behavior.
@@ -163,10 +161,12 @@ HTTP API exposes history to authenticated clients; see its [network boundary](do
   opens the selected Moment in the main Command Deck. `Ctrl+Alt+M` marks the current moment.
 - **HTTP API + local MCP.** An opt-in HTTP API (off by default, bearer authenticated) with
   configurable IPv4/IPv6 binding (loopback by default)
-  exposes search / ask / frames / marks / sessions and JSON export to reachable scripts and agents.
-  Plain HTTP is not encrypted; enable only with appropriate network access restrictions.
-  `screensearch-mcp.exe` — bundled in the installer — wraps it as a stdio **MCP server** for
-  Claude Desktop / Claude Code (see [`docs/API.md`](docs/API.md), [`docs/MCP.md`](docs/MCP.md)).
+  exposes search / ask / frames / marks / sessions, chronological frame pages, capture coverage,
+  saved reports and JSON export to reachable scripts and agents, with an optional independent
+  read-only token. Plain HTTP is not encrypted; enable only with appropriate network access
+  restrictions. `screensearch-mcp.exe` — bundled in the installer — wraps it as a stdio **MCP
+  server** for Claude Desktop / Claude Code, loopback by default or pointed at an explicit remote
+  HTTP/HTTPS API root (see [`docs/API.md`](docs/API.md), [`docs/MCP.md`](docs/MCP.md)).
 - **Lives in the tray, updates itself.** A native system tray with a passive capture-state icon
   and quick actions keeps capture running when you close the window (a one-time toast explains it;
   run-at-startup is off by default). From v0.3.2 on the app auto-updates: a signed manifest is
@@ -186,7 +186,8 @@ HTTP API exposes history to authenticated clients; see its [network boundary](do
 | **Pkg** | Unsigned **NSIS** installer shipped; **Authenticode code-signing** is the lone follow-up (DoD §13.9, `07` #26) | 🚧 Signing pending |
 
 Post-v1.0 arcs — attention-first text (0.2.x), surface reduction + flow recall + local API (0.3.0),
-the product shell (auto-update, tray, two-tier Settings — 0.3.2), and the sessions reframe (0.4.0) —
+the product shell (auto-update, tray, two-tier Settings — 0.3.2), the sessions reframe (0.4.0),
+memory reports + configurable API bind (0.4.1), and weekly memory + agent memory reads (0.4.2) —
 have all shipped. Each arc's detailed record lives in its `docs/<version>.md` and in
 [`CHANGELOG-ARCHIVE.md`](./CHANGELOG-ARCHIVE.md); point-in-time PR audits live as local-only
 artifacts under `docs/audits/` (git-ignored, not pushed).
@@ -203,7 +204,7 @@ artifacts under `docs/audits/` (git-ignored, not pushed).
 - **Text source:** foreground-window text via **UI Automation** with automatic fallback to native
   **WinRT OCR**, then an attention-first filter that keeps content over chrome.
 - **Data:** SQLite (WAL) + FTS5 + sqlite-vec (768-dim, cosine); forward-only migrations
-  (current schema version 11).
+  (current schema version 13).
 - **Embeddings:** **fastembed** (in-process ONNX) — EmbeddingGemma-300M text. **No Python in the
   runtime.**
 - **Inference:** a single supervised, model-agnostic **llama.cpp sidecar** (Vulkan GPU + CPU
@@ -314,8 +315,10 @@ cargo run -p doctor            # WebView2 / Vulkan / llama-server readiness (dia
 
 The desktop app/capture/inference remain Windows 10/11 only (Windows-native capture, OCR,
 WebView2). The approved exception is the standalone stdio HTTP-client wrapper, not a
-cross-platform app rewrite; package-scoped wrapper verification and native archives remain
-separate gates (see [`CLAUDE.md`](./CLAUDE.md) and [MCP](docs/MCP.md)).
+cross-platform app rewrite. CI builds and runs packaged wrapper archives on Windows x86_64,
+Linux x86_64 and macOS arm64, but only the Windows installer (which bundles
+`screensearch-mcp.exe`) is published as a release asset; on other systems, build the wrapper
+from source (see [`CLAUDE.md`](./CLAUDE.md) and [MCP](docs/MCP.md)).
 
 ## Inspirations & prior art
 

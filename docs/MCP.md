@@ -6,19 +6,19 @@ ask about, and mark your ScreenSearch history. It is a thin **stdio** wrapper ov
 [HTTP API](API.md): it holds no data of its own and sends your bearer token to one
 configured API root (loopback by default).
 
-**P2 transport is implemented and committed, but not released or integrated-app accepted:**
-the configuration below was first inspected at `7831e841411471700b83e1d196628ad9f0297387` in the
-isolated transport worktree; that worktree's `crates/mcp/` change set is now committed at
-`409d380262aae4dac2e63b85e9c1a6e474d940fe` (draft PR
-[#127](https://github.com/nicolasestrem/screensearch/pull/127)). The shipped v0.4.1 binary
-**and** the P1 bundled wrapper still carry the earlier baseline wrapper — nine tools, `--url`
-only, loopback-only validation, no read-only mode. Do not assume installing v0.4.1 supplies these new flags, tools or remote
-behavior. See [verification status](TESTING.md#external-agent-memory-api-p1p2--verification-status).
+**Shipped in v0.4.2:** the remote-capable transport (`--api-url`, explicit HTTP/HTTPS roots,
+no proxies or redirects), `--read-only` mode and the four memory read tools (`list_frames`,
+`get_capture_coverage`, `list_reports`, `get_report`) are in the wrapper bundled with the v0.4.2
+installer ([#127](https://github.com/nicolasestrem/screensearch/pull/127),
+[#130](https://github.com/nicolasestrem/screensearch/pull/130)). v0.4.1 and earlier installs
+carry the baseline wrapper — nine tools, `--url` only, loopback-only validation, no read-only
+mode. Native credential-UI and cross-machine acceptance are not claimed; see
+[verification status](TESTING.md#external-agent-memory-api-p1p2--verification-status).
 The active source repository is [nicolasestrem/screensearch](https://github.com/nicolasestrem/screensearch).
 
 > **Threat model — read this before enabling.** The application API defaults to loopback and accepts a configured IPv4/IPv6 bind address
 > using plain HTTP: any reachable token holder can read your history, and network traffic is
-> not encrypted. P2 permits deliberately configured remote HTTP/HTTPS destinations, still using
+> not encrypted. The wrapper permits deliberately configured remote HTTP/HTTPS destinations, still using
 > stdio to the MCP host; it does not expose a network MCP server. Protect client configuration
 > containing the token and review the [API network boundary](API.md). Read-only mode is not
 > authorization; use a separately created API read token for server-enforced permissions.
@@ -39,14 +39,14 @@ clear *"enable the API in ScreenSearch Settings"* message rather than failing si
 |---|---|
 | Installed (per-user, the default) | `%LOCALAPPDATA%/ScreenSearch/screensearch-mcp.exe` |
 | Installed (per-machine) | `C:/Program Files/ScreenSearch/screensearch-mcp.exe` |
-| From a source build | `target/release/screensearch-mcp.exe` |
+| From a source build | `target/release/screensearch-mcp.exe` (`screensearch-mcp` on macOS/Linux) |
 
 It ships **inside the ScreenSearch installer**, next to `ScreenSearch.exe` — no separate
 download.
 
 ## Configuration
 
-P2 resolves **CLI flag > environment variable > default**:
+The wrapper resolves **CLI flag > environment variable > default**:
 
 | What | Flag | Environment variable | Default |
 |---|---|---|---|
@@ -63,7 +63,7 @@ not commit client config. For memory agents, configure the independent read cred
 
 ### URL validation and transport boundary
 
-An explicit URL or environment value selects the destination. P2 accepts concrete HTTP/HTTPS
+An explicit URL or environment value selects the destination. The wrapper accepts concrete HTTP/HTTPS
 roots with hostname, IPv4 or bracketed IPv6 and optional port, e.g. `https://memory.example`
 or `http://[::1]:43210`. Only a root trailing slash is removed; URL-parser canonicalization
 also applies. Wildcards (`0.0.0.0`, `[::]`, `*`) are listeners, not destinations.
@@ -84,15 +84,10 @@ this client option does not add app TLS, change listener/CORS, or broaden infere
 ### Read-only mode
 
 `--read-only` both filters `tools/list` and refuses non-allowlisted dispatch **before HTTP**.
-The current committed transport registry (`409d380`, draft PR
-[#127](https://github.com/nicolasestrem/screensearch/pull/127)) allows eight read tools:
+The v0.4.2 registry allows **ten** read tools (of **thirteen** in normal mode):
 `search_screen_history`, `get_moment`, `where_was_i`, `list_marks`, `list_sessions`,
-`get_session`, `list_frames`, `get_capture_coverage`. The earlier committed HEAD (`7831e84`)
-had only the first six. The stacked P3 report-tool branch
-(`feat/agent-memory-saved-report-mcp`, a child of this P2 branch) adds `list_reports` and
-`get_report` for **ten** read tools / **thirteen** normal on that source branch. Those two are
-not in the P2 baseline registry, any released binary or the P1 bundled wrapper. None of the P2 additions are in the P1 bundled wrapper or any released
-binary (see [Tools](#tools)). Ask tools and `add_mark` are excluded; unknown/future names
+`get_session`, `list_frames`, `get_capture_coverage`, `list_reports`, `get_report` (see
+[Tools](#tools)). Ask tools and `add_mark` are excluded; unknown/future names
 default-deny. This is tool-selection ergonomics,
 **not authorization**: omitting the flag does not elevate a read token, and enabling it does
 not reduce the permissions of a leaked legacy token. API 403 means insufficient permission,
@@ -100,12 +95,13 @@ not API-off; 401 means missing/invalid credential. Rotation/revocation affects s
 requests, not guaranteed cancellation of authorized streams.
 
 The standalone wrapper can be built package-scoped with Rust 1.95.0 (`cargo build --locked
--p mcp --release`); it does not need Windows app crates on Linux. Intended first archive
-targets are the three native wrappers — Windows x86_64, Linux x86_64 and macOS arm64. Local
-P3 archive execution is verified on Windows and Linux; fresh three-target hosted checks remain
-pending. Each target needs its own receipt plus separate release authorization before any
-portable-release or supported-platform claim. Packaging is verified, not released.
-The Windows NSIS staging contract remains unchanged.
+-p mcp --release`); it does not need Windows app crates on Linux or macOS. The
+`MCP native packages` workflow (`.github/workflows/mcp-native.yml`) builds, archives, unpacks
+and runs the packaged wrapper on Windows x86_64, Linux x86_64 and macOS arm64, but keeps those
+archives as CI workflow artifacts only. **Standalone wrapper archives are not published as
+release assets**: the v0.4.2 release ships only the Windows installer, which bundles
+`screensearch-mcp.exe`. On macOS or Linux, build the wrapper from source as above. The Windows
+NSIS staging contract remains unchanged.
 
 ## Claude Desktop
 
@@ -140,29 +136,16 @@ before this?"*, *"mark this moment."*
 
 ## Tools
 
-Observed **committed** transport registry (`409d380`, draft PR
-[#127](https://github.com/nicolasestrem/screensearch/pull/127)): **eleven tools in normal
-mode, eight in read-only mode**. The earlier committed HEAD (`7831e84`) had nine normal / six
-read-only. The two additions (`list_frames`, `get_capture_coverage`) are **not** in the P1
-bundled wrapper or any released binary, and the base API on that branch does not serve
-`/v1/frames` or `/v1/coverage` — the P1 routes live on `feat/agent-memory-http` — so they are
-tested separately from the P1 producer source. A current packaged-client integration against
-the real P1/P3 fixture has now passed (see verification status). Until they are released
-and integrated, use the [HTTP frame/coverage reads](API.md#chronological-frames) and the
-[reference consumer](MEMORY_CONSUMER.md) directly. Do not infer their presence from the
-specification or from this page.
+The v0.4.2 wrapper has **thirteen tools in normal mode, ten in read-only mode**. v0.4.1 and
+earlier wrappers have only the first nine rows below and no `--read-only` flag. The four memory
+read tools need a v0.4.2 or later app, which serves `/v1/frames`, `/v1/coverage` and
+`/v1/reports`.
 
-**P3 report tools (`list_reports`, `get_report`) are resolved** (Nico GO, stored-presence
-visibility) and implemented on the **stacked report-tool branch**
-`feat/agent-memory-saved-report-mcp` — a separate child of this P2 transport branch. They are
-HTTP-only `Value` passthrough tools (no producer-crate import); the producer's `/v1/reports`
-routes live on `feat/agent-memory-saved-reports`. In addition to protocol fixtures, the
-unpacked Linux release client passed 21 genuine API/SQLite checks with full saved-report
-details, unchanged state and zero provider calls; native Windows unit/archive checks passed.
-Fresh hosted P3 checks remain pending. These tools are not in the P2 baseline
-registry, any released binary or the P1 bundled wrapper. Remote report generation, retry,
-scheduling and delivery remain deferred; the report tools add no phase/`result` logic of their own
-— the producer's projection is passed through verbatim.
+The report tools (`list_reports`, `get_report`) expose saved output by **stored presence**
+(`03 §7f.10`): output is readable while delivery is queued or retrying, and absent output stays
+explicit `null`. They are HTTP-only `Value` passthrough tools (no producer-crate import) and add
+no phase/`result` logic of their own — the producer's projection is passed through verbatim.
+Remote report generation, retry, scheduling and delivery remain out of scope.
 
 | Tool | Wraps | Arguments | Returns |
 |---|---|---|---|
@@ -175,21 +158,20 @@ scheduling and delivery remain deferred; the report tools add no phase/`result` 
 | `list_sessions` | `GET /v1/sessions` | `kind`, `tool`, `from`, `to`, `limit` (all optional) | The sessions overlapping the window (id, kind, tool, host, title, span, open flag); "No sessions." when none match. |
 | `get_session` | `GET /v1/sessions/{id}` | `session_id` (required); `include_summary` (default false) | One session plus its exchange artifacts; `include_summary` returns the cached summary if one exists and never generates one. |
 | `ask_session` | `POST /v1/ask` (`session_id`) | `session_id` (required); `query` (required); `top_k`; `thinking`; `max_tokens` | A grounded answer that cites **only** frames owned by that session. |
-| `list_frames` *(committed P2 `409d380`; draft PR #127)* | `GET /v1/frames` | `from`+`to` (first page) **or** `cursor` (continuation); optional `app`, `window_title`, `limit` (1–1000) | One chronological page over the half-open UTC window, with full `raw_text`/`content_text`/`vision_description` and the exact `next_cursor`. |
-| `get_capture_coverage` *(committed P2 `409d380`; draft PR #127)* | `GET /v1/coverage` | `from`, `to` (both required, unix ms) | Bounded coverage counts plus allocator/retention facts and capture observations with explicit unknowns. |
-| `list_reports` *(P3, stacked report-tool branch `feat/agent-memory-saved-report-mcp`)* | `GET /v1/reports` | `from`+`to` (first page) **or** `cursor` (continuation); optional `phase`, `outcome`, `limit` (1–1000) | One page of saved-report summaries over the half-open UTC window, newest first, with the exact `next_cursor`; rows omit `markdown`/full evidence. Each summary row carries the required persisted `kind` (`daily` \| `weekly_synthesis`) alongside the metadata, phase, outcome and error code. |
-| `get_report` *(P3, stacked report-tool branch `feat/agent-memory-saved-report-mcp`)* | `GET /v1/reports/{run_id}` | `run_id` (required, opaque UUID string) | One saved report's public detail — the summary fields (including the required `kind`) plus `result`: the frozen eleven-field saved result (markdown/model/coverage/provenance) or explicit `null`. |
+| `list_frames` *(v0.4.2)* | `GET /v1/frames` | `from`+`to` (first page) **or** `cursor` (continuation); optional `app`, `window_title`, `limit` (1–1000) | One chronological page over the half-open UTC window, with full `raw_text`/`content_text`/`vision_description` and the exact `next_cursor`. |
+| `get_capture_coverage` *(v0.4.2)* | `GET /v1/coverage` | `from`, `to` (both required, unix ms) | Bounded coverage counts plus allocator/retention facts and capture observations with explicit unknowns. |
+| `list_reports` *(v0.4.2)* | `GET /v1/reports` | `from`+`to` (first page) **or** `cursor` (continuation); optional `phase`, `outcome`, `limit` (1–1000) | One page of saved-report summaries over the half-open UTC window, newest first, with the exact `next_cursor`; rows omit `markdown`/full evidence. Each summary row carries the required persisted `kind` (`daily` \| `weekly_synthesis`) alongside the metadata, phase, outcome and error code. |
+| `get_report` *(v0.4.2)* | `GET /v1/reports/{run_id}` | `run_id` (required, opaque UUID string) | One saved report's public detail — the summary fields (including the required `kind`) plus `result`: the frozen eleven-field saved result (markdown/model/coverage/provenance) or explicit `null`. |
 
 The API's `health`, `export`, and mark-`resolve` surfaces are intentionally **not** exposed as
 tools. Normal mode includes reads, Ask generation and add-a-mark. `list_sessions` and
 `get_session` read stored data; **`ask_session` generates an answer** and needs
 `answer.generate`, so it is excluded from read-only mode. MCP has no store access.
 
-### Frame and coverage reads (P2, draft PR #127)
+### Frame and coverage reads
 
-When `list_frames` / `get_capture_coverage` are released and integrated against the P1 routes,
-three behaviours are the whole point — and they are the reason not to build a caller that
-assumes otherwise:
+For `list_frames` / `get_capture_coverage`, three behaviours are the whole point — and they are
+the reason not to build a caller that assumes otherwise:
 
 - **Full text, never truncated.** Each `list_frames` item carries the complete `raw_text`,
   `content_text` and stored `vision_description`. The MCP does not snippet, elide or summarise

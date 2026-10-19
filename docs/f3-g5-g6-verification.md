@@ -1,5 +1,7 @@
 # F3 G5/G6 — implementation and verification
 
+> **Shipped in v0.4.2 (2026-10-19).** The acceptance boundaries at the end of this record still apply.
+
 ## Candidate
 
 Landed as PR #140 (`957b234`, merged head `eea8184`). This document was first written for
