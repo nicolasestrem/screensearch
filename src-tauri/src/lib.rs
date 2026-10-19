@@ -1876,10 +1876,14 @@ async fn init_inference(
     let binary = match inference::download::ensure_binary(&sidecar_dir).await {
         Ok(b) => b,
         Err(e) => {
-            tracing::error!(error = %e, "llama-server unavailable");
+            // `{e:#}` prints the whole anyhow chain: the outer context alone hid the
+            // underlying HTTP status (the field log showed only "release query returned
+            // an error status" for a 403 rate limit).
+            let reason = format!("{e:#}");
+            tracing::error!(error = %reason, "llama-server unavailable");
             kernel.set_sidecar_readiness(
                 ComponentStatus::Unavailable,
-                Some(format!("llama-server unavailable: {e}")),
+                Some(format!("llama-server unavailable: {reason}")),
             );
             return;
         }
