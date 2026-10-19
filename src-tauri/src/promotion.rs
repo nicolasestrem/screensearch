@@ -520,8 +520,17 @@ fn is_redirected(meta: &std::fs::Metadata) -> bool {
     }
 }
 
+/// Prefix of the atomic writer's displaced-content recovery copy
+/// (`.screensearch-recovery-<uuid>.md`, written by `memory_files::write_owned`).
+/// It is the one dot-named file in `Projects/` that still counts as a project
+/// note (`07`: a retained recovery copy is deliberately a second note, so the
+/// exactly-one-note guard stays honest about it). Every other top-level dot-file
+/// is a hidden editor/app artifact, never a note.
+const RECOVERY_COPY_PREFIX: &str = ".screensearch-recovery-";
+
 /// One non-recursive scan of `ScreenSearch/Projects`: top-level `.md` regular
-/// files only, sorted for deterministic messaging.
+/// files only, sorted for deterministic messaging. A dot-named `.md` is skipped
+/// as an editor/app artifact except an app recovery copy (`07`), which counts.
 fn project_notes(output_folder: &Path) -> Result<Vec<PathBuf>, ReportError> {
     let dir = projects_dir(output_folder);
     let entries = match std::fs::read_dir(&dir) {
@@ -546,6 +555,14 @@ fn project_notes(output_folder: &Path) -> Result<Vec<PathBuf>, ReportError> {
             continue;
         }
         if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        // A top-level dot-file is an editor/app artifact, not a user note — except
+        // an app recovery copy, which `07` deliberately counts as a second note.
+        if name.starts_with('.') && !name.starts_with(RECOVERY_COPY_PREFIX) {
             continue;
         }
         notes.push(path);
@@ -1101,15 +1118,22 @@ async fn confirm(
     .map_err(|_| fail("WRITE_FAILED", "The file writer stopped unexpectedly."))?;
     match write {
         Ok(receipt) => {
-            if receipt.hash != intent.new_hash {
-                // The writer's own installed hash is authoritative; keep the
-                // intent aligned with reality if they ever differ.
+            // The writer's own installed hash is authoritative. Rebind the intent
+            // to it if the two ever differ, so the committed tombstone below — like
+            // the ownership row and the note — records the bytes that actually
+            // landed rather than the pre-correction expectation. The conflict arm
+            // keeps the original intent, which describes what this call tried to
+            // write.
+            let intent = if receipt.hash != intent.new_hash {
                 let corrected = PromotionIntent {
                     new_hash: receipt.hash.clone(),
                     ..intent.clone()
                 };
                 let _ = write_intent(store, &target, &corrected).await;
-            }
+                corrected
+            } else {
+                intent
+            };
             // The ownership row is the note's write guard, not an attribution log
             // or a garbage-collection key: it stores the source identity and the
             // SHA-256 of the bytes this app last wrote for this one note. Prepare
@@ -1252,7 +1276,7 @@ async fn create_note(store: &dyn Store, slug: &str) -> Result<ProjectNoteStatus,
         return Err(fail("INVALID_CONFIG", message));
     }
     let folder = output_folder(store).await?;
-    let _guard = NOTE_LOCK.lock().await;
+    let guard = NOTE_LOCK.lock().await;
     let notes = project_notes(&folder)?;
     if !notes.is_empty() {
         let detail = if notes.len() == 1 {
@@ -1278,9 +1302,15 @@ async fn create_note(store: &dyn Store, slug: &str) -> Result<ProjectNoteStatus,
     // ancestor (including reparse points) before creating the next missing
     // directory, so a junction under ScreenSearch is rejected before any external
     // `Projects` directory can be created through it.
-    let write = tokio::task::spawn_blocking(move || write_owned(&target, "", None))
-        .await
-        .map_err(|_| fail("WRITE_FAILED", "The file writer stopped unexpectedly."))?;
+    // As in `confirm`, the guard is moved into the blocking writer and returned
+    // with its result, so a cancelled caller cannot release NOTE_LOCK while the
+    // create is still in flight; the lock then stays held across the rescan below.
+    let (_guard, write) = tokio::task::spawn_blocking(move || {
+        let write = write_owned(&target, "", None);
+        (guard, write)
+    })
+    .await
+    .map_err(|_| fail("WRITE_FAILED", "The file writer stopped unexpectedly."))?;
     match write {
         Ok(_) => Ok(status_of(&project_notes(&folder)?)),
         Err(error) if error.conflict => Err(fail(
@@ -2333,6 +2363,31 @@ mod tests {
         assert_eq!(std::fs::read(&note).unwrap(), Vec::<u8>::new());
         assert_eq!(std::fs::read(&second).unwrap(), Vec::<u8>::new());
         assert!(store.list_report_files().await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn project_notes_skips_hidden_files_but_keeps_recovery_copies() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("vault");
+        let note_dir = folder.join("ScreenSearch").join("Projects");
+        std::fs::create_dir_all(&note_dir).unwrap();
+        let note = note_dir.join("launch.md");
+        std::fs::write(&note, "").unwrap();
+        // A hidden `.md` beside the note (an editor scratch file) is not a project
+        // note: the scan still sees exactly one.
+        std::fs::write(note_dir.join(".notes.md"), "").unwrap();
+        let notes = project_notes(&folder).unwrap();
+        assert_eq!(notes.len(), 1, "a hidden .md is not a note: {notes:?}");
+        assert!(notes[0].ends_with("launch.md"), "the real note: {notes:?}");
+        // An app recovery copy is the one dot-name that still counts: `07` makes a
+        // retained recovery copy deliberately a second note.
+        std::fs::write(note_dir.join(".screensearch-recovery-1234.md"), "").unwrap();
+        let notes = project_notes(&folder).unwrap();
+        assert_eq!(
+            notes.len(),
+            2,
+            "a retained recovery copy counts as a second note: {notes:?}"
+        );
     }
 
     #[tokio::test]

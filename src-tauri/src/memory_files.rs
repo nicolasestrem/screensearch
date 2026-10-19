@@ -126,6 +126,9 @@ pub fn report_label(run: &ReportRun) -> String {
     }
 }
 
+/// Daily and requested-range report paths (`03 §8e`). The weekly branch the spec
+/// attributes to `note_relative_path` lives in [`weekly_note_relative_path`]: a
+/// `Weekly/YYYY-Www.md` path is built there, never here.
 pub fn note_relative_path(
     local_date: &str,
     range: Option<&MemoryReportRange>,
@@ -154,6 +157,10 @@ pub fn note_relative_path(
 }
 
 pub fn daily_note(run: &ReportRun, base_run_id: Option<&str>) -> anyhow::Result<String> {
+    anyhow::ensure!(
+        run.kind == ReportRunKind::Daily,
+        "daily note requires a daily run"
+    );
     note_relative_path(&run.local_date, run.requested_range.as_ref(), base_run_id)?;
     let r = run
         .result
@@ -691,8 +698,18 @@ pub fn merged_content(existing: &str, entries: &[(String, String)]) -> String {
     let mut fence = MarkdownFence::default();
     let mut open_fence_start = None;
     for (index, line) in lines.iter().enumerate() {
+        // A UTF-8 BOM may precede the first line. It is part of the file and is
+        // preserved byte-for-byte on output, but heading and fence detection read
+        // through a single leading BOM so a `## Decisions` behind it is a real
+        // section boundary, not an invisible line that forces a duplicate heading
+        // at EOF (`03 §8e`).
+        let detected = if index == 0 {
+            line.strip_prefix('\u{feff}').unwrap_or(line)
+        } else {
+            line.as_str()
+        };
         let was_open = fence.is_open();
-        if fence.contains_line(line) {
+        if fence.contains_line(detected) {
             if !was_open && fence.is_open() {
                 open_fence_start = Some(index);
             } else if was_open && !fence.is_open() {
@@ -700,7 +717,7 @@ pub fn merged_content(existing: &str, entries: &[(String, String)]) -> String {
             }
             continue;
         }
-        if let Some(heading) = heading_title(line) {
+        if let Some(heading) = heading_title(detected) {
             if let Some(previous) = sections.last_mut() {
                 previous.1 = index;
             }
@@ -836,6 +853,14 @@ pub fn append_entries_owned(
         (Some(_), None) => {
             return Err(failure(
                 "note appeared since the promotion was prepared",
+                true,
+            ))
+        }
+        // The project note is user-created (`03 §8e`): the app never invents it, so
+        // an absent file with no selection is a conflict, never a create.
+        (None, None) => {
+            return Err(failure(
+                "the project note is missing; create it before promoting",
                 true,
             ))
         }
@@ -1085,6 +1110,69 @@ body
         assert_eq!(metadata.session_ids, vec![7]);
     }
 
+    /// Schema-1 daily frontmatter: the pre-F3 writer's exact field set and order
+    /// (`03 §8e`).
+    fn daily_frontmatter() -> Frontmatter {
+        Frontmatter {
+            requested_range: None,
+            base_run_id: None,
+            schema: 1,
+            run_id: "3f2b6b1e-8a4c-4c3e-9b6a-1f2e3d4c5b6a".into(),
+            source_id: "7c9d0e1f-2a3b-4c5d-8e9f-0a1b2c3d4e5f".into(),
+            window_start: "2026-10-14T22:00:00+00:00".into(),
+            window_end: "2026-10-15T22:00:00+00:00".into(),
+            timezone: "Europe/Paris".into(),
+            status: ReportOutcome::Ok,
+            model: Some("ministral-3-3b-reasoning".into()),
+            frames_sampled: 12,
+            frames_summarized: 2,
+            periods_total: 24,
+            periods_covered: 24,
+            truncated: false,
+            frame_ids: vec![41, 42],
+            session_ids: vec![7],
+            kind: ReportRunKind::Daily,
+            daily_run_ids: vec![],
+            window_local_dates: vec![],
+        }
+    }
+
+    #[test]
+    fn schema1_daily_frontmatter_is_locked_byte_for_byte() {
+        // The pre-F3 daily writer emitted exactly this block (`03 §8e`, field order
+        // frozen): the v2 keys are absent and every other byte is unchanged.
+        let expected = r#"{
+  "requested_range": null,
+  "base_run_id": null,
+  "schema": 1,
+  "run_id": "3f2b6b1e-8a4c-4c3e-9b6a-1f2e3d4c5b6a",
+  "source_id": "7c9d0e1f-2a3b-4c5d-8e9f-0a1b2c3d4e5f",
+  "window_start": "2026-10-14T22:00:00+00:00",
+  "window_end": "2026-10-15T22:00:00+00:00",
+  "timezone": "Europe/Paris",
+  "status": "OK",
+  "model": "ministral-3-3b-reasoning",
+  "frames_sampled": 12,
+  "frames_summarized": 2,
+  "periods_total": 24,
+  "periods_covered": 24,
+  "truncated": false,
+  "frame_ids": [
+    41,
+    42
+  ],
+  "session_ids": [
+    7
+  ]
+}"#;
+        let json = serialize_frontmatter(&daily_frontmatter()).unwrap();
+        assert_eq!(json, expected);
+        assert!(json.contains("\"schema\": 1"));
+        for key in ["kind", "daily_run_ids", "window_local_dates"] {
+            assert!(!json.contains(key), "schema-1 note leaked {key}: {json}");
+        }
+    }
+
     #[test]
     fn frontmatter_v2_roundtrips_for_weekly_synthesis() {
         let m = weekly_frontmatter();
@@ -1241,6 +1329,21 @@ body
         let mut no_data = run.clone();
         no_data.outcome = Some(ReportOutcome::NoData);
         assert!(weekly_note(&no_data).is_err());
+    }
+
+    #[test]
+    fn daily_note_rejects_a_weekly_synthesis_run() {
+        // Kind guard mirrors `weekly_note`: a daily write never renders a weekly run
+        // into `Daily/<date>.md` (`03 §8e`).
+        let run = weekly_note_run(
+            ReportOutcome::Ok,
+            "## Activity\n\n- weekly body [frame 101]",
+        );
+        let error = daily_note(&run, None).unwrap_err();
+        assert!(
+            error.to_string().contains("daily"),
+            "unexpected error: {error}"
+        );
     }
 
     fn assert_lines_preserved(original: &str, merged: &str) {
@@ -1471,6 +1574,38 @@ body
     }
 
     #[test]
+    fn merged_content_reads_through_a_leading_utf8_bom() {
+        // A note saved by another editor may open with a UTF-8 BOM. It is preserved
+        // byte-for-byte, yet detection reads through it so the file's own
+        // `## Decisions` is extended in place instead of a duplicate at EOF (`03 §8e`).
+        let existing =
+            "\u{feff}# Project\n\n## Decisions\n\n- user decision\n\n## Log\n\n- user log\n";
+        let entries = vec![(
+            "Decisions".to_string(),
+            "### 2026-10-18\n\n- promote decision".to_string(),
+        )];
+        let merged = merged_content(existing, &entries);
+        assert_eq!(
+            merged.matches("## Decisions").count(),
+            1,
+            "a BOM must not hide the existing heading: {merged}"
+        );
+        let heading = merged.find("## Decisions").unwrap();
+        let block = merged.find("- promote decision").unwrap();
+        let log = merged.find("## Log").unwrap();
+        assert!(
+            heading < block && block < log,
+            "the entry belongs inside the existing section: {merged}"
+        );
+        assert!(
+            merged.starts_with('\u{feff}'),
+            "BOM must survive: {merged:?}"
+        );
+        assert_eq!(&merged.as_bytes()[..3], &[0xEF, 0xBB, 0xBF]);
+        assert_lines_preserved(existing, &merged);
+    }
+
+    #[test]
     fn promotion_appends_without_rewrite() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("ScreenSearch/Projects/project.md");
@@ -1540,5 +1675,26 @@ body
         let removed = append_entries_owned(&absent, &entries, Some(&receipt.hash)).unwrap_err();
         assert!(removed.conflict);
         assert!(!absent.exists());
+    }
+
+    #[test]
+    fn promotion_conflicts_when_the_note_was_never_created() {
+        // The project note is user-created (`03 §8e`): promoting into a path that was
+        // never created is a conflict that writes nothing — no file, no parent dirs.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ScreenSearch/Projects/project.md");
+        let entries = vec![(
+            "Decisions".to_string(),
+            "### 2026-10-18\n\n- promote decision".to_string(),
+        )];
+        let conflict = append_entries_owned(&path, &entries, None).unwrap_err();
+        assert!(conflict.conflict);
+        assert_eq!(
+            conflict.message,
+            "the project note is missing; create it before promoting",
+        );
+        assert!(!path.exists());
+        assert!(!path.parent().unwrap().exists());
+        assert!(!dir.path().join("ScreenSearch").exists());
     }
 }
