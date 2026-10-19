@@ -7,9 +7,101 @@
 > moved on the v0.3.2 release sweep (2026-07-06, 0.3.2 PR6); the `[0.3.3]` section moved on
 > the v0.3.3 release sweep (2026-07-07, folded into 0.4.0 PR1); the `[0.4.0]` section moved on
 > the v0.4.0 release sweep (2026-07-11, 0.4.0 PR7); the `[0.4.1]` section moved on the v0.4.1
-> release sweep (2026-10-15). Only
+> release sweep (2026-10-15); the `[0.4.2]` section moved on the v0.4.2 release sweep
+> (2026-10-19). Only
 > `[Unreleased]` remains in `CHANGELOG.md`.
 
+
+## [0.4.2] - 2026-10-19
+
+Highlights: the external-agent memory API (PRs [#126](https://github.com/nicolasestrem/screensearch/pull/126)–[#130](https://github.com/nicolasestrem/screensearch/pull/130):
+chronological frame pages, capture coverage, independent read-only credentials, saved-report
+HTTP/MCP reads and a portable remote stdio MCP client) and F3 deeper memory (PRs
+[#136](https://github.com/nicolasestrem/screensearch/pull/136)–[#141](https://github.com/nicolasestrem/screensearch/pull/141): weekly synthesis over saved dailies, weekly notes and index
+entries, project-note promotion, weekly scheduler and weekly Telegram digest; schema 12 → 13).
+
+### Added
+
+- **Memory API — chronological frames (#128):** authenticated `GET /v1/frames` pages with
+  half-open UTC bounds, literal filters, a fixed membership ceiling, an opaque validated cursor,
+  full raw/filtered/vision text and explicit missing versus empty text.
+- **Memory API — capture coverage (#128):** `GET /v1/coverage` reports stored counts,
+  allocator/retention facts and bounded current-process capture observations; unknown history
+  is explicit, never inferred as inactivity.
+- **Memory API — read-only credential (#128):** an independently created API token limited to
+  `history.read`, with explicit per-route/method permissions, independent rotation/revocation
+  and Settings controls. Existing tokens keep their supported operations.
+- **Memory API — saved reports (#129):** `GET /v1/reports` (bounded filters, descending keyset
+  pagination) and `GET /v1/reports/{run_id}` expose saved report summaries/details, including
+  immutable saved output while delivery is queued or retrying. Reads never generate, retry or
+  deliver.
+- **MCP memory tools (#127, #130):** `list_frames`, `get_capture_coverage`, `list_reports` and
+  `get_report` read tools, plus a `--read-only` tool filter. The standalone `screensearch-mcp`
+  client accepts an explicit remote HTTP/HTTPS `--api-url` (`--url` kept as an alias; loopback
+  default unchanged), bypasses proxies, refuses redirects and keeps TLS verification. CI packages
+  and executes standalone archives on Windows x86_64, Linux x86_64 and macOS arm64 (CI artifacts,
+  not release assets). The app, capture and inference remain Windows-only.
+- **F3 G1:** report runs carry a `kind` (`daily` | `weekly_synthesis`) persisted by the
+  forward-only schema 12 → 13 migration and exposed as a required field on `GET /v1/reports`
+  summaries and details; ISO-week window helpers and note frontmatter schema 2 (`03 §8e`).
+- **F3 G2:** weekly synthesis runs are generated from that week's saved daily reports through
+  the shared report engine, with truthful NO_DATA / PARTIAL / OK / BLOCKED / FAILED statuses
+  that name any local date missing complete daily coverage and record the consumed
+  `daily_run_ids`.
+- **F3 G3:** weekly notes at `ScreenSearch/Weekly/YYYY-Www.md` (frontmatter schema 2) and
+  weekly entries in `ScreenSearch/Index.md` linking the week's note and the daily notes it
+  consumed; NO_DATA weeks write no note. Daily notes stay schema 1.
+- **F3 G4:** user-confirmed promotion of selected report items into one user-created project
+  note under `ScreenSearch/Projects/` — a dated, provenance-carrying block per touched section,
+  appended in one atomic write; an edit between preview and confirm surfaces as a conflict. No
+  HTTP/MCP surface.
+- **F3 G5:** default-off weekly schedule (own time, IANA zone and schedule ID), Run most recent
+  complete week, restart catch-up of the four most recent due weeks oldest-first within a
+  six-week scan, and visible missed weeks (including failed scheduled weeks).
+- **F3 G6:** weekly Telegram digest under its own default-off consent: `YYYY-Www` header, saved
+  status and coverage, masked and chunked saved synthesis; no second model.
+
+### Changed
+
+- Note frontmatter parsing now accepts only schema `1` or `2`; any other value is rejected as
+  invalid provenance metadata (`FILE_CONFLICT`), where previously an unknown schema number was
+  accepted. Affects hand-edited notes and notes written by a future build (`03 §8e`).
+- **F3 review fixes:** a fully covered week whose saved dailies are all NO_DATA is saved
+  NO_DATA instead of OK (a week with missing days stays PARTIAL); the saved-report shape on
+  `GET /v1/reports/{run_id}` and MCP `get_report` no longer carries the internal
+  `daily_run_ids` field; saved reports downloaded from the Memory panel
+  name their kind (`…-weekly-synthesis-…`); a project note starting with a byte-order mark keeps
+  its sections; hidden dot-files in `Projects/` no longer count as a second note; a weekly
+  digest never counts a named partial day as covered.
+- **CI cost:** Claude PR review is no longer automatic. `claude-code-review.yml` runs only on a
+  `/claude-review` PR comment (owner/member/collaborator) or a manual dispatch and uses Sonnet
+  (`claude-sonnet-5-5`). `claude.yml` (`@claude` mentions) is unchanged.
+
+### Security
+- `claude-code-review.yml` no longer checks out PR head code in its secret-bearing comment/dispatch
+  job (CodeQL `actions/untrusted-checkout` + `-toctou`, high, introduced by #134); it checks out
+  the default branch and reads the PR diff via the GitHub API.
+- Dependency alerts patched (#125, with #120/#121): rustls 0.23.45 / rustls-webpki 0.103.15,
+  brace-expansion 5.0.12 / 1.1.21, `postcss-selector-parser` overridden to ^7.1.6 and
+  source-map-js 1.2.2. CodeQL alert 2 (Windows credential read) was dismissed as a false
+  positive with evidence. The build-only braces advisory without an upstream patch remains
+  tracked in `specs/07_KNOWN_GAPS.md`.
+
+### Documentation
+- **Current state moved out of `CLAUDE.md`:** release, DB schema and merged-increment status now
+  live in `specs/01_PROJECT_CONTEXT.md §8` (schema 13, F3 G1–G6 merged); `CLAUDE.md` keeps
+  agent instructions and a pointer. `docs/ARCHITECTURE.md` names the v1→v13 migration chain.
+- **Agent token cost:** `CLAUDE.md` and `specs/04` §1 switch from "read 01–04 + UI_REFERENCE end
+  to end every session" (~60k tokens) to targeted section reads; the CLAUDE.md release-history
+  paragraph is condensed to a pointer (history stays in `CHANGELOG-ARCHIVE.md` /
+  `specs/archive/`). CLAUDE.md documents the on-demand review triggers.
+- **F3 deeper-memory contract (GO):** Nico's decisions for the deeper-memory slice are final and
+  the plan (`docs/deeper-memory-f3-plan.md`) is approved (F1-pilot contingency waived) — weekly
+  index-linked synthesis plus user-confirmed promotion into one accumulating project note. Kind
+  token `weekly_synthesis`; persisted `kind` column (migration 12 → 13) exposed on
+  `GET /v1/reports`; 4-complete-ISO-week catch-up cap; fixed weekly headings; one project note;
+  weekly Telegram digest under `03 §8d` (increment G6). Normative text `02 §5i` + `03 §8e`;
+  decisions ledger `specs/07_KNOWN_GAPS.md`.
 
 ## [0.4.1] - 2026-10-15
 

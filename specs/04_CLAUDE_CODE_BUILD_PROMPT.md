@@ -46,7 +46,7 @@ zero frame-level behavior change); **no audio** (D14); **no new NavRail route** 
 non-shaming** (D11 — nothing notifies, nudges, streaks, or scores). The **specs are the contract**
 (this arc's PR1 normalized decisions D1–D16 into the specs); the roadmap is context.
 
-**For the network API increment (Gate A, 2026-10-15):** read `02 §5e`, amended `03 §7c`
+**For the network API increment (Gate A, 2026-10-15; shipped in v0.4.1):** read `02 §5e`, amended `03 §7c`
 and `UI_REFERENCE` API/bind-address contract. Review and commit the API-only amendment before
 implementation; keep scheduled delivery and Telegram permissions in separate later amendments.
 This is a configurable product feature for all installations. The approved remote-wrapper
@@ -58,14 +58,19 @@ Update active user-facing privacy copy with the implementation, not before the b
 
 **Do not** hold the spec in your head from a prior session — re-read the sections you need; the files evolve.
 
-**For memory reports (2026-10-15):** read `docs/memory-api-direction-plan.md`, `02 §5f`,
+**For memory reports (2026-10-15; shipped in v0.4.1):** read `docs/memory-api-direction-plan.md`, `02 §5f`,
 `03 §8c` and the memory-report UI contract. The maintainer approved execution and the frozen
 report policies; do not ask for blanket plan approval again. Keep local-schedule and Telegram
 contract commits separate and independently reviewed before implementing their behavior. Build
 the durable state and installed-only model path before scheduling or destination side effects.
 Native acceptance and pilot evidence remain open until observed; no fake success receipts.
 
-**For deeper memory (F3, approved 2026-10-17):** also read `02 §5i` and the normative `03 §8e`
+**Current arc status (2026-10-19):** the 0.4.2 arc — external-agent memory API (`§1b`) and F3
+deeper memory (`§1c`) — is released as v0.4.2 (2026-10-19); open native acceptance is tracked in
+`05`. No next arc is defined yet (pending maintainer decision): stop and ask before starting new
+arc work (`§5`). The per-increment pointers below stay valid for follow-up work on those areas.
+
+**For deeper memory (F3, approved 2026-10-17; shipped in v0.4.2):** also read `02 §5i` and the normative `03 §8e`
 (weekly synthesis + project note), plus `03 §8b`/`§8c`/`§8d` where `§8e` extends them and
 `UI_REFERENCE §11` for the memory-report UI. Hard constraints: **exactly one schema migration**
 (G1 only, 12 → 13 — the indexed `kind` column; if any other unit appears to need schema, that
@@ -76,6 +81,10 @@ scheduled and default-off; the weekly Telegram digest lands only as G6 under the
 exception. The **specs are the contract**; `docs/deeper-memory-f3-plan.md` is context.
 
 ## 1b. External-agent memory API execution (approved 2026-10-16)
+
+**Status:** P0–P3 merged (#126–#130) and shipped in v0.4.2 (2026-10-19). Native Settings UI and
+separate-machine network acceptance remain open (`05`); wrapper archives are not release assets.
+The authority limits and gates below still apply to any follow-up work.
 
 Read `02 §5h`, the complete `03 §7f` contract (including wire types, route/tool permission matrix,
 source-inspected allocator/settings inventory and acceptance), and `UI_REFERENCE §12`. Nico's
@@ -123,6 +132,10 @@ implementation passes with completed versus blocked evidence; active user docs m
 availability only when implemented. Historical release descriptions remain historical.
 
 ## 1c. Deeper memory (F3) execution (approved 2026-10-17)
+
+**Status:** G1–G6 merged (#137–#141, contract #136) and shipped in v0.4.2 (2026-10-19), with
+the 12 → 13 migration. The native Windows interactive acceptance described below has not been
+performed and remains pending (`05`). The authority limits below still apply to follow-up work.
 
 Read `02 §5i` and the complete `03 §8e` contract (run identity/window/statuses, the `kind`
 discriminator and the 12 → 13 migration, weekly note + index + provenance branches, promotion
@@ -241,6 +254,10 @@ If the answer is in a doc, **use it verbatim** — do not invent alternatives.
   (`docs/0.4.0-kickoff-prompt.md`, local-only/git-ignored); the rest use the generic kickoff. Each PR
   is its own branch, runs the full verification suite, updates `05`–`08`, and **recycles this file
   (`04`) as its operating prompt**.
+- **Post-0.4.0 increments (status, 2026-10-19):** the network API and memory reports shipped in
+  v0.4.1 (2026-10-15); the external-agent memory API and F3 deeper memory shipped in v0.4.2
+  (2026-10-19). Their unit order lives in `§1b`/`§1c`. No next arc is defined yet (pending
+  maintainer decision).
 
 ## 4. Guardrails (hard rules — violating any = stop)
 - **No destructive git.** Feature branches only; never force-push or reset shared history; never

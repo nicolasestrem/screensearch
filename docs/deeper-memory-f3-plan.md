@@ -1,5 +1,7 @@
 # Deeper memory — F3 planning increment (weekly synthesis + accumulating project note)
 
+> **Shipped in v0.4.2 (2026-10-19)** as F3 G1–G6 (#137–#141); native interactive acceptance is still pending ([TESTING.md](TESTING.md#weekly-memory-f3-v042-native-acceptance-not-yet-performed)). The plan below is the historical record.
+
 Status (2026-10-17): **APPROVED** — Nico GO (2026-10-17); the F1-pilot contingency is waived. The
 normative contract text is now `02 §5i` + `03 §8e`; this document is context for it. It is the
 planning artifact for the F3 gate named in

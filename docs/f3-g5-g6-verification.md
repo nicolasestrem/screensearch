@@ -1,10 +1,12 @@
 # F3 G5/G6 — implementation and verification
 
+> **Shipped in v0.4.2 (2026-10-19).** The acceptance boundaries at the end of this record still apply.
+
 ## Candidate
 
 Landed as PR #140 (`957b234`, merged head `eea8184`). This document was first written for
 the pre-rebuild candidate below; later revisions and their native evidence are recorded in
-`specs/05_BUILD_REVIEW.md` (rebuild `1ce4d66`, re-enable fix `62c38ad`, failed-week decision
+`specs/archive/05_BUILD_REVIEW.v0.4.2.md` (rebuild `1ce4d66`, re-enable fix `62c38ad`, failed-week decision
 `ba931e8`, weekly time hint `418c163`/`05190d5`).
 
 Original branch: `feat/f3-g5-g6-weekly-scheduler-digest`.
@@ -70,6 +72,11 @@ Coordinator Linux controls:
 test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 98 filtered out
 UI: tests 43; pass 43; fail 0
 ```
+
+> **Correction (2026-10-19, v0.4.2 release sweep):** the UI counts in this record (43 on
+> Linux, 45 in the Windows chain below) describe the pre-rebuild candidate `7bdef55`, not a
+> merged tree. `npm test` in `ui/` reports `tests 50; pass 50; fail 0` at the merged G5/G6
+> commit `957b234` and `tests 55; pass 55; fail 0` at the v0.4.2 tree.
 
 Kernel clippy with `-D warnings`, UI lint, typecheck and production build exited 0.
 Full Windows `04 §1c` chain passed on the verified candidate: **1,118 Rust tests

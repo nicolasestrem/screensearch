@@ -395,6 +395,11 @@ issues), never by in-app instrumentation — the reading procedure lives in `07`
   **The 0.4.0 sessions arc shipped** (`v0.4.0`, 2026-07-11; `§5d`, `docs/0.4.0.md`, `03 §7e`):
   sessions over frames, additive and pull-based, delivered via the auto-updater 0.3.2 shipped, the
   **first auto-delivered release** (D16, gate passed live before the tag; closes #88).
+  **v0.4.1 shipped** (2026-10-15): the opt-in network API (`§5e`) and durable memory reports with
+  local schedules and the Telegram digest (`§5f`/`§5g`; schema 11 → 12). **v0.4.2 shipped**
+  (2026-10-19): the external-agent memory API (`§5h`, `03 §7f`) and F3 deeper memory G1–G6
+  (`§5i`, `03 §8e`; schema 12 → 13). Open native acceptance gates for both increments are tracked
+  in `05`; no next arc is defined yet (pending maintainer decision).
 
 ---
 

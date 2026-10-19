@@ -1,6 +1,6 @@
 # Testing — quick guide
 
-## Network API increment (unreleased): native acceptance checklist
+## Network API increment (shipped in v0.4.1): native acceptance checklist
 
 These are required checks, not claims of completed acceptance. Use an isolated test profile
 and fixture history; never serve personal history with a fixture token. Record raw outputs
@@ -17,9 +17,9 @@ without tokens or screen content. Preserve the everyday installation.
    with token, enabled state and port preserved; no automatic broadening or upgrade notice.
 4. Rotate token: old rejected, new accepted. Disable/re-enable preserves configuration.
    Port conflicts, including wildcard/specific listeners, retain enabled intent with visible error.
-5. Local MCP handshakes via loopback when the selected bind accepts it. Shipped v0.4.1 rejects
-   remote destinations; verify the separate P2 wrapper's explicit URL/redirect/proxy boundary
-   with its focused fixtures, then a separately scoped cross-machine app run. Cancel a real
+5. Local MCP handshakes via loopback when the selected bind accepts it. The v0.4.1 wrapper
+   rejects remote destinations; for the v0.4.2 wrapper, verify the explicit URL/redirect/proxy
+   boundary with its focused fixtures, then a separately scoped cross-machine app run. Cancel a real
    Ask stream only in an authorized native acceptance run. Inference remains loopback-only.
 6. Check address field validation, keyboard access and loading/error/off/listening states;
    distinguish wildcard listen addresses from client URLs and bracket IPv6 client addresses.
@@ -35,7 +35,12 @@ Run from the repo root. Each command stands alone. Green = good.
 
 ## External-agent memory API P1/P2 — verification status
 
-These are evidence boundaries, not a release or app-acceptance claim. Contract/source:
+This increment (P1 frames/coverage/read credential, P2 transport, P3 saved-report reads) shipped
+in **v0.4.2**. The rows below are historical evidence boundaries recorded during development, not
+an app-acceptance claim; "not released" statements in them describe their commit at the time.
+Since then the `MCP native packages` workflow has built, unpacked and run the packaged wrapper on
+Windows x86_64, Linux x86_64 and macOS arm64 on `main` (CI artifacts only; standalone archives
+are not published as release assets). Contract/source:
 [API frames](API.md#chronological-frames), [coverage](API.md#coverage),
 [MCP transport](MCP.md#configuration), [consumer](MEMORY_CONSUMER.md), and spec `03 §7f`.
 
@@ -100,12 +105,13 @@ build/test evidence, **not** app/UI acceptance.
 
 Still pending unless separately receipted: rendered credential UI states (the native UI
 acceptance run is prepared but not executed — its isolated launch is blocked on the session-0
-safety question), separate-machine frame traversal/consumer resume, supported native
-wrapper/archive execution (Windows/Linux/macOS legs) and real paging/latency measurements.
+safety question), separate-machine frame traversal/consumer resume and real paging/latency
+measurements. Packaged wrapper execution on the three native targets is now covered by the
+`MCP native packages` workflow (CI artifacts, not published release assets).
 P3 saved-report reads are **resolved** (Nico GO, stored-presence visibility — see the
-[P3 verification status](#p3-saved-report-reads--verification-status)); local producer and
-packaged-client and native Windows checks now pass; fresh hosted P3 gates remain open. Generation/retry/scheduling/delivery
-remain deferred. No merge, publication, installer replacement or release is implied.
+[P3 verification status](#p3-saved-report-reads--verification-status)); local producer,
+packaged-client and native Windows checks pass, and the increment shipped in v0.4.2.
+Generation/retry/scheduling/delivery remain out of scope.
 
 ### P3 saved-report reads — verification status
 
@@ -113,10 +119,11 @@ P3's retry-result visibility question is **resolved** (Nico GO): saved output is
 persisted presence even while a run is queued/retrying; absent output stays explicit `null`, stored
 `NO_DATA` stays factual, and a malformed saved payload is a read error. The contract is
 `03 §7f.5–7` / `§7f.10`; the endpoints are documented in
-[API saved reports](API.md#saved-reports). The source branches are
-`feat/agent-memory-saved-reports` and `feat/agent-memory-saved-report-mcp`. Parent observed the
-following local/native results; fresh hosted gates remain open. Do not reuse P2 old-head CI
-(or any base build) as P3 evidence.
+[API saved reports](API.md#saved-reports). The original source branches were
+`feat/agent-memory-saved-reports` and `feat/agent-memory-saved-report-mcp` (PRs #129/#130, merged
+and shipped in v0.4.2). Parent observed the following local/native results; the PRs' hosted
+Windows CI and three-OS package workflow passed on their exact heads. Do not reuse P2 old-head
+CI (or any base build) as P3 evidence.
 
 The final unpacked Linux release client passed **21 checks** against the genuine API/SQLite
 fixture: 1035 frames/details (zero mismatches), restart/resume, 11 report summaries/details,
@@ -129,8 +136,8 @@ Native Windows checks subsequently passed under Node22/Rust1.95: API library 23/
 HTTP 51/0 with one retained ignore, Tauri lifecycle 25/0, the full MCP package and
 workspace-unified TLS suite, plus actual Windows ZIP execution/registry/auth-read verification.
 Parent verified 20/20 remote source hashes and all raw command exits. Independent review
-round1 found no security/logic issues. Fresh P3 CI remains pending; GUI and direct cross-machine
-acceptance are not inferred.
+round1 found no security/logic issues. GUI and direct cross-machine acceptance are not
+inferred.
 
 Three evidence layers, which must not be conflated:
 
@@ -713,3 +720,23 @@ windows/request metadata and legacy previous-day deduplication. No SQL migration
 With an explicitly authorized test recipient/send, inspect the Telegram date-range/PARTIAL text
 and per-chunk receipts. Automated digest-rendering tests do not prove a live message arrived.
 Do not reset live schedules or directly edit durable run/delivery rows to manufacture acceptance.
+
+## Weekly memory F3 (v0.4.2): native acceptance (not yet performed)
+
+F3 G1–G6 shipped in v0.4.2 on automated tests plus the Windows CI and native test chain
+(`specs/05_BUILD_REVIEW.md`, [F3 G5/G6 verification](f3-g5-g6-verification.md)). The following
+`03 §8e` product checks have **not** been performed; record each separately when observed:
+
+1. On a consented test profile with a dated backup, observe the schema 12 → 13 upgrade, then
+   run a weekly synthesis over a real week of saved daily reports in the installed app. Compare
+   the saved status (`NO_DATA` / `PARTIAL` with named dates / `OK`) and consumed daily run IDs
+   with the actual saved dailies.
+2. Open `ScreenSearch/Weekly/YYYY-Www.md` and `Index.md` in Obsidian and check that weekly and
+   consumed daily links resolve; edit a weekly note and confirm the conflict is preserved.
+3. Create the project note, promote selected items from a saved report, inspect the preview,
+   confirm, and check the appended dated block and provenance; edit the note between preview
+   and confirm and observe the refused conflict.
+4. Enable the weekly schedule and observe a due run and restart catch-up (four most recent due
+   weeks, older weeks listed as missed).
+5. Only with an explicitly authorized test recipient, enable the weekly Telegram consent and
+   inspect a live weekly digest. Automated rendering tests do not prove a message arrived.

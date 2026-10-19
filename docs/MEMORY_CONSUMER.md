@@ -7,11 +7,15 @@ capture, marks, inference, report generation, scheduling, delivery, or images.
 
 ## Verification status
 
-The local SQLite/UTC tests and real refused-TCP error-path test can run now.
-**Successful API consumption is not yet verified:** the frame/coverage routes and
-real isolated Rust fixture runner must be supplied by the API owner. The seven
-`RealApiFixtureTests` are an executable integration harness, but are explicitly
-skipped without that runner. Skips are not P1 acceptance. This example targets the
+The frame/coverage routes it reads shipped in v0.4.2. The local SQLite/UTC tests and
+real refused-TCP error-path test run without any fixture. The seven
+`RealApiFixtureTests` need the isolated Rust fixture runner
+`crates/api/examples/memory_consumer_fixture.rs` (see
+[TESTING.md](TESTING.md#focused-checks-required-receipts-not-claimed-rerun-here) for how to
+build and point at it); with it, a recorded run executed all seven against a real
+`ApiServer` + `SqliteStore` with zero skips. Without it they are skipped, and skips are not
+acceptance. Native Windows app, credential UI and separate-machine acceptance remain separate
+gates. This example targets the
 actual `FrameEvidence`, `FramePage`, and `CaptureCoverage` definitions in
 `crates/traits/src/history.rs` and the existing `FrameDetail` in
 `crates/traits/src/ipc.rs`; it does not implement replacement HTTP responses.
@@ -189,7 +193,7 @@ URL validation. A CLI test makes a real refused TCP connection with no HTTP
 responder and verifies a non-data error plus unchanged checkpoint. These tests
 **do not** claim successful API/router/store integration.
 
-## Real API fixture continuation seam (not implemented here)
+## Real API fixture continuation seam
 
 The existing `crates/api/tests/http_api.rs` demonstrates a real `TestHost` backed
 by `SqliteStore`, real `ApiServer::start`, an ephemeral TCP listener, production
@@ -199,10 +203,9 @@ routes or required state controls; it is **not** sufficient for this acceptance.
 No Python `http.server`, mock transport, response cassette, Rust replacement
 router or hardcoded JSON adapter is supplied.
 
-After frame/coverage routes and Store readiness are implemented, the API owner
-can supply a dedicated native Rust fixture runner (for example a new ignored
-integration test in `crates/api/tests/reference_consumer.rs`) implementing the
-following **test-process-only** control seam. Controls are stdin, never additional
+The dedicated fixture runner is `crates/api/examples/memory_consumer_fixture.rs`
+(build it with `cargo build --locked -p api --example memory_consumer_fixture`). It
+implements the following **test-process-only** control seam. Controls are stdin, never additional
 product HTTP routes:
 
 1. The harness launches the configured command with no shell. It gives the
@@ -245,10 +248,9 @@ product HTTP routes:
      first and seeding the new namespace through the production writers, so a
      retained cursor hits the real 409.
    - `stop`: stop server/close isolated Store and exit promptly.
-5. Set `SCREENSEARCH_CONSUMER_FIXTURE_CMD` to a JSON argv array for that actual
-   runner; prebuild it on the supported native test host if necessary. A proposed
-   command shape, **not a runnable existing target**, is
-   `["cargo","test","--locked","-p","api","--test","reference_consumer","--","--ignored","--nocapture","live_reference_consumer_fixture"]`.
+5. Set `SCREENSEARCH_CONSUMER_FIXTURE_CMD` to a JSON argv array naming the
+   **absolute** path of the built `memory_consumer_fixture[.exe]` executable (resolve
+   the target directory with `cargo metadata --format-version 1 --no-deps`).
    Run the unittest command above with that environment. Each of the seven real
    integration tests launches its own fresh fixture and an actual CLI process.
    They cover >1000-frame resume, late text after checkpoint, restore/decrease

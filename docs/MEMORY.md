@@ -1,7 +1,8 @@
 # Memory reports
 
-This unreleased workflow creates daily Markdown reports from captured evidence, an optional
-weekly synthesis over those saved dailies, and user-confirmed entries in a project note. It is
+This workflow creates daily Markdown reports from captured evidence (since v0.4.1), an optional
+weekly synthesis over those saved dailies, and user-confirmed entries in a project note (both
+since v0.4.2). It is
 configured per installation in **Settings → Memory reports**. Scheduling and Telegram are off
 by default; no folder, timezone, model download or recipient is selected automatically.
 
@@ -103,7 +104,10 @@ Notes are written to `<folder>/ScreenSearch/Daily/YYYY-MM-DD.md` (weekly notes t
 its own file, while Regenerate updates only its unchanged owned base file. These reports appear
 in the same index with their date-range labels and never replace scheduled daily notes.
 Open that folder in Obsidian or any Markdown editor. Typed daily
-frontmatter contains schema version 1, run/source IDs, window and coverage metadata. Generated
+frontmatter contains schema version 1, run/source IDs, window and coverage metadata. Since
+v0.4.2, frontmatter is accepted only with schema `1` (daily and selected-date notes) or `2`
+(weekly notes); any other value, for example from a hand-edited note or a future build, is
+rejected as invalid provenance metadata (`FILE_CONFLICT`) instead of being accepted. Generated
 files use recorded content hashes: an edited or unrelated file produces a conflict instead of
 being overwritten. A detected concurrent replacement preserves a recovery file whose path is
 shown in the receipt. Reparse points and symbolic links are rejected by the writer.
@@ -145,9 +149,11 @@ use the explicit source-identity reset before configuring its own credentials an
 
 The local build and automated checks are recorded in `specs/05_BUILD_REVIEW.md`. Native model
 quality, Obsidian inspection, separate-machine network access and an explicitly authorized
-Telegram test send are separate acceptance checks in `docs/TESTING.md`. This branch is not an
-updater release. The first rollout must cover varied supported machines, history density,
-timezones, folder permissions and optional Telegram usage.
+Telegram test send are separate acceptance checks in `docs/TESTING.md`. The weekly features
+shipped in v0.4.2 on automated tests and the Windows CI/native test chain; their native
+interactive acceptance (a real week in the installed app, Obsidian inspection, a promotion, a
+live weekly digest) has not yet been performed. Rollout must cover varied supported machines,
+history density, timezones, folder permissions and optional Telegram usage.
 
 Paths shown and saved by Memory use forward slashes. Windows extended-path prefixes retain
 their identity and are restored to native spelling only during filesystem operations; legacy

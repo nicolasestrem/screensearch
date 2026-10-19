@@ -12,7 +12,7 @@ Everything runs against an **isolated** app-data dir so your real database is ne
 1. **Synthetic capture images** — small mock "screens" (a code editor, a terminal running Claude Code,
    a browser on docs, a meeting grid, notes, an inbox, a metrics dashboard) rendered from HTML to PNG.
 2. **A demo database** — `crates/store/tests/seed_demo.rs`, an `#[ignore]`d integration test that seeds
-   a real schema-11 store through the public `store` API: ~120 frames across a plausible day, ten
+   a real store at the current schema through the public `store` API: ~120 frames across a plausible day, ten
    **frozen** overlapping sessions (focus / meeting / concurrent Claude Code), marks, and AI exchanges.
    Frames are dated a few minutes into the future of the seed moment so the background sessions
    scheduler (which only segments the past, and never deletes a frozen row) leaves the curated sessions

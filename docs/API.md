@@ -4,23 +4,18 @@ The **HTTP API** exposes ScreenSearch's search, ask, frames, sessions, where-was
 marks to scripts and agents. It is **opt-in and off by default** (0.3.0
 PR7; the sessions surface added in 0.4.0 PR6, specs `03 §7c` / `§7e`).
 
-**External-agent increment (P1/P2/P3, unreleased):** this guide also describes the implemented
-chronological frame/coverage adapters and independent read credential on
-`feat/agent-memory-http`, against `crates/api/src/history.rs` and `crates/traits/src/history.rs`.
-Source presence and focused component checks are not integrated Windows-app acceptance. The
-portable MCP transport is a separate change; see [MCP configuration](MCP.md#configuration)
-and the [verification status](TESTING.md#external-agent-memory-api-p1p2--verification-status).
-The approved contract is [spec 03 §7f](../specs/03_MASTER_PRODUCTION_SPEC.md).
-
-**P3 saved-report reads (implemented on the source branches, unreleased).** Nico resolved the earlier
-retry-result visibility question in favour of **stored-presence exposure** (`spec 03 §7f.10`,
-GO): an immutable saved result is exposed immediately whenever it exists, including while
-delivery is queued or retrying. `GET /v1/reports` and `GET /v1/reports/{run_id}` are the
-approved contract (see [Saved reports](#saved-reports)), implemented on
-`feat/agent-memory-saved-reports`. Parent verified real API/SQLite packaged-client integration
-and native Windows affected checks; fresh hosted P3 checks remain pending. This is not
-installed-app, GUI or direct cross-machine acceptance. Remote report generation, retry, scheduling and delivery remain deferred; neither
-credential grants `reports.generate`.
+**External-agent memory reads (shipped in v0.4.2).** This guide also describes the
+chronological frame/coverage reads and the independent read credential
+(`crates/api/src/history.rs`, `crates/traits/src/history.rs`), and the saved-report reads
+`GET /v1/reports` and `GET /v1/reports/{run_id}` (see [Saved reports](#saved-reports)). The
+saved-report reads use **stored-presence exposure** (`spec 03 §7f.10`): an immutable saved
+result is exposed immediately whenever it exists, including while delivery is queued or
+retrying. Remote report generation, retry, scheduling and delivery remain out of scope; neither
+credential grants `reports.generate`. The portable MCP transport is described in
+[MCP configuration](MCP.md#configuration); the evidence boundary (automated, native test-chain
+and packaged-client checks; native credential-UI and cross-machine acceptance not claimed) is in
+the [verification status](TESTING.md#external-agent-memory-api-p1p2--verification-status). The
+approved contract is [spec 03 §7f](../specs/03_MASTER_PRODUCTION_SPEC.md).
 
 > **Threat model — read this before enabling.** The API uses plain HTTP without transport
 > encryption. The default bind is `127.0.0.1` (local access). If you choose a network address,
@@ -41,9 +36,9 @@ Settings → **HTTP API** → choose a bind address and port, then toggle on.
   Rotation takes effect immediately without restart.
 - A bind failure is visible in Settings with guidance to correct the address/port.
 
-Inference remains loopback-only. The shipped v0.4.1 MCP wrapper validates loopback destinations;
-the separately implemented P2 wrapper permits explicitly selected HTTP/HTTPS API roots, still
-loopback by default. See the [MCP guide](MCP.md#url-validation-and-transport-boundary) before
+Inference remains loopback-only. From v0.4.2 the bundled MCP wrapper permits explicitly
+selected HTTP/HTTPS API roots, still loopback by default (v0.4.1 and earlier wrappers accepted
+loopback destinations only). See the [MCP guide](MCP.md#url-validation-and-transport-boundary) before
 using a remote destination. This does not add TLS to the application's HTTP listener, change
 CORS or open a firewall.
 
@@ -85,7 +80,7 @@ Authorization: Bearer <token>
 
 A missing, malformed, revoked or wrong token returns **401**, including on unknown paths.
 Use the exact `Bearer ` prefix. Credentials are compared in constant time. There are two
-independent credential slots in P1:
+independent credential slots:
 
 | Credential | Server-enforced permissions |
 |---|---|
@@ -100,7 +95,7 @@ unchanged. Rotation/revocation affects subsequent requests without restart, not 
 cancellation of a request or stream already authorized. No credential-management HTTP route
 is exposed. Keep credentials out of URLs, logs and ordinary settings/export/report payloads.
 
-| Operation (P3 rows describe the approved contract) | Legacy | Read |
+| Operation | Legacy | Read |
 |---|---|---|
 | `GET`/`HEAD` health, search, frame listing, coverage, frame detail/image, context, marks, sessions/detail/cached summary, export, report listing/detail | allow | allow |
 | `POST /v1/marks` for a stored frame; `POST /v1/marks/{id}/resolve` | allow (`marks.write`) | 403 |
@@ -112,9 +107,8 @@ safe. **HEAD has the same authentication, permission, validation and read path a
 no response body. A valid token on an unknown path gets **404**; a valid read token on a
 classified write/Ask gets **403 before side effects**, not an API-off/401 error. An unsupported
 method on a classified path gets **405** with `Allow`; an unclassified registered route is
-denied, not inherited by either credential. P3 report routes (`GET /v1/reports`,
-`GET /v1/reports/{run_id}`) are implemented under `§7f` on the P3 source branch; they are
-not yet present in an integrated or released build.
+denied, not inherited by either credential. The report routes (`GET /v1/reports`,
+`GET /v1/reports/{run_id}`) are classified under `§7f` and shipped in v0.4.2.
 
 `--read-only` in MCP only filters listed/accepted tools. Use the independent API read token
 for authorization, even when calling raw HTTP or running MCP without that flag.
@@ -160,7 +154,7 @@ All paths are under `http://<computer-address>:<port>`; use `127.0.0.1` locally.
 ### `GET /v1/health`
 
 ```json
-{ "version": "0.4.1", "uptime_secs": 128, "capturing": true }
+{ "version": "0.4.2", "uptime_secs": 128, "capturing": true }
 ```
 
 ### `GET /v1/search`
@@ -179,7 +173,7 @@ Returns an array of `SearchHit` (`frame_id`, `captured_at`, `snippet`, `score`,
 
 ### Chronological frames
 
-`GET /v1/frames` (P1, unreleased) enumerates evidence without a search term, model,
+`GET /v1/frames` (since v0.4.2) enumerates evidence without a search term, model,
 OCR run or generation. This is not the ranked `/v1/search` surface.
 
 | Input | Exact contract |
@@ -275,7 +269,7 @@ bounds and nonexistent historical local dates rather than guessing.
 
 ### Coverage
 
-`GET /v1/coverage?from=<UTC-ms>&to=<UTC-ms>` (P1, unreleased) accepts **only** required
+`GET /v1/coverage?from=<UTC-ms>&to=<UTC-ms>` (since v0.4.2) accepts **only** required
 `from`/`to`, with the same strict integer, half-open and duplicate/unknown-key rules above.
 It returns `CaptureCoverage`, not an activity score:
 
@@ -312,8 +306,8 @@ is reserved and granted to **no** credential. Both routes are **implemented**: t
 in the app's router (`crates/api/src/lib.rs`) and served by the desktop host
 (`src-tauri/src/local_api.rs`) over the real store. See the
 [P3 verification status](TESTING.md#p3-saved-report-reads--verification-status) for the evidence
-boundary — the local producer, packaged-client and native checks pass, while fresh hosted P3 gates
-remain open.
+boundary — the local producer, packaged-client and native checks pass; GUI and direct
+cross-machine acceptance are not claimed.
 
 #### `GET /v1/reports` — list
 

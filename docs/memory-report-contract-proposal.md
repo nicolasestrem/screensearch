@@ -1,5 +1,7 @@
 # Memory reports: accepted policy record
 
+> **Shipped in v0.4.1** (daily reports, schedule, Telegram digests); the F3 weekly extension shipped in v0.4.2. The status text below is the historical record.
+
 Status (2026-10-15): **Report policies approved by the maintainer ("Sure GO"). Local schedule
 and durable-report contract frozen in `specs/03_MASTER_PRODUCTION_SPEC.md` §8c. Telegram
 outbound permission is frozen separately in `03 §8d`. Implementation passes the local Windows

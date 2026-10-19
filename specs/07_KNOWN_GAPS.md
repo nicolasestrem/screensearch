@@ -1,372 +1,48 @@
 # 07 — Known Gaps
 
-## 2026-10-18 — Weeks that closed just before a weekly disable are not recorded as missed
+## 2026-10-19 — Carried forward from the 0.4.2 arc (owner: maintainer unless stated)
 
-- Raised in Claude's PR #140 re-review (non-blocking). If weekly is disabled before catch-up
-  ran for weeks that closed while it was still enabled, re-enabling starts a fresh activation and
-  those weeks are neither backfilled nor listed under "Missed weeks"; they are simply absent,
-  never claimed as covered. `03 §8c`/`§8e` say disabled periods are not backfilled but do not say
-  whether already-closed, never-run weeks before the disable count as missed. Matches the daily
-  lane. Open decision (owner: Nico, raised 2026-10-18): keep, or record those closed weeks as
-  missed at disable time. Current behaviour stays until answered.
+Resolved decisions, implementation readings and verification detail for the 0.4.2 arc
+(external-agent memory API, F3 deeper memory G1–G6): `specs/archive/07_KNOWN_GAPS.v0.4.2.md`.
+Still open:
 
-## 2026-10-18 — Decided: a failed scheduled weekly synthesis is a missed week (Nico)
-
-- Supersedes the open decision in "Weekly run that fails generation is not retried by catch-up"
-  below. Nico approved recording failed weeks as missed (PR #140). A week whose scheduler-owned
-  original run settles FAILED is added to `memory.weekly.gaps` and shown under "Missed weeks";
-  it is still not retried automatically (the cursor advanced at enqueue), and the user can
-  regenerate it.
-- Edge cases `03 §8e` does not settle. These were implemented as readings without first asking,
-  contrary to `04 §5`; they shipped in PR #140 and are now open decisions (owner: Nico, raised
-  2026-10-18), not settled product rules: (a) manual runs do not count as the schedule's
-  coverage; (b) a failed regeneration of an already saved week does not mark it missed;
-  (c) BLOCKED (missing model/source) is not recorded as missed; (d) a missed record stays as
-  history after a later successful regeneration. Any changed answer is a follow-up patch (`06`).
-
-## 2026-10-18 — Weekly run that fails generation is not retried by catch-up
-
-- The weekly cursor advances at enqueue (enqueue-before-cursor), not on generation success. A
-  weekly run that settles `GENERATION_FAILED` (for example under the per-day citation rule)
-  stays visible as a FAILED run and can be regenerated manually, but catch-up neither retries it
-  nor records it as a gap. This matches the shipped daily lane. Open decision for Nico: keep,
-  retry, or record failed weeks as gaps.
-
-## 2026-10-18 — PR #139 review batch 3 readings
-
-- **Note identity is the OS-resolved canonical path, never case-folded.** The ownership
-  row and the promotion intent/receipt KV slots key on `std::fs::canonicalize` rendered
-  with forward slashes and without verbatim/device prefixes (restored only at the I/O
-  boundary), so `C:/Vault`, `c:/vault` and `C:/Vault/.` share one identity. Two distinct
-  files cannot collide because the key is the file the OS actually resolved; case folding
-  was rejected because it is the one way to make distinct NTFS entries collide.
-- **A note that does not exist yet has no canonical identity.** Two case-only spellings of
-  a missing note get different fallback keys (the fallback keeps the requested spelling's
-  case and `..`). That cannot adopt bytes — every promotion path reads the note first —
-  but the alternative (fold ASCII case in the fallback) could make two distinct
-  case-sensitive NTFS entries share one row, which `03 §8c`/`§8e` forbid. Recorded as the
-  one unspecified decision rather than guessed.
-- **A weekly "day claim" is a top-level `- ` item naming a consumed local date.** Every
-  such item under the four promotable headings must cite a consumed daily run ID or a
-  frame/session ID from that day's saved report; prose lines (window bounds, banners) are
-  not items and are not checked, so a section with no evidence says so in prose.
-  `03 §8e` does not define citation syntax, so a whole-number frame/session match counts
-  (`frame 101`, `[101]`, `101, 102`) and a bare number is accepted even when it was not
-  meant as a citation.
-- **A retained-prose day keeps its recorded frame IDs.** They join the weekly's
-  `frame_ids`/`cited_frame_ids` (the frontmatter invariant requires `frame_ids.len() ==
-  frames_summarized`) but are not re-read evidence: `frames_sampled` still counts only
-  frames actually read. For weekly runs `frame_ids` therefore reads "frames the synthesis
-  rests on", including a retained day's recorded frames it did not re-read — which is why
-  the coverage line reports the two counts separately instead of as a `N of M` ratio.
-
-## 2026-10-18 — Project-note ownership identity: open product decision (owner: agent; maintainer may override)
-
-- **A note that does not exist yet has no canonical identity.** `ReportFileOwnership` rows and the
-  internal promotion intent/receipt slots for the one project note are now keyed by
-  `promotion::note_identity`: the note's canonical Windows path, rendered with forward slashes and
-  without verbatim/device syntax, so every equivalent respelling of an existing note (`C:/Vault`,
-  `c:/vault`, `C:/Vault/.`, `C:\Vault`, `\\?\C:\Vault`) resolves to the same row and the same KV
-  slot. When `std::fs::canonicalize` fails — the note is absent, or the volume cannot be opened —
-  the identity falls back to the same rendering of the requested spelling, which removes duplicate
-  and trailing separators and `.` components but does **not** fold case and does **not** resolve
-  `..`. Two case-only spellings of a *missing* note therefore get different fallback identities.
-  That is the one unspecified product decision here, recorded instead of guessed: the alternative
-  (fold ASCII case in the fallback) could make two distinct files in an NTFS directory marked
-  case-sensitive share one ownership row, which `03 §8c`/`§8e` forbid. No promotion can adopt bytes
-  through the fallback: `prepare`/`confirm` read the note (or fail) before any ownership or intent
-  decision, and a note that cannot be read is never appended to. Decide only if a real flow needs an
-  identity for a note that does not exist yet.
-- **Pre-identity row and record keys are read only under the unchanged spelling.** A row or record
-  written by the previous build is keyed by the forward-slash path spelling, so `ownership` reads the
-  identity key first and then that exact spelling, and `read_record` does the same before checking
-  the record's stored path against the identity. That still finds a legacy key while the output
-  folder keeps its spelling (the common upgrade), but a legacy row keyed by an *old* spelling is
-  unreachable once the user respells the folder, and only the identity-keyed row this build writes
-  covers the note from then on. Closing that would need a table-wide rescan of `report_files` or a
-  one-time rewrite of legacy rows, neither of which this review fix introduces; it is deferred rather
-  than guessed. The stale spelling-keyed row is also left in place (no store-level delete exists and
-  no schema change is introduced). `owner_conflict` still compares source and live hash either way,
-  so a row that does not describe the live bytes refuses an append rather than authorizing one.
-
-## 2026-10-18 — Weekly per-item citation check and retention provenance
-
-- **A weekly "day claim" is a top-level `- ` item naming a consumed local date.** Every
-  top-level `- ` item under `Activity`, `Explicitly evidenced decisions`, `Open questions` and
-  `Next steps` must cite at least one token: a consumed daily run ID, or a frame or session ID
-  recorded by that day's saved report. An item naming a consumed date must cite *that* day's
-  token, not another day's. Prose lines (window bounds, banners) are not items and are not
-  checked. Items are the promotable unit, so a section with no evidence must say so in prose,
-  not as a bullet; the weekly framing now states that. `03 §8e` does not define citation syntax,
-  so a whole-number frame/session match counts (`frame 101`, `[101]`, `101, 102`) and a bare
-  number is accepted even when it was not meant as a citation.
-- **A retained-prose day keeps its recorded frame IDs.** `WeeklyMaterial::Saved` carries the
-  saved daily's `frame_ids` into the weekly's `frame_ids`/`frames_summarized` (the frontmatter
-  invariant requires `frame_ids.len() == frames_summarized`), so the note and a later
-  promotion's `frames —` line keep provenance the source daily still records. Those IDs are not
-  re-read evidence: `frames_sampled` still counts only Group frames, and `truncated` stays true
-  when recorded evidence could not be read. The `SavedReport` field shape is unchanged; for
-  weekly runs `frame_ids` reads as "frames the synthesis rests on", including a consumed day's
-  recorded frames it did not re-read.
-
-## 2026-10-18 — Saved-report export footer dates use the run's persisted zone
-
-- **A saved run's exported footer dates its window in `run.timezone`, not the computer's
-  current zone.** `MemoryPanel` builds the footer scope with `savedRunFooterScope(run)`, so
-  the half-open UTC `[window_start, window_end)` is labeled in the zone persisted with the
-  run (`03 §8c`: a later machine-timezone change does not move it) and the last covered
-  instant stays `window_end - 1`. A Tokyo daily window therefore exports the one
-  Tokyo-local date in the copied/downloaded markdown, not the two UTC-local dates the
-  machine happens to be in. The persisted `local_date` stays the source for the report
-  header's date, and `requested_range`/`window_local_dates` are not re-derived.
-- **On-demand reports and Session recap keep the browser-local span.** Their footer scope
-  carries no persisted run zone (`ReportFooterScope.timeZone` is absent), so
-  `absoluteDate` without a zone is unchanged for them and for the
-  Timeline/Insights/CapturesTrend labels. A valid IANA zone is assumed for a saved run: the
-  backend validates the identifier before persisting it and the run header already formats
-  `window_start`/`window_end` with it.
-## 2026-10-18 — F3 G5/G6 implementation readings
-
-- **Supersedes the G1/G2 transitional no-weekly-surface/no-digest notes below.**
-  Weekly settings, Run now, catch-up and weekly-specific saved-output Telegram
-  digests are implemented; native engineering verification is tracked in `05`.
-- **Catch-up scans six complete ISO weeks, capped at four most recent due weeks.**
-  Windows are queued oldest-first. Older omitted spans persist as disjoint ranges
-  in `memory.weekly.gaps`; enqueue precedes cursor advancement. Time/zone changes
-  preserve history and record skipped previously eligible closed weeks, never an
-  open/future activation week. First-week/DST rules and schema 13 remain unchanged.
-- **Weekly Telegram requires independent explicit opt-in.** It defaults off under
-  `memory.telegram.weekly_enabled`, sharing only the credential and chosen chat.
-  Frozen and current consent are both kind-aware. All opted-in catch-up weeks may
-  deliver; no undocumented newest-only suppression is introduced.
-- **Manual weekly runs do not advance or deduplicate against the schedule cursor.**
-  They remain explicit runs with `schedule_id=None`; a later scheduled run of the
-  same week is still possible, mirroring the daily Run-now contract.
-- **Weekly and daily zones are independent, but G2 matches saved dailies by exact
-  zone string.** Different selections can leave coverage missing; UI warns rather
-  than silently changing either zone or pretending aliases are interchangeable.
-- **Digest provenance is bounded, not rewritten.** Show up to 12 unique saved daily
-  source IDs, visibly abbreviate unusually long IDs, and disclose the exact omitted
-  count; full IDs remain in the saved report. Missing-day metadata is parsed only
-  from the producer's leading persisted banner, not later model prose. No new
-  SavedReport field or schema migration was invented.
-- **Engineering tests are not product acceptance.** Real-week/private-history,
-  Obsidian links, interactive promotion and an explicitly approved live Telegram
-  send remain open. No installed profile or live history is touched by this slice.
-## 2026-10-18 — Post-install promotion conflict receipt
-
-- `PromotionReceipt.hash` is populated when the promotion's bytes are confirmed
-  installed. `conflict: true` plus a hash means the append landed despite a
-  concurrent-swap/displaced-version verification conflict (`03 §8c`); the
-  recovery copy is retained and the UI reports written, not nothing written.
-  A conflict without a hash remains a no-append result. Ownership is reconciled
-  before returning the installed receipt, not silently on a later call.
-- A retained recovery `.md` in `Projects/` counts as a second note. The existing
-  exactly-one-note guard therefore blocks another promotion until the user
-  compares and moves/removes that copy; the dialog now makes this explicit.
-  No automatic removal of an unmatched recovery copy is introduced.
-
-- **`SavedReport.daily_run_ids` rides the saved-result wire surface** — FIXED 2026-10-19
-  (PR #141). `ReportDetail.result` now projects through `SavedReportView`, exactly the eleven
-  `§7f.6` fields; the persisted `SavedReport` keeps `daily_run_ids` for store round-trips and the
-  note frontmatter. The IPC run payload still carries it (that is the persisted shape, not the
-  §7f.6 wire). Test: `reports_detail_never_projects_persisted_daily_run_ids_provenance`.
-- **Weekly PARTIAL banner names the sampling cause even when retention caused the gap.** The
-  `truncated` flag mixes context-budget cuts with recorded evidence that could no longer be read,
-  so a week whose daily reports recorded evidence since pruned is told sampling was bounded while
-  its status and missing-day list stay correct. The banner cause should come from the unreadable
-  evidence count if this wording is worth another pass.
-
-## 2026-10-18 — F3 G3+G4 implementation readings (owner: agent; maintainer may override)
-
-- **`window_local_dates` describes the window, not the covered days.** A weekly note's frontmatter
-  lists every local date whose day period intersects `[window_start, window_end)` — seven for a
-  complete ISO week, DST weeks (167/169 h) included. A day without complete saved coverage stays in
-  `missing_local_dates` and the PARTIAL banner; the field itself never claims a day was covered.
-- **A `NO_DATA` week writes neither note nor index.** Both destinations get a skip receipt reading
-  "A week without saved daily evidence writes no weekly note (NO_DATA)." G2-era runs that already
-  carry skip receipts are not retro-written: Regenerate on such a run creates a linked revision,
-  which is the only way that week acquires a note.
-- **An index entry links only owned, hash-verified daily notes.** `days:` resolves the frontmatter
-  `daily_run_ids` to local dates oldest-first and links a date only when that run's owned note
-  passed the scan's hash and provenance checks; otherwise the date stays plain text. The whole line
-  reads `- [2026-W42](Weekly/2026-W42.md) — OK — <topic> — days: [2026-10-12](Daily/2026-10-12.md),
-  2026-10-13`. A retention-pruned run keeps its link when its hash/provenance-verified owned
-  daily note survives: the canonical `Daily/YYYY-MM-DD.md` path supplies the date before any run
-  lookup. A surviving run without a verified note contributes only a plain-text date; if both
-  are absent, there is no day to display. Equal-date dedup prefers a verified link over plain
-  text. The weekly note's `daily_run_ids` is never rewritten to match the index.
-- **Index ordering (the open `YYYY-Www` position) is chronological, newest first.** Entries sort
-  descending on `{date}/{relative_path}`; a weekly row's date is the window's **last** local date, so
-  the week's row opens its own block, and the `Weekly/` > `Daily/` path comparison keeps it above a
-  daily entry of that same date. The week label is never a sort key.
-- **The weekly note adds no banner of its own.** `weekly_note` writes the saved markdown verbatim
-  under `# YYYY-Www`; `save_weekly_execution` already prepended `weekly_partial_banner`, so a second
-  banner would state the week's gaps twice.
-- **Promotion works at bullet granularity.** One selectable unit is a top-level `- ` bullet of the
-  saved report, mapped by source heading: `Explicitly evidenced decisions` → `Decisions`,
-  `Open questions` → `Open questions`, `Next steps` → `Next steps`, `Activity` → `Log`. Items are
-  copied verbatim (the text after `- `); a selection that no longer matches the saved markdown is an
-  error, never a silent drop. UI and backend share that reading of the markdown (headings matched
-  case-insensitively, closing hashes tolerated, fenced code skipped), so backend validation cannot
-  reject an item the UI offered.
-- **The entry date is the promotion date, fixed at prepare.** `prepare_promotion` renders the local
-  date in the run's own saved timezone and the confirmed proposal carries it; `confirm_promotion`
-  rebuilds the blocks from that carried date (canonical `YYYY-MM-DD`) rather than the clock, so the
-  heading written is exactly the heading previewed.
-- **One `### date` block per touched section, in one atomic write.** A single promotion contributes
-  one block per touched section, all items for that section sharing one provenance footer; the
-  blocks are spliced by `merged_content` and written once by `write_owned` under the selection-time
-  hash. A block is `### YYYY-MM-DD`, a blank line, the verbatim items, a blank line, then one italic
-  footer, e.g. `*Source: weekly synthesis run R; daily runs A, B; frames 101, 102; sessions 7, 8.*`
-  — the `daily runs` clause appears only for a weekly source, ids are sorted and deduped, `—` stands
-  in for an empty list, and beyond 20 ids the list ends `, … (N total)`. There is no per-section
-  write and no delivery row, so a stopped app leaves either the old note or the complete promotion,
-  and untouched sections keep their bytes.
-- **The project note is user-created and default-empty.** `create_project_note` writes a zero-byte
-  `<slug>.md` (slug `^[a-z0-9][a-z0-9_-]{0,63}$`) and refuses when any note already exists; the four
-  `## ` headings are created lazily at EOF in canonical order (Decisions, Open questions, Next
-  steps, Log) by the first append. Zero notes is "create one first"; more than one `Projects/*.md`
-  is an unsupported state naming the paths, never a silent pick.
-- **Known edge, documented not fixed:** a consumed day whose daily note was later rewritten by a
-  linked revision renders as a plain-text date. The scan keys owned daily notes by the note's
-  frontmatter `run_id` — the revision's id — while the weekly note records the base run it consumed,
-  so the lookup misses and the day is not linked. The date and the run id stay correct; only the
-  link is lost.
-- **`WRITE_FAILED` is the weekly writer's guard, not a reachable status.** `weekly_note` exports only
-  `OK`/`PARTIAL`, so a hypothetical `BLOCKED`/`FAILED` weekly run that somehow carried a saved result
-  would surface as a write failure rather than a skip receipt. The engine never saves a result for
-  those outcomes, so the branch is unreachable today and kept as a guard.
-- **Promotion validates the current single-note target, not a client-selected filename.**
-  `confirm_promotion` re-scans `ScreenSearch/Projects`, requires exactly one existing note and
-  requires the proposal's path to match it, with a nonnull selection-time hash. It never creates
-  a missing target. Missing/multiple notes and stale paths are explicit errors/conflicts;
-  `ReportFileOwnership` is saved only after a successful write, so a conflict leaves the previous
-  row untouched. Creation and confirmation share an in-process async lock spanning scan/create
-  and ownership-check/append/save respectively; the existing single-instance app is the boundary.
-- **Confirmed promotion recovery uses bounded per-note metadata, not stored previews.** Before
-  appending, confirmation durably records the exact path, source/run, old/new hashes and a digest
-  of the selected items/date in internal settings KV. It contains no selected or note text. A
-  landed append is reconciled to its original ownership identity before normal hash checks or
-  loading a possibly pruned run; unchanged pre-write bytes discard an interrupted intent, while
-  unrelated bytes stay a conflict. One last committed receipt per target makes an exact retry
-  idempotent, including a lost response; a new explicit promotion with a fresh snapshot remains
-  allowed. Folder changes cannot replace another target's pending intent. Preview may settle
-  metadata from a previously confirmed append, but never appends note bytes. IPC work runs in an
-  owned task so cancellation of its response does not abandon the file/SQLite critical section.
-  No schema migration, public setting, HTTP/MCP surface or persistence of rejected proposals.
-- **Ownership is a write guard, not a history or garbage-collection key.** An initially unowned
-  note may be adopted on the first confirmed promotion. Both prepare and confirm compare an
-  already-owned note's current bytes against its persisted hash and require the same source
-  identity; an edit before prepare, a forged proposal hash or a source reset does not re-adopt
-  it. Such cases stay `FILE_CONFLICT`. The row's `run_id` names the most recent successful
-  promotion, not the only report represented in the ledger; the row outlives run pruning.
-- **Section matching ignores fenced content and tolerates case/closing hashes.** Source parsing
-  and destination insertion track the fence marker and opening-run length: a shorter run, a
-  different marker or a marker followed by non-whitespace does not close it. Destination entries
-  use the first matching real section when headings repeat; renamed sections remain distinct.
-  If EOF is inside an unclosed fence, insertion is before its opener, never inside the code.
-  Existing bytes, line endings and duplicate headings remain untouched. Duplicate saved bullets
-  remain independently selectable and are preserved up to their persisted occurrence count;
-  requesting more copies is an error, not fabrication or silent deduplication.
-
-## 2026-10-17 — F3 G2 implementation readings (owner: agent; maintainer may override)
-
-- **Evidence without saved dailies is refused, not reported.** `§8e` defines `NO_DATA` only for
-  "no saved dailies **and** no usable evidence" and PARTIAL for a partly covered week, but says
-  nothing about a week that has raw evidence and zero saved dailies. The engine stops that case
-  with `GENERATION_FAILED` (before `resolve`) rather than labelling it `NO_DATA` or synthesising
-  an uncited narrative. One branch to change if the contract later defines it.
-- **A weekly input is a single-local-day daily that owns its date.** A saved daily credits a date
-  only when it is not a manual date-range run, was saved in the weekly run's own zone (persisted
-  zone string equality, so `UTC` and `Etc/UTC` are not unified), its persisted `local_date` is
-  that date, and its window lies entirely inside that local day. Multi-day range runs and dailies
-  saved under a previous zone are not consumed and leave their dates missing; a week whose only
-  dailies are of that kind is refused like a week with none.
-- **Weekly prose must cite at least one consumed daily run id** (matched as a whole token),
-  or the run fails with `GENERATION_FAILED`. `§8e` asks for the daily run of **every** day the
-  prose describes; enforcing that per day would require knowing which days a passage
-  describes, so G2 enforces only the existence of a real citation. The check also cannot detect
-  additional invented ids. Per-day enforcement is a G3 review item when the note structure makes
-  day sections explicit.
-- **`missing_local_dates` counts a partial or truncated daily as a missing day**, since only
-  complete saved coverage establishes a covered date (`§8e` PARTIAL).
-- **Dailies and their revisions are all consumed** and all recorded in `daily_run_ids`; `§8e`
-  does not define revision precedence for the weekly input, so none was invented. G3/G5 should
-  decide whether a weekly may cite a revision rather than the base run of the same day.
-- **`daily_run_ids` is persisted on `SavedReport`** (new optional field, no schema change), so a
-  weekly report can be audited against the dailies it consumed.
-- **Weekly runs write no note and send no Telegram digest in this increment**: the app records a
-  skip receipt instead of emitting a daily-shaped note or a daily-format digest. G3 owns the
-  weekly note/index and G6 the weekly digest format.
-- **No user-visible weekly surface yet**: enqueue exists internally with `kind` =
-  `weekly_synthesis` and the explicit UTC window; Settings controls, Run now and catch-up remain
-  G5.
-
-## 2026-10-17 — F3 G1 implementation readings (owner: agent; maintainer may override)
-
-- **Daily notes keep frontmatter schema 1.** `03 §8e` requires weekly notes to write schema 2
-  and schema-1 notes to keep parsing; it does not move daily notes. Daily output stays
-  byte-identical; schema is stamped from the carried fields (any v2 field ⇒ 2).
-- **First eligible weekly window** uses the daily `§8c` rule "at or after activation":
-  activation exactly at Monday 00:00 local makes that week eligible. One-character switch in
-  `weekly_first_window` if strictly-after was intended.
-- **Weekly catch-up scan-back bound is unspecified.** `§8e` fixes oldest-first and the
-  4-complete-ISO-week cap but not the lookback; deferred to G5, not guessed in G1.
-- **`kind` is not a dedup dimension.** The `(schedule_id, window_start, window_end)` partial
-  unique key is unchanged per `§8e`; a daily and a weekly run cannot share the same schedule
-  and window. G5 must therefore give the weekly schedule its own schedule ID (weekly windows
-  never coincide with daily ones, but a shared ID must not be relied on).
-
-## 2026-10-17 — F3 deeper-memory plan: open decisions (owner: maintainer) — **Resolved (Nico, 2026-10-17)**
-
-Source: `docs/deeper-memory-f3-plan.md` §6. Specs `02`/`03` were silent on all of these; each was
-answered by Nico (2026-10-17, GO — the F1-pilot contingency is waived). The original questions are
-preserved below as history; the normative contract text is `02 §5i` + `03 §8e`.
-
-- **Weekly kind token.** `ReportKind::Weekly` already exists (`crates/traits/src/ipc.rs:158`,
-  `03 §8b`: on-demand trailing 7 local days). The scheduled ISO-week synthesis needs a distinct
-  token; proposal `weekly_synthesis`. **Resolved:** the token is `weekly_synthesis`.
-- **Persisted `kind`.** No discriminator exists on `ReportRun` (`crates/traits/src/memory.rs:110-132`),
-  `report_runs` (`crates/store/src/schema.rs:455-469`) or the `GET /v1/reports` projections. Column
-  vs payload field, and its default for existing daily runs, is a 12 → 13 migration decision.
-  **Resolved:** an indexed column `kind TEXT NOT NULL DEFAULT 'daily'` on `report_runs`, via the
-  forward-only 12 → 13 migration, exposed on `GET /v1/reports` — listing/filtering needs it and the
-  migration is already required.
-- **Weekly catch-up cap:** 4 complete weeks proposed. **Resolved:** 4 complete ISO weeks.
-- **Weekly note headings:** reuse daily `Activity` / `Explicitly evidenced decisions` or new names.
-  **Resolved:** `Activity`, `Explicitly evidenced decisions`, `Open questions`, `Next steps`.
-- **Project notes:** one user-selected note (direction-plan F3 minimum); more than one is out of scope.
-  **Resolved:** exactly one project note in this slice.
-- **Weekly Telegram digest** under `03 §8d`: later increment or never. **Resolved:** a weekly digest
-  with its own weekly-specific format under `03 §8d` — increment G6.
-
-## 2026-10-16 — External-agent memory API P0 decisions and gates
-
-- Nico authorized execution of the attached plan, replacing its draft/no-GO labels.
-  The new contract is `03 §7f`; it describes authorized behavior, not completed work.
-- **Resolved (Nico GO), P3 only — historical record preserved:** the question was whether to
-  expose saved output while an existing run is queued/running for delivery retry, or to suppress it
-  under the plan's unfinished-null rule; the recommendation was to mirror immutable saved-result
-  presence. **Nico approved stored-presence exposure:** an immutable saved result is exposed
-  immediately whenever it exists, including while delivery is queued or retrying; absent output is
-  explicit null; stored `NO_DATA` stays factual; a malformed saved payload is a read error. The
-  earlier "implementation remains blocked" hold is **superseded** for P3. Evidence/contradiction:
-  `06` external-agent P0 entry. P3 runtime is being implemented on
-  `feat/agent-memory-saved-reports`; verification pending, no P3 result claimed.
-- Wire normalization is explicit in `03 §7f.6`: signed integral timestamps, present
-  nullable fields, absent versus empty text, chronological global coverage extrema,
-  duplicate query rejection, safe fixed new-read errors and unknown saved error-code
-  to null. These are serialization/validation decisions, not broader capabilities.
-- Existing `--url` remains an alias of canonical `--api-url`; both override the
-  environment. Saved-report tuple high-water does not freeze status or membership.
-- Store inventory supports existing KV metadata without migration only with reserved
-  single/batch/delete guards, atomic pair setup and allocator-backed production
-  inserts. Established missing metadata must not be repaired on a read.
-- Native UI, three native wrapper archives, real cross-machine Windows-application
-  traversal, full workspace regression and measured paging profiles remain open
-  until recorded execution. TBX SSH is verified; Node 22/isolation preparation and
-  independent contract reviews are in progress. No installed/private history used.
+- **PENDING — F3 native Windows interactive acceptance (`04 §1c`).** Engineering tests are not
+  product acceptance. Not yet done: an `npm run dev` session in an isolated profile; a real weekly
+  run over a real week of saved dailies; Obsidian inspection of the weekly note and its index
+  links; one promotion into the project note in the running app; a running-app screenshot of
+  the weekly Settings hint. The G6 weekly Telegram test send needs an explicitly approved
+  recipient; no live send has been made.
+- **Open product decisions (owner: Nico, raised 2026-10-18; current behaviour stays until
+  answered; a changed answer is a follow-up patch in `06`):**
+  - Weeks that closed while weekly was still enabled but before catch-up ran, then weekly was
+    disabled, are neither backfilled nor listed under "Missed weeks" after re-enabling (matches
+    the daily lane). Keep, or record those closed weeks as missed at disable time.
+  - Failed scheduled weeks are missed weeks (Nico, PR #140). Edge cases implemented as readings
+    without first asking, contrary to `04 §5`, and still open: (a) manual runs do not count as the
+    schedule's coverage; (b) a failed regeneration of an already saved week does not mark it
+    missed; (c) BLOCKED (missing model/source) is not recorded as missed; (d) a missed record
+    stays as history after a later successful regeneration.
+- **OPEN, owner decision:** whether a weekly synthesis may cite a revision rather than the base
+  run of the same day. G3 and G5 shipped without deciding; the engine consumes base + revisions
+  (`weekly_consumed_with_dates`), which can narrate one day twice. Needs a maintainer call.
+- **OPEN, hardening:** the dispatch loop parses `TelegramSnapshot` per receipt while
+  `redirect_stale_telegram_deliveries` guards the same parse with `continue`; chunk-less receipts
+  no longer abort dispatch, but the two loops should share one parse contract.
+- **Agent readings the maintainer may override, and documented edges not fixed** (full text in
+  the archive): a project note that does not exist yet has no canonical identity, so case-only
+  spellings of a missing note get different fallback keys; a legacy spelling-keyed ownership row
+  becomes unreachable once the output folder is respelled (rescan/rewrite deferred); a week with
+  raw evidence but no saved dailies is refused with `GENERATION_FAILED`; weekly citation syntax
+  is unspecified, so a bare whole number counts as a frame/session citation; a consumed day whose
+  daily note was rewritten by a linked revision renders as a plain-text date in `Index.md`; the
+  weekly PARTIAL banner names sampling even when retention caused the gap; daily and weekly
+  zones are independent but the weekly engine matches saved dailies by exact zone string, so
+  different selections can leave coverage missing (the UI warns).
+- **External-agent memory API gates:** native Settings interaction (read-token controls) was
+  blocked in SSH Session 0 (no WebView2 renderer), not passed; separate-machine MCP → Windows
+  app traversal timed out under Windows' default inbound block, with no firewall/port-proxy
+  workaround applied. Windows localhost and same-host fixture runs are not the cross-machine
+  gate. Remote report generation/retry/delivery stay excluded by scope.
 
 ## 2026-10-15 — Memory/API execution gates (owner: maintainer + agent)
 
@@ -385,18 +61,11 @@ preserved below as history; the normative contract text is `02 §5i` + `03 §8e`
   intents recover the outcome); rate limiting remains deferred (#89(b) — the 64-connection cap and
   30 s header deadline shipped); sparse-content sampling can need a larger frame budget and must never
   be read as proof of no data; the Windows credential read CodeQL alert was dismissed as a false positive on
-  2026-10-15 (evidence in `05`); the remaining dev-tree braces advisory is tracked below.
-- **DISCHARGED 2026-10-19 (G5 landed in #140):** the weekly catch-up scan bound is now
-  `WEEKLY_SCAN_WEEKS = 6` with `WEEKLY_BACKFILL_CAP = 4`, and the weekly schedule has its own
-  schedule ID (`memory.weekly.state`) — `crates/kernel/src/memory_schedule.rs:393-395`.
-- **OPEN, owner decision:** whether a weekly synthesis may cite a revision rather than the base
-  run of the same day. G3 and G5 shipped without deciding; the engine consumes base + revisions
-  (`weekly_consumed_with_dates`), which can narrate one day twice. Needs a maintainer call.
-- **OPEN, hardening:** the dispatch loop parses `TelegramSnapshot` per receipt while
-  `redirect_stale_telegram_deliveries` guards the same parse with `continue`; chunk-less receipts
-  no longer abort dispatch, but the two loops should share one parse contract.
+  2026-10-15 (evidence in `specs/archive/05_BUILD_REVIEW.v0.4.2.md`); the remaining dev-tree braces advisory is tracked below.
 - Schema 11 → 12 (0.4.1) is forward-only and there is no automatic pre-migration backup in the app;
   the 0.4.1 release notes tell users to back up the data folder first.
+- Schema 12 → 13 (0.4.2, `report_runs.kind`) is likewise forward-only, and the app still makes no
+  automatic pre-migration backup.
 
 > Where the **spec is silent** and a decision was needed, plus **manual interventions** still
 > required (with owner + deadline). The agent appends here instead of guessing (`04 §5`). Empty
@@ -438,6 +107,8 @@ preserved below as history; the normative contract text is `02 §5i` + `03 §8e`
 > Resolved 0.4.0-arc rows (#98/#102/#110/#111/#114/#118/#119) → `specs/archive/07_KNOWN_GAPS.v0.4.0.md` (ids preserved). #102 closed GitHub issue #88 at the v0.4.0 release. The live table holds only still-open rows and standing deferrals.
 > Shipped 0.4.1 history (opt-in network API #122, durable memory reports #123, maintenance) →
 > `specs/archive/07_KNOWN_GAPS.v0.4.1.md` (resolved decisions; open gates carried forward above). Row #50 (scheduled / saved reports) shipped in 0.4.1 and moved there (id preserved).
+> Shipped 0.4.2 history (dependency/security fixes #120/#121/#125, external-agent memory API #126–#130, Claude workflows #133–#135, F3 deeper memory #131/#136–#141) →
+> `specs/archive/07_KNOWN_GAPS.v0.4.2.md` (resolved decisions and readings; open items carried forward above). No table rows changed in 0.4.2.
 
 Manual steps still required (e.g. signing certs, first-run model download, CI secrets):
 - **First-run model download** — embedding models (P3) auto-download via fastembed into
@@ -539,4 +210,4 @@ repository's Tailwind config; captured text and API requests do not become build
 patterns. The static production UI does not execute this Node pipeline, and
 `npm audit --omit=dev` is clean. Do not force a Tailwind 4 migration just to
 silence propagation. Reassess before accepting untrusted build patterns.
-CodeQL alert 2 was dismissed with the FFI contract evidence recorded in `05`.
+CodeQL alert 2 was dismissed with the FFI contract evidence recorded in `specs/archive/05_BUILD_REVIEW.v0.4.2.md`.

@@ -1,6 +1,26 @@
 # Architecture (as-built)
 
-## Unreleased daily memory increment (2026-10-15)
+## Weekly memory and external-agent reads (shipped in v0.4.2)
+
+F3 extends the daily memory below. `kernel::report_service::execute_weekly` runs a weekly
+synthesis through the same shared service and model path, over that ISO week's saved daily
+reports rather than raw captures. `src-tauri/src/memory_weekly.rs` is a child of the memory
+runtime that owns only the default-off weekly settings, its own schedule ID/activation/cursor,
+catch-up planning and missed-week gaps (settings KV, no extra migration); the parent keeps the
+report worker, file writing and Telegram delivery. Store migration 13 adds `report_runs.kind`
+(`daily` | `weekly_synthesis`). `memory_files` writes weekly notes with frontmatter schema 2
+and accepts only schema 1 or 2. `src-tauri/src/promotion.rs` is the only write path into the
+single user-created project note: preview, then one atomic append on confirm, with a persisted
+write intent for recovery; it has no HTTP/MCP surface.
+
+The external-agent reads (`03 §7f`) add `store::history_pages` (chronological frame pages and
+coverage) and `store::report_pages` (saved-report pages), each in one read transaction, served
+by `api::history` and `api::reports` under explicit per-route/method permissions
+(`api::permissions`) for the legacy token and an independent read-only token. The
+`screensearch-mcp` wrapper adds four passthrough read tools, a `--read-only` tool filter and
+explicitly configured remote HTTP/HTTPS roots with no proxy and no redirects.
+
+## Daily memory increment (shipped in v0.4.1)
 
 `kernel::report_service` shares evidence inspection and execution between Recall and durable
 memory runs. The automatic provider snapshots an installed model and cannot invoke downloads.
@@ -20,7 +40,7 @@ may finish after that await is cancelled. It owns only file inputs, no model or 
 the persisted intent allows restart reconciliation. The timeout is not a claim that a hung
 filesystem call has been joined. Native slow/unavailable-folder acceptance remains open.
 
-See [configuration and recovery](MEMORY.md) and `03 §8c/§8d` for the full contract. The following
+See [configuration and recovery](MEMORY.md) and `03 §8c/§8d/§8e` for the full contract. The following
 sections retain the shipped 0.4.0 architecture history.
 
 How ScreenSearch V2c is actually put together **as of 2026-07-11** — reflecting the complete 0.3.0
@@ -150,7 +170,7 @@ lane, v10 adds the `marks` table — frame-cascading intention capture with `idx
 **v10 → v11 (0.4.0 PR3)** adds the `sessions` and `session_artifacts` tables plus a nullable
 `frames.session_id` and its three indexes, structure-only with no backfill, **v11 → v12 (0.4.1)**
 adds the durable report tables `report_runs`, `report_deliveries` and `report_files`, and
-**v12 → v13 (F3 G1)** adds `report_runs.kind` (`daily` | `weekly_synthesis`, default `daily`) with
+**v12 → v13 (0.4.2, F3 G1)** adds `report_runs.kind` (`daily` | `weekly_synthesis`, default `daily`) with
 `idx_report_runs_kind_created`), the code in `store::schema` wins.
 
 Conceptually the schema groups into: capture rows (`frames`), the 0.2.x text signal (preserved raw
@@ -483,15 +503,18 @@ request id, and the UI ignores stale deltas.
   and `/v1/export` (JSON, frames + content text + marks, **no images** — D12). The host is a seam
   behind a trait, **not constructed at all** while disabled; the Settings "Export…" button calls the
   same export code path directly, so export works with the API off. Reference: `docs/API.md`.
-  The listener uses plain HTTP; reachable token holders can read history. MCP remains a
-  loopback-only client and the inference listener stays loopback-only. Existing enabled profiles
+  The listener uses plain HTTP; reachable token holders can read history. The inference
+  listener stays loopback-only. 0.4.2 adds `/v1/frames`, `/v1/coverage`, `/v1/reports` and
+  `/v1/reports/{run_id}` reads and an independent read-only token (see the section at the top). Existing enabled profiles
   without a bind address retain loopback exposure; address/port edits apply immediately. Startup emits a payload-free `api_status_changed` invalidation event;
   tokens are never broadcast through this event. No schema migration is needed.
 - **MCP server** (`crates/mcp` → `screensearch-mcp.exe`, PR8): a dependency-thin **stdio** JSON-RPC
   binary that never links the store (D13) — purely an HTTP client of the local API using
-  `SCREENSEARCH_API_URL` / `SCREENSEARCH_API_TOKEN`. Nine tools (`search_screen_history`,
-  `ask_screen_history`, `get_moment`, `where_was_i`, `list_marks`, `add_mark`, and the 0.4.0
-  read-only session trio `list_sessions`, `get_session`, `ask_session`); API-off or bad-token
+  `SCREENSEARCH_API_URL` / `SCREENSEARCH_API_TOKEN`. Nine tools through 0.4.1
+  (`search_screen_history`, `ask_screen_history`, `get_moment`, `where_was_i`, `list_marks`,
+  `add_mark`, and the 0.4.0 session trio `list_sessions`, `get_session`, `ask_session`), plus
+  `list_frames`, `get_capture_coverage`, `list_reports` and `get_report` in 0.4.2; loopback by
+  default, with explicit remote HTTP/HTTPS roots allowed from 0.4.2. API-off or bad-token
   states return guided errors ("enable the API in ScreenSearch Settings"), never a crash. Staged as
   the Tauri `externalBin` by `scripts/stage-mcp.mjs` and shipped inside the NSIS installer next to
   `ScreenSearch.exe`. Reference: `docs/MCP.md`.

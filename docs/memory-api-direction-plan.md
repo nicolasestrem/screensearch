@@ -1,5 +1,7 @@
 # ScreenSearch: useful memory, scheduled reports, and a network-accessible API
 
+> **Shipped:** the configurable API bind and daily memory reports (B–E) in v0.4.1; the external-agent reads (P1–P3) and F3 deeper memory in v0.4.2 (2026-10-19). The status text below is the historical record.
+
 Status (2026-10-15): **Execution authorized. Gate A API contract reviewed and committed;
 increment B implementation verification recorded separately. C–E report policies approved by
 the maintainer ("Sure GO"); local schedule/durable contract in `03 §8c`, Telegram permission
