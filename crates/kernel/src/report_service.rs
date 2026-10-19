@@ -5,7 +5,8 @@ use std::future::Future;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use traits::{
-    AnswerProvider, ReportConfig, ReportError, ReportMode, ReportOutput, ReportRange, Store,
+    AnswerProvider, ReportConfig, ReportError, ReportMode, ReportOutcome, ReportOutput,
+    ReportRange, Store,
 };
 
 pub struct ReportExecution {
@@ -150,8 +151,12 @@ pub struct WeeklyExecution {
 /// dailies is consumed-empty and refused the same way a week with no saved dailies is.
 /// A week with no saved dailies and no usable evidence returns [`ReportMode::Empty`] with
 /// `model: None`; a week that has captured frames but no saved dailies is refused (see
-/// below) rather than mislabelled or synthesized without daily-run provenance. After
-/// saved dailies are found, the same positive-probe rules as [`execute`] apply: a blank
+/// below) rather than mislabelled or synthesized without daily-run provenance. A week
+/// whose consumable saved dailies are *all* `NO_DATA` — every day measured and empty — is
+/// treated the same way (empty when the window holds no usable evidence, refused when it
+/// does) with the consumed runs recorded as provenance; a partially-empty week is
+/// untouched, since a `NO_DATA` day is a measured day and still counts as covered. Once
+/// measurable saved dailies are found, the same positive-probe rules as [`execute`] apply: a blank
 /// or empty generation is `GENERATION_FAILED`, a non-blank synthesis with an uncited
 /// promotable item or day claim is `GENERATION_FAILED` (untraceable prose is never
 /// persisted as OK), and a resolver failure propagates unchanged.
@@ -203,7 +208,17 @@ where
         request.timezone,
     )
     .map_err(|_| error("INVALID_CONFIG", "Invalid weekly report time zone."))?;
-    if consumed.is_empty() {
+    // `03 §8e`: NO_DATA is a measured day — a saved daily whose own window was inspected
+    // and held nothing — so a week whose consumable dailies are *all* NO_DATA recorded no
+    // activity at all and is an empty week, exactly like a week with no saved dailies.
+    // It must never reach the model: a synthesis could only invent days that no saved
+    // daily measured, and saving it as a covered week would be a false OK. A week with
+    // any measured day among its dailies is untouched — there the NO_DATA day still
+    // counts as covered coverage, so partially-empty weeks keep their exact behavior.
+    let all_dailies_no_data = consumed
+        .iter()
+        .all(|run| run.outcome == Some(ReportOutcome::NoData));
+    if consumed.is_empty() || all_dailies_no_data {
         // `03 §8e` permits NO_DATA only when the week has neither saved dailies nor
         // usable evidence.
         let has_evidence = store
@@ -239,7 +254,10 @@ where
                 truncated: false,
             },
             model: None,
-            daily_run_ids: Vec::new(),
+            // Provenance of what was inspected (`03 §8e`): the consumed dailies are
+            // recorded even though nothing was synthesized — store order, exactly as the
+            // generating path records them — and empty when the week had none.
+            daily_run_ids: consumed.iter().map(|run| run.run_id.clone()).collect(),
             missing_local_dates,
         });
     }
