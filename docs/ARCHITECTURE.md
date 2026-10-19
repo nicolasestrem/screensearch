@@ -140,7 +140,7 @@ per-crate file-level guide to where each concern lives is the rest of this docum
 Single file `screensearch.db`; forward-only migrations tracked in `schema_version` (`store::schema`).
 Per-connection pragmas: `journal_mode=WAL`, `foreign_keys=ON`, `recursive_triggers=ON`,
 `busy_timeout=5000`. **Authoritative as-built DDL (every table, column, index, trigger, and the full
-v1→v11 migration chain): `crates/store/src/schema.rs` (`LATEST_SCHEMA_VERSION = 11`)** — this is
+v1→v13 migration chain): `crates/store/src/schema.rs` (`LATEST_SCHEMA_VERSION = 13`)** — this is
 code, so it never drifts. `03 §4` is the design contract for the schema; where the migrations have
 moved ahead of it (v3 drops legacy `ocr_text`, v4 adds `text_spans.line_index`, v5 adds the nullable
 `frames.capture_trigger`, v6 widens that trigger token set for click / scroll-stop, v7 adds
@@ -148,8 +148,10 @@ moved ahead of it (v3 drops legacy `ocr_text`, v4 adds `text_spans.line_index`, 
 `idx_frames_image_retention` index for the retention sweep, v9 drops the removed image-embedding
 lane, v10 adds the `marks` table — frame-cascading intention capture with `idx_marks_open` — and
 **v10 → v11 (0.4.0 PR3)** adds the `sessions` and `session_artifacts` tables plus a nullable
-`frames.session_id` and its three indexes, structure-only with no backfill),
-the code in `store::schema` wins.
+`frames.session_id` and its three indexes, structure-only with no backfill, **v11 → v12 (0.4.1)**
+adds the durable report tables `report_runs`, `report_deliveries` and `report_files`, and
+**v12 → v13 (F3 G1)** adds `report_runs.kind` (`daily` | `weekly_synthesis`, default `daily`) with
+`idx_report_runs_kind_created`), the code in `store::schema` wins.
 
 Conceptually the schema groups into: capture rows (`frames`), the 0.2.x text signal (preserved raw
 vs. filtered `content_text` plus per-span and static-chrome metadata, with content-text and raw-text

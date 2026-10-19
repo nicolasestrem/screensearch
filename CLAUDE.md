@@ -8,10 +8,8 @@ A standalone, **Windows-only**, local-first desktop app (Rust + Tauri 2) that ca
 makes it searchable by text and meaning, and answers questions about it — fully on-device. This is
 a **clean-slate** project; it shares no code or data with any prior version.
 
-**Current state:** latest release v0.4.1 (2026-10-15), DB schema 12, auto-update live since v0.3.2.
-The full app exists — a 15-crate Rust workspace + a React/TS UI. Active work is tracked in the live
-build-loop docs (`05`/`06`/`07`/`08`); shipped history is in `CHANGELOG-ARCHIVE.md` and
-`specs/archive/`. Code-signing is the lone packaging follow-up (`03 §11b`).
+**Current state** (release, DB schema, merged increments, open gates) lives in
+`specs/01_PROJECT_CONTEXT.md §8`; read it there rather than restating it here.
 
 ## ⛔ Read the spec before changing anything (targeted, not exhaustive)
 The specs are large (`03` alone is ~150 KB) — **do not read them end to end**. Each session:
@@ -72,9 +70,9 @@ The files are the source of truth, not your memory — re-read the relevant sect
   chronological full-text reads, truthful bounded coverage, independent read credentials and
   saved-report HTTP/MCP reads. Only saved output is promoted; remote generation/retry/delivery
   remain excluded. Do not repeat blanket plan approval; require independent boundary review,
-  real per-unit verification and separate merge/release authorization. Schema remains 12 until
-  the approved F3 migration (12 → 13, `03 §8e`) lands; any other migration needs separate
-  approval; never weaken allocator/identity protection to fit KV.
+  real per-unit verification and separate merge/release authorization. Any migration beyond
+  the approved F3 one (`03 §8e`) needs separate approval; never weaken allocator/identity
+  protection to fit KV.
   Read authorization is explicit per route/method; no new scope is implicitly granted. Existing
   local workflows, listener security/defaults and Windows NSIS bundling remain compatible.
   The approved local-memory amendment permits default-off scheduled local reports and user-selected

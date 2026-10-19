@@ -893,7 +893,7 @@ mod migration_tests {
         assert_eq!(
             version,
             crate::LATEST_SCHEMA_VERSION,
-            "latest schema is v11 (0.4.0 PR3 added the sessions tables)"
+            "the database must be at the latest schema version"
         );
 
         let frame_rows: i64 = conn
@@ -1096,7 +1096,7 @@ mod migration_tests {
         assert_eq!(
             version,
             crate::LATEST_SCHEMA_VERSION,
-            "latest schema is v11 (0.4.0 PR3 added the sessions tables)"
+            "the database must be at the latest schema version"
         );
 
         // No image-lane object survives — tables, trigger, or vec0 shadow tables.
@@ -1179,7 +1179,7 @@ mod migration_tests {
         assert_eq!(
             version,
             crate::LATEST_SCHEMA_VERSION,
-            "latest schema is v11 (0.4.0 PR3 added the sessions tables)"
+            "the database must be at the latest schema version"
         );
 
         // The marks table and its open-marks index exist.
@@ -1334,7 +1334,7 @@ mod migration_tests {
         assert_eq!(
             version,
             crate::LATEST_SCHEMA_VERSION,
-            "latest schema is v11 (0.4.0 PR3 added the sessions tables)"
+            "the database must be at the latest schema version"
         );
 
         // All six new objects (2 tables + 4 indexes) exist by exact name and type.

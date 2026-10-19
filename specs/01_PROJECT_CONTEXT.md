@@ -110,6 +110,14 @@ for self-contained contracts and source-inspected inventory.
 ## 8. Status
 
 - **All context items decided.** License is **MIT**. Nothing outstanding.
+- **Current state (2026-10-19):** latest release v0.4.1 (2026-10-15), auto-update live since
+  v0.3.2. `main` is at DB schema 13: the forward-only 12 → 13 migration (`report_runs.kind`,
+  `03 §8e`) landed with F3 G1 (#137) and is unreleased. F3 deeper memory G1–G6 (weekly
+  synthesis, weekly notes and index entries, project-note promotion, weekly scheduler and
+  weekly Telegram digest) is merged; native Windows interactive acceptance is pending
+  (`05_BUILD_REVIEW.md`). The full app is a 15-crate Rust workspace plus a React/TS UI; active
+  work is tracked in `05`–`08`, shipped history in `CHANGELOG-ARCHIVE.md` and `specs/archive/`.
+  Code-signing is the lone packaging follow-up (`03 §11b`).
 
 ---
 
