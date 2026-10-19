@@ -1324,11 +1324,13 @@ async fn base_report_id(store: &dyn Store, run: &ReportRun) -> Result<Option<Str
 }
 
 /// The path a file receipt names: the index always points at `Index.md`; a vault
-/// skip names the report root, because a skipped run wrote no note file.
+/// skip names the report root, because a skipped run wrote no note file. Only the
+/// file destinations (`Vault`, `Index`) reach here.
 fn file_destination_path(root: &Path, destination: ReportDestination) -> PathBuf {
-    match destination {
-        ReportDestination::Index => root.join("Index.md"),
-        ReportDestination::Vault => root.to_path_buf(),
+    if destination == ReportDestination::Index {
+        root.join("Index.md")
+    } else {
+        root.to_path_buf()
     }
 }
 

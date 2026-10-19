@@ -1,5 +1,32 @@
 # 08 — AI Changelog
 
+## 2026-10-19 — F3 G1–G6 review round: truthfulness, wire contract and hardening
+
+- 17 reviewers (12 over `7639b25..8b3cf95`, 5 over `8b3cf95..957b234`) found 1 HIGH and ~22
+  lower findings; fixes are on `fix/f3-review-findings` (PR #141), not yet merged.
+  HIGH: an all-NO_DATA week could be saved `OK` — it now takes the empty-week branch
+  (`NO_DATA` without evidence, `GENERATION_FAILED` with evidence, model never called,
+  `daily_run_ids` recorded; `weekly_all_no_data_dailies_*`, `weekly_no_data_day_counts_as_covered`).
+  HIGH: `SavedReport.daily_run_ids` leaked on the §7f.6 wire — `ReportDetail.result` is now a
+  `SavedReportView` projection of exactly the eleven §7f.6 fields
+  (`reports_detail_never_projects_persisted_daily_run_ids_provenance`). Lower: API/MCP docs name
+  `kind`; `append_entries_owned` never invents a missing project note; a leading UTF-8 BOM no
+  longer defeats section matching; `daily_note` rejects non-daily runs; hidden dot-files in
+  `Projects/` are not notes (recovery copies still count); `create_note` holds `NOTE_LOCK` inside
+  the blocking write and commits the corrected intent hash; weekly NO_DATA skip receipts snapshot
+  `Index.md`; chunk-less Telegram receipts never abort dispatch and a skip is recorded once; a
+  weekly digest never counts a named partial day as covered
+  (`weekly_digest_never_counts_a_named_partial_day_as_covered`); saved-report downloads name
+  their run kind (`-weekly-synthesis-`, distinct from on-demand `-weekly-`); the weekly preview
+  query is keyed on its whole payload; Missed-weeks copy no longer contradicts a later manual
+  run; current state moved to `01 §8`; `CHANGELOG`/`docs/MEMORY.md`/`docs/ARCHITECTURE.md` updated.
+- Reviewers found no HIGH/MED defects in the G5 scheduler core or the kernel scheduling helpers
+  (one differential probe of `weekly_due_windows`: 1,169,040 cases, 0 mismatches).
+- Linux: fmt 0, clippy `-D warnings` 0, portable tests green except the pre-existing
+  `explicit_ipv4_and_ipv6_listeners_require_authentication` (no IPv6 loopback on this host);
+  UI 55/55, tsc/lint/build 0. **src-tauri fixes are unverified** — the crate is Windows-only and
+  the `04 §1c` chain on tbx has not run for these commits.
+
 ## 2026-10-18 — Weekly time hint describes the fire time
 
 - The weekly local-time hint now says the ISO week closes at Monday 00:00 and the synthesis

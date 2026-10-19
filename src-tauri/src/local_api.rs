@@ -21,8 +21,8 @@ use traits::{
     CaptureInterruption, CaptureInterruptionReason, CaptureObservations, EvidenceWindow,
     ExportFrameRow, ExportRequest, ExportResult, FrameDetail, FramePageRequest, HistoryReadError,
     ReportDeliveryState, ReportDetail, ReportPageRequest, ReportRunPhase, ResumeContext,
-    RetentionScope, RetrievedChunk, SavedReportRetention, SavedReportView, Settings, Store,
-    StoredFramePage, StoredReportPage, Toast, ToastLevel,
+    RetentionScope, RetrievedChunk, SavedReportRetention, Settings, Store, StoredFramePage,
+    StoredReportPage, Toast, ToastLevel,
 };
 
 use api::{ApiHost, ApiServer, FrameImage, SharedToken, DEFAULT_BIND_ADDRESS, DEFAULT_PORT};
@@ -854,6 +854,7 @@ pub async fn export_data(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use traits::SavedReportView;
 
     /// A minimal `ApiHost` for config-logic tests — none of its data methods are exercised
     /// by `apply_api_config`, which only needs *something* to hand to `ApiServer::start`.

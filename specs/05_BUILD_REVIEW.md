@@ -1,5 +1,35 @@
 # 05 — Build Review
 
+## 2026-10-19 — F3 G1–G6 review round (PR #141, pending merge)
+
+- 17 parallel reviewers (12 on `7639b25..8b3cf95`, 5 on `8b3cf95..957b234`), read-only, findings
+  by severity with file:line and scenario. 1 HIGH + ~22 lower; G5 scheduler core and kernel
+  scheduling helpers clean (differential probe of `weekly_due_windows`: 1,169,040 cases across
+  8 zones × 4 fire times × 12 activations × 3 date ranges × 4 cursors, 0 mismatches; another
+  reviewer checked `due_at >= end` over 5M+ zone × Monday × time cases across all 486 chrono-tz
+  zones). Fixes are the 5 `fix(memory|api|ui|docs)` commits on `fix/f3-review-findings`.
+- Named regression tests added: `weekly_all_no_data_dailies_is_no_data`,
+  `weekly_all_no_data_dailies_with_evidence_is_refused`, `weekly_no_data_day_counts_as_covered`
+  (kernel), `reports_detail_never_projects_persisted_daily_run_ids_provenance` (api),
+  `weekly_digest_never_counts_a_named_partial_day_as_covered` (src-tauri),
+  `project_notes_skips_hidden_files_but_keeps_recovery_copies`, `promotion_conflicts_when_the_note_was_never_created`,
+  `merged_content_reads_through_a_leading_utf8_bom`, `daily_note_rejects_a_weekly_synthesis_run`,
+  `schema1_daily_frontmatter_is_locked_byte_for_byte` (src-tauri), `report-file-stem.test.mjs`
+  cases and the weekly preview key case (ui).
+- Linux verification (verbatim): `cargo fmt --all -- --check` exit 0; `cargo clippy --locked -p
+  traits -p store -p kernel -p api -p mcp --all-targets -- -D warnings` exit 0;
+  `cargo test --locked --no-fail-fast` over those five crates green except
+  `explicit_ipv4_and_ipv6_listeners_require_authentication` (`AddrNotAvailable` — no IPv6
+  loopback on this host; identical on unmodified `main`); `ui/`: tsc 0, lint 0, `npm test` 55/55,
+  `npm run build` 0.
+- **Not run: `src-tauri`** (Windows-only: `openssl-sys` + `std::os::windows`). Every fix in
+  `memory.rs`, `memory_files.rs`, `promotion.rs`, `memory_telegram.rs` and `local_api.rs` is
+  compile- and test-unverified; rustfmt --check passes on the touched files only. The `04 §1c`
+  Windows chain on tbx is the gate before merge — nothing here claims native acceptance.
+- Known docs drift left for a follow-up: `docs/f3-g5-g6-verification.md` pins an older candidate
+  commit and a UI test count (43) matching no tree; committed UI tests at `957b234` are 50 (55
+  after the review-fix tests).
+
 ## 2026-10-18 — Weekly time hint (Codex `PRRT_kwDOTAuCtM6tu-Nu`, after PR #140 merged)
 
 - PR #140 merged at `eea8184` (`957b234`) before this fix landed; this branch carries it on top
