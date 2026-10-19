@@ -6,8 +6,10 @@ Resolved decisions, implementation readings and verification detail for the 0.4.
 (external-agent memory API, F3 deeper memory G1–G6): `specs/archive/07_KNOWN_GAPS.v0.4.2.md`.
 Still open:
 
-- **PENDING — F3 native Windows interactive acceptance (`04 §1c`).** Engineering tests are not
-  product acceptance. Not yet done: an `npm run dev` session in an isolated profile; a real weekly
+- **ACCEPTED on maintainer report (2026-10-19) — F3 native Windows interactive acceptance
+  (`04 §1c`).** After v0.4.2 shipped Nico reported "Tested everything green and field tested 0
+  bugs" (`05`); no per-item evidence was handed to this agent. Items that were pending until
+  then, kept for traceability: an `npm run dev` session in an isolated profile; a real weekly
   run over a real week of saved dailies; Obsidian inspection of the weekly note and its index
   links; one promotion into the project note in the running app; a running-app screenshot of
   the weekly Settings hint. The G6 weekly Telegram test send needs an explicitly approved

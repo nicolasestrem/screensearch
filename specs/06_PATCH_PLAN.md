@@ -9,9 +9,10 @@ retry, `03 §7f.10`) was resolved by Nico in favour of stored-presence projectio
 - **Pending Nico (`07`):** the failed-week edge cases (a)–(d) and the disable-before-catch-up
   reading. A changed answer becomes its own patch here. Also pending in `07`: whether a weekly
   synthesis may cite a revision rather than the base run of the same day.
-- **Not done:** running-app screenshot of the changed weekly Settings hint (`04` UI guardrails),
-  native acceptance (`04 §1c`: `npm run dev` isolated profile, real week, Obsidian, promotion) and
-  an approved Telegram test send.
+- **Accepted on maintainer report (2026-10-19, `05`):** native acceptance (`04 §1c`) after the
+  v0.4.2 release ("Tested everything green and field tested 0 bugs"). No per-item evidence
+  was provided: the running-app screenshot of the weekly Settings hint (`04` UI guardrails) and
+  an approved Telegram test send are not recorded as done.
 - **Maintenance:** retire the `postcss-selector-parser` override (#125) when upstream ranges
   resolve patched copies.
 - Remote report generation/retry/delivery remain excluded from the external-agent memory API.

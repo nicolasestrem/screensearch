@@ -1,5 +1,38 @@
 # 05 — Build Review
 
+## 2026-10-19 — v0.4.2 published and field-tested
+
+- **Release:** tag `v0.4.2` (annotated, on squash commit `611a4b4`, PR #142); release
+  <https://github.com/nicolasestrem/screensearch/releases/tag/v0.4.2>, non-draft,
+  non-prerelease, Latest, published 2026-10-19T12:22:34Z. Tag run 39249860802 passed every step
+  including "Verify version consistency" and "Publish GitHub Release"; the earlier dispatch dry
+  run 39249417516 on `611a4b4` also passed (tree identical to the audited `7d5133d`).
+- **Assets (observed):**
+
+  ```text
+  latest.json 773
+  ScreenSearch_0.4.2_x64-setup.exe 14608705
+  ScreenSearch_0.4.2_x64-setup.exe.sig 424
+  ```
+
+- **Updater endpoint (observed):** `latest.json` reports `version` 0.4.2, installer URL
+  `.../screensearch-v2c/releases/download/v0.4.2/ScreenSearch_0.4.2_x64-setup.exe`, signature key
+  ID `27E1C773C0BDF81E` (matches the shipped pubkey). The old-name endpoint resolves:
+
+  ```text
+  HTTP/2 301 -> .../nicolasestrem/screensearch/releases/latest/download/latest.json
+  HTTP/2 302 -> .../releases/download/v0.4.2/latest.json
+  HTTP/2 302 -> release-assets.githubusercontent.com/...
+  HTTP/2 200
+  endpoint version: 0.4.2
+  ```
+
+- **Field test (maintainer-reported, 2026-10-19):** Nico: "Auto update works. Tested everything
+  green and field tested 0 bugs." Recorded as the maintainer's statement; this agent did not
+  observe the run and holds no per-item output, screenshot or Telegram send log from it. It is
+  taken as the F3 native interactive acceptance (`04 §1c`) and the auto-update check. The
+  entry above it is superseded on "no tag claimed": the tag and release now exist.
+
 ## 2026-10-19 — v0.4.2 release-prep archive sweep (branch `release/v0.4.2`)
 
 - **Moved, verbatim:** every 0.4.2-arc entry recorded since the v0.4.1 sweep (security alert

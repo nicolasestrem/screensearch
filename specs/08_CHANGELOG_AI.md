@@ -1,5 +1,14 @@
 # 08 — AI Changelog
 
+## 2026-10-19 — Record v0.4.2 publication and field test
+
+- **Change:** `05` gained the publication evidence (tag run, assets, updater endpoint
+  redirect chain); `07` and `06` moved F3 native acceptance from PENDING to accepted on the
+  maintainer's report.
+- **Why:** the sweep entries said "no tag claimed" and left F3 acceptance pending; the release is
+  now published and Nico reported a green field test. Recorded as reported, not as agent-observed.
+- **Verification:** docs only; values copied from the observed release run output (`05`).
+
 ## 2026-10-19 — v0.4.2 release-prep archive sweep (branch `release/v0.4.2`)
 
 - **Change:** moved the 0.4.2-arc entries of `05`/`06`/`07`/`08` verbatim into
