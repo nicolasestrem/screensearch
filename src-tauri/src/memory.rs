@@ -3316,18 +3316,16 @@ mod tests {
             .as_ref()
             .map(|error| error.message.as_str())
             == Some("A week without saved daily evidence writes no weekly note (NO_DATA).")));
-        let vault_snapshot = receipts
-            .iter()
-            .find(|item| item.destination == ReportDestination::Vault)
-            .expect("a vault skip receipt exists")
-            .destination_snapshot
-            .clone();
-        let index_snapshot = receipts
-            .iter()
-            .find(|item| item.destination == ReportDestination::Index)
-            .expect("an index skip receipt exists")
-            .destination_snapshot
-            .clone();
+        // A file receipt snapshots its path as a JSON string.
+        let snapshot_path = |destination: ReportDestination| -> String {
+            let item = receipts
+                .iter()
+                .find(|item| item.destination == destination)
+                .expect("a file skip receipt exists");
+            serde_json::from_str(&item.destination_snapshot).expect("a JSON path snapshot")
+        };
+        let vault_snapshot = snapshot_path(ReportDestination::Vault);
+        let index_snapshot = snapshot_path(ReportDestination::Index);
         assert!(
             vault_snapshot.ends_with("ScreenSearch"),
             "the vault skip names the report root: {vault_snapshot}"
