@@ -58,9 +58,18 @@
   `cargo test -p inference --lib` → `110 passed; 0 failed; 2 ignored` (TEST_EXIT=0) and
   `cargo clippy -p inference -p screensearch --all-targets -- -D warnings` → `Finished`
   (CLIPPY_EXIT=0).
+- **Review round 1 (PR #145):** Codex reviewed `fd35571` with **no findings** (0 inline
+  threads, 0 review submissions); `@claude review` returned six non-blocking suggestions as a
+  PR conversation comment. Dispositions: (1) broad fallback trigger — intentional and now
+  covered by `release_lookup_without_a_matching_asset_uses_direct_fallback`; (2) pin staleness
+  — already `07` #95; (3) `verify_sha256` wording — reworded; (4) env-var race in the ignored
+  test — now takes `ENV_LOCK` like the other env-reading test; (5) 32 MB double copy —
+  pre-existing and unchanged (would need a `Bytes`-based signature), left as is; (6) offline
+  start — already `07` #94. Only (1), (3) and (4) changed code/docs; no product contract moved.
 - **Not run / open:** the live installed app was never restarted and its data untouched (the
   single-instance plugin means an isolated first run would require stopping it); no full
-  `cargo test --workspace` / UI chain was run on this branch, and no merge/release was made.
+  `cargo test --workspace` / UI chain was run locally on this branch (CI's Windows job passed
+  on `fd35571`), and no merge/release was made.
 
 ## 2026-10-19 — v0.4.2 published and field-tested
 

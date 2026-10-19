@@ -569,8 +569,9 @@ async fn fetch_binary_body(
     Ok(bytes.to_vec())
 }
 
-/// Constant-time-insensitive digest check for a pinned asset: the file is downloaded over
-/// TLS from GitHub and then compared with the digest published in the release metadata.
+/// Digest check for a pinned asset: the file is downloaded over TLS from GitHub and then
+/// compared with the digest published in the release metadata. A plain comparison is fine
+/// here — the digest is public, so there is no secret to leak through timing.
 fn verify_sha256(bytes: &[u8], expected_hex: &str) -> Result<()> {
     let actual: String = Sha256::digest(bytes)
         .iter()
@@ -1933,6 +1934,27 @@ mod tests {
         assert_eq!(pick_vulkan_asset(&[name]), Some(0));
     }
 
+    /// The fallback is deliberately broad: a 200 response whose recent releases carry no
+    /// matching asset (a run of incomplete upstream releases) must also resolve to the pin
+    /// rather than leave the app without a sidecar.
+    #[tokio::test]
+    async fn release_lookup_without_a_matching_asset_uses_direct_fallback() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/releases"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"assets": [{"name": "llama-b3-bin-win-cpu-x64.zip", "browser_download_url": "https://example.invalid/cpu.zip"}]}
+            ])))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let (url, name) =
+            resolve_binary_url_with_fallback(&format!("{}/releases", server.uri())).await;
+        assert_eq!(url, FALLBACK_VULKAN_ASSET.0);
+        assert_eq!(name, FALLBACK_VULKAN_ASSET.1);
+    }
+
     #[tokio::test]
     async fn release_lookup_keeps_newest_matching_asset_when_api_works() {
         let server = MockServer::start().await;
@@ -2065,6 +2087,12 @@ mod tests {
     #[tokio::test]
     #[ignore = "downloads the real llama.cpp Vulkan release from GitHub (~32 MB)"]
     async fn downloads_the_real_sidecar_binary() {
+        // `ensure_binary` reads `SSV2C_LLAMA_RELEASE_URL`; hold the same lock the other
+        // env-mutating test takes so an `--include-ignored` run cannot race it.
+        let _guard = ENV_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
         let dir = real_binary_test_dir("api-path");
         let binary = ensure_binary(&dir)
             .await
