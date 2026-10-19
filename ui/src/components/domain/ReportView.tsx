@@ -4,7 +4,9 @@
 // app version, model, time span, filters, and coverage counts. 0.3.1 (D2/D3, #65): the
 // download is a date-stamped file in Downloads via the `save_report_markdown` command
 // (collision-safe `-2`/`-3`); 0.3.2 (#89): daily/weekly downloads carry the report kind
-// in the stem. The footer is a single plain-text block used in BOTH
+// in the stem; `03 §8e` (F3): a persisted run's durable kind names the file too, so a
+// `weekly_synthesis` download never shares the on-demand weekly report's stem. The footer
+// is a single plain-text block used in BOTH
 // places — on screen AND appended to the copied/saved markdown so the file is
 // self-describing. A no-evidence report renders its honest message with no chips/footer.
 import Markdown from "react-markdown";
@@ -22,6 +24,7 @@ import { buildReportFooter } from "../../lib/reportFooter";
 import type { ReportFooterScope } from "../../lib/reportFooter";
 import { handleExternalLinkClick } from "../../lib/openExternal";
 import type { ReportKind } from "../../bindings/ReportKind";
+import type { ReportRunKind } from "../../bindings/ReportRunKind";
 import type { ReportResponse } from "../../bindings/ReportResponse";
 import type { ReportRequest } from "../../bindings/ReportRequest";
 import type { ReportRun } from "../../bindings/ReportRun";
@@ -67,7 +70,10 @@ function blobDownload(filename: string, markdown: string) {
   URL.revokeObjectURL(url);
 }
 
-async function downloadReport(markdown: string, kind?: ReportKind) {
+async function downloadReport(
+  markdown: string,
+  kind?: ReportKind | ReportRunKind,
+) {
   const stem = reportFileStem(kind);
   if (isTauri()) {
     try {
@@ -121,7 +127,10 @@ export function ReportView({
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => downloadReport(exportMarkdown, request?.kind)}
+            // A persisted run names itself by its durable kind (`weekly_synthesis` /
+            // `daily`, `03 §8e`) so a saved synthesis never masquerades as the on-demand
+            // weekly report; on-demand runs keep using the request's kind.
+            onClick={() => downloadReport(exportMarkdown, run?.kind ?? request?.kind)}
           >
             Download .md
           </Button>

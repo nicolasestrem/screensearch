@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ReportView } from "./ReportView";
 import { Button, Chip, Field, Panel, Toggle } from "../primitives";
@@ -13,6 +12,7 @@ import { savedRunFooterScope } from "../../lib/reportFooter";
 import {
   memoryError, useMemoryDeliveries, useMemoryMutation, useMemoryRun,
   useMemoryRuns, useMemorySchedulePreview, useMemoryStatus, useSetMemorySettings,
+  useWeeklyMemorySchedulePreview,
 } from "../../lib/ipc/memory";
 import {
   promotionError, useCreateProjectNote, useProjectNoteStatus,
@@ -23,6 +23,7 @@ const displaySettings = (settings: MemorySettings): MemorySettings => ({
   ...settings,
   output_folder: settings.output_folder === null ? null : forwardPath(settings.output_folder),
 });
+
 
 function timestamp(value: number, timeZone?: string) {
   return new Date(value).toLocaleString(undefined, {
@@ -376,12 +377,7 @@ export function MemoryPanel({ initialSettings }: { initialSettings?: MemorySetti
   const clearToken = useMemoryMutation(cmd.clearTelegramToken);
   const reset = useMemoryMutation(cmd.resetMemorySourceIdentity);
   const preview = useMemorySchedulePreview(draft);
-  const weeklyPreview = useQuery({
-    queryKey: ["memory-weekly-preview", draft?.weekly_local_time, draft?.weekly_timezone, draft?.output_folder],
-    queryFn: () => cmd.previewWeeklyMemorySchedule({ ...draft!, weekly_enabled: false, weekly_telegram_enabled: false }),
-    enabled: Boolean(draft?.weekly_local_time && draft?.weekly_timezone),
-    retry: false,
-  });
+  const weeklyPreview = useWeeklyMemorySchedulePreview(draft);
 
   useEffect(() => {
     if (status.data) setDraft((previous) => previous ?? displaySettings(status.data.settings));
@@ -445,7 +441,7 @@ export function MemoryPanel({ initialSettings }: { initialSettings?: MemorySetti
           <Field label="Local report time" type="time" step={60} value={draft?.local_time ?? ""} disabled={!loaded || busy} onChange={(e) => set("local_time", e.currentTarget.value.slice(0, 5) || null)} />
           <Field label="Timezone (IANA)" value={draft?.timezone ?? ""} placeholder="Europe/Paris" disabled={!loaded || busy} onChange={(e) => set("timezone", e.currentTarget.value || null)} hint="Fixed to your selection, even if the computer timezone changes." />
         </div>
-        <Field label="Output folder (absolute path)" placeholder="C:/Users/YourName/Documents/Notes" value={draft?.output_folder ?? ""} disabled={!loaded || busy} onChange={(e) => set("output_folder", forwardPath(e.currentTarget.value) || null)} hint="Daily notes go into ScreenSearch/Daily; selected-date reports go into ScreenSearch/Reports. ScreenSearch/Index.md links them. Edited or unrelated files are preserved." />
+        <Field label="Output folder (absolute path)" placeholder="C:/Users/YourName/Documents/Notes" value={draft?.output_folder ?? ""} disabled={!loaded || busy} onChange={(e) => set("output_folder", forwardPath(e.currentTarget.value) || null)} hint="Daily notes go into ScreenSearch/Daily; weekly syntheses go into ScreenSearch/Weekly; selected-date reports go into ScreenSearch/Reports. ScreenSearch/Index.md links them. Edited or unrelated files are preserved." />
         <div className="min-h-12 text-caption text-ink-muted" aria-live="polite">
           {!draft?.timezone || !draft.local_time ? <p>Select time and timezone to preview the first report.</p> : preview.isError ? <p className="text-warn">{memoryError(preview.error)}</p> : preview.isFetching ? <p>Calculating first eligible report…</p> : preview.data ? <p>First eligible day for a new activation: {preview.data.local_date}. Due {new Date(preview.data.due_at).toLocaleString(undefined, { timeZone: draft.timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} ({draft.timezone}). Saving unchanged scheduling settings preserves the existing activation.</p> : <p>Complete the schedule to preview its first report.</p>}
         </div>
@@ -575,7 +571,7 @@ export function MemoryPanel({ initialSettings }: { initialSettings?: MemorySetti
             <div>
               <h4 className="font-display text-body">Missed weeks</h4>
               <p className="text-caption text-ink-muted">
-                These uncovered spans were skipped by bounded catch-up or a schedule change, or their scheduled synthesis failed, and are not reported as covered. Times use the current weekly timezone.
+                These uncovered spans were skipped by bounded catch-up or a schedule change, or their scheduled synthesis failed. They were not covered when the schedule reached them; a later manual run of the same week is listed under the last weekly synthesis. Times use the current weekly timezone.
               </p>
               <ul>
                 {weeklyMissed.map((window) => (

@@ -45,6 +45,23 @@ export function useMemorySchedulePreview(settings: MemorySettings | null) {
     retry: false,
   });
 }
+/** The settings a weekly preview asks about: the draft with both weekly switches off. */
+export const weeklyPreviewPayload = (settings: MemorySettings): MemorySettings => ({
+  ...settings,
+  weekly_enabled: false,
+  weekly_telegram_enabled: false,
+});
+export const weeklyPreviewKey = (settings: MemorySettings | null) =>
+  ["memory-weekly-preview", settings === null ? null : weeklyPreviewPayload(settings)] as const;
+/** Keyed on the whole payload: the backend verdict also reads the shared Telegram fields. */
+export function useWeeklyMemorySchedulePreview(settings: MemorySettings | null) {
+  return useQuery({
+    queryKey: weeklyPreviewKey(settings),
+    queryFn: () => cmd.previewWeeklyMemorySchedule(weeklyPreviewPayload(settings!)),
+    enabled: settings !== null && Boolean(settings.weekly_local_time && settings.weekly_timezone),
+    retry: false,
+  });
+}
 export function useMemoryMutation<T, V>(mutationFn: (variables: V) => Promise<T>) {
   const qc = useQueryClient();
   return useMutation({
