@@ -15,6 +15,9 @@ retry, `03 §7f.10`) was resolved by Nico in favour of stored-presence projectio
 - **Maintenance:** retire the `postcss-selector-parser` override (#125) when upstream ranges
   resolve patched copies.
 - Remote report generation/retry/delivery remain excluded from the external-agent memory API.
+- **Done in the release PR (#142, Codex `PRRT_kwDOTAuCtM6t5thb`):** the archived docs-drift
+  follow-up — `docs/f3-g5-g6-verification.md` now points at the 0.4.2 archive and carries a
+  dated correction of its candidate-only UI test counts (50 at `957b234`, 55 at v0.4.2).
 
 > **Ordered fixes required before shipping**, plus any **spec contradictions** found during the
 > build (`04 §5`). Empty until the build surfaces something.

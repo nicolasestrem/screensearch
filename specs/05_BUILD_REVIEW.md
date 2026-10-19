@@ -46,6 +46,19 @@
   the current `latest.json`; `scripts/make-latest-json.mjs` strips the tag `v`; nothing but
   `release.yml` triggers on `v*` tags; the 12 → 13 migration tests pass
   (`cargo test -p store --lib migration_`: 13 passed).
+- **Codex P2 on PR #142 (`PRRT_kwDOTAuCtM6t5thb`):** the archived 05 entry "Known docs drift
+  left for a follow-up" (`docs/f3-g5-g6-verification.md`: stale candidate, UI count 43) was not
+  carried forward. Fixed in the PR instead of carrying it: the doc's revision pointer now names
+  `specs/archive/05_BUILD_REVIEW.v0.4.2.md` and a dated correction records the committed UI
+  counts, observed on Linux with `node --experimental-strip-types --test test/*.test.mjs`
+  (Node v26.8.1) in a temporary detached worktree at `957b234` and in `ui/` at the PR tree:
+
+  ```text
+  957b234: ℹ tests 50 / ℹ pass 50 / ℹ fail 0
+  a634e8c: ℹ tests 55 / ℹ pass 55 / ℹ fail 0
+  ```
+
+  The tbx chain at `98b1466` reported the same `# tests 55` / `# pass 55` / `# fail 0`.
 - **Carried forward, still PENDING (not archived away):** F3 native Windows interactive
   acceptance (`04 §1c`) has not been run — no `npm run dev` isolated-profile session, no real
   weekly run over a real week of saved dailies, no Obsidian inspection of the weekly note and

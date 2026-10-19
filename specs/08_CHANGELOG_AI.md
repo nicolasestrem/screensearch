@@ -12,6 +12,10 @@
 - **Why:** CLAUDE.md "Archive on release"; modelled on the v0.4.1 sweep (`6587e84`). Release
   prep only; no tag or release is claimed here.
 - **Verification:** archive bodies diffed byte-identical to the pre-sweep live files (`05`).
+- **Review fix (Codex `PRRT_kwDOTAuCtM6t5thb`):** the archived docs-drift follow-up for
+  `docs/f3-g5-g6-verification.md` was fixed rather than dropped: its revision pointer names the
+  0.4.2 archive and a dated correction records the committed UI test counts (50 at `957b234`,
+  55 at v0.4.2; observed output in `05`).
 
 > Append-only record of what the agent changed during the build, **with reasons**. One entry per
 > meaningful change set. Empty until P0 begins. (This tracks build work; the design-phase history
