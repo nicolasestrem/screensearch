@@ -24,8 +24,9 @@
   (one differential probe of `weekly_due_windows`: 1,169,040 cases, 0 mismatches).
 - Linux: fmt 0, clippy `-D warnings` 0, portable tests green except the pre-existing
   `explicit_ipv4_and_ipv6_listeners_require_authentication` (no IPv6 loopback on this host);
-  UI 55/55, tsc/lint/build 0. **src-tauri fixes are unverified** — the crate is Windows-only and
-  the `04 §1c` chain on tbx has not run for these commits.
+  UI 55/55, tsc/lint/build 0. Windows CI then caught two src-tauri compile errors and one test
+  bug (fixed in `f51a1be`, `3117aba`); the `04 §1c` chain on tbx at `3117aba` is `CHAIN_EXIT=0`
+  (1141 passed, 0 failed). `npm run dev` app verification and native acceptance were not run.
 
 ## 2026-10-18 — Weekly time hint describes the fire time
 

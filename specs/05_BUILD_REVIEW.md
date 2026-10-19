@@ -22,10 +22,30 @@
   `explicit_ipv4_and_ipv6_listeners_require_authentication` (`AddrNotAvailable` — no IPv6
   loopback on this host; identical on unmodified `main`); `ui/`: tsc 0, lint 0, `npm test` 55/55,
   `npm run build` 0.
-- **Not run: `src-tauri`** (Windows-only: `openssl-sys` + `std::os::windows`). Every fix in
-  `memory.rs`, `memory_files.rs`, `promotion.rs`, `memory_telegram.rs` and `local_api.rs` is
-  compile- and test-unverified; rustfmt --check passes on the touched files only. The `04 §1c`
-  Windows chain on tbx is the gate before merge — nothing here claims native acceptance.
+- **Not run on Linux: `src-tauri`** (Windows-only: `openssl-sys` + `std::os::windows`). The
+  first Windows CI run then failed on it: clippy E0004 (`file_destination_path` missed
+  `ReportDestination::Telegram`) and an unused production import of `SavedReportView` (fixed in
+  `f51a1be`), then `weekly_runs_write_note_and_index_or_skip_no_data` compared the raw JSON
+  `destination_snapshot` against a path (test fix in `3117aba`).
+- **Windows (tbx, Rust 1.95.0, Node 22.23.3), `04 §1c` order, detached at `3117aba`:**
+
+  ```text
+  EXIT npm ci = 0
+  EXIT npm run lint = 0
+  EXIT npm run build = 0
+  EXIT npm test = 0
+  EXIT stage-mcp = 0
+  EXIT cargo fmt = 0
+  EXIT cargo clippy = 0
+  EXIT cargo build = 0
+  EXIT cargo test = 0        (62 suites: 1141 passed, 0 failed, 15 ignored)
+  EXIT bindings diff = 0
+  CHAIN_EXIT=0
+  ```
+
+  Hosted CI on `3117aba`: `build & test (windows)`, all three `package & verify` targets and
+  CodeQL pass. **Not run:** app verification via `npm run dev` in an isolated profile and the
+  `04 §1c` native acceptance (real weekly run, Obsidian, promotion) — not claimed here.
 - Known docs drift left for a follow-up: `docs/f3-g5-g6-verification.md` pins an older candidate
   commit and a UI test count (43) matching no tree; committed UI tests at `957b234` are 50 (55
   after the review-fix tests).
