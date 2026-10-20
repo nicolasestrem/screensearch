@@ -14,7 +14,9 @@
   why; users need to see setup progress and a persistent, actionable failure.
 - **Verification:** see `05` (2026-10-20) — full CI chain green on tbx, two mutation REDs,
   independent review fixed; interactive native run by Nico on tbx reported
-  "All good!" (failed chip, live install stage, Engine/Search model Done; see `05`).
+  "All good!" (failed chip, live install stage, Engine/Search model Done; see `05`). PR #146
+  round 1 (Codex, 3 × P2): listener-before-snapshot refetch, Settings zero presence once all
+  steps are done, terminal engine steps keep the real attempt — all fixed, gate green on tbx.
 
 ## 2026-10-19 — llama.cpp bootstrap recovery
 

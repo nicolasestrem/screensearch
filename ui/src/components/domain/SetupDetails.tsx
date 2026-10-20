@@ -12,6 +12,7 @@ import { Skeleton } from "../primitives";
 import { useSetupStatus } from "../../lib/ipc/queries";
 import {
   SETUP_OPERATION_LABELS,
+  setupDetailsSteps,
   setupBytesText,
   setupDoneText,
   setupDownloadPercent,
@@ -136,8 +137,9 @@ export function SetupDetails() {
     );
   }
 
-  const steps = setup.data?.steps ?? [];
-  // Nothing to set up → details list nothing (§4: the element does not exist).
+  // Nothing active or failed → details list nothing (§4: zero presence when
+  // idle, even after every operation has completed).
+  const steps = setupDetailsSteps(setup.data);
   if (steps.length === 0) return null;
 
   return (

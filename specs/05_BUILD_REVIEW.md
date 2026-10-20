@@ -45,6 +45,22 @@
   reload reconciliation. Polish noted: at the rail's width the active chip truncates the stage
   word ("Installing e…"); a shorter active label is a candidate follow-up, not a defect against
   `03 §7g`. Not pushed; no PR; no merge.
+- **PR #146 review round 1 (Codex, `e0503e3`, 3 inline P2 threads; all valid, fixed):**
+  (1) `PRRT_kwDOTAuCtM6uUbG1` — the snapshot query mounts in the child `StatusRail`, whose fetch
+  can resolve before `useLiveEvents`' async `setup_changed` listener exists, so a terminal event
+  in that gap was lost → the hook now invalidates the setup query once the listener is live (the
+  revision guard makes the refetch safe). Timing inside the WebView; no node-runner test can
+  reproduce it — verified by reading, lint/build. (2) `PRRT_kwDOTAuCtM6uUbG7` — Settings kept
+  listing all-`done` rows forever, contrary to `UI_REFERENCE §4` ("details list nothing") → new
+  pure `setupDetailsSteps` returns nothing once no operation is active or failed; test
+  `setupDetailsSteps: zero presence once every operation is done…` proven RED on tbx (guard
+  removed → `pass 80 / fail 1`, file restored). This also corrects the native-run observation
+  above: the "Engine available / Search model ready" rows after setup were that defect, not the
+  intended idle state. (3) `PRRT_kwDOTAuCtM6uUbHC` — terminal engine `Done`/`Failed` reset
+  `attempt` to 1 → the last download attempt is shared (`Arc<AtomicU32>`) with the terminal
+  steps. Gate on tbx at the fixed tree: lint 0 · UI `tests 81 / pass 81 / fail 0` · build 0 ·
+  fmt 0 · workspace clippy `-D warnings` 0 · `cargo test -p screensearch` `162 passed` ·
+  kernel setup `9 passed` · bindings clean.
 
 ## 2026-10-19 — llama.cpp bootstrap recovery (branch `fix/llama-bootstrap-recovery`)
 

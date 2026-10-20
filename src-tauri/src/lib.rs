@@ -1949,7 +1949,10 @@ async fn init_inference(
     let kernel_for_engine = kernel.clone();
     // Verifying/Installing follow the attempt that delivered the bytes, so they carry
     // that attempt number rather than resetting it to 1.
-    let last_attempt = std::sync::atomic::AtomicU32::new(1);
+    // Shared with the terminal Done/Failed steps below, so they report the attempt
+    // that actually ended the download instead of resetting it to 1.
+    let last_attempt = Arc::new(std::sync::atomic::AtomicU32::new(1));
+    let progress_attempt = last_attempt.clone();
     let engine_progress = move |p: EngineProgress| {
         use std::sync::atomic::Ordering;
         let (phase, attempt, downloaded_bytes, total_bytes) = match p {
@@ -1959,18 +1962,18 @@ async fn init_inference(
                 received,
                 total,
             } => {
-                last_attempt.store(attempt, Ordering::Relaxed);
+                progress_attempt.store(attempt, Ordering::Relaxed);
                 (SetupPhase::Downloading, attempt, Some(received), total)
             }
             EngineProgress::Verifying => (
                 SetupPhase::Verifying,
-                last_attempt.load(Ordering::Relaxed),
+                progress_attempt.load(Ordering::Relaxed),
                 None,
                 None,
             ),
             EngineProgress::Installing => (
                 SetupPhase::Installing,
-                last_attempt.load(Ordering::Relaxed),
+                progress_attempt.load(Ordering::Relaxed),
                 None,
                 None,
             ),
@@ -2002,7 +2005,7 @@ async fn init_inference(
             kernel.set_setup_step(SetupStep {
                 operation: SetupOperation::Engine,
                 phase: SetupPhase::Failed,
-                attempt: 1,
+                attempt: last_attempt.load(std::sync::atomic::Ordering::Relaxed),
                 downloaded_bytes: None,
                 total_bytes: None,
                 error: Some(reason.clone()),
@@ -2019,7 +2022,7 @@ async fn init_inference(
     kernel.set_setup_step(SetupStep {
         operation: SetupOperation::Engine,
         phase: SetupPhase::Done,
-        attempt: 1,
+        attempt: last_attempt.load(std::sync::atomic::Ordering::Relaxed),
         downloaded_bytes: None,
         total_bytes: None,
         error: None,
@@ -2060,7 +2063,7 @@ async fn init_inference(
             kernel.set_setup_step(SetupStep {
                 operation: SetupOperation::Engine,
                 phase: SetupPhase::Failed,
-                attempt: 1,
+                attempt: last_attempt.load(std::sync::atomic::Ordering::Relaxed),
                 downloaded_bytes: None,
                 total_bytes: None,
                 error: Some(format!("{e:#}")),

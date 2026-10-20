@@ -182,6 +182,12 @@ export function useLiveEvents() {
         if (newerSetupStatus(incoming, cached)) {
           qc.setQueryData(queryKeys.setupStatus, incoming);
         }
+      }).then((unlisten) => {
+        // The snapshot query mounts in a child (StatusRail) whose fetch can resolve
+        // before this async listener exists; an event in that gap would be lost.
+        // Refetch once the listener is live — the revision guard keeps it safe.
+        void qc.invalidateQueries({ queryKey: queryKeys.setupStatus });
+        return unlisten;
       }),
     );
 

@@ -216,6 +216,16 @@ export function summarizeSetup(
 }
 
 /**
+ * The rows Settings · Models lists (`UI_REFERENCE §4`): every step while any
+ * operation is active or failed (completed rows stay for context), and nothing
+ * once everything has finished — zero presence when idle.
+ */
+export function setupDetailsSteps(status: SetupStatus | null | undefined): SetupStep[] {
+  if (status == null) return [];
+  return summarizeSetup(status) === null ? [] : status.steps;
+}
+
+/**
  * The live-region announcement. Deliberately derived ONLY from operation + phase
  * (plus presence), never from byte counts — so a stream of progress ticks that
  * only moves bytes does not re-announce anything (§4: phase changes only).

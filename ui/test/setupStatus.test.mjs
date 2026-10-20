@@ -16,6 +16,7 @@ import {
   setupFormatBytes,
   setupStageText,
   summarizeSetup,
+  setupDetailsSteps,
 } from "../src/lib/setup.ts";
 
 function step(overrides) {
@@ -317,4 +318,26 @@ test("setupFormatBytes formats the way the rail already does", () => {
   assert.equal(setupFormatBytes(5_000_000), "4.8 MB");
   assert.equal(setupFormatBytes(13_000_000), "12 MB");
   assert.equal(setupFormatBytes(1_073_741_824), "1.0 GB");
+});
+
+test("setupDetailsSteps: zero presence once every operation is done; all rows while one is active or failed", () => {
+  const allDone = status(5, [
+    step({ operation: "engine", phase: "done" }),
+    step({ operation: "embeddings", phase: "done" }),
+  ]);
+  assert.deepEqual(setupDetailsSteps(allDone), [], "an idle, all-done snapshot lists nothing");
+  assert.deepEqual(setupDetailsSteps(status(1, [])), []);
+  assert.deepEqual(setupDetailsSteps(null), []);
+
+  const oneActive = status(6, [
+    step({ operation: "engine", phase: "done" }),
+    step({ operation: "embeddings", phase: "preparing" }),
+  ]);
+  assert.equal(setupDetailsSteps(oneActive).length, 2, "completed rows stay while another operation runs");
+
+  const oneFailed = status(7, [
+    step({ operation: "engine", phase: "failed", error: "HTTP 404" }),
+    step({ operation: "embeddings", phase: "done" }),
+  ]);
+  assert.equal(setupDetailsSteps(oneFailed).length, 2, "a failure keeps the list visible");
 });
