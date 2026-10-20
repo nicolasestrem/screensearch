@@ -30,9 +30,21 @@
   workspace clippy 0 · `cargo test -p kernel --test setup` `9 passed` · `cargo test -p
   inference --lib` `117 passed; 2 ignored` · `cargo test -p screensearch` 0 (`162 passed`) ·
   bindings clean.
-- **Pending (not observed):** the interactive run of the source-built app on tbx — engine
-  failure state + reload reconciliation, and a real engine download with progress → Done
-  (`03 §7g` acceptance, `UI_REFERENCE §10.8` screenshots). Not pushed; no PR; no merge.
+- **Native interactive run (Nico, tbx, 2026-10-20, `npm run dev` of the `a36504b` tree, sidecar
+  folder emptied):** reported "All good!" with four screenshots. Observed in them:
+  (1) `SSV2C_LLAMA_RELEASE_URL` pointed at a missing asset → StatusRail chip **"Setup failed"**
+  plus the existing readiness banner "Inference: Unavailable — llama-server unavailable:
+  download …/b0/nope.zip returned HTTP 404 Not Found"; (2) a real first-run acquisition →
+  chip "Preparing local AI · Installing e…" (step text truncated by the new width cap) beside
+  the "Embeddings: Starting" / "Inference: Starting — resolving llama-server" banner; (3) the
+  console log shows the anonymous API lookup **failing with HTTP 403 rate limit and the pinned
+  fallback being used** (the #145 path, live); (4) Settings · Models afterwards: **Engine —
+  Done, "Engine available"; Search model — Done, "Search model ready"**, no chip.
+  Not captured as screenshots (covered only by Nico's "All good!" report): the failed row in
+  Settings details with its next step, the determinate download percentage, and the Ctrl+R
+  reload reconciliation. Polish noted: at the rail's width the active chip truncates the stage
+  word ("Installing e…"); a shorter active label is a candidate follow-up, not a defect against
+  `03 §7g`. Not pushed; no PR; no merge.
 
 ## 2026-10-19 — llama.cpp bootstrap recovery (branch `fix/llama-bootstrap-recovery`)
 

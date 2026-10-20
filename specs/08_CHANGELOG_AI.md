@@ -13,7 +13,8 @@
 - **Why:** the v0.4.2 field failure left inference unavailable with nothing in the app to say
   why; users need to see setup progress and a persistent, actionable failure.
 - **Verification:** see `05` (2026-10-20) — full CI chain green on tbx, two mutation REDs,
-  independent review fixed; interactive native run still pending.
+  independent review fixed; interactive native run by Nico on tbx reported
+  "All good!" (failed chip, live install stage, Engine/Search model Done; see `05`).
 
 ## 2026-10-19 — llama.cpp bootstrap recovery
 
