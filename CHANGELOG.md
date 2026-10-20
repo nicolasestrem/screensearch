@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Setup progress and errors are visible in the app.** While ScreenSearch prepares local AI —
+  downloading and installing the llama.cpp engine, preparing the search model, or downloading a
+  vision/answer model — a quiet status-bar chip reads "Preparing local AI" with the current
+  stage, and Settings · Models lists each step: Checking → Downloading → Verifying → Installing →
+  Done. Real progress (bytes and a percentage) appears only when it can be measured; the search
+  model shows honest indeterminate progress. A failed step stays visible as "Setup failed" until
+  that step runs again, with a plain cause, the next step and the technical details one click away (signed
+  URL parameters are stripped). Nothing blocks capture or search, and no new download, setting
+  or network destination is added. Spec: `03 §7g`.
+
 ### Fixed
 
 - **Local inference could be permanently unavailable on a rate-limited network.** The app

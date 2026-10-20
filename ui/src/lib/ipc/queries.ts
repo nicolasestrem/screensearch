@@ -26,6 +26,8 @@ import type { UiResumeContext } from "../../bindings/UiResumeContext";
 import type { ApiStatus } from "../../bindings/ApiStatus";
 import type { UpdateStatus } from "../../bindings/UpdateStatus";
 import type { SessionQuery } from "../../bindings/SessionQuery";
+import type { SetupStatus } from "../../bindings/SetupStatus";
+import { newerSetupStatus } from "../setup";
 
 /** Subsystem readiness; kept live by `readiness_changed` (see useLiveEvents). */
 export function useReadiness() {
@@ -336,4 +338,25 @@ export function useUpdateStatus() {
     queryFn: cmd.getUpdateStatus,
   });
   return useMaybeOverride(q, queryKeys.updateStatus);
+}
+
+/**
+ * The setup/acquisition snapshot (2026-10-20, `03 §7g`). Fetched on mount — but
+ * the subscription lives in useLiveEvents, which registers `setup_changed` while
+ * this query runs, so subscribe-before-fetch ordering holds at the app level.
+ * The queryFn merges its fetch against the current cache through
+ * `newerSetupStatus`, so a fetch racing a newer live event can never downgrade
+ * the cache: the result already inside the cache (revised by the event) wins.
+ */
+export function useSetupStatus() {
+  const qc = useQueryClient();
+  const q = useQuery<SetupStatus>({
+    queryKey: queryKeys.setupStatus,
+    queryFn: async () => {
+      const fetched = await cmd.getSetupStatus();
+      const cached = qc.getQueryData<SetupStatus | null>(queryKeys.setupStatus);
+      return newerSetupStatus(fetched, cached) ? fetched : (cached as SetupStatus);
+    },
+  });
+  return useMaybeOverride(q, queryKeys.setupStatus);
 }

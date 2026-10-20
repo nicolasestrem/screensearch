@@ -17,6 +17,7 @@ import type { ThrottleStatus } from "../../bindings/ThrottleStatus";
 import type { OpenMoment } from "../../bindings/OpenMoment";
 import type { MarkToast } from "../../bindings/MarkToast";
 import type { UpdateStatus } from "../../bindings/UpdateStatus";
+import type { SetupStatus } from "../../bindings/SetupStatus";
 
 /** Map of backend event name → payload type. */
 export interface AppEvents {
@@ -42,6 +43,10 @@ export interface AppEvents {
   // downloading / ready / error / back to idle). The UI mirrors it into the
   // `updateStatus` query cache — no toast, the updater is quiet (`03 §11b`, D1).
   update_status_changed: UpdateStatus;
+  // Setup visibility (2026-10-20, `03 §7g`): every setup/acquisition change
+  // broadcasts the WHOLE SetupStatus snapshot. Managed with a revision guard so
+  // a lagged event can never overwrite newer state (see useLiveEvents).
+  setup_changed: SetupStatus;
   // Pull-based cache invalidation after the independent sessions scheduler commits.
   // Null payload and no toast: mounted views simply refetch their typed queries.
   sessions_changed: null;

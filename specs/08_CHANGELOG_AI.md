@@ -1,5 +1,27 @@
 # 08 — AI Changelog
 
+## 2026-10-20 — Setup visibility
+
+- **Change:** `traits` gains `SetupOperation`/`SetupPhase`/`SetupStep`/`SetupStatus`;
+  `download.rs` adds `EngineProgress` + `ensure_binary_with_progress` (streamed body, real
+  per-attempt bytes, rate-limited); the kernel owns a revisioned snapshot
+  (`set_setup_step`/`setup_status`, URL-query redaction, identical re-reports ignored) and
+  mirrors `model_download`; `src-tauri` adds `get_setup_status`, forwards `setup_changed` and
+  wires engine/embeddings steps; the UI adds `SetupIndicator`, `SetupDetails` and the
+  `newerSetupStatus` revision guard. Specs: `02 §5j`, `03 §7g`/`§7`, `UI_REFERENCE §4`/`§5`,
+  `04 §1`, `06` #26, `07` #121/#122.
+- **Why:** the v0.4.2 field failure left inference unavailable with nothing in the app to say
+  why; users need to see setup progress and a persistent, actionable failure.
+- **Verification:** see `05` (2026-10-20) — full CI chain green on tbx, two mutation REDs,
+  independent review fixed; interactive native run by Nico on tbx reported
+  "All good!" (failed chip, live install stage, Engine/Search model Done; see `05`). PR #146
+  round 1 (Codex, 3 × P2): listener-before-snapshot refetch, Settings zero presence once all
+  steps are done, terminal engine steps keep the real attempt — all fixed, gate green on tbx.
+  Round 2 (Codex, 3 × P2): one rail indicator (legacy download chip removed), a visible failure
+  cause line, snapshot re-emit after a lagged broadcast — fixed, gate green on tbx. Final
+  auto-triggered findings: vision failure copy names "Start vision tagging"; a lane's failure
+  clears when that lane's model reaches Ready.
+
 ## 2026-10-19 — llama.cpp bootstrap recovery
 
 - **Change:** `download.rs` now falls back to a pinned, SHA-256-verified Windows Vulkan asset

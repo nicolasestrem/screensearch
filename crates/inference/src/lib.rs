@@ -36,7 +36,7 @@ pub mod vision;
 pub use flags::{probe_caps, FlashAttnKind, SidecarCaps};
 
 /// The model downloader (coordinated, progress-reporting). Shared by both lane providers.
-pub use download::ModelDownloader;
+pub use download::{EngineProgress, ModelDownloader};
 
 // The composition root (`src-tauri`) wires these concrete impls (`03 §2`).
 #[cfg(windows)]

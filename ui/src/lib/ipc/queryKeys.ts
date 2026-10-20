@@ -68,4 +68,8 @@ export const queryKeys = {
   // indicator + the Settings · App section. Kept live by the `update_status_changed`
   // event; the manual check mutation also writes it (`03 §11b`).
   updateStatus: ["updateStatus"] as const,
+  // Setup visibility (2026-10-20, `03 §7g`): the setup snapshot behind the
+  // StatusRail chip + the Settings · Models setup details. Kept live by the
+  // whole-snapshot `setup_changed` event; revision-guarded both write paths.
+  setupStatus: ["setupStatus"] as const,
 };

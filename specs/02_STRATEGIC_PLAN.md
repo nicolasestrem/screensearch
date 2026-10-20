@@ -354,6 +354,18 @@ fixtures or compile success. Review focus: week-boundary/DST correctness, synthe
 (uncited claims are a defect, not style), promotion races and kind separation. Rollback disables
 the weekly schedule without deleting local history, reports or notes.
 
+## 5j. Setup visibility — approved increment (2026-10-20)
+
+Nico approved making startup acquisition visible ("Plan is approved", 2026-10-20) after the
+v0.4.2 field failure in which inference stayed unavailable behind an exhausted GitHub API quota
+with no in-app explanation. **Outcome:** while the engine or search model is being acquired or
+prepared, or any setup step has failed, the user sees one quiet StatusRail indicator and plain
+details in Settings — real progress where it is measurable, honest indeterminate progress where
+it is not, and a failure that stays visible with what to do next. Non-goals: no new downloads,
+resume machinery, schema change, setting, network destination, in-app engine re-initialization
+(`07` #94) or automatic Ask replay. Normative contract: `03 §7g`; UI: `UI_REFERENCE §4`/`§5`.
+Approval covers implementation; merge and release each need separate authorization.
+
 ## 6. Risks & mitigations
 
 | Risk | Mitigation |

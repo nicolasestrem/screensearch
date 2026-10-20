@@ -3,16 +3,15 @@
 // caches that the live event stream keeps fresh (useLiveEvents). Outside the Tauri
 // shell the readiness query errors and the rail shows an honest "Kernel offline".
 import { Chip, Skeleton, Tooltip } from "../primitives";
+import { SetupIndicator } from "../domain";
 import {
   IconCapture,
   IconCpu,
   IconDatabase,
-  IconDownload,
   IconQueue,
 } from "../icons";
 import {
   useJobStats,
-  useModelDownload,
   useReadiness,
   useSidecarStatus,
   useStorageStats,
@@ -43,16 +42,7 @@ export function StatusRail() {
   const jobStats = useJobStats();
   const storage = useStorageStats();
   const sidecar = useSidecarStatus();
-  const download = useModelDownload();
   const throttle = useThrottleStatus();
-
-  // A model fetch is global, slow (multi-GB) work — surface it in the rail so it's visible
-  // from any screen, not just the Settings panel. Percent shown when the total is known.
-  const dl = download.data?.phase === "downloading" ? download.data : null;
-  const dlPct =
-    dl && dl.total_bytes && dl.total_bytes > 0
-      ? Math.min(100, Math.round((dl.downloaded_bytes / dl.total_bytes) * 100))
-      : null;
 
   // Only present under real pressure (level >= 1) — genuinely subtle, hidden when idle or
   // when the throttle is off. Tells the user why enrichment slowed without hunting Settings.
@@ -71,6 +61,11 @@ export function StatusRail() {
       </div>
 
       <div className="flex items-center gap-2 min-w-0">
+        {/* Setup chip (03 §7g): the one rail indicator for every setup operation —
+            engine, search model and the vision/answer model downloads (which the
+            kernel mirrors from `model_download`), so no second download chip.
+            Present only while something is active/failed; zero presence otherwise. */}
+        <SetupIndicator />
         {throttling && (
           <Tooltip
             label={`Throttling enrichment (${throttling.level >= 2 ? "Sustained" : "High"})${
@@ -88,22 +83,6 @@ export function StatusRail() {
             <Chip tone="warn" dot>
               <IconCpu size={14} />
               Throttling
-            </Chip>
-          </Tooltip>
-        )}
-
-        {dl && (
-          <Tooltip
-            label={
-              dlPct !== null
-                ? `Downloading ${dl.model ?? `${dl.lane} model`} · ${formatBytes(dl.downloaded_bytes)} / ${formatBytes(dl.total_bytes ?? 0)}`
-                : `Downloading ${dl.model ?? `${dl.lane} model`}…`
-            }
-            side="bottom"
-          >
-            <Chip tone="accent" dot>
-              <IconDownload size={14} />
-              {dlPct !== null ? `${dlPct}%` : "Downloading"}
             </Chip>
           </Tooltip>
         )}

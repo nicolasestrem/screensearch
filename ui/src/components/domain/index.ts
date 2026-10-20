@@ -44,3 +44,5 @@ export { SessionBands, type SessionBandsProps } from "./SessionBands";
 export { IntentionsStrip, type IntentionsStripProps } from "./IntentionsStrip";
 export { ApiPanel } from "./ApiPanel";
 export { AppPanel } from "./AppPanel";
+export { SetupIndicator } from "./SetupIndicator";
+export { SetupDetails } from "./SetupDetails";

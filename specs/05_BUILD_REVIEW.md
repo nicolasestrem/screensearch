@@ -1,5 +1,99 @@
 # 05 — Build Review
 
+## 2026-10-20 — Setup visibility (branch `feat/setup-progress-visibility`, `06` #26)
+
+- **Scope (approved contract `02 §5j`, `03 §7g`):** additive `SetupStatus` snapshot +
+  `setup_changed` event + `get_setup_status`; engine acquisition reports real per-attempt
+  bytes and Checking/Downloading/Verifying/Installing; embeddings report Preparing → Done/
+  Failed (indeterminate); model-lane downloads are mirrored from `model_download`;
+  StatusRail `SetupIndicator` + Settings · Models `SetupDetails`. No schema, setting, network
+  destination or downloader-policy change.
+- **Implemented by three disjoint writer lanes** (kernel+Tauri, `download.rs`, UI), integrated
+  and verified by the parent. All compilation and tests ran on tbx (Windows, Rust 1.95.0,
+  Node 26.12.0 — documented Node is 22); nothing was compiled on the Linux coordinator.
+- **Native gate at the pre-review tree** (`44398dd`): `npm ci` 0 · `npm run lint` 0 ·
+  `npm run build` 0 · `cargo fmt --all -- --check` 0 · `cargo clippy --workspace
+  --all-targets -- -D warnings` 0 · `cargo test --workspace` 0 (inference `117 passed;
+  2 ignored`, kernel setup `8 passed`) · `git diff --exit-code -- ui/src/bindings` 0. The first
+  UI test run failed (`actual: '12 MB', expected: '12.4 MB'`): the test assumed one decimal,
+  the code follows the existing rail/ModelPanel rule (whole numbers from 10 up) — the test was
+  corrected, not the code; rerun `tests 80 / pass 80 / fail 0`.
+- **RED proofs (mutation on tbx):** making `newerSetupStatus` accept unconditionally failed
+  exactly the four ordering tests (`pass 76 / fail 4`); removing the kernel identical-step
+  guard failed `setup_identical_re_report_neither_bumps_revision_nor_broadcasts`
+  (`assertion left == right failed`, exit 101). Both files restored and verified.
+- **Independent review** (read-only): `clean_with_minor_findings`, no P0/P1. Fixed: P2 empty
+  snapshot announced "Local AI setup complete" → now silent; P3 Verifying/Installing reset the
+  attempt to 1 → carry the delivering attempt; P3 identical re-report bumped the revision → no
+  bump, no broadcast (new test); P3 chip had no width cap → `max-w-80` + truncated step text.
+- **Native gate at the post-review tree** (`a36504b`): lint 0 · UI tests 0 · build 0 · fmt 0 ·
+  workspace clippy 0 · `cargo test -p kernel --test setup` `9 passed` · `cargo test -p
+  inference --lib` `117 passed; 2 ignored` · `cargo test -p screensearch` 0 (`162 passed`) ·
+  bindings clean.
+- **Native interactive run (Nico, tbx, 2026-10-20, `npm run dev` of the `a36504b` tree, sidecar
+  folder emptied):** reported "All good!" with four screenshots. Observed in them:
+  (1) `SSV2C_LLAMA_RELEASE_URL` pointed at a missing asset → StatusRail chip **"Setup failed"**
+  plus the existing readiness banner "Inference: Unavailable — llama-server unavailable:
+  download …/b0/nope.zip returned HTTP 404 Not Found"; (2) a real first-run acquisition →
+  chip "Preparing local AI · Installing e…" (step text truncated by the new width cap) beside
+  the "Embeddings: Starting" / "Inference: Starting — resolving llama-server" banner; (3) the
+  console log shows the anonymous API lookup **failing with HTTP 403 rate limit and the pinned
+  fallback being used** (the #145 path, live); (4) Settings · Models afterwards: **Engine —
+  Done, "Engine available"; Search model — Done, "Search model ready"**, no chip.
+  Not captured as screenshots (covered only by Nico's "All good!" report): the failed row in
+  Settings details with its next step, the determinate download percentage, and the Ctrl+R
+  reload reconciliation. Polish noted: at the rail's width the active chip truncates the stage
+  word ("Installing e…"); a shorter active label is a candidate follow-up, not a defect against
+  `03 §7g`. Not pushed; no PR; no merge.
+- **PR #146 review round 1 (Codex, `e0503e3`, 3 inline P2 threads; all valid, fixed):**
+  (1) `PRRT_kwDOTAuCtM6uUbG1` — the snapshot query mounts in the child `StatusRail`, whose fetch
+  can resolve before `useLiveEvents`' async `setup_changed` listener exists, so a terminal event
+  in that gap was lost → the hook now invalidates the setup query once the listener is live (the
+  revision guard makes the refetch safe). Timing inside the WebView; no node-runner test can
+  reproduce it — verified by reading, lint/build. (2) `PRRT_kwDOTAuCtM6uUbG7` — Settings kept
+  listing all-`done` rows forever, contrary to `UI_REFERENCE §4` ("details list nothing") → new
+  pure `setupDetailsSteps` returns nothing once no operation is active or failed; test
+  `setupDetailsSteps: zero presence once every operation is done…` proven RED on tbx (guard
+  removed → `pass 80 / fail 1`, file restored). This also corrects the native-run observation
+  above: the "Engine available / Search model ready" rows after setup were that defect, not the
+  intended idle state. (3) `PRRT_kwDOTAuCtM6uUbHC` — terminal engine `Done`/`Failed` reset
+  `attempt` to 1 → the last download attempt is shared (`Arc<AtomicU32>`) with the terminal
+  steps. Gate on tbx at the fixed tree: lint 0 · UI `tests 81 / pass 81 / fail 0` · build 0 ·
+  fmt 0 · workspace clippy `-D warnings` 0 · `cargo test -p screensearch` `162 passed` ·
+  kernel setup `9 passed` · bindings clean.
+- **PR #146 review round 2 (Codex, `b500176`, auto-triggered on push; 3 inline P2, all valid,
+  fixed):** (1) `PRRT_kwDOTAuCtM6uUowo` — a vision/answer download showed the legacy
+  `model_download` rail chip *and* the setup chip; `UI_REFERENCE §4` wants one summarized
+  indicator → the legacy rail chip is removed (the kernel already mirrors both lanes into the
+  setup snapshot with real bytes; ModelPanel keeps its own `model_download` view). (2)
+  `PRRT_kwDOTAuCtM6uUowu` — a failed row showed no cause outside the collapsed diagnostic →
+  pure `setupFailureCause` renders a visible cause line derived only from the error text (HTTP
+  status, digest mismatch, else the innermost chain segment; never an inferred "offline");
+  test proven RED on tbx (`pass 81 / fail 1`, file restored). (3) `PRRT_kwDOTAuCtM6uUowy` — a
+  lagged kernel broadcast could drop the terminal `SetupChanged` → `forward_events` re-emits
+  `kernel.setup_status()` on `RecvError::Lagged` (the UI revision guard keeps it safe). Gate on
+  tbx: lint 0 · UI `tests 82 / pass 82 / fail 0` · build 0 · fmt 0 · workspace clippy
+  `-D warnings` 0 · `cargo test -p screensearch` `162 passed` · kernel setup `9 passed` ·
+  bindings clean. Independent read-only review of the round-2 diff: no defects. Merge
+  authorized by Nico for #146 once checks on the pushed head pass.
+- **Auto-triggered Codex review on `1291529` (1 inline P2, valid, fixed):**
+  `PRRT_kwDOTAuCtM6uU02n` — the vision-model failure copy said "Use Load", but Load only loads
+  the answer model, so it pointed at an action that cannot retry the vision download → each
+  lane now names its own existing action ("Load answer model" / "Start vision tagging"); `03
+  §7g` and the `UI_REFERENCE §4` row corrected to match (no new retry mechanism). Copy-only
+  change (UI + specs only — no Rust path changed since `1291529`, whose Windows CI passed). tbx:
+  lint 0 · UI `tests 82 / pass 82 / fail 0` · build 0; the old "Use Load" copy fails the updated
+  test (`pass 81 / fail 1`, file restored).
+- **Auto-triggered Codex review on `fa186f5` (1 inline P2, valid, fixed — final round, Nico:
+  "merge after addressing this round"):** `PRRT_kwDOTAuCtM6uVC5e` — after a model download
+  failed, switching that lane to a tier already on disk resolves without the downloader, so the
+  lane's `failed` step stayed until restart while the model served fine → the kernel clears a
+  lane's `failed` setup step when the sidecar reports that lane `Ready` (other lane and non-ready
+  transitions untouched). Test `setup_lane_failure_clears_when_that_lane_model_is_ready`, proven
+  RED on tbx with the call removed (exit 101, file restored). tbx: UI build 0 · fmt 0 · workspace
+  clippy `-D warnings` 0 · `cargo test -p kernel` all green (setup `10 passed`); tbx restored to
+  clean `main`.
+
 ## 2026-10-19 — llama.cpp bootstrap recovery (branch `fix/llama-bootstrap-recovery`)
 
 - **Trigger (field evidence):** installed 0.4.2 on tbx logged
