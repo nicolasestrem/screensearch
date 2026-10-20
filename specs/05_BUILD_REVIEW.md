@@ -1,5 +1,39 @@
 # 05 — Build Review
 
+## 2026-10-20 — Setup visibility (branch `feat/setup-progress-visibility`, `06` #26)
+
+- **Scope (approved contract `02 §5j`, `03 §7g`):** additive `SetupStatus` snapshot +
+  `setup_changed` event + `get_setup_status`; engine acquisition reports real per-attempt
+  bytes and Checking/Downloading/Verifying/Installing; embeddings report Preparing → Done/
+  Failed (indeterminate); model-lane downloads are mirrored from `model_download`;
+  StatusRail `SetupIndicator` + Settings · Models `SetupDetails`. No schema, setting, network
+  destination or downloader-policy change.
+- **Implemented by three disjoint writer lanes** (kernel+Tauri, `download.rs`, UI), integrated
+  and verified by the parent. All compilation and tests ran on tbx (Windows, Rust 1.95.0,
+  Node 26.12.0 — documented Node is 22); nothing was compiled on the Linux coordinator.
+- **Native gate at the pre-review tree** (`44398dd`): `npm ci` 0 · `npm run lint` 0 ·
+  `npm run build` 0 · `cargo fmt --all -- --check` 0 · `cargo clippy --workspace
+  --all-targets -- -D warnings` 0 · `cargo test --workspace` 0 (inference `117 passed;
+  2 ignored`, kernel setup `8 passed`) · `git diff --exit-code -- ui/src/bindings` 0. The first
+  UI test run failed (`actual: '12 MB', expected: '12.4 MB'`): the test assumed one decimal,
+  the code follows the existing rail/ModelPanel rule (whole numbers from 10 up) — the test was
+  corrected, not the code; rerun `tests 80 / pass 80 / fail 0`.
+- **RED proofs (mutation on tbx):** making `newerSetupStatus` accept unconditionally failed
+  exactly the four ordering tests (`pass 76 / fail 4`); removing the kernel identical-step
+  guard failed `setup_identical_re_report_neither_bumps_revision_nor_broadcasts`
+  (`assertion left == right failed`, exit 101). Both files restored and verified.
+- **Independent review** (read-only): `clean_with_minor_findings`, no P0/P1. Fixed: P2 empty
+  snapshot announced "Local AI setup complete" → now silent; P3 Verifying/Installing reset the
+  attempt to 1 → carry the delivering attempt; P3 identical re-report bumped the revision → no
+  bump, no broadcast (new test); P3 chip had no width cap → `max-w-80` + truncated step text.
+- **Native gate at the post-review tree** (`a36504b`): lint 0 · UI tests 0 · build 0 · fmt 0 ·
+  workspace clippy 0 · `cargo test -p kernel --test setup` `9 passed` · `cargo test -p
+  inference --lib` `117 passed; 2 ignored` · `cargo test -p screensearch` 0 (`162 passed`) ·
+  bindings clean.
+- **Pending (not observed):** the interactive run of the source-built app on tbx — engine
+  failure state + reload reconciliation, and a real engine download with progress → Done
+  (`03 §7g` acceptance, `UI_REFERENCE §10.8` screenshots). Not pushed; no PR; no merge.
+
 ## 2026-10-19 — llama.cpp bootstrap recovery (branch `fix/llama-bootstrap-recovery`)
 
 - **Trigger (field evidence):** installed 0.4.2 on tbx logged
