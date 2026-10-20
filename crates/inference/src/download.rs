@@ -15,7 +15,7 @@ use std::os::windows::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use futures::stream::{self, StreamExt};
@@ -150,6 +150,30 @@ const FALLBACK_VULKAN_SHA256: &str =
 const BINARY_RETRY_MAX_ATTEMPTS: u32 = 3;
 const BINARY_RETRY_BACKOFF: Duration = Duration::from_millis(400);
 
+/// Rate limit for the engine acquisition `Downloading` progress callbacks (`03 §7g`:
+/// at most ~5/s at the source, plus every phase change). The attempt start and the
+/// final received count of a body are always emitted; intermediate byte updates are
+/// throttled to one per interval.
+const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Real-time engine acquisition stages reported during [`ensure_binary_with_progress`]
+/// (`03 §7g` `checking` → `downloading` → `verifying` → `installing`). `Downloading`
+/// carries the **current** 1-based attempt and the bytes received **in that attempt**
+/// only — a retry restarts at 0 — plus `total_bytes` when the server reported a
+/// Content-Length (never fabricated). A phase change (`Checking` → first
+/// `Downloading`, `Verifying`, `Installing`) is always emitted, never throttled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineProgress {
+    Checking,
+    Downloading {
+        attempt: u32,
+        received: u64,
+        total: Option<u64>,
+    },
+    Verifying,
+    Installing,
+}
+
 #[derive(Deserialize)]
 struct GithubRelease {
     assets: Vec<GithubAsset>,
@@ -230,13 +254,32 @@ pub fn pick_gguf_files(
 /// lands in a URL-specific override directory, so testers can pin a sidecar build
 /// without deleting the app-managed release.
 pub async fn ensure_binary(sidecar_dir: &Path) -> Result<PathBuf> {
+    ensure_binary_with_progress(sidecar_dir, &|_| {}).await
+}
+
+/// [`ensure_binary`] with real-time acquisition progress reporting for the setup UI
+/// (`03 §7g`): emits [`EngineProgress::Checking`] first, then the phase events of the
+/// actual acquisition (or just `Checking` when an existing install is used). The
+/// downloader's fallback / retry / digest behaviour is unchanged.
+pub async fn ensure_binary_with_progress(
+    sidecar_dir: &Path,
+    progress: &(dyn Fn(EngineProgress) + Send + Sync),
+) -> Result<PathBuf> {
+    progress(EngineProgress::Checking);
     if let Some((url, name)) = env_binary_override() {
         let install = sidecar_dir
             .join("llama-override")
             .join(url_fingerprint(&url));
         // An operator override is trusted, but when it *is* the pin we know its digest, so
         // verify it like the managed fallback rather than skipping the check.
-        return ensure_binary_from_url_verified(&install, &url, &name, fallback_sha256(&url)).await;
+        return ensure_binary_from_url_verified(
+            &install,
+            &url,
+            &name,
+            fallback_sha256(&url),
+            progress,
+        )
+        .await;
     }
 
     let install = sidecar_dir.join("llama");
@@ -245,7 +288,7 @@ pub async fn ensure_binary(sidecar_dir: &Path) -> Result<PathBuf> {
     }
 
     let (url, name) = resolve_binary_url().await;
-    ensure_binary_from_url_verified(&install, &url, &name, fallback_sha256(&url)).await
+    ensure_binary_from_url_verified(&install, &url, &name, fallback_sha256(&url), progress).await
 }
 
 /// The pinned fallback asset is the only download with a known-good digest; the API path
@@ -259,16 +302,19 @@ async fn ensure_binary_from_url_verified(
     url: &str,
     name: &str,
     expected_sha256: Option<&str>,
+    progress: &(dyn Fn(EngineProgress) + Send + Sync),
 ) -> Result<PathBuf> {
     if let Some(found) = find_file(install, "llama-server.exe") {
         return Ok(found);
     }
 
     tracing::info!(asset = %name, "downloading llama.cpp Vulkan release");
-    let bytes = http_get_bytes(url).await?;
+    let bytes = http_get_bytes(url, progress).await?;
     if let Some(expected) = expected_sha256 {
+        progress(EngineProgress::Verifying);
         verify_sha256(&bytes, expected).with_context(|| format!("verify sidecar asset {name}"))?;
     }
+    progress(EngineProgress::Installing);
     let install = install.to_path_buf();
     let partial = partial_install_dir(&install);
     let install_for_task = install.clone();
@@ -505,7 +551,10 @@ async fn cleanup_partial_install(partial: PathBuf) {
     .await;
 }
 
-async fn http_get_bytes(url: &str) -> Result<Vec<u8>> {
+async fn http_get_bytes(
+    url: &str,
+    progress: &(dyn Fn(EngineProgress) + Send + Sync),
+) -> Result<Vec<u8>> {
     let client = reqwest::Client::builder()
         .connect_timeout(HTTP_CONNECT_TIMEOUT)
         .read_timeout(HTTP_READ_TIMEOUT)
@@ -513,7 +562,14 @@ async fn http_get_bytes(url: &str) -> Result<Vec<u8>> {
         .context("build download http client")?;
     let mut attempt = 1;
     loop {
-        match fetch_binary_body(&client, url).await {
+        // Report every attempt's start with the current attempt number at received = 0;
+        // a retry restarts the byte count at zero (no cross-attempt aggregate, `03 §7g`).
+        progress(EngineProgress::Downloading {
+            attempt,
+            received: 0,
+            total: None,
+        });
+        match fetch_binary_body(&client, url, attempt, progress).await {
             Ok(bytes) => return Ok(bytes),
             Err(failure) if failure.retryable && attempt < BINARY_RETRY_MAX_ATTEMPTS => {
                 tracing::warn!(
@@ -540,8 +596,10 @@ struct BinaryFetchError {
 async fn fetch_binary_body(
     client: &reqwest::Client,
     url: &str,
+    attempt: u32,
+    progress: &(dyn Fn(EngineProgress) + Send + Sync),
 ) -> std::result::Result<Vec<u8>, BinaryFetchError> {
-    let resp = client
+    let mut resp = client
         .get(url)
         .header(reqwest::header::USER_AGENT, USER_AGENT)
         .send()
@@ -562,11 +620,40 @@ async fn fetch_binary_body(
                 || status.is_server_error(),
         });
     }
-    let bytes = resp.bytes().await.map_err(|e| BinaryFetchError {
+    // Stream the body chunk-by-chunk so real received bytes can be reported (a fixed
+    // `resp.bytes()` gives progress only after the whole body has landed). A mid-stream
+    // read failure stays retryable transport-level, as before.
+    let total = content_length(resp.headers());
+    let mut bytes = Vec::new();
+    let mut received: u64 = 0;
+    let mut last_emit: Option<Instant> = None;
+    while let Some(chunk) = resp.chunk().await.map_err(|e| BinaryFetchError {
         error: anyhow!(e).context(format!("read download body for {url}")),
         retryable: true,
-    })?;
-    Ok(bytes.to_vec())
+    })? {
+        if chunk.is_empty() {
+            continue;
+        }
+        bytes.extend_from_slice(&chunk);
+        received += chunk.len() as u64;
+        // Rate limit at the source: intermediate updates at most once per interval; the
+        // body's completion is always reported with the final received count below.
+        let due = last_emit.is_none_or(|t| t.elapsed() >= PROGRESS_EMIT_INTERVAL);
+        if due {
+            progress(EngineProgress::Downloading {
+                attempt,
+                received,
+                total,
+            });
+            last_emit = Some(Instant::now());
+        }
+    }
+    progress(EngineProgress::Downloading {
+        attempt,
+        received,
+        total,
+    });
+    Ok(bytes)
 }
 
 /// Digest check for a pinned asset: the file is downloaded over TLS from GitHub and then
@@ -2005,6 +2092,7 @@ mod tests {
             &format!("{}/llama.zip", server.uri()),
             "x.zip",
             None,
+            &|_| {},
         )
         .await
         .expect("a transient 403 must be retried, not fatal");
@@ -2030,6 +2118,7 @@ mod tests {
             &format!("{}/llama.zip", server.uri()),
             "x.zip",
             None,
+            &|_| {},
         )
         .await
         .expect_err("a persistent 403 must fail truthfully");
@@ -2064,6 +2153,7 @@ mod tests {
             &format!("{}/pinned.zip", server.uri()),
             "pinned.zip",
             Some(FALLBACK_VULKAN_SHA256),
+            &|_| {},
         )
         .await
         .expect_err("a digest mismatch must refuse the download");
@@ -2116,9 +2206,10 @@ mod tests {
 
         let dir = real_binary_test_dir("pinned-fallback");
         let install = dir.join("llama");
-        let binary = ensure_binary_from_url_verified(&install, &url, &name, fallback_sha256(&url))
-            .await
-            .expect("real pinned asset must download and verify");
+        let binary =
+            ensure_binary_from_url_verified(&install, &url, &name, fallback_sha256(&url), &|_| {})
+                .await
+                .expect("real pinned asset must download and verify");
         assert_sidecar_starts(&binary);
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -2322,6 +2413,7 @@ mod tests {
             &format!("{}/bad.zip", server.uri()),
             "bad.zip",
             None,
+            &|_| {},
         )
         .await
         .expect_err("invalid zip should fail");
@@ -3429,5 +3521,305 @@ mod tests {
             }
         });
         addr
+    }
+
+    // ── Engine acquisition progress (`03 §7g`) ────────────────────────────────────────────────
+
+    /// Thread-safe [`EngineProgress`] sink for the progress callback; events append in
+    /// emission order. The `std::sync::Mutex` guard never spans an `.await` (each
+    /// callback is a synchronous push).
+    #[derive(Default)]
+    struct ProgressRecorder {
+        events: std::sync::Mutex<Vec<EngineProgress>>,
+    }
+
+    impl ProgressRecorder {
+        fn record(&self, event: EngineProgress) {
+            self.events.lock().unwrap().push(event);
+        }
+        fn events(&self) -> Vec<EngineProgress> {
+            self.events.lock().unwrap().clone()
+        }
+        fn downloading(&self) -> Vec<(u32, u64, Option<u64>)> {
+            self.events()
+                .into_iter()
+                .filter_map(|event| match event {
+                    EngineProgress::Downloading {
+                        attempt,
+                        received,
+                        total,
+                    } => Some((attempt, received, total)),
+                    _ => None,
+                })
+                .collect()
+        }
+    }
+
+    #[tokio::test]
+    async fn engine_progress_reports_stages_and_real_bytes_with_known_length() {
+        let zip = zip_with_llama_server(b"progress");
+        let server = MockServer::start().await;
+        let digest = sha256_hex(&zip);
+        Mock::given(method("GET"))
+            .and(path("/llama.zip"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(zip.clone(), "application/zip"))
+            .mount(&server)
+            .await;
+
+        let root = unique_temp_dir("engine-progress");
+        let install = root.join("llama");
+        let recorder = ProgressRecorder::default();
+        let found = ensure_binary_from_url_verified(
+            &install,
+            &format!("{}/llama.zip", server.uri()),
+            "x.zip",
+            Some(digest.as_str()),
+            &|event| recorder.record(event),
+        )
+        .await
+        .expect("a known-good asset must install");
+
+        let downloads = recorder.downloading();
+        let first = *downloads
+            .first()
+            .expect("at least the attempt-start Downloading event");
+        assert_eq!(
+            (first.0, first.1),
+            (1, 0),
+            "the first Downloading event is attempt 1 at received = 0, got {downloads:?}"
+        );
+        let last = *downloads
+            .last()
+            .expect("at least the body-complete Downloading event");
+        assert_eq!(
+            last,
+            (
+                1,
+                zip.len() as u64,
+                Some(zip.len() as u64)
+            ),
+            "the final Downloading event must carry the real received bytes and the served Content-Length"
+        );
+        let events = recorder.events();
+        let verifying = events
+            .iter()
+            .position(|event| *event == EngineProgress::Verifying)
+            .expect("Verifying is emitted when a digest is known");
+        let installing = events
+            .iter()
+            .position(|event| *event == EngineProgress::Installing)
+            .expect("Installing is emitted before extraction/publish");
+        assert!(
+            verifying < installing,
+            "Verifying must precede Installing, got {events:?}"
+        );
+        assert_eq!(std::fs::read(&found).unwrap(), b"progress");
+        assert!(
+            !partial_install_dir(&install).exists(),
+            "a successful install must not leave the partial dir"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// wiremock 0.6.5 serves fixed bodies through hyper, which **always** sets a
+    /// `Content-Length` for a known-length response and has no streaming-body API —
+    /// a real length-less 200 fetch cannot be served from a template without
+    /// something less honest than a mapping test. The engine's `total` is read
+    /// through the existing [`content_length`] header helper, so its mapping is
+    /// asserted directly: a missing header (or a garbled value) must mean `None`,
+    /// and only a real length is reported.
+    #[test]
+    fn engine_progress_without_content_length_reports_unknown_total() {
+        use reqwest::header::{HeaderMap, HeaderValue};
+        let mut headers = HeaderMap::new();
+        assert_eq!(
+            content_length(&headers),
+            None,
+            "no Content-Length header → total stays None"
+        );
+        headers.insert(
+            reqwest::header::CONTENT_LENGTH,
+            HeaderValue::from_static("12345"),
+        );
+        assert_eq!(
+            content_length(&headers),
+            Some(12345),
+            "a real Content-Length is surfaced as the total"
+        );
+    }
+
+    #[tokio::test]
+    async fn engine_progress_retry_restarts_bytes_at_zero_with_next_attempt() {
+        let zip = zip_with_llama_server(b"attempt2");
+        let server = MockServer::start().await;
+        // The transient-then-success pattern the existing retry test uses; 503 is a
+        // retryable status in [`fetch_binary_body`]'s classification.
+        Mock::given(method("GET"))
+            .and(path("/llama.zip"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/llama.zip"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(zip.clone(), "application/zip"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let root = unique_temp_dir("engine-progress-retry");
+        let install = root.join("llama");
+        let recorder = ProgressRecorder::default();
+        let found = ensure_binary_from_url_verified(
+            &install,
+            &format!("{}/llama.zip", server.uri()),
+            "x.zip",
+            None,
+            &|event| recorder.record(event),
+        )
+        .await
+        .expect("a transient 503 must be retried, not fatal");
+
+        let downloads = recorder.downloading();
+        let attempt2_start = downloads
+            .iter()
+            .position(|(attempt, ..)| *attempt == 2)
+            .expect("attempt 2 must be reported after the 503");
+        assert_eq!(
+            downloads[attempt2_start],
+            (2, 0, None),
+            "attempt 2's first Downloading event restarts the byte count at 0, got {downloads:?}"
+        );
+        assert!(
+            downloads[attempt2_start + 1..]
+                .iter()
+                .any(|(attempt, received, _)| *attempt == 2 && *received == zip.len() as u64),
+            "attempt 2 must stream real bytes to completion"
+        );
+        assert!(
+            downloads[..attempt2_start]
+                .iter()
+                .all(|(attempt, ..)| *attempt == 1),
+            "no attempt-2 event may appear before the retry"
+        );
+        assert_eq!(std::fs::read(&found).unwrap(), b"attempt2");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn engine_progress_digest_mismatch_stops_after_verifying() {
+        let zip = zip_with_llama_server(b"tampered");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/pinned.zip"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(zip.clone(), "application/zip"))
+            .mount(&server)
+            .await;
+
+        let root = unique_temp_dir("engine-progress-digest");
+        let install = root.join("llama");
+        let recorder = ProgressRecorder::default();
+        let wrong = "0".repeat(64);
+        let err = ensure_binary_from_url_verified(
+            &install,
+            &format!("{}/pinned.zip", server.uri()),
+            "pinned.zip",
+            Some(wrong.as_str()),
+            &|event| recorder.record(event),
+        )
+        .await
+        .expect_err("a digest mismatch must refuse the download");
+        assert!(
+            format!("{err:#}").contains("sha256 mismatch"),
+            "unexpected error: {err:#}"
+        );
+        let events = recorder.events();
+        assert!(
+            events.contains(&EngineProgress::Verifying),
+            "Verifying must be emitted when a digest is known, got {events:?}"
+        );
+        assert!(
+            !events.contains(&EngineProgress::Installing),
+            "a failed digest must stop the sequence before Installing"
+        );
+        assert!(
+            !install.exists(),
+            "an unverified asset must never be installed"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn engine_progress_existing_install_reports_only_checking() {
+        // `ensure_binary_with_progress` reads `SSV2C_LLAMA_RELEASE_URL`; hold the env
+        // lock so a parallel env-override test cannot flip this into a download.
+        let _guard = ENV_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let sidecar_dir = unique_temp_dir("engine-existing");
+        let exe = sidecar_dir
+            .join("llama")
+            .join("rel")
+            .join("llama-server.exe");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"present").unwrap();
+
+        let recorder = ProgressRecorder::default();
+        let found = ensure_binary_with_progress(&sidecar_dir, &|event| recorder.record(event))
+            .await
+            .expect("an existing install must be reused");
+        assert_eq!(found, exe);
+        assert_eq!(
+            recorder.events(),
+            vec![EngineProgress::Checking],
+            "an existing install must report only Checking, nothing further"
+        );
+        let _ = std::fs::remove_dir_all(sidecar_dir);
+    }
+
+    #[tokio::test]
+    async fn engine_progress_corrupt_zip_reports_installing_then_fails() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/bad.zip"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(b"this is not a zip".to_vec(), "application/zip"),
+            )
+            .mount(&server)
+            .await;
+
+        let root = unique_temp_dir("engine-progress-corrupt");
+        let install = root.join("llama");
+        let recorder = ProgressRecorder::default();
+        let err = ensure_binary_from_url_verified(
+            &install,
+            &format!("{}/bad.zip", server.uri()),
+            "bad.zip",
+            None,
+            &|event| recorder.record(event),
+        )
+        .await
+        .expect_err("invalid zip should fail");
+        assert!(
+            err.to_string().contains("extract llama release zip"),
+            "unexpected error: {err:?}"
+        );
+        let events = recorder.events();
+        assert!(
+            events.contains(&EngineProgress::Installing),
+            "Installing is emitted before extraction, got {events:?}"
+        );
+        assert!(
+            !events.contains(&EngineProgress::Verifying),
+            "no digest is known for an API-path asset, so Verifying must not fire"
+        );
+        assert!(
+            !install.exists(),
+            "a failed extraction must not publish an install dir"
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }

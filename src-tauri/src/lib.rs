@@ -23,13 +23,15 @@ use traits::{
     ModelLane, MonitorInfo, OcrProvider, OcrResult, Readiness, ReportConfig, ReportKind,
     ReportMode, ReportProgress, ReportRange, ReportRequest, ReportResponse, RetrievedChunk,
     SearchHit, SearchQuery, Session, SessionArtifactKind, SessionDetail, SessionFilter,
-    SessionQuery, SessionRecapRequest, SetModelTier, Settings, StorageStats, Store, TextSpan,
-    ThrottleStatus, TimeRange, TimelineBucket, ToastLevel, UiFrameDetail, UiResumeContext,
-    VisionTarget,
+    SessionQuery, SessionRecapRequest, SetModelTier, Settings, SetupOperation, SetupPhase,
+    SetupStatus, SetupStep, StorageStats, Store, TextSpan, ThrottleStatus, TimeRange,
+    TimelineBucket, ToastLevel, UiFrameDetail, UiResumeContext, VisionTarget,
 };
 
 use embeddings::FastEmbedProvider;
-use inference::{AnswerSidecar, ModelSupervisor, SupervisorConfig, VisionSidecar};
+use inference::{
+    download::EngineProgress, AnswerSidecar, ModelSupervisor, SupervisorConfig, VisionSidecar,
+};
 use kernel::{CaptureFactory, IdleSource, Kernel, KernelEvent};
 use store::SqliteStore;
 use tokio::task::JoinHandle;
@@ -253,6 +255,18 @@ fn get_readiness(state: State<'_, AppState>) -> Readiness {
     match &state.kernel {
         Some(kernel) => kernel.readiness(),
         None => state.fallback_readiness.clone(),
+    }
+}
+
+/// The authoritative setup snapshot (`get_setup_status`, `03 §7g`): current-session
+/// startup-acquisition progress and honest failures. Returns the empty snapshot
+/// (revision 0, no steps) when there is no kernel (`get_readiness`'s fallback
+/// convention).
+#[tauri::command]
+fn get_setup_status(state: State<'_, AppState>) -> SetupStatus {
+    match &state.kernel {
+        Some(kernel) => kernel.setup_status(),
+        None => SetupStatus::default(),
     }
 }
 
@@ -1656,6 +1670,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ping,
             get_readiness,
+            get_setup_status,
             get_job_stats,
             get_storage_stats,
             get_monitors,
@@ -1824,16 +1839,44 @@ async fn init_embeddings(kernel: Arc<Kernel>, store: Arc<dyn Store>, models_dir:
             ComponentStatus::Disabled,
             Some("embeddings disabled in settings".to_string()),
         );
+        // A disabled operation never reports: the setup snapshot is "every
+        // operation that has reported" (`03 §7g`), so it stays absent.
         return;
     }
+    // `03 §7g`: fastembed initialization is a visible setup operation — indeterminate
+    // (`preparing`), because fastembed exposes no byte counter.
+    kernel.set_setup_step(SetupStep {
+        operation: SetupOperation::Embeddings,
+        phase: SetupPhase::Preparing,
+        attempt: 1,
+        downloaded_bytes: None,
+        total_bytes: None,
+        error: None,
+    });
     match tokio::task::spawn_blocking(move || FastEmbedProvider::new(models_dir)).await {
         Ok(Ok(provider)) => {
             tracing::info!("embedding model loaded; attaching to kernel");
             kernel.attach_embedder(Arc::new(provider)).await;
+            kernel.set_setup_step(SetupStep {
+                operation: SetupOperation::Embeddings,
+                phase: SetupPhase::Done,
+                attempt: 1,
+                downloaded_bytes: None,
+                total_bytes: None,
+                error: None,
+            });
         }
         Ok(Err(e)) => {
             tracing::error!(error = %e, "embedding model load failed");
             kernel.set_embed_readiness(ComponentStatus::Unavailable, Some(e.to_string()));
+            kernel.set_setup_step(SetupStep {
+                operation: SetupOperation::Embeddings,
+                phase: SetupPhase::Failed,
+                attempt: 1,
+                downloaded_bytes: None,
+                total_bytes: None,
+                error: Some(format!("{e:#}")),
+            });
         }
         Err(e) => {
             tracing::error!(error = %e, "embedding model load task panicked");
@@ -1841,6 +1884,14 @@ async fn init_embeddings(kernel: Arc<Kernel>, store: Arc<dyn Store>, models_dir:
                 ComponentStatus::Unavailable,
                 Some("model load task panicked".to_string()),
             );
+            kernel.set_setup_step(SetupStep {
+                operation: SetupOperation::Embeddings,
+                phase: SetupPhase::Failed,
+                attempt: 1,
+                downloaded_bytes: None,
+                total_bytes: None,
+                error: Some(format!("{e:#}")),
+            });
         }
     }
 }
@@ -1862,7 +1913,26 @@ async fn init_inference(
 ) {
     let sidecar_dir = data_dir.join("sidecar");
     let models_root = data_dir.join("models");
+    // `03 §7g`: llama-server acquisition is the visible `engine` setup operation;
+    // `checking` covers both the local-dir probe and the release lookup that follows.
+    kernel.set_setup_step(SetupStep {
+        operation: SetupOperation::Engine,
+        phase: SetupPhase::Checking,
+        attempt: 1,
+        downloaded_bytes: None,
+        total_bytes: None,
+        error: None,
+    });
     if let Err(e) = std::fs::create_dir_all(&sidecar_dir) {
+        // From the user's view this is an engine-acquisition failure (`03 §7g`).
+        kernel.set_setup_step(SetupStep {
+            operation: SetupOperation::Engine,
+            phase: SetupPhase::Failed,
+            attempt: 1,
+            downloaded_bytes: None,
+            total_bytes: None,
+            error: Some(format!("{e:#}")),
+        });
         kernel.set_sidecar_readiness(ComponentStatus::Unavailable, Some(e.to_string()));
         return;
     }
@@ -1872,8 +1942,37 @@ async fn init_inference(
         tracing::warn!("startup reap terminated a stray sidecar before binary resolution");
     }
 
-    // Fetch the prebuilt Vulkan llama-server (idempotent; skipped if already present).
-    let binary = match inference::download::ensure_binary(&sidecar_dir).await {
+    // Fetch the prebuilt Vulkan llama-server (idempotent; skipped if already present),
+    // with allowed progress mapped into the `engine` setup step (`03 §7g`). The
+    // closure is `Send + Sync` via an `Arc<Kernel>` clone: the downloader calls it
+    // from its own runtime.
+    let kernel_for_engine = kernel.clone();
+    let engine_progress = move |p: EngineProgress| {
+        let (phase, attempt, downloaded_bytes, total_bytes) = match p {
+            EngineProgress::Checking => (SetupPhase::Checking, 1, None, None),
+            EngineProgress::Downloading {
+                attempt,
+                received,
+                total,
+            } => (SetupPhase::Downloading, attempt, Some(received), total),
+            EngineProgress::Verifying => (SetupPhase::Verifying, 1, None, None),
+            EngineProgress::Installing => (SetupPhase::Installing, 1, None, None),
+        };
+        kernel_for_engine.set_setup_step(SetupStep {
+            operation: SetupOperation::Engine,
+            phase,
+            attempt,
+            downloaded_bytes,
+            total_bytes,
+            error: None,
+        });
+    };
+    let binary = match inference::download::ensure_binary_with_progress(
+        &sidecar_dir,
+        &engine_progress,
+    )
+    .await
+    {
         Ok(b) => b,
         Err(e) => {
             // `{e:#}` prints the whole anyhow chain: the outer context alone hid the
@@ -1881,6 +1980,16 @@ async fn init_inference(
             // an error status" for a 403 rate limit).
             let reason = format!("{e:#}");
             tracing::error!(error = %reason, "llama-server unavailable");
+            // The same full reason string goes to the setup step, with URL query
+            // strings redacted by the kernel (`03 §7g`).
+            kernel.set_setup_step(SetupStep {
+                operation: SetupOperation::Engine,
+                phase: SetupPhase::Failed,
+                attempt: 1,
+                downloaded_bytes: None,
+                total_bytes: None,
+                error: Some(reason.clone()),
+            });
             kernel.set_sidecar_readiness(
                 ComponentStatus::Unavailable,
                 Some(format!("llama-server unavailable: {reason}")),
@@ -1888,6 +1997,16 @@ async fn init_inference(
             return;
         }
     };
+    // The binary resolved — the `engine` setup operation is done. (`Done` never means
+    // "model loaded"; `sidecar` readiness stays authoritative for that, `03 §7g`.)
+    kernel.set_setup_step(SetupStep {
+        operation: SetupOperation::Engine,
+        phase: SetupPhase::Done,
+        attempt: 1,
+        downloaded_bytes: None,
+        total_bytes: None,
+        error: None,
+    });
 
     let settings = kernel::settings::load_settings(store.as_ref()).await;
     *sidecar_binary_slot.lock().expect("sidecar binary slot") = Some(binary.clone());
@@ -1919,6 +2038,16 @@ async fn init_inference(
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, "model supervisor init failed");
+            // From the user's view this is an engine-acquisition failure too
+            // (`03 §7g`): the engine never became usable this session.
+            kernel.set_setup_step(SetupStep {
+                operation: SetupOperation::Engine,
+                phase: SetupPhase::Failed,
+                attempt: 1,
+                downloaded_bytes: None,
+                total_bytes: None,
+                error: Some(format!("{e:#}")),
+            });
             kernel.set_sidecar_readiness(ComponentStatus::Unavailable, Some(e.to_string()));
             return;
         }
@@ -2042,6 +2171,9 @@ async fn forward_events(kernel: Arc<Kernel>, app: tauri::AppHandle) {
             }
             Ok(KernelEvent::SessionsChanged) => {
                 let _ = app.emit("sessions_changed", ());
+            }
+            Ok(KernelEvent::SetupChanged(status)) => {
+                let _ = app.emit("setup_changed", status);
             }
             Err(RecvError::Lagged(n)) => {
                 tracing::warn!(skipped = n, "event bus lagged; some ticks dropped")

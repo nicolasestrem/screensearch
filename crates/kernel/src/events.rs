@@ -6,8 +6,8 @@
 //! Tauri.
 
 use traits::{
-    CaptureTick, JobCompleted, JobStats, ModelDownloadStatus, Readiness, SidecarStatus,
-    ThrottleStatus, Toast,
+    CaptureTick, JobCompleted, JobStats, ModelDownloadStatus, Readiness, SetupStatus,
+    SidecarStatus, ThrottleStatus, Toast,
 };
 
 /// An event the kernel emits for the UI (forwarded to Tauri events by `src-tauri`).
@@ -44,4 +44,9 @@ pub enum KernelEvent {
     /// uses this pull-based signal to refetch mounted session queries; it carries no
     /// user-facing notification (`sessions_changed`).
     SessionsChanged,
+    /// Setup acquisition changed — the payload is the **whole** updated snapshot
+    /// (`setup_changed`, `03 §7g`). The kernel applies the change to its authoritative
+    /// state before sending this, so a handler can call [`Kernel::setup_status`] and
+    /// observe exactly what the event delivered.
+    SetupChanged(SetupStatus),
 }

@@ -20,9 +20,9 @@ use tokio::task::JoinHandle;
 use traits::{
     AnswerProvider, BackfillControl, CaptureConfig, CaptureNowReceiver, CaptureNowRequest,
     CaptureSource, ComponentReadiness, ComponentStatus, EmbeddingProvider, JobKind,
-    ModelDownloadStatus, NewJob, OcrProvider, PressureProbe, Readiness, SessionSegmenter,
-    SidecarState, SidecarStatus, Store, ThrottleStatus, Toast, ToastLevel, VisionProvider,
-    VisionTarget,
+    ModelDownloadPhase, ModelDownloadStatus, ModelLane, NewJob, OcrProvider, PressureProbe,
+    Readiness, SessionSegmenter, SetupOperation, SetupPhase, SetupStatus, SetupStep, SidecarState,
+    SidecarStatus, Store, ThrottleStatus, Toast, ToastLevel, VisionProvider, VisionTarget,
 };
 
 mod capture_loop;
@@ -680,6 +680,11 @@ pub struct Kernel {
     frames_dir: PathBuf,
     events: broadcast::Sender<KernelEvent>,
     readiness: Arc<RwLock<Readiness>>,
+    /// The authoritative current-session setup snapshot (`03 §7g`): startup
+    /// acquisition progress + honest failures. Updated before every `SetupChanged`
+    /// broadcast, so an event handler reading the bus already observes what
+    /// [`Kernel::setup_status`] returns.
+    setup: RwLock<SetupStatus>,
     capture: Arc<Mutex<Option<CaptureHandle>>>,
     capture_generation: AtomicU64,
     /// Process-local, privacy-safe controller observations; never a health journal.
@@ -791,6 +796,7 @@ impl Kernel {
             frames_dir,
             events,
             readiness: Arc::new(RwLock::new(initial_readiness)),
+            setup: RwLock::new(SetupStatus::default()),
             capture: Arc::new(Mutex::new(None)),
             capture_generation: AtomicU64::new(1),
             capture_observations: Arc::new(std::sync::Mutex::new(CaptureObservationBuffer::new(
@@ -832,6 +838,30 @@ impl Kernel {
             .read()
             .expect("readiness lock poisoned")
             .clone()
+    }
+
+    /// The authoritative setup snapshot (backs the `get_setup_status` command,
+    /// `03 §7g`). The whole snapshot is also broadcast on every change, and its
+    /// `revision` lets the UI discard a snapshot that arrives late.
+    pub fn setup_status(&self) -> SetupStatus {
+        self.setup.read().expect("setup lock poisoned").clone()
+    }
+
+    /// Registers one setup operation's current step and broadcasts the **whole**
+    /// updated snapshot as [`KernelEvent::SetupChanged`] (`setup_changed`,
+    /// `03 §7g`). The snapshot is updated *before* the event is sent, so a
+    /// subscriber's handler observes exactly what [`Kernel::setup_status`] returns;
+    /// `revision` increases by exactly one per call; the steps stay sorted by
+    /// `SetupOperation`'s `Ord` and a change to one operation never overwrites
+    /// another's; error text has every URL query string redacted (signed CDN
+    /// parameters must never reach the UI).
+    pub fn set_setup_step(&self, step: SetupStep) {
+        let snapshot = {
+            let mut status = self.setup.write().expect("setup lock poisoned");
+            apply_setup_step(&mut status, step);
+            status.clone()
+        };
+        let _ = self.events.send(KernelEvent::SetupChanged(snapshot));
     }
 
     /// Whether the capture loop is currently running.
@@ -1339,9 +1369,28 @@ impl Kernel {
         }
     }
 
-    /// Re-broadcasts a model-download progress update for the UI (`model_download`). The
-    /// composition root bridges the downloader's progress channel here.
+    /// Re-broadcasts a model-download progress update for the UI (`model_download`)
+    /// **and** mirrors it into the setup snapshot as the lane's `vision_model` /
+    /// `answer_model` step (`setup_changed`, `03 §7g`). The composition root bridges
+    /// the downloader's progress channel here.
     pub fn emit_model_download(&self, status: ModelDownloadStatus) {
+        let operation = match status.lane {
+            ModelLane::Vision => SetupOperation::VisionModel,
+            ModelLane::Answer => SetupOperation::AnswerModel,
+        };
+        let phase = match status.phase {
+            ModelDownloadPhase::Downloading => SetupPhase::Downloading,
+            ModelDownloadPhase::Done => SetupPhase::Done,
+            ModelDownloadPhase::Failed => SetupPhase::Failed,
+        };
+        self.set_setup_step(SetupStep {
+            operation,
+            phase,
+            attempt: 1,
+            downloaded_bytes: Some(status.downloaded_bytes),
+            total_bytes: status.total_bytes,
+            error: status.error.clone(),
+        });
         let _ = self.events.send(KernelEvent::ModelDownload(status));
     }
 
@@ -1513,4 +1562,61 @@ fn set_capture_readiness(
         r.clone()
     };
     let _ = events.send(KernelEvent::ReadinessChanged(snapshot));
+}
+
+/// Applies one step to the authoritative snapshot (`03 §7g`): the step replaces its
+/// operation's entry (or is inserted) with the steps kept sorted by
+/// `SetupOperation`'s `Ord` — a change to one operation never overwrites another's —
+/// `error` is set only on `failed` with every URL query string redacted (signed CDN
+/// parameters never reach the UI), and `revision` increases by exactly one.
+fn apply_setup_step(status: &mut SetupStatus, mut step: SetupStep) {
+    if let Some(error) = step.error.as_mut() {
+        *error = redact_url_queries(error);
+    }
+    if step.phase != SetupPhase::Failed {
+        step.error = None;
+    }
+    // The steps are kept in `SetupOperation` order (declaration order), so a binary
+    // search by the operation's `Ord` finds an existing entry to replace, or the
+    // insertion point that keeps the vec sorted.
+    match status
+        .steps
+        .binary_search_by(|probe| probe.operation.cmp(&step.operation))
+    {
+        Ok(index) => status.steps[index] = step,
+        Err(index) => status.steps.insert(index, step),
+    }
+    status.revision += 1;
+}
+
+/// Removes the query string from every `http://`/`https://` URL token in `text`
+/// (`03 §7g`): a URL token runs to the next whitespace, and everything from its `?`
+/// on is dropped, keeping the path and all surrounding text. A byte scan rather
+/// than a URL parser: it matches the redaction contract exactly and never fails on
+/// arbitrary diagnostic text.
+fn redact_url_queries(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let Some(start) = rest
+            .find("http://") // note: "https://…" does not contain "http://" — the 's' breaks it
+            .into_iter()
+            .chain(rest.find("https://"))
+            .min()
+        else {
+            out.push_str(rest);
+            return out;
+        };
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let token_end = tail.find(char::is_whitespace).unwrap_or(tail.len());
+        let url = &tail[..token_end];
+        match url.find('?') {
+            // Keep only the scheme + authority + path; the query (and everything
+            // after it inside the token) is dropped outright.
+            Some(query) => out.push_str(&url[..query]),
+            None => out.push_str(url),
+        }
+        rest = &tail[token_end..];
+    }
 }
