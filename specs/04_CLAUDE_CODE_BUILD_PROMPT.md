@@ -56,6 +56,13 @@ remain Windows-only; inference stays loopback-only; no listener/CORS changes or 
 Approval is not evidence of implemented behavior; require native Windows and separate-machine HTTP evidence before claiming acceptance.
 Update active user-facing privacy copy with the implementation, not before the behavior exists.
 
+**For setup visibility (approved 2026-10-20):** read `02 §5j`, the normative `03 §7g` and the
+`03 §7` command/event rows, plus `UI_REFERENCE §4` (Setup indicator row), `§5`, `§6`, `§7` and
+`§8`. Hard constraints: additive only — no schema migration, no new setting, no network
+destination, no change to the downloader's fallback/retry/digest behavior or to the sidecar
+lifecycle; no in-app engine re-initialization (`07` #94). This is a bounded increment, not a new
+arc: approval covers implementation only; merge/release need separate authorization.
+
 **Do not** hold the spec in your head from a prior session — re-read the sections you need; the files evolve.
 
 **For memory reports (2026-10-15; shipped in v0.4.1):** read `docs/memory-api-direction-plan.md`, `02 §5f`,

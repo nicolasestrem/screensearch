@@ -213,6 +213,7 @@ ships with only the happy path; no mock data; no "Coming Soon."
 | Tray (0.3.2) | — (icon present whenever the app runs) | capture error → error glyph/tint; menu still operates | paused → paused glyph/tint | passive state only — no notifications, no counts (`03 §7d`); menu actions round-trip through existing commands |
 | Updater indicator (0.3.2) | no update → **zero presence** (nothing rendered) | check/download failed → quiet App-section line ("couldn't check for updates" + retry), never a modal | downloading → indicator present, App line reflects it | presence, never a count; install only on user-initiated restart (`03 §11b`) |
 | Settings · App (0.3.2) | — | startup-registration or update-check failure → inline explain + retry, form kept | update downloading → status line reflects it | run-at-startup + close-to-tray apply optimistic + reconcile, like the rest of Settings |
+| Setup indicator + Settings · Models setup details (2026-10-20, `03 §7g`) | nothing active or failed → **zero presence** (no chip; details list nothing) | an operation `failed` → danger-toned chip "Setup failed" until that operation retries; details show a plain cause line + the next step (engine: "resolve the problem, then restart ScreenSearch"; model lane: the existing Load action) + an expandable diagnostic detail | several operations at once → one chip summarizing the most urgent (failed > active); details list each operation independently | chip copy "Preparing local AI" + the active step ("Downloading engine 42%" only when bytes and total are both known, otherwise indeterminate); details = per-operation stage (Checking → Downloading → Verifying → Installing → Done; embeddings "Preparing search model", never a percentage); loading = the snapshot query is pending → no chip, skeleton line in details; chip is a link/button to Settings; progress is `role="progressbar"` with values only when determinate; one polite live region announces phase changes, never byte ticks; reduced-motion disables the indeterminate animation |
 
 **API address and threat model (configurable-bind correction).** Default off, with missing
 bind address defaulting to `127.0.0.1` even for existing enabled installations. Allow any IPv4/IPv6
@@ -263,6 +264,9 @@ reveal/copy/regenerate + threat-model copy + the loud port-in-use "pick another"
 `ExportPanel` (Settings "Data export": an **Export…** `Button` → `export_data`, streaming
 frames + content text + marks to a JSON file in the user's Downloads folder, **no images**;
 its own panel so it reads as independent of the API — it **works with the API off** — D12).
+Domain (2026-10-20, `03 §7g`): `SetupIndicator` (StatusRail chip: zero presence when idle, one
+summarized active/failed state, links to Settings) and `SetupDetails` (Settings · Models: one row
+per setup operation with stage, determinate-or-indeterminate progress and plain failure copy).
 Domain (0.4.0, names proposal-level — PR5 owns): `SessionBands` (the kind-coded band layer over
 `ScanlineTimeline`, tokens only, one-accent — data via `list_sessions`; exactly four reserved lanes
 in every state, lane-5+ overflow aggregated into the neutral range-preset-focus control), `SessionDrillIn` (the

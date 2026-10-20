@@ -522,6 +522,7 @@ duplicates). **Commands** (UI → core):
 | `list_sessions` | `SessionQuery` → `Session[]` (0.4.0 PR5; filters kind/tool/`TimeRange`/limit; also the Timeline session-bands data source — `§7e`, `UI_REFERENCE §3`) |
 | `get_session` | `session_id` → `SessionDetail` (0.4.0 PR5; span + tool/host + exchanges; `include_summary` triggers lazy generation — `§7e`) |
 | `session_recap` | `session_id` → report (0.4.0 PR5; the existing **§8b report engine** scoped to the session's time range + frames — no new summarization machinery, D3) |
+| `get_setup_status` | `()` → `SetupStatus` (2026-10-20; current-session setup/acquisition snapshot — `§7g`) |
 
 *(0.4.0 command names + shapes are **naming PROPOSALS** — PR5 owns the final call, the 0.3.2 `app.*`
 precedent. `session_recap` may instead land as a session scope on the existing `generate_report`
@@ -535,7 +536,9 @@ governor tick while `throttle.enabled` — `§5`), and `sessions_changed` (0.4.0
 `null`, from Rust unit `()`). After a sessions scheduler iteration has at least one successful awaited
 store pass, the kernel emits `sessions_changed`; mounted session list/detail queries refetch from the
 store. It is a pull-based cache-invalidation signal only: **no notification, toast,
-nudge, badge, or score** is produced (D10/D11).
+nudge, badge, or score** is produced (D10/D11). `model_download` (payload `ModelDownloadStatus`,
+per-lane GGUF progress) and `setup_changed` (2026-10-20; payload the whole `SetupStatus`
+snapshot, `§7g`) drive the download/setup progress UI.
 
 **`ThrottleStatus` shape** (0.2.1, smart enrichment throttle): `{ enabled: bool, level: u8 (0=Normal
 / 1=High / 2=Sustained), sample: Option<PressureSample>, gpu_monitored: bool }`, where
@@ -1236,6 +1239,61 @@ KV storage is feasible without migration only after generic single/batch/delete 
 rejection plus dedicated atomic initialization/allocation. Every production producer shares the
 same insertion primitive. Identity-present/allocator-missing blocks feed readiness; never
 recreate a lower allocator. These prerequisites are required code, not already implemented.
+
+## 7g. Setup visibility: startup acquisition progress and errors (approved 2026-10-20)
+
+Nico approved this contract on 2026-10-20 ("Plan is approved"), after the 2026-10-19 field
+failure where an exhausted anonymous GitHub API quota left inference unavailable with nothing
+but a log line. It is additive: `model_download`, `get_readiness`, `readiness_changed` and the
+retry/fallback/integrity behavior of `crates/inference/src/download.rs` are unchanged. No schema
+migration, no new setting, no new network destination, no new automatic download.
+
+**Operations.** Four independent setup operations, keyed by `SetupOperation`:
+`engine` (llama-server acquisition, `ensure_binary`), `embeddings` (fastembed search model
+initialization, `init_embeddings`), `vision_model` and `answer_model` (GGUF lane downloads,
+mirrored from `model_download`). A change to one operation never overwrites another.
+
+**Phases** (`SetupPhase`): `checking` · `downloading` · `verifying` · `installing` · `preparing`
+· `done` · `failed`. Engine: `checking` (local install / release lookup) → `downloading` →
+`verifying` (digest, only when a digest is known) → `installing` (extract + publish) → `done`.
+Embeddings: `preparing` → `done`, always indeterminate (fastembed exposes no byte counter, so no
+percentage is shown). Model lanes: `downloading` → `done` / `failed`. `done` means the operation
+completed — never that a model is loaded or a capability is ready; readiness stays authoritative
+for that.
+
+**`SetupStep`** = `{ operation, phase, attempt: u32 (1-based, engine download attempt; 1
+elsewhere), downloaded_bytes: Option<u64>, total_bytes: Option<u64>, error: Option<String> }`.
+Bytes are real received bytes of the current attempt only (a retry restarts at 0; no
+cross-attempt or cross-phase aggregate). `total_bytes` is `None` unless the server reported a
+length; the UI shows a percentage only when both are known. `error` is set only on `failed` and
+is diagnostic text with every URL query string removed (signed CDN parameters never reach the
+UI). **`SetupStatus`** = `{ revision: u64, steps: SetupStep[] }`: the current-session state of
+every operation that has reported, in `SetupOperation` order. `revision` increases by one on
+every change.
+
+**Transport.** The kernel owns the authoritative `SetupStatus`. Every change is applied to it
+first and then broadcast as the `setup_changed` event carrying the **whole** snapshot; the
+`get_setup_status` command returns the same snapshot. The UI subscribes before fetching and
+keeps whichever snapshot has the higher `revision`, so a late mount, a webview reload or a
+lagged/lost event reconciles to the current state and an older snapshot never overwrites a
+newer one. Engine progress events are rate-limited at the source (at most ~5/s, plus every
+phase change). State is per-session memory: nothing is persisted, and a previous session's
+activity is never shown as live.
+
+**Failure persistence and recovery copy.** A `failed` step stays until that same operation
+reports a new phase (a new attempt), never merely because Settings was visited or another
+operation succeeded. Engine acquisition still runs once per launch (`07` #94): its failure copy
+says to resolve the cause and restart ScreenSearch; no retry button is offered for it. Model-lane
+failures keep the existing Load action (`ModelPanel`); no vision retry or automatic Ask replay
+is introduced. Offline is never inferred from a generic network error.
+
+**UI** (`UI_REFERENCE §4`/`§5`): a compact StatusRail setup indicator, present only while any
+operation is active or failed, opening the Settings · Models setup details; no modal, no toast
+for progress, no badge count. Acceptance: Rust unit tests for ordering/revision, independent
+operations, failure persistence, URL redaction and engine phase/byte reporting (known and
+unknown length, retry reset, digest failure, extraction failure); UI tests for the indicator and
+details states; the full CI chain; and a native run of a source-built app on Windows showing
+real engine progress, a failure and reload reconciliation, recorded in `05`.
 
 ## 8. Configuration / settings (keys in `settings`)
 
