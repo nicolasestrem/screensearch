@@ -14,6 +14,8 @@ import { listenTo } from "./events";
 import { queryKeys } from "./queryKeys";
 import { toast as toastStore } from "../../state/toastStore";
 import type { Readiness } from "../../bindings/Readiness";
+import type { SetupStatus } from "../../bindings/SetupStatus";
+import { newerSetupStatus } from "../setup";
 import { memoryKeys } from "./memory";
 
 /** Debounce window for coalescing capture_tick bursts into one invalidation. */
@@ -168,6 +170,18 @@ export function useLiveEvents() {
     track(
       listenTo("update_status_changed", (status) => {
         qc.setQueryData(queryKeys.updateStatus, status);
+      }),
+    );
+
+    track(
+      listenTo("setup_changed", (incoming) => {
+        // Revision guard (03 §7g): an older snapshot — a lagged, replayed, or
+        // out-of-order event — never downgrades the cache. The event path and
+        // the queryFn share the same pure predicate.
+        const cached = qc.getQueryData<SetupStatus | null>(queryKeys.setupStatus);
+        if (newerSetupStatus(incoming, cached)) {
+          qc.setQueryData(queryKeys.setupStatus, incoming);
+        }
       }),
     );
 

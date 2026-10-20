@@ -50,6 +50,7 @@ import type { ProjectNoteStatus } from "../../bindings/ProjectNoteStatus";
 import type { PromotionProposal } from "../../bindings/PromotionProposal";
 import type { PromotionReceipt } from "../../bindings/PromotionReceipt";
 import type { PromotionSelection } from "../../bindings/PromotionSelection";
+import type { SetupStatus } from "../../bindings/SetupStatus";
 
 /** Liveness probe for the IPC bridge. */
 export const ping = (): Promise<string> => invoke<string>("ping");
@@ -317,6 +318,12 @@ export const exportData = (request: ExportRequest): Promise<ExportResult> =>
 /** Current auto-update snapshot (0.3.2 PR2, #69; `03 §11b`). `idle` = zero UI presence. */
 export const getUpdateStatus = (): Promise<UpdateStatus> =>
   invoke<UpdateStatus>("get_update_status");
+
+/** The current-session setup/acquisition snapshot (`03 §7g`). Kept live by the
+ *  whole-status `setup_changed` event; an older snapshot never overwrites a newer
+ *  one (see `newerSetupStatus` in lib/setup.ts). */
+export const getSetupStatus = (): Promise<SetupStatus> =>
+  invoke<SetupStatus>("get_setup_status");
 
 /** Manually check for updates; returns the post-check status. A found update downloads
  *  in the background and finishes via the `update_status_changed` event. */

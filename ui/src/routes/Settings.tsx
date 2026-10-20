@@ -38,6 +38,7 @@ import {
   ModelTierPicker,
   RetentionControl,
   ScheduleControl,
+  SetupDetails,
 } from "../components/domain";
 import {
   useMonitors,
@@ -766,6 +767,10 @@ export function Component() {
           <div className="border-t border-line pt-4">
             <ModelPanel />
           </div>
+          {/* Setup operations (03 §7g): one row per operation with stage, bytes
+              and plain failure copy. Renders nothing when there is nothing to
+              set up (§4: details list nothing). */}
+          <SetupDetails />
         </div>
       </Panel>
 

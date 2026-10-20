@@ -3,6 +3,7 @@
 // caches that the live event stream keeps fresh (useLiveEvents). Outside the Tauri
 // shell the readiness query errors and the rail shows an honest "Kernel offline".
 import { Chip, Skeleton, Tooltip } from "../primitives";
+import { SetupIndicator } from "../domain";
 import {
   IconCapture,
   IconCpu,
@@ -71,6 +72,9 @@ export function StatusRail() {
       </div>
 
       <div className="flex items-center gap-2 min-w-0">
+        {/* Setup chip (03 §7g): present only while something is active/failed;
+            zero presence otherwise, no rail layout pressure. */}
+        <SetupIndicator />
         {throttling && (
           <Tooltip
             label={`Throttling enrichment (${throttling.level >= 2 ? "Sustained" : "High"})${
