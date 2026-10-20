@@ -1353,6 +1353,15 @@ impl Kernel {
     pub fn emit_sidecar_status(&self, status: SidecarStatus) {
         let (component, detail) = sidecar_component(&status);
         let state = status.state;
+        // A lane's model reached `Ready`, so whatever that lane's last download failure
+        // was, it no longer stands — e.g. the user switched to a tier already on disk,
+        // which resolves without the downloader and would otherwise leave a stale
+        // "Setup failed" until restart (`03 §7g`, PR #146 review).
+        if state == SidecarState::Ready {
+            if let Some(lane) = status.lane {
+                self.clear_failed_lane_step(lane);
+            }
+        }
         let snapshot = {
             let mut r = self.readiness.write().expect("readiness lock poisoned");
             r.sidecar = ComponentReadiness {
@@ -1368,6 +1377,32 @@ impl Kernel {
                 ToastLevel::Error,
                 "Inference sidecar crashed; the next request will try to restart it",
             );
+        }
+    }
+
+    /// Replaces a `failed` model-lane setup step with `done` once that lane's model is
+    /// serving. A no-op when the lane has no step or its step is not `failed`.
+    fn clear_failed_lane_step(&self, lane: ModelLane) {
+        let operation = match lane {
+            ModelLane::Vision => SetupOperation::VisionModel,
+            ModelLane::Answer => SetupOperation::AnswerModel,
+        };
+        let failed = self
+            .setup
+            .read()
+            .expect("setup lock poisoned")
+            .steps
+            .iter()
+            .any(|s| s.operation == operation && s.phase == SetupPhase::Failed);
+        if failed {
+            self.set_setup_step(SetupStep {
+                operation,
+                phase: SetupPhase::Done,
+                attempt: 1,
+                downloaded_bytes: None,
+                total_bytes: None,
+                error: None,
+            });
         }
     }
 

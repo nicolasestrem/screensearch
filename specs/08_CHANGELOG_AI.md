@@ -18,7 +18,9 @@
   round 1 (Codex, 3 × P2): listener-before-snapshot refetch, Settings zero presence once all
   steps are done, terminal engine steps keep the real attempt — all fixed, gate green on tbx.
   Round 2 (Codex, 3 × P2): one rail indicator (legacy download chip removed), a visible failure
-  cause line, snapshot re-emit after a lagged broadcast — fixed, gate green on tbx.
+  cause line, snapshot re-emit after a lagged broadcast — fixed, gate green on tbx. Final
+  auto-triggered findings: vision failure copy names "Start vision tagging"; a lane's failure
+  clears when that lane's model reaches Ready.
 
 ## 2026-10-19 — llama.cpp bootstrap recovery
 

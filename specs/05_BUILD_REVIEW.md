@@ -84,6 +84,15 @@
   change (UI + specs only — no Rust path changed since `1291529`, whose Windows CI passed). tbx:
   lint 0 · UI `tests 82 / pass 82 / fail 0` · build 0; the old "Use Load" copy fails the updated
   test (`pass 81 / fail 1`, file restored).
+- **Auto-triggered Codex review on `fa186f5` (1 inline P2, valid, fixed — final round, Nico:
+  "merge after addressing this round"):** `PRRT_kwDOTAuCtM6uVC5e` — after a model download
+  failed, switching that lane to a tier already on disk resolves without the downloader, so the
+  lane's `failed` step stayed until restart while the model served fine → the kernel clears a
+  lane's `failed` setup step when the sidecar reports that lane `Ready` (other lane and non-ready
+  transitions untouched). Test `setup_lane_failure_clears_when_that_lane_model_is_ready`, proven
+  RED on tbx with the call removed (exit 101, file restored). tbx: UI build 0 · fmt 0 · workspace
+  clippy `-D warnings` 0 · `cargo test -p kernel` all green (setup `10 passed`); tbx restored to
+  clean `main`.
 
 ## 2026-10-19 — llama.cpp bootstrap recovery (branch `fix/llama-bootstrap-recovery`)
 

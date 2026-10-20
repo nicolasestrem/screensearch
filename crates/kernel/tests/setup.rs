@@ -17,7 +17,8 @@ use kernel::{CaptureFactory, Kernel, KernelEvent};
 use store::SqliteStore;
 use traits::{
     CaptureSource, ModelDownloadPhase, ModelDownloadStatus, ModelLane, OcrProvider, OcrResult,
-    Readiness, Result, SetupOperation, SetupPhase, SetupStatus, SetupStep,
+    Readiness, Result, SetupOperation, SetupPhase, SetupStatus, SetupStep, SidecarState,
+    SidecarStatus,
 };
 
 /// Never produces a frame — the setup snapshot needs nothing from the capture loop.
@@ -69,6 +70,17 @@ fn step_(operation: SetupOperation, phase: SetupPhase) -> SetupStep {
         downloaded_bytes: None,
         total_bytes: None,
         error: None,
+    }
+}
+
+fn failed_(operation: SetupOperation, error: &str) -> SetupStep {
+    SetupStep {
+        operation,
+        phase: SetupPhase::Failed,
+        attempt: 1,
+        downloaded_bytes: None,
+        total_bytes: None,
+        error: Some(error.to_string()),
     }
 }
 
@@ -380,4 +392,49 @@ async fn setup_model_download_maps_lane_into_a_step() {
 async fn setup_empty_snapshot_has_revision_zero_and_no_steps() {
     let kernel = test_kernel();
     assert_eq!(kernel.setup_status(), SetupStatus::default());
+}
+
+/// A lane whose model reaches `Ready` no longer has a standing download failure — e.g. the
+/// user switched to a tier already on disk, which resolves without the downloader (PR #146
+/// review). The other lane's failure is untouched.
+#[tokio::test]
+async fn setup_lane_failure_clears_when_that_lane_model_is_ready() {
+    let kernel = test_kernel();
+    kernel.set_setup_step(failed_(SetupOperation::VisionModel, "HTTP 500"));
+    kernel.set_setup_step(failed_(SetupOperation::AnswerModel, "HTTP 500"));
+
+    kernel.emit_sidecar_status(SidecarStatus {
+        state: SidecarState::Ready,
+        model: Some("qwen3-vl".to_string()),
+        lane: Some(ModelLane::Vision),
+    });
+
+    let snap = kernel.setup_status();
+    let phase = |op| {
+        snap.steps
+            .iter()
+            .find(|s| s.operation == op)
+            .map(|s| s.phase)
+    };
+    assert_eq!(phase(SetupOperation::VisionModel), Some(SetupPhase::Done));
+    assert_eq!(
+        phase(SetupOperation::AnswerModel),
+        Some(SetupPhase::Failed),
+        "only the lane that became ready is reconciled"
+    );
+
+    // A non-ready transition never clears a failure.
+    kernel.emit_sidecar_status(SidecarStatus {
+        state: SidecarState::Starting,
+        model: None,
+        lane: Some(ModelLane::Answer),
+    });
+    let snap = kernel.setup_status();
+    assert_eq!(
+        snap.steps
+            .iter()
+            .find(|s| s.operation == SetupOperation::AnswerModel)
+            .map(|s| s.phase),
+        Some(SetupPhase::Failed)
+    );
 }
