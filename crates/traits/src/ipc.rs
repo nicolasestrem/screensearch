@@ -1000,6 +1000,65 @@ pub struct ModelDownloadStatus {
     pub error: Option<String>,
 }
 
+/// One independent startup/acquisition operation (`03 §7g`). Declaration order is the
+/// order `SetupStatus::steps` is kept in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub enum SetupOperation {
+    /// llama-server acquisition (`ensure_binary`).
+    Engine,
+    /// fastembed search-model initialization.
+    Embeddings,
+    /// Vision-lane GGUF download (mirrored from `model_download`).
+    VisionModel,
+    /// Answer-lane GGUF download (mirrored from `model_download`).
+    AnswerModel,
+}
+
+/// Stage of one setup operation (`03 §7g`). `Done` means the operation completed — never
+/// that a model is loaded; readiness stays authoritative for that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub enum SetupPhase {
+    Checking,
+    Downloading,
+    Verifying,
+    Installing,
+    Preparing,
+    Done,
+    Failed,
+}
+
+/// Current state of one setup operation. Bytes are real received bytes of the current
+/// attempt only; `total_bytes` is `None` unless the server reported a length. `error` is
+/// set only on `Failed`, with URL query strings removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct SetupStep {
+    pub operation: SetupOperation,
+    pub phase: SetupPhase,
+    /// 1-based download attempt (engine); `1` for every other operation.
+    pub attempt: u32,
+    #[ts(type = "number | null")]
+    pub downloaded_bytes: Option<u64>,
+    #[ts(type = "number | null")]
+    pub total_bytes: Option<u64>,
+    pub error: Option<String>,
+}
+
+/// Authoritative current-session setup snapshot (`get_setup_status` output and the
+/// whole-state `setup_changed` event payload, `03 §7g`). `revision` increases by one on
+/// every change so the UI can discard an older snapshot that arrives late.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct SetupStatus {
+    #[ts(type = "number")]
+    pub revision: u64,
+    pub steps: Vec<SetupStep>,
+}
+
 /// Severity of a UI toast (`toast` event).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
