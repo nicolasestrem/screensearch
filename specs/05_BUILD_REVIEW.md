@@ -76,6 +76,14 @@
   `-D warnings` 0 · `cargo test -p screensearch` `162 passed` · kernel setup `9 passed` ·
   bindings clean. Independent read-only review of the round-2 diff: no defects. Merge
   authorized by Nico for #146 once checks on the pushed head pass.
+- **Auto-triggered Codex review on `1291529` (1 inline P2, valid, fixed):**
+  `PRRT_kwDOTAuCtM6uU02n` — the vision-model failure copy said "Use Load", but Load only loads
+  the answer model, so it pointed at an action that cannot retry the vision download → each
+  lane now names its own existing action ("Load answer model" / "Start vision tagging"); `03
+  §7g` and the `UI_REFERENCE §4` row corrected to match (no new retry mechanism). Copy-only
+  change (UI + specs only — no Rust path changed since `1291529`, whose Windows CI passed). tbx:
+  lint 0 · UI `tests 82 / pass 82 / fail 0` · build 0; the old "Use Load" copy fails the updated
+  test (`pass 81 / fail 1`, file restored).
 
 ## 2026-10-19 — llama.cpp bootstrap recovery (branch `fix/llama-bootstrap-recovery`)
 

@@ -256,7 +256,7 @@ test("done copy per operation", () => {
   assert.equal(setupDoneText("answer_model"), "Downloaded");
 });
 
-test("failure next-step copy: engine and embeddings restart, model lanes keep Load", () => {
+test("failure next-step copy: engine and embeddings restart, each model lane names its own retry action", () => {
   assert.equal(
     setupFailureNextStep("engine"),
     "Resolve the problem, then restart ScreenSearch.",
@@ -265,12 +265,16 @@ test("failure next-step copy: engine and embeddings restart, model lanes keep Lo
     setupFailureNextStep("embeddings"),
     "Resolve the problem, then restart ScreenSearch.",
   );
-  for (const lane of ["vision_model", "answer_model"]) {
-    assert.equal(
-      setupFailureNextStep(lane),
-      "Use Load to try again — the download resumes where it stopped.",
-    );
-  }
+  // Each lane names the existing action that actually re-runs its download:
+  // Load only loads the answer model, so the vision lane points at vision tagging.
+  assert.equal(
+    setupFailureNextStep("vision_model"),
+    "Use Start vision tagging to try again — the download resumes where it stopped.",
+  );
+  assert.equal(
+    setupFailureNextStep("answer_model"),
+    "Use Load answer model to try again — the download resumes where it stopped.",
+  );
 });
 
 test("bytes line: '4.8 MB of 32 MB' with a known total, bare received bytes otherwise, empty outside downloading", () => {

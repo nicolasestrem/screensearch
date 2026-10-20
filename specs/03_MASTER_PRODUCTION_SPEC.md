@@ -1284,7 +1284,8 @@ activity is never shown as live.
 reports a new phase (a new attempt), never merely because Settings was visited or another
 operation succeeded. Engine acquisition still runs once per launch (`07` #94): its failure copy
 says to resolve the cause and restart ScreenSearch; no retry button is offered for it. Model-lane
-failures keep the existing Load action (`ModelPanel`); no vision retry or automatic Ask replay
+failures point at the existing action that re-runs that lane's download — "Load answer model" for
+the answer lane, "Start vision tagging" for the vision lane (PR #146 review); no new vision retry or automatic Ask replay
 is introduced. Offline is never inferred from a generic network error.
 
 **UI** (`UI_REFERENCE §4`/`§5`): a compact StatusRail setup indicator, present only while any

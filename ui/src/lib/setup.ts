@@ -91,15 +91,18 @@ export function setupDoneText(operation: SetupOperation): string {
 }
 
 /** Next-step copy under a failed stage. Engine/embeddings need an app restart;
- *  model lanes keep the existing Load action (`ModelPanel`). Never "offline". */
+ *  each model lane points at the existing action that re-runs its download —
+ *  "Load answer model" for the answer lane, "Start vision tagging" for the vision
+ *  lane (Load only loads the answer model). Never "offline". */
 export function setupFailureNextStep(operation: SetupOperation): string {
   switch (operation) {
     case "engine":
     case "embeddings":
       return "Resolve the problem, then restart ScreenSearch.";
     case "vision_model":
+      return "Use Start vision tagging to try again — the download resumes where it stopped.";
     case "answer_model":
-      return "Use Load to try again — the download resumes where it stopped.";
+      return "Use Load answer model to try again — the download resumes where it stopped.";
   }
 }
 
