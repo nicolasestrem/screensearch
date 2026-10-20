@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stage, and Settings · Models lists each step: Checking → Downloading → Verifying → Installing →
   Done. Real progress (bytes and a percentage) appears only when it can be measured; the search
   model shows honest indeterminate progress. A failed step stays visible as "Setup failed" until
-  that step runs again, with a plain next step and the technical details one click away (signed
+  that step runs again, with a plain cause, the next step and the technical details one click away (signed
   URL parameters are stripped). Nothing blocks capture or search, and no new download, setting
   or network destination is added. Spec: `03 §7g`.
 

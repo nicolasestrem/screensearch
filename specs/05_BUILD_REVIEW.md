@@ -61,6 +61,21 @@
   steps. Gate on tbx at the fixed tree: lint 0 · UI `tests 81 / pass 81 / fail 0` · build 0 ·
   fmt 0 · workspace clippy `-D warnings` 0 · `cargo test -p screensearch` `162 passed` ·
   kernel setup `9 passed` · bindings clean.
+- **PR #146 review round 2 (Codex, `b500176`, auto-triggered on push; 3 inline P2, all valid,
+  fixed):** (1) `PRRT_kwDOTAuCtM6uUowo` — a vision/answer download showed the legacy
+  `model_download` rail chip *and* the setup chip; `UI_REFERENCE §4` wants one summarized
+  indicator → the legacy rail chip is removed (the kernel already mirrors both lanes into the
+  setup snapshot with real bytes; ModelPanel keeps its own `model_download` view). (2)
+  `PRRT_kwDOTAuCtM6uUowu` — a failed row showed no cause outside the collapsed diagnostic →
+  pure `setupFailureCause` renders a visible cause line derived only from the error text (HTTP
+  status, digest mismatch, else the innermost chain segment; never an inferred "offline");
+  test proven RED on tbx (`pass 81 / fail 1`, file restored). (3) `PRRT_kwDOTAuCtM6uUowy` — a
+  lagged kernel broadcast could drop the terminal `SetupChanged` → `forward_events` re-emits
+  `kernel.setup_status()` on `RecvError::Lagged` (the UI revision guard keeps it safe). Gate on
+  tbx: lint 0 · UI `tests 82 / pass 82 / fail 0` · build 0 · fmt 0 · workspace clippy
+  `-D warnings` 0 · `cargo test -p screensearch` `162 passed` · kernel setup `9 passed` ·
+  bindings clean. Independent read-only review of the round-2 diff: no defects. Merge
+  authorized by Nico for #146 once checks on the pushed head pass.
 
 ## 2026-10-19 — llama.cpp bootstrap recovery (branch `fix/llama-bootstrap-recovery`)
 

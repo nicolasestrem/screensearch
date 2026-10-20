@@ -13,6 +13,7 @@ import { useSetupStatus } from "../../lib/ipc/queries";
 import {
   SETUP_OPERATION_LABELS,
   setupDetailsSteps,
+  setupFailureCause,
   setupBytesText,
   setupDoneText,
   setupDownloadPercent,
@@ -80,6 +81,11 @@ function SetupRow({ step }: { step: SetupStep }) {
           <span className="text-caption text-danger font-body">
             {label} didn’t finish.
           </span>
+          {step.error && (
+            <span className="text-caption text-ink font-body">
+              {setupFailureCause(step.error)}
+            </span>
+          )}
           <span className="text-caption text-ink-muted font-body">
             {setupFailureNextStep(step.operation)}
           </span>

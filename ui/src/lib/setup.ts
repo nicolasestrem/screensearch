@@ -216,6 +216,28 @@ export function summarizeSetup(
 }
 
 /**
+ * A plain, visible cause line for a failed step (`UI_REFERENCE §4`: cause line +
+ * next step + a separately expandable diagnostic). Derived only from what the
+ * error actually says — never an inferred "offline": an HTTP status names the
+ * server's answer, a digest mismatch says so, otherwise the innermost error in
+ * the anyhow chain (`outer: inner: innermost`), capped so it stays one line.
+ * Empty when there is no error text.
+ */
+export function setupFailureCause(error: string | null | undefined): string {
+  const text = (error ?? "").trim();
+  if (text === "") return "";
+  const http = /HTTP (\d{3}(?: [A-Za-z][A-Za-z ]*[A-Za-z])?)/.exec(text);
+  if (http) return `The download server answered HTTP ${http[1]}.`;
+  if (/sha256 mismatch/i.test(text)) {
+    return "The download didn’t match its published checksum, so it wasn’t installed.";
+  }
+  const segments = text.split(": ").map((s) => s.trim()).filter((s) => s !== "");
+  const innermost = segments[segments.length - 1] ?? text;
+  const capped = innermost.length > 160 ? `${innermost.slice(0, 157)}…` : innermost;
+  return capped.charAt(0).toUpperCase() + capped.slice(1);
+}
+
+/**
  * The rows Settings · Models lists (`UI_REFERENCE §4`): every step while any
  * operation is active or failed (completed rows stay for context), and nothing
  * once everything has finished — zero presence when idle.

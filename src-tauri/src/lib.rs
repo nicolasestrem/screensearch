@@ -2196,7 +2196,12 @@ async fn forward_events(kernel: Arc<Kernel>, app: tauri::AppHandle) {
                 let _ = app.emit("setup_changed", status);
             }
             Err(RecvError::Lagged(n)) => {
-                tracing::warn!(skipped = n, "event bus lagged; some ticks dropped")
+                tracing::warn!(skipped = n, "event bus lagged; some ticks dropped");
+                // A skipped `SetupChanged` may have been the terminal one, and nothing
+                // guarantees a later transition — re-send the authoritative whole-state
+                // snapshot so the UI reconciles (`03 §7g`; its revision guard keeps it
+                // from ever downgrading a newer cache).
+                let _ = app.emit("setup_changed", kernel.setup_status());
             }
             Err(RecvError::Closed) => break,
         }

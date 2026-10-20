@@ -17,6 +17,7 @@ import {
   setupStageText,
   summarizeSetup,
   setupDetailsSteps,
+  setupFailureCause,
 } from "../src/lib/setup.ts";
 
 function step(overrides) {
@@ -340,4 +341,28 @@ test("setupDetailsSteps: zero presence once every operation is done; all rows wh
     step({ operation: "embeddings", phase: "done" }),
   ]);
   assert.equal(setupDetailsSteps(oneFailed).length, 2, "a failure keeps the list visible");
+});
+
+test("setupFailureCause: a visible plain cause from the real error text, never invented", () => {
+  assert.equal(
+    setupFailureCause(
+      "llama-server unavailable: download https://github.com/ggml-org/llama.cpp/releases/download/b0/nope.zip returned HTTP 404 Not Found",
+    ),
+    "The download server answered HTTP 404 Not Found.",
+  );
+  assert.equal(
+    setupFailureCause("llama.cpp release query returned an error status: HTTP status client error (403 Forbidden)"),
+    "HTTP status client error (403 Forbidden)",
+    "no 'HTTP <code>' token: fall back to the innermost error, not a guessed cause",
+  );
+  assert.equal(
+    setupFailureCause("verify sidecar asset llama.zip: sha256 mismatch: expected aa, got bb"),
+    "The download didn’t match its published checksum, so it wasn’t installed.",
+  );
+  assert.equal(setupFailureCause("create dir: access is denied (os error 5)"), "Access is denied (os error 5)");
+  assert.equal(setupFailureCause(null), "");
+  assert.equal(setupFailureCause("   "), "");
+  const long = setupFailureCause("x".repeat(400));
+  assert.ok(long.length <= 160, "capped to one line");
+  assert.ok(!/offline/i.test(setupFailureCause("error sending request: connection refused")), "never infers offline");
 });

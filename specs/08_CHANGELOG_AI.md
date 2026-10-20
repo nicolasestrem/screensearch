@@ -17,6 +17,8 @@
   "All good!" (failed chip, live install stage, Engine/Search model Done; see `05`). PR #146
   round 1 (Codex, 3 × P2): listener-before-snapshot refetch, Settings zero presence once all
   steps are done, terminal engine steps keep the real attempt — all fixed, gate green on tbx.
+  Round 2 (Codex, 3 × P2): one rail indicator (legacy download chip removed), a visible failure
+  cause line, snapshot re-emit after a lagged broadcast — fixed, gate green on tbx.
 
 ## 2026-10-19 — llama.cpp bootstrap recovery
 
