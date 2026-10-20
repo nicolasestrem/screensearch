@@ -222,7 +222,11 @@ See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for the as-built design and
 | **Embeddings** | EmbeddingGemma-300M (text) | |
 
 Exact HF repos / quants are pinned in [`specs/MODEL_REGISTRY.md`](./specs/MODEL_REGISTRY.md).
-Embedding models auto-download on first use into `<app-data>/models/fastembed`.
+Embedding models auto-download on first use into `<app-data>/models/fastembed`. The llama.cpp
+engine downloads at launch into `<app-data>/sidecar/llama`, and vision/answer models on first use.
+While anything is being prepared, a "Preparing local AI" chip in the status bar shows the stage
+and real progress; a failure stays visible as "Setup failed", with details and the next step in
+**Settings · Models**.
 
 ## Repository layout
 

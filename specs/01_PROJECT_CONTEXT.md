@@ -121,7 +121,9 @@ for self-contained contracts and source-inspected inventory.
   interactive acceptance has not been performed, and the external-agent API's native Settings
   UI and separate-machine network gates remain open. Only the Windows NSIS installer, its
   updater `.sig` and `latest.json` are release assets; standalone MCP wrapper archives are not
-  published. No next arc is defined yet (pending maintainer decision). The full app is a
+  published. No next arc is defined yet (pending maintainer decision). Post-release increments on
+  `main`/branches: llama.cpp bootstrap recovery (#145, merged) and setup visibility (`02 §5j`,
+  `03 §7g`, branch `feat/setup-progress-visibility`). The full app is a
   15-crate Rust workspace plus a React/TS UI; active work is tracked in `05`–`08`, shipped
   history in `CHANGELOG-ARCHIVE.md` and `specs/archive/`. Code-signing is the lone packaging
   follow-up (`03 §11b`).

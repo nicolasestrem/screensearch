@@ -384,6 +384,11 @@ everything downloads on first use, Rust-only (no Python in the runtime):
   same single-use signed-CDN failure mode the model chunk downloader already retries).
   An acquisition failure is reported with its **full** error chain, not just the outer
   context, so the log names the underlying status.
+  `ensure_binary_with_progress` streams the zip and reports `EngineProgress`
+  (Checking → Downloading{attempt, received, total} → Verifying, only with a known digest →
+  Installing). Bytes are per attempt (a retry restarts at 0), `total` comes only from
+  `Content-Length`, and intermediate reports are rate-limited to ~5/s with the final count always
+  sent. `init_inference` maps these into the `engine` setup step (`§8.1`).
 
 - **Models** — `ensure_model` lists the tier's HuggingFace repo via `hf-hub`, picks the `Q4_K_M`
   weights (+ the **same-repo** `mmproj` for vision — a mismatched projector crashes the server), and
@@ -473,6 +478,21 @@ searchable proof. The Moment view renders a text + layout reconstruction (from `
 full-delete, `delete_frame`, remains for the one-time self-capture purge.)
 
 ---
+
+### 8.1 Setup visibility (`03 §7g`, 2026-10-20)
+
+The kernel owns one authoritative, per-session `SetupStatus { revision, steps }` with an
+independent `SetupStep` per operation (`engine`, `embeddings`, `vision_model`, `answer_model`).
+`Kernel::set_setup_step` strips URL query strings from errors, replaces that operation's step
+(steps stay in operation order), bumps `revision` by one, and only then broadcasts
+`setup_changed` with the whole snapshot; an identical re-report is ignored. `get_setup_status`
+returns the same snapshot. Sources: `init_inference` (engine, via `EngineProgress`),
+`init_embeddings` (Preparing → Done/Failed, indeterminate) and `emit_model_download` (the model
+lanes, mirrored from `model_download`, which is unchanged). The UI subscribes in the always-mounted
+live-events hook and both the event and the snapshot fetch go through `newerSetupStatus`, so an
+older revision never overwrites a newer one; `SetupIndicator` (StatusRail) and `SetupDetails`
+(Settings · Models) render it. Nothing is persisted; engine acquisition still runs once per
+launch, so its failure copy says to restart (`07` #94).
 
 ## 9. Query → answer path (`ask`)
 
