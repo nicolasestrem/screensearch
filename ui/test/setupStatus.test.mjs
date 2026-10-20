@@ -203,7 +203,7 @@ test("setupAnnouncement: a phase change is announced", () => {
   assert.notEqual(setupAnnouncement(downloading), setupAnnouncement(installing));
 });
 
-test("setupAnnouncement: all-done snapshot says setup is complete; nothing active says the same", () => {
+test("setupAnnouncement: all-done snapshot says setup is complete; an empty snapshot stays silent", () => {
   const done = setupAnnouncement(
     status(9, [
       step({ operation: "engine", phase: "done" }),
@@ -212,8 +212,9 @@ test("setupAnnouncement: all-done snapshot says setup is complete; nothing activ
   );
   assert.equal(done, "Local AI setup complete");
 
+  // Nothing has reported yet — announcing "complete" would be false.
   const empty = setupAnnouncement(status(10, []));
-  assert.equal(empty, "Local AI setup complete");
+  assert.equal(empty, "");
 });
 
 test("setupAnnouncement: failures and operations are named plainly", () => {

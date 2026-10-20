@@ -106,6 +106,30 @@ async fn setup_revision_increments_by_one_per_change() {
     );
 }
 
+/// An identical re-report is not a change: the revision stays put and no
+/// `setup_changed` event is broadcast (`03 §7g` "increases by one on every change").
+#[tokio::test]
+async fn setup_identical_re_report_neither_bumps_revision_nor_broadcasts() {
+    let kernel = test_kernel();
+    kernel.set_setup_step(step_(SetupOperation::Engine, SetupPhase::Downloading));
+    assert_eq!(kernel.setup_status().revision, 1);
+
+    let mut rx = kernel.subscribe();
+    kernel.set_setup_step(step_(SetupOperation::Engine, SetupPhase::Downloading));
+    assert_eq!(
+        kernel.setup_status().revision,
+        1,
+        "the same step reported twice must not move the revision"
+    );
+    loop {
+        match rx.try_recv() {
+            Ok(KernelEvent::SetupChanged(_)) => panic!("an unchanged step must not broadcast"),
+            Ok(_) => continue,
+            Err(_) => break,
+        }
+    }
+}
+
 /// Every independent operation keeps its own step: a change to one never overwrites
 /// another (`03 §7g`).
 #[tokio::test]

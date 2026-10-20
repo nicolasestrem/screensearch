@@ -858,7 +858,9 @@ impl Kernel {
     pub fn set_setup_step(&self, step: SetupStep) {
         let snapshot = {
             let mut status = self.setup.write().expect("setup lock poisoned");
-            apply_setup_step(&mut status, step);
+            if !apply_setup_step(&mut status, step) {
+                return;
+            }
             status.clone()
         };
         let _ = self.events.send(KernelEvent::SetupChanged(snapshot));
@@ -1569,7 +1571,7 @@ fn set_capture_readiness(
 /// `SetupOperation`'s `Ord` — a change to one operation never overwrites another's —
 /// `error` is set only on `failed` with every URL query string redacted (signed CDN
 /// parameters never reach the UI), and `revision` increases by exactly one.
-fn apply_setup_step(status: &mut SetupStatus, mut step: SetupStep) {
+fn apply_setup_step(status: &mut SetupStatus, mut step: SetupStep) -> bool {
     if let Some(error) = step.error.as_mut() {
         *error = redact_url_queries(error);
     }
@@ -1583,10 +1585,14 @@ fn apply_setup_step(status: &mut SetupStatus, mut step: SetupStep) {
         .steps
         .binary_search_by(|probe| probe.operation.cmp(&step.operation))
     {
+        // An identical re-report is not a change: keep the revision so it only moves
+        // when the snapshot does.
+        Ok(index) if status.steps[index] == step => return false,
         Ok(index) => status.steps[index] = step,
         Err(index) => status.steps.insert(index, step),
     }
     status.revision += 1;
+    true
 }
 
 /// Removes the query string from every `http://`/`https://` URL token in `text`

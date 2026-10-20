@@ -221,7 +221,9 @@ export function summarizeSetup(
  * only moves bytes does not re-announce anything (§4: phase changes only).
  */
 export function setupAnnouncement(status: SetupStatus | null): string {
-  if (status == null) return "";
+  // An empty snapshot means nothing has reported yet (cold start, or no kernel) —
+  // that is not "complete", so stay silent.
+  if (status == null || status.steps.length === 0) return "";
   const parts = status.steps
     .filter(
       (s) => s.phase === "failed" || ACTIVE_PHASES.includes(s.phase),

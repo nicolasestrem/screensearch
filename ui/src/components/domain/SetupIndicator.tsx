@@ -40,7 +40,7 @@ export function SetupIndicator() {
             "min-h-hit-min whitespace-nowrap font-mono text-data leading-none",
             // Stable width per §8 — summarize text changes inside a reserved
             // minimum, the rail never reflows around it.
-            "min-w-40 justify-center",
+            "min-w-40 max-w-80 justify-center",
             "transition-colors duration-fast ease-ui",
             failed
               ? "text-danger border-danger hover:text-ink"
@@ -56,7 +56,7 @@ export function SetupIndicator() {
           ) : (
             <>
               <span>{summary.label}</span>
-              <span className="text-ink-muted">{summary.stepText}</span>
+              <span className="text-ink-muted min-w-0 truncate">{summary.stepText}</span>
             </>
           )}
           {!failed &&

@@ -1947,16 +1947,33 @@ async fn init_inference(
     // closure is `Send + Sync` via an `Arc<Kernel>` clone: the downloader calls it
     // from its own runtime.
     let kernel_for_engine = kernel.clone();
+    // Verifying/Installing follow the attempt that delivered the bytes, so they carry
+    // that attempt number rather than resetting it to 1.
+    let last_attempt = std::sync::atomic::AtomicU32::new(1);
     let engine_progress = move |p: EngineProgress| {
+        use std::sync::atomic::Ordering;
         let (phase, attempt, downloaded_bytes, total_bytes) = match p {
             EngineProgress::Checking => (SetupPhase::Checking, 1, None, None),
             EngineProgress::Downloading {
                 attempt,
                 received,
                 total,
-            } => (SetupPhase::Downloading, attempt, Some(received), total),
-            EngineProgress::Verifying => (SetupPhase::Verifying, 1, None, None),
-            EngineProgress::Installing => (SetupPhase::Installing, 1, None, None),
+            } => {
+                last_attempt.store(attempt, Ordering::Relaxed);
+                (SetupPhase::Downloading, attempt, Some(received), total)
+            }
+            EngineProgress::Verifying => (
+                SetupPhase::Verifying,
+                last_attempt.load(Ordering::Relaxed),
+                None,
+                None,
+            ),
+            EngineProgress::Installing => (
+                SetupPhase::Installing,
+                last_attempt.load(Ordering::Relaxed),
+                None,
+                None,
+            ),
         };
         kernel_for_engine.set_setup_step(SetupStep {
             operation: SetupOperation::Engine,
