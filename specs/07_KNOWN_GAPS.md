@@ -76,6 +76,14 @@ open, or newly scoped out:
   - `api.enabled`, `api.port` and `api.bind_address` are typed UI keys and now hot-apply through
     `apply_api_config` when saved. `overlay.max_results` reaches the overlay through the new
     read-only `get_advanced_config` projection, which P7 also uses for Settings · Advanced.
+- **P3 built the read-only Advanced projection one phase early (2026-11-03).** The P3 kickoff named
+  `get_advanced_config` as P7's projection; it was built in P3 because cutting the 44 file-only fields
+  left `FlowOverlay` and `ScheduleControl` with no honest source for values that must keep flowing,
+  and a hardcoded constant is forbidden (`03 §3b`). It is read-only with no setter, so it is not a
+  second editable surface, and P7 renders Settings · Advanced from it. Evidence: `ui`'s build script
+  is `tsc --noEmit && vite build`, so the typecheck is part of the gate; `npm run build` failed with
+  the removed-field errors after the settings cut and exits 0 after the repair, with 40 controls
+  removed from `Settings.tsx`, 3 from `ScheduleControl.tsx` and 0 from `FlowOverlay.tsx`.
 - **P4 metric conventions to confirm at Gate A (2026-11-03).** The eval runner matches `involvement`
   on window titles and URLs only (content would be dominated by pasted text, per `03 §7h.2`),
   treats a `NULL` session end as open-ended for citation validity, uses nearest-rank percentiles,
