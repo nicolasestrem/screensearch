@@ -101,7 +101,7 @@ hf-hub = { version = "0.4", default-features = false, features = [
     "tokio",
     "rustls-tls",
 ] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "4", default-features = false, features = ["deflate"] }
 base64 = "0.22"
 # Verifies a parallel-downloaded model blob against HuggingFace's LFS sha256
 # (the `X-Linked-Etag` OID) when the CDN advertises it. Already in the tree
