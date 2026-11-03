@@ -1526,8 +1526,10 @@ win** over the clusterer. Precedence is total: for any session, an override-deri
 the clustered one, and a later override beats an earlier one of the same kind.
 
 - **rename** sets `threads.title` only; membership is untouched.
-- **merge** folds the source thread's `thread_sessions` rows into `target_thread_id`, then removes
-  the emptied source thread.
+- **merge** folds the source thread's `thread_sessions` rows into `target_thread_id` (the survivor),
+  then removes the emptied source thread. `payload.session_ids` records the source's member set at
+  merge time, for audit and for the undo path; the fold itself follows `thread_sessions`, so the list
+  can never contradict the rows.
 - **split** moves the listed sessions into a **new** thread seeded by the override (its
   `cluster_key` derives from the override, not from the clusterer), from which clustering continues.
 

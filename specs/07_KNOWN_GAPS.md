@@ -39,6 +39,15 @@ open, or newly scoped out:
   (`crates/kernel/src/settings.rs:62`) is `file-only`: today a typed field in the `settings` KV, P3
   moves it into `advanced.toml`. `api.read_token` stays a `settings` KV row written only by the
   credential commands. Both now in the `§8` table.
+- **P1 self-test residue (2026-11-03, phase-level design choices, not blockers).** Each phase owns
+  these inside its contract, so a fresh agent can still start P3/P4/P5:
+  - **P6:** `03 §7i.2` fixes the retrieval stage order and requires each stage's candidate count to
+    be recorded per turn, but sets no numeric ceiling per stage. The numbers are a measurement
+    decision for P6, recorded in `05`/`06`; if a cap is wanted as a gate, the maintainer states it at
+    Gate A.
+  - **P8:** `03 §7j` fixes the five insight kinds and requires a typed payload that renders without
+    the model, but does not fix the JSON shape per kind. P8 defines it in `traits` with a fixture
+    test per kind; the shape is additive and never renames an existing field.
 
 ## 2026-10-19 — Carried forward from the 0.4.2 arc (owner: maintainer unless stated)
 
