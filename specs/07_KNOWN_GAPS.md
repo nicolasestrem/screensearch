@@ -64,6 +64,24 @@ open, or newly scoped out:
     cards until P9 defines the target.
 - **`UI_REFERENCE §8` calls the `compact` density "a choice in Settings", but `03 §8` has no density
   key** and no phase owns adding one. Recorded in `06` as a spec contradiction.
+- **P3 outcome questions for the maintainer (2026-11-03).**
+  - **An existing profile loses customised file-only values.** `advanced.toml` is now the single
+    source for the 44 file-only keys, so a profile that had set `sidecar.*`, `capture.uia_*`,
+    `throttle.*` and the other demoted keys in the `settings` KV reads the documented defaults until
+    the same values are copied into the file. The old rows stay valid table keys, so they are not
+    purged, but nothing reads them. Options: a one-time import at first boot that seeds
+    `advanced.toml` from the KV, or accept the reset and say so in the release notes. Needs a
+    decision before Gate A.
+  - The rebuild carry set and the three stale defaults are `06` #32 and #33.
+  - `api.enabled`, `api.port` and `api.bind_address` are typed UI keys and now hot-apply through
+    `apply_api_config` when saved. `overlay.max_results` reaches the overlay through the new
+    read-only `get_advanced_config` projection, which P7 also uses for Settings · Advanced.
+- **P4 metric conventions to confirm at Gate A (2026-11-03).** The eval runner matches `involvement`
+  on window titles and URLs only (content would be dominated by pasted text, per `03 §7h.2`),
+  treats a `NULL` session end as open-ended for citation validity, uses nearest-rank percentiles,
+  and treats `app` as the one `03 §7h.1` kind with no unambiguous reference form, so it is not a
+  P4 reference kind. Each of these is printed in the report, so a different convention is a
+  comparison against a stated baseline rather than a hidden one.
 
 
 ## 2026-10-19 — Carried forward from the 0.4.2 arc (owner: maintainer unless stated)

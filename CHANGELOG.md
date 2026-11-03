@@ -27,6 +27,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URL parameters are stripped). Nothing blocks capture or search, and no new download, setting
   or network destination is added. Spec: `03 §7g`.
 
+- **A dev-only evaluation harness for search and answers.** It writes its own questions from facts
+  already in your history (when you last opened a file, which sessions mentioned a repo, what you
+  were doing before a session, where a line appeared again), then scores retrieval, citation
+  validity, latency and entity recovery. No hand-written question set to maintain and nothing to
+  label, so the next improvements are measured rather than guessed.
+
+### Changed
+
+- **One clean database schema, no migration chain.** The database is now created from a single
+  baseline at schema version 14, and any other version refuses to open with a message that names
+  the `ssv2c-rebuild` tool. That dev-only tool carries an existing history into the new file
+  read-only: frames, images, text, embeddings, sessions, marks, reports and the API identity are
+  copied, derived indexes are rebuilt, the old file is never modified, and renaming it to
+  `*.v13.bak` stays your step. Spec: `03 §4`.
+- **Settings are cut down to what a person can actually decide.** The Settings screen edits 25 keys
+  instead of 78. Engine tuning moves to a documented `advanced.toml` file beside the database, nine
+  retired keys are gone, and an unknown key is rewritten away once instead of being silently
+  tolerated. Spec: `03 §8`.
+
 ### Fixed
 
 - **Local inference could be permanently unavailable on a rate-limited network.** The app

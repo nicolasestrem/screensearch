@@ -1,6 +1,100 @@
 # 05 — Build Review
 
-## 2026-11-03 — 0.4.5 P1 specs contract (branch `feat/0.4.5-p1-specs-contract`, specs-only)
+## 2026-11-03: 0.4.5 P4 automatic evaluation harness (branch `feat/0.4.5-p4-auto-eval`)
+
+- **Scope (roadmap P4, kickoff `docs/kickoffs/P4.md`):** dev-only eval runner in `crates/harness`.
+  Five self-generated families (last-seen, involvement, sequence, window recall, seen-again),
+  unlabeled entity check, six metrics. **No hand-written question set, no labelling, no golden
+  file** (0.4.5 D17). `D17` is enforced by construction: the only inputs are the fixture database
+  and a seed.
+- **Metrics defined in code and printed in the report:** evidence recall@10 over cited ids (the
+  only evidence a client sees, `03 §7i.3`), a separate `/v1/search` retrieval recall@10 diagnostic
+  that is never mixed in, citation validity (frame exists and captured in window; session exists
+  and overlaps the window, NULL end treated as open), known-fact presence after case and
+  whitespace normalization, latency p50/p95 by nearest rank, entity recovery and invention with
+  `n/a (no entity surface)` when the graph is empty.
+- **Fixture run (not the baseline):** 87 pairs from a 12 session, 36 frame fixture. `pairs.jsonl`,
+  `runs.jsonl`, `report.md`, `report.json`. A fixture yields fewer pairs than real history, and the
+  report prints a pair-shortfall note rather than inventing pairs.
+- **Verification (branch tip, raw):**
+  ```
+  cargo fmt --all -- --check                                       exit=0
+  cargo clippy -p harness --all-targets -- -D warnings              exit=0
+  cargo test -p harness   146 passed / 1 / 3 / 6 / 6 / 3 / 3 passed, 0 failed
+  ```
+  Read-only proof: `PRAGMA query_only=1`, INSERT and CREATE TABLE fail, reads succeed, the file is
+  byte identical afterwards, with a writable negative control on the same file. Determinism:
+  same database and seed produce identical pairs; a different seed does not; editing a frame
+  changes the derived pair.
+- **Maintainer run (not performed by an agent):**
+  `cargo run -p harness --bin harness -- eval --db <db> --api http://127.0.0.1:43210 --out harness-data/eval-baseline`
+- **Not claimed:** the baseline report against real history (maintainer's run), and the P5/P6
+  thresholds, which freeze from that report at Gate A.
+
+## 2026-11-03: 0.4.5 P3 baseline schema and settings v2 (branch `feat/0.4.5-p3-baseline-schema`)
+
+- **Scope (roadmap P3, kickoff `docs/kickoffs/P3.md`):** `crates/store` baseline v14 with the
+  v1 to v13 chain deleted, the dev-only `crates/rebuild` tool (D3), settings v2 in
+  `crates/traits`/`crates/kernel`/`src-tauri` (D6), and the regenerated bindings.
+- **Baseline fidelity.** The chain was dumped before deletion: a throwaway test opened an
+  in-memory database through the old migrations and wrote `sqlite_master` to `target/v13_dump.sql`,
+  then a second throwaway harness rebuilt v13 from that dump and compared it with `create_baseline`
+  table by table (`PRAGMA table_info`, `foreign_key_list`, `index_list`, index and trigger SQL).
+  Result: `parity OK: 41 v13 objects preserved`, `missing (0)`, `added (19)` = the eleven new tables
+  and eight indexes. 31 tables (27 plain plus 4 virtual), 22 indexes, 7 triggers.
+- **Open refusal.** A database that is not v14 fails before any pragma runs, so a refused file is
+  never header rewritten; the message names the found version and `ssv2c-rebuild`. Tests assert the
+  file bytes and mtime are unchanged after a refusal, for a v13 and a v15 fixture.
+- **Settings v2 counts (grep, not assertion):** 25 UI rows = 24 typed fields plus `api.token`;
+  44 file-only = 43 `AdvancedConfig` knobs plus `app.tray_toast_done`; 9 deleted. Retired-key grep
+  hits only the retired list, its doc comments, the retirement test, the rebuild tool's own copy of
+  the retired list and fixtures, and two `uia` doc comments that explain the retirement.
+- **Deleted-key and moved-key greps (raw):**
+  ```
+  grep -rn MIGRATIONS crates                                    -> 0 lines
+  grep -rn ssv2c-rebuild crates/store/src                       -> 4 lines
+  grep -rn advanced.toml crates                                 -> 28 lines
+  capture_diff_threshold / sidecar_device / enrich_embed_text /
+    overlay_max_results in crates/traits/src/ipc.rs             -> 0 each
+  ```
+- **Per-crate gates (raw, from the lanes' logs):**
+  ```
+  cargo fmt --all -- --check                                    exit=0
+  cargo clippy -p store --all-targets -- -D warnings             exit=0
+  cargo test -p store        171 passed (80 lib + 6 baseline + 65 store + others), 0 failed
+  cargo test -p rebuild      4 + 5 passed, 0 failed
+  cargo test -p traits       123 + 4 passed, 0 failed
+  cargo test -p kernel       126 + 9 + 17 + 3 + 31 + 10 + 2 passed, 0 failed
+  cargo test -p harness      146 + 1 + 3 + 6 + 6 + 3 + 3 passed, 0 failed
+  ```
+- **Full suite on the integrated tree (verbatim, one command per line):**
+  ```
+  === npm ci                                                   exit=0
+  === npm run lint                                             exit=0
+  === npm run build                                            exit=0
+  === node scripts/stage-mcp.mjs                               exit=0
+  === cargo fmt --all -- --check                               exit=0
+  === cargo clippy --workspace --all-targets -- -D warnings     exit=0
+  === cargo build --workspace                                  exit=0
+  === cargo test --workspace                                   exit=0
+  ```
+  `cargo test --workspace` summary: **1233 passed, 0 failed**; the four `1 ignored` are the
+  pre-existing `perf` and `seed_demo` gates. Full log kept at `%TEMP%\p3-full-verify.txt`.
+- **UI build was red mid-phase and was repaired.** Removing 44 file-only and 9 deleted keys from
+  the typed `Settings` broke `Settings.tsx`, `ScheduleControl.tsx` and `FlowOverlay.tsx` (157
+  type errors). Repair: 40 controls removed from `Settings.tsx` (that is the D6 subtraction P7 will
+  re-home by category), 3 from `ScheduleControl.tsx`, and the overlay now reads `overlay.max_results`
+  from a new read-only `get_advanced_config` projection instead of a removed field. No hardcoded
+  fallback. `npm test` 82 passed.
+- **Not claimed:** the rebuild run against the maintainer's real database, the per-table counts
+  before and after, and the twenty frame spot check. Those are the maintainer run in
+  `docs/kickoffs/P3.md`; the agent evidence is the synthetic fixture test only.
+- **Gaps recorded:** `06` #30 (the spec's §4 does not describe ten as-built details), #31 (the
+  rebuild tool's home reconciled from `crates/harness` to `crates/rebuild`), #32 (carry set wider
+  than the kickoff list), #33 (three §8 defaults disagree with the as-built code). `07` carries the
+  product questions, including the `advanced.toml` reset for an existing profile.
+
+## 2026-11-03: 0.4.5 P1 specs contract (branch `feat/0.4.5-p1-specs-contract`, specs-only)
 
 - **Scope (roadmap `docs/0.4.5.md` P1):** zero code. D1–D18 normalized into the specs so a fresh
   agent can start any wave-A phase (P2/P3/P4) from `specs/` alone. Landing sites: `01 §2/§6/§7/§8`

@@ -199,7 +199,7 @@ Single file `screensearch.db`. **Baseline rule (0.4.5 D2):** this section holds 
 the current `schema_version = 14`; the app creates a fresh DB from it and ships **no migration
 chain**. A schema change edits this baseline and bumps `schema_version`; there are no populated-DB
 migration tests. A DB whose `schema_version` is not 14 refuses to open with a message naming the
-rebuild tool (`crates/harness`'s `ssv2c-rebuild`); that dev-only tool reads the old DB **read-only**
+rebuild tool (`crates/rebuild`'s `ssv2c-rebuild`); that dev-only tool reads the old DB **read-only**
 and writes a fresh v14 file, and the old file is renamed `*.v13.bak` only after the maintainer
 confirms the new one opens — a clean start instead of a rebuild is the maintainer's Gate A choice,
 never automatic (0.4.5 D3). The shipped app never migrates history; the 0.2.x–0.4.2 forward-only

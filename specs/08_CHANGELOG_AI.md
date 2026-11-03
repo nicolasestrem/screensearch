@@ -1,5 +1,38 @@
 # 08 — AI Changelog
 
+## 2026-11-03: 0.4.5 P4 automatic intelligence evaluation
+
+- **Change:** `crates/harness` gains an `eval` subcommand and `src/eval/` (facts, generators,
+  reference extractor, seeded PRNG, API client, metrics, report). It generates its own question and
+  answer pairs from the database (last-seen, involvement, sequence, window recall, seen-again),
+  scores evidence recall@10, a separate search recall diagnostic, citation validity, known-fact
+  presence, entity recovery and invention, and latency p50/p95, and writes `report.md`,
+  `report.json`, `pairs.jsonl` and `runs.jsonl`.
+- **Why:** the arc must measure Ask and the work graph before changing them, with zero maintainer
+  input (0.4.5 D17). The numbers freeze as the P5/P6 thresholds at Gate A.
+- **Verification:** see `05` (2026-11-03) for the raw lists. `fmt`, `clippy -p harness`, and 168
+  harness tests green, including determinism (same DB and seed produce identical pairs), read-only
+  proof (query_only, INSERT and CREATE fail, file byte identical with a writable negative control),
+  and a fixture end-to-end report. No real database was touched.
+
+## 2026-11-03: 0.4.5 P3 baseline schema and settings v2
+
+- **Change:** `crates/store` loses the v1 to v13 migration chain for one baseline script at
+  `schema_version = 14`, with a refusal that names `ssv2c-rebuild`. New dev-only `crates/rebuild`
+  carries history from a v13 file into a fresh v14 file read-only, copying by column intersection,
+  repopulating FTS and `vec0`, filtering settings and refusing to rename anything. Settings v2 splits
+  the typed `Settings` into the 25 UI keys plus `advanced.toml` (43 knobs, eight sections), deletes
+  the nine retired keys, rewrites unknown keys away once, and keeps the reserved identity and
+  allocator rows. `get_advanced_config` gives the UI a read-only projection, and the regenerated
+  bindings replace the old wide `Settings.ts`.
+- **Why:** the arc needs one clean schema and one honest settings model for a single user (0.4.5 D2,
+  D6, D1). A migration chain nobody validates and a settings surface of 78 keys were both tax with no
+  user.
+- **Verification:** see `05` (2026-11-03) for the full suite and the parity proof. 1233 tests pass
+  workspace-wide; the baseline was compared table by table against the as-built v13 dump (41
+  objects preserved, 19 added); the rebuild tool is tested only against a synthetic fixture. The
+  maintainer's real-database run and the twenty-frame spot check remain open by design.
+
 ## 2026-11-03 — 0.4.5 P1 specs contract
 
 - **Change:** specs only. `03 §4` becomes a baseline (full DDL at `schema_version = 14`, no
