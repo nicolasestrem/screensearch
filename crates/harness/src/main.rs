@@ -6,6 +6,9 @@
 //!   harness export --days <d1,d2,...> [--db <path>] [--out harness-data]
 //! Phase B/C (score.rs, group.rs):
 //!   harness replay | score | sweep | stability [--algo micro|grouped|concurrent|shipped] [--data ...] [...]
+//! 0.4.5 P4 (eval/):
+//!   harness eval --db <path> --api <url> [--pairs 300] [--seed <n>] [--out <dir>]
+//!                [--top-k <n>] [--timeout-secs 180] [--max-frames <n>]
 //!
 //! `--algo` selects the segmenter: `micro` (ungrouped `§7b` baseline), `grouped` (the serial
 //! `06` #27 two-pass segmenter — the A/B baseline), or `concurrent` (the per-identity-track
@@ -131,6 +134,8 @@ fn usage() -> &'static str {
      \x20 harness replay [--algo micro|grouped|concurrent|shipped] [--data harness-data] [seg/group flags]\n\
      \x20 harness score  [--algo micro|grouped|concurrent|shipped] [--data harness-data] [seg/group flags]\n\
      \x20 harness sweep | stability [--algo micro|grouped|concurrent|shipped] [--data harness-data] [seg/group flags]\n\
+     \x20 harness eval --db <path> [--api http://127.0.0.1:43210] [--pairs 300] [--seed <n>] [--out <dir>]\n\
+     \x20              [--top-k <n>] [--timeout-secs 180] [--max-frames <n>]   (automatic eval; read-only)\n\
      \n\
      --algo default = concurrent (per-identity-track, 06 #28 / 07 #114); grouped = serial 06 #27 A/B baseline.\n\
      Group flags: --merge-gap <s> --absorb-max <s> --meeting-gap <s> --focus-min-len <s> --focus-density <fph>\n\
@@ -151,6 +156,19 @@ fn db_path(args: &[String]) -> Result<PathBuf> {
         return Ok(PathBuf::from(p));
     }
     export::default_db_path().context("APPDATA is unset; pass --db <path> to the live DB")
+}
+
+/// `harness eval` (0.4.5 P4): the automatic intelligence evaluation. Dev-only, read-only, and
+/// needs no hand-written question set (0.4.5 D17); see [`harness::eval`].
+fn cmd_eval(args: &[String]) -> Result<()> {
+    let opts = harness::eval::EvalOpts::parse(args)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building the async runtime")?;
+    let run = runtime.block_on(harness::eval::run_eval(&opts))?;
+    println!("report written to {}", run.report_path.display());
+    Ok(())
 }
 
 fn cmd_suggest_days(args: &[String]) -> Result<()> {
@@ -653,6 +671,7 @@ fn run() -> Result<()> {
         Some("score") => cmd_score(&args),
         Some("sweep") => cmd_sweep(&args),
         Some("stability") => cmd_stability(&args),
+        Some("eval") => cmd_eval(&args),
         None => {
             print!("{}", usage());
             Ok(())
