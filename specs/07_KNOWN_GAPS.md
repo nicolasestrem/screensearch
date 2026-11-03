@@ -36,7 +36,9 @@ open, or newly scoped out:
 - **RESOLVED by maintainer (2026-11-03): two live settings keys lacked a `03 §8` row.**
   `api.read_token` (`src-tauri/src/local_api.rs:37`) **shares the `api.token` UI row** as the
   Integrations credential pair, so the UI ceiling stays 25 (0.4.5 D6); `sidecar.device`
-  (`crates/kernel/src/settings.rs:62`) is `file-only` in `advanced.toml`. Both now in the `§8` table.
+  (`crates/kernel/src/settings.rs:62`) is `file-only`: today a typed field in the `settings` KV, P3
+  moves it into `advanced.toml`. `api.read_token` stays a `settings` KV row written only by the
+  credential commands. Both now in the `§8` table.
 
 ## 2026-10-19 — Carried forward from the 0.4.2 arc (owner: maintainer unless stated)
 
