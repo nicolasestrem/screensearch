@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScreenSearch 0.4.5: three design directions</title>
+<style>
+  /* ------------------------------------------------------------------
+     Comparison page chrome only. It is deliberately neutral: near
+     greys, system sans, no accent of its own, so it does not bias the
+     read of the three directions inside the frames.
+     ------------------------------------------------------------------ */
+  :root {
+    --bg: #191919;
+    --panel: #212121;
+    --panel-2: #262626;
+    --line: #343434;
+    --line-strong: #4a4a4a;
+    --ink: #ececec;
+    --ink-2: #b4b4b4;
+    --ink-3: #909090;
+    --focus: #8ab4f8;
+    --radius: 8px;
+    --space: 8px;
+    --frame-w: 1440px;      /* the width each direction was designed for */
+    --frame-h: 3000px;      /* enough of the page to show all five screens */
+    --scale: 0.325;         /* what fits a 1440 to 1920 window at 3 columns */
+    --col-w: calc(var(--frame-w) * var(--scale));
+    --col-h: calc(var(--frame-h) * var(--scale));
+    --font: ui-sans-serif, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.55 var(--font);
+    padding: 32px 24px 64px;
+  }
+  header.page { max-width: 1180px; margin: 0 auto 28px; }
+  .eyebrow {
+    font: 600 11px/1 var(--mono);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 10px;
+  }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -0.01em; }
+  .lede { color: var(--ink-2); max-width: 78ch; margin: 0 0 14px; }
+  .howto {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    max-width: 78ch;
+  }
+  .howto p { margin: 0 0 8px; color: var(--ink-2); }
+  .howto p:last-child { margin-bottom: 0; }
+  .howto code, .cmd {
+    font: 13px/1.5 var(--mono);
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 6px;
+    color: var(--ink);
+  }
+  .howto ol { margin: 6px 0 0; padding-left: 20px; color: var(--ink-2); }
+  .howto li { margin: 3px 0; }
+
+  /* ---------- three columns ---------- */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, var(--col-w));
+    gap: 20px;
+    justify-content: center;
+    align-items: start;
+  }
+  @media (max-width: 1500px) {
+    :root { --scale: 0.29; }
+  }
+  @media (max-width: 1340px) {
+    :root { --scale: 0.26; }
+    .grid { gap: 14px; }
+  }
+  @media (max-width: 900px) {
+    :root { --scale: 1; }
+    .grid { grid-template-columns: 1fr; }
+    .viewport { width: 100%; height: 80vh; }
+    .viewport iframe { width: 100%; height: 80vh; transform: none; }
+  }
+
+  .col { min-width: 0; }
+  .frame-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 0 6px;
+  }
+  .letter { font: 600 11px/1 var(--mono); color: var(--ink-3); letter-spacing: 0.1em; }
+  .name { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
+  .thesis { color: var(--ink-2); font-size: 13px; margin: 0 0 10px; min-height: 3.2em; }
+
+  .viewport {
+    position: relative;
+    width: var(--col-w);
+    height: var(--col-h);
+    overflow: hidden;
+    background: #000;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+  }
+  .viewport iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: var(--frame-w);
+    height: var(--frame-h);
+    border: 0;
+    transform: scale(var(--scale));
+    transform-origin: 0 0;
+  }
+  .open {
+    display: inline-block;
+    margin: 10px 0 0;
+    font: 600 12px/1 var(--mono);
+    color: var(--ink);
+    text-decoration: none;
+    border-bottom: 1px solid var(--line-strong);
+    padding-bottom: 4px;
+  }
+  .open:hover, .open:focus-visible { border-bottom-color: var(--focus); color: #fff; }
+  .open:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+
+  /* ---------- the spec notes under each frame ---------- */
+  dl.spec {
+    margin: 14px 0 0;
+    padding: 12px 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    font-size: 12.5px;
+  }
+  dl.spec dt {
+    font: 600 10.5px/1 var(--mono);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 12px 0 6px;
+  }
+  dl.spec dt:first-child { margin-top: 0; }
+  dl.spec dd { margin: 0; color: var(--ink-2); }
+  dl.spec dd strong { color: var(--ink); font-weight: 600; }
+  ul.points { margin: 0; padding-left: 16px; }
+  ul.points li { margin: 0 0 4px; }
+
+  .swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+  .sw {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font: 11px/1 var(--mono);
+    color: var(--ink-2);
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 3px 7px 3px 3px;
+  }
+  .sw i {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.22);
+  }
+  .themes { font: 11px/1.4 var(--mono); color: var(--ink-3); margin-top: 10px; }
+  footer.page {
+    max-width: 1180px;
+    margin: 36px auto 0;
+    color: var(--ink-3);
+    font-size: 12.5px;
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
+  }
+  footer.page p { margin: 0 0 6px; }
+</style>
+</head>
+<body>
+
+<header class="page">
+  <p class="eyebrow">ScreenSearch 0.4.5 &middot; P2 direction checkpoint</p>
+  <h1>Three design directions, same content, same five screens</h1>
+  <p class="lede">
+    Each direction is one self-contained HTML file with its CSS inline, system fonts only, no
+    network request. Each renders the same five screens: Settings, search results, a session card,
+    an Ask answer with citations, and a gallery of every control state. Pick one, or name a merge,
+    and the choice is written into <code>specs/UI_REFERENCE.md</code> section 1 before any screen
+    work starts (0.4.5 D4, D5).
+  </p>
+  <div class="howto">
+    <p><strong>To view one full screen:</strong></p>
+    <ol>
+      <li>Run this in the repository root: <span class="cmd">start docs\kickoffs\P2-directions\direction-a.html</span> (replace <span class="cmd">a</span> with <span class="cmd">b</span> or <span class="cmd">c</span>).</li>
+      <li>Or click <em>Open full size</em> under any frame below.</li>
+      <li>Each file has its own theme button at the top. Every direction ships both themes except where noted.</li>
+    </ol>
+    <p style="margin-top:10px">The frames below are the real files, scaled to about 33 percent so all three fit side by side. Scrolling inside a frame works; colours and type read better in the full screen view.</p>
+  </div>
+</header>
+
+<div class="grid">
+
+  <!-- ================= A ================= -->
+  <div class="col">
+    <div class="frame-head">
+      <span class="letter">A</span>
+      <span class="name">Command Deck, refined</span>
+    </div>
+    <p class="thesis">
+      The v1 console kept and refined: warm graphite, one signal orange, hairline discipline.
+      Nothing is a new language, the change is craft: type scale, density, light theme.
+      Familiar in a minute, precise by the end of a week.
+    </p>
+    <div class="viewport"><iframe src="direction-a.html" title="Direction A, Command Deck refined" loading="lazy"></iframe></div>
+    <a class="open" href="direction-a.html">Open full size</a>
+    <dl class="spec">
+      <dt>Type</dt>
+      <dd>
+        Display <strong>Bahnschrift</strong> (then DIN Alternate, Segoe UI Variable Display)<br>
+        Text <strong>Segoe UI Variable Text</strong><br>
+        Mono <strong>Cascadia Mono</strong> for timestamps, paths and counts
+      </dd>
+      <dt>Colour, dark</dt>
+      <dd class="swatches">
+        <span class="sw"><i style="background:#0E0C09"></i>#0E0C09</span>
+        <span class="sw"><i style="background:#1B1711"></i>#1B1711</span>
+        <span class="sw"><i style="background:#F0E9DC"></i>#F0E9DC</span>
+        <span class="sw"><i style="background:#FF6A1A"></i>#FF6A1A</span>
+        <span class="sw"><i style="background:#E8706A"></i>#E8706A</span>
+      </dd>
+      <dt>Colour, light</dt>
+      <dd class="swatches">
+        <span class="sw"><i style="background:#F4F0E6"></i>#F4F0E6</span>
+        <span class="sw"><i style="background:#FBF8F0"></i>#FBF8F0</span>
+        <span class="sw"><i style="background:#1D1913"></i>#1D1913</span>
+        <span class="sw"><i style="background:#B93D0B"></i>#B93D0B</span>
+      </dd>
+      <dt>Structure</dt>
+      <dd>
+        <ul class="points">
+          <li>The accent is a state channel, not paint: a 2px bar plus a surface shift marks selection, focus and the primary action, and nothing else.</li>
+          <li>Recall carries a CSS-drawn density strip: 48 half-hour ticks, a selection brush, a mono axis. The only data visual in the direction.</li>
+          <li>Autosave is the model: no Save control, per-field Saved flags, a 12 second undo toast, inline destructive confirm.</li>
+        </ul>
+      </dd>
+      <dt>Themes</dt>
+      <dd class="themes">2: dark default, complete light peer</dd>
+    </dl>
+  </div>
+
+  <!-- ================= B ================= -->
+  <div class="col">
+    <div class="frame-head">
+      <span class="letter">B</span>
+      <span class="name">Paper Ledger</span>
+    </div>
+    <p class="thesis">
+      Your screen history as a working paper: a light-led reading surface, printed tables, no dashboard.
+      One serif voice for titles and evidence, a sans for machinery, one ink blue accent.
+      Everything is a document: hairline rules, aligned figures, margin notes.
+    </p>
+    <div class="viewport"><iframe src="direction-b.html" title="Direction B, Paper Ledger" loading="lazy"></iframe></div>
+    <a class="open" href="direction-b.html">Open full size</a>
+    <dl class="spec">
+      <dt>Type</dt>
+      <dd>
+        Display and prose <strong>ui-serif / Georgia</strong> (system serif)<br>
+        Text <strong>ui-sans-serif / Segoe UI</strong><br>
+        Mono <strong>ui-monospace / Cascadia Mono</strong> for figures and citations<br>
+        Scale 54 / 40 / 30 / 22 / 18 / 16 / 14 / 12 / 11
+      </dd>
+      <dt>Colour, light</dt>
+      <dd class="swatches">
+        <span class="sw"><i style="background:#F3EFE5"></i>#F3EFE5</span>
+        <span class="sw"><i style="background:#FBF9F4"></i>#FBF9F4</span>
+        <span class="sw"><i style="background:#1A1917"></i>#1A1917</span>
+        <span class="sw"><i style="background:#2A4B7C"></i>#2A4B7C</span>
+        <span class="sw"><i style="background:#8A2B2B"></i>#8A2B2B</span>
+      </dd>
+      <dt>Colour, dark</dt>
+      <dd class="swatches">
+        <span class="sw"><i style="background:#121110"></i>#121110</span>
+        <span class="sw"><i style="background:#171614"></i>#171614</span>
+        <span class="sw"><i style="background:#F2EEE4"></i>#F2EEE4</span>
+        <span class="sw"><i style="background:#9DBBE6"></i>#9DBBE6</span>
+      </dd>
+      <dt>Structure</dt>
+      <dd>
+        <ul class="points">
+          <li>A sheet with marginalia: every screen is a document with a narrow right margin carrying the facts, not a dashboard with cards.</li>
+          <li>Footnote apparatus on the Ask screen: real superscript numbers and a matching notes block; links are underlined, actions are text with a rule beneath.</li>
+          <li>The form gallery is a labelled state table with <span class="cmd">n/a</span> where a state cannot exist, instead of faking it.</li>
+        </ul>
+      </dd>
+      <dt>Themes</dt>
+      <dd class="themes">2: light default, complete dark peer</dd>
+    </dl>
+  </div>
+
+  <!-- ================= C ================= -->
+  <div class="col">
+    <div class="frame-head">
+      <span class="letter">C</span>
+      <span class="name">Signal Console</span>
+    </div>
+    <p class="thesis">
+      An instrument panel for your own screen history: dense, chronological, logbook first.
+      Structure carries the signal: hairline panels, tabular figures, a context rail on every screen.
+      Cyan marks action, violet marks only relationships, monospace does the measuring.
+    </p>
+    <div class="viewport"><iframe src="direction-c.html" title="Direction C, Signal Console" loading="lazy"></iframe></div>
+    <a class="open" href="direction-c.html">Open full size</a>
+    <dl class="spec">
+      <dt>Type</dt>
+      <dd>
+        Mono <strong>Cascadia Mono</strong> for labels, keys, counts, timestamps<br>
+        Sans <strong>Segoe UI Variable Text</strong> for headings and prose only<br>
+        No serif face anywhere
+      </dd>
+      <dt>Colour, dark</dt>
+      <dd class="swatches">
+        <span class="sw"><i style="background:#070B0F"></i>#070B0F</span>
+        <span class="sw"><i style="background:#0E141B"></i>#0E141B</span>
+        <span class="sw"><i style="background:#E6EDF3"></i>#E6EDF3</span>
+        <span class="sw"><i style="background:#4BD6D2"></i>#4BD6D2</span>
+        <span class="sw"><i style="background:#A98BFA"></i>#A98BFA</span>
+      </dd>
+      <dt>Colour, light</dt>
+      <dd class="swatches">
+        <span class="sw"><i style="background:#F0F4F8"></i>#F0F4F8</span>
+        <span class="sw"><i style="background:#F7F9FB"></i>#F7F9FB</span>
+        <span class="sw"><i style="background:#0C141B"></i>#0C141B</span>
+        <span class="sw"><i style="background:#066C75"></i>#066C75</span>
+        <span class="sw"><i style="background:#6A45BE"></i>#6A45BE</span>
+      </dd>
+      <dt>Structure</dt>
+      <dd>
+        <ul class="points">
+          <li>The gap is the divider: nav, pane and context rail separated by 1px grid gaps in the hairline colour, so surfaces do the work instead of borders.</li>
+          <li>Two accents with a hard boundary: cyan is action, selection, focus and match; violet appears only on entity chips, thread membership and relationship spines.</li>
+          <li>Data as data: the Ask screen shows the retrieval path as threads / sessions / frames / tokens, the session card carries a metrics band, the gallery is a 13 by 6 state matrix.</li>
+        </ul>
+      </dd>
+      <dt>Themes</dt>
+      <dd class="themes">2: dark default, complete light peer</dd>
+    </dl>
+  </div>
+
+</div>
+
+<footer class="page">
+  <p>
+    All three files are self-contained: one style block, system fonts, no network request, no build
+    step. Contrast pairs and their ratios are recorded in a comment at the top of each file. Each
+    direction's whole token system is a commented custom property block at the start of its style
+    block, which is what P2 turns into the three layer token file after the pick.
+  </p>
+  <p>
+    Nothing below happened yet: no token file, no Tailwind config, no primitive component, no app
+    route. Those are the real P2, and they wait for the pick (0.4.5 D4).
+  </p>
+</footer>
+
+</body>
+</html>
