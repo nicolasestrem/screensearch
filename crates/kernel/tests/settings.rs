@@ -1,11 +1,24 @@
-//! Settings persistence round-trip (`03 §8`): `save_settings` followed by
-//! `load_settings` returns exactly what was written. This guards the key-string
-//! contract between the two — a typo in either would silently fall back to a
-//! default and never round-trip.
+//! Settings persistence (`03 §8`, settings v2 / 0.4.5 D6).
+//!
+//! Two surfaces are covered:
+//!
+//! - the `UI` key set: `save_settings` followed by `load_settings` returns exactly what was
+//!   written (this guards the key-string contract between the two — a typo in either would
+//!   silently fall back to a default and never round-trip), retired keys are rewritten away,
+//!   and the reserved history/allocator metadata survives every settings path;
+//! - the `file-only` surface: `advanced.toml` parses into [`AdvancedConfig`], unknown
+//!   sections/fields are dropped on a one-shot rewrite, a missing/unreadable/invalid file
+//!   applies defaults without error, and the values reach the same consumers the typed
+//!   fields used to reach.
 
-use kernel::settings::{load_settings, save_settings};
+use kernel::settings::{load_advanced_config, load_settings, save_settings};
+use std::path::Path;
 use store::SqliteStore;
-use traits::{FlashAttnSetting, KvCacheType, ModelTier, Settings, Store};
+use traits::{
+    AdvancedConfig, CaptureAdvanced, EnrichAdvanced, FlashAttnSetting, KvCacheType, ModelTier,
+    OverlayAdvanced, ReportsAdvanced, ResumeAdvanced, Settings, SidecarAdvanced, SidecarParams,
+    Store, TextAdvanced, ThrottleAdvanced, FRAME_ID_HIGH_WATER_KEY, HISTORY_ID_KEY,
+};
 
 #[tokio::test]
 async fn round_trips_defaults() {
@@ -28,80 +41,30 @@ async fn round_trips_non_default_values() {
     // Every field set away from its default, including composites (monitors,
     // excluded apps, model tiers) so the JSON encodings are exercised too.
     let original = Settings {
+        app_run_at_startup: true,
+        app_close_to_tray: false,
+        overlay_hotkey: "Ctrl+Shift+F".to_string(),
+        marks_hotkey: "Ctrl+Shift+M".to_string(),
         capture_interval_ms: 5000,
         capture_monitors: vec![0, 2],
-        capture_diff_threshold: 0.02,
-        storage_max_width: 1600,
-        storage_retention_days: 30,
-        enrich_embed_text: false,
-        enrich_vision_timer_enabled: true,
-        enrich_vision_timer_interval_ms: 1_800_000,
-        enrich_vision_idle_enabled: true,
-        enrich_vision_idle_secs: 120,
-        enrich_vision_batch_size: 50,
-        enrich_worker_concurrency: 4,
-        models_vision_tier: ModelTier::Quality,
-        models_answer_tier: ModelTier::Quality,
-        answer_thinking: false,
-        sidecar_idle_ttl_secs: 600,
-        sidecar_ngl: 35,
-        sidecar_device: Some("Vulkan0".to_string()),
-        sidecar_ctx_size: 4096,
-        sidecar_kv_cache_type: KvCacheType::F16,
-        sidecar_flash_attn: FlashAttnSetting::Off,
-        sidecar_recycle_enabled: false,
-        sidecar_recycle_rss_mb: 8192,
         privacy_excluded_apps: vec!["Signal".to_string(), "Element".to_string()],
         privacy_pause_on_lock: false,
-        text_include_chrome_default: true,
-        text_chrome_suppress_min_seen: 20,
-        text_chrome_protect_min_chars: 64,
-        text_chrome_region_buckets: 12,
+        enrich_vision_timer_enabled: true,
+        enrich_vision_timer_interval_ms: 1_800_000,
         retrieval_default_top_k: 16,
         reports_daily_top_k: 60,
-        reports_weekly_top_k: 300,
-        reports_map_reduce_min_frames: 30,
-        // Event-driven capture — every field away from its default, within the
-        // sanitize clamps, so the round-trip exercises the new load/save encodings.
-        capture_event_driven_enabled: true,
-        capture_event_on_foreground: false,
-        capture_event_on_idle: true,
-        capture_event_debounce_ms: 750,
-        capture_event_min_interval_ms: 2000,
-        capture_event_idle_threshold_ms: 8000,
-        capture_event_fallback_interval_ms: 60_000,
-        // UIA text — every field away from its default, within the sanitize clamps.
-        capture_uia_text_enabled: false,
-        capture_uia_latency_budget_ms: 300,
-        capture_uia_min_text_chars: 32,
-        // UIA hang-fix knobs (`07` #71) — each away from its default, within the clamps.
-        capture_uia_view_control_only: false,
-        capture_uia_max_nodes: 2000,
-        capture_uia_max_textpattern_calls: 128,
-        capture_uia_suppress_during_input_ms: 750,
-        overlay_hotkey: "Ctrl+Shift+F".to_string(),
-        overlay_max_results: 12,
-        // 0.3.0 flow recall — away from defaults, within the sanitize clamps.
-        resume_min_dwell_secs: 300,
         sessions_min_len_secs: 240,
         sessions_gap_close_secs: 600,
-        marks_hotkey: "Ctrl+Shift+M".to_string(),
-        // Enrichment throttle — every field away from its default, within the sanitize
-        // clamps (each exit % kept below its enter %), so the round-trip exercises the
-        // new load/save encodings.
+        text_include_chrome_default: true,
+        answer_thinking: false,
+        models_vision_tier: ModelTier::Quality,
+        models_answer_tier: ModelTier::Quality,
+        storage_retention_days: 7,
+        storage_max_width: 1600,
         throttle_enabled: true,
-        throttle_cpu_enter_pct: 75.0,
-        throttle_cpu_exit_pct: 50.0,
-        throttle_gpu_enter_pct: 80.0,
-        throttle_gpu_exit_pct: 55.0,
-        throttle_enter_after_ms: 3000,
-        throttle_exit_after_ms: 6000,
-        throttle_sample_interval_ms: 2000,
-        throttle_embed_text_floor: 2,
-        // 0.3.2 app lifecycle — both away from their defaults (close-to-tray defaults on,
-        // run-at-startup defaults off) so the round-trip exercises their load/save encodings.
-        app_close_to_tray: false,
-        app_run_at_startup: true,
+        api_enabled: true,
+        api_port: 43_211,
+        api_bind_address: "0.0.0.0".to_string(),
     };
 
     save_settings(dyn_store, &original)
@@ -119,15 +82,11 @@ async fn load_settings_sanitizes_persisted_numeric_values() {
 
     store.set_setting("capture.interval_ms", "1").await.unwrap();
     store
-        .set_setting("capture.diff_threshold", "NaN")
-        .await
-        .unwrap();
-    store
         .set_setting("storage.max_width", "100000")
         .await
         .unwrap();
     store
-        .set_setting("enrich.worker_concurrency", "0")
+        .set_setting("storage.retention_days", "999999")
         .await
         .unwrap();
     store
@@ -135,75 +94,29 @@ async fn load_settings_sanitizes_persisted_numeric_values() {
         .await
         .unwrap();
     store
-        .set_setting("enrich.vision_idle_secs", "1")
+        .set_setting("retrieval.default_top_k", "0")
         .await
         .unwrap();
     store
-        .set_setting("enrich.vision_batch_size", "9999")
-        .await
-        .unwrap();
-    store
-        .set_setting("sidecar.idle_ttl_secs", "999999")
-        .await
-        .unwrap();
-    store.set_setting("sidecar.ngl", "10000").await.unwrap();
-    store
-        .set_setting("sidecar.ctx_size", "999999")
-        .await
-        .unwrap();
-    store
-        .set_setting("capture.uia_max_nodes", "50") // below floor 100
-        .await
-        .unwrap();
-    store
-        .set_setting("capture.uia_max_textpattern_calls", "0") // below floor 1
-        .await
-        .unwrap();
-    store
-        .set_setting("capture.uia_suppress_during_input_ms", "99999") // above ceiling 10_000
+        .set_setting("reports.daily_top_k", "999999")
         .await
         .unwrap();
     store
         .set_setting("overlay.hotkey", "\"   \"")
         .await
         .unwrap();
-    store
-        .set_setting("overlay.max_results", "999")
-        .await
-        .unwrap();
+    store.set_setting("api.port", "80").await.unwrap();
 
     let loaded = load_settings(dyn_store).await;
 
     assert_eq!(loaded.capture_interval_ms, 250);
-    assert_eq!(loaded.capture_uia_max_nodes, 100);
-    assert_eq!(loaded.capture_uia_max_textpattern_calls, 1);
-    assert_eq!(loaded.capture_uia_suppress_during_input_ms, 10_000);
-    assert_eq!(loaded.overlay_hotkey, Settings::default().overlay_hotkey);
-    assert_eq!(loaded.overlay_max_results, 50);
-    assert_eq!(loaded.capture_diff_threshold, 0.0);
     assert_eq!(loaded.storage_max_width, 7680);
-    assert_eq!(loaded.enrich_worker_concurrency, 1);
+    assert_eq!(loaded.storage_retention_days, 3650);
     assert_eq!(loaded.enrich_vision_timer_interval_ms, 60_000);
-    assert_eq!(loaded.enrich_vision_idle_secs, 60);
-    assert_eq!(loaded.enrich_vision_batch_size, 500);
-    assert_eq!(loaded.sidecar_idle_ttl_secs, 86_400);
-    assert_eq!(loaded.sidecar_ngl, 999);
-    assert_eq!(loaded.sidecar_ctx_size, 32_768);
-}
-
-#[tokio::test]
-async fn sidecar_ctx_size_zero_is_preserved_as_auto_sentinel() {
-    let store = SqliteStore::open_in_memory().expect("open in-memory store");
-    let dyn_store: &dyn Store = &store;
-
-    // 0 must survive sanitization (it means "automatic per-lane default"), not get
-    // clamped up to the 512 floor.
-    store.set_setting("sidecar.ctx_size", "0").await.unwrap();
-    assert_eq!(load_settings(dyn_store).await.sidecar_ctx_size, 0);
-
-    // A small non-zero value below the floor is clamped up.
-    store.set_setting("sidecar.ctx_size", "100").await.unwrap();
-    assert_eq!(load_settings(dyn_store).await.sidecar_ctx_size, 512);
+    assert_eq!(loaded.retrieval_default_top_k, 1);
+    assert_eq!(loaded.reports_daily_top_k, 1_000);
+    assert_eq!(loaded.overlay_hotkey, Settings::default().overlay_hotkey);
+    assert_eq!(loaded.api_port, 1024);
 }
 
 #[tokio::test]
@@ -212,20 +125,11 @@ async fn save_settings_persists_sanitized_numeric_values() {
     let dyn_store: &dyn Store = &store;
     let original = Settings {
         capture_interval_ms: 1,
-        capture_diff_threshold: f32::NAN,
         storage_max_width: 100_000,
-        enrich_worker_concurrency: 0,
         enrich_vision_timer_interval_ms: 1,
-        enrich_vision_idle_secs: 1,
-        enrich_vision_batch_size: 9_999,
-        sidecar_idle_ttl_secs: 999_999,
-        sidecar_ngl: 10_000,
-        sidecar_ctx_size: 999_999,
-        capture_event_debounce_ms: 1,           // below floor 100
-        capture_event_min_interval_ms: 999_999, // above ceiling 60_000
-        capture_event_fallback_interval_ms: 1,  // below floor 1_000
         overlay_hotkey: "  Ctrl+Shift+F  ".to_string(),
-        overlay_max_results: 0,
+        retrieval_default_top_k: 0,
+        api_port: 1,
         ..Settings::default()
     };
 
@@ -235,28 +139,61 @@ async fn save_settings_persists_sanitized_numeric_values() {
     let loaded = load_settings(dyn_store).await;
 
     assert_eq!(loaded.capture_interval_ms, 250);
-    assert_eq!(loaded.capture_diff_threshold, 0.0);
     assert_eq!(loaded.storage_max_width, 7680);
-    assert_eq!(loaded.enrich_worker_concurrency, 1);
     assert_eq!(loaded.enrich_vision_timer_interval_ms, 60_000);
-    assert_eq!(loaded.enrich_vision_idle_secs, 60);
-    assert_eq!(loaded.enrich_vision_batch_size, 500);
-    assert_eq!(loaded.sidecar_idle_ttl_secs, 86_400);
-    assert_eq!(loaded.sidecar_ngl, 999);
-    assert_eq!(loaded.sidecar_ctx_size, 32_768);
-    assert_eq!(loaded.capture_event_debounce_ms, 100);
-    assert_eq!(loaded.capture_event_min_interval_ms, 60_000);
-    assert_eq!(loaded.capture_event_fallback_interval_ms, 1_000);
     assert_eq!(loaded.overlay_hotkey, "Ctrl+Shift+F");
-    assert_eq!(loaded.overlay_max_results, 1);
+    assert_eq!(loaded.retrieval_default_top_k, 1);
+    assert_eq!(loaded.api_port, 1024);
+}
 
+/// A persisted `report_runs.config_snapshot` written before settings v2 carries the old
+/// field set: no `api_*` keys, plus the now `file-only`/`deleted` names. It must still
+/// deserialize (defaults for the three new keys, unknown names ignored), or a queued run
+/// from an older build would fail with `STORE_ERROR` (`03 §8c`).
+#[test]
+fn pre_v2_settings_json_still_deserializes() {
+    let mut value = serde_json::to_value(Settings::default()).unwrap();
+    let object = value.as_object_mut().unwrap();
+    object.remove("api_enabled");
+    object.remove("api_port");
+    object.remove("api_bind_address");
+    object.insert("sidecar_ngl".to_string(), 42.into());
+    object.insert("storage.jpeg_quality".to_string(), 80.into());
+
+    let parsed: Settings = serde_json::from_value(value).unwrap();
+    assert_eq!(parsed, Settings::default());
+}
+
+#[tokio::test]
+async fn api_settings_round_trip_as_plain_values() {
+    let store = SqliteStore::open_in_memory().expect("open in-memory store");
+    let dyn_store: &dyn Store = &store;
+    let settings = Settings {
+        api_enabled: true,
+        api_port: 43_210,
+        api_bind_address: "::1".to_string(),
+        ..Settings::default()
+    };
+
+    save_settings(dyn_store, &settings).await.expect("save");
+    let loaded = load_settings(dyn_store).await;
+    assert!(loaded.api_enabled);
+    assert_eq!(loaded.api_port, 43_210);
+    assert_eq!(loaded.api_bind_address, "::1");
+
+    // Stored raw, exactly as `local_api` writes and reads it (never JSON-quoted), so the
+    // HTTP surface and the typed struct cannot disagree about the literal.
     assert_eq!(
         store
-            .get_setting("capture.diff_threshold")
+            .get_setting("api.bind_address")
             .await
             .unwrap()
             .as_deref(),
-        Some("0")
+        Some("::1")
+    );
+    assert_eq!(
+        store.get_setting("api.enabled").await.unwrap().as_deref(),
+        Some("true")
     );
 }
 
@@ -320,13 +257,10 @@ async fn overlay_hotkey_legacy_default_remaps_once() {
 #[tokio::test]
 async fn overlay_hotkey_deliberate_legacy_survives_after_migration() {
     // The reversible escape hatch (`07` #94): after the one-shot remap has run, a user who
-    // *deliberately* sets the old chord back must keep it — the value-only remap used to clobber
-    // it again on the very next load (codex PR #80 P2). The persisted migration marker makes the
-    // remap fire at most once, so the deliberate choice is now durable across loads.
+    // *deliberately* sets the old chord back must keep it.
     let store = SqliteStore::open_in_memory().expect("open in-memory store");
     let dyn_store: &dyn Store = &store;
 
-    // Upgraded install: the retired default is remapped once on first load.
     store
         .set_setting("overlay.hotkey", "\"Ctrl+Alt+Space\"")
         .await
@@ -336,17 +270,11 @@ async fn overlay_hotkey_deliberate_legacy_survives_after_migration() {
         Settings::default().overlay_hotkey
     );
 
-    // The user deliberately sets the old chord back…
     store
         .set_setting("overlay.hotkey", "\"Ctrl+Alt+Space\"")
         .await
         .unwrap();
 
-    // …and it now survives every subsequent load instead of being re-remapped.
-    assert_eq!(
-        load_settings(dyn_store).await.overlay_hotkey,
-        "Ctrl+Alt+Space"
-    );
     assert_eq!(
         load_settings(dyn_store).await.overlay_hotkey,
         "Ctrl+Alt+Space"
@@ -362,9 +290,22 @@ async fn overlay_hotkey_deliberate_legacy_survives_after_migration() {
     );
 }
 
+#[tokio::test]
+async fn overlay_hotkey_custom_value_survives() {
+    let store = SqliteStore::open_in_memory().expect("open in-memory store");
+    let dyn_store: &dyn Store = &store;
+    store
+        .set_setting("overlay.hotkey", "\"Ctrl+Shift+P\"")
+        .await
+        .unwrap();
+
+    let loaded = load_settings(dyn_store).await;
+    assert_eq!(loaded.overlay_hotkey, "Ctrl+Shift+P");
+}
+
 /// A `Store` decorator that forwards to an inner `SqliteStore` but fails `set_setting` for one
-/// key. The real in-memory store never fails a write, so this is the only way to drive
-/// `load_overlay_hotkey`'s "remap write failed" branch. All other methods delegate unchanged.
+/// key (or every batch). The real in-memory store never fails a write, so this is the only way
+/// to drive the one-shot migration "write failed" branches.
 struct FailSetSettingFor {
     inner: SqliteStore,
     fail_key: &'static str,
@@ -457,8 +398,7 @@ impl Store for FailSetSettingFor {
 #[tokio::test]
 async fn overlay_hotkey_failed_remap_is_retried_not_latched() {
     // If the remap rewrite fails, the migration marker must NOT latch — otherwise the next load
-    // sees `migrated` and honors the stale `Ctrl+Alt+Space` forever (PR #80 codex/claude P2).
-    // Instead the one-shot retries, and once the write can succeed the chord is remapped.
+    // sees `migrated` and honors the stale `Ctrl+Alt+Space` forever.
     let inner = SqliteStore::open_in_memory().expect("open in-memory store");
     inner
         .set_setting("overlay.hotkey", "\"Ctrl+Alt+Space\"")
@@ -469,13 +409,11 @@ async fn overlay_hotkey_failed_remap_is_retried_not_latched() {
         fail_key: "overlay.hotkey",
     };
 
-    // First load: the rewrite fails, so this session still uses the new default…
     let dyn_failing: &dyn Store = &failing;
     assert_eq!(
         load_settings(dyn_failing).await.overlay_hotkey,
         Settings::default().overlay_hotkey
     );
-    // …but nothing latched — the DB still holds the legacy chord and no migration marker exists.
     assert_eq!(
         failing
             .inner
@@ -510,83 +448,29 @@ async fn overlay_hotkey_failed_remap_is_retried_not_latched() {
             .await
             .unwrap()
             .as_deref(),
-        Some(expected_default.as_str()),
-        "once the write can succeed the retired chord is remapped"
+        Some(expected_default.as_str())
     );
 }
 
 #[tokio::test]
-async fn overlay_hotkey_custom_value_survives() {
-    // A chord the user deliberately set (anything but the exact retired default) is never
-    // touched by the one-shot remap.
-    let store = SqliteStore::open_in_memory().expect("open in-memory store");
-    let dyn_store: &dyn Store = &store;
-    store
-        .set_setting("overlay.hotkey", "\"Ctrl+Shift+P\"")
-        .await
-        .unwrap();
-
-    let loaded = load_settings(dyn_store).await;
-    assert_eq!(loaded.overlay_hotkey, "Ctrl+Shift+P");
-    assert_eq!(
-        store
-            .get_setting("overlay.hotkey")
-            .await
-            .unwrap()
-            .as_deref(),
-        Some("\"Ctrl+Shift+P\""),
-        "a custom chord is left untouched in the DB"
-    );
-}
-
-#[tokio::test]
-async fn sidecar_device_round_trips_empty_as_none() {
-    let store = SqliteStore::open_in_memory().expect("open in-memory store");
-    let dyn_store: &dyn Store = &store;
-    let settings = Settings {
-        sidecar_device: Some("   ".to_string()),
-        ..Settings::default()
-    };
-
-    save_settings(dyn_store, &settings)
-        .await
-        .expect("save settings");
-    let loaded = load_settings(dyn_store).await;
-
-    assert_eq!(loaded.sidecar_device, None);
-    assert_eq!(
-        store
-            .get_setting("sidecar.device")
-            .await
-            .unwrap()
-            .as_deref(),
-        Some("null")
-    );
-}
-
-#[tokio::test]
-async fn load_drops_retired_event_keys_without_error() {
-    // 0.3.0 PR2: a config persisted by an older version still carries the four extra
-    // event-trigger keys + the typing-pause threshold. `drop_retired_settings` purges
-    // them (so the row doesn't linger) and load must not error or be perturbed by them.
-    // 0.3.2 PR5 (D8): `storage.jpeg_quality` + `capture.uia_run_on_interactive` joined the
-    // retired list. The 2026-08-01 usage review adds the now-constant focus length/density
-    // parameters. This same test proves a persisted config drops every removed key without
-    // perturbing surviving settings (usage review 2026-08-01 §6.7).
+async fn load_drops_retired_keys_without_error() {
+    // A config persisted by an older version still carries retired keys. `drop_retired_settings`
+    // purges every one of them (so the row doesn't linger) and load must not error or be
+    // perturbed by them. This is the settings-v2 rewrite: the nine `deleted` rows of `03 §8`
+    // plus the two constant-candidate sweep parameters retired earlier.
     use kernel::settings::{drop_retired_settings, RETIRED_SETTINGS_KEYS};
 
     let store = SqliteStore::open_in_memory().expect("open in-memory store");
     let dyn_store: &dyn Store = &store;
 
-    // A real (surviving) key alongside the retired ones, to prove only the retired go.
     save_settings(dyn_store, &Settings::default())
         .await
         .expect("seed defaults");
     for key in RETIRED_SETTINGS_KEYS {
         store.set_setting(key, "true").await.unwrap();
     }
-    // Overwrite the numeric retiree with the value shape a pre-0.3.2 install persisted
-    // (`80`, not `true`) so the tolerance is proven against realistic data too.
+    // Overwrite the numeric retirees with the value shapes old installs persisted, so the
+    // tolerance is proven against realistic data too.
     store
         .set_setting("storage.jpeg_quality", "80")
         .await
@@ -611,7 +495,7 @@ async fn load_drops_retired_event_keys_without_error() {
     }
     // A surviving key is untouched, and load still yields the defaults (no error).
     assert!(store
-        .get_setting("capture.event_on_foreground")
+        .get_setting("capture.interval_ms")
         .await
         .unwrap()
         .is_some());
@@ -619,6 +503,65 @@ async fn load_drops_retired_event_keys_without_error() {
 
     // Idempotent: a second run finds nothing to drop (so it logs nothing — "once").
     drop_retired_settings(dyn_store).await;
+}
+
+#[tokio::test]
+async fn save_settings_never_writes_retired_keys() {
+    // The save path must not resurrect a retired key: after saving defaults, none of the
+    // retired keys exist. This pins `save_settings`' key set against the retired list.
+    use kernel::settings::RETIRED_SETTINGS_KEYS;
+
+    let store = SqliteStore::open_in_memory().expect("open in-memory store");
+    let dyn_store: &dyn Store = &store;
+
+    save_settings(dyn_store, &Settings::default())
+        .await
+        .expect("save settings");
+
+    for key in RETIRED_SETTINGS_KEYS {
+        assert_eq!(
+            store.get_setting(key).await.unwrap(),
+            None,
+            "save_settings must not write retired key {key}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn reserved_history_metadata_survives_every_settings_path() {
+    // `03 §7f.8`: the history identity and the frame allocator high-water are reserved
+    // metadata. The settings loader/saver, the retired-key purge and a reset-to-default save
+    // must never touch them (the store's generic seams refuse them outright; this pins the
+    // kernel-side paths on top of that).
+    use kernel::settings::drop_retired_settings;
+
+    let store = SqliteStore::open_in_memory().expect("open in-memory store");
+    let dyn_store: &dyn Store = &store;
+    let history = store.get_setting(HISTORY_ID_KEY).await.unwrap();
+    let allocator = store.get_setting(FRAME_ID_HIGH_WATER_KEY).await.unwrap();
+    assert!(
+        history.is_some(),
+        "opening a store initializes history identity"
+    );
+    assert!(
+        allocator.is_some(),
+        "opening a store initializes the allocator"
+    );
+
+    save_settings(dyn_store, &Settings::default())
+        .await
+        .expect("save defaults");
+    load_settings(dyn_store).await;
+    drop_retired_settings(dyn_store).await;
+    save_settings(dyn_store, &Settings::default())
+        .await
+        .expect("save defaults again");
+
+    assert_eq!(store.get_setting(HISTORY_ID_KEY).await.unwrap(), history);
+    assert_eq!(
+        store.get_setting(FRAME_ID_HIGH_WATER_KEY).await.unwrap(),
+        allocator
+    );
 }
 
 #[tokio::test]
@@ -905,28 +848,6 @@ async fn unknown_tier_falls_back_to_default_without_rewrite() {
 }
 
 #[tokio::test]
-async fn save_settings_never_writes_retired_keys() {
-    // The save path must not resurrect a retired key: after saving defaults, none of the
-    // retired keys exist. This pins `save_settings`' key set against the retired list.
-    use kernel::settings::RETIRED_SETTINGS_KEYS;
-
-    let store = SqliteStore::open_in_memory().expect("open in-memory store");
-    let dyn_store: &dyn Store = &store;
-
-    save_settings(dyn_store, &Settings::default())
-        .await
-        .expect("save settings");
-
-    for key in RETIRED_SETTINGS_KEYS {
-        assert_eq!(
-            store.get_setting(key).await.unwrap(),
-            None,
-            "save_settings must not write retired key {key}"
-        );
-    }
-}
-
-#[tokio::test]
 async fn session_settings_round_trip_and_clamp_to_the_final_contract() {
     let store = SqliteStore::open_in_memory().expect("open in-memory store");
     let dyn_store: &dyn Store = &store;
@@ -966,4 +887,270 @@ async fn session_settings_round_trip_and_clamp_to_the_final_contract() {
     assert_eq!(low.sessions_gap_close_secs, 3_600);
     assert_eq!(Settings::default().sessions_min_len_secs, 120);
     assert_eq!(Settings::default().sessions_gap_close_secs, 120);
+}
+
+// ---------------------------------------------------------------------------
+// `advanced.toml` (`file-only` keys, 0.4.5 D6)
+// ---------------------------------------------------------------------------
+
+fn write_advanced(dir: &Path, body: &str) -> std::path::PathBuf {
+    let path = kernel::settings::advanced_config_path(dir);
+    std::fs::write(&path, body).expect("write advanced.toml");
+    path
+}
+
+#[test]
+fn advanced_defaults_apply_when_the_file_is_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let loaded = load_advanced_config(dir.path());
+    assert_eq!(loaded, AdvancedConfig::default());
+    assert!(
+        !kernel::settings::advanced_config_path(dir.path()).exists(),
+        "a missing file is not created merely by reading it"
+    );
+}
+
+#[test]
+fn advanced_defaults_apply_when_the_file_is_unreadable() {
+    let dir = tempfile::tempdir().unwrap();
+    // A directory at the file path is unreadable as a text file on every platform.
+    std::fs::create_dir(kernel::settings::advanced_config_path(dir.path())).unwrap();
+    assert_eq!(load_advanced_config(dir.path()), AdvancedConfig::default());
+}
+
+#[test]
+fn advanced_defaults_apply_when_the_file_is_invalid_and_it_is_left_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    let body = "not = [valid";
+    let path = write_advanced(dir.path(), body);
+
+    assert_eq!(load_advanced_config(dir.path()), AdvancedConfig::default());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        body,
+        "a syntax error must not be destroyed by a rewrite"
+    );
+}
+
+#[test]
+fn advanced_parses_known_values_and_clamps_them() {
+    let dir = tempfile::tempdir().unwrap();
+    write_advanced(
+        dir.path(),
+        r#"
+[capture]
+diff_threshold = 9.0
+event_on_idle = true
+event_debounce_ms = 1
+
+[sidecar]
+ngl = 100000
+ctx_size = 100
+device = "  Vulkan0  "
+
+[throttle]
+cpu_enter_pct = 50.0
+cpu_exit_pct = 90.0
+embed_text_floor = 0
+
+[overlay]
+max_results = 1
+"#,
+    );
+
+    let cfg = load_advanced_config(dir.path());
+    assert_eq!(cfg.capture.diff_threshold, 1.0, "clamped to the 0..=1 band");
+    assert!(cfg.capture.event_on_idle);
+    assert_eq!(cfg.capture.event_debounce_ms, 100, "floor is 100 ms");
+    assert_eq!(cfg.sidecar.ngl, 999);
+    assert_eq!(cfg.sidecar.ctx_size, 512, "non-zero ctx floors at 512");
+    assert_eq!(cfg.sidecar.device.as_deref(), Some("Vulkan0"), "trimmed");
+    assert_eq!(cfg.throttle.cpu_enter_pct, 50.0);
+    assert_eq!(
+        cfg.throttle.cpu_exit_pct, 49.0,
+        "exit must stay strictly below enter"
+    );
+    assert_eq!(cfg.throttle.embed_text_floor, 1);
+    assert_eq!(cfg.overlay.max_results, 1);
+}
+
+#[test]
+fn advanced_reports_which_keys_came_from_the_file_not_the_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    write_advanced(
+        dir.path(),
+        r#"
+[capture]
+diff_threshold = 9.0
+mystery_field = 1
+
+[overlay]
+max_results = 12
+
+[reports]
+weekly_top_k = 300
+"#,
+    );
+
+    let loaded = kernel::settings::load_advanced_config_with_provenance(dir.path());
+    assert_eq!(loaded.config.overlay.max_results, 12);
+    assert_eq!(
+        loaded.from_file,
+        [
+            "capture.diff_threshold",
+            "overlay.max_results",
+            "reports.weekly_top_k"
+        ],
+        "exactly the keys the file supplied, in section order"
+    );
+    assert_eq!(
+        loaded.config.capture.diff_threshold, 1.0,
+        "a clamped value still came from the file"
+    );
+    assert!(
+        !loaded.from_file.iter().any(|key| key.starts_with("text.")),
+        "an untouched section holds defaults and is not claimed"
+    );
+
+    // Nothing comes from a file that does not exist.
+    let empty = tempfile::tempdir().unwrap();
+    let defaults = kernel::settings::load_advanced_config_with_provenance(empty.path());
+    assert_eq!(defaults.config, AdvancedConfig::default());
+    assert!(defaults.from_file.is_empty());
+}
+
+#[test]
+fn advanced_sidecar_device_blank_round_trips_as_none() {
+    let dir = tempfile::tempdir().unwrap();
+    write_advanced(
+        dir.path(),
+        r#"
+[sidecar]
+device = "   "
+"#,
+    );
+    assert_eq!(load_advanced_config(dir.path()).sidecar.device, None);
+}
+
+#[test]
+fn advanced_drops_unknown_section_and_field_and_rewrites_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_advanced(
+        dir.path(),
+        r#"
+[capture]
+diff_threshold = 0.25
+mystery_field = 1
+
+[bogus]
+x = 1
+"#,
+    );
+
+    let cfg = load_advanced_config(dir.path());
+    assert_eq!(cfg.capture.diff_threshold, 0.25, "known value survives");
+    assert_eq!(cfg.enrich, AdvancedConfig::default().enrich);
+
+    let rewritten = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !rewritten.contains("mystery_field"),
+        "unknown field must be dropped from the file: {rewritten}"
+    );
+    assert!(
+        !rewritten.contains("bogus"),
+        "unknown section must be dropped from the file: {rewritten}"
+    );
+    assert!(
+        rewritten.contains("diff_threshold = 0.25"),
+        "the surviving value is kept: {rewritten}"
+    );
+
+    // Second load is clean: same values, and the file is not rewritten again.
+    let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+    assert_eq!(load_advanced_config(dir.path()), cfg);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+        before,
+        "a clean file is not rewritten"
+    );
+}
+
+#[test]
+fn advanced_values_drive_the_same_consumers_the_typed_fields_did() {
+    let dir = tempfile::tempdir().unwrap();
+    write_advanced(
+        dir.path(),
+        r#"
+[capture]
+diff_threshold = 0.5
+event_driven_enabled = true
+event_on_idle = true
+event_min_interval_ms = 2000
+
+[sidecar]
+ngl = 42
+ctx_size = 4096
+device = "Vulkan0"
+kv_cache_type = "f16"
+flash_attn = "off"
+idle_ttl_secs = 600
+recycle_rss_mb = 16384
+recycle_enabled = false
+
+[text]
+chrome_suppress_min_seen = 9
+chrome_protect_min_chars = 64
+chrome_region_buckets = 12
+"#,
+    );
+
+    let cfg = load_advanced_config(dir.path());
+
+    // Capture config is fed the same fields it used to read off `Settings`.
+    let capture = kernel::settings::capture_config(&Settings::default(), &cfg);
+    assert_eq!(capture.diff_threshold, 0.5);
+    assert!(capture.event_driven_enabled);
+    assert!(capture.event_on_idle);
+    assert_eq!(capture.event_min_interval_ms, 2_000);
+    assert_eq!(
+        capture.interval_ms, 3000,
+        "UI key still comes from Settings"
+    );
+
+    // Sidecar launch params mirror the old `From<&Settings>` conversion exactly.
+    let params = SidecarParams::from(&cfg);
+    assert_eq!(params.ngl, 42);
+    assert_eq!(params.ctx_size, 4096);
+    assert_eq!(params.device.as_deref(), Some("Vulkan0"));
+    assert_eq!(params.kv_cache_type, KvCacheType::F16);
+    assert_eq!(params.flash_attn, FlashAttnSetting::Off);
+
+    // Text-chrome thresholds reach the capture loop through the same snapshot.
+    assert_eq!(cfg.text.chrome_suppress_min_seen, 9);
+    assert_eq!(cfg.text.chrome_protect_min_chars, 64);
+    assert_eq!(cfg.text.chrome_region_buckets, 12);
+}
+
+/// The `file-only` sections are constructed here so a rename or a dropped field is a compile
+/// error rather than a silent default (the defaults are asserted by `AdvancedConfig::default`
+/// in the tests above; this pins the shapes the consumers destructure).
+#[test]
+fn advanced_config_sections_are_complete() {
+    let cfg = AdvancedConfig {
+        capture: CaptureAdvanced::default(),
+        enrich: EnrichAdvanced::default(),
+        overlay: OverlayAdvanced::default(),
+        reports: ReportsAdvanced::default(),
+        resume: ResumeAdvanced::default(),
+        sidecar: SidecarAdvanced::default(),
+        text: TextAdvanced::default(),
+        throttle: ThrottleAdvanced::default(),
+    };
+    assert!(cfg.enrich.embed_text);
+    assert_eq!(cfg.enrich.vision_batch_size, 20);
+    assert_eq!(cfg.reports.weekly_top_k, 200);
+    assert_eq!(cfg.reports.map_reduce_min_frames, 20);
+    assert_eq!(cfg.resume.min_dwell_secs, 120);
+    assert_eq!(cfg.throttle.sample_interval_ms, 1_000);
+    assert_eq!(cfg.overlay.max_results, 8);
 }

@@ -1,0 +1,31 @@
+[package]
+name = "rebuild"
+description = "Dev-only v13 -> v14 database rebuild (`ssv2c-rebuild`). Not shipped: workspace crates are never bundled by the NSIS installer. See specs/03 §4, 0.4.5 D3."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "rebuild"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ssv2c-rebuild"
+path = "src/main.rs"
+
+# `store` is used only for the single source of truth this tool must not duplicate:
+# `LATEST_SCHEMA_VERSION` and `create_baseline`/`BASELINE_SQL` (`03 §4`, 0.4.5 D2).
+# The dependency is one-way — no shipped crate depends on `rebuild`.
+[dependencies]
+anyhow.workspace = true
+rusqlite.workspace = true
+# vec0 registration for the fixture + destination connections (same pinned crate `store` uses).
+sqlite-vec.workspace = true
+store.workspace = true
+traits.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

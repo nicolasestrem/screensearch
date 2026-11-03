@@ -1,16 +1,23 @@
 // Settings (/settings) — the two-tier IA (0.3.2 PR5, D6; UI_REFERENCE §3/§4).
 // **Essentials** (always visible, in the D6 order): Capture · Hotkeys · Privacy ·
 // Models · Storage · App · Data. **Advanced** (collapsed by default, one `Expander`
-// per group, per-session state in the ui store): Capture tuning · Text source / UIA ·
-// Enrichment & scheduling · Sessions · Performance throttle · Text filtering ·
-// Reports & retrieval · Inference engine. Every section opens with one plain-language sentence
-// (§9). Presentation-first (D7): zero key renames, zero semantic changes — the form
-// still edits one draft of the typed `Settings` binding; Save persists the whole
-// draft (optimistic + reconcile via useSetSettings). Model tiers additionally
-// hot-apply the moment they change (useSetModelTier). Every field labels *when* it
-// takes effect. The Hotkeys section carries the gap-#100 inline cross-chord conflict
-// warning (fires live while the overlay and marks chords match; clears when they
-// differ) — the loud registration-failure warning stays the save-time safety net.
+// per group, per-session state in the ui store): Enrichment & scheduling · Sessions ·
+// Performance throttle · Text filtering · Reports & retrieval. Every section opens with
+// one plain-language sentence (§9).
+//
+// Settings v2 (0.4.5 D6, `03 §8`): this page edits **only** the 25 `UI` keys. The
+// `file-only` keys carry no control here — not a disabled one, not a placeholder row —
+// because they live in `advanced.toml` and are surfaced read-only by the
+// `get_advanced_config` projection (P7 rebuilds this page around categories). The
+// removed groups are therefore gone rather than greyed out.
+//
+// Presentation-first (D7): zero key renames, zero semantic changes — the form still
+// edits one draft of the typed `Settings` binding; Save persists the whole draft
+// (optimistic + reconcile via useSetSettings). Model tiers additionally hot-apply the
+// moment they change (useSetModelTier). Every field labels *when* it takes effect. The
+// Hotkeys section carries the gap-#100 inline cross-chord conflict warning (fires live
+// while the overlay and marks chords match; clears when they differ) — the loud
+// registration-failure warning stays the save-time safety net.
 //
 // States (§4): loading → skeleton; error → load failed + retry; partial → models
 // still downloading (noted in the Models panel); populated → the form. Settings has
@@ -26,7 +33,6 @@ import {
   Skeleton,
   Toggle,
   ErrorState,
-  Select,
 } from "../components/primitives";
 import {
   ApiPanel,
@@ -45,7 +51,6 @@ import {
   useReadiness,
   useSettings,
   useHotkeyStatus,
-  useSidecarDevices,
   useTextFilterStats,
   useThrottleStatus,
 } from "../lib/ipc/queries";
@@ -70,8 +75,6 @@ const TIER_LABEL: Record<ModelTier, string> = {
 const APPLY_NOW = "Applies now.";
 const APPLY_ASK = "Applies to your next question.";
 const APPLY_CAPTURE = "Applies on the next capture start.";
-const APPLY_RESTART = "Applies on restart.";
-const APPLY_SIDECAR = "Applies to the next sidecar launch.";
 const APPLY_SESSION = "Changes apply on the next session pass.";
 
 /** Parse a comma-separated list of non-negative monitor indices; empty → []. */
@@ -119,138 +122,34 @@ function chordsConflict(a: string, b: string): boolean {
  * Clamp/round the numeric settings into valid ranges before they're persisted. Field
  * `min`/`max` are advisory — a user can type or paste out of range — and the integer
  * Rust fields reject a JSON float, so the form sanitises on save: every integer field
- * is rounded and clamped, and `capture_diff_threshold` (the only float) is clamped to
- * [0, 1] (a normalised frame-difference can never exceed 1, so a larger value would
- * wedge the capture diff-gate). Returns a new object; never mutates the input.
+ * is rounded and clamped. Every field here is a `UI` key (`03 §8`, 0.4.5 D6); the
+ * `file-only` knobs are clamped backend-side by `AdvancedConfig::sanitized` and have
+ * no control or clamp on this page. Returns a new object; never mutates the input.
  */
 function sanitizeSettings(s: Settings): Settings {
   const clampInt = (v: number, lo: number, hi: number) =>
     Math.min(hi, Math.max(lo, Math.round(Number.isFinite(v) ? v : lo)));
-  const clampNum = (v: number, lo: number, hi: number) =>
-    Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : lo));
   return {
     ...s,
     capture_interval_ms: clampInt(s.capture_interval_ms, 250, 3_600_000),
-    capture_diff_threshold: clampNum(s.capture_diff_threshold, 0, 1),
-    // Event-driven capture timing knobs — mirror the backend clamps exactly.
-    capture_event_debounce_ms: clampInt(
-      s.capture_event_debounce_ms,
-      100,
-      10_000,
-    ),
-    capture_event_min_interval_ms: clampInt(
-      s.capture_event_min_interval_ms,
-      250,
-      60_000,
-    ),
-    capture_event_idle_threshold_ms: clampInt(
-      s.capture_event_idle_threshold_ms,
-      1_000,
-      60_000,
-    ),
-    capture_event_fallback_interval_ms: clampInt(
-      s.capture_event_fallback_interval_ms,
-      1_000,
-      3_600_000,
-    ),
-    // UIA text knobs — mirror the backend clamps (docs/0.2.0.md #48, hang fix 07 #71).
-    capture_uia_latency_budget_ms: clampInt(
-      s.capture_uia_latency_budget_ms,
-      20,
-      2_000,
-    ),
-    capture_uia_min_text_chars: clampInt(
-      s.capture_uia_min_text_chars,
-      0,
-      10_000,
-    ),
-    capture_uia_max_nodes: clampInt(s.capture_uia_max_nodes, 100, 20_000),
-    capture_uia_max_textpattern_calls: clampInt(
-      s.capture_uia_max_textpattern_calls,
-      1,
-      4_096,
-    ),
-    capture_uia_suppress_during_input_ms: clampInt(
-      s.capture_uia_suppress_during_input_ms,
-      0,
-      10_000,
-    ),
     // 0 = native (no downscale) — mirrors the backend sentinel; any other value clamps.
     storage_max_width:
       s.storage_max_width === 0 ? 0 : clampInt(s.storage_max_width, 320, 7680),
     storage_retention_days: clampInt(s.storage_retention_days, 0, 3650),
-    enrich_worker_concurrency: clampInt(s.enrich_worker_concurrency, 1, 16),
     enrich_vision_timer_interval_ms: clampInt(
       s.enrich_vision_timer_interval_ms,
       60_000,
       86_400_000,
     ),
-    enrich_vision_idle_secs: clampInt(s.enrich_vision_idle_secs, 60, 86_400),
-    enrich_vision_batch_size: clampInt(s.enrich_vision_batch_size, 1, 500),
-    sidecar_idle_ttl_secs: clampInt(s.sidecar_idle_ttl_secs, 0, 86_400),
-    sidecar_ngl: clampInt(s.sidecar_ngl, 0, 999),
-    // 0 = automatic (per-lane default chosen in the backend); any other value is clamped
-    // to a sane window. The two enum fields are constrained by their Select options.
-    sidecar_ctx_size:
-      s.sidecar_ctx_size === 0 ? 0 : clampInt(s.sidecar_ctx_size, 512, 32_768),
-    sidecar_recycle_enabled: !!s.sidecar_recycle_enabled,
-    sidecar_recycle_rss_mb:
-      s.sidecar_recycle_rss_mb === 0
-        ? 0
-        : clampInt(s.sidecar_recycle_rss_mb, 8192, 131_072),
-    sidecar_device: s.sidecar_device?.trim() ? s.sidecar_device.trim() : null,
-    // PR3 attention-filter thresholds — mirror the backend clamps (03 §8).
-    text_chrome_suppress_min_seen: clampInt(
-      s.text_chrome_suppress_min_seen,
-      2,
-      100_000,
-    ),
-    text_chrome_protect_min_chars: clampInt(
-      s.text_chrome_protect_min_chars,
-      1,
-      4_096,
-    ),
-    text_chrome_region_buckets: clampInt(s.text_chrome_region_buckets, 1, 32),
-    // PR6 retrieval + recall reports — mirror the backend clamps (03 §8).
+    // Retrieval + recall reports — mirror the backend clamps (03 §8).
     retrieval_default_top_k: clampInt(s.retrieval_default_top_k, 1, 100),
     reports_daily_top_k: clampInt(s.reports_daily_top_k, 1, 1_000),
-    reports_weekly_top_k: clampInt(s.reports_weekly_top_k, 1, 2_000),
-    reports_map_reduce_min_frames: clampInt(
-      s.reports_map_reduce_min_frames,
-      1,
-      1_000,
-    ),
     overlay_hotkey: s.overlay_hotkey.trim() || DEFAULT_OVERLAY_HOTKEY,
-    overlay_max_results: clampInt(s.overlay_max_results, 1, 50),
-    // PR6 where-was-i + marks — mirror the backend clamps (kernel settings.rs):
-    // dwell clamps to 10..=86400s; an empty mark chord falls back to the default.
+    // An empty mark chord falls back to the default (mirrors kernel settings.rs).
     marks_hotkey: s.marks_hotkey.trim() || DEFAULT_MARKS_HOTKEY,
-    resume_min_dwell_secs: clampInt(s.resume_min_dwell_secs, 10, 86_400),
-    // 0.4.0 PR4 sessions keys — UI placement stays PR5; mirror backend final clamps now.
+    // 0.4.0 PR4 sessions keys — mirror the backend final clamps.
     sessions_min_len_secs: clampInt(s.sessions_min_len_secs, 30, 3_600),
     sessions_gap_close_secs: clampInt(s.sessions_gap_close_secs, 60, 3_600),
-    // 0.2.1 enrichment throttle — mirror the backend clamps (03 §8); each exit % is kept
-    // strictly below its enter % so the hysteresis band is always valid.
-    throttle_cpu_enter_pct: clampInt(s.throttle_cpu_enter_pct, 1, 100),
-    throttle_cpu_exit_pct: clampInt(
-      s.throttle_cpu_exit_pct,
-      0,
-      clampInt(s.throttle_cpu_enter_pct, 1, 100) - 1,
-    ),
-    throttle_gpu_enter_pct: clampInt(s.throttle_gpu_enter_pct, 1, 100),
-    throttle_gpu_exit_pct: clampInt(
-      s.throttle_gpu_exit_pct,
-      0,
-      clampInt(s.throttle_gpu_enter_pct, 1, 100) - 1,
-    ),
-    throttle_enter_after_ms: clampInt(s.throttle_enter_after_ms, 500, 120_000),
-    throttle_exit_after_ms: clampInt(s.throttle_exit_after_ms, 500, 300_000),
-    throttle_sample_interval_ms: clampInt(
-      s.throttle_sample_interval_ms,
-      250,
-      10_000,
-    ),
-    throttle_embed_text_floor: clampInt(s.throttle_embed_text_floor, 1, 16),
   };
 }
 
@@ -383,17 +282,7 @@ export function Component() {
   const settings = useSettings();
   const readiness = useReadiness();
   const monitors = useMonitors();
-  // The device list only needs the binary resolved, so an idle-unloaded sidecar
-  // (now reported as "disabled", not "ready") is still "available" for this probe.
-  const sidecarAvailable =
-    readiness.data?.sidecar.status === "ready" ||
-    readiness.data?.sidecar.status === "disabled";
-  const sidecarDevices = useSidecarDevices(sidecarAvailable);
-  const throttleStatus = useThrottleStatus();
   const hotkeyStatus = useHotkeyStatus();
-  // Default true while unknown, so GPU threshold fields aren't annotated as dead until the
-  // probe confirms the GPU genuinely isn't monitored.
-  const gpuMonitored = throttleStatus.data?.gpu_monitored ?? true;
   const setSettings = useSetSettings();
   const setTier = useSetModelTier();
   const exportData = useExportData();
@@ -467,21 +356,12 @@ export function Component() {
   // Numeric inputs: a cleared field yields NaN — fall back to 0 (a transient value the
   // user types over; out-of-range values are clamped on save) rather than ignoring the
   // change, which would snap the controlled input back to its old value. `intHandler`
-  // rounds for the integer-typed Rust fields (a stray float is rejected by serde);
-  // `numHandler` keeps the raw value for the one float field (capture_diff_threshold).
+  // rounds for the integer-typed Rust fields (a stray float is rejected by serde).
   const intHandler =
     <K extends keyof Settings>(key: K) =>
     (e: ChangeEvent<HTMLInputElement>) => {
       const v = e.currentTarget.valueAsNumber;
       if (Number.isFinite(v)) set(key, Math.round(v) as Settings[K]);
-      else if (e.currentTarget.value === "") set(key, 0 as Settings[K]);
-    };
-
-  const numHandler =
-    <K extends keyof Settings>(key: K) =>
-    (e: ChangeEvent<HTMLInputElement>) => {
-      const v = e.currentTarget.valueAsNumber;
-      if (Number.isFinite(v)) set(key, v as Settings[K]);
       else if (e.currentTarget.value === "") set(key, 0 as Settings[K]);
     };
 
@@ -548,8 +428,6 @@ export function Component() {
     set("capture_monitors", next);
     setMonitorsText(next.join(", "));
   };
-  const detectedSidecarDevices = sidecarDevices.data ?? [];
-  const hasDetectedSidecarDevices = detectedSidecarDevices.length > 0;
   const overlayHotkeyStatus = (hotkeyStatus.data ?? []).find(
     (h) => h.id === "overlay.hotkey",
   );
@@ -605,8 +483,8 @@ export function Component() {
       <Panel group title="Capture">
         <div className="flex flex-col gap-4">
           <SectionIntro>
-            What ScreenSearch records: how often the screen is sampled, which
-            monitors, and whether app switches trigger extra captures.
+            What ScreenSearch records: how often the screen is sampled and
+            which monitors.
           </SectionIntro>
           <Field
             label="Capture interval (ms)"
@@ -650,12 +528,6 @@ export function Component() {
               })}
             </div>
           )}
-          <Toggle
-            label="Enable event-driven capture"
-            checked={draft.capture_event_driven_enabled}
-            onChange={(v) => set("capture_event_driven_enabled", v)}
-            hint={`Also capture on app-switch / idle, not just the timer. Your keystrokes are never recorded. Fine-tune under Capture tuning below. ${APPLY_CAPTURE}`}
-          />
         </div>
       </Panel>
 
@@ -687,23 +559,6 @@ export function Component() {
               one of them.
             </p>
           )}
-          <Field
-            label="Overlay results"
-            type="number"
-            min={1}
-            max={50}
-            value={draft.overlay_max_results}
-            onChange={intHandler("overlay_max_results")}
-            hint={`Top results shown in the Flow overlay. ${APPLY_NOW}`}
-          />
-          <Field
-            label="Where-was-I dwell (seconds)"
-            type="number"
-            min={10}
-            value={draft.resume_min_dwell_secs}
-            onChange={intHandler("resume_min_dwell_secs")}
-            hint={`How long a context must persist to count as a place worth resuming. ${APPLY_NOW}`}
-          />
         </div>
       </Panel>
 
@@ -845,177 +700,15 @@ export function Component() {
       </div>
 
       <Expander
-        title="Capture tuning"
-        intro="Fine-grained capture behavior: the change threshold and event-driven timing."
-        open={!!settingsExpanded["capture-tuning"]}
-        onToggle={() => toggleSettingsGroup("capture-tuning")}
-      >
-        <div className="flex flex-col gap-4">
-          <Field
-            label="Change threshold"
-            type="number"
-            min={0}
-            max={1}
-            step={0.001}
-            value={draft.capture_diff_threshold}
-            onChange={numHandler("capture_diff_threshold")}
-            hint={`Fraction of the frame that must change to keep it (0–1). ${APPLY_CAPTURE}`}
-          />
-          {draft.capture_event_driven_enabled ? (
-            <div className="flex flex-col gap-4 border-t border-line pt-3">
-              <Toggle
-                label="Capture on app switch"
-                checked={draft.capture_event_on_foreground}
-                onChange={(v) => set("capture_event_on_foreground", v)}
-                hint={`Capture when the foreground app or window changes. ${APPLY_CAPTURE}`}
-              />
-              <Toggle
-                label="Capture when idle"
-                checked={draft.capture_event_on_idle}
-                onChange={(v) => set("capture_event_on_idle", v)}
-                hint={`Capture once after you stop interacting for the idle threshold. ${APPLY_CAPTURE}`}
-              />
-              <Field
-                label="Debounce (ms)"
-                type="number"
-                min={100}
-                max={10000}
-                value={draft.capture_event_debounce_ms}
-                onChange={intHandler("capture_event_debounce_ms")}
-                hint={`Wait this long after an event settles before capturing. ${APPLY_CAPTURE}`}
-              />
-              <Field
-                label="Min interval between captures (ms)"
-                type="number"
-                min={250}
-                max={60000}
-                value={draft.capture_event_min_interval_ms}
-                onChange={intHandler("capture_event_min_interval_ms")}
-                hint={`Minimum time between event-triggered captures (rate limit). ${APPLY_CAPTURE}`}
-              />
-              <Field
-                label="Idle threshold (ms)"
-                type="number"
-                min={1000}
-                max={60000}
-                value={draft.capture_event_idle_threshold_ms}
-                onChange={intHandler("capture_event_idle_threshold_ms")}
-                hint={`How long without input before you count as idle. ${APPLY_CAPTURE}`}
-              />
-              <Field
-                label="Fallback interval (ms)"
-                type="number"
-                min={1000}
-                max={3600000}
-                value={draft.capture_event_fallback_interval_ms}
-                onChange={intHandler("capture_event_fallback_interval_ms")}
-                hint={`Capture at least this often when no events fire (safety net). ${APPLY_CAPTURE}`}
-              />
-            </div>
-          ) : (
-            <p className="text-caption text-ink-muted border-t border-line pt-3">
-              Event-driven capture is off — turn it on in the Capture section
-              above to tune its triggers and timing.
-            </p>
-          )}
-        </div>
-      </Expander>
-
-      <Expander
-        title="Text source / UIA"
-        intro="How text is read from the screen: Windows UI Automation with OCR fallback, and its safety limits."
-        open={!!settingsExpanded["uia"]}
-        onToggle={() => toggleSettingsGroup("uia")}
-      >
-        <div className="flex flex-col gap-4">
-          <Toggle
-            label="Use UI Automation text (with OCR fallback)"
-            checked={draft.capture_uia_text_enabled}
-            onChange={(v) => set("capture_uia_text_enabled", v)}
-            hint={`Read the active window's text via Windows UI Automation — often cleaner than OCR — falling back to OCR when it's unavailable or yields too little. ${APPLY_NOW}`}
-          />
-          <Field
-            label="UIA latency budget (ms)"
-            type="number"
-            min={20}
-            max={2000}
-            value={draft.capture_uia_latency_budget_ms}
-            onChange={intHandler("capture_uia_latency_budget_ms")}
-            hint={`Give up on the UIA read past this and fall back to OCR for that frame. ${APPLY_NOW}`}
-          />
-          <Field
-            label="UIA minimum text (chars)"
-            type="number"
-            min={0}
-            max={10000}
-            value={draft.capture_uia_min_text_chars}
-            onChange={intHandler("capture_uia_min_text_chars")}
-            hint={`If UIA returns fewer characters than this, use OCR for that frame instead (0 disables). ${APPLY_NOW}`}
-          />
-          <Toggle
-            label="Use control view only (faster)"
-            checked={draft.capture_uia_view_control_only}
-            onChange={(v) => set("capture_uia_view_control_only", v)}
-            hint={`On (recommended): walk only meaningful controls, not every text fragment — far fewer cross-process calls on large pages. ${APPLY_NOW}`}
-          />
-          <Field
-            label="UIA max nodes per read"
-            type="number"
-            min={100}
-            max={20000}
-            value={draft.capture_uia_max_nodes}
-            onChange={intHandler("capture_uia_max_nodes")}
-            hint={`Upper bound on accessibility elements visited per frame, so a huge page can't stall the read. ${APPLY_NOW}`}
-          />
-          <Field
-            label="UIA max text reads per read"
-            type="number"
-            min={1}
-            max={4096}
-            value={draft.capture_uia_max_textpattern_calls}
-            onChange={intHandler("capture_uia_max_textpattern_calls")}
-            hint={`Upper bound on full-text reads per frame (the costliest UIA call); bounds a text-heavy page. ${APPLY_NOW}`}
-          />
-          <Field
-            label="Pause UIA after input (ms)"
-            type="number"
-            min={0}
-            max={10000}
-            value={draft.capture_uia_suppress_during_input_ms}
-            onChange={intHandler("capture_uia_suppress_during_input_ms")}
-            hint={`Timer-driven frames skip UI Automation (using OCR) for this long after you type, click, scroll, or move the mouse, so an active scroll never triggers a tree walk against the app. 0 disables. ${APPLY_NOW}`}
-          />
-        </div>
-      </Expander>
-
-      <Expander
         title="Enrichment & scheduling"
-        intro="When the heavier AI work runs: text indexing and scheduled vision tagging."
+        intro="When the heavier AI work runs: scheduled vision tagging."
         open={!!settingsExpanded["enrichment"]}
         onToggle={() => toggleSettingsGroup("enrichment")}
       >
         <div className="flex flex-col gap-4">
-          <Toggle
-            label="Embed OCR text"
-            checked={draft.enrich_embed_text}
-            onChange={(v) => set("enrich_embed_text", v)}
-            hint={`Index recognised text as vectors for semantic search. Worker claiming updates after save; capture enqueueing changes on the next capture start.`}
-          />
-          <Field
-            label="Worker concurrency"
-            type="number"
-            min={1}
-            max={16}
-            value={draft.enrich_worker_concurrency}
-            onChange={intHandler("enrich_worker_concurrency")}
-            hint={`How many enrichment jobs run at once. ${APPLY_NOW}`}
-          />
           <ScheduleControl
             timerEnabled={draft.enrich_vision_timer_enabled}
             timerIntervalMs={draft.enrich_vision_timer_interval_ms}
-            idleEnabled={draft.enrich_vision_idle_enabled}
-            idleSecs={draft.enrich_vision_idle_secs}
-            batchSize={draft.enrich_vision_batch_size}
             onChange={patch}
           />
         </div>
@@ -1063,90 +756,6 @@ export function Component() {
             hint={`Pause heavy enrichment (vision tagging) and ease text-embed concurrency when the machine is under sustained CPU/GPU pressure, so your foreground work stays responsive. Capture, OCR, and storage never pause. ${APPLY_NOW}`}
           />
           <ThrottleReadout />
-          {draft.throttle_enabled && (
-            <div className="flex flex-col gap-4 border-t border-line pt-3">
-              <Field
-                label="CPU enter threshold (%)"
-                type="number"
-                min={1}
-                max={100}
-                value={draft.throttle_cpu_enter_pct}
-                onChange={intHandler("throttle_cpu_enter_pct")}
-                hint={`Start throttling once CPU stays at or above this. ${APPLY_NOW}`}
-              />
-              <Field
-                label="CPU exit threshold (%)"
-                type="number"
-                min={0}
-                max={99}
-                value={draft.throttle_cpu_exit_pct}
-                onChange={intHandler("throttle_cpu_exit_pct")}
-                hint={`Ease throttling once CPU stays below this (kept under the enter threshold for hysteresis). ${APPLY_NOW}`}
-              />
-              <Field
-                label="GPU enter threshold (%)"
-                type="number"
-                min={1}
-                max={100}
-                value={draft.throttle_gpu_enter_pct}
-                onChange={intHandler("throttle_gpu_enter_pct")}
-                hint={
-                  gpuMonitored
-                    ? `Start throttling once GPU stays at or above this. ${APPLY_NOW}`
-                    : "Your GPU isn't monitored on this machine, so this has no effect."
-                }
-              />
-              <Field
-                label="GPU exit threshold (%)"
-                type="number"
-                min={0}
-                max={99}
-                value={draft.throttle_gpu_exit_pct}
-                onChange={intHandler("throttle_gpu_exit_pct")}
-                hint={
-                  gpuMonitored
-                    ? `Ease throttling once GPU stays below this (kept under the enter threshold). ${APPLY_NOW}`
-                    : "Your GPU isn't monitored on this machine, so this has no effect."
-                }
-              />
-              <Field
-                label="Enter delay (ms)"
-                type="number"
-                min={500}
-                max={120000}
-                value={draft.throttle_enter_after_ms}
-                onChange={intHandler("throttle_enter_after_ms")}
-                hint={`Pressure must stay high this long before throttling steps up a level. ${APPLY_NOW}`}
-              />
-              <Field
-                label="Exit delay (ms)"
-                type="number"
-                min={500}
-                max={300000}
-                value={draft.throttle_exit_after_ms}
-                onChange={intHandler("throttle_exit_after_ms")}
-                hint={`Pressure must stay low this long before throttling steps back down a level. ${APPLY_NOW}`}
-              />
-              <Field
-                label="Sample interval (ms)"
-                type="number"
-                min={250}
-                max={10000}
-                value={draft.throttle_sample_interval_ms}
-                onChange={intHandler("throttle_sample_interval_ms")}
-                hint={`How often CPU/GPU pressure is sampled. ${APPLY_NOW}`}
-              />
-              <Field
-                label="Text-embed floor (workers)"
-                type="number"
-                min={1}
-                max={16}
-                value={draft.throttle_embed_text_floor}
-                onChange={intHandler("throttle_embed_text_floor")}
-                hint={`Keep at least this many text-embed workers running even under the heaviest throttle, so search indexing never fully stalls. ${APPLY_NOW}`}
-              />
-            </div>
-          )}
         </div>
       </Expander>
 
@@ -1162,32 +771,6 @@ export function Component() {
             checked={draft.text_include_chrome_default}
             onChange={(v) => set("text_include_chrome_default", v)}
             hint={`When on, Recall searches raw / app-chrome text by default instead of just cleaned content. ${APPLY_NOW}`}
-          />
-          <Field
-            label="Suppress after (appearances)"
-            type="number"
-            min={2}
-            value={draft.text_chrome_suppress_min_seen}
-            onChange={intHandler("text_chrome_suppress_min_seen")}
-            hint={`A repeated short label (toolbar / menu / tab) becomes chrome after this many appearances. ${APPLY_CAPTURE}`}
-          />
-          <Field
-            label="Protect lines ≥ (characters)"
-            type="number"
-            min={1}
-            max={4096}
-            value={draft.text_chrome_protect_min_chars}
-            onChange={intHandler("text_chrome_protect_min_chars")}
-            hint={`Lines at least this long are never suppressed just for repeating. ${APPLY_CAPTURE}`}
-          />
-          <Field
-            label="Region grid (N×N)"
-            type="number"
-            min={1}
-            max={32}
-            value={draft.text_chrome_region_buckets}
-            onChange={intHandler("text_chrome_region_buckets")}
-            hint={`Screen-position resolution used to tell fixed chrome from moving content. ${APPLY_CAPTURE}`}
           />
           <div className="flex flex-col gap-2 border-t border-line pt-3">
             <span className="eyebrow">Per-app suppression</span>
@@ -1221,140 +804,6 @@ export function Component() {
             onChange={intHandler("reports_daily_top_k")}
             hint="Target frames sampled per active day in a report. Report depth scales with the range. Applies to your next report."
           />
-          <Field
-            label="Report frame cap"
-            type="number"
-            min={1}
-            max={2000}
-            value={draft.reports_weekly_top_k}
-            onChange={intHandler("reports_weekly_top_k")}
-            hint="Most frames a single report will summarize across the whole range (bounds work on weak hardware). Applies to your next report."
-          />
-          <Field
-            label="Map-reduce threshold (frames)"
-            type="number"
-            min={1}
-            max={1000}
-            value={draft.reports_map_reduce_min_frames}
-            onChange={intHandler("reports_map_reduce_min_frames")}
-            hint="Above this many sampled frames a report summarizes day-by-day then combines, instead of in one pass. Applies to your next report."
-          />
-        </div>
-      </Expander>
-
-      <Expander
-        title="Inference engine"
-        intro="Low-level knobs for the local AI engine: memory, context size, and recovery."
-        open={!!settingsExpanded["inference"]}
-        onToggle={() => toggleSettingsGroup("inference")}
-      >
-        <div className="flex flex-col gap-4">
-          <Field
-            label="Idle TTL (seconds)"
-            type="number"
-            min={0}
-            value={draft.sidecar_idle_ttl_secs}
-            onChange={intHandler("sidecar_idle_ttl_secs")}
-            hint={`Unload the model after this many idle seconds (0 keeps it loaded). ${APPLY_RESTART}`}
-          />
-          <Field
-            label="GPU layers (n-gpu-layers)"
-            type="number"
-            min={0}
-            value={draft.sidecar_ngl}
-            onChange={intHandler("sidecar_ngl")}
-            hint={`How many model layers to offload to the GPU. ${APPLY_SIDECAR}`}
-          />
-          <Field
-            label="Context size (tokens)"
-            type="number"
-            min={0}
-            value={draft.sidecar_ctx_size}
-            onChange={intHandler("sidecar_ctx_size")}
-            hint={`Max tokens kept in memory. 0 — or clearing the field — = automatic (small, tuned per lane); lower = less VRAM, but too low can truncate long answers. ${APPLY_SIDECAR}`}
-          />
-          <Toggle
-            label="Recycle sidecar on high memory"
-            checked={draft.sidecar_recycle_enabled}
-            onChange={(v) => set("sidecar_recycle_enabled", v)}
-            hint={`Restarts the engine when its memory crosses the ceiling, reclaiming a known upstream leak that grows the vision engine over long tagging runs. ${APPLY_RESTART}`}
-          />
-          <Field
-            label="Recycle memory ceiling (MiB)"
-            type="number"
-            min={0}
-            value={draft.sidecar_recycle_rss_mb}
-            onChange={intHandler("sidecar_recycle_rss_mb")}
-            hint={`Committed RAM that triggers a recycle (minimum 8192 when set explicitly). 0 — or clearing the field — = automatic (derived from your total RAM). Only used when the toggle is on. ${APPLY_RESTART}`}
-          />
-          <Select
-            label="KV cache precision"
-            value={draft.sidecar_kv_cache_type}
-            onChange={(e) =>
-              set(
-                "sidecar_kv_cache_type",
-                e.currentTarget.value as Settings["sidecar_kv_cache_type"],
-              )
-            }
-            options={[
-              { value: "f16", label: "f16 (max quality)" },
-              { value: "q8_0", label: "q8_0 (balanced)" },
-              { value: "q4_0", label: "q4_0 (smallest)" },
-            ]}
-            hint={`Lower precision shrinks the KV cache (less VRAM). Applied only when flash attention is active. ${APPLY_SIDECAR}`}
-          />
-          <Select
-            label="Flash attention"
-            value={draft.sidecar_flash_attn}
-            onChange={(e) =>
-              set(
-                "sidecar_flash_attn",
-                e.currentTarget.value as Settings["sidecar_flash_attn"],
-              )
-            }
-            options={[
-              { value: "auto", label: "Auto" },
-              { value: "on", label: "On" },
-              { value: "off", label: "Off" },
-            ]}
-            hint={`Reduces attention memory and unlocks KV quantization. Auto uses it when the bundled engine supports it. ${APPLY_SIDECAR}`}
-          />
-          {hasDetectedSidecarDevices ? (
-            <Select
-              label="Device"
-              value={draft.sidecar_device ?? ""}
-              onChange={(e) =>
-                set("sidecar_device", e.currentTarget.value || null)
-              }
-              options={[
-                { value: "", label: "Automatic" },
-                ...detectedSidecarDevices.map((d) => ({ value: d, label: d })),
-                ...(draft.sidecar_device &&
-                !detectedSidecarDevices.includes(draft.sidecar_device)
-                  ? [
-                      {
-                        value: draft.sidecar_device,
-                        label: draft.sidecar_device,
-                      },
-                    ]
-                  : []),
-              ]}
-              hint={APPLY_SIDECAR}
-            />
-          ) : (
-            <Field
-              label="Device"
-              value={draft.sidecar_device ?? ""}
-              onChange={(e) =>
-                set("sidecar_device", e.currentTarget.value.trim() || null)
-              }
-              hint={
-                sidecarDevices.isError
-                  ? `Device list unavailable; enter a llama.cpp device id such as Vulkan0. ${APPLY_SIDECAR}`
-                  : `Device list appears after sidecar initialization; enter a manual id such as Vulkan0 if needed. ${APPLY_SIDECAR}`
-              }
-            />
-          )}
         </div>
       </Expander>
     </div>

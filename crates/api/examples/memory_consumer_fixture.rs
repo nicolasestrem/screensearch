@@ -868,7 +868,8 @@ impl ApiHost for FixtureHost {
     async fn where_was_i(&self) -> anyhow::Result<Option<ResumeContext>> {
         let inner = self.inner();
         let settings = kernel::settings::load_settings(inner.store.as_ref()).await;
-        kernel::resume::where_was_i(inner.store.as_ref(), &settings).await
+        let advanced = inner.kernel.advanced_config();
+        kernel::resume::where_was_i(inner.store.as_ref(), &settings, &advanced).await
     }
 
     async fn export_frames_page(

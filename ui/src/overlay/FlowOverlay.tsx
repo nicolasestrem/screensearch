@@ -18,7 +18,12 @@ import { hideOverlay, openMoment, overlayShownAck } from "../lib/ipc/commands";
 import { listenTo } from "../lib/ipc/events";
 import { queryKeys } from "../lib/ipc/queryKeys";
 import { useAsk } from "../lib/ipc/useAsk";
-import { useSearch, useSettings, useWhereWasI } from "../lib/ipc/queries";
+import {
+  useAdvancedConfig,
+  useSearch,
+  useSettings,
+  useWhereWasI,
+} from "../lib/ipc/queries";
 import { cn } from "../lib/cn";
 import type { SearchQuery } from "../bindings/SearchQuery";
 import type { SearchHit } from "../bindings/SearchHit";
@@ -29,7 +34,6 @@ import { WhereWasIStrip } from "./WhereWasIStrip";
 type Mode = "search" | "ask";
 
 const SEARCH_DEBOUNCE_MS = 250;
-const DEFAULT_RESULT_LIMIT = 8;
 const ASK_MAX_TOKENS = 2048;
 const LISTBOX_ID = "flow-overlay-results";
 
@@ -43,8 +47,11 @@ export function FlowOverlay() {
   const settings = useSettings();
   const ask = useAsk();
   const resetAsk = ask.reset;
-  const resultLimit =
-    settings.data?.overlay_max_results ?? DEFAULT_RESULT_LIMIT;
+  // The overlay's result depth is a `file-only` key (`overlay.max_results`, `03 §8`):
+  // it comes from the read-only advanced projection, never a literal. Until that load
+  // lands the search stays idle instead of guessing a depth.
+  const advanced = useAdvancedConfig();
+  const resultLimit = advanced.data?.config.overlay.max_results;
   const normalizedText = text.trim();
   const committedSearchText = debounced.trim();
   const searchWaitingForCommit =
@@ -64,13 +71,19 @@ export function FlowOverlay() {
   const query: SearchQuery = useMemo(
     () => ({
       text: debounced,
-      limit: resultLimit,
+      // Placeholder only: the search is disabled below until `resultLimit` is known,
+      // so this value is never sent to the backend.
+      limit: resultLimit ?? 0,
       time_range: null,
       include_chrome: false,
     }),
     [debounced, resultLimit],
   );
-  const search = useSearch(query, mode === "search", true);
+  const search = useSearch(
+    query,
+    mode === "search" && resultLimit != null,
+    true,
+  );
   // Empty-query search state shows the where-was-i strip (`03 §7b`); the query only runs
   // when that strip is visible, and refreshes on each summon (it depends on live context).
   const showResume = mode === "search" && normalizedText.length === 0;

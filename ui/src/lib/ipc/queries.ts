@@ -119,6 +119,20 @@ export function useSettings() {
 }
 
 /**
+ * Read-only `file-only` settings projection (`03 §8`, 0.4.5 D6): the effective
+ * `AdvancedConfig`, the `advanced.toml` path, and which keys came from the file.
+ * Read once per app run — the file is loaded at startup — so it never refetches.
+ */
+export function useAdvancedConfig() {
+  const q = useQuery({
+    queryKey: queryKeys.advancedConfig,
+    queryFn: cmd.getAdvancedConfig,
+    staleTime: Infinity,
+  });
+  return useMaybeOverride(q, queryKeys.advancedConfig);
+}
+
+/**
  * Enrichment-throttle status: live CPU/GPU pressure, level, and whether the GPU is
  * monitored. Fetched once, then kept live by the `throttle_changed` event (see
  * useLiveEvents) which the governor emits each sample tick while enabled.

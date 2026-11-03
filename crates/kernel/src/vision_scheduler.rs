@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use tokio::sync::{watch, Mutex};
 use tokio::task::JoinHandle;
-use traits::{BackfillControl, JobKind, NewJob, Store};
+use traits::{BackfillControl, EnrichAdvanced, JobKind, NewJob, Store};
 
 use crate::settings;
 use crate::IdleSource;
@@ -55,11 +55,13 @@ impl Drop for SchedulerHandle {
 }
 
 /// Spawns the timer loop (always) and, when an idle source is available, the idle loop.
-/// Both honor their settings toggle each tick, so enabling/disabling in settings takes
-/// effect without a restart. `backfill` lets the idle loop keep the sidecar warm while it
-/// drains the backlog (`None` when no inference supervisor is wired).
+/// The timer loop re-reads its `UI` toggle each tick, so enabling/disabling it in settings
+/// takes effect without a restart; the batch size and the whole idle trigger are `file-only`
+/// and fixed for this run (`03 §8`, 0.4.5 D6). `backfill` lets the idle loop keep the
+/// sidecar warm while it drains the backlog (`None` when no inference supervisor is wired).
 pub(crate) fn spawn(
     store: Arc<dyn Store>,
+    advanced: EnrichAdvanced,
     idle: Option<IdleSource>,
     backfill: Option<Arc<dyn BackfillControl>>,
 ) -> SchedulerHandle {
@@ -74,12 +76,13 @@ pub(crate) fn spawn(
     let gate = Arc::new(Mutex::new(()));
     let mut joins = vec![tokio::spawn(timer_loop(
         store.clone(),
+        advanced.clone(),
         gate.clone(),
         stop_rx.clone(),
     ))];
     if let Some(idle) = idle {
         joins.push(tokio::spawn(idle_loop(
-            store, idle, gate, backfill, stop_rx,
+            store, advanced, idle, gate, backfill, stop_rx,
         )));
     }
     SchedulerHandle {
@@ -90,7 +93,12 @@ pub(crate) fn spawn(
 
 /// Enqueues up to `enrich.vision_batch_size` untagged frames every
 /// `enrich.vision_timer_interval_ms`, while the timer trigger is enabled.
-async fn timer_loop(store: Arc<dyn Store>, gate: Arc<Mutex<()>>, mut stop: watch::Receiver<bool>) {
+async fn timer_loop(
+    store: Arc<dyn Store>,
+    advanced: EnrichAdvanced,
+    gate: Arc<Mutex<()>>,
+    mut stop: watch::Receiver<bool>,
+) {
     loop {
         let s = settings::load_settings(store.as_ref()).await;
         let wait = if s.enrich_vision_timer_enabled {
@@ -101,10 +109,11 @@ async fn timer_loop(store: Arc<dyn Store>, gate: Arc<Mutex<()>>, mut stop: watch
         if wait_or_stop(&mut stop, wait).await {
             break;
         }
-        // Re-read in case the toggle (or batch size) changed during the wait.
+        // Re-read the UI toggle in case it changed during the wait; the batch size is
+        // `file-only` and fixed for this run (`03 §8`, 0.4.5 D6).
         let s = settings::load_settings(store.as_ref()).await;
         if s.enrich_vision_timer_enabled {
-            enqueue_untagged(&store, &gate, "timer", s.enrich_vision_batch_size).await;
+            enqueue_untagged(&store, &gate, "timer", advanced.vision_batch_size).await;
         }
     }
 }
@@ -117,6 +126,7 @@ async fn timer_loop(store: Arc<dyn Store>, gate: Arc<Mutex<()>>, mut stop: watch
 /// resumes, it clears keep-warm so the normal idle-TTL eviction frees the VRAM (`03 §5`).
 async fn idle_loop(
     store: Arc<dyn Store>,
+    advanced: EnrichAdvanced,
     idle: IdleSource,
     gate: Arc<Mutex<()>>,
     backfill: Option<Arc<dyn BackfillControl>>,
@@ -129,12 +139,11 @@ async fn idle_loop(
         if wait_or_stop(&mut stop, poll).await {
             break;
         }
-        let s = settings::load_settings(store.as_ref()).await;
-        if !s.enrich_vision_idle_enabled {
+        if !advanced.vision_idle_enabled {
             set_keep_warm(&backfill, &mut keep_warm, false);
             continue;
         }
-        let threshold_ms = (s.enrich_vision_idle_secs as u64).saturating_mul(1000);
+        let threshold_ms = u64::from(advanced.vision_idle_secs).saturating_mul(1000);
         let now_idle = idle().is_some_and(|idle_ms| idle_ms >= threshold_ms);
         if !now_idle {
             // User is back: stop holding the model warm; let the idle-TTL reclaim VRAM.
@@ -144,13 +153,13 @@ async fn idle_loop(
         // Idle. Throttle on in-flight vision work so we top the queue up rather than pile
         // batch on batch; while work is draining, keep the model warm.
         let pending = store.pending_vision_job_count().await.unwrap_or(0);
-        let watermark = u64::from(s.enrich_vision_batch_size / 4).max(1);
+        let watermark = u64::from(advanced.vision_batch_size / 4).max(1);
         if pending >= watermark {
             set_keep_warm(&backfill, &mut keep_warm, true);
             continue;
         }
         // Queue is low: enqueue the next batch if any backlog remains.
-        let found = enqueue_untagged(&store, &gate, "idle", s.enrich_vision_batch_size).await;
+        let found = enqueue_untagged(&store, &gate, "idle", advanced.vision_batch_size).await;
         // Backlog remains → keep warm; drained → release so the TTL frees VRAM.
         set_keep_warm(&backfill, &mut keep_warm, found > 0);
     }

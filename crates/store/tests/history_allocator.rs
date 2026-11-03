@@ -131,7 +131,7 @@ async fn allocator_key_survives_settings_level_reset() {
         .await
         .unwrap();
     store
-        .delete_settings(&["capture.event_on_click"])
+        .delete_settings(&["test.not_a_real_key"])
         .await
         .unwrap();
     store

@@ -163,19 +163,33 @@ fn write_jpeg(data_dir: &std::path::Path, captured_at: i64) {
         .unwrap();
 }
 
-/// Throttle settings with fast timing so the dwell + sample windows pass in ~1 s, and the
-/// text embed lane enabled so the pool claims `embed_text`.
+/// The `UI` master switch (`throttle.enabled`).
 fn throttle_settings(enabled: bool) -> Settings {
     Settings {
         throttle_enabled: enabled,
-        throttle_cpu_enter_pct: 80.0,
-        throttle_cpu_exit_pct: 20.0,
-        throttle_enter_after_ms: 500,
-        throttle_exit_after_ms: 500,
-        throttle_sample_interval_ms: 250,
-        throttle_embed_text_floor: 1,
-        enrich_embed_text: true,
         ..Settings::default()
+    }
+}
+
+/// The `file-only` throttle knobs (`advanced.toml`, `03 §8`): fast timing so the dwell +
+/// sample windows pass in ~1 s, and the text embed lane enabled so the pool claims
+/// `embed_text`.
+fn throttle_advanced() -> traits::AdvancedConfig {
+    traits::AdvancedConfig {
+        throttle: traits::ThrottleAdvanced {
+            cpu_enter_pct: 80.0,
+            cpu_exit_pct: 20.0,
+            enter_after_ms: 500,
+            exit_after_ms: 500,
+            sample_interval_ms: 250,
+            embed_text_floor: 1,
+            ..Default::default()
+        },
+        enrich: traits::EnrichAdvanced {
+            embed_text: true,
+            ..Default::default()
+        },
+        ..Default::default()
     }
 }
 
@@ -244,6 +258,8 @@ async fn throttle_pauses_heavy_enrichment_then_resumes_on_recovery() {
         data_dir.join("frames"),
         Readiness::default(),
     );
+
+    kernel.set_advanced_config(throttle_advanced());
 
     // Probe starts HIGH; start the governor and wait until it reaches level >= 1 BEFORE
     // any worker runs, so the heavy kind is never claimable in this window.
@@ -341,6 +357,7 @@ async fn throttle_disabled_drains_everything() {
         data_dir.join("frames"),
         Readiness::default(),
     );
+    kernel.set_advanced_config(throttle_advanced());
     // Even with a probe injected, a disabled throttle never starts the governor.
     kernel.set_pressure_probe(Arc::new(FakePressureProbe {
         cpu_pct: Arc::new(AtomicU32::new(99)),

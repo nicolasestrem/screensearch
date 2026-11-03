@@ -1,24 +1,20 @@
 // ScheduleControl (UI_REFERENCE §5) — the deferred-vision enrichment schedule.
 // Vision tagging is never real-time (`03 §5`): on-demand tagging (from a Moment) is
-// always available; the timer and idle lanes are independent opt-ins, each with a
-// threshold (`Settings`, see specs/06_PATCH_PLAN). The thresholds are surfaced in
-// minutes for readability and converted to the stored units (ms / seconds) on edit.
-// Both lanes apply on the next app restart, labelled honestly here.
+// always available; the timer lane is the one editable opt-in (`03 §8` settings v2,
+// 0.4.5 D6). The idle lane and its batch size are `file-only` keys now
+// (`enrich.vision_idle_*`, `enrich.vision_batch_size`), tuned in `advanced.toml` —
+// they deliberately have no control here. The timer threshold is surfaced in minutes
+// for readability and converted to the stored unit (ms) on edit, and applies on the
+// next app restart, labelled honestly here.
 import { Field, Toggle } from "../primitives";
 
 export interface ScheduleControlProps {
   timerEnabled: boolean;
   timerIntervalMs: number;
-  idleEnabled: boolean;
-  idleSecs: number;
-  batchSize: number;
   onChange: (
     patch: Partial<{
       enrich_vision_timer_enabled: boolean;
       enrich_vision_timer_interval_ms: number;
-      enrich_vision_idle_enabled: boolean;
-      enrich_vision_idle_secs: number;
-      enrich_vision_batch_size: number;
     }>,
   ) => void;
 }
@@ -26,15 +22,11 @@ export interface ScheduleControlProps {
 export function ScheduleControl({
   timerEnabled,
   timerIntervalMs,
-  idleEnabled,
-  idleSecs,
-  batchSize,
   onChange,
 }: ScheduleControlProps) {
   // Shown in minutes; a cleared field shows 0 (a transient value to type over) rather
-  // than snapping back — the Settings save clamps both thresholds to their valid range.
+  // than snapping back — the Settings save clamps the threshold to its valid range.
   const timerMinutes = Math.round(timerIntervalMs / 60_000);
-  const idleMinutes = Math.round(idleSecs / 60);
 
   return (
     <div className="flex flex-col gap-4">
@@ -67,49 +59,6 @@ export function ScheduleControl({
             }
           }}
           hint="Applies on restart."
-        />
-      )}
-
-      <Toggle
-        label="Tag while idle"
-        checked={idleEnabled}
-        onChange={(v) => onChange({ enrich_vision_idle_enabled: v })}
-        hint="Tag only after you've been away from the keyboard for a while."
-      />
-      {idleEnabled && (
-        <Field
-          label="Idle threshold (minutes)"
-          type="number"
-          min={1}
-          value={idleMinutes}
-          onChange={(e) => {
-            const m = e.currentTarget.valueAsNumber;
-            if (Number.isFinite(m) && m >= 1) {
-              onChange({ enrich_vision_idle_secs: Math.round(m) * 60 });
-            } else if (e.currentTarget.value === "") {
-              onChange({ enrich_vision_idle_secs: 0 });
-            }
-          }}
-          hint="Applies on restart."
-        />
-      )}
-
-      {(timerEnabled || idleEnabled) && (
-        <Field
-          label="Frames per run"
-          type="number"
-          min={1}
-          max={500}
-          value={batchSize}
-          onChange={(e) => {
-            const n = e.currentTarget.valueAsNumber;
-            if (Number.isFinite(n) && n >= 1) {
-              onChange({ enrich_vision_batch_size: Math.round(n) });
-            } else if (e.currentTarget.value === "") {
-              onChange({ enrich_vision_batch_size: 0 });
-            }
-          }}
-          hint="Most untagged frames a scheduled run queues. Already-queued frames are skipped. Applies on the next run."
         />
       )}
     </div>

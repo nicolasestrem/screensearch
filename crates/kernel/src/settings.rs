@@ -1,27 +1,44 @@
-//! Typed settings loading: assemble the strongly-typed [`Settings`] from the
-//! opaque key/value `settings` table (`03 §8`).
+//! Typed settings loading: assemble the strongly-typed [`Settings`] from the opaque
+//! key/value `settings` table (`03 §8`), and the [`AdvancedConfig`] from `advanced.toml`.
 //!
-//! Each `03 §8` key is read individually; a missing or unparsable value falls back
-//! to the corresponding [`Settings::default`] field (never an error — capture must
-//! be able to start on a fresh DB). Composite values (`capture.monitors`,
-//! `privacy.excluded_apps`, model tiers) are stored as JSON.
+//! Settings v2 (0.4.5 D6) splits every `03 §8` key into one of three dispositions:
+//!
+//! - `UI` keys live in [`Settings`] and ride `get_settings`/`set_settings`. Each is read
+//!   individually; a missing or unparsable value falls back to the corresponding
+//!   [`Settings::default`] field (never an error — capture must be able to start on a
+//!   fresh DB). Composite values (`capture.monitors`, `privacy.excluded_apps`, model
+//!   tiers) are stored as JSON.
+//! - `file-only` keys live in [`AdvancedConfig`], loaded **once** at startup from
+//!   `advanced.toml` beside `screensearch.db` ([`load_advanced_config`]). There is one
+//!   source of truth per value: none of them is a field of [`Settings`].
+//! - `deleted` keys are purged from the `settings` table on startup
+//!   ([`drop_retired_settings`]) and are named nowhere else except that list, its doc
+//!   comments and the tests.
 
 use serde::de::DeserializeOwned;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use traits::{CaptureConfig, ModelTier, Result, Settings, Store};
+use traits::{AdvancedConfig, CaptureConfig, ModelTier, Result, Settings, Store};
 
-/// Reads every `03 §8` setting, falling back to [`Settings::default`] per key.
+/// Path of the advanced (file-only) configuration inside the app data directory.
+pub fn advanced_config_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(traits::ADVANCED_CONFIG_FILE)
+}
+
+/// Reads every `UI`-disposition `03 §8` setting, falling back to [`Settings::default`]
+/// per key.
 pub async fn load_settings(store: &dyn Store) -> Settings {
     let d = Settings::default();
     sanitize_settings(Settings {
+        app_run_at_startup: boolean(store, "app.run_at_startup", d.app_run_at_startup).await,
+        app_close_to_tray: boolean(store, "app.close_to_tray", d.app_close_to_tray).await,
+        overlay_hotkey: load_overlay_hotkey(store, d.overlay_hotkey).await,
+        marks_hotkey: json(store, "marks.hotkey", d.marks_hotkey).await,
         capture_interval_ms: num(store, "capture.interval_ms", d.capture_interval_ms).await,
         capture_monitors: json(store, "capture.monitors", d.capture_monitors).await,
-        capture_diff_threshold: num(store, "capture.diff_threshold", d.capture_diff_threshold)
+        privacy_excluded_apps: json(store, "privacy.excluded_apps", d.privacy_excluded_apps).await,
+        privacy_pause_on_lock: boolean(store, "privacy.pause_on_lock", d.privacy_pause_on_lock)
             .await,
-        storage_max_width: num(store, "storage.max_width", d.storage_max_width).await,
-        storage_retention_days: num(store, "storage.retention_days", d.storage_retention_days)
-            .await,
-        enrich_embed_text: boolean(store, "enrich.embed_text", d.enrich_embed_text).await,
         enrich_vision_timer_enabled: boolean(
             store,
             "enrich.vision_timer_enabled",
@@ -34,45 +51,11 @@ pub async fn load_settings(store: &dyn Store) -> Settings {
             d.enrich_vision_timer_interval_ms,
         )
         .await,
-        enrich_vision_idle_enabled: boolean(
-            store,
-            "enrich.vision_idle_enabled",
-            d.enrich_vision_idle_enabled,
-        )
-        .await,
-        enrich_vision_idle_secs: num(store, "enrich.vision_idle_secs", d.enrich_vision_idle_secs)
+        retrieval_default_top_k: num(store, "retrieval.default_top_k", d.retrieval_default_top_k)
             .await,
-        enrich_vision_batch_size: num(
-            store,
-            "enrich.vision_batch_size",
-            d.enrich_vision_batch_size,
-        )
-        .await,
-        enrich_worker_concurrency: num(
-            store,
-            "enrich.worker_concurrency",
-            d.enrich_worker_concurrency,
-        )
-        .await,
-        models_vision_tier: load_tier(store, "models.vision_tier", d.models_vision_tier).await,
-        models_answer_tier: load_tier(store, "models.answer_tier", d.models_answer_tier).await,
-        answer_thinking: boolean(store, "answer.thinking", d.answer_thinking).await,
-        sidecar_idle_ttl_secs: num(store, "sidecar.idle_ttl_secs", d.sidecar_idle_ttl_secs).await,
-        sidecar_ngl: num(store, "sidecar.ngl", d.sidecar_ngl).await,
-        sidecar_device: json(store, "sidecar.device", d.sidecar_device).await,
-        sidecar_ctx_size: num(store, "sidecar.ctx_size", d.sidecar_ctx_size).await,
-        sidecar_kv_cache_type: json(store, "sidecar.kv_cache_type", d.sidecar_kv_cache_type).await,
-        sidecar_flash_attn: json(store, "sidecar.flash_attn", d.sidecar_flash_attn).await,
-        sidecar_recycle_enabled: boolean(
-            store,
-            "sidecar.recycle_enabled",
-            d.sidecar_recycle_enabled,
-        )
-        .await,
-        sidecar_recycle_rss_mb: num(store, "sidecar.recycle_rss_mb", d.sidecar_recycle_rss_mb)
-            .await,
-        privacy_excluded_apps: json(store, "privacy.excluded_apps", d.privacy_excluded_apps).await,
-        privacy_pause_on_lock: boolean(store, "privacy.pause_on_lock", d.privacy_pause_on_lock)
+        reports_daily_top_k: num(store, "reports.daily_top_k", d.reports_daily_top_k).await,
+        sessions_min_len_secs: num(store, "sessions.min_len_secs", d.sessions_min_len_secs).await,
+        sessions_gap_close_secs: load_sessions_gap_close_secs(store, d.sessions_gap_close_secs)
             .await,
         text_include_chrome_default: boolean(
             store,
@@ -80,203 +63,54 @@ pub async fn load_settings(store: &dyn Store) -> Settings {
             d.text_include_chrome_default,
         )
         .await,
-        text_chrome_suppress_min_seen: num(
-            store,
-            "text.chrome_suppress_min_seen",
-            d.text_chrome_suppress_min_seen,
-        )
-        .await,
-        text_chrome_protect_min_chars: num(
-            store,
-            "text.chrome_protect_min_chars",
-            d.text_chrome_protect_min_chars,
-        )
-        .await,
-        text_chrome_region_buckets: num(
-            store,
-            "text.chrome_region_buckets",
-            d.text_chrome_region_buckets,
-        )
-        .await,
-        retrieval_default_top_k: num(store, "retrieval.default_top_k", d.retrieval_default_top_k)
+        answer_thinking: boolean(store, "answer.thinking", d.answer_thinking).await,
+        models_vision_tier: load_tier(store, "models.vision_tier", d.models_vision_tier).await,
+        models_answer_tier: load_tier(store, "models.answer_tier", d.models_answer_tier).await,
+        storage_retention_days: num(store, "storage.retention_days", d.storage_retention_days)
             .await,
-        reports_daily_top_k: num(store, "reports.daily_top_k", d.reports_daily_top_k).await,
-        reports_weekly_top_k: num(store, "reports.weekly_top_k", d.reports_weekly_top_k).await,
-        reports_map_reduce_min_frames: num(
-            store,
-            "reports.map_reduce_min_frames",
-            d.reports_map_reduce_min_frames,
-        )
-        .await,
-        capture_event_driven_enabled: boolean(
-            store,
-            "capture.event_driven_enabled",
-            d.capture_event_driven_enabled,
-        )
-        .await,
-        capture_event_on_foreground: boolean(
-            store,
-            "capture.event_on_foreground",
-            d.capture_event_on_foreground,
-        )
-        .await,
-        capture_event_on_idle: boolean(store, "capture.event_on_idle", d.capture_event_on_idle)
-            .await,
-        capture_event_debounce_ms: num(
-            store,
-            "capture.event_debounce_ms",
-            d.capture_event_debounce_ms,
-        )
-        .await,
-        capture_event_min_interval_ms: num(
-            store,
-            "capture.event_min_interval_ms",
-            d.capture_event_min_interval_ms,
-        )
-        .await,
-        capture_event_idle_threshold_ms: num(
-            store,
-            "capture.event_idle_threshold_ms",
-            d.capture_event_idle_threshold_ms,
-        )
-        .await,
-        capture_event_fallback_interval_ms: num(
-            store,
-            "capture.event_fallback_interval_ms",
-            d.capture_event_fallback_interval_ms,
-        )
-        .await,
-        capture_uia_text_enabled: boolean(
-            store,
-            "capture.uia_text_enabled",
-            d.capture_uia_text_enabled,
-        )
-        .await,
-        capture_uia_latency_budget_ms: num(
-            store,
-            "capture.uia_latency_budget_ms",
-            d.capture_uia_latency_budget_ms,
-        )
-        .await,
-        capture_uia_min_text_chars: num(
-            store,
-            "capture.uia_min_text_chars",
-            d.capture_uia_min_text_chars,
-        )
-        .await,
-        capture_uia_view_control_only: boolean(
-            store,
-            "capture.uia_view_control_only",
-            d.capture_uia_view_control_only,
-        )
-        .await,
-        capture_uia_max_nodes: num(store, "capture.uia_max_nodes", d.capture_uia_max_nodes).await,
-        capture_uia_max_textpattern_calls: num(
-            store,
-            "capture.uia_max_textpattern_calls",
-            d.capture_uia_max_textpattern_calls,
-        )
-        .await,
-        capture_uia_suppress_during_input_ms: num(
-            store,
-            "capture.uia_suppress_during_input_ms",
-            d.capture_uia_suppress_during_input_ms,
-        )
-        .await,
-        overlay_hotkey: load_overlay_hotkey(store, d.overlay_hotkey).await,
-        overlay_max_results: num(store, "overlay.max_results", d.overlay_max_results).await,
-        resume_min_dwell_secs: num(store, "resume.min_dwell_secs", d.resume_min_dwell_secs).await,
-        sessions_min_len_secs: num(store, "sessions.min_len_secs", d.sessions_min_len_secs).await,
-        sessions_gap_close_secs: load_sessions_gap_close_secs(store, d.sessions_gap_close_secs)
-            .await,
-        marks_hotkey: json(store, "marks.hotkey", d.marks_hotkey).await,
+        storage_max_width: num(store, "storage.max_width", d.storage_max_width).await,
         throttle_enabled: boolean(store, "throttle.enabled", d.throttle_enabled).await,
-        throttle_cpu_enter_pct: num(store, "throttle.cpu_enter_pct", d.throttle_cpu_enter_pct)
-            .await,
-        throttle_cpu_exit_pct: num(store, "throttle.cpu_exit_pct", d.throttle_cpu_exit_pct).await,
-        throttle_gpu_enter_pct: num(store, "throttle.gpu_enter_pct", d.throttle_gpu_enter_pct)
-            .await,
-        throttle_gpu_exit_pct: num(store, "throttle.gpu_exit_pct", d.throttle_gpu_exit_pct).await,
-        throttle_enter_after_ms: num(store, "throttle.enter_after_ms", d.throttle_enter_after_ms)
-            .await,
-        throttle_exit_after_ms: num(store, "throttle.exit_after_ms", d.throttle_exit_after_ms)
-            .await,
-        throttle_sample_interval_ms: num(
-            store,
-            "throttle.sample_interval_ms",
-            d.throttle_sample_interval_ms,
-        )
-        .await,
-        throttle_embed_text_floor: num(
-            store,
-            "throttle.embed_text_floor",
-            d.throttle_embed_text_floor,
-        )
-        .await,
-        app_close_to_tray: boolean(store, "app.close_to_tray", d.app_close_to_tray).await,
-        app_run_at_startup: boolean(store, "app.run_at_startup", d.app_run_at_startup).await,
+        api_enabled: boolean(store, "api.enabled", d.api_enabled).await,
+        api_port: num(store, "api.port", d.api_port).await,
+        api_bind_address: raw_string(store, "api.bind_address", d.api_bind_address).await,
     })
 }
 
-/// Settings keys retired by past versions, purged from the DB on startup so a config
-/// persisted with any of them still loads and the stale rows don't linger (`03 §8`,
-/// `docs/0.3.0.md` PR2/PR4). Grows per arc: 0.3.0 PR2 removed the four extra event triggers
-/// (clipboard / typing-pause / click / scroll-stop) and the typing-pause threshold; PR4
-/// removed the image-embedding lane toggle (`enrich.image_embeddings`); 0.3.2 PR5 retired
-/// the two provably-inert knobs — `storage.jpeg_quality` (inert since the lossless-WebP
-/// storage path) and `capture.uia_run_on_interactive` (its only firing triggers were
-/// removed by the 0.3.0 trigger trim, `07` #83) — per the D8 removal mechanics. The
-/// 2026-08-01 usage review demoted the flat `sessions.focus_min_len_secs` sweep parameter
-/// to a named constant; the already-constant density parameter is listed too so either
-/// historical orphan is removed rather than silently retained (usage review 2026-08-01 §6.7).
-pub const RETIRED_SETTINGS_KEYS: &[&str] = &[
-    "capture.event_on_clipboard",
-    "capture.event_on_typing_pause",
-    "capture.event_on_click",
-    "capture.event_on_scroll_stop",
-    "capture.event_typing_pause_ms",
-    "enrich.image_embeddings",
-    "storage.jpeg_quality",
-    "capture.uia_run_on_interactive",
-    "sessions.focus_min_len_secs",
-    "sessions.focus_min_density_fph",
-];
-
-/// Deletes any [`RETIRED_SETTINGS_KEYS`] left in the `settings` table by an older
-/// version, logging **once** which keys were dropped. Called once at startup (before
-/// the rest of the maintenance sweep). "Log once" falls out naturally — the keys are
-/// gone by the next launch, so a subsequent run finds nothing and logs nothing. A read
-/// or delete error is logged and swallowed: dropping stale keys is best-effort and must
-/// never block startup or capture (`04 §4`).
-pub async fn drop_retired_settings(store: &dyn Store) {
-    match store.delete_settings(RETIRED_SETTINGS_KEYS).await {
-        Ok(dropped) if !dropped.is_empty() => {
-            tracing::warn!(keys = ?dropped, "settings: dropped retired keys");
-        }
-        Ok(_) => {}
-        Err(e) => tracing::warn!(error = %e, "settings: failed to drop retired keys"),
-    }
-}
-
-/// Persists every `03 §8` setting back to the key/value `settings` table — the
-/// exact inverse of [`load_settings`], using the **same key strings** so a saved
-/// value round-trips. Numbers are written via `to_string`, bools as `"true"`/
-/// `"false"`, and composite values (`capture.monitors`, `privacy.excluded_apps`,
-/// model tiers) as JSON (matching how `set_model_tier` already writes a tier).
+/// Persists every `UI`-disposition `03 §8` setting back to the key/value `settings` table —
+/// the exact inverse of [`load_settings`], using the **same key strings** so a saved value
+/// round-trips. Numbers are written via `to_string`, bools as `"true"`/`"false"`, and
+/// composite values (`capture.monitors`, `privacy.excluded_apps`, model tiers) as JSON
+/// (matching how `set_model_tier` already writes a tier). `api.bind_address` is written as a
+/// raw literal, matching `local_api`'s reader.
 ///
-/// Every pair (including the fallible JSON encodings) is built **before** any write,
-/// then committed in one transaction via [`Store::set_settings_batch`]. This is
-/// all-or-nothing: a serialization error short-circuits with zero writes, and a
-/// crash mid-commit rolls back — so [`load_settings`] never observes a mix of new
-/// and stale keys (its per-key default fallback would hide such a split silently).
+/// Every pair (including the fallible JSON encodings) is built **before** any write, then
+/// committed in one transaction via [`Store::set_settings_batch`]. This is all-or-nothing: a
+/// serialization error short-circuits with zero writes, and a crash mid-commit rolls back —
+/// so [`load_settings`] never observes a mix of new and stale keys (its per-key default
+/// fallback would hide such a split silently).
 ///
-/// Backs the `set_settings` command (`03 §7`): the values are durable immediately;
-/// which subsystems re-read them live vs on restart is documented in the Settings
-/// UI (model tiers hot-apply; capture/storage/privacy on next capture start; the
-/// rest on app restart).
+/// Backs the `set_settings` command (`03 §7`): the values are durable immediately; which
+/// subsystems re-read them live vs on restart is documented in the Settings UI (model tiers
+/// hot-apply; capture/storage/privacy on next capture start; the rest on app restart).
 pub async fn save_settings(store: &dyn Store, s: &Settings) -> Result<()> {
     let s = sanitize_settings(s.clone());
     let kvs: Vec<(String, String)> = vec![
+        (
+            "app.run_at_startup".into(),
+            bool_str(s.app_run_at_startup).into(),
+        ),
+        (
+            "app.close_to_tray".into(),
+            bool_str(s.app_close_to_tray).into(),
+        ),
+        (
+            "overlay.hotkey".into(),
+            serde_json::to_string(&s.overlay_hotkey)?,
+        ),
+        (
+            "marks.hotkey".into(),
+            serde_json::to_string(&s.marks_hotkey)?,
+        ),
         (
             "capture.interval_ms".into(),
             s.capture_interval_ms.to_string(),
@@ -284,78 +118,6 @@ pub async fn save_settings(store: &dyn Store, s: &Settings) -> Result<()> {
         (
             "capture.monitors".into(),
             serde_json::to_string(&s.capture_monitors)?,
-        ),
-        (
-            "capture.diff_threshold".into(),
-            s.capture_diff_threshold.to_string(),
-        ),
-        ("storage.max_width".into(), s.storage_max_width.to_string()),
-        (
-            "storage.retention_days".into(),
-            s.storage_retention_days.to_string(),
-        ),
-        (
-            "enrich.embed_text".into(),
-            bool_str(s.enrich_embed_text).into(),
-        ),
-        (
-            "enrich.vision_timer_enabled".into(),
-            bool_str(s.enrich_vision_timer_enabled).into(),
-        ),
-        (
-            "enrich.vision_timer_interval_ms".into(),
-            s.enrich_vision_timer_interval_ms.to_string(),
-        ),
-        (
-            "enrich.vision_idle_enabled".into(),
-            bool_str(s.enrich_vision_idle_enabled).into(),
-        ),
-        (
-            "enrich.vision_idle_secs".into(),
-            s.enrich_vision_idle_secs.to_string(),
-        ),
-        (
-            "enrich.vision_batch_size".into(),
-            s.enrich_vision_batch_size.to_string(),
-        ),
-        (
-            "enrich.worker_concurrency".into(),
-            s.enrich_worker_concurrency.to_string(),
-        ),
-        (
-            "models.vision_tier".into(),
-            serde_json::to_string(&s.models_vision_tier)?,
-        ),
-        (
-            "models.answer_tier".into(),
-            serde_json::to_string(&s.models_answer_tier)?,
-        ),
-        ("answer.thinking".into(), bool_str(s.answer_thinking).into()),
-        (
-            "sidecar.idle_ttl_secs".into(),
-            s.sidecar_idle_ttl_secs.to_string(),
-        ),
-        ("sidecar.ngl".into(), s.sidecar_ngl.to_string()),
-        (
-            "sidecar.device".into(),
-            serde_json::to_string(&s.sidecar_device)?,
-        ),
-        ("sidecar.ctx_size".into(), s.sidecar_ctx_size.to_string()),
-        (
-            "sidecar.kv_cache_type".into(),
-            serde_json::to_string(&s.sidecar_kv_cache_type)?,
-        ),
-        (
-            "sidecar.flash_attn".into(),
-            serde_json::to_string(&s.sidecar_flash_attn)?,
-        ),
-        (
-            "sidecar.recycle_enabled".into(),
-            bool_str(s.sidecar_recycle_enabled).into(),
-        ),
-        (
-            "sidecar.recycle_rss_mb".into(),
-            s.sidecar_recycle_rss_mb.to_string(),
         ),
         (
             "privacy.excluded_apps".into(),
@@ -366,20 +128,12 @@ pub async fn save_settings(store: &dyn Store, s: &Settings) -> Result<()> {
             bool_str(s.privacy_pause_on_lock).into(),
         ),
         (
-            "text.include_chrome_default".into(),
-            bool_str(s.text_include_chrome_default).into(),
+            "enrich.vision_timer_enabled".into(),
+            bool_str(s.enrich_vision_timer_enabled).into(),
         ),
         (
-            "text.chrome_suppress_min_seen".into(),
-            s.text_chrome_suppress_min_seen.to_string(),
-        ),
-        (
-            "text.chrome_protect_min_chars".into(),
-            s.text_chrome_protect_min_chars.to_string(),
-        ),
-        (
-            "text.chrome_region_buckets".into(),
-            s.text_chrome_region_buckets.to_string(),
+            "enrich.vision_timer_interval_ms".into(),
+            s.enrich_vision_timer_interval_ms.to_string(),
         ),
         (
             "retrieval.default_top_k".into(),
@@ -390,82 +144,6 @@ pub async fn save_settings(store: &dyn Store, s: &Settings) -> Result<()> {
             s.reports_daily_top_k.to_string(),
         ),
         (
-            "reports.weekly_top_k".into(),
-            s.reports_weekly_top_k.to_string(),
-        ),
-        (
-            "reports.map_reduce_min_frames".into(),
-            s.reports_map_reduce_min_frames.to_string(),
-        ),
-        (
-            "capture.event_driven_enabled".into(),
-            bool_str(s.capture_event_driven_enabled).into(),
-        ),
-        (
-            "capture.event_on_foreground".into(),
-            bool_str(s.capture_event_on_foreground).into(),
-        ),
-        (
-            "capture.event_on_idle".into(),
-            bool_str(s.capture_event_on_idle).into(),
-        ),
-        (
-            "capture.event_debounce_ms".into(),
-            s.capture_event_debounce_ms.to_string(),
-        ),
-        (
-            "capture.event_min_interval_ms".into(),
-            s.capture_event_min_interval_ms.to_string(),
-        ),
-        (
-            "capture.event_idle_threshold_ms".into(),
-            s.capture_event_idle_threshold_ms.to_string(),
-        ),
-        (
-            "capture.event_fallback_interval_ms".into(),
-            s.capture_event_fallback_interval_ms.to_string(),
-        ),
-        (
-            "capture.uia_text_enabled".into(),
-            bool_str(s.capture_uia_text_enabled).into(),
-        ),
-        (
-            "capture.uia_latency_budget_ms".into(),
-            s.capture_uia_latency_budget_ms.to_string(),
-        ),
-        (
-            "capture.uia_min_text_chars".into(),
-            s.capture_uia_min_text_chars.to_string(),
-        ),
-        (
-            "capture.uia_view_control_only".into(),
-            bool_str(s.capture_uia_view_control_only).into(),
-        ),
-        (
-            "capture.uia_max_nodes".into(),
-            s.capture_uia_max_nodes.to_string(),
-        ),
-        (
-            "capture.uia_max_textpattern_calls".into(),
-            s.capture_uia_max_textpattern_calls.to_string(),
-        ),
-        (
-            "capture.uia_suppress_during_input_ms".into(),
-            s.capture_uia_suppress_during_input_ms.to_string(),
-        ),
-        (
-            "overlay.hotkey".into(),
-            serde_json::to_string(&s.overlay_hotkey)?,
-        ),
-        (
-            "overlay.max_results".into(),
-            s.overlay_max_results.to_string(),
-        ),
-        (
-            "resume.min_dwell_secs".into(),
-            s.resume_min_dwell_secs.to_string(),
-        ),
-        (
             "sessions.min_len_secs".into(),
             s.sessions_min_len_secs.to_string(),
         ),
@@ -474,63 +152,39 @@ pub async fn save_settings(store: &dyn Store, s: &Settings) -> Result<()> {
             s.sessions_gap_close_secs.to_string(),
         ),
         (
-            "marks.hotkey".into(),
-            serde_json::to_string(&s.marks_hotkey)?,
+            "text.include_chrome_default".into(),
+            bool_str(s.text_include_chrome_default).into(),
         ),
+        ("answer.thinking".into(), bool_str(s.answer_thinking).into()),
+        (
+            "models.vision_tier".into(),
+            serde_json::to_string(&s.models_vision_tier)?,
+        ),
+        (
+            "models.answer_tier".into(),
+            serde_json::to_string(&s.models_answer_tier)?,
+        ),
+        (
+            "storage.retention_days".into(),
+            s.storage_retention_days.to_string(),
+        ),
+        ("storage.max_width".into(), s.storage_max_width.to_string()),
         (
             "throttle.enabled".into(),
             bool_str(s.throttle_enabled).into(),
         ),
-        (
-            "throttle.cpu_enter_pct".into(),
-            s.throttle_cpu_enter_pct.to_string(),
-        ),
-        (
-            "throttle.cpu_exit_pct".into(),
-            s.throttle_cpu_exit_pct.to_string(),
-        ),
-        (
-            "throttle.gpu_enter_pct".into(),
-            s.throttle_gpu_enter_pct.to_string(),
-        ),
-        (
-            "throttle.gpu_exit_pct".into(),
-            s.throttle_gpu_exit_pct.to_string(),
-        ),
-        (
-            "throttle.enter_after_ms".into(),
-            s.throttle_enter_after_ms.to_string(),
-        ),
-        (
-            "throttle.exit_after_ms".into(),
-            s.throttle_exit_after_ms.to_string(),
-        ),
-        (
-            "throttle.sample_interval_ms".into(),
-            s.throttle_sample_interval_ms.to_string(),
-        ),
-        (
-            "throttle.embed_text_floor".into(),
-            s.throttle_embed_text_floor.to_string(),
-        ),
-        (
-            "app.close_to_tray".into(),
-            bool_str(s.app_close_to_tray).into(),
-        ),
-        (
-            "app.run_at_startup".into(),
-            bool_str(s.app_run_at_startup).into(),
-        ),
+        ("api.enabled".into(), bool_str(s.api_enabled).into()),
+        ("api.port".into(), s.api_port.to_string()),
+        ("api.bind_address".into(), s.api_bind_address.clone()),
     ];
     store.set_settings_batch(&kvs).await
 }
 
-/// Backend-side numeric bounds matching the Settings UI's save-time sanitizer. The
-/// UI is not a trust boundary: persisted settings may be hand-edited, migrated from
-/// older builds, or sent directly over IPC, so the kernel clamps before use/write.
+/// Backend-side bounds matching the Settings UI's save-time sanitizer. The UI is not a
+/// trust boundary: persisted settings may be hand-edited, migrated from older builds, or
+/// sent directly over IPC, so the kernel clamps before use/write.
 pub fn sanitize_settings(mut s: Settings) -> Settings {
     s.capture_interval_ms = clamp_u32(s.capture_interval_ms, 250, 3_600_000);
-    s.capture_diff_threshold = clamp_f32(s.capture_diff_threshold, 0.0, 1.0);
     // 0 = native (no downscale) — the capture path keeps the frame at the monitor's full
     // width so ultra-wide captures stay legible. Any positive value is a real width ceiling
     // clamped to a sane band (mirrors the `0 = auto` sentinels for sidecar ctx/recycle).
@@ -540,163 +194,336 @@ pub fn sanitize_settings(mut s: Settings) -> Settings {
         clamp_u32(s.storage_max_width, 320, 7680)
     };
     s.storage_retention_days = clamp_u32(s.storage_retention_days, 0, 3650);
-    s.enrich_worker_concurrency = clamp_u32(s.enrich_worker_concurrency, 1, 16);
     s.enrich_vision_timer_interval_ms =
         clamp_u32(s.enrich_vision_timer_interval_ms, 60_000, 86_400_000);
-    s.enrich_vision_idle_secs = clamp_u32(s.enrich_vision_idle_secs, 60, 86_400);
-    s.enrich_vision_batch_size = clamp_u32(s.enrich_vision_batch_size, 1, 500);
-    s.sidecar_idle_ttl_secs = clamp_u32(s.sidecar_idle_ttl_secs, 0, 86_400);
-    s.sidecar_ngl = clamp_u32(s.sidecar_ngl, 0, 999);
-    // 0 is the "automatic" sentinel (per-lane default chosen at resolution); any other
-    // value is a real context window, clamped to a sane band.
-    s.sidecar_ctx_size = if s.sidecar_ctx_size == 0 {
-        0
-    } else {
-        clamp_u32(s.sidecar_ctx_size, 512, 32_768)
-    };
-    // 0 = automatic (derived from RAM); any explicit value is a real MiB ceiling clamped
-    // to a sane band. The 8 GiB floor matches `auto_recycle_ceiling`'s `lo`: the vision model
-    // loads to ~6.8 GB *before* the first inference, so any ceiling below that would fire
-    // `over_recycle_ceiling` immediately after every warmup → recycle → reload → over again,
-    // a silent continuous loop. 8 GiB clears the baseline with headroom to accumulate.
-    s.sidecar_recycle_rss_mb = if s.sidecar_recycle_rss_mb == 0 {
-        0
-    } else {
-        clamp_u32(s.sidecar_recycle_rss_mb, 8192, 131_072)
-    };
-    s.sidecar_device = s
-        .sidecar_device
-        .and_then(|d| (!d.trim().is_empty()).then(|| d.trim().to_string()));
-    // PR3 attention-filter thresholds (03 §8). Floors keep the classifier sane: at
-    // least two appearances before suppression; a positive protect length; a non-zero
-    // region grid. Ceilings are generous guards against hand-edited extremes.
-    s.text_chrome_suppress_min_seen = clamp_u32(s.text_chrome_suppress_min_seen, 2, 100_000);
-    s.text_chrome_protect_min_chars = clamp_u32(s.text_chrome_protect_min_chars, 1, 4_096);
-    s.text_chrome_region_buckets = clamp_u32(s.text_chrome_region_buckets, 1, 32);
-    // 0.2.x retrieval + recall reports (03 §8). At least 1 of everything; generous
-    // ceilings guard hand-edited extremes (the weekly cap also bounds report passes).
     s.retrieval_default_top_k = clamp_u32(s.retrieval_default_top_k, 1, 100);
     s.reports_daily_top_k = clamp_u32(s.reports_daily_top_k, 1, 1_000);
-    s.reports_weekly_top_k = clamp_u32(s.reports_weekly_top_k, 1, 2_000);
-    s.reports_map_reduce_min_frames = clamp_u32(s.reports_map_reduce_min_frames, 1, 1_000);
-    // 0.2.1 event-driven capture (docs/0.2.0.md, 07 #47). Thresholds are settings, not
-    // hardcoded; floors keep the trigger machine sane (a positive debounce/quiet window,
-    // a real rate ceiling) and ceilings guard hand-edited extremes.
-    s.capture_event_debounce_ms = clamp_u32(s.capture_event_debounce_ms, 100, 10_000);
-    s.capture_event_min_interval_ms = clamp_u32(s.capture_event_min_interval_ms, 250, 60_000);
-    s.capture_event_idle_threshold_ms = clamp_u32(s.capture_event_idle_threshold_ms, 1_000, 60_000);
-    s.capture_event_fallback_interval_ms =
-        clamp_u32(s.capture_event_fallback_interval_ms, 1_000, 3_600_000);
-    // UIA text (docs/0.2.0.md #48). Latency budget floored well above a trivial walk and
-    // ceilinged so a hand-edited extreme can't stall capture; min-text-chars is a free
-    // count (0 disables the thin-yield fallback). Thresholds, not hardcoded.
-    s.capture_uia_latency_budget_ms = clamp_u32(s.capture_uia_latency_budget_ms, 20, 2_000);
-    s.capture_uia_min_text_chars = clamp_u32(s.capture_uia_min_text_chars, 0, 10_000);
-    // 0.2.1 UIA hang fix (`07` #71). Node cap floored well above a trivial walk and ceilinged
-    // so a hand-edited extreme can't reopen the freeze; live TextPattern reads floored at 1
-    // (a doc page still gets some body text) and ceilinged. `view_control_only` is a bool
-    // (no clamp). Thresholds, not hardcoded (`03 §3b`).
-    s.capture_uia_max_nodes = clamp_u32(s.capture_uia_max_nodes, 100, 20_000);
-    s.capture_uia_max_textpattern_calls = clamp_u32(s.capture_uia_max_textpattern_calls, 1, 4_096);
-    // Input-suppression window: 0 (off) up to 10 s (a hand-edited extreme can't keep UIA off
-    // forever — capture still samples via OCR meanwhile). Threshold, not hardcoded.
-    s.capture_uia_suppress_during_input_ms =
-        clamp_u32(s.capture_uia_suppress_during_input_ms, 0, 10_000);
+    s.sessions_min_len_secs = clamp_u32(s.sessions_min_len_secs, 30, 3_600);
+    s.sessions_gap_close_secs = clamp_u32(s.sessions_gap_close_secs, 60, 3_600);
     let default_overlay_hotkey = Settings::default().overlay_hotkey;
     s.overlay_hotkey = match s.overlay_hotkey.trim() {
         "" => default_overlay_hotkey,
         hotkey => hotkey.to_string(),
     };
-    s.overlay_max_results = clamp_u32(s.overlay_max_results, 1, 50);
-    // 0.3.0 flow recall (docs/0.3.0.md PR6). The where-was-i dwell is floored at 10 s (a
-    // shorter "sustained" context is noise) and ceilinged at a day; the mark hotkey empty
-    // → default, same shell-registered posture as the overlay hotkey. Thresholds/chords are
-    // settings, never hardcoded (`03 §3b` stance); the shell surfaces a bad chord loudly (D6).
-    s.resume_min_dwell_secs = clamp_u32(s.resume_min_dwell_secs, 10, 86_400);
-    // 0.4.0 PR4 final clamps. These are the arc's only two user-tunable segmentation knobs;
-    // merge/absorb/meeting/focus-density/freeze values are named correctness constants.
-    s.sessions_min_len_secs = clamp_u32(s.sessions_min_len_secs, 30, 3_600);
-    s.sessions_gap_close_secs = clamp_u32(s.sessions_gap_close_secs, 60, 3_600);
     let default_marks_hotkey = Settings::default().marks_hotkey;
     s.marks_hotkey = match s.marks_hotkey.trim() {
         "" => default_marks_hotkey,
         hotkey => hotkey.to_string(),
     };
-    // 0.2.1 smart enrichment throttle (docs/0.2.0.md former PR5, 07 #49). Thresholds are
-    // settings, never hardcoded. Each `*_exit_pct` is clamped strictly below its
-    // `*_enter_pct` so the hysteresis invariant holds even against hand-edited DB values
-    // (the kernel is not a trust boundary); the embed_text floor is clamped >= 1 so text
-    // indexing never fully stalls under sustained pressure.
-    s.throttle_cpu_enter_pct = clamp_f32(s.throttle_cpu_enter_pct, 1.0, 100.0);
-    s.throttle_cpu_exit_pct =
-        clamp_f32(s.throttle_cpu_exit_pct, 0.0, s.throttle_cpu_enter_pct - 1.0);
-    s.throttle_gpu_enter_pct = clamp_f32(s.throttle_gpu_enter_pct, 1.0, 100.0);
-    s.throttle_gpu_exit_pct =
-        clamp_f32(s.throttle_gpu_exit_pct, 0.0, s.throttle_gpu_enter_pct - 1.0);
-    s.throttle_enter_after_ms = clamp_u32(s.throttle_enter_after_ms, 500, 120_000);
-    s.throttle_exit_after_ms = clamp_u32(s.throttle_exit_after_ms, 500, 300_000);
-    s.throttle_sample_interval_ms = clamp_u32(s.throttle_sample_interval_ms, 250, 10_000);
-    s.throttle_embed_text_floor = clamp_u32(s.throttle_embed_text_floor, 1, 16);
+    // `03 §8`: the port clamp is 1024..=65535 (`u16` already caps the top); an empty bind
+    // address means "missing" and falls back to loopback. A non-empty non-literal is left
+    // alone here so the API surfaces it as a loud guided-change error rather than a silent
+    // rewrite.
+    s.api_port = s.api_port.max(1024);
+    s.api_bind_address = match s.api_bind_address.trim() {
+        "" => Settings::default().api_bind_address,
+        address => address.to_string(),
+    };
     s
 }
 
-fn clamp_u32(value: u32, min: u32, max: u32) -> u32 {
-    value.clamp(min, max)
-}
-
-fn clamp_f32(value: f32, min: f32, max: f32) -> f32 {
-    if value.is_finite() {
-        value.clamp(min, max)
-    } else {
-        min
-    }
-}
-
-/// The canonical string form for a persisted bool (parsed back by [`boolean`]).
-fn bool_str(b: bool) -> &'static str {
-    if b {
-        "true"
-    } else {
-        "false"
-    }
-}
-
-/// The capture-relevant slice of [`Settings`], handed to the capture impl (`03 §8`).
-pub fn capture_config(s: &Settings) -> CaptureConfig {
+/// The capture-relevant slice of [`Settings`] plus the `file-only` capture knobs
+/// ([`AdvancedConfig`]), handed to the capture impl (`03 §8`).
+pub fn capture_config(s: &Settings, advanced: &AdvancedConfig) -> CaptureConfig {
     CaptureConfig {
         interval_ms: s.capture_interval_ms,
         monitors: s.capture_monitors.clone(),
-        diff_threshold: s.capture_diff_threshold,
+        diff_threshold: advanced.capture.diff_threshold,
         excluded_apps: s.privacy_excluded_apps.clone(),
         pause_on_lock: s.privacy_pause_on_lock,
-        event_driven_enabled: s.capture_event_driven_enabled,
-        event_on_foreground: s.capture_event_on_foreground,
-        event_on_idle: s.capture_event_on_idle,
-        event_debounce_ms: s.capture_event_debounce_ms,
-        event_min_interval_ms: s.capture_event_min_interval_ms,
-        event_idle_threshold_ms: s.capture_event_idle_threshold_ms,
-        event_fallback_interval_ms: s.capture_event_fallback_interval_ms,
+        event_driven_enabled: advanced.capture.event_driven_enabled,
+        event_on_foreground: advanced.capture.event_on_foreground,
+        event_on_idle: advanced.capture.event_on_idle,
+        event_debounce_ms: advanced.capture.event_debounce_ms,
+        event_min_interval_ms: advanced.capture.event_min_interval_ms,
+        event_idle_threshold_ms: advanced.capture.event_idle_threshold_ms,
+        event_fallback_interval_ms: advanced.capture.event_fallback_interval_ms,
     }
 }
 
-async fn num<T: FromStr>(store: &dyn Store, key: &str, default: T) -> T {
-    match store.get_setting(key).await {
-        Ok(Some(raw)) => match raw.parse() {
-            Ok(v) => v,
-            Err(_) => {
-                tracing::warn!(key, raw = %raw, "settings: unparsable number; using default");
-                default
+/// Settings keys retired by past versions, purged from the DB on startup so a config
+/// persisted with any of them still loads and the stale rows don't linger (`03 §8`).
+///
+/// The first nine are the settings-v2 `deleted` rows (0.4.5 D6): each has no live consumer
+/// after the 0.4.5 changes, and no replacement key was promoted into the `UI` ceiling to
+/// refill a slot. They were removed by earlier arcs — the four extra event triggers and the
+/// typing-pause threshold by 0.3.0 PR2, the image-embedding lane toggle by 0.3.0 PR4, the
+/// superseded API notice state by the API arc, and `storage.jpeg_quality` +
+/// `capture.uia_run_on_interactive` by 0.3.2 PR5 (both provably inert). The last two are
+/// sweep parameters the 2026-08-01 usage review demoted to named constants. This list is the
+/// only place those key names remain, besides these comments and the retirement test.
+pub const RETIRED_SETTINGS_KEYS: &[&str] = &[
+    "api.network_notice_state",
+    "capture.event_on_click",
+    "capture.event_on_clipboard",
+    "capture.event_on_scroll_stop",
+    "capture.event_on_typing_pause",
+    "capture.event_typing_pause_ms",
+    "capture.uia_run_on_interactive",
+    "enrich.image_embeddings",
+    "storage.jpeg_quality",
+    "sessions.focus_min_len_secs",
+    "sessions.focus_min_density_fph",
+];
+
+/// Deletes any [`RETIRED_SETTINGS_KEYS`] left in the `settings` table by an older version,
+/// logging **once** which keys were dropped. Called once at startup (before the rest of the
+/// maintenance sweep). "Log once" falls out naturally — the keys are gone by the next launch,
+/// so a subsequent run finds nothing and logs nothing. A read or delete error is logged and
+/// swallowed: dropping stale keys is best-effort and must never block startup or capture
+/// (`04 §4`). The reserved history/allocator keys (`03 §7f.8`) are not on this list and the
+/// store's generic delete refuses them regardless.
+pub async fn drop_retired_settings(store: &dyn Store) {
+    match store.delete_settings(RETIRED_SETTINGS_KEYS).await {
+        Ok(dropped) if !dropped.is_empty() => {
+            tracing::warn!(keys = ?dropped, "settings: dropped retired keys");
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "settings: failed to drop retired keys"),
+    }
+}
+
+/// One `[section]` of `advanced.toml`: pulls the known fields out of the table, dropping
+/// (and flagging) anything unknown or unparsable, and records the `section.field` name of
+/// every value that actually parsed from the file.
+macro_rules! advanced_section {
+    ($table:ident, $dirty:ident, $from_file:ident, $name:literal, $default:expr, {
+        $($field:ident => $key:literal),* $(,)?
+    }) => {{
+        let mut section = take_advanced_section(&mut $table, $name, &mut $dirty);
+        let mut out = $default;
+        $(
+            if let Some(value) = section.remove($key) {
+                match value.try_into() {
+                    Ok(parsed) => {
+                        out.$field = parsed;
+                        $from_file.push(concat!($name, ".", $key).to_string());
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            section = $name,
+                            field = $key,
+                            error = %error,
+                            "advanced.toml: unparsable value; using default",
+                        );
+                        $dirty = true;
+                    }
+                }
             }
-        },
-        Ok(None) => default,
-        Err(e) => {
-            tracing::warn!(key, error = %e, "settings: read failed; using default");
-            default
+        )*
+        if !section.is_empty() {
+            let unknown: Vec<&String> = section.keys().collect();
+            tracing::warn!(
+                section = $name,
+                fields = ?unknown,
+                "advanced.toml: dropping unknown fields",
+            );
+            $dirty = true;
+        }
+        out
+    }};
+}
+
+/// One [`load_advanced_config_with_provenance`] result: the effective config plus the
+/// provenance the read-only Settings · Advanced projection reports
+/// ([`traits::AdvancedConfigView`], `03 §8`, 0.4.5 D6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdvancedConfigLoad {
+    /// The effective configuration, clamped by [`AdvancedConfig::sanitized`].
+    pub config: AdvancedConfig,
+    /// `section.field` keys whose value was parsed from the file, e.g.
+    /// `overlay.max_results`. A key absent from this list still holds its compiled
+    /// default. A listed value may have been clamped into its `03 §8` range.
+    pub from_file: Vec<String>,
+}
+
+/// Parses `advanced.toml` once at startup into the typed [`AdvancedConfig`] (`03 §8`,
+/// 0.4.5 D6). The config without its provenance, for callers that do not report it.
+pub fn load_advanced_config(data_dir: &Path) -> AdvancedConfig {
+    load_advanced_config_with_provenance(data_dir).config
+}
+
+/// Parses `advanced.toml` once at startup: [`load_advanced_config`] plus which
+/// `section.field` keys the file actually supplied.
+///
+/// Missing file: defaults apply and the reason is logged (the honest degraded path P7
+/// shows under Settings · Advanced). Unreadable or invalid TOML: defaults apply, the reason
+/// is logged, and the file is left untouched so a typo is never destroyed. In every one of
+/// those cases `from_file` is empty — nothing came from the file.
+///
+/// Strict in the same way as the `settings` table: an unknown section or field, or a field
+/// whose value does not parse, is dropped on a one-shot rewrite, so the file always matches
+/// the table afterwards. Values are clamped by [`AdvancedConfig::sanitized`]; `from_file`
+/// is recorded at parse time, so the one-shot rewrite that follows never makes a default
+/// look like a file value.
+pub fn load_advanced_config_with_provenance(data_dir: &Path) -> AdvancedConfigLoad {
+    let path = advanced_config_path(data_dir);
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            tracing::info!(
+                path = %path.display(),
+                "advanced.toml absent; file-only defaults apply",
+            );
+            return AdvancedConfigLoad {
+                config: AdvancedConfig::default(),
+                from_file: Vec::new(),
+            };
+        }
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %error,
+                "advanced.toml unreadable; file-only defaults apply",
+            );
+            return AdvancedConfigLoad {
+                config: AdvancedConfig::default(),
+                from_file: Vec::new(),
+            };
+        }
+    };
+    let mut table: toml::Table = match toml::from_str(&raw) {
+        Ok(table) => table,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %error,
+                "advanced.toml is not valid TOML; file-only defaults apply (file left untouched)",
+            );
+            return AdvancedConfigLoad {
+                config: AdvancedConfig::default(),
+                from_file: Vec::new(),
+            };
+        }
+    };
+
+    let mut dirty = false;
+    let mut from_file: Vec<String> = Vec::new();
+    let defaults = AdvancedConfig::default();
+    let capture = advanced_section!(table, dirty, from_file, "capture", defaults.capture.clone(), {
+        diff_threshold => "diff_threshold",
+        event_debounce_ms => "event_debounce_ms",
+        event_driven_enabled => "event_driven_enabled",
+        event_fallback_interval_ms => "event_fallback_interval_ms",
+        event_idle_threshold_ms => "event_idle_threshold_ms",
+        event_min_interval_ms => "event_min_interval_ms",
+        event_on_foreground => "event_on_foreground",
+        event_on_idle => "event_on_idle",
+        uia_latency_budget_ms => "uia_latency_budget_ms",
+        uia_max_nodes => "uia_max_nodes",
+        uia_max_textpattern_calls => "uia_max_textpattern_calls",
+        uia_min_text_chars => "uia_min_text_chars",
+        uia_suppress_during_input_ms => "uia_suppress_during_input_ms",
+        uia_text_enabled => "uia_text_enabled",
+        uia_view_control_only => "uia_view_control_only",
+    });
+    let enrich = advanced_section!(table, dirty, from_file, "enrich", defaults.enrich.clone(), {
+        embed_text => "embed_text",
+        vision_batch_size => "vision_batch_size",
+        vision_idle_enabled => "vision_idle_enabled",
+        vision_idle_secs => "vision_idle_secs",
+        worker_concurrency => "worker_concurrency",
+    });
+    let overlay = advanced_section!(table, dirty, from_file, "overlay", defaults.overlay.clone(), {
+        max_results => "max_results",
+    });
+    let reports = advanced_section!(table, dirty, from_file, "reports", defaults.reports.clone(), {
+        map_reduce_min_frames => "map_reduce_min_frames",
+        weekly_top_k => "weekly_top_k",
+    });
+    let resume = advanced_section!(table, dirty, from_file, "resume", defaults.resume.clone(), {
+        min_dwell_secs => "min_dwell_secs",
+    });
+    let sidecar = advanced_section!(table, dirty, from_file, "sidecar", defaults.sidecar.clone(), {
+        ctx_size => "ctx_size",
+        device => "device",
+        flash_attn => "flash_attn",
+        idle_ttl_secs => "idle_ttl_secs",
+        kv_cache_type => "kv_cache_type",
+        ngl => "ngl",
+        recycle_enabled => "recycle_enabled",
+        recycle_rss_mb => "recycle_rss_mb",
+    });
+    let text = advanced_section!(table, dirty, from_file, "text", defaults.text.clone(), {
+        chrome_protect_min_chars => "chrome_protect_min_chars",
+        chrome_region_buckets => "chrome_region_buckets",
+        chrome_suppress_min_seen => "chrome_suppress_min_seen",
+    });
+    let throttle = advanced_section!(table, dirty, from_file, "throttle", defaults.throttle.clone(), {
+        cpu_enter_pct => "cpu_enter_pct",
+        cpu_exit_pct => "cpu_exit_pct",
+        embed_text_floor => "embed_text_floor",
+        enter_after_ms => "enter_after_ms",
+        exit_after_ms => "exit_after_ms",
+        gpu_enter_pct => "gpu_enter_pct",
+        gpu_exit_pct => "gpu_exit_pct",
+        sample_interval_ms => "sample_interval_ms",
+    });
+
+    if !table.is_empty() {
+        let unknown: Vec<&String> = table.keys().collect();
+        tracing::warn!(
+            sections = ?unknown,
+            "advanced.toml: dropping unknown sections",
+        );
+        dirty = true;
+    }
+
+    let config = AdvancedConfig {
+        capture,
+        enrich,
+        overlay,
+        reports,
+        resume,
+        sidecar,
+        text,
+        throttle,
+    }
+    .sanitized();
+    if dirty {
+        rewrite_advanced_config(&path, &config);
+    }
+    AdvancedConfigLoad { config, from_file }
+}
+
+/// Removes one section table, flagging a non-table value for the rewrite.
+fn take_advanced_section(table: &mut toml::Table, name: &str, dirty: &mut bool) -> toml::Table {
+    match table.remove(name) {
+        None => toml::Table::new(),
+        Some(toml::Value::Table(section)) => section,
+        Some(_) => {
+            tracing::warn!(
+                section = name,
+                "advanced.toml: section is not a table; using defaults",
+            );
+            *dirty = true;
+            toml::Table::new()
         }
     }
 }
-/// The pre-retune micro-gap default selected from the original two-day sample.
-const LEGACY_SESSIONS_GAP_CLOSE_SECS: u32 = 300;
+
+/// Best-effort one-shot rewrite of `advanced.toml` from the effective config, so the file
+/// matches the `03 §8` table after unknown/unparsable entries were dropped.
+fn rewrite_advanced_config(path: &Path, config: &AdvancedConfig) {
+    let body = match toml::to_string_pretty(config) {
+        Ok(body) => body,
+        Err(error) => {
+            tracing::warn!(error = %error, "advanced.toml: failed to serialize the rewrite");
+            return;
+        }
+    };
+    match std::fs::write(path, body) {
+        Ok(()) => tracing::warn!(
+            path = %path.display(),
+            "advanced.toml rewritten to match the settings table",
+        ),
+        Err(error) => tracing::warn!(
+            path = %path.display(),
+            error = %error,
+            "advanced.toml rewrite failed; the in-memory values still apply",
+        ),
+    }
+}
 
 /// One-shot marker for the 300 → 120 default migration. It is deliberately outside [`Settings`]
 /// so ordinary saves neither expose nor reset migration state.
@@ -793,6 +620,26 @@ async fn mark_sessions_gap_close_migrated(store: &dyn Store) {
     }
 }
 
+/// The pre-retune micro-gap default selected from the original two-day sample.
+const LEGACY_SESSIONS_GAP_CLOSE_SECS: u32 = 300;
+
+async fn num<T: FromStr>(store: &dyn Store, key: &str, default: T) -> T {
+    match store.get_setting(key).await {
+        Ok(Some(raw)) => match raw.parse() {
+            Ok(v) => v,
+            Err(_) => {
+                tracing::warn!(key, raw = %raw, "settings: unparsable number; using default");
+                default
+            }
+        },
+        Ok(None) => default,
+        Err(e) => {
+            tracing::warn!(key, error = %e, "settings: read failed; using default");
+            default
+        }
+    }
+}
+
 async fn boolean(store: &dyn Store, key: &str, default: bool) -> bool {
     match store.get_setting(key).await {
         Ok(Some(raw)) => match raw.trim().to_ascii_lowercase().as_str() {
@@ -819,6 +666,23 @@ async fn json<T: DeserializeOwned>(store: &dyn Store, key: &str, default: T) -> 
                 tracing::warn!(key, error = %e, "settings: unparsable JSON; using default");
                 default
             }
+        },
+        Ok(None) => default,
+        Err(e) => {
+            tracing::warn!(key, error = %e, "settings: read failed; using default");
+            default
+        }
+    }
+}
+
+/// Reads a plain (non-JSON) string setting. `api.bind_address` is written raw by both this
+/// module and `local_api`, so it cannot use [`json`]. A blank value means "missing" and maps
+/// to the default.
+async fn raw_string(store: &dyn Store, key: &str, default: String) -> String {
+    match store.get_setting(key).await {
+        Ok(Some(raw)) => match raw.trim() {
+            "" => default,
+            value => value.to_string(),
         },
         Ok(None) => default,
         Err(e) => {
@@ -964,54 +828,23 @@ async fn mark_overlay_hotkey_migrated(store: &dyn Store) {
     }
 }
 
+/// The canonical string form for a persisted bool (parsed back by [`boolean`]).
+fn bool_str(b: bool) -> &'static str {
+    if b {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+fn clamp_u32(value: u32, min: u32, max: u32) -> u32 {
+    value.clamp(min, max)
+}
+
 #[cfg(test)]
 mod tests {
     use super::sanitize_settings;
     use traits::Settings;
-
-    #[test]
-    fn recycle_rss_mb_clamps_explicit_but_keeps_auto_zero() {
-        // 0 = automatic sentinel: must survive sanitization unchanged.
-        let s = sanitize_settings(Settings {
-            sidecar_recycle_rss_mb: 0,
-            ..Settings::default()
-        });
-        assert_eq!(s.sidecar_recycle_rss_mb, 0, "0 stays auto");
-
-        // Below the 8 GiB floor: clamped up (8192 = auto_recycle_ceiling's lo; clears the
-        // ~6.8 GB vision warmup baseline so an explicit value can't cause a recycle loop).
-        let s = sanitize_settings(Settings {
-            sidecar_recycle_rss_mb: 100,
-            ..Settings::default()
-        });
-        assert_eq!(s.sidecar_recycle_rss_mb, 8192);
-
-        // Above 131_072 ceiling: clamped down.
-        let s = sanitize_settings(Settings {
-            sidecar_recycle_rss_mb: 999_999,
-            ..Settings::default()
-        });
-        assert_eq!(s.sidecar_recycle_rss_mb, 131_072);
-    }
-
-    #[test]
-    fn resume_min_dwell_secs_clamps_to_band() {
-        // Below the 10 s floor: clamped up (a shorter "sustained" context is noise).
-        let s = sanitize_settings(Settings {
-            resume_min_dwell_secs: 0,
-            ..Settings::default()
-        });
-        assert_eq!(s.resume_min_dwell_secs, 10);
-        // Above the day ceiling: clamped down.
-        let s = sanitize_settings(Settings {
-            resume_min_dwell_secs: 999_999,
-            ..Settings::default()
-        });
-        assert_eq!(s.resume_min_dwell_secs, 86_400);
-        // In band: unchanged (the 120 s default).
-        let s = sanitize_settings(Settings::default());
-        assert_eq!(s.resume_min_dwell_secs, 120);
-    }
 
     #[test]
     fn marks_hotkey_empty_falls_back_to_default() {
@@ -1028,5 +861,24 @@ mod tests {
             ..Settings::default()
         });
         assert_eq!(s.marks_hotkey, "Ctrl+Alt+K");
+    }
+
+    #[test]
+    fn api_port_floors_at_1024_and_bind_address_blank_means_loopback() {
+        let s = sanitize_settings(Settings {
+            api_port: 80,
+            api_bind_address: "   ".to_string(),
+            ..Settings::default()
+        });
+        assert_eq!(s.api_port, 1024);
+        assert_eq!(s.api_bind_address, "127.0.0.1");
+        // A literal is trimmed and kept.
+        let s = sanitize_settings(Settings {
+            api_port: 43_210,
+            api_bind_address: "  0.0.0.0  ".to_string(),
+            ..Settings::default()
+        });
+        assert_eq!(s.api_port, 43_210);
+        assert_eq!(s.api_bind_address, "0.0.0.0");
     }
 }

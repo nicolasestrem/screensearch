@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod advanced;
 pub mod contracts;
 pub mod domain;
 pub mod history;
@@ -24,6 +25,7 @@ pub mod promotion;
 pub mod reports;
 pub mod sessions;
 
+pub use advanced::*;
 pub use contracts::{
     AnswerProvider, BackfillControl, CaptureSource, EmbeddingProvider, OcrProvider, PressureProbe,
     SessionSegmenter, Store, VisionProvider,

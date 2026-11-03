@@ -846,10 +846,11 @@ fn requested_range_in_progress(run: &ReportRun) -> Result<bool, ReportError> {
 fn resolve_answer(
     answer: Option<Arc<inference::AnswerSidecar>>,
     settings: &Settings,
+    advanced: &AdvancedConfig,
 ) -> Result<Arc<dyn AnswerProvider>, ReportError> {
     answer
         .ok_or_else(|| fail("MODEL_UNAVAILABLE", "Local answer model is not ready."))?
-        .installed_provider_for(settings.models_answer_tier, SidecarParams::from(settings))
+        .installed_provider_for(settings.models_answer_tier, SidecarParams::from(advanced))
         .map_err(|_| {
             fail(
                 "MODEL_UNAVAILABLE",
@@ -865,14 +866,20 @@ async fn generate(state: &AppState, run: &mut ReportRun) -> Result<(), ReportErr
     let store = db(state)?;
     let config: RunSnapshot = serde_json::from_str(&run.config_snapshot).map_err(storage)?;
     let settings = &config.report_settings;
+    // The report depth beyond the daily UI knob is `file-only` (`03 §8`, 0.4.5 D6): read the
+    // startup-frozen values rather than the snapshot, which only carries the `UI` keys.
+    let advanced = state.advanced.clone();
     let answer = state.answer.lock().expect("answer slot").clone();
     let report_config = ReportConfig {
         daily_top_k: settings.reports_daily_top_k,
-        weekly_top_k: settings.reports_weekly_top_k,
-        map_reduce_min_frames: settings.reports_map_reduce_min_frames,
+        weekly_top_k: advanced.reports.weekly_top_k,
+        map_reduce_min_frames: advanced.reports.map_reduce_min_frames,
         reply_budget: crate::REPORT_REPLY_BUDGET,
     };
-    let resolve = move || async move { resolve_answer(answer.clone(), settings) };
+    let resolve = move || {
+        let advanced = advanced.clone();
+        async move { resolve_answer(answer.clone(), settings, &advanced) }
+    };
     match run.kind {
         ReportRunKind::Daily => {
             let execution = kernel::report_service::execute(
@@ -3177,7 +3184,8 @@ mod tests {
     fn weekly_no_model_is_blocked() {
         // A missing model surfaces as MODEL_UNAVAILABLE and settles as a visible
         // BLOCKED — never FAILED and never a silently saved empty report (`03 §8e`).
-        let Err(error) = resolve_answer(None, &Settings::default()) else {
+        let Err(error) = resolve_answer(None, &Settings::default(), &AdvancedConfig::default())
+        else {
             panic!("a missing model must not resolve a provider");
         };
         assert_eq!(error.code, "MODEL_UNAVAILABLE");

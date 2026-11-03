@@ -51,8 +51,8 @@ pub(crate) fn read_history_metadata(
     })
 }
 
-/// Called after migrations while opening the store, never from a read or insert.
-/// Only the wholly absent pair denotes a new/pre-upgrade history. A partial or
+/// Called after the baseline is created while opening the store, never from a read or
+/// insert. Only the wholly absent pair denotes a new/pre-upgrade history. A partial or
 /// invalid existing pair stays untouched and causes readiness/allocation to fail.
 pub(crate) fn setup_history_metadata(conn: &mut Connection) -> Result<()> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
