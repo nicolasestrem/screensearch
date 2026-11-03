@@ -86,7 +86,8 @@ The files are the source of truth, not your memory — re-read the relevant sect
 - **No real-time vision** — vision runs on-demand / timer / idle only (`03 §5`).
 - **Sidecar must never orphan** — implement the Job-Object lifecycle exactly (`03 §6`); do not ship
   P4 until the no-orphan test passes.
-- **Schema changes = forward-only migration** with a `schema_version` bump. No schema drift.
+- **Schema changes = baseline edit** with a `schema_version` bump (0.4.5 D2: `03 §4` holds the full
+  DDL; no migration chain, no populated-DB migration tests). No schema drift.
 - **Branches, not main.** New work on a feature branch; no force-push; no commit to `main` without
   review. Never commit models, secrets, or DB files (see `.gitignore`).
 - **PR review is on-demand only (cost).** Nothing reviews a PR automatically. Never trigger a

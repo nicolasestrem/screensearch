@@ -74,8 +74,9 @@ Native acceptance and pilot evidence remain open until observed; no fake success
 
 **Current arc status (2026-10-19):** the 0.4.2 arc — external-agent memory API (`§1b`) and F3
 deeper memory (`§1c`) — is released as v0.4.2 (2026-10-19); open native acceptance is tracked in
-`05`. No next arc is defined yet (pending maintainer decision): stop and ask before starting new
-arc work (`§5`). The per-increment pointers below stay valid for follow-up work on those areas.
+`05`. **The next arc is 0.4.5** (2026-11-03; pointer below and `02 §5k`), and nothing is defined
+past it — stop and ask before starting any other arc work (`§5`). The per-increment pointers below
+stay valid for follow-up work on those areas.
 
 **For deeper memory (F3, approved 2026-10-17; shipped in v0.4.2):** also read `02 §5i` and the normative `03 §8e`
 (weekly synthesis + project note), plus `03 §8b`/`§8c`/`§8d` where `§8e` extends them and
@@ -86,6 +87,20 @@ unit is wrong: stop and report); **no report HTTP/MCP generation** (C3 stays def
 promotion — no auto-edits of identity/knowledge pages, no nags/scores; weekly runs are local,
 scheduled and default-off; the weekly Telegram digest lands only as G6 under the `03 §8d`
 exception. The **specs are the contract**; `docs/deeper-memory-f3-plan.md` is context.
+
+**For 0.4.5 work (P9 — the work-intelligence + design-system-v2 arc, approved 2026-11-03):** also
+read `docs/0.4.5.md` (phase order, per-phase acceptance, file ownership), `02 §5k`, and the
+normative `03 §4`/`§7h`/`§7i`/`§7j`/`§8` with `UI_REFERENCE` (identity, tokens, IA, components).
+Three hard arc constraints, all decided: **baseline schema instead of a migration chain** — `03 §4`
+holds the full DDL at v14, a schema change edits it and bumps the version, there are no populated-DB
+migration tests and no retired-key load tolerance (0.4.5 D2); **single user** — the maintainer is
+the only user, so no compatibility, adaptation or pilot obligation exists toward anyone else
+(0.4.5 D1); **no manual evaluation work** — no hand-written question sets, no labelling;
+evaluation is generated from data the DB already holds (0.4.5 D17). The `04` discipline itself is
+**unchanged** for this arc: stop-at-ambiguity, verbatim verification, no stubs, build-loop records
+(0.4.5 D16).
+And **no agent commit or push** until the maintainer validates the content and names the target repo
+`nicolasestrem/screensearch` (0.4.5 D18).
 
 ## 1b. External-agent memory API execution (approved 2026-10-16)
 
@@ -189,6 +204,7 @@ Update `05`–`08` after meaningful implementation passes with completed versus 
 | 0.3.1 patch scope / PR order (post-0.3.0 triage: regression fix + polish) | `docs/0.3.1.md` |
 | 0.3.2 arc scope / PR order (product shell: lifecycle + interface) | `docs/0.3.2.md` |
 | 0.4.0 arc scope / PR order (sessions: frames → sessions reframe) | `docs/0.4.0.md` (+ `02 §5d`) |
+| 0.4.5 arc scope / phase order | `docs/0.4.5.md` (+ `02 §5k`) |
 | Environment, constraints, non-goals | `01` |
 | Schema, trait signatures, job-queue/sidecar protocol, settings, DoD | `03` |
 | UI identity, tokens, screens, state matrix, components, a11y/perf | `UI_REFERENCE.md` |
@@ -263,14 +279,42 @@ If the answer is in a doc, **use it verbatim** — do not invent alternatives.
   (`04`) as its operating prompt**.
 - **Post-0.4.0 increments (status, 2026-10-19):** the network API and memory reports shipped in
   v0.4.1 (2026-10-15); the external-agent memory API and F3 deeper memory shipped in v0.4.2
-  (2026-10-19). Their unit order lives in `§1b`/`§1c`. No next arc is defined yet (pending
-  maintainer decision).
+  (2026-10-19). Their unit order lives in `§1b`/`§1c`. The next arc is 0.4.5 (below).
+- **0.4.5 arc (P9, `02 §5k` / `docs/0.4.5.md`):** **P1 Specs contract** (specs-only, executed alone)
+  → **Wave A** (P2 design system v2 · P3 baseline schema v14 + settings v2 · P4 automatic
+  intelligence evaluation) → Gate A, `v0.4.3` → **Wave B** (P5 work graph · P6 Ask v2 · P7 shell +
+  Settings v2) → Gate B, `v0.4.4` → **Wave C** (P8 insights + agent surface · P9 intelligence UI ·
+  P10 Recall refont + shim removal) → Gate C, `v0.4.5`. **A wave starts only when every phase of
+  the previous wave is merged**, not when that wave's debug window closes; **executing branches
+  rebase on `main` daily** so debug-window fixes reach them immediately, and fixes go to short
+  `fix/` branches merged the same day. **File ownership per phase** — two phases in one wave never
+  edit the same file:
+  - Wave A: P2 `ui/src/styles`, `ui/tailwind.config.*`, `ui/src/components/primitives`,
+    `ui/src/routes/Kitchen*` · P3 `crates/store`, `crates/traits` settings, settings consumers,
+    `ui/src/bindings` · P4 `crates/harness`.
+  - Wave B: P5 `crates/graph`, `crates/sessions` (read-side only), graph jobs in `crates/kernel` ·
+    P6 `crates/inference` ask path, ask pipeline in `crates/kernel`, store retrieval queries · P7
+    `ui/src/components/shell`, `ui/src/routes/settings/`, `ui/src/app`.
+  - Wave C: P8 `crates/api`, `crates/mcp`, insights in `crates/kernel`/`crates/store` · P9 new
+    routes `Work`, `Insights`, `Ask`, `components/intelligence/` · P10 every existing route and
+    `components/domain`.
+
+  **P5/P6 overlap to manage:** both add kernel jobs — each in its own module file, plus one shared
+  edit to the job-kind registry made by P5 first. **Brake rule:** if a debug window finds a
+  foundation-level flaw (P2 tokens, P3 schema, P4 metrics) rather than a bug, the dependent
+  executing phase pauses until the fix merges. **One schema owner:** only P3 touches the DDL; any
+  later phase needing a schema change stops and amends `03 §4` first — under 0.4.5 D2 that is a
+  cheap baseline edit plus a rebuild, but still a contract change, never a silent one. Each phase is
+  its own branch, runs the full verification suite, updates `05`–`08`, and **recycles this file
+  (`04`) as its operating prompt**.
 
 ## 4. Guardrails (hard rules — violating any = stop)
 - **No destructive git.** Feature branches only; never force-push or reset shared history; never
   commit to `main` without the work being reviewed. New work starts on a new branch.
-- **No schema drift without a migration.** Every schema change is a forward-only migration with a
-  `schema_version` bump (`03 §4/§12`).
+- **Schema changes edit the baseline** (`03 §4`), `schema_version` bumped: no migration chain, no
+  populated-DB migration tests (0.4.5 D2). Forward-only migrations remain the historical rule for
+  0.2.x–0.4.2 only.
+- **No commit or push by an agent** until the maintainer validates the content and names the target repo `nicolasestrem/screensearch` (0.4.5 D18).
 - **No Python in the shipped runtime. No cloud inference or arbitrary uploads.** Runtime ML is Rust-only (fastembed) + the
   local llama.cpp sidecar (`01 §5`); a Python *ML* sidecar is the V1 approach we don't repeat. Python
   is allowed for build/dev tooling (e.g. the `hf` CLI). Network = localhost + model downloads + the

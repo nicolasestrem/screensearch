@@ -1,5 +1,43 @@
 # 05 — Build Review
 
+## 2026-11-03 — 0.4.5 P1 specs contract (branch `feat/0.4.5-p1-specs-contract`, specs-only)
+
+- **Scope (roadmap `docs/0.4.5.md` P1):** zero code. D1–D18 normalized into the specs so a fresh
+  agent can start any wave-A phase (P2/P3/P4) from `specs/` alone. Landing sites: `01 §2/§6/§7/§8`
+  (single user, baseline schema, rebuild tool, local-only, next arc); `02 §5k` (arc), `§5d`/`§7`
+  (audio not a priority); `03 §4` (baseline rule at `schema_version = 14`, 11 new tables, migration
+  prose kept as history), `§7c`/`§7f.7` (4 read routes, 4 MCP tools), new `§7h`/`§7i`/`§7j` (work
+  graph, Ask v2, insights), `§8` (settings v2 table, load rule), `§12` (schema failure mode), new
+  `§13d` (gates + per-phase DoD); `04 §1/§2/§3/§4` (0.4.5 pointer, ownership, D2/D18 guardrails);
+  `UI_REFERENCE §1/§2/§5` (placeholders filled at P2), `§3` (v2 IA), `§4` (12 state rows), `§7`,
+  `§8` (v2 shell contract), `§10.7`; v1 identity archived verbatim to
+  `specs/archive/UI_REFERENCE_v1_identity.md`; `07` (0.4.5 section, #75, #82, #104); `CLAUDE.md`
+  hard rule; one-line amendments in `docs/ARCHITECTURE.md` and `docs/memory-api-direction-plan.md`.
+- **Implemented by four disjoint writer lanes** (`03` core sections, `03 §8`, `UI_REFERENCE`, the
+  other specs/docs), integrated by the parent, which also fixed survivors the lanes did not own:
+  `03 §12` still stated forward-only migrations as the current rule, `02` closing status still said
+  "no next arc", `UI_REFERENCE §7` still said "dark-only by design", `07` #82/#104 pointed forward
+  at the superseded rules.
+- **`03 §8` conversion:** 78 key rows — 25 `UI` (the closed list, each with a live consumer;
+  `api.read_token` shares the `api.token` row), 44 `file-only` (live consumer, engine tuning), 9 `deleted` (hits only in the
+  `RETIRED_SETTINGS_KEYS` sweep/tests/doc comments, or none). Two backticked tokens in the old list
+  were not keys (`frames.capture_trigger`, `set_api_config.bind_address`) and stay in prose.
+- **Gates 1–2 (raw output goes in the PR body):** scope — 13 tracked files modified plus the new
+  archive file and `docs/0.4.5.md`, every changed path `*.md`, no `crates/`/`ui/`/`src-tauri/`
+  path; UI rows `25`; tolerance grep over `03` empty (`§8b` byte-identical to `main`); `D1`–`D18`
+  each cited ≥1 file; `CREATE (VIRTUAL) TABLE` count `29` with each of the 11 new names once; every
+  surviving `forward-only` hit is historical or amended; `git diff --check` clean. No build/test
+  run — no code changed.
+- **Gate 3 cold reads:** P3 from `03 §4` alone — **yes** (typed columns, PKs/FKs/CHECKs/indexes for
+  all 11 tables, `schema_version = 14`, refusal naming `ssv2c-rebuild`, no normative migration
+  function); `06` #27 resolved by the maintainer. P2 from `UI_REFERENCE §1/§2/§5` alone —
+  **yes** (each placeholder names who fills it, when, and what unblocks it; `§3`/`§4`/`§8` already
+  authoritative). P5/P8 from `03 §7h` + `§7j` alone — **yes** (six entity kinds, linking rule,
+  ≥0.7 confidence with 7 d → 30 d decay, override precedence, five insight types; `TBD` count `0`).
+- **Resolved (`06` #27, maintainer 2026-11-03):** `api.read_token` shares the `api.token` UI row;
+  `sidecar.device` added as `file-only`. Committed and pushed after the maintainer validated the
+  content and named `nicolasestrem/screensearch` (0.4.5 D18).
+
 ## 2026-10-20 — Setup visibility (branch `feat/setup-progress-visibility`, `06` #26)
 
 - **Scope (approved contract `02 §5j`, `03 §7g`):** additive `SetupStatus` snapshot +

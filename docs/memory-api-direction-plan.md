@@ -12,7 +12,9 @@ outstanding. Native acceptance and F1/F2 pilot/release review remain open.**
 This is the canonical repository execution plan, adapted from the original desktop planning
 artifact; that external file is preserved unchanged. The product serves approximately 15,000
 people, as clarified by the maintainer. Pilot and release validation must cover supported user
-environments rather than use one person's workflow as the acceptance standard.
+environments rather than use one person's workflow as the acceptance standard. *(Superseded
+2026-11-03: the product has one user — the maintainer — so the "approximately 15,000" audience
+figure no longer carries weight; 0.4.5 D1.)*
 
 ## External-agent follow-up (2026-10-16, P1/P2 unreleased)
 

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — specs
+
+- **0.4.5 arc (P9) contract: work graph, Ask v2, insights, baseline schema v14, settings v2, v2
+  design-system placeholders.** Specs-only; zero code. Roadmap: `docs/0.4.5.md`; contracts:
+  `specs/03_MASTER_PRODUCTION_SPEC.md` §4, §7h–§7j, §8, §13d and `specs/UI_REFERENCE.md`.
+
 ### Added
 
 - **Setup progress and errors are visible in the app.** While ScreenSearch prepares local AI —

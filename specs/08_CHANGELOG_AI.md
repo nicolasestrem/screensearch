@@ -1,5 +1,21 @@
 # 08 — AI Changelog
 
+## 2026-11-03 — 0.4.5 P1 specs contract
+
+- **Change:** specs only. `03 §4` becomes a baseline (full DDL at `schema_version = 14`, no
+  migration chain, refuse-and-name-`ssv2c-rebuild` on any other version) with 11 new tables for the
+  work graph, session vectors, insights and Ask v2 threads; new `03 §7h`/`§7i`/`§7j` contracts; `§7c`
+  routes and `§7f.7` MCP tools; `§8` rewritten as a 78-row disposition table (25 UI / 44 file-only /
+  9 deleted; `api.read_token` shares the `api.token` row) with a rewrite-away load rule; `§12` schema failure mode; new `§13d` DoD. `01`, `02
+  §5k`, `04`, `07`, `CLAUDE.md` carry the arc pointer and D1/D2/D14/D15/D16/D17/D18;
+  `UI_REFERENCE` gets the v2 IA and placeholders for the P2 identity, v1 identity archived to
+  `specs/archive/UI_REFERENCE_v1_identity.md`. `docs/0.4.5.md` (the roadmap) enters git.
+- **Why:** roadmap P1 — every 0.4.5 decision must be normative in `specs/` before wave A, so no
+  phase depends on rereading the roadmap; the single-user decision (D1) removes the migration
+  chain and the retired-key tolerance.
+- **Verification:** see `05` (2026-11-03) — scope, consistency and cold-read gates; no code changed,
+  so no build or test run. Two unlisted `§8` keys resolved by the maintainer (`06` #27).
+
 ## 2026-10-20 — Setup visibility
 
 - **Change:** `traits` gains `SetupOperation`/`SetupPhase`/`SetupStep`/`SetupStatus`;
