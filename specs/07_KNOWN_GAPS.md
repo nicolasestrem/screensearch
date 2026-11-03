@@ -48,6 +48,23 @@ open, or newly scoped out:
   - **P8:** `03 §7j` fixes the five insight kinds and requires a typed payload that renders without
     the model, but does not fix the JSON shape per kind. P8 defines it in `traits` with a fixture
     test per kind; the shape is additive and never renames an existing field.
+- **Gaps found while writing the phase kickoffs (2026-11-03, each one is a stop condition in the
+  phase file, not an answer invented at P1).**
+  - **P6 / P9: `src-tauri` command glue is assigned to no phase** in `docs/0.4.5.md` §4. P6 needs the
+    ask route and its host methods wired, P9 needs the thread and insight commands. Rule applied: a
+    phase requests an explicit one-time grant in its kickoff and must not duplicate the pipeline in
+    `src-tauri`. The maintainer confirms the grant when the phase starts.
+  - **P6: `ask_turns` has no columns for per-stage counts or assembled tokens.** `03 §7i.2` requires
+    the counts to be recorded per turn. They are carried on the terminal SSE event and logged; adding
+    columns is a P3 schema change, so it is a stop condition, not a silent edit.
+  - **P8: no spec values exist for the recurrence gap, the resumption gap or the neighbour similarity
+    threshold.** P8 owns the values inside the contract and records them in `05`/`06`.
+  - **P9: "connected threads" and "time spent" are undefined**, and `entity` / `mark` evidence kinds
+    have no destination route, so "every claim links to its evidence" cannot be satisfied for those
+    cards until P9 defines the target.
+- **`UI_REFERENCE §8` calls the `compact` density "a choice in Settings", but `03 §8` has no density
+  key** and no phase owns adding one. Recorded in `06` as a spec contradiction.
+
 
 ## 2026-10-19 — Carried forward from the 0.4.2 arc (owner: maintainer unless stated)
 
