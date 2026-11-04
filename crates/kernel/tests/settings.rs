@@ -3,7 +3,7 @@
 //! Two surfaces are covered:
 //!
 //! - the `UI` key set: `save_settings` followed by `load_settings` returns exactly what was
-//!   written (this guards the key-string contract between the two — a typo in either would
+//!   written (this guards the key-string contract between the two - a typo in either would
 //!   silently fall back to a default and never round-trip), retired keys are rewritten away,
 //!   and the reserved history/allocator metadata survives every settings path;
 //! - the `file-only` surface: `advanced.toml` parses into [`AdvancedConfig`], unknown
@@ -304,6 +304,17 @@ async fn overlay_hotkey_custom_value_survives() {
 
     let loaded = load_settings(dyn_store).await;
     assert_eq!(loaded.overlay_hotkey, "Ctrl+Shift+P");
+    // A deliberate custom chord must survive as the raw DB value too, not only through
+    // the typed loader (the one-shot legacy-default remap only touches the old default).
+    assert_eq!(
+        store
+            .get_setting("overlay.hotkey")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("\"Ctrl+Shift+P\""),
+        "the custom chord is persisted verbatim"
+    );
 }
 
 /// A `Store` decorator that forwards to an inner `SqliteStore` but fails `set_setting` for one
@@ -1033,6 +1044,24 @@ device = "   "
 "#,
     );
     assert_eq!(load_advanced_config(dir.path()).sidecar.device, None);
+}
+
+#[test]
+fn advanced_sidecar_ctx_size_zero_survives_as_the_auto_sentinel() {
+    let dir = tempfile::tempdir().unwrap();
+    write_advanced(
+        dir.path(),
+        r#"
+[sidecar]
+ctx_size = 0
+"#,
+    );
+    let cfg = load_advanced_config(dir.path());
+    // `0` means "automatic per-lane default" (`03 §8`); the clamp must not turn it into
+    // the 512 floor, and the sentinel must reach the sidecar params unchanged.
+    assert_eq!(cfg.sidecar.ctx_size, 0, "0 stays the auto sentinel");
+    let params: SidecarParams = (&cfg).into();
+    assert_eq!(params.ctx_size, 0, "the auto sentinel reaches the sidecar");
 }
 
 #[test]
