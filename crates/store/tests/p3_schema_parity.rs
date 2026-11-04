@@ -8,20 +8,25 @@
 //! two-way gap is recorded as `specs/06` #30 (open doc gap), so this test pins both
 //! directions instead of comparing object names only:
 //!
-//! - every `CREATE TABLE`, `CREATE VIRTUAL TABLE`, `CREATE INDEX`, `CREATE TRIGGER` and
+//! - every `CREATE TABLE`, `CREATE VIRTUAL TABLE`, `CREATE INDEX` and
 //!   `ALTER TABLE ... ADD COLUMN` that section 4 declares must exist in the baseline with
-//!   the same columns, constraints, index columns, trigger bodies and virtual-table
-//!   arguments (tokens are compared after stripping comments, so formatting and the
-//!   section's prose comments cannot hide a real difference);
+//!   the same columns, constraints, index columns and virtual-table arguments (tokens are
+//!   compared after stripping comments, so formatting and the section's prose comments
+//!   cannot hide a real difference);
+//! - the three documented extra table definitions (`frames.image_purged`,
+//!   `text_spans.line_index`, `embeddings` UNIQUE) must be present, not merely allowed;
 //! - the two section 4 declarations the as-built baseline deliberately lacks must stay
 //!   absent, so a stray re-introduction of the dropped OCR lane is caught;
 //! - the documented carried extras must exist, and nothing undocumented may be added to
-//!   either side;
+//!   either side. Section 4 declares **no** `CREATE TRIGGER` (it names FTS/vec sync only
+//!   in prose), so the seven carried triggers are existence-checked by name here; their
+//!   bodies are covered by the functional FTS and `vec0` sync tests;
 //! - opening a fresh store must materialise exactly the baseline script.
 //!
 //! No row count and no table count is hardcoded. The section 4 side is parsed out of the
-//! spec at compile time; the extras below are the documented `specs/06` #30 list, not a
-//! snapshot of whatever the schema currently contains.
+//! spec at compile time; the extras below are the documented `specs/06` #30 list plus the
+//! section 4 prose FTS/vec triggers, not a snapshot of whatever the schema currently
+//! contains.
 
 use std::collections::BTreeMap;
 
@@ -88,19 +93,22 @@ const CARRIED_TRIGGERS: [&str; 7] = [
     "embeddings_ad",
 ];
 
-/// The section 4 DDL block: the first ```sql fence after the section 4 heading, read up
-/// to the first closing fence. The rest of the spec is never touched.
+/// The section 4 DDL block: the first ```sql fence after the section 4 heading and before
+/// the next `## ` heading, read up to the first closing fence. The rest of the spec is
+/// never touched.
 fn section_4_ddl(spec: &str) -> &str {
     const HEADING: &str = "## 4. Data model (";
     let at = spec
         .find(HEADING)
         .unwrap_or_else(|| panic!("03 has no section 4 heading starting {HEADING:?}"));
     let after_heading = &spec[at..];
+    let scope_end = after_heading.find("\n## ").unwrap_or(after_heading.len());
+    let scope = &after_heading[..scope_end];
     let fence = "```sql";
-    let fence_at = after_heading
+    let fence_at = scope
         .find(fence)
         .unwrap_or_else(|| panic!("03 section 4 has no {fence:?} DDL block"));
-    let after_fence = &after_heading[fence_at + fence.len()..];
+    let after_fence = &scope[fence_at + fence.len()..];
     let end = after_fence
         .find("\n```")
         .unwrap_or_else(|| panic!("03 section 4 DDL block is unterminated"));
@@ -371,6 +379,16 @@ fn baseline_holds_every_spec_section_4_declaration_and_the_documented_extras() {
         !spec.tables.is_empty() && !spec.indexes.is_empty(),
         "parsed no tables/indexes from 03 section 4; the extraction or the spec changed"
     );
+    // Sentinel objects: a block truncated or shifted to some earlier snippet cannot pass
+    // by parsing an empty or unrelated fragment.
+    assert!(
+        spec.tables.contains_key("frames") && spec.tables.contains_key("schema_version"),
+        "03 section 4 extraction lost its sentinel tables"
+    );
+    assert!(
+        spec.indexes.contains_key("idx_frames_captured_at"),
+        "03 section 4 extraction lost its sentinel index"
+    );
 
     for (name, spec_defs) in &spec.tables {
         if SPEC_ONLY_ABSENT.contains(&name.as_str()) {
@@ -385,6 +403,15 @@ fn baseline_holds_every_spec_section_4_declaration_and_the_documented_extras() {
             panic!("03 section 4 declares table `{name}` but the v14 baseline does not create it")
         });
         let documented = documented_extra_defs(name);
+        // The documented as-built extras are required, not just tolerated: dropping one
+        // from schema.rs while leaving the rest of the table in place must fail here.
+        for def in &documented {
+            assert!(
+                base_defs.contains(def),
+                "table `{name}`: the documented carried extra `{def}` (specs/06 #30) is \
+                 missing from the v14 baseline"
+            );
+        }
         for def in spec_defs {
             assert!(
                 base_defs.iter().any(|have| have == def),
