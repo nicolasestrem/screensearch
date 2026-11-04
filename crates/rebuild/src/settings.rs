@@ -265,6 +265,7 @@ mod tests {
             "tray.updates",
             "tray.vision",
             "advanced.toml",
+            "screensearch.db",
         ];
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let decl = |line: &str| -> Option<String> {

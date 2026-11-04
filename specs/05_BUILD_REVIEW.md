@@ -1,3 +1,955 @@
+## 2026-11-04: 0.4.5 P4 baseline, P5/P6 thresholds frozen on the committed fixture, verified and merged
+
+- **Scope (roadmap P4, kickoff `docs/kickoffs/P4.md`, plus the maintainer's threshold task).** The
+  automatic evaluation runner from the previous P4 pass is unchanged in behaviour: it derives 300
+  question/answer pairs from the database at run time (0.4.5 D17), asks them through the product's
+  own `POST /v1/ask`, measures the product's own `GET /v1/search`, and writes a report. What is new
+  in this pass is where the database comes from and what the numbers are used for: the P5/P6
+  acceptance thresholds are frozen here.
+- **Branch state.** `feat/0.4.5-p4-auto-eval` was rebased `--onto origin/main 48a9705`, so only the
+  three P4 commits replay over the merged P3 baseline (`0dfa2f5`, #153). The rebase had no
+  conflicts: P3's schema and store code won every file it touched, and the harness adapted to them.
+  `crates/harness` tests were green on the rebased tip before any new work (`cargo test -p harness`:
+  every suite ok, 39 s).
+- **No real database was opened, copied or touched.** There is no ScreenSearch profile on this
+  machine, and the app has no data-directory override, so the product could not be served over a
+  fixture database by launching the app. The fixture path below replaces the kickoff's
+  "Maintainer run"; the decisions are recorded in `07` (2026-11-04 P4 section) and `06` #35.
+- **New dev-only crate `crates/evalfixture` (`ssv2c-evalfixture`, workspace member, nothing shipped
+  depends on it).** Two subcommands:
+  - `gen` writes a seeded synthetic v14 history through the production Store writers only
+    (`insert_frame`, `insert_ocr_filtered` so the real attention filter decides `content_text`,
+    `insert_session`, `assign_frames_session`, `set_setting`, `upsert_text_embedding`). 1260 frames,
+    218 sessions, 13 apps, 12 repositories, 65 absolute paths, 40 domains, 36 ticket refs and 42
+    documents, six working weeks. The timeline starts Monday 2026-09-07 at a fixed UTC+02:00 offset,
+    so the content digest does not depend on the machine clock.
+  - `serve` starts the real `crates/api` server over that database: the app's own `hybrid_search` +
+    `ocr_texts` composition for Ask grounding, the real fastembed provider for the vector arm
+    (`--embed`), and the real answer sidecar (llama-server + the configured answer tier, preloaded
+    through `crates/inference`, exactly as `init_inference` does in the composition root).
+  - Fixture seed `0x5cee55ee41520004` (decimal `6696384177732976644`), committed in
+    `crates/evalfixture/src/lib.rs`; it is both the generation seed and the harness `--seed`, so P5
+    and P6 reproduce this database and this pair set. Content digest
+    `69dac6e6ae417c0a6bc25590948a4dde8a6e1d500f99bb177f80a6bc794b8ab9` (identical with and without
+    embeddings, which are not part of the digest).
+- **Baseline run.** 300 pairs at seed `6696384177732976644`, `--pairs 300`, against
+  `harness-data/fixture/screensearch.db` served at `http://127.0.0.1:43210`; 300/300 turns
+  succeeded, zero failures of any class, 346 s wall clock. Fixture generation (1260 embeddings) took
+  143 s; the run is a single command.
+- **What the baseline says about today's Ask.** The two generators that need ordering or a time
+  window are the weak ones: `sequence` scores 1.0% evidence recall and `window_recall` 4.0%, with
+  citation validity 21.7% and 4.2% because Ask returns the globally best-matching frames regardless
+  of the implied window. The three families whose ground truth is a string match score 57.9%,
+  31.7% and 68.2% evidence recall with 100% citation validity. That gap is exactly what P6's
+  planner and window resolution exist to close, and it is why citation validity has its own target
+  rather than being averaged into recall.
+- **Entity metric.** v14 creates the work-graph tables empty (P5 writes them), so the reference
+  extractor found 176 entities in the sampled frames and recovery/invention report
+  `n/a (no entity surface)` rather than a fabricated zero. P5's target is therefore the absolute
+  0.80 floor.
+
+### P5/P6 thresholds (fixture)
+
+| Metric | Baseline (fixture) | Target | Basis |
+|---|---|---|---|
+| P6 retrieval recall@10 (`GET /v1/search`, overall) | 37.0% (111/300) | >= 41.0% (>= 123/300) | baseline x 1.10 (at least +10% relative) |
+| P6 known-fact answer rate (`/v1/ask`, overall) | 64.7% (194/300) | >= 71.3% (>= 214/300) | baseline x 1.10 (at least +10% relative) |
+| P6 citation validity | 71.4% (1713/2400) | 100% (2400/2400) | fixed at 100% |
+| P5 entity recovery | n/a (no entity surface) | >= 80.0% | max(0.80, baseline); the baseline surface does not exist yet |
+| P6 latency p95 | 2323 ms | <= 3485 ms | baseline x 1.5 or lower (2323 x 1.5 = 3484.5) |
+
+Notes on the table, so P5/P6 cannot read it as more than it is:
+
+- The numbers are the `overall` row of the pasted report. Evidence recall@10 (the comparator Gate A
+  freezes, 36.6%) and every per-generator baseline are in the report itself; the targets above are
+  stated once, at the overall scope, because a per-generator target on a 30-pair family would move
+  with sampling noise rather than with the product.
+- Counts are exact, not rounded from percentages: 111/300 retrieval hits, 194/300 known-fact hits,
+  1713/2400 valid cited ids. The percentage targets are the smallest count that clears the required
+  relative margin (123/111 = 1.108, 214/194 = 1.103).
+- These thresholds are binding on P5 and P6 measured with this fixture and this seed. A future
+  baseline over real history is a separate record: it replaces this table only if it is taken with
+  the same runner and the same metric definitions, and it must state its own seed and database.
+
+### Baseline report, pasted verbatim
+
+Run at 2026-11-04 23:10 local, seed `6696384177732976644`, schema v14, fixture database. The
+report is reproduced byte for byte below, including its own metric definitions section.
+
+````text
+# ScreenSearch P4 automatic intelligence evaluation
+
+- Run id: `20261104-231002`
+- Started: 2026-11-04 23:10:02 +01:00
+- Seed: `6696384177732976644` (`--seed 6696384177732976644` reproduces this exact pair set against this database)
+- Database: `harness-data/fixture/screensearch.db` (opened read-only: `SQLITE_OPEN_READ_ONLY` + `PRAGMA query_only`)
+- Schema version: 14
+- API: `http://127.0.0.1:43210` (version ssv2c-evalfixture 0.4.2, uptime 2455 s, capturing: no)
+- Pairs requested: 300 · generated: 300
+- Frames: 1260 scanned for reference discovery (of 1260 total) · 1260 in the exact reference pass
+- Sessions: 218
+- History: 2026-09-07 08:38 → 2026-10-16 14:22 (local)
+- Open-session overlap basis (`now_ms`): 1793830202147
+- Duration: 346 s
+
+## Pair generation
+
+| Generator | Eligible | Target | Generated | Notes |
+|---|---:|---:|---:|---|
+| last-seen (`last_seen`) | 133 | 60 | 73 | — |
+| involvement (`involvement`) | 52 | 60 | 52 | — |
+| sequence (`sequence`) | 201 | 60 | 73 | — |
+| window recall (`window_recall`) | 30 | 60 | 30 | — |
+| seen-again (`seen_again`) | ≥ 300 | 60 | 72 | enumeration stopped at its cap |
+
+`Eligible` counts the pairs the generator could derive from this database (a lower bound when marked `≥`). `Target` is the generator's even share of the requested total; a deficit is handed to the other generators in fixed order (`last_seen`, `involvement`, `sequence`, `window_recall`, `seen_again`), one pair at a time.
+
+## Metrics
+
+| Scope | Pairs | Evidence recall@10 | Retrieval recall@10 (diagnostic) | Citation validity | Known fact present | Latency p50 (ms) | Latency p95 (ms) | Gate A threshold |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| overall | 300 | 36.6% | 37.0% | 71.4% (1713/2400) | 64.7% | 879 | 2323 |  |
+| last-seen (`last_seen`) | 73 | 57.9% | 60.3% | 100.0% (584/584) | 95.9% | 791 | 1924 |  |
+| involvement (`involvement`) | 52 | 31.7% | 28.8% | 100.0% (416/416) | 100.0% | 1291 | 2652 |  |
+| sequence (`sequence`) | 73 | 1.0% | 1.4% | 21.7% (127/584) | 1.4% | 849 | 2323 |  |
+| window recall (`window_recall`) | 30 | 4.0% | 0.0% | 4.2% (10/240) | 0.0% | 666 | 2240 |  |
+| seen-again (`seen_again`) | 72 | 68.2% | 70.8% | 100.0% (576/576) | 98.6% | 921 | 2809 |  |
+
+### Turns
+
+- successful: 300 / 300
+- failures: api_unavailable 0, timeout 0, empty_answer 0, http_error 0
+
+## Failures
+
+_none_
+
+## Invalid citations
+
+| Pair | Generator | Cited kind | Id | Reason |
+|---|---|---|---:|---|
+| `sequence-001` | sequence | frame | 295 | outside the pair window |
+| `sequence-001` | sequence | frame | 251 | outside the pair window |
+| `sequence-001` | sequence | frame | 9 | outside the pair window |
+| `sequence-001` | sequence | frame | 983 | outside the pair window |
+| `sequence-001` | sequence | frame | 223 | outside the pair window |
+| `sequence-001` | sequence | frame | 1152 | outside the pair window |
+| `sequence-001` | sequence | frame | 522 | outside the pair window |
+| `sequence-001` | sequence | frame | 226 | outside the pair window |
+| `sequence-002` | sequence | frame | 574 | outside the pair window |
+| `sequence-002` | sequence | frame | 570 | outside the pair window |
+| `sequence-002` | sequence | frame | 503 | outside the pair window |
+| `sequence-002` | sequence | frame | 1241 | outside the pair window |
+| `sequence-002` | sequence | frame | 1145 | outside the pair window |
+| `sequence-002` | sequence | frame | 552 | outside the pair window |
+| `sequence-002` | sequence | frame | 506 | outside the pair window |
+| `sequence-002` | sequence | frame | 457 | outside the pair window |
+| `sequence-003` | sequence | frame | 31 | outside the pair window |
+| `sequence-003` | sequence | frame | 29 | outside the pair window |
+| `sequence-003` | sequence | frame | 32 | outside the pair window |
+| `sequence-003` | sequence | frame | 19 | outside the pair window |
+| `sequence-003` | sequence | frame | 814 | outside the pair window |
+| `sequence-003` | sequence | frame | 570 | outside the pair window |
+| `sequence-003` | sequence | frame | 43 | outside the pair window |
+| `sequence-003` | sequence | frame | 18 | outside the pair window |
+| `sequence-004` | sequence | frame | 24 | outside the pair window |
+| `sequence-004` | sequence | frame | 383 | outside the pair window |
+| `sequence-004` | sequence | frame | 387 | outside the pair window |
+| `sequence-004` | sequence | frame | 874 | outside the pair window |
+| `sequence-004` | sequence | frame | 872 | outside the pair window |
+| `sequence-004` | sequence | frame | 569 | outside the pair window |
+| `sequence-004` | sequence | frame | 875 | outside the pair window |
+| `sequence-004` | sequence | frame | 413 | outside the pair window |
+| `sequence-005` | sequence | frame | 794 | outside the pair window |
+| `sequence-005` | sequence | frame | 544 | outside the pair window |
+| `sequence-005` | sequence | frame | 973 | outside the pair window |
+| `sequence-005` | sequence | frame | 773 | outside the pair window |
+| `sequence-005` | sequence | frame | 1104 | outside the pair window |
+| `sequence-005` | sequence | frame | 1174 | outside the pair window |
+| `sequence-005` | sequence | frame | 153 | outside the pair window |
+| `sequence-005` | sequence | frame | 27 | outside the pair window |
+| `sequence-006` | sequence | frame | 31 | outside the pair window |
+| `sequence-006` | sequence | frame | 32 | outside the pair window |
+| `sequence-006` | sequence | frame | 570 | outside the pair window |
+| `sequence-006` | sequence | frame | 574 | outside the pair window |
+| `sequence-006` | sequence | frame | 814 | outside the pair window |
+| `sequence-007` | sequence | frame | 570 | outside the pair window |
+| `sequence-007` | sequence | frame | 574 | outside the pair window |
+| `sequence-007` | sequence | frame | 552 | outside the pair window |
+| `sequence-007` | sequence | frame | 742 | outside the pair window |
+| `sequence-007` | sequence | frame | 745 | outside the pair window |
+| `sequence-007` | sequence | frame | 744 | outside the pair window |
+| `sequence-007` | sequence | frame | 494 | outside the pair window |
+| `sequence-008` | sequence | frame | 42 | outside the pair window |
+| `sequence-008` | sequence | frame | 369 | outside the pair window |
+| `sequence-008` | sequence | frame | 40 | outside the pair window |
+| `sequence-008` | sequence | frame | 1201 | outside the pair window |
+| `sequence-008` | sequence | frame | 246 | outside the pair window |
+| `sequence-008` | sequence | frame | 636 | outside the pair window |
+| `sequence-008` | sequence | frame | 866 | outside the pair window |
+| `sequence-008` | sequence | frame | 237 | outside the pair window |
+| `sequence-009` | sequence | frame | 661 | outside the pair window |
+| `sequence-009` | sequence | frame | 52 | outside the pair window |
+| `sequence-009` | sequence | frame | 143 | outside the pair window |
+| `sequence-009` | sequence | frame | 57 | outside the pair window |
+| `sequence-009` | sequence | frame | 59 | outside the pair window |
+| `sequence-009` | sequence | frame | 435 | outside the pair window |
+| `sequence-009` | sequence | frame | 660 | outside the pair window |
+| `sequence-009` | sequence | frame | 163 | outside the pair window |
+| `sequence-010` | sequence | frame | 59 | outside the pair window |
+| `sequence-010` | sequence | frame | 61 | outside the pair window |
+| `sequence-010` | sequence | frame | 57 | outside the pair window |
+| `sequence-010` | sequence | frame | 54 | outside the pair window |
+| `sequence-010` | sequence | frame | 60 | outside the pair window |
+| `sequence-010` | sequence | frame | 1068 | outside the pair window |
+| `sequence-011` | sequence | frame | 1056 | outside the pair window |
+| `sequence-011` | sequence | frame | 1055 | outside the pair window |
+| `sequence-011` | sequence | frame | 66 | outside the pair window |
+| `sequence-011` | sequence | frame | 760 | outside the pair window |
+| `sequence-011` | sequence | frame | 367 | outside the pair window |
+| `sequence-011` | sequence | frame | 759 | outside the pair window |
+| `sequence-011` | sequence | frame | 757 | outside the pair window |
+| `sequence-011` | sequence | frame | 134 | outside the pair window |
+| `sequence-012` | sequence | frame | 570 | outside the pair window |
+| `sequence-012` | sequence | frame | 574 | outside the pair window |
+| `sequence-012` | sequence | frame | 866 | outside the pair window |
+| `sequence-012` | sequence | frame | 1208 | outside the pair window |
+| `sequence-012` | sequence | frame | 237 | outside the pair window |
+| `sequence-012` | sequence | frame | 552 | outside the pair window |
+| `sequence-012` | sequence | frame | 109 | outside the pair window |
+| `sequence-012` | sequence | frame | 573 | outside the pair window |
+| `sequence-013` | sequence | frame | 128 | outside the pair window |
+| `sequence-013` | sequence | frame | 570 | outside the pair window |
+| `sequence-013` | sequence | frame | 149 | outside the pair window |
+| `sequence-013` | sequence | frame | 585 | outside the pair window |
+| `sequence-013` | sequence | frame | 590 | outside the pair window |
+| `sequence-013` | sequence | frame | 574 | outside the pair window |
+| `sequence-013` | sequence | frame | 1064 | outside the pair window |
+| `sequence-013` | sequence | frame | 150 | outside the pair window |
+| `sequence-014` | sequence | frame | 91 | outside the pair window |
+| `sequence-014` | sequence | frame | 94 | outside the pair window |
+| `sequence-014` | sequence | frame | 98 | outside the pair window |
+| `sequence-014` | sequence | frame | 570 | outside the pair window |
+| `sequence-014` | sequence | frame | 146 | outside the pair window |
+| `sequence-014` | sequence | frame | 1003 | outside the pair window |
+| `sequence-014` | sequence | frame | 574 | outside the pair window |
+| `sequence-014` | sequence | frame | 1201 | outside the pair window |
+| `sequence-015` | sequence | frame | 315 | outside the pair window |
+| `sequence-015` | sequence | frame | 101 | outside the pair window |
+| `sequence-015` | sequence | frame | 100 | outside the pair window |
+| `sequence-015` | sequence | frame | 313 | outside the pair window |
+| `sequence-015` | sequence | frame | 1234 | outside the pair window |
+| `sequence-015` | sequence | frame | 735 | outside the pair window |
+| `sequence-015` | sequence | frame | 885 | outside the pair window |
+| `sequence-015` | sequence | frame | 1201 | outside the pair window |
+| `sequence-016` | sequence | frame | 570 | outside the pair window |
+| `sequence-016` | sequence | frame | 574 | outside the pair window |
+| `sequence-016` | sequence | frame | 109 | outside the pair window |
+| `sequence-016` | sequence | frame | 597 | outside the pair window |
+| `sequence-016` | sequence | frame | 474 | outside the pair window |
+| `sequence-016` | sequence | frame | 598 | outside the pair window |
+| `sequence-017` | sequence | frame | 1055 | outside the pair window |
+| `sequence-017` | sequence | frame | 1056 | outside the pair window |
+| `sequence-017` | sequence | frame | 759 | outside the pair window |
+| `sequence-017` | sequence | frame | 338 | outside the pair window |
+| `sequence-017` | sequence | frame | 134 | outside the pair window |
+| `sequence-017` | sequence | frame | 279 | outside the pair window |
+| `sequence-017` | sequence | frame | 760 | outside the pair window |
+| `sequence-018` | sequence | frame | 570 | outside the pair window |
+| `sequence-018` | sequence | frame | 574 | outside the pair window |
+| `sequence-018` | sequence | frame | 573 | outside the pair window |
+| `sequence-018` | sequence | frame | 695 | outside the pair window |
+| `sequence-018` | sequence | frame | 693 | outside the pair window |
+| `sequence-018` | sequence | frame | 388 | outside the pair window |
+| `sequence-018` | sequence | frame | 389 | outside the pair window |
+| `sequence-019` | sequence | frame | 544 | outside the pair window |
+| `sequence-019` | sequence | frame | 794 | outside the pair window |
+| `sequence-019` | sequence | frame | 1174 | outside the pair window |
+| `sequence-019` | sequence | frame | 1104 | outside the pair window |
+| `sequence-019` | sequence | frame | 973 | outside the pair window |
+| `sequence-019` | sequence | frame | 468 | outside the pair window |
+| `sequence-019` | sequence | frame | 255 | outside the pair window |
+| `sequence-019` | sequence | frame | 773 | outside the pair window |
+| `sequence-020` | sequence | frame | 759 | outside the pair window |
+| `sequence-020` | sequence | frame | 814 | outside the pair window |
+| `sequence-020` | sequence | frame | 371 | outside the pair window |
+| `sequence-020` | sequence | frame | 338 | outside the pair window |
+| `sequence-020` | sequence | frame | 987 | outside the pair window |
+| `sequence-021` | sequence | frame | 570 | outside the pair window |
+| `sequence-021` | sequence | frame | 574 | outside the pair window |
+| `sequence-021` | sequence | frame | 845 | outside the pair window |
+| `sequence-021` | sequence | frame | 552 | outside the pair window |
+| `sequence-021` | sequence | frame | 1199 | outside the pair window |
+| `sequence-021` | sequence | frame | 424 | outside the pair window |
+| `sequence-021` | sequence | frame | 422 | outside the pair window |
+| `sequence-021` | sequence | frame | 403 | outside the pair window |
+| `sequence-022` | sequence | frame | 570 | outside the pair window |
+| `sequence-022` | sequence | frame | 574 | outside the pair window |
+| `sequence-022` | sequence | frame | 496 | outside the pair window |
+| `sequence-022` | sequence | frame | 142 | outside the pair window |
+| `sequence-022` | sequence | frame | 1006 | outside the pair window |
+| `sequence-022` | sequence | frame | 1007 | outside the pair window |
+| `sequence-023` | sequence | frame | 570 | outside the pair window |
+| `sequence-023` | sequence | frame | 574 | outside the pair window |
+| `sequence-023` | sequence | frame | 1003 | outside the pair window |
+| `sequence-023` | sequence | frame | 999 | outside the pair window |
+| `sequence-023` | sequence | frame | 1001 | outside the pair window |
+| `sequence-024` | sequence | frame | 150 | outside the pair window |
+| `sequence-024` | sequence | frame | 1064 | outside the pair window |
+| `sequence-024` | sequence | frame | 590 | outside the pair window |
+| `sequence-024` | sequence | frame | 585 | outside the pair window |
+| `sequence-024` | sequence | frame | 732 | outside the pair window |
+| `sequence-024` | sequence | frame | 1051 | outside the pair window |
+| `sequence-025` | sequence | frame | 570 | outside the pair window |
+| `sequence-025` | sequence | frame | 574 | outside the pair window |
+| `sequence-025` | sequence | frame | 1241 | outside the pair window |
+| `sequence-025` | sequence | frame | 845 | outside the pair window |
+| `sequence-025` | sequence | frame | 424 | outside the pair window |
+| `sequence-025` | sequence | frame | 422 | outside the pair window |
+| `sequence-025` | sequence | frame | 1145 | outside the pair window |
+| `sequence-025` | sequence | frame | 403 | outside the pair window |
+| `sequence-026` | sequence | frame | 570 | outside the pair window |
+| `sequence-026` | sequence | frame | 574 | outside the pair window |
+| `sequence-026` | sequence | frame | 1241 | outside the pair window |
+| `sequence-026` | sequence | frame | 1230 | outside the pair window |
+| `sequence-026` | sequence | frame | 552 | outside the pair window |
+| `sequence-026` | sequence | frame | 503 | outside the pair window |
+| `sequence-026` | sequence | frame | 845 | outside the pair window |
+| `sequence-027` | sequence | frame | 957 | outside the pair window |
+| `sequence-027` | sequence | frame | 570 | outside the pair window |
+| `sequence-027` | sequence | frame | 574 | outside the pair window |
+| `sequence-027` | sequence | frame | 237 | outside the pair window |
+| `sequence-027` | sequence | frame | 958 | outside the pair window |
+| `sequence-027` | sequence | frame | 814 | outside the pair window |
+| `sequence-027` | sequence | frame | 759 | outside the pair window |
+| `sequence-027` | sequence | frame | 742 | outside the pair window |
+| `sequence-028` | sequence | frame | 1072 | outside the pair window |
+| `sequence-028` | sequence | frame | 189 | outside the pair window |
+| `sequence-028` | sequence | frame | 186 | outside the pair window |
+| `sequence-028` | sequence | frame | 887 | outside the pair window |
+| `sequence-028` | sequence | frame | 1226 | outside the pair window |
+| `sequence-028` | sequence | frame | 1039 | outside the pair window |
+| `sequence-028` | sequence | frame | 534 | outside the pair window |
+| `sequence-028` | sequence | frame | 493 | outside the pair window |
+| `sequence-029` | sequence | frame | 222 | outside the pair window |
+| `sequence-029` | sequence | frame | 237 | outside the pair window |
+| `sequence-029` | sequence | frame | 633 | outside the pair window |
+| `sequence-029` | sequence | frame | 637 | outside the pair window |
+| `sequence-029` | sequence | frame | 399 | outside the pair window |
+| `sequence-029` | sequence | frame | 239 | outside the pair window |
+| `sequence-029` | sequence | frame | 866 | outside the pair window |
+| `sequence-029` | sequence | frame | 957 | outside the pair window |
+| `sequence-030` | sequence | frame | 743 | outside the pair window |
+| `sequence-030` | sequence | frame | 541 | outside the pair window |
+| `sequence-030` | sequence | frame | 247 | outside the pair window |
+| `sequence-030` | sequence | frame | 1025 | outside the pair window |
+| `sequence-030` | sequence | frame | 264 | outside the pair window |
+| `sequence-030` | sequence | frame | 1239 | outside the pair window |
+| `sequence-030` | sequence | frame | 1241 | outside the pair window |
+| `sequence-031` | sequence | frame | 222 | outside the pair window |
+| `sequence-031` | sequence | frame | 633 | outside the pair window |
+| `sequence-031` | sequence | frame | 237 | outside the pair window |
+| `sequence-031` | sequence | frame | 1201 | outside the pair window |
+| `sequence-031` | sequence | frame | 866 | outside the pair window |
+| `sequence-031` | sequence | frame | 814 | outside the pair window |
+| `sequence-031` | sequence | frame | 637 | outside the pair window |
+| `sequence-031` | sequence | frame | 399 | outside the pair window |
+| `sequence-032` | sequence | frame | 1235 | outside the pair window |
+| `sequence-032` | sequence | frame | 1236 | outside the pair window |
+| `sequence-032` | sequence | frame | 633 | outside the pair window |
+| `sequence-032` | sequence | frame | 597 | outside the pair window |
+| `sequence-032` | sequence | frame | 552 | outside the pair window |
+| `sequence-032` | sequence | frame | 237 | outside the pair window |
+| `sequence-032` | sequence | frame | 1201 | outside the pair window |
+| `sequence-033` | sequence | frame | 915 | outside the pair window |
+| `sequence-033` | sequence | frame | 574 | outside the pair window |
+| `sequence-033` | sequence | frame | 552 | outside the pair window |
+| `sequence-033` | sequence | frame | 570 | outside the pair window |
+| `sequence-033` | sequence | frame | 503 | outside the pair window |
+| `sequence-033` | sequence | frame | 531 | outside the pair window |
+| `sequence-033` | sequence | frame | 506 | outside the pair window |
+| `sequence-034` | sequence | frame | 570 | outside the pair window |
+| `sequence-034` | sequence | frame | 574 | outside the pair window |
+| `sequence-034` | sequence | frame | 519 | outside the pair window |
+| `sequence-034` | sequence | frame | 742 | outside the pair window |
+| `sequence-034` | sequence | frame | 232 | outside the pair window |
+| `sequence-034` | sequence | frame | 301 | outside the pair window |
+| `sequence-034` | sequence | frame | 552 | outside the pair window |
+| `sequence-034` | sequence | frame | 237 | outside the pair window |
+| `sequence-035` | sequence | frame | 236 | outside the pair window |
+| `sequence-035` | sequence | frame | 945 | outside the pair window |
+| `sequence-035` | sequence | frame | 395 | outside the pair window |
+| `sequence-035` | sequence | frame | 1175 | outside the pair window |
+| `sequence-035` | sequence | frame | 944 | outside the pair window |
+| `sequence-035` | sequence | frame | 852 | outside the pair window |
+| `sequence-035` | sequence | frame | 235 | outside the pair window |
+| `sequence-036` | sequence | frame | 637 | outside the pair window |
+| `sequence-036` | sequence | frame | 633 | outside the pair window |
+| `sequence-036` | sequence | frame | 960 | outside the pair window |
+| `sequence-036` | sequence | frame | 399 | outside the pair window |
+| `sequence-036` | sequence | frame | 958 | outside the pair window |
+| `sequence-037` | sequence | frame | 541 | outside the pair window |
+| `sequence-037` | sequence | frame | 743 | outside the pair window |
+| `sequence-037` | sequence | frame | 1025 | outside the pair window |
+| `sequence-037` | sequence | frame | 264 | outside the pair window |
+| `sequence-037` | sequence | frame | 1239 | outside the pair window |
+| `sequence-037` | sequence | frame | 1241 | outside the pair window |
+| `sequence-038` | sequence | frame | 860 | outside the pair window |
+| `sequence-038` | sequence | frame | 861 | outside the pair window |
+| `sequence-038` | sequence | frame | 862 | outside the pair window |
+| `sequence-038` | sequence | frame | 699 | outside the pair window |
+| `sequence-038` | sequence | frame | 777 | outside the pair window |
+| `sequence-038` | sequence | frame | 701 | outside the pair window |
+| `sequence-038` | sequence | frame | 702 | outside the pair window |
+| `sequence-038` | sequence | frame | 754 | outside the pair window |
+| `sequence-039` | sequence | frame | 265 | outside the pair window |
+| `sequence-039` | sequence | frame | 906 | outside the pair window |
+| `sequence-039` | sequence | frame | 650 | outside the pair window |
+| `sequence-039` | sequence | frame | 465 | outside the pair window |
+| `sequence-039` | sequence | frame | 783 | outside the pair window |
+| `sequence-039` | sequence | frame | 464 | outside the pair window |
+| `sequence-039` | sequence | frame | 266 | outside the pair window |
+| `sequence-040` | sequence | frame | 814 | outside the pair window |
+| `sequence-040` | sequence | frame | 633 | outside the pair window |
+| `sequence-040` | sequence | frame | 866 | outside the pair window |
+| `sequence-040` | sequence | frame | 399 | outside the pair window |
+| `sequence-040` | sequence | frame | 637 | outside the pair window |
+| `sequence-041` | sequence | frame | 759 | outside the pair window |
+| `sequence-041` | sequence | frame | 1056 | outside the pair window |
+| `sequence-041` | sequence | frame | 275 | outside the pair window |
+| `sequence-041` | sequence | frame | 276 | outside the pair window |
+| `sequence-041` | sequence | frame | 1059 | outside the pair window |
+| `sequence-042` | sequence | frame | 637 | outside the pair window |
+| `sequence-042` | sequence | frame | 633 | outside the pair window |
+| `sequence-042` | sequence | frame | 1201 | outside the pair window |
+| `sequence-042` | sequence | frame | 552 | outside the pair window |
+| `sequence-042` | sequence | frame | 570 | outside the pair window |
+| `sequence-042` | sequence | frame | 596 | outside the pair window |
+| `sequence-043` | sequence | frame | 1235 | outside the pair window |
+| `sequence-043` | sequence | frame | 1236 | outside the pair window |
+| `sequence-043` | sequence | frame | 552 | outside the pair window |
+| `sequence-043` | sequence | frame | 633 | outside the pair window |
+| `sequence-043` | sequence | frame | 531 | outside the pair window |
+| `sequence-043` | sequence | frame | 1206 | outside the pair window |
+| `sequence-043` | sequence | frame | 814 | outside the pair window |
+| `sequence-044` | sequence | frame | 915 | outside the pair window |
+| `sequence-044` | sequence | frame | 552 | outside the pair window |
+| `sequence-044` | sequence | frame | 1241 | outside the pair window |
+| `sequence-044` | sequence | frame | 570 | outside the pair window |
+| `sequence-044` | sequence | frame | 574 | outside the pair window |
+| `sequence-044` | sequence | frame | 633 | outside the pair window |
+| `sequence-044` | sequence | frame | 531 | outside the pair window |
+| `sequence-045` | sequence | frame | 310 | outside the pair window |
+| `sequence-045` | sequence | frame | 312 | outside the pair window |
+| `sequence-045` | sequence | frame | 824 | outside the pair window |
+| `sequence-045` | sequence | frame | 311 | outside the pair window |
+| `sequence-045` | sequence | frame | 820 | outside the pair window |
+| `sequence-045` | sequence | frame | 882 | outside the pair window |
+| `sequence-045` | sequence | frame | 884 | outside the pair window |
+| `sequence-046` | sequence | frame | 574 | outside the pair window |
+| `sequence-046` | sequence | frame | 570 | outside the pair window |
+| `sequence-046` | sequence | frame | 1148 | outside the pair window |
+| `sequence-046` | sequence | frame | 389 | outside the pair window |
+| `sequence-046` | sequence | frame | 1144 | outside the pair window |
+| `sequence-046` | sequence | frame | 1191 | outside the pair window |
+| `sequence-047` | sequence | frame | 330 | outside the pair window |
+| `sequence-047` | sequence | frame | 1151 | outside the pair window |
+| `sequence-047` | sequence | frame | 331 | outside the pair window |
+| `sequence-047` | sequence | frame | 328 | outside the pair window |
+| `sequence-047` | sequence | frame | 329 | outside the pair window |
+| `sequence-047` | sequence | frame | 327 | outside the pair window |
+| `sequence-047` | sequence | frame | 1110 | outside the pair window |
+| `sequence-048` | sequence | frame | 814 | outside the pair window |
+| `sequence-048` | sequence | frame | 827 | outside the pair window |
+| `sequence-048` | sequence | frame | 338 | outside the pair window |
+| `sequence-048` | sequence | frame | 336 | outside the pair window |
+| `sequence-048` | sequence | frame | 371 | outside the pair window |
+| `sequence-049` | sequence | frame | 570 | outside the pair window |
+| `sequence-049` | sequence | frame | 574 | outside the pair window |
+| `sequence-049` | sequence | frame | 1241 | outside the pair window |
+| `sequence-049` | sequence | frame | 1151 | outside the pair window |
+| `sequence-049` | sequence | frame | 636 | outside the pair window |
+| `sequence-049` | sequence | frame | 742 | outside the pair window |
+| `sequence-050` | sequence | frame | 860 | outside the pair window |
+| `sequence-050` | sequence | frame | 349 | outside the pair window |
+| `sequence-050` | sequence | frame | 862 | outside the pair window |
+| `sequence-050` | sequence | frame | 350 | outside the pair window |
+| `sequence-050` | sequence | frame | 861 | outside the pair window |
+| `sequence-050` | sequence | frame | 702 | outside the pair window |
+| `sequence-050` | sequence | frame | 774 | outside the pair window |
+| `sequence-051` | sequence | frame | 382 | outside the pair window |
+| `sequence-051` | sequence | frame | 633 | outside the pair window |
+| `sequence-051` | sequence | frame | 399 | outside the pair window |
+| `sequence-051` | sequence | frame | 960 | outside the pair window |
+| `sequence-052` | sequence | frame | 636 | outside the pair window |
+| `sequence-052` | sequence | frame | 570 | outside the pair window |
+| `sequence-052` | sequence | frame | 574 | outside the pair window |
+| `sequence-052` | sequence | frame | 573 | outside the pair window |
+| `sequence-052` | sequence | frame | 742 | outside the pair window |
+| `sequence-053` | sequence | frame | 362 | outside the pair window |
+| `sequence-053` | sequence | frame | 581 | outside the pair window |
+| `sequence-053` | sequence | frame | 904 | outside the pair window |
+| `sequence-053` | sequence | frame | 363 | outside the pair window |
+| `sequence-053` | sequence | frame | 518 | outside the pair window |
+| `sequence-053` | sequence | frame | 451 | outside the pair window |
+| `sequence-053` | sequence | frame | 478 | outside the pair window |
+| `sequence-053` | sequence | frame | 795 | outside the pair window |
+| `sequence-054` | sequence | frame | 814 | outside the pair window |
+| `sequence-054` | sequence | frame | 420 | outside the pair window |
+| `sequence-055` | sequence | frame | 369 | outside the pair window |
+| `sequence-055` | sequence | frame | 636 | outside the pair window |
+| `sequence-055` | sequence | frame | 1201 | outside the pair window |
+| `sequence-055` | sequence | frame | 828 | outside the pair window |
+| `sequence-056` | sequence | frame | 633 | outside the pair window |
+| `sequence-056` | sequence | frame | 637 | outside the pair window |
+| `sequence-056` | sequence | frame | 866 | outside the pair window |
+| `sequence-056` | sequence | frame | 382 | outside the pair window |
+| `sequence-057` | sequence | frame | 940 | outside the pair window |
+| `sequence-057` | sequence | frame | 378 | outside the pair window |
+| `sequence-057` | sequence | frame | 1068 | outside the pair window |
+| `sequence-057` | sequence | frame | 664 | outside the pair window |
+| `sequence-057` | sequence | frame | 665 | outside the pair window |
+| `sequence-058` | sequence | frame | 636 | outside the pair window |
+| `sequence-058` | sequence | frame | 854 | outside the pair window |
+| `sequence-058` | sequence | frame | 397 | outside the pair window |
+| `sequence-058` | sequence | frame | 634 | outside the pair window |
+| `sequence-058` | sequence | frame | 1175 | outside the pair window |
+| `sequence-059` | sequence | frame | 636 | outside the pair window |
+| `sequence-059` | sequence | frame | 634 | outside the pair window |
+| `sequence-059` | sequence | frame | 397 | outside the pair window |
+| `sequence-059` | sequence | frame | 400 | outside the pair window |
+| `sequence-059` | sequence | frame | 1175 | outside the pair window |
+| `sequence-060` | sequence | frame | 636 | outside the pair window |
+| `sequence-060` | sequence | frame | 637 | outside the pair window |
+| `sequence-060` | sequence | frame | 958 | outside the pair window |
+| `sequence-060` | sequence | frame | 633 | outside the pair window |
+| `sequence-061` | sequence | frame | 633 | outside the pair window |
+| `sequence-061` | sequence | frame | 637 | outside the pair window |
+| `sequence-061` | sequence | frame | 399 | outside the pair window |
+| `sequence-062` | sequence | frame | 845 | outside the pair window |
+| `sequence-062` | sequence | frame | 424 | outside the pair window |
+| `sequence-062` | sequence | frame | 422 | outside the pair window |
+| `sequence-062` | sequence | frame | 403 | outside the pair window |
+| `sequence-062` | sequence | frame | 402 | outside the pair window |
+| `sequence-063` | sequence | frame | 570 | outside the pair window |
+| `sequence-063` | sequence | frame | 574 | outside the pair window |
+| `sequence-063` | sequence | frame | 693 | outside the pair window |
+| `sequence-063` | sequence | frame | 571 | outside the pair window |
+| `sequence-064` | sequence | frame | 636 | outside the pair window |
+| `sequence-064` | sequence | frame | 1201 | outside the pair window |
+| `sequence-064` | sequence | frame | 866 | outside the pair window |
+| `sequence-065` | sequence | frame | 745 | outside the pair window |
+| `sequence-065` | sequence | frame | 744 | outside the pair window |
+| `sequence-065` | sequence | frame | 416 | outside the pair window |
+| `sequence-065` | sequence | frame | 742 | outside the pair window |
+| `sequence-065` | sequence | frame | 872 | outside the pair window |
+| `sequence-066` | sequence | frame | 759 | outside the pair window |
+| `sequence-066` | sequence | frame | 419 | outside the pair window |
+| `sequence-066` | sequence | frame | 814 | outside the pair window |
+| `sequence-067` | sequence | frame | 845 | outside the pair window |
+| `sequence-067` | sequence | frame | 424 | outside the pair window |
+| `sequence-067` | sequence | frame | 422 | outside the pair window |
+| `sequence-067` | sequence | frame | 913 | outside the pair window |
+| `sequence-068` | sequence | frame | 648 | outside the pair window |
+| `sequence-068` | sequence | frame | 651 | outside the pair window |
+| `sequence-068` | sequence | frame | 1023 | outside the pair window |
+| `sequence-068` | sequence | frame | 766 | outside the pair window |
+| `sequence-068` | sequence | frame | 570 | outside the pair window |
+| `sequence-068` | sequence | frame | 622 | outside the pair window |
+| `sequence-069` | sequence | frame | 665 | outside the pair window |
+| `sequence-069` | sequence | frame | 1068 | outside the pair window |
+| `sequence-070` | sequence | frame | 570 | outside the pair window |
+| `sequence-070` | sequence | frame | 574 | outside the pair window |
+| `sequence-070` | sequence | frame | 573 | outside the pair window |
+| `sequence-070` | sequence | frame | 1241 | outside the pair window |
+| `sequence-070` | sequence | frame | 552 | outside the pair window |
+| `sequence-070` | sequence | frame | 1145 | outside the pair window |
+| `sequence-070` | sequence | frame | 1024 | outside the pair window |
+| `sequence-070` | sequence | frame | 531 | outside the pair window |
+| `sequence-071` | sequence | frame | 491 | outside the pair window |
+| `sequence-071` | sequence | frame | 493 | outside the pair window |
+| `sequence-071` | sequence | frame | 554 | outside the pair window |
+| `sequence-071` | sequence | frame | 492 | outside the pair window |
+| `sequence-071` | sequence | frame | 494 | outside the pair window |
+| `sequence-071` | sequence | frame | 552 | outside the pair window |
+| `sequence-071` | sequence | frame | 531 | outside the pair window |
+| `sequence-071` | sequence | frame | 920 | outside the pair window |
+| `sequence-072` | sequence | frame | 1104 | outside the pair window |
+| `sequence-072` | sequence | frame | 1174 | outside the pair window |
+| `sequence-072` | sequence | frame | 544 | outside the pair window |
+| `sequence-072` | sequence | frame | 794 | outside the pair window |
+| `sequence-072` | sequence | frame | 773 | outside the pair window |
+| `sequence-072` | sequence | frame | 468 | outside the pair window |
+| `sequence-072` | sequence | frame | 973 | outside the pair window |
+| `sequence-073` | sequence | frame | 916 | outside the pair window |
+| `sequence-073` | sequence | frame | 887 | outside the pair window |
+| `sequence-073` | sequence | frame | 919 | outside the pair window |
+| `sequence-073` | sequence | frame | 920 | outside the pair window |
+| `window_recall-001` | window recall | frame | 1144 | outside the pair window |
+| `window_recall-001` | window recall | frame | 742 | outside the pair window |
+| `window_recall-001` | window recall | frame | 574 | outside the pair window |
+| `window_recall-001` | window recall | frame | 908 | outside the pair window |
+| `window_recall-001` | window recall | frame | 976 | outside the pair window |
+| `window_recall-001` | window recall | frame | 570 | outside the pair window |
+| `window_recall-001` | window recall | frame | 457 | outside the pair window |
+| `window_recall-002` | window recall | frame | 1144 | outside the pair window |
+| `window_recall-002` | window recall | frame | 976 | outside the pair window |
+| `window_recall-002` | window recall | frame | 773 | outside the pair window |
+| `window_recall-002` | window recall | frame | 973 | outside the pair window |
+| `window_recall-002` | window recall | frame | 742 | outside the pair window |
+| `window_recall-002` | window recall | frame | 1145 | outside the pair window |
+| `window_recall-002` | window recall | frame | 574 | outside the pair window |
+| `window_recall-002` | window recall | frame | 570 | outside the pair window |
+| `window_recall-003` | window recall | frame | 457 | outside the pair window |
+| `window_recall-003` | window recall | frame | 574 | outside the pair window |
+| `window_recall-003` | window recall | frame | 742 | outside the pair window |
+| `window_recall-003` | window recall | frame | 570 | outside the pair window |
+| `window_recall-003` | window recall | frame | 668 | outside the pair window |
+| `window_recall-003` | window recall | frame | 503 | outside the pair window |
+| `window_recall-003` | window recall | frame | 506 | outside the pair window |
+| `window_recall-004` | window recall | frame | 574 | outside the pair window |
+| `window_recall-004` | window recall | frame | 1144 | outside the pair window |
+| `window_recall-004` | window recall | frame | 570 | outside the pair window |
+| `window_recall-004` | window recall | frame | 742 | outside the pair window |
+| `window_recall-004` | window recall | frame | 976 | outside the pair window |
+| `window_recall-004` | window recall | frame | 457 | outside the pair window |
+| `window_recall-004` | window recall | frame | 908 | outside the pair window |
+| `window_recall-004` | window recall | frame | 973 | outside the pair window |
+| `window_recall-005` | window recall | frame | 574 | outside the pair window |
+| `window_recall-005` | window recall | frame | 1144 | outside the pair window |
+| `window_recall-005` | window recall | frame | 570 | outside the pair window |
+| `window_recall-005` | window recall | frame | 976 | outside the pair window |
+| `window_recall-005` | window recall | frame | 742 | outside the pair window |
+| `window_recall-005` | window recall | frame | 973 | outside the pair window |
+| `window_recall-005` | window recall | frame | 1239 | outside the pair window |
+| `window_recall-005` | window recall | frame | 648 | outside the pair window |
+| `window_recall-006` | window recall | frame | 570 | outside the pair window |
+| `window_recall-006` | window recall | frame | 574 | outside the pair window |
+| `window_recall-006` | window recall | frame | 976 | outside the pair window |
+| `window_recall-006` | window recall | frame | 973 | outside the pair window |
+| `window_recall-006` | window recall | frame | 1144 | outside the pair window |
+| `window_recall-006` | window recall | frame | 773 | outside the pair window |
+| `window_recall-006` | window recall | frame | 908 | outside the pair window |
+| `window_recall-006` | window recall | frame | 743 | outside the pair window |
+| `window_recall-007` | window recall | frame | 574 | outside the pair window |
+| `window_recall-007` | window recall | frame | 570 | outside the pair window |
+| `window_recall-007` | window recall | frame | 1144 | outside the pair window |
+| `window_recall-007` | window recall | frame | 908 | outside the pair window |
+| `window_recall-007` | window recall | frame | 503 | outside the pair window |
+| `window_recall-007` | window recall | frame | 1240 | outside the pair window |
+| `window_recall-008` | window recall | frame | 1144 | outside the pair window |
+| `window_recall-008` | window recall | frame | 973 | outside the pair window |
+| `window_recall-008` | window recall | frame | 574 | outside the pair window |
+| `window_recall-008` | window recall | frame | 976 | outside the pair window |
+| `window_recall-008` | window recall | frame | 570 | outside the pair window |
+| `window_recall-008` | window recall | frame | 1145 | outside the pair window |
+| `window_recall-008` | window recall | frame | 908 | outside the pair window |
+| `window_recall-008` | window recall | frame | 1240 | outside the pair window |
+| `window_recall-009` | window recall | frame | 976 | outside the pair window |
+| `window_recall-009` | window recall | frame | 1144 | outside the pair window |
+| `window_recall-009` | window recall | frame | 973 | outside the pair window |
+| `window_recall-009` | window recall | frame | 570 | outside the pair window |
+| `window_recall-009` | window recall | frame | 574 | outside the pair window |
+| `window_recall-009` | window recall | frame | 1240 | outside the pair window |
+| `window_recall-009` | window recall | frame | 1145 | outside the pair window |
+| `window_recall-010` | window recall | frame | 1144 | outside the pair window |
+| `window_recall-010` | window recall | frame | 574 | outside the pair window |
+| `window_recall-010` | window recall | frame | 457 | outside the pair window |
+| `window_recall-010` | window recall | frame | 976 | outside the pair window |
+| `window_recall-010` | window recall | frame | 908 | outside the pair window |
+| `window_recall-010` | window recall | frame | 570 | outside the pair window |
+| `window_recall-010` | window recall | frame | 973 | outside the pair window |
+| `window_recall-010` | window recall | frame | 742 | outside the pair window |
+| `window_recall-011` | window recall | frame | 1144 | outside the pair window |
+| `window_recall-011` | window recall | frame | 976 | outside the pair window |
+| `window_recall-011` | window recall | frame | 973 | outside the pair window |
+| `window_recall-011` | window recall | frame | 908 | outside the pair window |
+| `window_recall-011` | window recall | frame | 58 | outside the pair window |
+| `window_recall-011` | window recall | frame | 1145 | outside the pair window |
+| `window_recall-011` | window recall | frame | 742 | outside the pair window |
+| `window_recall-011` | window recall | frame | 574 | outside the pair window |
+| `window_recall-012` | window recall | frame | 1144 | outside the pair window |
+| `window_recall-012` | window recall | frame | 574 | outside the pair window |
+| `window_recall-012` | window recall | frame | 570 | outside the pair window |
+| `window_recall-012` | window recall | frame | 976 | outside the pair window |
+| `window_recall-012` | window recall | frame | 973 | outside the pair window |
+| `window_recall-012` | window recall | frame | 908 | outside the pair window |
+| `window_recall-012` | window recall | frame | 742 | outside the pair window |
+| `window_recall-012` | window recall | frame | 1145 | outside the pair window |
+| `window_recall-013` | window recall | frame | 574 | outside the pair window |
+| `window_recall-013` | window recall | frame | 1241 | outside the pair window |
+| `window_recall-013` | window recall | frame | 247 | outside the pair window |
+| `window_recall-013` | window recall | frame | 570 | outside the pair window |
+| `window_recall-013` | window recall | frame | 541 | outside the pair window |
+| `window_recall-013` | window recall | frame | 58 | outside the pair window |
+| `window_recall-013` | window recall | frame | 1145 | outside the pair window |
+| `window_recall-014` | window recall | frame | 574 | outside the pair window |
+| `window_recall-014` | window recall | frame | 743 | outside the pair window |
+| `window_recall-014` | window recall | frame | 570 | outside the pair window |
+| `window_recall-014` | window recall | frame | 541 | outside the pair window |
+| `window_recall-014` | window recall | frame | 773 | outside the pair window |
+| `window_recall-014` | window recall | frame | 1241 | outside the pair window |
+| `window_recall-014` | window recall | frame | 58 | outside the pair window |
+| `window_recall-014` | window recall | frame | 973 | outside the pair window |
+| `window_recall-015` | window recall | frame | 973 | outside the pair window |
+| `window_recall-015` | window recall | frame | 58 | outside the pair window |
+| `window_recall-015` | window recall | frame | 574 | outside the pair window |
+| `window_recall-015` | window recall | frame | 773 | outside the pair window |
+| `window_recall-015` | window recall | frame | 570 | outside the pair window |
+| `window_recall-015` | window recall | frame | 743 | outside the pair window |
+| `window_recall-015` | window recall | frame | 541 | outside the pair window |
+| `window_recall-015` | window recall | frame | 247 | outside the pair window |
+| `window_recall-016` | window recall | frame | 743 | outside the pair window |
+| `window_recall-016` | window recall | frame | 574 | outside the pair window |
+| `window_recall-016` | window recall | frame | 570 | outside the pair window |
+| `window_recall-016` | window recall | frame | 541 | outside the pair window |
+| `window_recall-016` | window recall | frame | 58 | outside the pair window |
+| `window_recall-016` | window recall | frame | 742 | outside the pair window |
+| `window_recall-016` | window recall | frame | 247 | outside the pair window |
+| `window_recall-016` | window recall | frame | 773 | outside the pair window |
+| `window_recall-017` | window recall | frame | 743 | outside the pair window |
+| `window_recall-017` | window recall | frame | 58 | outside the pair window |
+| `window_recall-017` | window recall | frame | 977 | outside the pair window |
+| `window_recall-017` | window recall | frame | 773 | outside the pair window |
+| `window_recall-017` | window recall | frame | 541 | outside the pair window |
+| `window_recall-017` | window recall | frame | 973 | outside the pair window |
+| `window_recall-018` | window recall | frame | 743 | outside the pair window |
+| `window_recall-018` | window recall | frame | 58 | outside the pair window |
+| `window_recall-018` | window recall | frame | 247 | outside the pair window |
+| `window_recall-018` | window recall | frame | 742 | outside the pair window |
+| `window_recall-018` | window recall | frame | 333 | outside the pair window |
+| `window_recall-018` | window recall | frame | 1241 | outside the pair window |
+| `window_recall-018` | window recall | frame | 908 | outside the pair window |
+| `window_recall-019` | window recall | frame | 743 | outside the pair window |
+| `window_recall-019` | window recall | frame | 742 | outside the pair window |
+| `window_recall-019` | window recall | frame | 58 | outside the pair window |
+| `window_recall-019` | window recall | frame | 541 | outside the pair window |
+| `window_recall-019` | window recall | frame | 1145 | outside the pair window |
+| `window_recall-019` | window recall | frame | 1241 | outside the pair window |
+| `window_recall-019` | window recall | frame | 570 | outside the pair window |
+| `window_recall-019` | window recall | frame | 773 | outside the pair window |
+| `window_recall-020` | window recall | frame | 570 | outside the pair window |
+| `window_recall-020` | window recall | frame | 574 | outside the pair window |
+| `window_recall-020` | window recall | frame | 743 | outside the pair window |
+| `window_recall-020` | window recall | frame | 541 | outside the pair window |
+| `window_recall-020` | window recall | frame | 742 | outside the pair window |
+| `window_recall-020` | window recall | frame | 58 | outside the pair window |
+| `window_recall-020` | window recall | frame | 1241 | outside the pair window |
+| `window_recall-020` | window recall | frame | 1145 | outside the pair window |
+| `window_recall-021` | window recall | frame | 541 | outside the pair window |
+| `window_recall-021` | window recall | frame | 743 | outside the pair window |
+| `window_recall-021` | window recall | frame | 784 | outside the pair window |
+| `window_recall-021` | window recall | frame | 247 | outside the pair window |
+| `window_recall-021` | window recall | frame | 1026 | outside the pair window |
+| `window_recall-021` | window recall | frame | 1147 | outside the pair window |
+| `window_recall-021` | window recall | frame | 779 | outside the pair window |
+| `window_recall-021` | window recall | frame | 782 | outside the pair window |
+| `window_recall-022` | window recall | frame | 742 | outside the pair window |
+| `window_recall-022` | window recall | frame | 743 | outside the pair window |
+| `window_recall-022` | window recall | frame | 541 | outside the pair window |
+| `window_recall-022` | window recall | frame | 58 | outside the pair window |
+| `window_recall-022` | window recall | frame | 1145 | outside the pair window |
+| `window_recall-022` | window recall | frame | 570 | outside the pair window |
+| `window_recall-022` | window recall | frame | 574 | outside the pair window |
+| `window_recall-022` | window recall | frame | 247 | outside the pair window |
+| `window_recall-023` | window recall | frame | 742 | outside the pair window |
+| `window_recall-023` | window recall | frame | 743 | outside the pair window |
+| `window_recall-023` | window recall | frame | 574 | outside the pair window |
+| `window_recall-023` | window recall | frame | 570 | outside the pair window |
+| `window_recall-023` | window recall | frame | 541 | outside the pair window |
+| `window_recall-023` | window recall | frame | 333 | outside the pair window |
+| `window_recall-023` | window recall | frame | 58 | outside the pair window |
+| `window_recall-023` | window recall | frame | 908 | outside the pair window |
+| `window_recall-024` | window recall | frame | 773 | outside the pair window |
+| `window_recall-024` | window recall | frame | 742 | outside the pair window |
+| `window_recall-024` | window recall | frame | 743 | outside the pair window |
+| `window_recall-024` | window recall | frame | 1145 | outside the pair window |
+| `window_recall-024` | window recall | frame | 541 | outside the pair window |
+| `window_recall-024` | window recall | frame | 574 | outside the pair window |
+| `window_recall-024` | window recall | frame | 570 | outside the pair window |
+| `window_recall-024` | window recall | frame | 58 | outside the pair window |
+| `window_recall-025` | window recall | frame | 742 | outside the pair window |
+| `window_recall-025` | window recall | frame | 574 | outside the pair window |
+| `window_recall-025` | window recall | frame | 570 | outside the pair window |
+| `window_recall-025` | window recall | frame | 457 | outside the pair window |
+| `window_recall-025` | window recall | frame | 503 | outside the pair window |
+| `window_recall-025` | window recall | frame | 333 | outside the pair window |
+| `window_recall-025` | window recall | frame | 743 | outside the pair window |
+| `window_recall-025` | window recall | frame | 541 | outside the pair window |
+| `window_recall-026` | window recall | frame | 574 | outside the pair window |
+| `window_recall-026` | window recall | frame | 570 | outside the pair window |
+| `window_recall-026` | window recall | frame | 743 | outside the pair window |
+| `window_recall-026` | window recall | frame | 333 | outside the pair window |
+| `window_recall-026` | window recall | frame | 58 | outside the pair window |
+| `window_recall-026` | window recall | frame | 742 | outside the pair window |
+| `window_recall-026` | window recall | frame | 541 | outside the pair window |
+| `window_recall-026` | window recall | frame | 773 | outside the pair window |
+| `window_recall-027` | window recall | frame | 574 | outside the pair window |
+| `window_recall-027` | window recall | frame | 570 | outside the pair window |
+| `window_recall-027` | window recall | frame | 743 | outside the pair window |
+| `window_recall-027` | window recall | frame | 742 | outside the pair window |
+| `window_recall-027` | window recall | frame | 1145 | outside the pair window |
+| `window_recall-027` | window recall | frame | 973 | outside the pair window |
+| `window_recall-027` | window recall | frame | 541 | outside the pair window |
+| `window_recall-027` | window recall | frame | 58 | outside the pair window |
+| `window_recall-028` | window recall | frame | 570 | outside the pair window |
+| `window_recall-028` | window recall | frame | 574 | outside the pair window |
+| `window_recall-028` | window recall | frame | 743 | outside the pair window |
+| `window_recall-028` | window recall | frame | 773 | outside the pair window |
+| `window_recall-028` | window recall | frame | 541 | outside the pair window |
+| `window_recall-028` | window recall | frame | 973 | outside the pair window |
+| `window_recall-028` | window recall | frame | 742 | outside the pair window |
+| `window_recall-028` | window recall | frame | 58 | outside the pair window |
+| `window_recall-029` | window recall | frame | 574 | outside the pair window |
+| `window_recall-029` | window recall | frame | 570 | outside the pair window |
+| `window_recall-029` | window recall | frame | 743 | outside the pair window |
+| `window_recall-029` | window recall | frame | 541 | outside the pair window |
+| `window_recall-029` | window recall | frame | 247 | outside the pair window |
+| `window_recall-029` | window recall | frame | 742 | outside the pair window |
+| `window_recall-029` | window recall | frame | 503 | outside the pair window |
+| `window_recall-030` | window recall | frame | 743 | outside the pair window |
+| `window_recall-030` | window recall | frame | 574 | outside the pair window |
+| `window_recall-030` | window recall | frame | 570 | outside the pair window |
+| `window_recall-030` | window recall | frame | 541 | outside the pair window |
+| `window_recall-030` | window recall | frame | 58 | outside the pair window |
+| `window_recall-030` | window recall | frame | 973 | outside the pair window |
+| `window_recall-030` | window recall | frame | 1145 | outside the pair window |
+| `window_recall-030` | window recall | frame | 1241 | outside the pair window |
+
+## Entity check (independent reference extractor vs. the work graph)
+
+- Work-graph surface: absent (`entities` table not present or empty)
+- Reference entities sampled from the discovery frames: 176 of 176
+- Recovery: n/a (no entity surface)
+- Invention: n/a (no entity surface)
+
+## Metric definitions (the comparator Gate A freezes)
+
+**1. Evidence recall@10 (the comparator).** For one pair: the pair's expected ids with sessions and frames interleaved, a session first (s1, f1, s2, f2, and so on), first 10 taken, score = matched / min(10, expected count). A cited id set is the turn's cited frame ids plus its cited session ids; an expected **session** id also counts as matched when a cited frame's `session_id` equals it. The aggregate is the arithmetic mean of the per-pair scores, overall and per generator. Citations are the only evidence the product exposes to a client (`03 §7i.3`), so this is what Gate A freezes.
+
+**2. Retrieval recall@10 (diagnostic, never mixed into 1).** Per pair, whether the pair's first expected frame id appears among the first 10 `frame_id`s of `GET /v1/search?q=<question>&limit=10&include_chrome=false`. Pairs without expected frames, or whose search call failed, are not measured and do not enter the denominator.
+
+**3. Citation validity.** `valid / total` over every cited id of every turn (the kickoff states its complement, `invalid / total`; both counts appear next to the rate). A cited frame is valid when it exists and its `captured_at` lies inside the pair's window; a pair with no window means the whole history. A cited session is valid when it exists and its interval overlaps the window (a session with `ended_at` NULL is open-ended). Every invalid id is printed above with its pair and the reason.
+
+**4. Known fact present.** The answer, lowercased and whitespace-collapsed, contains at least one of the pair's expected strings (normalized the same way), or for `last_seen` the expected local `YYYY-MM-DD`. The rate is over all pairs of the scope: a failed turn has no answer and counts as a miss.
+
+**5. Latency p50 / p95.** Per turn, wall clock milliseconds from the `POST /v1/ask` request to the terminal `done` or `error` event, over successful turns only, nearest-rank percentile (`ceil(p*n)`). Failures are counted separately by class: `api_unavailable`, `timeout`, `empty_answer`, `http_error`.
+
+**Generator ground truth (the field scope each family matches).** `last_seen` matches the reference, ASCII-case-insensitively, in `frames.window_title`, `frames.browser_url` or content text (`frame_text.content_text`, falling back to legacy `ocr_text.text`), newest first. `involvement` matches `window_title`/`browser_url` only - the fields a repository or domain appears in per `03 §7h.2` - and orders the owning sessions by `started_at`. `sequence` takes the session with the greatest `started_at` strictly below the target session's, and skips the pair when that is not unique (another session starts at the same instant as either one). `window_recall` takes the sessions whose interval overlaps the local `[06:00, 12:00)` window of that date, and of their frames only those captured inside that window, so expected evidence is never an out-of-window citation. `seen_again` takes the exact FTS5 match set (`frame_text_fts`, porter tokenizer) of a whitespace-collapsed line of 24 to 160 characters that occurs in at least two and at most 50 frames. Each pair keeps at most ten expected ids of each kind, because the comparator is `@10`.
+
+An expected string for `seen_again` is the quoted line itself, so that family's known-fact check can be satisfied by echoing the question; it is reported per generator for exactly that reason, never only in the overall mean.
+
+**Entity recovery and invention.** The reference entities are the distinct references the narrow independent extractor found in the sampled frames (`file`: an absolute Windows path with a drive letter; `domain`: the host of a full URL; `repo`: `<host>/<owner>/<repo>` on a known code host, from a URL or a bare token; `document`: a bare file name with a document extension; `ref`: `#123` or `ABC-123`; `app` is not extracted because nothing in captured text names an application unambiguously). Recovery is the fraction of those references matched by `entities.canonical_name`, `entities.normalized_key` or an `entity_aliases.alias` (case-insensitive). Invention counts `entities` rows whose `canonical_name` and every alias appear in no frame's `window_title`, `browser_url` or content text. On a database whose graph tables are empty the section says `n/a (no entity surface)` instead of a fabricated zero.
+
+## Files written beside this report
+
+`report.md` (this document), `report.json` (the same numbers, machine-readable), `pairs.jsonl` (every pair with its question, expected ids and expected strings) and `runs.jsonl` (one line per turn: timing, cited arrays, terminal event verbatim).
+
+## Reproduce
+
+```
+cargo run -p harness --bin harness -- eval --db "harness-data/fixture/screensearch.db" --api http://127.0.0.1:43210 --seed 6696384177732976644 --pairs 300 --out "harness-data/eval-p4-baseline"
+```
+
+Nothing in this report was typed by hand: the question/answer pairs are regenerated from the database on every run (0.4.5 D17), so no stored question set, label file or answer key exists in the repository.
+````
+
+### Verification (raw)
+
+Run in this order in `C:\Users\nicol\Documents\GitHub\ss-p4` (UI first: `src-tauri` embeds
+`ui/dist`). Commands and exit codes verbatim; the raw output of each is in the same run.
+
+```text
+=== npm ci
+added 347 packages in 3s
+exit=0
+=== npm run lint
+npm notice run screensearch-ui@0.4.2 lint
+npm notice run eslint .
+exit=0
+=== npm run build
+dist/assets/CitationTile-DFhMdEJO.js                  157.84 kB | gzip: 47.99 kB
+dist/assets/react-vendor-LgzazqmD.js                  143.35 kB | gzip: 45.97 kB
+✓ built in 1.68s
+exit=0
+=== node scripts/stage-mcp.mjs
+[stage-mcp] building screensearch-mcp (release)...
+    Finished `release` profile [optimized] target(s) in 0.34s
+[stage-mcp] up to date: C:\Users\nicol\Documents\GitHub\ss-p4\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
+exit=0
+=== cargo fmt --all -- --check
+exit=0
+=== cargo clippy --locked --workspace --all-targets -- -D warnings
+    Checking screensearch v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p4\src-tauri)
+    Checking rebuild v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p4\crates\rebuild)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.83s
+exit=0
+=== cargo build --locked --workspace
+   Compiling evalfixture v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p4\crates\evalfixture)
+   Compiling harness v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p4\crates\harness)
+   Compiling mcp v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p4\crates\mcp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 15.32s
+exit=0
+=== cargo test --locked --workspace
+...
+   Doc-tests uia
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+=== git diff --exit-code -- ui/src/bindings
+(no output)
+exit=0
+=== cargo test --locked -p harness
+test shipped_parity_covers_none_meetings_gap_edges_density_and_qualification ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests harness
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+=== cargo test --locked -p harness --test eval_determinism
+exit=0
+=== cargo test --locked -p harness --test eval_readonly
+exit=0
+=== cargo test --locked -p harness --test eval_metrics
+exit=0
+=== cargo test --locked -p harness --test eval_cli
+exit=0
+=== cargo test --locked -p evalfixture
+test serve_api_health_auth_search_ask_and_port_release ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+   Doc-tests evalfixture
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+=== git ls-files crates/harness | grep -Ei 'question|golden|answer[-_]?key'
+(no output)
+exit=1
+```
+
+Totals read from that log: `cargo test --locked --workspace` = 79 suites, **1269 passed, 0 failed,
+16 ignored**; every command above exited 0 except the final `git ls-files | grep`, whose exit 1 with
+no output is the pass condition (no stored question set, no golden file, no answer key).
+
+- **`eval_determinism`** covers the two data-following requirements and the pair-set identity from
+  the kickoff: same database and seed produce identical pairs, different seeds differ, and
+  inserting, deleting or retitling a frame changes the affected family (`last_seen`, `seen_again`,
+  `involvement`). **`eval_readonly`** asserts the runner's handle rejects an attempted write while a
+  separate write connection can still change the same file, and that a missing `api.token` explains
+  the Settings fix. **`eval_cli`** drives a synthetic v14 database plus a stubbed `/v1/search` and
+  `/v1/ask` stream end to end and checks the report's numbers against the fixture's own facts.
+- **`serve_api`** (new crate) proves the server the baseline was measured through: health 200 with
+  the token, 401 without it and with a wrong one, a `/v1/search` hit set whose every `frame_id`
+  exists in the fixture, `/v1/ask` 503 without an answer model, and port release on `stop()`.
+- **The report's `API: version` line reads `ssv2c-evalfixture 0.4.2`** because the fixture host
+  reports its own crate version. The routes, retrieval, settings loading and answer provider are
+  `crates/api`, `crates/store`, `crates/kernel` and `crates/inference` at workspace version 0.4.2,
+  unmodified by this phase.
+- **One guard had to learn a new file name.** `crates/rebuild`'s settings drift guard scans the
+  workspace source for `&str` constants that look like dotted settings keys; the new crate's
+  `DB_FILE = "screensearch.db"` tripped it as an unclassified key. The fix classifies it where the
+  list already keeps `advanced.toml` (a file name, not a `settings` row) - the guard still covers
+  the new crate's real key, `api.token`.
+
 # 05 — Build Review
 
 ## 2026-11-04: 0.4.5 P3 baseline schema + settings v2, synced to main, audited and re-verified

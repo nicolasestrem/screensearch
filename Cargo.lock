@@ -1424,6 +1424,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d817e038c30374a4bcb22f94d0a8a0e216958d4c3dcde369b1439fec4bdda6e6"
 
 [[package]]
+name = "evalfixture"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "api",
+ "async-trait",
+ "blake3",
+ "chrono",
+ "embeddings",
+ "futures-util",
+ "inference",
+ "kernel",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "store",
+ "tempfile",
+ "tokio",
+ "traits",
+]
+
+[[package]]
 name = "event-listener"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5719,6 +5741,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

@@ -23,6 +23,7 @@ members = [
     "crates/harness",
     "crates/sessions",
     "crates/rebuild",
+    "crates/evalfixture",
 ]
 
 [workspace.package]
