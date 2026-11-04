@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   design-system placeholders.** Specs-only; zero code. Roadmap: `docs/0.4.5.md`; contracts:
   `specs/03_MASTER_PRODUCTION_SPEC.md` §4, §7h–§7j, §8, §13d and `specs/UI_REFERENCE.md`.
 
+### Added: design system v2 foundation
+
+- **The UI is rebuilt on one token system with four themes.** `ui/src/styles/tokens.css` carries
+  primitives, a four-theme semantic layer (pine light and dark, ink light and dark; pine is the
+  default) and a density token, with bundled local variable fonts and a compatibility shim so every
+  existing screen keeps rendering. 30 primitives and one local icon set are rebuilt on it, and two
+  tests enforce AA contrast in every theme and forbid raw colours or pixel font sizes in components.
+  A dev-only `/kitchen` route shows every primitive in every state. The `ui.appearance` setting
+  (26th UI key) is recorded for P3 and P7.
+
 ### Added
 
 - **Setup progress and errors are visible in the app.** While ScreenSearch prepares local AI —
@@ -47,6 +57,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tolerated. Spec: `03 §8`.
 
 ### Fixed
+
+- **A keyboard user could select an option they could not see in the new Combobox.** The design
+  system's `Combobox` keeps focus in the input and announces the active option with
+  `aria-activedescendant`, but its popup caps its height, and ArrowDown past the seventh option moved
+  the active row out of the visible band without scrolling. Enter then committed an option that was
+  never on screen. The popup now reveals the active option itself: only its own scroll offset moves
+  (measured from rects, so the popup border and padding stay visible at both ends and the page never
+  jumps), covering arrow keys, Home/End, wrapping, typing a filter and opening with a selection near
+  the bottom. Arrow keys and Home/End also skip disabled options instead of landing on a row that
+  cannot be chosen, which is what a native select does. Verified in a browser over a twelve-option
+  list: 0 of 15 keyboard steps left the active option hidden, against 7 of 15 with the fix disabled.
+
+- **A loading button could still submit its form.** The design system's `Button` dropped its click
+  handler while loading, which stops a handler but not a native form submit: with `type="submit"`,
+  `aria-disabled` is announced and ignored, so clicking the spinner or pressing Enter on the focused
+  button sent the form again while the first request was still pending. The button now cancels the
+  activation itself while loading.
+
+- **Tab could be swallowed at the edge of the new Dialog and Sheet.** Their focus trap wraps from the
+  last control to the first and back, but it counted a control inside a collapsed group or an
+  inactive tab panel as a candidate, and focusing one of those does nothing, so a Tab at the wrap
+  point did nothing either: focus stayed on the panel and the next press repeated it. The trap now
+  only counts controls it can actually focus. Verified in the browser: the same Shift+Tab that
+  previously left focus on the panel now lands on the visible control, and Escape still returns focus
+  to whatever opened the dialog.
 
 - **Local inference could be permanently unavailable on a rate-limited network.** The app
   resolves its llama.cpp sidecar through GitHub's *anonymous* releases API, which is capped at

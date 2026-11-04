@@ -1,78 +1,543 @@
-/* Design tokens — the single source of styling truth (UI_REFERENCE §1–2).
+/* Design tokens - the single source of styling truth (UI_REFERENCE 1-2).
  *
- * Every color, font, spacing, radius, z-layer, and motion duration the UI uses
- * lives here as a CSS custom property. The Tailwind theme (tailwind.config.js)
- * maps utility classes onto these variables, so components reference *tokens*,
- * never raw hex / px / magic numbers ("tokens only", CLAUDE.md + UI_REFERENCE §2).
+ * Identity: "Logbook", a calm instrument surface for a passive capture tool.
+ * One sans family (Source Sans 3, bundled) carries headings, labels, body and
+ * interface text; Cascadia Mono is bundled for measured values only (timestamps,
+ * counts, durations, sizes, frame numbers) and is applied through .num or
+ * font-mono + tabular-nums. Nothing renders below 12px, no label is uppercase,
+ * no label is tracked, no glow, no scanlines, no second accent.
  *
- * Identity: warm-graphite "Command Deck", dark-only, one signal-orange accent,
- * Windows-native fonts. Do not add a fourth hue (UI_REFERENCE §1).
+ * Two skins, four themes, one semantic layer:
+ *   pine (default)  graphite + mist neutrals (hue 160), pine accent.
+ *                   Success is intentionally NOT green: --status-ok-fg is
+ *                   primary text on a raised surface, so success never reads
+ *                   as a second accent.
+ *   ink (second skin) slate + paper neutrals (hue 252), blue accent.
+ *                   Success is a green ramp from direction D.
+ *
+ * Every colour value in this file lives in layer 1 (the --p- primitives),
+ * copied verbatim from the direction D / D2 mockup token blocks. Layer 2
+ * (semantic) only references primitives, so a theme swap replaces layer 2 and
+ * nothing else. Layer 3 holds the theme-independent scales, density metrics,
+ * z layers and durations. v1 token names live in tokens.compat.css.
+ *
+ * File order: fonts, 1 primitives, 2 semantic (4 themes), 3 scales/density.
  */
 
+/* ---- 0. fonts: bundled, local, no network (SIL OFL 1.1, see fonts/) ------ */
+@font-face {
+  font-family: "Source Sans 3";
+  src: url("./fonts/SourceSans3-Upright.ttf.woff2") format("woff2");
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Source Sans 3";
+  src: url("./fonts/SourceSans3-Italic.ttf.woff2") format("woff2");
+  font-weight: 200 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Cascadia Mono";
+  src: url("./fonts/CascadiaMono.woff2") format("woff2");
+  /* Variable 200-700: the range is what makes the axis usable. */
+  font-weight: 200 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* =========================================================================
+   1. PRIMITIVES (--p-*)
+   The only place a colour literal is written. Both skins are present so all
+   four themes resolve from one file.
+   ========================================================================= */
+
 :root {
+  /* ---- 1a. pine skin: dark graphite ramp, hue 160, near-neutral ---- */
+  --p-graphite-1000: #0c0f0d;
+  --p-graphite-950: #0f1310;
+  --p-graphite-900: #101412;
+  --p-graphite-850: #151816;
+  --p-graphite-800: #1b1f1d;
+  --p-graphite-750: #202422;
+  --p-graphite-700: #272b29;
+  --p-graphite-650: #323634;
+  --p-graphite-600: #656b67;
+
+  /* ---- pine skin: light mist ramp, same hue, chroma 0.004 ---- */
+  --p-mist-000: #ffffff;
+  --p-mist-025: #fbfcfb;
+  --p-mist-050: #f5f8f6;
+  --p-mist-100: #eff3f1;
+  --p-mist-150: #eef1ef;
+  --p-mist-200: #e9ecea;
+  --p-mist-300: #dde0df;
+  --p-mist-400: #cfd2d0;
+  --p-mist-500: #838785;
+
+  /* ---- pine skin: text ink on graphite (dark) ---- */
+  --p-graphite-ink-100: #e9ecea;
+  --p-graphite-ink-300: #bbbfbc;
+  --p-graphite-ink-500: #9ea3a0;
+  --p-graphite-ink-450: #787F7B;
+
+  /* ---- pine skin: text ink on mist (light) ---- */
+  --p-mist-ink-900: #181c19;
+  --p-mist-ink-700: #444946;
+  --p-mist-ink-600: #606562;
+  --p-mist-ink-550: #656C68;
+
+  /* ---- pine skin: accent ramp, hue 165 ---- */
+  --p-pine-990: #04160e;
+  --p-pine-900: #173528;
+  --p-pine-850: #193127;
+  --p-pine-800: #0a553d;
+  --p-pine-700: #23694f;
+  --p-pine-300: #a3ddc2;
+  --p-pine-250: #8ccaaf;
+  --p-pine-150: #d6efe3;
+  --p-pine-100: #ddf1e7;
+
+  /* ---- ink skin: dark slate ramp, hue 252, low chroma ---- */
+  --p-slate-1000: #0b0f13;
+  --p-slate-950: #0e1216;
+  --p-slate-900: #101317;
+  --p-slate-850: #14181c;
+  --p-slate-800: #1b1e23;
+  --p-slate-750: #1f2328;
+  --p-slate-700: #272b2f;
+  --p-slate-650: #32363a;
+  --p-slate-600: #646a70;
+
+  /* ---- ink skin: light paper ramp, same hue, chroma 0.006 ---- */
+  --p-paper-000: #ffffff;
+  --p-paper-025: #fafcfe;
+  --p-paper-050: #f4f7fb;
+  --p-paper-100: #eef2f7;
+  --p-paper-150: #edf0f4;
+  --p-paper-200: #e8ebef;
+  --p-paper-300: #dde0e4;
+  --p-paper-400: #ced1d5;
+  --p-paper-500: #83878b;
+
+  /* ---- ink skin: text ink on slate (dark) ---- */
+  --p-slate-ink-100: #e8ebef;
+  --p-slate-ink-300: #babec3;
+  --p-slate-ink-500: #9da2a8;
+  --p-slate-ink-450: #787D84;
+
+  /* ---- ink skin: text ink on paper (light) ---- */
+  --p-paper-ink-900: #171b20;
+  --p-paper-ink-700: #43484e;
+  --p-paper-ink-600: #5e646a;
+  --p-paper-ink-550: #656A71;
+
+  /* ---- ink skin: accent ramp, ink blue, hue 258 ---- */
+  --p-blue-990: #08121f;
+  --p-blue-900: #1e2f44;
+  --p-blue-850: #1e2c3f;
+  --p-blue-800: #1e4e93;
+  --p-blue-700: #3262a9;
+  --p-blue-300: #9fc7fb;
+  --p-blue-250: #88b4ed;
+  --p-blue-150: #dce9fc;
+  --p-blue-100: #e1ecfc;
+
+  /* ---- state ramps: light then dark (shared by both skins) ---- */
+  --p-red-l: #a02a26;
+  --p-red-l-wash: #ffe0db;
+  --p-red-l-line: #edb3ae;
+  --p-red-l-on: #fffbfa;
+  --p-red-l-press: #86231f; /* extension: one press step below --p-red-l */
+  --p-red-d: #eb776c;
+  --p-red-d-wash: #3a1d1a;
+  --p-red-d-line: #6b3733;
+  --p-red-d-on: #22110f;
+  --p-red-d-press: #f2938a; /* extension: one press step above --p-red-d */
+
+  --p-amber-l: #8c5500;
+  --p-amber-l-wash: #f8e4cf;
+  --p-amber-l-line: #e2c7a0;
+  --p-amber-d: #e8b458;
+  --p-amber-d-wash: #32240a;
+  --p-amber-d-line: #5e4a28;
+
+  /* success, pine skin: folds into the pine ramp on a neutral wash */
+  --p-green-l: #23694f;
+  --p-green-l-wash: #ffffff;
+  --p-green-l-line: #a7cfbc;
+  --p-green-d: #8ccaaf;
+  --p-green-d-wash: #1b1f1d;
+  --p-green-d-line: #274b3c;
+
+  /* success, ink skin: a real green, never the accent */
+  --p-green-ink-l: #216b3c;
+  --p-green-ink-l-wash: #d8efdd;
+  --p-green-ink-l-line: #a5d0b5;
+  --p-green-ink-d: #7ccd93;
+  --p-green-ink-d-wash: #142d1b;
+  --p-green-ink-d-line: #2e5741;
+
+  /* ---- elevation and scrim, per skin and theme (from the mockup blocks:
+     rgba families 16,22,19 (pine light), 0,0,0 (pine dark), 20,28,38 (ink
+     light), 0,0,0 (ink dark)). Layer 2 references these, never the raw
+     colour. Overlay sits between raised and toast. ---- */
+  --p-shadow-pine-l-raised: 0 1px 2px rgba(16, 22, 19, 0.05);
+  --p-shadow-pine-l-overlay: 0 6px 18px rgba(16, 22, 19, 0.12);
+  --p-shadow-pine-l-toast: 0 10px 28px rgba(16, 22, 19, 0.16);
+  --p-scrim-pine-l: rgba(16, 22, 19, 0.28);
+
+  --p-shadow-pine-d-raised: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  --p-shadow-pine-d-overlay: 0 8px 24px rgba(0, 0, 0, 0.44);
+  --p-shadow-pine-d-toast: 0 12px 30px rgba(0, 0, 0, 0.48);
+  --p-scrim-pine-d: rgba(4, 6, 5, 0.62);
+
+  --p-shadow-ink-l-raised: 0 1px 2px rgba(20, 28, 38, 0.05);
+  --p-shadow-ink-l-overlay: 0 6px 18px rgba(20, 28, 38, 0.12);
+  --p-shadow-ink-l-toast: 0 10px 28px rgba(20, 28, 38, 0.16);
+  --p-scrim-ink-l: rgba(20, 28, 38, 0.28);
+
+  --p-shadow-ink-d-raised: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  --p-shadow-ink-d-overlay: 0 8px 24px rgba(0, 0, 0, 0.44);
+  --p-shadow-ink-d-toast: 0 12px 30px rgba(0, 0, 0, 0.48);
+  --p-scrim-ink-d: rgba(5, 8, 11, 0.62);
+}
+
+/* =========================================================================
+   2. SEMANTIC LAYER, one block per theme. Names are final (contract). Every
+   value references layer 1 only. :root is pine-light, the default.
+   ========================================================================= */
+
+:root,
+:root[data-theme="pine-light"] {
+  color-scheme: light;
+
+  --surface-app: var(--p-mist-150);
+  --surface-chrome: var(--p-mist-050);
+  --surface-pane: var(--p-mist-025);
+  --surface-raised: var(--p-mist-000);
+  --surface-inset: var(--p-mist-200);
+  --surface-hover: var(--p-mist-100);
+  --surface-selected: var(--p-pine-150);
+  --surface-scrim: var(--p-scrim-pine-l);
+
+  --border-subtle: var(--p-mist-300);
+  --border-strong: var(--p-mist-400);
+  --border-control: var(--p-mist-500);
+  --border-focus: var(--p-pine-700);
+
+  --text-primary: var(--p-mist-ink-900);
+  --text-secondary: var(--p-mist-ink-700);
+  --text-tertiary: var(--p-mist-ink-600);
+  --text-disabled: var(--p-mist-ink-550);
+  --text-on-accent: var(--p-mist-000);
+
+  --accent: var(--p-pine-700);
+  --accent-strong: var(--p-pine-800);
+  --accent-wash: var(--p-pine-100);
+  --accent-line: var(--p-pine-150);
+
+  --action-primary-bg: var(--p-pine-700);
+  --action-primary-bg-hover: var(--p-pine-800);
+  --action-primary-fg: var(--p-mist-000);
+  --action-danger-bg: var(--p-red-l);
+  --action-danger-bg-hover: var(--p-red-l-press);
+  --action-danger-fg: var(--p-red-l-on);
+
+  --focus-ring: var(--p-pine-700);
+
+  /* pine success: primary text on a raised surface, strong border */
+  --status-ok-fg: var(--text-primary);
+  --status-ok-bg: var(--surface-raised);
+  --status-ok-border: var(--border-strong);
+  --status-warn-fg: var(--p-amber-l);
+  --status-warn-bg: var(--p-amber-l-wash);
+  --status-warn-border: var(--p-amber-l-line);
+  --status-danger-fg: var(--p-red-l);
+  --status-danger-bg: var(--p-red-l-wash);
+  --status-danger-border: var(--p-red-l-line);
+
+  --mark-bg: var(--accent-wash);
+  --mark-fg: var(--text-primary);
+
+  --shadow-raised: var(--p-shadow-pine-l-raised);
+  --shadow-overlay: var(--p-shadow-pine-l-overlay);
+  --shadow-toast: var(--p-shadow-pine-l-toast);
+}
+
+:root[data-theme="pine-dark"] {
   color-scheme: dark;
 
-  /* ── Palette: warm graphite + one bold accent ───────────────────────────── */
-  --bg-base: #15120d; /* app background (warm near-black, not pure black) */
-  --bg-surface: #1e1a13; /* panels, cards */
-  --bg-overlay: #262017; /* popovers, command palette, modals */
-  --line: #332b20; /* hairline dividers, borders */
-  --ink: #ece4d5; /* primary text (warm off-white) */
-  --ink-muted: #9a8f7a; /* secondary text, labels */
-  --ink-faint: #6b6253; /* tertiary, disabled */
-  --accent: #ff6a1a; /* the only bold color — scan-head, active, primary action */
-  --accent-wash: rgba(255, 106, 26, 0.14); /* scanline glow, selection, active row */
-  --scrim: rgba(8, 6, 3, 0.72); /* modal/overlay backdrop dimming the app behind */
-  --glow-scan: 0 0 8px rgba(255, 106, 26, 0.6); /* the signature scan-head's halo */
+  --surface-app: var(--p-graphite-1000);
+  --surface-chrome: var(--p-graphite-900);
+  --surface-pane: var(--p-graphite-850);
+  --surface-raised: var(--p-graphite-800);
+  --surface-inset: var(--p-graphite-950);
+  --surface-hover: var(--p-graphite-750);
+  --surface-selected: var(--p-pine-850);
+  --surface-scrim: var(--p-scrim-pine-d);
 
-  /* Functional-only (status contexts; never brand decoration; desaturated). */
-  --danger: #c5524b;
-  --warn: #d9912f;
-  --ok: #7fa88b;
+  --border-subtle: var(--p-graphite-700);
+  --border-strong: var(--p-graphite-650);
+  --border-control: var(--p-graphite-600);
+  --border-focus: var(--p-pine-250);
 
-  /* ── Typography (Windows-native stack — a constraint and the personality) ── */
-  --font-display: "Bahnschrift", "Segoe UI", system-ui, sans-serif; /* labels, eyebrows, heads */
-  --font-body: "Segoe UI", system-ui, sans-serif; /* prose, answers */
-  --font-mono: "Consolas", "Cascadia Mono", ui-monospace, monospace; /* all data */
+  --text-primary: var(--p-graphite-ink-100);
+  --text-secondary: var(--p-graphite-ink-300);
+  --text-tertiary: var(--p-graphite-ink-500);
+  --text-disabled: var(--p-graphite-ink-450);
+  --text-on-accent: var(--p-pine-990);
 
-  /* Type scale (px / weight) — UI_REFERENCE §1. */
-  --text-display: 28px;
-  --text-title: 20px;
-  --text-subtitle: 16px;
+  --accent: var(--p-pine-250);
+  --accent-strong: var(--p-pine-300);
+  --accent-wash: var(--p-pine-900);
+  --accent-line: var(--p-pine-800);
+
+  --action-primary-bg: var(--p-pine-250);
+  --action-primary-bg-hover: var(--p-pine-300);
+  --action-primary-fg: var(--p-pine-990);
+  --action-danger-bg: var(--p-red-d);
+  --action-danger-bg-hover: var(--p-red-d-press);
+  --action-danger-fg: var(--p-red-d-on);
+
+  --focus-ring: var(--p-pine-250);
+
+  --status-ok-fg: var(--text-primary);
+  --status-ok-bg: var(--surface-raised);
+  --status-ok-border: var(--border-strong);
+  --status-warn-fg: var(--p-amber-d);
+  --status-warn-bg: var(--p-amber-d-wash);
+  --status-warn-border: var(--p-amber-d-line);
+  --status-danger-fg: var(--p-red-d);
+  --status-danger-bg: var(--p-red-d-wash);
+  --status-danger-border: var(--p-red-d-line);
+
+  --mark-bg: var(--accent-wash);
+  --mark-fg: var(--text-primary);
+
+  --shadow-raised: var(--p-shadow-pine-d-raised);
+  --shadow-overlay: var(--p-shadow-pine-d-overlay);
+  --shadow-toast: var(--p-shadow-pine-d-toast);
+}
+
+:root[data-theme="ink-light"] {
+  color-scheme: light;
+
+  --surface-app: var(--p-paper-150);
+  --surface-chrome: var(--p-paper-050);
+  --surface-pane: var(--p-paper-025);
+  --surface-raised: var(--p-paper-000);
+  --surface-inset: var(--p-paper-200);
+  --surface-hover: var(--p-paper-100);
+  --surface-selected: var(--p-blue-150);
+  --surface-scrim: var(--p-scrim-ink-l);
+
+  --border-subtle: var(--p-paper-300);
+  --border-strong: var(--p-paper-400);
+  --border-control: var(--p-paper-500);
+  --border-focus: var(--p-blue-700);
+
+  --text-primary: var(--p-paper-ink-900);
+  --text-secondary: var(--p-paper-ink-700);
+  --text-tertiary: var(--p-paper-ink-600);
+  --text-disabled: var(--p-paper-ink-550);
+  --text-on-accent: var(--p-paper-000);
+
+  --accent: var(--p-blue-700);
+  --accent-strong: var(--p-blue-800);
+  --accent-wash: var(--p-blue-100);
+  --accent-line: var(--p-blue-150);
+
+  --action-primary-bg: var(--p-blue-700);
+  --action-primary-bg-hover: var(--p-blue-800);
+  --action-primary-fg: var(--p-paper-000);
+  --action-danger-bg: var(--p-red-l);
+  --action-danger-bg-hover: var(--p-red-l-press);
+  --action-danger-fg: var(--p-red-l-on);
+
+  --focus-ring: var(--p-blue-700);
+
+  --status-ok-fg: var(--p-green-ink-l);
+  --status-ok-bg: var(--p-green-ink-l-wash);
+  --status-ok-border: var(--p-green-ink-l-line);
+  --status-warn-fg: var(--p-amber-l);
+  --status-warn-bg: var(--p-amber-l-wash);
+  --status-warn-border: var(--p-amber-l-line);
+  --status-danger-fg: var(--p-red-l);
+  --status-danger-bg: var(--p-red-l-wash);
+  --status-danger-border: var(--p-red-l-line);
+
+  --mark-bg: var(--accent-wash);
+  --mark-fg: var(--text-primary);
+
+  --shadow-raised: var(--p-shadow-ink-l-raised);
+  --shadow-overlay: var(--p-shadow-ink-l-overlay);
+  --shadow-toast: var(--p-shadow-ink-l-toast);
+}
+
+:root[data-theme="ink-dark"] {
+  color-scheme: dark;
+
+  --surface-app: var(--p-slate-1000);
+  --surface-chrome: var(--p-slate-900);
+  --surface-pane: var(--p-slate-850);
+  --surface-raised: var(--p-slate-800);
+  --surface-inset: var(--p-slate-950);
+  --surface-hover: var(--p-slate-750);
+  --surface-selected: var(--p-blue-850);
+  --surface-scrim: var(--p-scrim-ink-d);
+
+  --border-subtle: var(--p-slate-700);
+  --border-strong: var(--p-slate-650);
+  --border-control: var(--p-slate-600);
+  --border-focus: var(--p-blue-250);
+
+  --text-primary: var(--p-slate-ink-100);
+  --text-secondary: var(--p-slate-ink-300);
+  --text-tertiary: var(--p-slate-ink-500);
+  --text-disabled: var(--p-slate-ink-450);
+  --text-on-accent: var(--p-blue-990);
+
+  --accent: var(--p-blue-250);
+  --accent-strong: var(--p-blue-300);
+  --accent-wash: var(--p-blue-900);
+  --accent-line: var(--p-blue-800);
+
+  --action-primary-bg: var(--p-blue-250);
+  --action-primary-bg-hover: var(--p-blue-300);
+  --action-primary-fg: var(--p-blue-990);
+  --action-danger-bg: var(--p-red-d);
+  --action-danger-bg-hover: var(--p-red-d-press);
+  --action-danger-fg: var(--p-red-d-on);
+
+  --focus-ring: var(--p-blue-250);
+
+  --status-ok-fg: var(--p-green-ink-d);
+  --status-ok-bg: var(--p-green-ink-d-wash);
+  --status-ok-border: var(--p-green-ink-d-line);
+  --status-warn-fg: var(--p-amber-d);
+  --status-warn-bg: var(--p-amber-d-wash);
+  --status-warn-border: var(--p-amber-d-line);
+  --status-danger-fg: var(--p-red-d);
+  --status-danger-bg: var(--p-red-d-wash);
+  --status-danger-border: var(--p-red-d-line);
+
+  --mark-bg: var(--accent-wash);
+  --mark-fg: var(--text-primary);
+
+  --shadow-raised: var(--p-shadow-ink-d-raised);
+  --shadow-overlay: var(--p-shadow-ink-d-overlay);
+  --shadow-toast: var(--p-shadow-ink-d-toast);
+}
+
+/* =========================================================================
+   3. SHARED SCALES (theme independent): families, type, rhythm, radii,
+   durations, layers, hit target, density metrics.
+   ========================================================================= */
+
+:root {
+  /* ---- families: one sans everywhere, mono for measured values only ---- */
+  --font-text: "Source Sans 3", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", "Consolas", "SF Mono", ui-monospace, monospace;
+
+  /* ---- type scale: 12px floor, steps of roughly 1.15 ---- */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-data: 13px;
   --text-body: 14px;
-  --text-caption: 12px;
-  --text-data: 13px; /* mono */
+  --text-ui: 14px;
+  --text-prose: 15px;
+  --text-h3: 17px;
+  --text-h2: 20px;
+  --text-h1: 26px;
+  --text-display: 30px;
+
   --weight-regular: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
-  --tracking-eyebrow: 0.08em; /* uppercase instrument-readout tracking */
 
-  /* ── Form ───────────────────────────────────────────────────────────────── */
-  --radius-panel: 4px;
-  --radius-chip: 2px;
-  --radius-ribbon: 0; /* the timeline is an instrument, not a card */
+  --leading-tight: 1.25;
+  --leading-data: 1.45;
+  --leading-body: 1.6;
 
-  /* ── Spacing scale: 4 · 8 · 12 · 16 · 24 · 32 · 48 (UI_REFERENCE §2) ─────── */
+  --tracking-tight: -0.012em;
+
+  /* ---- spacing: mirrors every Tailwind default key at identical px ---- */
+  --space-0: 0px;
+  --space-px: 1px;
+  --space-0_5: 2px;
   --space-1: 4px;
+  --space-1_5: 6px;
   --space-2: 8px;
+  --space-2_5: 10px;
   --space-3: 12px;
+  --space-3_5: 14px;
   --space-4: 16px;
+  --space-5: 20px;
   --space-6: 24px;
+  --space-7: 28px;
   --space-8: 32px;
+  --space-9: 36px;
+  --space-10: 40px;
+  --space-11: 44px;
   --space-12: 48px;
+  --space-14: 56px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+  --space-28: 112px;
+  --space-32: 128px;
+  --space-36: 144px;
+  --space-40: 160px;
+  --space-44: 176px;
+  --space-48: 192px;
+  --space-52: 208px;
+  --space-56: 224px;
+  --space-60: 240px;
+  --space-64: 256px;
+  --space-72: 288px;
+  --space-80: 320px;
+  --space-96: 384px;
 
-  /* ── Z-layers: base / rail / overlay / toast ────────────────────────────── */
+  /* ---- radii: small by rule, 6px is the ceiling ---- */
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-pill: 999px;
+
+  /* ---- strokes ---- */
+  --stroke-hair: 1px;
+  --stroke-icon: 1.5;
+
+  /* ---- motion: state only, 90-220ms ---- */
+  --duration-fast: 90ms;
+  --duration-base: 140ms;
+  --duration-slow: 220ms;
+  --ease-standard: cubic-bezier(0.2, 0.6, 0.2, 1);
+
+  /* ---- z layers ---- */
   --z-base: 0;
-  --z-rail: 10;
-  --z-overlay: 100;
-  --z-toast: 1000;
+  --z-rail: 20;
+  --z-overlay: 40;
+  --z-toast: 60;
 
-  /* ── Motion: 120–200ms ease for UI; scan-head linear; ambient very slow ─── */
-  --motion-fast: 120ms;
-  --motion-base: 160ms;
-  --motion-slow: 200ms;
-  --ease-ui: cubic-bezier(0.2, 0, 0.2, 1);
-
-  /* Minimum interactive hit target (UI_REFERENCE §7: ≥ 32px). */
+  /* ---- interactive metrics ---- */
   --hit-min: 32px;
+
+  /* ---- density: comfortable (default) ---- */
+  --row-h: 36px;
+  --control-h: 32px;
+  --control-h-sm: 28px;
+  --grid-gap: 16px;
+  --pane-pad: 24px;
+}
+
+:root[data-density="compact"] {
+  --row-h: 32px;
+  --control-h: 28px;
+  --control-h-sm: 24px;
+  --grid-gap: 12px;
+  --pane-pad: 16px;
 }

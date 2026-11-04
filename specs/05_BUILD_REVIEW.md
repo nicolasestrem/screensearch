@@ -1,5 +1,200 @@
 # 05 — Build Review
 
+## 2026-11-04: 0.4.5 P2 design system v2 (branch `feat/0.4.5-p2-design-system`)
+
+- **Specs first (P2 precondition, 0.4.5 D4).** The pick is recorded before any visual code:
+  `UI_REFERENCE` §1 (direction **Logbook**: C's structure kept, two skins as four themes, pine
+  default, success rule, Source Sans 3 + Cascadia Mono at a 12px floor, mono only for measured
+  values, motion state-only, one local SVG icon set at one 1.5 stroke), §2 (three layers, the
+  semantic families, the four `data-theme` values, density, z-layers, durations), §5 (primitive
+  inventory), `03 §8` (`ui.appearance`, six-value enum, `pine-light` default; the closed UI set
+  rises 25 -> 26), `07` (P3 adds the key to the settings v2 registry; P7 renders it and resolves
+  `*-system`), `docs/0.4.5.md` (D6 ceiling 26; P7/P9 acceptance "all four themes").
+- **Deviation, stated.** `P2.md` expects the pick merged to `main` before this branch exists and
+  says not to commit until the maintainer validates and names the repo. The maintainer instructed
+  this run to continue P2 and to commit locally without pushing, so the branch is cut from
+  `origin/main` (which carries the P1 contract, #150) and every commit stays local.
+- **Built:** `ui/src/styles/fonts/` (Source Sans 3 upright + italic variable woff2, Cascadia Mono
+  variable woff2, SIL OFL 1.1 with licence text beside each file); `tokens.css` (226 distinct custom
+  properties over 357 declarations: 114 `--p-*` primitives plus the semantic layer redeclared in four
+  theme blocks, the scales and the density block); `tokens.compat.css` (25 aliases, which is what the
+  46 v1 names need: 21 of them kept their v2 name); rewritten `globals.css`; `ui/tailwind.config.js` (legacy keys intact, v2 keys
+  added, everything var-backed); 30 primitives; `icons/index.tsx` (55 glyphs); `routes/Kitchen.tsx`
+  + `KitchenPrimitives.tsx`; `test/contrast.test.mjs` + `test/tokens.test.mjs`; one additive
+  dev-only route line.
+- **Font axes, measured** (`fontTools`, not asserted):
+
+```
+CascadiaMono.woff2           | Cascadia Mono | axes: [('wght', 200.0, 400.0, 700.0)]
+SourceSans3-Italic.ttf.woff2 | SourceSans3VF | axes: [('wght', 200.0, 200.0, 900.0)]
+SourceSans3-Upright.ttf.woff2| SourceSans3VF | axes: [('wght', 200.0, 200.0, 900.0)]
+digit widths: uniform in both faces, so tabular figures need no tnum feature
+```
+
+- **Verification, P2.md's order, raw.** `npm ci` first ran while the Vite dev server held
+  `node_modules` open and failed on locked files; the server was stopped, `npm ci` then exited 0.
+
+```
+=== npm run lint
+npm notice run screensearch-ui@0.4.2 lint
+npm notice run eslint .
+=== npm run test
+ℹ tests 90
+ℹ pass 90
+ℹ fail 0
+=== npm run build
+dist/assets/react-vendor-LgzazqmD.js                 143.35 kB │ gzip: 45.97 kB
+✓ built in 2.29s
+=== node scripts/stage-mcp.mjs
+[stage-mcp] up to date: ...screensearch-mcp-x86_64-pc-windows-msvc.exe
+=== cargo fmt --all -- --check
+FMT-OK
+=== cargo clippy --workspace --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 21.64s
+=== cargo build --workspace
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 39.22s
+=== cargo test --workspace
+test result: ok. 12 passed; 0 failed
+test result: ok. 113 passed; 0 failed
+test result: ok. 4 passed; 0 failed
+test result: ok. 26 passed; 0 failed; 4 ignored
+```
+
+```
+$ grep -rnE "#[0-9a-fA-F]{3,8}\b|rgb\(|hsl\(" ui/src/components/primitives
+0
+$ grep -rn "font-size: *[0-9]" ui/src/components/primitives
+0
+$ grep -rniE "url\(http|fonts\.googleapis|fonts\.gstatic|cdn\." ui/src/styles
+0
+$ grep -rni kitchen ui/dist
+0
+$ grep -rn "data-theme" ui/src/styles/tokens.css
+4
+$ git diff --exit-code -- ui/src/bindings
+bindings-diff-exit=0
+```
+
+- **Enforcement fails when it should, then passes.** `contrast.test.mjs` with pine-light
+  `--status-warn-fg` set to `#e8b458` fails with `pine-light: status-warn-fg on status-warn-bg =
+  1.53:1`; restored, 5/5 pass and print 124 pairs (31 x 4 themes) with minima 4.90 / 5.39 / 4.88 /
+  5.39. `tokens.test.mjs` with `border-[#8ccaaf]` appended to `Button.tsx` fails with
+  `Button.tsx:120 [colour-literal] #8ccaaf";`; restored, 3/3 pass, 0 hits over 30 primitives x 7
+  rules. Both restorations verified by sha256 against the pre-demo snapshot.
+- **Four-variant detect gate** (`vite` dev server, URL scan at 1440x900, pinned 0.1.5):
+
+```
+pine-light  1 anti-pattern found.
+pine-dark   1 anti-pattern found.
+ink-light   1 anti-pattern found.
+ink-dark    1 anti-pattern found.
+  [layout-transition] transition: width
+```
+
+  The single remaining finding is not in P2's code. Tailwind emits `.transition-[width]` because
+  three v1 files still use it (`components/domain/ModelPanel.tsx:104`, `SetupDetails.tsx:53`,
+  `SetupIndicator.tsx:74`), and `P2.md` forbids touching `components/domain/**`. For P10:
+  `grep -rn "transition-\[width\]" ui/src` lists exactly those call sites. Nothing P2 owns has a
+  layout transition (`grep -rn "transition-\[width\]|transition-\[height\]|transition-all"` over
+  `primitives`, `Kitchen*`, `styles` returns 0). The pass converged 27 -> 9 -> 6 -> 2 -> 1 by real
+  fixes: card-in-card specimens un-nested, `Panel` and `Expander` restyled as borderless surfaces
+  (a control inside them is then the only bordered element), 8px inner padding on Segmented, Badge,
+  Chip, Kbd and table cells, no `transition-[grid-template-rows]`, state icons inlined beside their
+  titles, and `/kitchen` moved out of the AppShell so the scan measures v2 and not v1 chrome.
+- **AA, all four variants** (`/kitchen?theme=<theme>`, every visible text node against its effective
+  background, transitions frozen):
+
+| variant | pairs | min font | under 12px | enabled below AA | disabled below AA | worst |
+|---|---|---|---|---|---|---|
+| pine-light | 528 | 12px | 0 | 0 | 0 | 4.90:1 |
+| pine-dark | 528 | 12px | 0 | 0 | 0 | 5.39:1 |
+| ink-light | 528 | 12px | 0 | 0 | 0 | 4.88:1 |
+| ink-dark | 528 | 12px | 0 | 0 | 0 | 5.39:1 |
+
+  Re-measured after the PR #151 review round added four gallery specimens (528 pairs, up from 516):
+  0 failures, min font 12px, worst unchanged at the ratios above.
+  Disabled text clears AA too: each theme gained one ink step (`--p-mist-ink-550`,
+  `--p-graphite-ink-450`, `--p-paper-ink-550`, `--p-slate-ink-450`) solved to 4.5:1 on
+  `--surface-inset`, so `--text-disabled` does not rely on the SC 1.4.3 exemption and inertness is
+  carried by surface, border and absent hover instead of washed-out text.
+- **Shim proof.** In a plain browser (no Tauri backend, so each screen shows its real error state):
+  `/` "Can't reach the kernel", `/recall` "Search your screen history", `/timeline` "Couldn't load
+  the timeline", `/settings` "Couldn't load settings", all on `rgb(238, 241, 239)` with
+  `--accent: #23694f`. No unstyled or transparent surface.
+- **Review round on the residuals.** Three claims from review were checked against the tree:
+  (a) the `nested-cards` findings were cleared structurally by making `Panel` and `Expander`
+  borderless surfaces, not by bending the gallery, so the Panel action chips and the Badge
+  ("Running", "Saved", "Saved") were **restored** afterwards and the count stayed at 1 per variant:
+  the shipped direction keeps those chips, and a gallery that hides them would misreport the design.
+  (b) `--text-tertiary` on `--surface-app` measures 5.22 / 7.52 / 5.24 / 7.48 across the four themes,
+  so no tertiary pair fails; the audit walks it and the static test covers it. (c) Surface separation
+  after the borderless change is real, not invisible: `--surface-raised` renders
+  `rgb(255,255,255)` on `rgb(238,241,239)` (pine-light) and `rgb(27,31,29)` on `rgb(12,15,13)`
+  (pine-dark), a 14 to 17 channel-point step, with the ink pairing identical. The three
+  P10-owned items this leaves behind (legacy `transition-[width]` bars, the `StatusRail` uppercase
+  wordmark, and the flatter look of unconverted screens until the refont) are now tracked as gaps
+  in `07`, not only described here.
+- **PR #151 review round (Codex `6dd36eb`, 1 inline finding, valid; two more of the same class found
+  by audit and fixed).** (a) *Reported:* the Combobox popup caps its height and focus stays in the
+  input, so `aria-activedescendant` moved past visible options without revealing the active row,
+  and Enter could commit an option the user could not see. `Combobox` now holds a ref on the listbox
+  and, whenever the active index or the visible set changes, moves only that listbox's `scrollTop` by
+  the rect delta measured against the popup's inner padded band (`clientTop` plus computed
+  `paddingTop`/`paddingBottom`), so the border and `py-1` padding survive at both ends and page
+  scroll never moves. (b) *Found by audit, same finding class:* arrow keys could land on a
+  `disabled` option, which paints no highlight at all, leaving a dead Enter. Painting the active row
+  instead was measured and **rejected**: `--text-disabled` over `--surface-selected` is 4.44 / 3.39 /
+  4.44 / 3.41 across the four themes, below AA, and P2 claims AA even for disabled text. Navigation
+  now skips disabled options (`stepTo`/`edgeTo`, the same rule `RadioGroup` and `Segmented` already
+  follow and what a native `<select>` does), hover on a disabled row no longer moves the active row,
+  and `openList` indexes into the *rendered* set so it cannot point at a row that is not in the list.
+  When every option is disabled no row is active at all (the derived index is `-1`), so
+  `aria-activedescendant` is omitted rather than pointing at a row that paints nothing.
+  (c) *Found by audit:* the Dialog/Sheet focus trap filtered candidates with
+  `!node.hasAttribute("hidden")`, which only sees a node's own attribute, so a control inside a
+  collapsed `Expander` body or an inactive tab panel was accepted as the first/last candidate and
+  `.focus()` on it was a silent no-op, swallowing the Tab wrap. Both traps now require
+  `!node.closest("[hidden]") && node.getClientRects().length > 0`.
+  Evidence, real browser, in two eras because the skip rule landed between them. Against the reveal
+  alone (Excel still reachable, 15 keyboard steps captured as `active label / scrollTop /
+  clientHeight / scrollHeight / fully inside the band / window.scrollY`): **0 of 15 hidden with the
+  fix and 7 of 15 hidden with the reveal disabled** (Excel, PowerPoint, Outlook, Spotify, Zoom, End
+  and the ArrowUp wrap, all at `scrollTop 0`), `scrollY` fixed at `6078` throughout. Re-probed on
+  the final code, where arrows skip Excel (13 steps: seven ArrowDown, End, Home, the ArrowUp wrap,
+  a hover on the disabled row, plus open): **0 hidden, no active row ever disabled**, same `6078`.
+  Opening with the last option selected lands at `scrollTop 138` of a 138 max, the row fully
+  visible; ArrowDown from Obsidian goes to PowerPoint and hovering Excel leaves the active row on
+  Zoom. Over a new `Dialog focus trap` specimen, Shift+Tab from the panel stops on the visible
+  `Advanced capture` toggle with no step inside a `[hidden]` subtree and Escape returns focus to the
+  trigger, where the reverted predicate leaves focus stuck **on the panel**. Both control runs
+  restored their file byte-identically. Lint clean, `90 / 90` tests, build ok, `kitchen` still 0 hits
+  in `dist`.
+- **Design gate held at one finding, after one real regression.** The first version of the trap
+  specimen carried a ~100 character `note`, and the gallery's note `<p>` had no measure, so the
+  detector reported `[line-length]` (2 anti-patterns per variant) against a ~1400px row. The shared
+  `KitchenSpecimen` note now takes `max-w-prose` (65ch, a Tailwind preset), which is the detector's
+  own recommendation and keeps any note readable: the same 100 character note now renders as two
+  lines at 49 characters each, and the gate is back to the single `transition: width` residual.
+- **PR #151 second review round (Codex `917059e`, 1 inline finding, valid and latent, fixed).**
+  `Button` dropped `onClick` while `loading`, which stops a click handler but not a native form
+  submit: with `type="submit"`, `aria-disabled` is announced and ignored, so clicking the spinner or
+  activating the focused button with Enter submitted the form again while the first request was
+  pending. The handler now stays attached and calls `event.preventDefault()` while loading, which
+  covers an ordinary click, Enter/Space on the focused button, and the implicit submission a form
+  runs by clicking its default submit button. No callsite hits it today (the three `type="submit"`
+  users pass native `disabled`), so the defect was latent in the primitive's contract rather than
+  live in a screen. Evidence, throwaway form page at `ui/probe.html` with one loading and one idle
+  submit button, deleted afterwards: **0 submits while loading** for click, Enter-on-button and
+  implicit submission, `1` submit when idle, and the same three runs against the reverted handler
+  submit every time. `Button.tsx` restored byte-identically. Lint clean, `90 / 90` tests, build ok.
+- **Commits (local branch `feat/0.4.5-p2-design-system`, cut from `origin/main` at `e27f42c`,
+  the P1 contract):** `cf56222` PRODUCT.md, `8136179` specs record the pick, `5c9c679` and `8e1935b`
+  icon contract wording, `75c77ba` the implementation, `d113a0f` the review round (truthful gallery,
+  `07` residuals), then the documentation commit that also opens the PR. Merged to `main`: no.
+- **Open.** Populated screenshots need the Tauri app and a seeded database (`docs/SCREENSHOTS.md`),
+  which this run did not touch by rule; `/kitchen` in all four themes is the visual record.
+  `StatusRail` still renders an uppercase tracked wordmark (v1 shell, P10).
+
 ## 2026-11-04: QA pass on P2, P3 and P4 (branches `feat/0.4.5-p3-baseline-schema`, `feat/0.4.5-p4-auto-eval`)
 
 - **Method.** Each branch was verified on its own (not only the combined tree), an independent

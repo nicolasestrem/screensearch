@@ -91,6 +91,12 @@ exception. The **specs are the contract**; `docs/deeper-memory-f3-plan.md` is co
 **For 0.4.5 work (P9 — the work-intelligence + design-system-v2 arc, approved 2026-11-03):** also
 read `docs/0.4.5.md` (phase order, per-phase acceptance, file ownership), `02 §5k`, and the
 normative `03 §4`/`§7h`/`§7i`/`§7j`/`§8` with `UI_REFERENCE` (identity, tokens, IA, components).
+The P2 design system is built (branch `feat/0.4.5-p2-design-system`, in review): read the
+identity from `UI_REFERENCE` §1/§2 and the shipped primitives from
+`ui/src/components/primitives/` with `ui/src/styles/tokens.css`, do not re-derive either. Every
+theme is one of `pine-light` (default), `pine-dark`, `ink-light`, `ink-dark` via `data-theme`, and
+the `ui.appearance` setting selects between them (`03 §8`).
+
 Three hard arc constraints, all decided: **baseline schema instead of a migration chain** — `03 §4`
 holds the full DDL at v14, a schema change edits it and bumps the version, there are no populated-DB
 migration tests and no retired-key load tolerance (0.4.5 D2); **single user** — the maintainer is

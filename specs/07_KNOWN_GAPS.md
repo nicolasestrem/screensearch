@@ -113,7 +113,67 @@ open, or newly scoped out:
   `get_advanced_config`'s `from_file` therefore cannot drive per-key "overridden" badges reliably.
   P7 shows the full effective list read-only with the file path, and must not promise per-key
   override flags unless the rewrite is changed to keep only the keys the user actually set.
+- **P2 direction pick recorded 2026-11-04: Logbook, two skins, four themes (owner: P2, then P3/P7).**
+  `UI_REFERENCE §1`/`§2` and `03 §8` carry the decision: a pine skin (default) and an ink skin, each
+  in light and dark, selected by the new UI key `ui.appearance` (enum `pine-light` / `pine-dark` /
+  `pine-system` / `ink-light` / `ink-dark` / `ink-system`, default `pine-light`), which raises the
+  closed UI set from 25 to 26 keys. Open follow-ups:
+  - **P3 must add `ui.appearance` to the settings v2 registry and baseline.** Its branch
+    `feat/0.4.5-p3-baseline-schema` predates the key, so the registry there does not know it.
+  - **P7 renders the select in Settings > General** and resolves `*-system` through
+    `prefers-color-scheme`, applying `data-theme` on the root element. The four `data-theme` values
+    are exactly `pine-light` / `pine-dark` / `ink-light` / `ink-dark`; `*-system` is a stored intent,
+    not a fifth theme.
+  - **Until then the app ships `pine-light` by default**, so no screen may assume a dark-only
+    palette in the interim.
+  - **The density token is still keyless.** `06` #29 stays open and unchanged: a density key would
+    now be the 27th UI key, so the pick does not resolve that gap.
 
+
+## 2026-11-04: P2 design system v2 follow-ups (owner: P10 refont unless stated)
+
+Recorded by the P2 run so the refont phases inherit them as tracked gaps, not prose:
+
+- **Legacy progress bars still animate `width`.** `components/domain/ModelPanel.tsx:104`,
+  `SetupDetails.tsx:53` and `SetupIndicator.tsx:74` carry `transition-[width]`, which makes Tailwind
+  emit `.transition-[width]` into the stylesheet on every route. The detector reads the stylesheet,
+  so it reports one `layout-transition` finding on a page that does not use the class. P2 cannot fix
+  it (`P2.md` keeps `components/domain/**` untouched) and does not strip the utility, which would
+  break those bars. Owner: P10, together with the refont (transform-based bar, or a width transition
+  on `transform: scaleX`). No P2-owned file contains a layout transition.
+- **`StatusRail` renders an uppercase tracked wordmark.** `components/shell/StatusRail.tsx:55` uses
+  `font-display uppercase tracking-eyebrow`, which the pick retires (`UI_REFERENCE` §1). The class
+  survives as a neutral no-op in `globals.css` so unconverted screens keep rendering; the markup
+  itself goes at P10. Owner: P10.
+- **Borderless panels read flat on unconverted screens until the refont.** P2 rebuilt `Panel` and
+  `Expander` as surfaces without a border or corner radius, so a control inside them is the only
+  bordered element (this is what retired the card-in-card pattern, and it matches the direction's
+  "the gap is the divider"). Measured separation of `--surface-raised` over `--surface-app`:
+  `rgb(255,255,255)` on `rgb(238,241,239)` in pine-light, `rgb(27,31,29)` on `rgb(12,15,13)` in
+  pine-dark, and the ink pairing is the same. A soft step of 14 to 17 channel points reads as a
+  surface but not as a card edge, so v1 screens that relied on panel borders will look flatter
+  between now and P10. Owner: P10 (hairline gaps between panes, per `UI_REFERENCE` §8).
+- **The v1 command palette has the same unrevealed-active-option defect P2 just fixed in `Combobox`.**
+  `components/shell/CommandPalette.tsx:296-298` is a `role="listbox"` with `max-h-80 overflow-y-auto`
+  and `aria-activedescendant` (line 288), and no code moves the list's scroll offset, so with more
+  results than fit, ArrowDown walks the active option out of the visible band and Enter runs a command
+  the user cannot see. Found while fixing the PR #151 review finding in `Combobox`; P2 cannot fix it
+  (`P2.md` keeps `components/shell/**` untouched). Owner: P10. The fix shape is the one shipped in
+  `primitives/Combobox.tsx:96-114` (a ref on the `<ul>`, a rect delta against the padded inner band),
+  with one caveat particular to this file: its empty state renders a single `<li>` that is *not* an
+  option, so the active node must be looked up by id (`command-option-${id}`) rather than by child
+  index.
+- **A toast can dismiss itself while one of its own buttons has focus.** `primitives/Toast.tsx:76-81`
+  starts a per-item timer on mount and clears on unmount only, so a focused Dismiss (or a future
+  action) can disappear under a keyboard user when a real duration is set. Nothing auto-dismisses at
+  a focused control today: every gallery toast uses `duration={0}` and `toastStore.push` carries no
+  action, so this is latent. Owner: P10, together with the toast redesign; the fix is to pause the
+  timer while the item contains focus (or on hover), which is what WCAG 2.2.1 expects.
+- **`/kitchen` sits outside the `AppShell` by design.** The dev gallery renders v2 alone, so a
+  design review or a detector scan of it measures the design system and not the v1 shell. The route
+  is gated on `import.meta.env.DEV` and tree-shaken from the production bundle (`grep -rni kitchen
+  ui/dist` is empty). When P7 replaces the shell, re-point the gallery at the new shell only if the
+  review needs it.
 
 ## 2026-10-19 — Carried forward from the 0.4.2 arc (owner: maintainer unless stated)
 

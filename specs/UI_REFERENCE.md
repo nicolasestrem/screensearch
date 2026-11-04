@@ -9,20 +9,43 @@
 
 ## 1. Aesthetic direction (the point of view)
 
-**Placeholder — the v2 identity is chosen by the maintainer at the P2 direction checkpoint (0.4.5 D4) and written here before any screen work starts.** The superseded v1 identity (warm graphite + signal-orange, Windows-native fonts, Scanline Timeline, dark-only) is preserved verbatim at `specs/archive/UI_REFERENCE_v1_identity.md` and is **not** normative for 0.4.5 onward.
+**Logbook** - recorded 2026-11-04 as the 0.4.5 P2 direction pick (D4/D5). Logbook keeps direction C "Signal Console" structure exactly and replaces its skin: the density, the logbook-first chronology, a context rail on every screen and tabular figures for measured values all survive, while C's cyan/violet pair, glow, scanlines and sub-12px tracked micro-labels do not. The superseded v1 identity (warm graphite + signal-orange, Windows-native fonts, Scanline Timeline, dark-only) is preserved verbatim at `specs/archive/UI_REFERENCE_v1_identity.md` and is **not** normative for 0.4.5 onward.
 
-Until that pick, this section is the only open variable in the UI contract: `§2` (token shape), `§3` (IA), `§4` (state matrix) and `§8` (shell layout) are already authoritative for v2 and do not depend on the direction. P2 renders three complete directions on identical content at a dev-only `/kitchen` route — a real Settings page, a search result list, a session card, an answer with citations, a form with every control state, both themes where the direction has two — and the maintainer picks one (or a merge), which is then recorded **here**. Nothing visual starts before the pick.
+**Visual evidence:** the two rendered skins live on branch `feat/0.4.5-p2-design-directions` as `docs/kickoffs/P2-directions/direction-d.html` (ink) and `direction-d2.html` (pine), with `compare.html` showing C, D and D2 side by side and `PICK.md` recording the pick and its `impeccable detect` counts. Those files are the rendered comparison, not the token contract: each is a self-contained HTML mockup with its own inline `<style>` and short local names, while the app's names are the ones in `§2`.
 
-Themes: the v2 token architecture supports multiple themes, and the v1 dark-only rule is **superseded** — whether v2 ships dark-only, light-only or both is part of the D4 pick (0.4.5 D5).
+**Skin rules (binding).** No cyan, no violet, no neon, no glow, no scanlines. **Mono is for measured values only** - timestamps, counts, durations, sizes, percentages, frame numbers - never for labels, headings, buttons or setting names. **One restrained accent per theme.** Red and amber appear only as states, never as decoration and never as a second accent. **Nothing renders below 12px.** **No tracked uppercase labels:** sentence case throughout, with weight and tone carrying hierarchy. Density comes from layout and rhythm, not from shrinking type.
 
-Fonts and icons are **bundled local files** (0.4.5 D15): OFL-licensed variable fonts, one text family and one mono family — display treatment comes from weight and size, not a third face — and one local SVG icon set at a single stroke width. Nothing is fetched over the network; there is no web-font CDN and no icon service.
+**Colour roles.** The accent is action, selection, focus and the matched term. Relationships (entity chips, thread membership, session links) are neutral surfaces, neutral borders and a small link icon, never a second hue. The match highlight is accent wash plus an accent underline - there is no yellow. Red and amber are states. **Pine success:** in pine, success is its own token family and visibly distinct from the pine accent - a neutral status treatment (primary-text foreground on a raised-surface background with a strong border) that always carries a check/state icon, so "Capturing", "Saved" and "completed" never read as the accent. In ink, success stays green. Status components therefore always render their icon, in every theme (`§7`). The state glyphs are fixed shapes: a check (or check-in-circle where the badge is self-contained) for ok, a triangle for warn, a circled exclamation for danger, an info glyph for neutral advisories, and a plain arc for loading, which animates only under `motion-safe`. Danger and warn are deliberately distinct shapes and are never swapped.
 
-Palette, typography (families, weights, the type scale), form (radius, elevation, motion) and the timeline signature are **P2's to write here** after the D4 pick — everything that section names is a decision the direction checkpoint produces, so none of it is restated now. The binding restatement: the signature surface (the timeline, `§3`) encodes real capture density rather than decoration, and motion — including any ambient drift — is disabled under `prefers-reduced-motion` (`§7`).
+**Four themes, two accents.** Themes differ only in the semantic token layer, switched by `data-theme` on the root element; structure, type and components are shared. Two accents ship, each in light and dark, all four user-selectable: **pine** (default) - near-neutral graphite and mist neutrals on hue 160, with a pine-green accent on hue 165 - and **ink** - cool slate and paper neutrals on hue 252, with an ink-blue accent on hue 258. The values are exactly `pine-light` (the default, and the `:root` theme), `pine-dark`, `ink-light` and `ink-dark`.
+
+The choice is the setting **`ui.appearance`** (`03 §8`): enum `pine-light` (default) | `pine-dark` | `pine-system` | `ink-light` | `ink-dark` | `ink-system`, rendered in Settings > General. The `*-system` values follow the OS light/dark preference within the chosen accent. P3 registers the key in the settings v2 registry; P7 renders the control, resolves `*-system` through `prefers-color-scheme` and applies `data-theme` on the root. Until P7 lands the app ships `pine-light` by default.
+
+Fonts and icons are **bundled local files** (0.4.5 D15): OFL-licensed variable fonts shipped with the app, nothing fetched at runtime - **Source Sans 3** (variable, weights 200-900) is the one text family, carrying headings, labels, body and interface text, and **Cascadia Mono** (variable, 200-700) is the one mono family, used for measured values only. Display treatment comes from weight and size; there is no third face. Icons are **one local SVG set** under `ui/src/components/primitives/icons/` at a single stroke width - `--stroke-icon`, 1.5, on a 24 viewBox with round caps and joins, drawing `currentColor` (`docs/0.4.5.md` P2 item 6 replaces the hand-maintained `ui/src/components/icons.tsx`). No web-font CDN and no icon service.
+
+**Motion is state-only.** A transition may show that something changed - hover, focus, open, save, a row arriving - and nothing animates for atmosphere: no ambient drift, no entrance choreography, no sweep. Durations come from one scale (fast 90 ms for control feedback, base 140 ms, slow 220 ms) on a single ease curve, so a visible state transition lands in the 150-250 ms class, and `prefers-reduced-motion` disables all of them (`§7`). The binding restatement carries over: the signature surface (the timeline, `§3`) encodes real capture density rather than decoration.
 
 ## 2. Design tokens (single source)
-**Placeholder — P2 writes the scales here after the `§1` direction pick (0.4.5 D4).** The architecture is decided now and binds every screen: three layers in `ui/src/styles/tokens.css` — **primitive** (raw scales: colour ramps, type scale, space scale, radii, shadows, durations) → **semantic** (`--surface-raised`, `--text-secondary`, `--border-subtle`, `--action-primary-bg`, `--focus-ring`…) → **component** (only where a component needs its own knob).
+Three layers in `ui/src/styles/tokens.css`: **primitive** (raw scales: colour ramps, type scale, space scale, radii, shadows, durations) → **semantic** (`--surface-raised`, `--text-secondary`, `--border-subtle`, `--action-primary-bg`, `--focus-ring`…) → **component** (only where a component needs its own knob). **The primitive palette values are P2's to write** in that file; the scales and the semantic names below are the contract those primitives implement, so a token P2 adds either maps onto one of them or is a new decision recorded here.
 
-Components may reference **semantic and component tokens only** — never a primitive directly. **No component hardcodes a hex, px font, or magic spacing** — everything references a token. Themes are **semantic-layer swaps** (`[data-theme]`), so a new theme never touches a component, and the `§1` pick decides how many ship (0.4.5 D5). Spacing is a 4-based scale with named steps plus a density token (`comfortable` / `compact`, `§8`). Z-layers stay base / rail / overlay / toast.
+**Type scale (px).** `12` xs · `13` sm, also `data` at 13 in mono · `14` body · `14` ui · `15` prose · `17` h3 · `20` h2 · `26` h1 · `30` display. **12 is the floor**; `13` mono (`data`) is for measured values only, and `ui` labels setting names, control labels and nav. Weights are **400 / 500 / 600** (normal, medium, semi), and display treatment comes from weight and size, never a third family (`§1`).
+
+**Space scale.** 4-based with named steps (2 · 4 · 6 · 8 · 10 · 12 · 16 · 20 · 24 · 32 · 40 · 48 · 64 px); no component invents a spacing value between steps. **Radii** are `3` · `4` · `6` · `pill` - small by rule, `6` is the ceiling. **Density token:** `comfortable` (default) or `compact`, driving row height (36 / 32 px), control height (32 / 28 px) and grid gap; a screen never hardcodes a row height (`§8`).
+
+**Semantic names** (the token layer a component may reference):
+- Surfaces: `--surface-app`, `--surface-chrome`, `--surface-pane`, `--surface-raised`, `--surface-inset`, `--surface-hover`, `--surface-selected`.
+- Borders: `--border-subtle`, `--border-strong`, `--border-control`, `--border-focus`.
+- Text: `--text-primary`, `--text-secondary`, `--text-tertiary`.
+- Accent and action: `--accent`, `--accent-strong`, `--accent-wash`, `--accent-line`, `--text-on-accent`, `--action-primary-bg`, `--action-primary-fg`.
+- Focus: `--focus-ring`.
+- States: `--status-ok-fg` / `-bg` / `-border`, and the same three-part family for `warn` and `danger`; the success family is the neutral treatment in `§1` under pine.
+- Match highlight: `--mark-bg`, `--mark-fg` - accent wash and accent-inked text; no yellow.
+
+**Themes** are semantic-layer swaps on `[data-theme]`, whose values are exactly `pine-light` (the `:root` default), `pine-dark`, `ink-light` and `ink-dark` (`§1`); the setting that selects them is `ui.appearance` (`03 §8`), whose `*-system` values resolve against `prefers-color-scheme` in the applier rather than adding a fifth `data-theme`. Every semantic token is declared in all four themes, and a theme value references a primitive only.
+
+**Z-layers** stay `base` / `rail` / `overlay` / `toast`. **Durations** are `fast` 90 ms, `base` 140 ms, `slow` 220 ms with one ease curve (`§1`); `prefers-reduced-motion` disables all three (`§7`). **Icon stroke** is `--stroke-icon` = 1.5, one value for every glyph, so a heavier icon is a decision recorded here and not a call-site override - the wrapper accepts an explicit `strokeWidth` rather than silently swallowing it, and no call site passes one. `size` (default 18 px) is the icon set's only size knob and it sets no `font-size`, so an icon nests inside any type step without disturbing the scale. Geometry numbers inside path and shape data (`d`, `r`, `rx`) are drawing coordinates, not weights - the discriminator is whether the token name `--stroke-icon` is on the line.
+
+Components may reference **semantic and component tokens only**, never a primitive directly. **No component hardcodes a hex, px font, or magic spacing**: everything references a token, and a later theme is another entry in that layer, not a component change.
 
 Tailwind's theme maps onto the same custom properties, so a Tailwind utility and a hand-written `var(--…)` resolve to one value. A raw hex, a px font size or a non-token spacing value in a primitive is a lint failure (P2 acceptance).
 
@@ -75,7 +98,7 @@ One job per screen, one primary action. A screen whose job cannot be stated in o
 | Flow overlay | FlowOverlay | Recall without leaving the current app | Jump to the Moment |
 | Tray | Tray | Control capture and models from the OS shell | Pause / Resume |
 
-**Settings v2 (0.4.5 D7/D9; P7 builds it).** Settings is one shell with a **category sidebar** — **General · Capture · Privacy · Intelligence · Models · Data · Integrations · Advanced** — implemented as `routes/settings/`, one file per category (none over ~300 lines) and a search across all settings that finds every key by label and by key name (gap `07` #103). Every category uses **one row pattern**: label, one-line plain-language effect, control, "changed" marker with reset-to-default. **Autosave per field with an undo toast — there is no global Save button** (0.4.5 D9); a failed save keeps the typed value in place, explains, and retries. **Destructive actions** (delete history, revoke a credential, remove an output folder) sit behind a confirm dialog that names exactly what is destroyed (0.4.5 D9). Live status shows inline where a setting has a runtime effect — hotkey registered, API listening on, model loaded. `api.*` and the Telegram/Obsidian credentials live under **Integrations**; `file-only` keys appear read-only under **Advanced** with the `advanced.toml` path. Membership is normative in `03 §8` — only the 25 UI keys are controls; everything else is file-only or gone, with no unknown-key tolerance (0.4.5 D6).
+**Settings v2 (0.4.5 D7/D9; P7 builds it).** Settings is one shell with a **category sidebar**: **General · Capture · Privacy · Intelligence · Models · Data · Integrations · Advanced**, implemented as `routes/settings/`, one file per category (none over ~300 lines) and a search across all settings that finds every key by label and by key name (gap `07` #103). Every category uses **one row pattern**: label, one-line plain-language effect, control, "changed" marker with reset-to-default. **Autosave per field with an undo toast, and there is no global Save button** (0.4.5 D9); a failed save keeps the typed value in place, explains, and retries. **Destructive actions** (delete history, revoke a credential, remove an output folder) sit behind a confirm dialog that names exactly what is destroyed (0.4.5 D9). Live status shows inline where a setting has a runtime effect: hotkey registered, API listening on, model loaded. `api.*` and the Telegram/Obsidian credentials live under **Integrations**; `file-only` keys appear read-only under **Advanced** with the `advanced.toml` path. Membership is normative in `03 §8`: only the 26 UI keys are controls, `ui.appearance` among them; everything else is file-only or gone, with no unknown-key tolerance (0.4.5 D6).
 
 **Identity and navigation notes below are historical (0.4.5 D4/D5/D7).** The rest of this section records what shipped in 0.2.x–0.4.2. Its **behavioural** rules still bind — states, keyboard paths, privacy, no badge counts, one scroll context, honest empty — but every **identity or navigation** reference in it (signal-orange accent, Windows-native fonts, the Scanline signature, the 0.3.2 two-tier Settings, the 0.4.0 "no new route" fence) is superseded by `§1`/`§2` and by the v2 IA above.
 
@@ -230,12 +253,72 @@ Loading uses skeletons that match final layout (no spinner-only screens). Empty 
 **invitations to act**, not mood.
 
 ## 5. Component inventory (built once, reused)
-**Placeholder — P2 writes the inventory here as the primitives land, after the `§1` direction pick (0.4.5 D4).** Two inputs are authoritative now and do not wait for the pick:
+**Thirty primitives ship, and one barrel is the import path.** `ui/src/components/primitives/index.ts` re-exports the thirty components tabulated below with their prop types; it also re-exports `useToastStore` and the `ToastItem` type, which are state rather than components. Screens import from the barrel (`import { Button, Panel } from "../components/primitives"`), never from a primitive file. Variants are props, not second components: `variant`, `size`, `tone`, `side`, `align`. Every interactive primitive also takes `preview` (`hover` | `active` | `focus`), which renders `data-preview` and paints that state statically, so the gallery and a review screenshot show every state without a pointer. The icon set is `icons/index.tsx`: 55 `Icon*` glyphs on one 24 viewBox at `--stroke-icon` 1.5, drawing `currentColor`, decorative by default.
 
-- **The primitive list to build** is P2's item 5 in `docs/0.4.5.md` (`:150-155`): Button (primary / secondary / ghost / danger × sm / md, icon and loading states), IconButton, Field, TextInput, Textarea, Select, Combobox, Toggle, Checkbox, Radio group, Segmented control, Slider with numeric input, Chip/Tag, Badge, Tooltip, Popover, Dialog, Sheet, Toast, Tabs, Panel/Card, List row, Table, Skeleton, EmptyState, ErrorState, Kbd, Divider. Every primitive ships all interaction states, keyboard behaviour, a focus ring, reduced-motion handling and WCAG-AA contrast in every theme.
-- **The shipped v1 inventory** — shell, primitives, domain components, and the arc-by-arc notes explaining why each exists — is preserved verbatim at `specs/archive/UI_REFERENCE_v1_identity.md`. It is provenance, not a list to keep: P10 deletes dead components left behind by the redesign and removes `tokens.compat.css` (P2 item 7 / P10 in `docs/0.4.5.md`), and P2's `tokens.compat.css` aliases keep unconverted screens rendering in the meantime.
+**Controls (14).**
 
-Still binding without a pick: **each component owns one job** — a label labels, an example demonstrates, nothing does double duty; components reference semantic and component tokens only (`§2`); and the *behavioural* contracts these components carried do **not** lapse with their v1 visuals — full state coverage per `§4`, one scroll context and no nested scrollbars per `§8`, honest empty states, no badge counts. The v2 inventory is written here by P2 as primitives land, extended by P9 (`ConnectionsPanel`, `EntityChips` — built there, placed in Session and Moment by P10) and by P10's refonted domain components.
+| Primitive | States it ships | Notes |
+| --- | --- | --- |
+| `Button` | default, hover, active, focus-visible, disabled, loading | `variant` primary / secondary / ghost / danger with `size` sm / md, optional `leadingIcon`; `loading` sets `aria-busy` and `aria-disabled`, cancels the activation (a click, Enter/Space, and a native submit) and swaps the leading glyph for a spinner; a transparent `--hit-min` 32px target sits under a shorter visual height |
+| `IconButton` | default, hover, focus-visible, disabled, pressed | `label` is required and becomes both `aria-label` and the native tooltip; `active` renders `aria-pressed` on the selected surface, so a toggle needs no second primitive |
+| `Field` | default, hover, focus-visible, disabled, invalid | The labelled-input pattern: `label`, `hint`, `error` (sets `aria-invalid` and the danger border), generated id |
+| `TextInput` | default, hover, focus-visible, disabled, invalid | `size` sm / md from the density scale; `invalid` paints the danger border and sets `aria-invalid` |
+| `Textarea` | default, hover, focus-visible, disabled, invalid | The `TextInput` contract with `resize-y` and a `min-h-control` floor |
+| `Select` | default, hover, focus-visible, disabled, invalid | A native `select`, so the OS popup and its keyboard model are kept; same `label` / `hint` / `error` / `size` contract |
+| `Combobox` | closed, open, option highlighted, filtered-empty, disabled, invalid, plus the five data states | Filter-as-you-type listbox: the active option moves by `aria-activedescendant` without moving focus into the list; `state` covers loading, error and partial inside the panel; `emptyMessage` covers a filter that matches nothing |
+| `Toggle` | off, on, hover, active, focus-visible, disabled | `role="switch"` with `aria-checked`; the knob translates and the track takes `--accent` when on |
+| `Checkbox` | unchecked, checked, indeterminate, hover, active, focus-visible, disabled, invalid | `indeterminate` takes precedence over `checked`; `error` sets `aria-invalid` |
+| `RadioGroup` | selected, hover, active, focus-visible, disabled (group and option), invalid | Arrow keys move the selection; `orientation` vertical or horizontal |
+| `Segmented` | selected, hover, active, focus-visible, option disabled | A radio group drawn as buttons; a disabled option takes no focus and no click |
+| `Slider` | default, hover, active, focus-visible, disabled, invalid, plus the five data states | Track and thumb plus a numeric input (`name` submits it); `unit` appends to the spoken value |
+| `Tabs` | selected, hover, active, focus-visible, tab disabled | Roving focus (`tabIndex` 0 only on the selected or focused tab); a disabled tab keeps its place, loses focus and cannot be selected; `value` / `defaultValue` |
+| `Chip` | default, hover (removable), focus-visible (remove control), tone variants | `tone` neutral / accent / ok / warn / danger, optional `dot`, optional `onRemove` with `removeLabel` |
+
+**Surfaces (4).**
+
+| Primitive | States it ships | Notes |
+| --- | --- | --- |
+| `Panel` | none (static) | One elevation step: `--surface-raised` on `--border-subtle`; `title` and `action` build the header row, `flush` drops body padding, `group` adds `role="group"` with `aria-labelledby` on the title |
+| `Divider` | none (static) | `role="separator"` with `aria-orientation`; `vertical` for a rule between columns |
+| `Kbd` | none (static) | A keycap for a shortcut hint; not a control |
+| `Expander` | collapsed, expanded, hover, active, focus-visible | The header row is the disclosure button (`aria-expanded` + `aria-controls`); the body is a labelled `role="region"`, kept in the DOM and `hidden` while collapsed; 140 ms on the shared ease, off under `prefers-reduced-motion` |
+
+**Overlays (5).**
+
+| Primitive | States it ships | Notes |
+| --- | --- | --- |
+| `Dialog` | closed, open | Named `role="dialog"` with `aria-modal`, a scrim, a Tab cycle that stays inside the panel, Escape to close, scroll lock and focus returned to the opener; `size` sm / md / lg; portalled to `document.body` |
+| `Sheet` | closed, open | The `Dialog` modal mechanics with `side` bottom / left / right |
+| `Popover` | closed, open (controlled or its own) | The trigger owns `aria-expanded`, `aria-controls` and `aria-haspopup="dialog"`; `label` names the panel; Escape, an outside press or a focus move away all close it; `side` and `align` |
+| `Tooltip` | hidden, shown (hover or focus, after `delay`) | Text only, never a surface; `disabled` suppresses the label without unmounting the trigger |
+| `Toast` (with `ToastViewport`) | level info / success / warning / error, auto-dismissed, loading, dismissed | `loading` shows a spinner, sets `aria-busy` and suspends the timer; `action` adds the undo affordance; the viewport renders the `useToastStore` queue at `z-toast` with `aria-live="polite"` |
+
+**Data (4).**
+
+| Primitive | States it ships | Notes |
+| --- | --- | --- |
+| `Table` | loading, empty, error, partial, populated | `loading` renders `loadingRows` skeleton rows at the final row height and sets `aria-busy`; `partial` reads "Showing N of M" from `total`; `error` renders the retry; controlled `sort` via `onSortChange`, `selectedRowId`, `stickyHeader`, `zebra` off by default; numeric cells are mono and tabular; `caption` renders as a visually hidden caption |
+| `ListRow` | loading, empty, error, partial, populated | The one row pattern: `icon`, `title`, `meta`, `trailing`; an `a` when `href` is set, otherwise a `button` or a plain `div`; `selected` fills `--surface-selected`; `partial` adds a "Partial data" mark; loading, empty and error rows take no interaction |
+| `Skeleton` | none (static) | Token `w` / `h` steps and `circle`, pulse off under `prefers-reduced-motion`, `aria-hidden`; it reserves the final layout instead of a spinner-only screen |
+| `Spinner` | none (static) | `role="status"` with a visually hidden `label`; `size` sm / md; spin off under `prefers-reduced-motion` |
+
+**Status (3).**
+
+| Primitive | States it ships | Notes |
+| --- | --- | --- |
+| `Badge` | tone ok / warn / danger / neutral / accent | A tone and a glyph, never a count: ok, warn and danger render their state icon, neutral and accent render none |
+| `EmptyState` | empty | An invitation to act: `title`, one `description` line, one `action`, `align` center or start; carries `data-state="empty"` |
+| `ErrorState` | error | `title` and `message` naming the cause and the fix, `onRetry` (default label "Try again") or a custom `action`; `align` center or start |
+
+**State contract.** Every interactive primitive ships the same baseline: default, hover, active, focus-visible (a 2px outline at `--focus-ring`), and disabled wherever the control can be disabled; `Tabs` and `Segmented` disable per item and a disabled item takes no focus. On top of that baseline each ships its own control state: checked (`Toggle`, `Checkbox` with `indeterminate` beating `checked`), selected (`Segmented`, `Tabs`, `RadioGroup`, `Slider`, `ListRow`), open or expanded (`Dialog`, `Sheet`, `Popover`, `Combobox`, `Expander`), pressed (`IconButton.active`), invalid (`TextInput`, `Textarea`, `Select`, `Combobox`, `Checkbox`, `RadioGroup`, `Slider`, each setting `aria-invalid`), or loading (`Button`, `Toast`). Data-bearing primitives ship the `§4` set as one union type, `loading | empty | error | partial | populated`, and not as an afterthought: `Table`, `ListRow`, `Slider` and `Combobox`. Feedback transitions come from the one duration scale (`fast` 90 ms for control feedback, `base` 140 ms, `slow` 220 ms) on the shared ease, and the looping animations (`animate-pulse`, the spinner) stop under `prefers-reduced-motion`.
+
+**What did not lapse from v1.** Separate from the visuals, the behavioural contracts these components carried still bind, and the v2 primitives are written to them rather than around them. State coverage still means all five `§4` states per view, never the happy path alone. One scroll context per route still holds: only the content pane scrolls, no route adds a nested scrollbar (`§8`), and the two documented exemptions (a preformatted block, overlay surfaces with their own bounded scroll) are the only ones. Empty states are still admissions and invitations to act, never mood, which is why `EmptyState` and `ErrorState` are primitives and not page-local markup. Nothing ships a count affordance: `Badge` takes a tone and a glyph and no number, so presence-only surfaces stay presence-only. Each component still owns one job; a label labels and nothing does double duty. The v1 inventory with the arc-by-arc reasons each component existed stays archived at `specs/archive/UI_REFERENCE_v1_identity.md` as provenance, not as a list to keep.
+
+**Enforcement.** Two tests hold this section to the tokens rather than to prose. `ui/test/contrast.test.mjs` resolves every semantic token through its `var()` chain to a hex literal and checks 31 declared text/surface pairs (three text roles on each of seven surfaces, plus the accent, action, status and match pairs) in each of the four themes: **124 pairs at WCAG AA 4.5:1**, and a token missing from any theme is a hard failure rather than a skipped pair. `ui/test/tokens.test.mjs` is the token fence over the 30 primitive `.tsx` files and its **7 rules** (colour literal, colour function, `font-size` literal, arbitrary font size, arbitrary px value, layer-1 `--p-` reference, and the structural inline-style scan for numeric px), and it currently reports **0 hits**.
+
+**Gallery.** `/kitchen` (`ui/src/routes/Kitchen.tsx` over `KitchenPrimitives.tsx`) is the dev-only design-system specimen: it renders the real primitives against the real tokens outside the AppShell, with density and theme switches in the header and `?theme=` read on mount for screenshot runs. It is registered in `app/router.tsx` behind `import.meta.env.DEV` with a dynamic import, so Vite folds the guard to `false` and the route, its chunk and the gallery are **excluded from the production bundle**.
+
+**`Expander` stays in the barrel as a v2 adapter** for `routes/Settings.tsx`, which still imports it for its collapsed Settings groups, until P7 replaces that screen.
 
 ## 6. Data & state (reliability by construction)
 - **Typed IPC only.** Every command/event payload is a Rust struct exported via **`ts-rs`** and
@@ -315,9 +398,13 @@ no filler. Timestamps human-relative with absolute on hover.
    mock data, zero dead ends, zero "Coming Soon."**
 2. All payload types are `ts-rs`-generated; no hand-written API types in the UI.
 3. `eslint-plugin-react-hooks` passes as an error-level gate; routes have error boundaries.
-4. Tokens are the single source — no hardcoded hex/font/spacing in components.
-5. AA contrast verified; keyboard-only operation of every screen incl. the timeline; reduced-motion
-   honored.
+4. Tokens are the single source: no hardcoded hex/font/spacing in components, and the rule is
+   machine-enforced, not reviewed by eye (`ui/test/tokens.test.mjs` over
+   `ui/src/components/primitives`, plus the two greps in `04`). Components reference semantic and
+   component tokens only.
+5. AA contrast verified **in every shipped theme** (four: `pine-light`, `pine-dark`, `ink-light`,
+   `ink-dark`) by `ui/test/contrast.test.mjs` over the semantic text pairs, and confirmed on rendered
+   surfaces; keyboard-only operation of every screen incl. the timeline; reduced-motion honored.
 6. Performance budgets (§8) met on a realistic DB.
 7. The timeline scrubs smoothly and reflects real capture density — the Scanline Timeline or its v2
    successor, whichever the `§1` pick names (0.4.5 D4).

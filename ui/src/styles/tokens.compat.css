@@ -1,0 +1,64 @@
+/* v1 compatibility shim (P2 codemod bridge).
+ *
+ * Every token name from the old Command Deck tokens.css resolves here onto a
+ * v2 semantic token, so components that were not rewritten in this pass keep
+ * rendering instead of falling back to an undefined custom property.
+ *
+ * Rules:
+ *   - v2 names win. Where a v1 name is also a v2 name (--accent, --accent-wash,
+ *     --font-mono, --text-display, --text-body, --text-data, --weight-*,
+ *     --space-*, --z-*, --hit-min) the shim does NOT redefine it.
+ *   - --glow-scan maps to none: the v1 scan-head halo is gone by rule, so
+ *     shadow-scan paints nothing rather than a ghost of the old brand.
+ *   - --tracking-eyebrow maps to 0: tracked uppercase labels are gone, and a
+ *     legacy tracked label now renders untracked instead of keeping the tic.
+ *
+ * Imported by globals.css immediately after tokens.css.
+ */
+
+:root {
+  /* surfaces */
+  --bg-base: var(--surface-app);
+  --bg-surface: var(--surface-pane);
+  --bg-overlay: var(--surface-raised);
+  --scrim: var(--surface-scrim);
+
+  /* borders */
+  --line: var(--border-subtle);
+
+  /* text */
+  --ink: var(--text-primary);
+  --ink-muted: var(--text-secondary);
+  --ink-faint: var(--text-tertiary);
+
+  /* effects */
+  --glow-scan: none;
+
+  /* states (v1 names were standalone colours; keep them as foreground tones) */
+  --danger: var(--status-danger-fg);
+  --warn: var(--status-warn-fg);
+  --ok: var(--status-ok-fg);
+
+  /* families */
+  --font-display: var(--font-text);
+  --font-body: var(--font-text);
+
+  /* type scale (v2 keeps --text-display, --text-body, --text-data itself) */
+  --text-title: var(--text-h2);
+  --text-subtitle: var(--text-h3);
+  --text-caption: var(--text-xs);
+
+  /* legacy tracked-label tracking */
+  --tracking-eyebrow: 0em;
+
+  /* form */
+  --radius-panel: var(--radius-md);
+  --radius-chip: var(--radius-sm);
+  --radius-ribbon: 0;
+
+  /* motion */
+  --motion-fast: var(--duration-fast);
+  --motion-base: var(--duration-base);
+  --motion-slow: var(--duration-slow);
+  --ease-ui: var(--ease-standard);
+}

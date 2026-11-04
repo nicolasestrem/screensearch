@@ -1,5 +1,24 @@
 # 08 — AI Changelog
 
+## 2026-11-04: 0.4.5 P2 design system v2
+
+- **Change:** the v2 foundation lands on `feat/0.4.5-p2-design-system`, cut from `origin/main`
+  (P1 contract). Specs first: `UI_REFERENCE` §1/§2/§5 record the Logbook direction, its scales and
+  its primitive inventory; `03 §8` gains `ui.appearance` and the closed UI set rises 25 -> 26;
+  `07` carries the P3/P7 follow-ups. Code: bundled local variable fonts (Source Sans 3, Cascadia
+  Mono, both OFL), three-layer `tokens.css` with four themes (`pine-light` default) and a density
+  token, `tokens.compat.css` shim covering 46 v1 names (25 aliases, 21 kept their name), rewritten `globals.css`, Tailwind mapped onto
+  the same properties, 30 primitives rebuilt with the v1 names and props intact, a 55-glyph local
+  icon set, a dev-only `/kitchen` gallery outside the AppShell, and two enforcement tests (124 AA
+  pairs x 4 themes; a 7-rule token fence over the primitives).
+- **Commits:** `cf56222`, `8136179`, `5c9c679`, `8e1935b` (docs/specs), `75c77ba` (implementation),
+  `d113a0f` (review round), then the documentation commit. Branch `feat/0.4.5-p2-design-system`, PR
+  opened, not merged.
+- **Verified:** lint, 90 UI tests, build, clippy, cargo build and the workspace tests all green;
+  the six P2 greps at 0 (0 unresolved tokens), bindings untouched; detect 1 finding per variant,
+  attributable to v1 progress bars outside this phase's ownership; AA 0 failures in all four
+  themes. Raw output in `05`.
+
 ## 2026-11-03: 0.4.5 P4 automatic intelligence evaluation
 
 - **Change:** `crates/harness` gains an `eval` subcommand and `src/eval/` (facts, generators,
