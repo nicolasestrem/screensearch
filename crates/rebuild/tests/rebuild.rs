@@ -16,8 +16,11 @@ use traits::{FRAME_ID_HIGH_WATER_KEY, HISTORY_ID_KEY};
 
 /// The reserved identity the fixture carries and the rebuild must copy verbatim.
 const HISTORY_ID: &str = "11111111-2222-4333-8444-555555555555";
-/// The reserved allocator high-water the fixture carries (never recomputed).
-const HIGH_WATER: &str = "7";
+/// The reserved allocator high-water the fixture carries (never recomputed). It is
+/// deliberately **above** the fixture's highest frame id (7), as on a real profile whose
+/// newest frames were deleted: an implementation that recomputed the allocator from
+/// `MAX(frames.id)` would write 7 and fail, so the test can tell copy from recompute.
+const HIGH_WATER: &str = "42";
 
 /// The nine settings-v2 `deleted` rows (`03 §8`, 0.4.5 D6); all are seeded so the
 /// test proves the full set is dropped, not just one example.
@@ -259,8 +262,28 @@ fn rebuild_carries_history_and_repopulates_indexes() -> Result<()> {
         assert_eq!(setting(&conn, key)?, None, "{key} must be dropped");
     }
     assert_eq!(setting(&conn, "obsolete.unknown_key")?, None);
-    assert_eq!(report.settings_copied, 8);
-    assert_eq!(report.settings_dropped.len(), 10);
+    // Internal markers guard carried state (the session backfill checkpoint above all:
+    // without it the app re-segments the carried history), so they survive verbatim.
+    assert_eq!(
+        setting(&conn, "sessions.backfill_done_until")?.as_deref(),
+        Some("2100")
+    );
+    for key in [
+        "overlay.hotkey_migrated",
+        "sessions.gap_close_secs_migrated",
+        "maintenance.self_capture_purged",
+        "maintenance.purged_spans_merged",
+    ] {
+        assert_eq!(
+            setting(&conn, key)?.as_deref(),
+            Some("1"),
+            "{key} must survive"
+        );
+    }
+    // The catalog watermark resets with `chrome_text_catalog`, which is not carried.
+    assert_eq!(setting(&conn, "text.catalog_filter_version")?, None);
+    assert_eq!(report.settings_copied, 13);
+    assert_eq!(report.settings_dropped.len(), 11);
 
     // A missing image is reported, never a reason to drop the row or its path.
     assert_eq!(report.missing_images, ["frames/0007.webp"]);
@@ -362,7 +385,7 @@ INSERT INTO schema_version VALUES (13);
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 INSERT INTO settings(key, value) VALUES
   ('api.history_id', '11111111-2222-4333-8444-555555555555'),
-  ('api.frame_id_high_water', '7'),
+  ('api.frame_id_high_water', '42'),
   ('api.token', 'fixture-api-token'),
   ('api.read_token', 'fixture-read-token'),
   ('capture.interval_ms', '1234'),
@@ -378,6 +401,12 @@ INSERT INTO settings(key, value) VALUES
   ('capture.uia_run_on_interactive', 'true'),
   ('enrich.image_embeddings', 'true'),
   ('storage.jpeg_quality', '82'),
+  ('sessions.backfill_done_until', '2100'),
+  ('overlay.hotkey_migrated', '1'),
+  ('sessions.gap_close_secs_migrated', '1'),
+  ('maintenance.self_capture_purged', '1'),
+  ('maintenance.purged_spans_merged', '1'),
+  ('text.catalog_filter_version', '3'),
   ('obsolete.unknown_key', 'not in the table');
 
 CREATE TABLE sessions (

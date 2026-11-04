@@ -311,22 +311,31 @@ export function Component() {
       setMonitorsText(data.capture_monitors.join(", "));
       setAppsText(data.privacy_excluded_apps.join(", "));
     } else {
-      // The App-section toggles (run-at-startup / close-to-tray) are edited through
-      // AppPanel's own self-contained round-trip, not this form's draft (that split is
-      // deliberate — the toggles have fallible OS side effects and apply immediately).
-      // Mirror their latest persisted values into the draft so they never register as
-      // unsaved here and a bulk Save of other fields never reverts a toggle changed via
-      // AppPanel. Only these two fields are touched — in-progress edits to the form's
-      // own fields are preserved, and an unchanged draft keeps its reference (no
-      // re-render loop).
+      // Two groups are edited through their own self-contained round-trips, not this
+      // form's draft: the App toggles (run-at-startup / close-to-tray, via AppPanel; they
+      // have fallible OS side effects and apply immediately) and the HTTP API settings
+      // (enabled / port / bind address, via ApiPanel's `set_api_config`, which starts,
+      // stops and rebinds the listener). Mirror their latest persisted values into the
+      // draft so they never register as unsaved here and a bulk Save of other fields never
+      // reverts them. That revert matters most for the API: `set_settings` hot-applies a
+      // changed `api_*` value, so a stale draft would stop a listener the user just
+      // started. Only these five fields are touched — in-progress edits to the form's own
+      // fields are preserved, and an unchanged draft keeps its reference (no re-render
+      // loop).
       setDraft((cur) =>
         cur &&
         (cur.app_run_at_startup !== data.app_run_at_startup ||
-          cur.app_close_to_tray !== data.app_close_to_tray)
+          cur.app_close_to_tray !== data.app_close_to_tray ||
+          cur.api_enabled !== data.api_enabled ||
+          cur.api_port !== data.api_port ||
+          cur.api_bind_address !== data.api_bind_address)
           ? {
               ...cur,
               app_run_at_startup: data.app_run_at_startup,
               app_close_to_tray: data.app_close_to_tray,
+              api_enabled: data.api_enabled,
+              api_port: data.api_port,
+              api_bind_address: data.api_bind_address,
             }
           : cur,
       );

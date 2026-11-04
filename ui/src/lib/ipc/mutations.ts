@@ -70,6 +70,10 @@ export function useSetSettings() {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: queryKeys.settings });
       qc.invalidateQueries({ queryKey: queryKeys.hotkeyStatus });
+      // `api_*` are typed settings: a save that changes them starts, stops or rebinds
+      // the listener (`set_settings` hot-applies through `apply_api_config`), so the API
+      // panel's status must refresh too.
+      qc.invalidateQueries({ queryKey: queryKeys.apiStatus });
     },
   });
 }
@@ -126,7 +130,10 @@ export function useResolveMark() {
 /**
  * Enable/disable the local HTTP API (and set the port). Returns the new `ApiStatus`;
  * the panel reads `enabled && !running && last_error` to show the loud port-in-use
- * state (`03 §7c`). Invalidates `apiStatus` so the panel reflects the new state.
+ * state (`03 §7c`). Invalidates `apiStatus` so the panel reflects the new state, and
+ * `settings`, because `api.enabled`/`api.port`/`api.bind_address` are typed settings:
+ * without the refetch, the Settings form keeps the pre-change values and a later save
+ * would write them back and undo this change (0.4.5 P3, settings v2).
  */
 export function useSetApiConfig() {
   const qc = useQueryClient();
@@ -135,6 +142,7 @@ export function useSetApiConfig() {
       mutationFn: (args) => cmd.setApiConfig(args),
       onSettled: () => {
         qc.invalidateQueries({ queryKey: queryKeys.apiStatus });
+        qc.invalidateQueries({ queryKey: queryKeys.settings });
       },
     },
   );

@@ -504,6 +504,11 @@ fn take_advanced_section(table: &mut toml::Table, name: &str, dirty: &mut bool) 
 
 /// Best-effort one-shot rewrite of `advanced.toml` from the effective config, so the file
 /// matches the `03 §8` table after unknown/unparsable entries were dropped.
+///
+/// Written atomically: the body goes to a sibling temp file which then replaces the
+/// original. A crash or kill mid-write leaves either the old file or the new one, never a
+/// truncated file that the loader would read as invalid TOML and silently replace with
+/// defaults on every later start.
 fn rewrite_advanced_config(path: &Path, config: &AdvancedConfig) {
     let body = match toml::to_string_pretty(config) {
         Ok(body) => body,
@@ -512,16 +517,21 @@ fn rewrite_advanced_config(path: &Path, config: &AdvancedConfig) {
             return;
         }
     };
-    match std::fs::write(path, body) {
+    let tmp = path.with_extension("toml.tmp");
+    let written = std::fs::write(&tmp, body).and_then(|()| std::fs::rename(&tmp, path));
+    match written {
         Ok(()) => tracing::warn!(
             path = %path.display(),
             "advanced.toml rewritten to match the settings table",
         ),
-        Err(error) => tracing::warn!(
-            path = %path.display(),
-            error = %error,
-            "advanced.toml rewrite failed; the in-memory values still apply",
-        ),
+        Err(error) => {
+            let _ = std::fs::remove_file(&tmp);
+            tracing::warn!(
+                path = %path.display(),
+                error = %error,
+                "advanced.toml rewrite failed; the file is unchanged and the in-memory values still apply",
+            );
+        }
     }
 }
 

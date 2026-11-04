@@ -121,6 +121,14 @@ fn open_existing(conn: Connection) -> Result<Connection> {
     Ok(conn)
 }
 
+/// Number of schema objects (tables, indexes, views, triggers) in the database. Zero means
+/// an empty database; a non-SQLite file is reported as a refusal naming the rebuild tool,
+/// never treated as empty.
+fn schema_object_count(conn: &Connection) -> Result<i64> {
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
+        .map_err(|e| refuse_schema(format!("unknown ({e})")))
+}
+
 /// Requires every table of [`schema::BASELINE_SQL`] to be present. A version row alone
 /// does not prove completeness: a truncated restore, or a file from a different product,
 /// must be refused here rather than fail later with a misleading query error.
@@ -185,12 +193,27 @@ impl SqliteStore {
     /// else with a message naming the version found and the `ssv2c-rebuild` tool.
     pub fn open_path(path: &Path) -> Result<Self> {
         register_vec_extension();
-        let existing = path.exists();
         let conn = Connection::open(path)?;
-        let conn = if existing {
-            open_existing(conn)?
-        } else {
+        // Decide by what the database *contains*, never by whether a file exists:
+        //
+        // - A missing file and a zero-byte file both read as a database with no schema
+        //   objects, and so does a file left behind by a first run that failed mid-way
+        //   (the baseline is one transaction, so a failure rolls back to empty). All of
+        //   these are safely initialised here. Deciding by `path.exists()` instead would
+        //   refuse that last case forever (`ssv2c-rebuild` cannot repair it either), and
+        //   would race a file appearing between the check and the open.
+        // - Anything with at least one schema object is someone's database: it goes
+        //   through the strict v14 check and is refused, untouched, if it is not v14.
+        // - A file that is not SQLite at all fails the probe and is refused, never
+        //   overwritten.
+        //
+        // The probe is a read on the schema table and runs before any pragma, because
+        // `journal_mode=WAL` rewrites the header of a file we may be about to refuse.
+        conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+        let conn = if schema_object_count(&conn)? == 0 {
             open_fresh(conn)?
+        } else {
+            open_existing(conn)?
         };
         Ok(Self::from_conn(conn))
     }

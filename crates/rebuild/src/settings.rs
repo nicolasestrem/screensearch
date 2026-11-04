@@ -36,6 +36,29 @@ pub const API_READ_TOKEN_KEY: &str = "api.read_token";
 /// it contains dynamic subkeys (`memory.promotion.pending.<sha256(note)>`).
 pub const MEMORY_SETTINGS_PREFIX: &str = "memory.";
 
+/// Internal one-shot markers and checkpoints that live in the `settings` KV but are not
+/// user settings, so they have no `03 §8` row. Each guards state the rebuild *does*
+/// carry, so dropping it would make the app redo work over that carried state:
+///
+/// - `sessions.backfill_done_until`: the historical segmentation checkpoint. Without it
+///   the backfill restarts from the earliest frame and re-segments carried sessions,
+///   orphaning their titles, summaries and artifacts on the old ids.
+/// - `overlay.hotkey_migrated`, `sessions.gap_close_secs_migrated`: one-shot default
+///   remaps. Without the marker a value the user deliberately chose again after the
+///   remap is rewritten a second time.
+/// - `maintenance.self_capture_purged`, `maintenance.purged_spans_merged`: one-time
+///   maintenance passes over carried frames and spans (idempotent; scan cost only).
+///
+/// `text.catalog_filter_version` is deliberately absent: it watermarks
+/// `chrome_text_catalog`, which the rebuild does not carry, so the two reset together.
+pub const CARRIED_INTERNAL_MARKERS: [&str; 5] = [
+    "sessions.backfill_done_until",
+    "overlay.hotkey_migrated",
+    "sessions.gap_close_secs_migrated",
+    "maintenance.self_capture_purged",
+    "maintenance.purged_spans_merged",
+];
+
 /// The parsed settings-v2 dispositions (`03 §8`, 0.4.5 D6).
 pub struct SettingsPolicy {
     ui: BTreeSet<&'static str>,
@@ -63,10 +86,13 @@ impl SettingsPolicy {
     /// Retired keys — including the nine `deleted` rows — are *not* carried: D6's
     /// load rule removes a row that names a key outside the table, so the tool applies
     /// the same rule up front instead of writing rows the app would delete on boot.
+    /// The [`CARRIED_INTERNAL_MARKERS`] are carried although they have no table row,
+    /// because they are bookkeeping for carried state, not settings.
     pub fn carries(&self, key: &str) -> bool {
         (self.ui.contains(key) || self.file_only.contains(key))
             || key.starts_with(MEMORY_SETTINGS_PREFIX)
             || key == API_READ_TOKEN_KEY
+            || CARRIED_INTERNAL_MARKERS.contains(&key)
             || is_history_metadata_key(key)
     }
 
@@ -197,5 +223,91 @@ mod tests {
         assert!(policy.carries("memory.schedule.output_folder"));
         assert!(policy.carries("memory.promotion.pending.abc123"));
         assert!(!policy.carries("obsolete.unknown_key"));
+    }
+
+    #[test]
+    fn internal_markers_survive_and_the_catalog_watermark_resets() {
+        let policy = SettingsPolicy::load();
+        for key in CARRIED_INTERNAL_MARKERS {
+            assert!(
+                policy.carries(key),
+                "{key} guards carried state and must survive"
+            );
+        }
+        // Watermarks `chrome_text_catalog`, which is not carried: they reset together.
+        assert!(!policy.carries("text.catalog_filter_version"));
+    }
+
+    /// Drift guard. Every `settings` key the shipped code names in a `&str` constant must
+    /// be carried by the rebuild or be on the short reviewed list of keys it drops on
+    /// purpose. A new internal marker that nobody classified fails here instead of being
+    /// silently dropped on the maintainer's real rebuild.
+    #[test]
+    fn every_kv_key_constant_in_the_code_is_classified() {
+        // Dropped on purpose, each with its reason.
+        const DELIBERATELY_DROPPED: &[&str] = &[
+            // Watermark for `chrome_text_catalog`, which the rebuild does not carry.
+            "text.catalog_filter_version",
+        ];
+        // Constants that look like dotted keys but name something other than a
+        // `settings` row (tray menu ids, hotkey registration ids, a file name).
+        const NOT_KV_KEYS: &[&str] = &[
+            "tray.model",
+            "tray.open",
+            "tray.pause",
+            "tray.quit",
+            "tray.updates",
+            "tray.vision",
+            "marks.hotkey",
+            "overlay.hotkey",
+            "advanced.toml",
+        ];
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let decl = |line: &str| -> Option<String> {
+            let line = line.trim();
+            if !(line.starts_with("const ") || line.starts_with("pub const "))
+                || !line.contains(": &str = \"")
+            {
+                return None;
+            }
+            let value = line.split(": &str = \"").nth(1)?.split('"').next()?;
+            let dotted = value.contains('.')
+                && value
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_' || c == '.');
+            dotted.then(|| value.to_string())
+        };
+        let mut unclassified = Vec::new();
+        let mut stack = vec![root.join("crates"), root.join("src-tauri/src")];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).expect("read source dir").flatten() {
+                let path = entry.path();
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if path.is_dir() {
+                    // Only shipped source: skip build output, tests and this tool itself.
+                    if !matches!(name, "target" | "tests" | "rebuild" | "harness") {
+                        stack.push(path);
+                    }
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).expect("read source file");
+                    for key in text.lines().filter_map(decl) {
+                        let policy = SettingsPolicy::load();
+                        if !policy.carries(&key)
+                            && !policy.is_deleted(&key)
+                            && !DELIBERATELY_DROPPED.contains(&key.as_str())
+                            && !NOT_KV_KEYS.contains(&key.as_str())
+                        {
+                            unclassified.push(format!("{key} ({})", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+        unclassified.sort();
+        unclassified.dedup();
+        assert!(
+            unclassified.is_empty(),
+            "settings keys the rebuild would silently drop; carry them or list them as dropped: {unclassified:#?}"
+        );
     }
 }

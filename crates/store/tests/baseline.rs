@@ -217,41 +217,69 @@ fn refuses_any_database_that_is_not_v14() {
     }
 }
 
-/// An existing file with no readable `schema_version` is refused too (empty file and a
-/// missing table both land here), and it is not modified either.
+/// A zero-byte `screensearch.db` holds no data, so it is initialised rather than refused.
+/// This is also what a first run that failed mid-way leaves behind (the baseline is one
+/// transaction, so the failure rolls back to an empty file). Refusing it would brick the
+/// app permanently: `ssv2c-rebuild` only reads v13 sources and cannot repair it either.
 #[test]
-fn refuses_an_empty_file_without_creating_the_baseline() {
+fn initialises_a_zero_byte_file_instead_of_refusing_it() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("screensearch.db");
     fs::write(&path, b"").expect("create an empty file");
-    assert_eq!(fs::read(&path).expect("read before"), Vec::<u8>::new());
 
-    let err = match SqliteStore::open_path(&path) {
-        Ok(_) => panic!("an empty file must not be adopted as a store"),
-        Err(e) => e.to_string(),
-    };
-    assert!(
-        err.contains("ssv2c-rebuild"),
-        "the refusal must name the rebuild tool, got {err:?}"
-    );
+    let store = SqliteStore::open_path(&path).expect("an empty file is initialised");
     assert_eq!(
-        fs::read(&path).expect("read after"),
-        Vec::<u8>::new(),
-        "an empty refused file must stay empty: the baseline is never written into it"
+        store.schema_version().expect("version"),
+        store::LATEST_SCHEMA_VERSION
     );
+    drop(store);
+    // And it reopens normally as a v14 store afterwards.
+    SqliteStore::open_path(&path).expect("the initialised file reopens");
+}
 
-    // A file that holds a table but no version row is the same refusal.
+/// A file that holds schema objects but no readable version is someone's partial or
+/// foreign database: it is refused with the rebuild instruction and left untouched,
+/// never "initialised" over. Contrast with the zero-byte case above, which has no
+/// objects and so holds nothing to protect.
+#[test]
+fn refuses_a_database_with_objects_but_no_version_row() {
+    let dir = tempfile::tempdir().expect("temp dir");
     let no_row = dir.path().join("no-row.db");
     Connection::open(&no_row)
         .expect("create db")
         .execute_batch("CREATE TABLE schema_version (version INTEGER NOT NULL);")
         .expect("schema_version table");
+    let before = fs::read(&no_row).expect("read before");
     let err = match SqliteStore::open_path(&no_row) {
         Ok(_) => panic!("a database without a version row must not open"),
         Err(e) => e.to_string(),
     };
     assert!(err.contains("ssv2c-rebuild"), "got {err:?}");
     assert!(err.contains("unknown"), "got {err:?}");
+    assert_eq!(
+        fs::read(&no_row).expect("read after"),
+        before,
+        "a refused database must stay byte-identical"
+    );
+}
+
+/// A file that is not SQLite at all is refused, never overwritten with a baseline.
+#[test]
+fn refuses_a_non_sqlite_file_and_leaves_it_untouched() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("screensearch.db");
+    let garbage = b"this is not a database, it is a text file someone renamed".repeat(80);
+    fs::write(&path, &garbage).expect("write a non-sqlite file");
+    let err = match SqliteStore::open_path(&path) {
+        Ok(_) => panic!("a non-SQLite file must not be adopted as a store"),
+        Err(e) => e.to_string(),
+    };
+    assert!(err.contains("ssv2c-rebuild"), "got {err:?}");
+    assert_eq!(
+        fs::read(&path).expect("read after"),
+        garbage,
+        "left untouched"
+    );
 }
 
 /// Reopening a v14 store succeeds: the refusal path must not reject a healthy file.

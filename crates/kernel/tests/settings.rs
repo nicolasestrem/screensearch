@@ -1064,6 +1064,15 @@ x = 1
         rewritten.contains("diff_threshold = 0.25"),
         "the surviving value is kept: {rewritten}"
     );
+    // Atomic rewrite: the temp file is renamed into place, never left behind, and the
+    // result is complete, parseable TOML rather than a truncated write.
+    assert!(
+        !path.with_extension("toml.tmp").exists(),
+        "the rewrite must not leave its temp file behind"
+    );
+    rewritten
+        .parse::<toml::Table>()
+        .expect("the rewritten file is complete, valid TOML");
 
     // Second load is clean: same values, and the file is not rewritten again.
     let before = std::fs::metadata(&path).unwrap().modified().unwrap();
