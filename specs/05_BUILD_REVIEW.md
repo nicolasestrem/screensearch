@@ -226,6 +226,11 @@
   `%TEMP%\p3-cargo-test3-2026-11-04.log`. The clean-worktree build above independently re-ran
   `cargo fmt`, `cargo clippy -p store -p rebuild` and `cargo test -p store -p rebuild` from a detached
   checkout with its own target directory, so the branch is not relying on the shared build cache.
+- **Publication.** Branch `feat/0.4.5-p3-baseline-schema` pushed to `origin` and opened as
+  [PR #153](https://github.com/nicolasestrem/screensearch/pull/153) against `main` on the
+  maintainer's explicit 2026-11-04 instruction, after the recompute above. **Not merged**; no review
+  automation was triggered. The PR body carries the summary, the verification block and the
+  maintainer-only items.
 - **One ownership note for reviewers.** The 2026-11-04 QA pass's Settings API fix touches
   `ui/src/lib/settingsDraft.ts`, `ui/test/settingsDraft.test.mjs`, `ui/src/lib/ipc/mutations.ts` and
   `ui/src/routes/Settings.tsx`. It is in P3 because P3 introduced the typed `api.*` settings and the

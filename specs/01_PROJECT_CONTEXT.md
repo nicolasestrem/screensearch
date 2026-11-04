@@ -151,7 +151,8 @@ for self-contained contracts and source-inspected inventory.
 
 - **Wave A in flight (2026-11-04, updated):** **P2 is merged** to `main` as `7e73e30` (design system
   v2, Logbook, four themes, `pine-light` default). **P3 is implemented, synced onto main and opened
-  for review** on `feat/0.4.5-p3-baseline-schema` (base `origin/main` `3976551`, PR open, not
+  for review** on `feat/0.4.5-p3-baseline-schema` (base `origin/main` `3976551`,
+  [PR #153](https://github.com/nicolasestrem/screensearch/pull/153) open, not
   merged): code now carries the baseline schema **v14** instead of the migration chain (`03 §4`,
   0.4.5 D2), the dev-only `ssv2c-rebuild` carrier, settings v2 (26 UI keys including
   `ui.appearance`, 44 `file-only`, 9 `deleted`) with `advanced.toml` and `get_advanced_config`, and a

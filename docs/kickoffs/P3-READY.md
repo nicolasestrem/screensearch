@@ -1,14 +1,16 @@
 # P3 ready: baseline schema v14 + settings v2
 
-**Branch:** `feat/0.4.5-p3-baseline-schema`. Pushed to `origin` and opened as a PR against `main`
-after the maintainer's explicit 2026-11-04 instruction; **not merged**. No other branch and no
-`main` commit was touched.
+**Branch:** `feat/0.4.5-p3-baseline-schema`. Pushed to `origin` and opened as
+**[PR #153](https://github.com/nicolasestrem/screensearch/pull/153)** against `main` after the
+maintainer's explicit 2026-11-04 instruction; **not merged**. No other branch and no `main` commit
+was touched.
 **Base:** `origin/main` `3976551` (0.4.5 P1 #150, the P2 design system #151 and its records #152).
 The branch hung off P1 `dad1eb2`; it was rebased with
 `git rebase --onto origin/main dad1eb2 feat/0.4.5-p3-baseline-schema`, clean, five commits replayed.
 `git diff 3d15756 e27f42c` is empty, so the P1 tip tree is exactly main's #150 squash.
-**New tip:** `8833c41` for code and docs, followed by the specs/records commit that carries this
-file and the PR-number commit. Old overnight tip: `48a9705`.
+**New tip:** the head of [PR #153](https://github.com/nicolasestrem/screensearch/pull/153), which
+includes the records commits; the code/docs tip before those records is `8833c41`. Old overnight
+tip: `48a9705`.
 
 **Commits added today:** `31f7c66` (`ui.appearance` as the 26th UI key), `47b1f1b` (baseline DDL
 parity test), `1407e5b` (rebuild fixture seeds the new key), `bbd8976` (dev-gallery stale specimen,

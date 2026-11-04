@@ -20,9 +20,9 @@
   `bbd8976` (kitchen gallery), `c039d5e` (maintainer run + contract text), then `3d9d89a`,
   `b53db47`, `8aca7a5`, `244638a`, `9d3a9ee` and `8833c41` from an adversarial audit (parity-test
   strictness, rebuild fidelity failures, settings doc truth, P3-authored em dash removal, restored
-  coverage, guarded maintainer procedure), plus the records commits. Branch pushed and PR opened
-  against `main` on the maintainer's explicit 2026-11-04 instruction (0.4.5 D18 validation given
-  for this PR); not merged.
+  coverage, guarded maintainer procedure), plus the records commits. Branch pushed and
+  [PR #153](https://github.com/nicolasestrem/screensearch/pull/153) opened against `main` on the
+  maintainer's explicit 2026-11-04 instruction (0.4.5 D18 validation given for this PR); not merged.
 - **Verified:** all nine verification commands in `04` section 4 exit 0 on the final tree
   (`npm ci`, `lint`, `build`, `stage-mcp`, `fmt`, `clippy`, `cargo build`, `cargo test --workspace`
   1195 passed / 0 failed, bindings diff clean); raw output and the per-item acceptance audit are in
