@@ -158,8 +158,8 @@ pub struct RebuildReport {
 
 /// Rebinds `source` into a fresh v14 database at `dest`.
 ///
-/// The destination is removed again if any step fails, so a failed run never
-/// leaves a half-written file behind.
+/// The destination is removed again (best effort) if any step fails, so a failed run
+/// does not intentionally leave a half-written file behind.
 pub fn rebuild(options: &RebuildOptions) -> Result<RebuildReport> {
     if !options.source.is_file() {
         bail!(
@@ -224,8 +224,17 @@ fn create_and_copy(
     let (settings_copied, settings_dropped, embedding_vectors) = {
         let tx = dest.transaction()?;
         for table in CARRY_TABLES {
-            if !table_exists(source, table)? || !table_exists(&tx, table)? {
-                continue;
+            // A carry table missing from either side means the rebuild would silently
+            // drop carried history (a truncated v13 source, or a baseline gap). That is
+            // a fidelity failure, not a table to skip (P3.md stop condition).
+            if !table_exists(source, table)? {
+                bail!(
+                    "source database is missing the carry table `{table}`; refusing to \
+                     rebuild a partial history"
+                );
+            }
+            if !table_exists(&tx, table)? {
+                bail!("destination baseline is missing the carry table `{table}`");
             }
             let source_rows = copy_table(source, &tx, table)?;
             carried.push(TableCopy {
@@ -256,10 +265,15 @@ fn create_and_copy(
             integrity_check.join("; ")
         );
     }
-    let foreign_key_violations = foreign_key_violations(&dest)?;
-    if foreign_key_violations != 0 {
-        bail!("destination has {foreign_key_violations} PRAGMA foreign_key_check violation row(s)");
+    let foreign_key_violation_rows = foreign_key_violation_rows(&dest)?;
+    if !foreign_key_violation_rows.is_empty() {
+        bail!(
+            "destination has {} PRAGMA foreign_key_check violation row(s): {}",
+            foreign_key_violation_rows.len(),
+            foreign_key_violation_rows.join("; ")
+        );
     }
+    let foreign_key_violations = foreign_key_violation_rows.len() as i64;
     verify_reserved_metadata(source, &dest)?;
 
     let embeddings: i64 = count_on(&dest, "embeddings")?;
@@ -612,16 +626,29 @@ fn integrity_check(conn: &Connection) -> Result<Vec<String>> {
     Ok(rows)
 }
 
-fn foreign_key_violations(conn: &Connection) -> Result<i64> {
-    conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
-        row.get(0)
-    })
-    .context("run PRAGMA foreign_key_check")
+/// The exact `PRAGMA foreign_key_check` rows (table, rowid, parent table, fk index), so
+/// a fidelity failure names what could not be preserved instead of only a count.
+fn foreign_key_violation_rows(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt =
+        conn.prepare("SELECT \"table\", rowid, parent, fkid FROM pragma_foreign_key_check")?;
+    let rows = stmt
+        .query_map([], |row| {
+            let table: String = row.get(0)?;
+            let rowid: Option<i64> = row.get(1)?;
+            let parent: String = row.get(2)?;
+            let fkid: i64 = row.get(3)?;
+            Ok(format!(
+                "table={table} rowid={rowid:?} parent={parent} fkid={fkid}"
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
 }
 
 fn sample_frame_ids_on(conn: &Connection, limit: usize) -> Result<Vec<i64>> {
-    // A negative SQLite LIMIT means "no limit"; clamp so an absurd `--sample-frames`
-    // cannot turn into a full-table dump.
+    // `usize` exceeds `i64::MAX` only for absurd input on 64-bit; clamp it instead of
+    // wrapping. SQLite treats a negative LIMIT as "no limit", so the clamp must stay
+    // non-negative; the CLI parses a plain count and the report prints what it sampled.
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
     let mut stmt = conn.prepare("SELECT id FROM frames ORDER BY random() LIMIT ?1")?;
     let ids = stmt

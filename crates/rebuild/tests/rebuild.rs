@@ -342,6 +342,106 @@ fn rebuild_refuses_an_existing_destination_and_leaves_it_alone() -> Result<()> {
 }
 
 #[test]
+fn rebuild_refuses_a_source_missing_a_carry_table() -> Result<()> {
+    let fixture = fixture()?;
+    let dest = fixture.path().join("missing-table-v14.db");
+    {
+        let conn = Connection::open(&fixture.source)?;
+        conn.execute_batch("DROP TABLE marks;")?;
+    }
+
+    let error = rebuild::rebuild(&RebuildOptions {
+        source: fixture.source.clone(),
+        dest: dest.clone(),
+        sample_frames: None,
+    })
+    .expect_err("a source missing a carry table must be refused");
+
+    let message = format!("{error:#}");
+    assert!(message.contains("missing the carry table"), "{message}");
+    assert!(message.contains("marks"), "{message}");
+    assert!(
+        !dest.exists(),
+        "a refused rebuild must not leave a destination"
+    );
+    Ok(())
+}
+
+#[test]
+fn rebuild_reports_the_foreign_key_violation_rows_not_just_a_count() -> Result<()> {
+    let fixture = fixture()?;
+    let dest = fixture.path().join("orphan-v14.db");
+    {
+        let conn = Connection::open(&fixture.source)?;
+        // An orphan artifact row whose session id has no parent, as a damaged source
+        // could carry. The tool must name it, not delete the evidence and print a count.
+        conn.execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO session_artifacts(id, session_id, kind, role, content)
+             VALUES (9001, 999, 'exchange', 'user', 'orphan row');",
+        )?;
+    }
+
+    let error = rebuild::rebuild(&RebuildOptions {
+        source: fixture.source.clone(),
+        dest: dest.clone(),
+        sample_frames: None,
+    })
+    .expect_err("a foreign-key violation must fail the rebuild");
+
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("foreign_key_check violation row(s)"),
+        "{message}"
+    );
+    assert!(message.contains("session_artifacts"), "{message}");
+    assert!(message.contains("rowid"), "{message}");
+    assert!(
+        !dest.exists(),
+        "a refused rebuild must not leave a destination"
+    );
+    Ok(())
+}
+
+#[test]
+fn samples_twenty_distinct_frame_ids_when_history_allows() -> Result<()> {
+    let fixture = fixture()?;
+    let dest = fixture.path().join("twenty-v14.db");
+    {
+        let conn = Connection::open(&fixture.source)?;
+        for id in 10..=26 {
+            conn.execute(
+                "INSERT INTO frames(id, captured_at, monitor_index, width, height, image_path, content_hash)
+                 VALUES (?1, ?2, 0, 1920, 1080, ?3, ?4)",
+                params![
+                    id,
+                    1_700_000_000_000_i64 + id,
+                    format!("frames/{id:04}.webp"),
+                    format!("hash-{id}")
+                ],
+            )?;
+        }
+    }
+
+    let report = rebuild::rebuild(&RebuildOptions {
+        source: fixture.source.clone(),
+        dest,
+        sample_frames: Some(20),
+    })?;
+
+    let mut ids = report.sample_frames.clone();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(
+        ids.len(),
+        20,
+        "twenty distinct ids were requested, got {:?}",
+        report.sample_frames
+    );
+    Ok(())
+}
+
+#[test]
 fn counts_report_skips_index_shadows() -> Result<()> {
     let fixture = fixture()?;
     let counts = rebuild::table_counts(&fixture.source)?;
