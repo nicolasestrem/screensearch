@@ -1,3 +1,5 @@
+# 05 — Build Review
+
 ## 2026-11-04: 0.4.5 P4 baseline, P5/P6 thresholds frozen on the committed fixture, verified and merged
 
 - **Scope (roadmap P4, kickoff `docs/kickoffs/P4.md`, plus the maintainer's threshold task).** The
@@ -949,8 +951,15 @@ no output is the pass condition (no stored question set, no golden file, no answ
   `DB_FILE = "screensearch.db"` tripped it as an unclassified key. The fix classifies it where the
   list already keeps `advanced.toml` (a file name, not a `settings` row) - the guard still covers
   the new crate's real key, `api.token`.
-
-# 05 — Build Review
+- **CI found one flaky assertion in the new tests, now fixed.** The first push failed
+  `build & test (windows)` on `a_tiny_fixture_is_quick_and_reports_no_embeddings`: it asserted a
+  5-second wall clock for a tiny fixture and the CI runner (tests in parallel, a slower box) took
+  7.6 s. Wall clock was the wrong proxy for what the test protects, so the assertion is gone and the
+  deterministic facts are asserted instead: 8 frames, `embeddings = 0`, and **no `models/`
+  directory created**, which is exactly "nothing was loaded or downloaded" and is offline-stable in
+  CI. The test is renamed to say what it now proves
+  (`a_tiny_fixture_reports_no_embeddings_and_downloads_nothing`); nothing was weakened about the
+  fixture's content, which the other three tests still check row by row.
 
 ## 2026-11-04: 0.4.5 P3 baseline schema + settings v2, synced to main, audited and re-verified
 

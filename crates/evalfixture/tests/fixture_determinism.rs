@@ -7,7 +7,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
-use std::time::Instant;
 
 use evalfixture::gen::{generate, world_entities, GenManifest, GenOptions};
 use evalfixture::{
@@ -249,15 +248,20 @@ fn the_default_fixture_reads_back_with_every_entity_in_content_text() {
 }
 
 #[test]
-fn a_tiny_fixture_is_quick_and_reports_no_embeddings() {
+fn a_tiny_fixture_reports_no_embeddings_and_downloads_nothing() {
     let dir = tempfile::tempdir().unwrap();
-    let started = Instant::now();
     let manifest: GenManifest = generate(&options(dir.path(), DEFAULT_SEED, 1, 8)).unwrap();
-    let elapsed = started.elapsed();
-    assert!(elapsed.as_secs() < 5, "tiny fixture took {elapsed:?}");
     assert_eq!(manifest.frames, 8);
     assert_eq!(manifest.embeddings, 0);
     assert!(manifest.sessions >= 1);
+    // `embeddings: false` must not touch the model cache at all: no model is loaded and
+    // nothing is downloaded, which is what keeps this test offline in CI. The elapsed time
+    // is deliberately not asserted - it depends on the machine and on how many tests run
+    // in parallel, and it was not what the assertion was protecting.
+    assert!(
+        !dir.path().join("models").exists(),
+        "a no-embeddings run must not create a model cache"
+    );
 
     let summary = manifest.summary();
     let keys: Vec<&str> = summary
