@@ -105,11 +105,13 @@ ink-dark    1 anti-pattern found.
 
 | variant | pairs | min font | under 12px | enabled below AA | disabled below AA | worst |
 |---|---|---|---|---|---|---|
-| pine-light | 516 | 12px | 0 | 0 | 0 | 4.90:1 |
-| pine-dark | 516 | 12px | 0 | 0 | 0 | 5.39:1 |
-| ink-light | 516 | 12px | 0 | 0 | 0 | 4.88:1 |
-| ink-dark | 516 | 12px | 0 | 0 | 0 | 5.39:1 |
+| pine-light | 528 | 12px | 0 | 0 | 0 | 4.90:1 |
+| pine-dark | 528 | 12px | 0 | 0 | 0 | 5.39:1 |
+| ink-light | 528 | 12px | 0 | 0 | 0 | 4.88:1 |
+| ink-dark | 528 | 12px | 0 | 0 | 0 | 5.39:1 |
 
+  Re-measured after the PR #151 review round added four gallery specimens (528 pairs, up from 516):
+  0 failures, min font 12px, worst unchanged at the ratios above.
   Disabled text clears AA too: each theme gained one ink step (`--p-mist-ink-550`,
   `--p-graphite-ink-450`, `--p-paper-ink-550`, `--p-slate-ink-450`) solved to 4.5:1 on
   `--surface-inset`, so `--text-disabled` does not rely on the SC 1.4.3 exemption and inertness is

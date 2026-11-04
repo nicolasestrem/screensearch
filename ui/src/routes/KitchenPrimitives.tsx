@@ -995,7 +995,7 @@ export function KitchenGallery() {
 
       <KitchenSpecimen
         name="Dialog focus trap"
-        note="collapsed group at the end of the dialog: Shift+Tab must skip its button and stop on the visible control"
+        note="collapsed group at the wrap point: Tab must skip its button"
       >
         <KitchenDialogFocusTrapDemo />
       </KitchenSpecimen>
