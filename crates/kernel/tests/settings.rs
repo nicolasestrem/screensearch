@@ -17,7 +17,7 @@ use store::SqliteStore;
 use traits::{
     AdvancedConfig, CaptureAdvanced, EnrichAdvanced, FlashAttnSetting, KvCacheType, ModelTier,
     OverlayAdvanced, ReportsAdvanced, ResumeAdvanced, Settings, SidecarAdvanced, SidecarParams,
-    Store, TextAdvanced, ThrottleAdvanced, FRAME_ID_HIGH_WATER_KEY, HISTORY_ID_KEY,
+    Store, TextAdvanced, ThrottleAdvanced, UiAppearance, FRAME_ID_HIGH_WATER_KEY, HISTORY_ID_KEY,
 };
 
 #[tokio::test]
@@ -45,6 +45,7 @@ async fn round_trips_non_default_values() {
         app_close_to_tray: false,
         overlay_hotkey: "Ctrl+Shift+F".to_string(),
         marks_hotkey: "Ctrl+Shift+M".to_string(),
+        ui_appearance: UiAppearance::InkDark,
         capture_interval_ms: 5000,
         capture_monitors: vec![0, 2],
         privacy_excluded_apps: vec!["Signal".to_string(), "Element".to_string()],
@@ -147,9 +148,10 @@ async fn save_settings_persists_sanitized_numeric_values() {
 }
 
 /// A persisted `report_runs.config_snapshot` written before settings v2 carries the old
-/// field set: no `api_*` keys, plus the now `file-only`/`deleted` names. It must still
-/// deserialize (defaults for the three new keys, unknown names ignored), or a queued run
-/// from an older build would fail with `STORE_ERROR` (`03 §8c`).
+/// field set: no `api_*` keys and no `ui.appearance` (added by the 0.4.5 P2 pick), plus the
+/// now `file-only`/`deleted` names. It must still deserialize (defaults for the four v2
+/// keys, unknown names ignored), or a queued run from an older build would fail with
+/// `STORE_ERROR` (`03 §8c`).
 #[test]
 fn pre_v2_settings_json_still_deserializes() {
     let mut value = serde_json::to_value(Settings::default()).unwrap();
@@ -157,6 +159,7 @@ fn pre_v2_settings_json_still_deserializes() {
     object.remove("api_enabled");
     object.remove("api_port");
     object.remove("api_bind_address");
+    object.remove("ui_appearance");
     object.insert("sidecar_ngl".to_string(), 42.into());
     object.insert("storage.jpeg_quality".to_string(), 80.into());
 

@@ -364,12 +364,14 @@ fn counts_report_skips_index_shadows() -> Result<()> {
 #[test]
 fn settings_policy_matches_the_spec_table() {
     let policy = rebuild::SettingsPolicy::load();
-    assert_eq!(policy.ui_count(), 25);
+    // 25 UI keys in the P1 contract plus `ui.appearance` from the 0.4.5 P2 pick.
+    assert_eq!(policy.ui_count(), 26);
     assert_eq!(policy.deleted_count(), 9);
     for key in DELETED_KEYS {
         assert!(!policy.carries(key));
     }
     assert!(policy.carries("capture.interval_ms"));
+    assert!(policy.carries("ui.appearance"));
     assert!(policy.carries("api.history_id"));
     assert!(policy.carries("api.frame_id_high_water"));
 }

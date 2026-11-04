@@ -101,7 +101,8 @@ impl SettingsPolicy {
         self.deleted.contains(key)
     }
 
-    /// Number of `UI` keys: the D6 ceiling (25) in the committed table.
+    /// Number of `UI` keys: the D6 ceiling (26 after the 0.4.5 P2 pick added
+    /// `ui.appearance`) in the committed table.
     pub fn ui_count(&self) -> usize {
         self.ui.len()
     }
@@ -180,7 +181,11 @@ mod tests {
     #[test]
     fn spec_table_parses_to_the_committed_sets() {
         let policy = SettingsPolicy::load();
-        assert_eq!(policy.ui_count(), 25, "D6's UI ceiling is 25 keys");
+        assert_eq!(
+            policy.ui_count(),
+            26,
+            "D6's UI ceiling is 26 keys: the P1 contract's 25 plus ui.appearance at the 0.4.5 P2 pick"
+        );
         assert_eq!(policy.deleted_count(), 9, "the nine deleted rows");
         assert_eq!(policy.file_only_count(), 44);
     }
@@ -192,6 +197,7 @@ mod tests {
         assert!(policy.carries("capture.diff_threshold"));
         assert!(policy.carries("app.tray_toast_done"));
         assert!(policy.carries("api.token"));
+        assert!(policy.carries("ui.appearance"));
     }
 
     #[test]

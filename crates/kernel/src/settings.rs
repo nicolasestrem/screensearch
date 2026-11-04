@@ -34,6 +34,7 @@ pub async fn load_settings(store: &dyn Store) -> Settings {
         app_close_to_tray: boolean(store, "app.close_to_tray", d.app_close_to_tray).await,
         overlay_hotkey: load_overlay_hotkey(store, d.overlay_hotkey).await,
         marks_hotkey: json(store, "marks.hotkey", d.marks_hotkey).await,
+        ui_appearance: json(store, "ui.appearance", d.ui_appearance).await,
         capture_interval_ms: num(store, "capture.interval_ms", d.capture_interval_ms).await,
         capture_monitors: json(store, "capture.monitors", d.capture_monitors).await,
         privacy_excluded_apps: json(store, "privacy.excluded_apps", d.privacy_excluded_apps).await,
@@ -110,6 +111,10 @@ pub async fn save_settings(store: &dyn Store, s: &Settings) -> Result<()> {
         (
             "marks.hotkey".into(),
             serde_json::to_string(&s.marks_hotkey)?,
+        ),
+        (
+            "ui.appearance".into(),
+            serde_json::to_string(&s.ui_appearance)?,
         ),
         (
             "capture.interval_ms".into(),

@@ -495,6 +495,27 @@ pub struct AdvancedConfigView {
     pub from_file: Vec<String>,
 }
 
+/// Theme appearance select (`ui.appearance`, `03 §8`; 0.4.5 P2 pick 2026-11-04).
+///
+/// The shell theme applier sets `data-theme` on the root element from this value, and the
+/// `*-system` variants follow the OS light/dark preference inside the chosen accent. P7
+/// renders the select and resolves `*-system` through `prefers-color-scheme`; P3 owns this
+/// registry entry and its persistence only. The wire/stored tokens are exactly the
+/// `data-theme` ids defined in `ui/src/styles/tokens.css`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub enum UiAppearance {
+    /// Default; matches the shipped pine-light theme.
+    #[default]
+    PineLight,
+    PineDark,
+    PineSystem,
+    InkLight,
+    InkDark,
+    InkSystem,
+}
+
 /// User-facing settings (`get_settings`/`set_settings`): **exactly** the `UI` rows of the
 /// `03 §8` table (settings v2, 0.4.5 D6), with that table's defaults and clamps. Persisted
 /// as key/value rows in the `settings` table.
@@ -528,6 +549,12 @@ pub struct Settings {
     /// shell-registered/validated posture as `overlay_hotkey`: a bad/colliding value
     /// surfaces as the D6 Settings warning + toast, never a silent rewrite.
     pub marks_hotkey: String,
+    /// Theme appearance (`ui.appearance`, `03 §8`; 0.4.5 P2 pick 2026-11-04). Persisted
+    /// like every other UI key; the shell theme applier and P7's Settings > General select
+    /// consume it. `#[serde(default)]` keeps a `config_snapshot` written before settings v2
+    /// deserializable (`03 §8c`).
+    #[serde(default)]
+    pub ui_appearance: UiAppearance,
     // Capture
     pub capture_interval_ms: u32,
     /// Empty = all monitors.
@@ -644,6 +671,9 @@ impl Default for Settings {
             sessions_min_len_secs: 120,
             sessions_gap_close_secs: 120,
             marks_hotkey: "Ctrl+Alt+M".to_string(),
+            // Four-theme design system (0.4.5 P2 pick, 2026-11-04): pine is the shipped
+            // default, matching the `:root` token block in `ui/src/styles/tokens.css`.
+            ui_appearance: UiAppearance::PineLight,
             // 0.2.1 smart enrichment throttle (docs/0.2.0.md former PR5, 07 #49). Opt-in
             // master OFF: flipping it on backs enrichment off under sustained load. The
             // thresholds/dwells themselves are `file-only`.
