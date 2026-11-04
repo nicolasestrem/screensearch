@@ -165,6 +165,18 @@ ink-dark    1 anti-pattern found.
   returns focus to the trigger, where the reverted predicate leaves focus stuck **on the panel**.
   Both control runs restored their file byte-identically. Lint clean, `90 / 90` tests, build ok,
   `kitchen` still 0 hits in `dist`.
+- **PR #151 second review round (Codex `917059e`, 1 inline finding, valid and latent, fixed).**
+  `Button` dropped `onClick` while `loading`, which stops a click handler but not a native form
+  submit: with `type="submit"`, `aria-disabled` is announced and ignored, so clicking the spinner or
+  activating the focused button with Enter submitted the form again while the first request was
+  pending. The handler now stays attached and calls `event.preventDefault()` while loading, which
+  covers an ordinary click, Enter/Space on the focused button, and the implicit submission a form
+  runs by clicking its default submit button. No callsite hits it today (the three `type="submit"`
+  users pass native `disabled`), so the defect was latent in the primitive's contract rather than
+  live in a screen. Evidence, throwaway form page at `ui/probe.html` with one loading and one idle
+  submit button, deleted afterwards: **0 submits while loading** for click, Enter-on-button and
+  implicit submission, `1` submit when idle, and the same three runs against the reverted handler
+  submit every time. `Button.tsx` restored byte-identically. Lint clean, `90 / 90` tests, build ok.
 - **Commits (local branch `feat/0.4.5-p2-design-system`, cut from `origin/main` at `e27f42c`,
   the P1 contract):** `cf56222` PRODUCT.md, `8136179` specs record the pick, `5c9c679` and `8e1935b`
   icon contract wording, `75c77ba` the implementation, `d113a0f` the review round (truthful gallery,

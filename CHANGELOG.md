@@ -69,6 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot be chosen, which is what a native select does. Verified in a browser over a twelve-option
   list: 0 of 15 keyboard steps left the active option hidden, against 7 of 15 with the fix disabled.
 
+- **A loading button could still submit its form.** The design system's `Button` dropped its click
+  handler while loading, which stops a handler but not a native form submit: with `type="submit"`,
+  `aria-disabled` is announced and ignored, so clicking the spinner or pressing Enter on the focused
+  button sent the form again while the first request was still pending. The button now cancels the
+  activation itself while loading.
+
 - **Tab could be swallowed at the edge of the new Dialog and Sheet.** Their focus trap wraps from the
   last control to the first and back, but it counted a control inside a collapsed group or an
   inactive tab panel as a candidate, and focusing one of those does nothing, so a Tab at the wrap

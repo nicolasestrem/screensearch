@@ -85,7 +85,17 @@ export function Button({
       aria-busy={loading ? true : rest["aria-busy"]}
       aria-disabled={loading ? true : rest["aria-disabled"]}
       data-preview={preview}
-      onClick={loading ? undefined : onClick}
+      // While loading the button must not act, and that includes a native form
+      // submit: `aria-disabled` is announced but does not stop activation, so
+      // dropping `onClick` alone would leave `type="submit"` free to submit the
+      // form again while the previous request is still pending.
+      onClick={(event) => {
+        if (loading) {
+          event.preventDefault();
+          return;
+        }
+        onClick?.(event);
+      }}
       className={cn(
         "relative inline-flex shrink-0 select-none items-center justify-center gap-2",
         "whitespace-nowrap rounded-md border font-text font-medium",
