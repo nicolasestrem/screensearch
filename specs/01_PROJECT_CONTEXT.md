@@ -149,8 +149,8 @@ for self-contained contracts and source-inspected inventory.
   0.4.5 D2). Until Wave A starts, `01`–`04`/`UI_REFERENCE` are the contract for it and the roadmap
   is context.
 
-- **Wave A in flight (2026-11-04):** **P2 (design system v2) is built and in review** on
-  `feat/0.4.5-p2-design-system`: the Logbook direction with four themes (`pine-light` default) from
+- **Wave A in flight (2026-11-04):** **P2 (design system v2) is merged** to `main` as `7e73e30`:
+  the Logbook direction with four themes (`pine-light` default) from
   two accents, three-layer tokens, bundled OFL variable fonts, 30 primitives, a local icon set, a v1
   token shim, and two enforcement tests. The schema is still **13** and no screen is refonted: P3
   cuts v14 and P10 does the screens. `ui.appearance` is the 26th UI key (`03 §8`); P3 adds it to the

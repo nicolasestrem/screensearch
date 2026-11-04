@@ -10,10 +10,20 @@
   inventory), `03 §8` (`ui.appearance`, six-value enum, `pine-light` default; the closed UI set
   rises 25 -> 26), `07` (P3 adds the key to the settings v2 registry; P7 renders it and resolves
   `*-system`), `docs/0.4.5.md` (D6 ceiling 26; P7/P9 acceptance "all four themes").
-- **Deviation, stated.** `P2.md` expects the pick merged to `main` before this branch exists and
-  says not to commit until the maintainer validates and names the repo. The maintainer instructed
-  this run to continue P2 and to commit locally without pushing, so the branch is cut from
-  `origin/main` (which carries the P1 contract, #150) and every commit stays local.
+- **Deviations, stated.** Two, both authorised conversationally (`P2.md`'s "stop and ask" clause)
+  rather than pre-approved in writing. (a) *Sequence:* `P2.md` expects the pick merged to `main`
+  before this branch exists and says not to commit until the maintainer validates and names the
+  repo. The maintainer instructed this run to continue P2 and to commit locally, so the branch was
+  cut from `origin/main` (which carries the P1 contract, #150) and the commits stayed local until
+  the maintainer authorised the push. (b) *Write boundary:* the kickoff permits only append-only
+  entries outside the owned UI paths, but the phase also had to write `specs/01 §8` (Wave A status),
+  `specs/03 §8` and `§13d` (the `ui.appearance` row and the acceptance status, both following the
+  maintainer's own 26-key ruling), `specs/04 §1` (a pointer the next phase reads), `specs/UI_REFERENCE`
+  `§1/§2/§5/§10` (the pick and the two sections whose own text says "P2 writes" them), `docs/0.4.5.md`
+  (the roadmap's P2 status), `PRODUCT.md` (written by the maintainer-side `impeccable init`) and
+  `docs/screenshots/p2/**` (the phase's visual evidence). Every one is documentation, status or a
+  capture: no code left the owned paths plus the three approved exceptions, and the contradiction
+  is logged as `06 #34` with what a future kickoff should do instead.
 - **Built:** `ui/src/styles/fonts/` (Source Sans 3 upright + italic variable woff2, Cascadia Mono
   variable woff2, SIL OFL 1.1 with licence text beside each file); `tokens.css` (226 distinct custom
   properties over 357 declarations: 114 `--p-*` primitives plus the semantic layer redeclared in four
@@ -112,7 +122,10 @@ ink-dark    1 anti-pattern found.
 | ink-dark | 528 | 12px | 0 | 0 | 0 | 5.39:1 |
 
   Re-measured after the PR #151 review round added four gallery specimens (528 pairs, up from 516):
-  0 failures, min font 12px, worst unchanged at the ratios above.
+  0 failures, min font 12px, worst unchanged at the ratios above. Re-measured a third time on `main`
+  after the Cascadia Mono face was corrected from `font-weight: 400` to the file's real `200 700`
+  range, since a weight change could shift rendering: identical at 528 pairs, 0 failures, and the
+  same four minima.
   Disabled text clears AA too: each theme gained one ink step (`--p-mist-ink-550`,
   `--p-graphite-ink-450`, `--p-paper-ink-550`, `--p-slate-ink-450`) solved to 4.5:1 on
   `--surface-inset`, so `--text-disabled` does not rely on the SC 1.4.3 exemption and inertness is
@@ -190,7 +203,8 @@ ink-dark    1 anti-pattern found.
 - **Commits (local branch `feat/0.4.5-p2-design-system`, cut from `origin/main` at `e27f42c`,
   the P1 contract):** `cf56222` PRODUCT.md, `8136179` specs record the pick, `5c9c679` and `8e1935b`
   icon contract wording, `75c77ba` the implementation, `d113a0f` the review round (truthful gallery,
-  `07` residuals), then the documentation commit that also opens the PR. Merged to `main`: no.
+  `07` residuals), then the documentation commit that also opens the PR, the review rounds and the
+  capture refreshes (16 commits). Merged to `main`: yes, `7e73e30` (squash), 2026-11-04.
 - **Open.** Populated screenshots need the Tauri app and a seeded database (`docs/SCREENSHOTS.md`),
   which this run did not touch by rule; `/kitchen` in all four themes is the visual record.
   `StatusRail` still renders an uppercase tracked wordmark (v1 shell, P10).
