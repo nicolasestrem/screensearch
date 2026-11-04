@@ -124,7 +124,11 @@ function KitchenSpecimen({
     <section className="grid gap-3 border-t border-line-subtle pt-4 first:border-t-0 first:pt-0">
       <div>
         <h3 className="m-0 text-t-xs font-medium text-fg-secondary">{name}</h3>
-        {note ? <p className="m-0 text-t-xs text-fg-tertiary">{note}</p> : null}
+        {note ? (
+          // `max-w-prose` (65ch): the specimen row is ~1400px wide, so an
+          // unconstrained note runs the full width as one unreadable line.
+          <p className="m-0 max-w-prose text-t-xs text-fg-tertiary">{note}</p>
+        ) : null}
       </div>
       <div className="flex flex-wrap items-start gap-4">{children}</div>
     </section>
@@ -995,7 +999,7 @@ export function KitchenGallery() {
 
       <KitchenSpecimen
         name="Dialog focus trap"
-        note="collapsed group at the wrap point: Tab must skip its button"
+        note="collapsed group at the wrap point: Shift+Tab must skip its button and stop on the visible control"
       >
         <KitchenDialogFocusTrapDemo />
       </KitchenSpecimen>

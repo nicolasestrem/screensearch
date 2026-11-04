@@ -154,17 +154,26 @@ ink-dark    1 anti-pattern found.
   collapsed `Expander` body or an inactive tab panel was accepted as the first/last candidate and
   `.focus()` on it was a silent no-op, swallowing the Tab wrap. Both traps now require
   `!node.closest("[hidden]") && node.getClientRects().length > 0`.
-  Evidence, real browser: over a new twelve-option `overflow` specimen, 15 keyboard steps captured
-  as `active label / scrollTop / clientHeight / scrollHeight / fully inside the band / window.scrollY`
-  give **0 of 15 hidden with the fix and 7 of 15 hidden with the reveal disabled** (Excel, PowerPoint,
-  Outlook, Spotify, Zoom, End and the ArrowUp wrap, all at `scrollTop 0`), with `scrollY` fixed at
-  `6078` throughout; opening with the last option selected lands at `scrollTop 138` of a 138 max, the
-  row fully visible; ArrowDown from Obsidian goes to PowerPoint (Excel skipped) and hovering Excel
-  leaves the active row on Zoom. Over a new `Dialog focus trap` specimen, Shift+Tab from the panel
-  stops on the visible `Advanced capture` toggle with no step inside a `[hidden]` subtree and Escape
-  returns focus to the trigger, where the reverted predicate leaves focus stuck **on the panel**.
-  Both control runs restored their file byte-identically. Lint clean, `90 / 90` tests, build ok,
-  `kitchen` still 0 hits in `dist`.
+  Evidence, real browser, in two eras because the skip rule landed between them. Against the reveal
+  alone (Excel still reachable, 15 keyboard steps captured as `active label / scrollTop /
+  clientHeight / scrollHeight / fully inside the band / window.scrollY`): **0 of 15 hidden with the
+  fix and 7 of 15 hidden with the reveal disabled** (Excel, PowerPoint, Outlook, Spotify, Zoom, End
+  and the ArrowUp wrap, all at `scrollTop 0`), `scrollY` fixed at `6078` throughout. Re-probed on
+  the final code, where arrows skip Excel (13 steps: seven ArrowDown, End, Home, the ArrowUp wrap,
+  a hover on the disabled row, plus open): **0 hidden, no active row ever disabled**, same `6078`.
+  Opening with the last option selected lands at `scrollTop 138` of a 138 max, the row fully
+  visible; ArrowDown from Obsidian goes to PowerPoint and hovering Excel leaves the active row on
+  Zoom. Over a new `Dialog focus trap` specimen, Shift+Tab from the panel stops on the visible
+  `Advanced capture` toggle with no step inside a `[hidden]` subtree and Escape returns focus to the
+  trigger, where the reverted predicate leaves focus stuck **on the panel**. Both control runs
+  restored their file byte-identically. Lint clean, `90 / 90` tests, build ok, `kitchen` still 0 hits
+  in `dist`.
+- **Design gate held at one finding, after one real regression.** The first version of the trap
+  specimen carried a ~100 character `note`, and the gallery's note `<p>` had no measure, so the
+  detector reported `[line-length]` (2 anti-patterns per variant) against a ~1400px row. The shared
+  `KitchenSpecimen` note now takes `max-w-prose` (65ch, a Tailwind preset), which is the detector's
+  own recommendation and keeps any note readable: the same 100 character note now renders as two
+  lines at 49 characters each, and the gate is back to the single `transition: width` residual.
 - **PR #151 second review round (Codex `917059e`, 1 inline finding, valid and latent, fixed).**
   `Button` dropped `onClick` while `loading`, which stops a click handler but not a native form
   submit: with `type="submit"`, `aria-disabled` is announced and ignored, so clicking the spinner or
