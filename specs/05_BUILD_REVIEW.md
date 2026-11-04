@@ -1,5 +1,68 @@
 # 05 — Build Review
 
+## 2026-11-04: QA pass on P2, P3 and P4 (branches `feat/0.4.5-p3-baseline-schema`, `feat/0.4.5-p4-auto-eval`)
+
+- **Method.** Each branch was verified on its own (not only the combined tree), an independent
+  read-only reviewer audited the P3 and P4 diff against the kickoffs and `03 §4`/`§8`, and every
+  finding was reproduced in code before it was fixed. Every code fix has a regression test that
+  was **mutation-checked**: the old behaviour was put back and the test was confirmed to fail,
+  then the fix was restored and confirmed byte-identical.
+- **Found by testing the P3 branch alone (merge blocker).** `node scripts/stage-mcp.mjs` failed
+  on P3 with `cannot update the lock file ... because --locked was passed`. The P3 commit's
+  `Cargo.lock` had been written while P4's harness work shared the tree, so it listed five
+  harness dependencies P3 does not use. It passed only on the combined tree, which is why the
+  overnight run missed it. Fixed on P3 (`d68a6f5`); P4 re-adds its own edges (`40dee0a`).
+- **Blocker (review, verified).** A Settings save could undo an API change made in the HTTP API
+  panel and stop the listener: `api.enabled/port/bind_address` became typed settings that
+  `set_settings` hot-applies, but the Settings draft never refreshed them and `set_api_config`
+  never invalidated the `settings` query, so a stale `api_enabled=false` was written back. Fixed:
+  the draft mirrors `api_*` like it already mirrored `app_*`, `set_api_config` invalidates
+  `settings`, `set_settings` invalidates `apiStatus`. **Not run live:** the app has no data-dir
+  override, so running it would open the real profile, which the run rules forbid. The behavioural
+  proof is the maintainer's native check (enable the API in Integrations, change any other
+  setting, confirm the listener stays up).
+- **Should-fix, all fixed (`b431bc8`, `cc1d916`):**
+  - `ssv2c-rebuild` dropped five live internal markers. Losing `sessions.backfill_done_until`
+    re-segments the carried history. Now carried, plus a drift-guard test that scans the shipped
+    source for `settings` key constants and fails on any key the rebuild neither carries nor drops
+    on purpose. `text.catalog_filter_version` is dropped on purpose: it watermarks
+    `chrome_text_catalog`, which is not carried.
+  - The allocator test could not tell copy from recompute (fixture high-water 7 = max frame id 7).
+    Now 42; a recompute mutant fails with `source Some("42"), destination Some("7")`.
+  - Store open decided fresh vs existing by `path.exists()`, so a first run that failed mid-baseline
+    left an empty file refused forever, and the check raced a file appearing. It now decides by
+    contents: zero schema objects is initialised, anything else takes the strict v14 refusal, a
+    non-SQLite file is refused untouched. A simulated crashed first run now recovers to v14.
+  - `advanced.toml` rewrite is atomic (temp file then rename).
+  - Four P4 metrics did not match their printed definitions: `sequence` ties, `window_recall`
+    expecting out-of-window frames, recall@10 never reaching sessions, and the seen-again probe
+    varying with `--pairs`. Fixed, report text updated to match.
+- **Accepted, not changed:** the reviewer's nits on vacuous older kernel tests, the rebuild's
+  image check resolving paths against the copied DB's folder, and harness edge cases (empty
+  terminal citations event, non-ASCII needles). Recorded here for P5/P6; none changes a result
+  tonight's fixture or the maintainer's run depends on.
+- **P2 deliverables.** All four HTML files parse with zero structural errors and no duplicate ids,
+  make no network request, and the three directions use no raw colour or px font size outside their
+  token blocks. Contrast was **computed from the token values**, not read from the files' own
+  comments: every text-on-background pair the CSS actually renders, and every text token on every
+  page background, clears WCAG AA 4.5:1 in every theme of every direction (lowest 4.52, direction A
+  light, faint text on the document background).
+- **Final gate, P4 tip (contains all P3 fixes), raw:**
+  ```
+  === npm ci                                                             exit=0
+  === npm run lint                                                       exit=0
+  === npm run build                                                      exit=0
+  === npm test               tests 82 / pass 82 / fail 0                 exit=0
+  === node scripts/stage-mcp.mjs                                         exit=0
+  === cargo fmt --all -- --check                                         exit=0
+  === cargo clippy --locked --workspace --all-targets -- -D warnings     exit=0
+  === cargo build --locked --workspace                                   exit=0
+  === cargo test --locked --workspace                                    exit=0
+  === git diff --exit-code -- ui/src/bindings                            exit=0
+  passed: 1241  failed: 0
+  ```
+  1241 = the earlier 1233 plus 8 new regression tests. The P3 branch alone was also run green.
+
 ## 2026-11-03: 0.4.5 P4 automatic evaluation harness (branch `feat/0.4.5-p4-auto-eval`)
 
 - **Scope (roadmap P4, kickoff `docs/kickoffs/P4.md`):** dev-only eval runner in `crates/harness`.

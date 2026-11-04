@@ -11,13 +11,33 @@ before the rules took effect: PR #150 (P1) is open from an earlier turn.
 | 2 P1 self-test | done | `feat/0.4.5-p1-specs-contract` | 83e281a |
 | 3 P2 design directions | done, stopped at the checkpoint | `feat/0.4.5-p2-design-directions` | cdf20ba |
 | 4 Phase kickoff files P2 to P10 | done | `feat/0.4.5-p1-specs-contract` | dad1eb2 |
-| 5 P3 baseline schema and settings v2 | done, maintainer run open | `feat/0.4.5-p3-baseline-schema` | 336efc6 |
-| 6 P4 evaluation harness | done, baseline run open | `feat/0.4.5-p4-auto-eval` | 7363774 |
+| 5 P3 baseline schema and settings v2 | done, maintainer run open | `feat/0.4.5-p3-baseline-schema` | b431bc8 |
+| 6 P4 evaluation harness | done, baseline run open | `feat/0.4.5-p4-auto-eval` | cc1d916 |
 
-Full suite on the integrated tree: `npm ci`, `npm run lint`, `npm run build`, `stage-mcp`,
-`cargo fmt --check`, `cargo clippy --workspace --all-targets -D warnings`, `cargo build
---workspace`, `cargo test --workspace` all exit 0, **1233 tests passed, 0 failed**. Raw output is
-in `specs/05_BUILD_REVIEW.md` (2026-11-03, P3 entry).
+Full suite on the P4 tip, which contains every P3 change: `npm ci`, `npm run lint`, `npm run
+build`, `npm test`, `stage-mcp`, `cargo fmt --check`, and `clippy`, `build` and `test` on the whole
+workspace with `--locked`, all exit 0: **1241 tests passed, 0 failed**, 82 UI tests. The P3 branch
+was also verified on its own. Raw output: `specs/05_BUILD_REVIEW.md`, 2026-11-04 QA entry.
+
+## QA pass (2026-11-04): what it found
+
+An independent review plus per-branch testing found real defects in my overnight work. All are
+fixed, each with a test confirmed to fail on the old code:
+
+- **P3 would not have merged.** Its `Cargo.lock` carried P4's dependencies, so the locked MCP
+  build failed on P3 alone. It only passed on the combined tree.
+- **Blocker: a Settings save could switch the HTTP API off.** Enabling the API in the panel and
+  then saving any other setting wrote the stale "disabled" value back and stopped the listener.
+- **The rebuild would have re-segmented your history,** because it dropped the session backfill
+  checkpoint and four other internal markers. It now carries them, and a test fails if a future
+  marker is added without being classified.
+- **A failed first run would have bricked the app,** leaving an empty file the app refused forever.
+- **Four P4 metrics did not match the definitions the report prints.** They are fixed before they
+  freeze as Gate A thresholds.
+
+**One check only you can do** (I cannot run the app: it would open your real profile): in
+Settings · Integrations, turn the HTTP API on, then change any other setting and save. The API
+must stay listening.
 
 ## The three design directions
 
