@@ -500,8 +500,9 @@ pub struct AdvancedConfigView {
 /// The shell theme applier sets `data-theme` on the root element from this value, and the
 /// `*-system` variants follow the OS light/dark preference inside the chosen accent. P7
 /// renders the select and resolves `*-system` through `prefers-color-scheme`; P3 owns this
-/// registry entry and its persistence only. The wire/stored tokens are exactly the
-/// `data-theme` ids defined in `ui/src/styles/tokens.css`.
+/// registry entry and its persistence only. The four concrete tokens are exactly the
+/// `data-theme` ids defined in `ui/src/styles/tokens.css`; `*-system` is a stored intent,
+/// not a fifth theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
@@ -517,8 +518,10 @@ pub enum UiAppearance {
 }
 
 /// User-facing settings (`get_settings`/`set_settings`): **exactly** the `UI` rows of the
-/// `03 §8` table (settings v2, 0.4.5 D6), with that table's defaults and clamps. Persisted
-/// as key/value rows in the `settings` table.
+/// `03 §8` table (settings v2, 0.4.5 D6), with that table's defaults and clamps. The three
+/// places where the as-built value still differs from the table are tracked in
+/// `specs/06_PATCH_PLAN.md` #33, pending a maintainer ruling. Persisted as key/value rows
+/// in the `settings` table.
 ///
 /// The `file-only` keys do not live here: they are typed in [`crate::AdvancedConfig`] and
 /// read once at startup from `advanced.toml`. `api.token` / `api.read_token` are

@@ -8,9 +8,10 @@
 //! field of `Settings`.
 //!
 //! One `[section]` per key prefix and the suffix as the field name, so
-//! `capture.diff_threshold` is `[capture]` / `diff_threshold`. Defaults and clamps mirror
-//! `03 §8`; [`AdvancedConfig::sanitized`] is the backend trust boundary because the file is
-//! hand-editable.
+//! `capture.diff_threshold` is `[capture]` / `diff_threshold`. Defaults and clamps come
+//! from `03 §8`; the three places where the as-built value still differs are tracked in
+//! `specs/06_PATCH_PLAN.md` #33, pending a maintainer ruling. [`AdvancedConfig::sanitized`]
+//! is the backend trust boundary because the file is hand-editable.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

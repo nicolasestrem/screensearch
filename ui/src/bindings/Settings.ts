@@ -4,8 +4,10 @@ import type { UiAppearance } from "./UiAppearance";
 
 /**
  * User-facing settings (`get_settings`/`set_settings`): **exactly** the `UI` rows of the
- * `03 §8` table (settings v2, 0.4.5 D6), with that table's defaults and clamps. Persisted
- * as key/value rows in the `settings` table.
+ * `03 §8` table (settings v2, 0.4.5 D6), with that table's defaults and clamps. The three
+ * places where the as-built value still differs from the table are tracked in
+ * `specs/06_PATCH_PLAN.md` #33, pending a maintainer ruling. Persisted as key/value rows
+ * in the `settings` table.
  *
  * The `file-only` keys do not live here: they are typed in [`crate::AdvancedConfig`] and
  * read once at startup from `advanced.toml`. `api.token` / `api.read_token` are
