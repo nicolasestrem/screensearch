@@ -54,7 +54,13 @@ function useSheetFocus(
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusable = () =>
       Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-        (node) => node.tabIndex !== -1 && !node.hasAttribute("hidden"),
+        (node) =>
+          node.tabIndex !== -1 &&
+          // Same reason as Dialog: `hidden` usually sits on an ancestor (a closed
+          // Expander body, an inactive Tabs panel), where `hasAttribute` on the
+          // node itself sees nothing and a focus call becomes a silent no-op.
+          !node.closest("[hidden]") &&
+          node.getClientRects().length > 0,
       );
 
     // Same as Dialog: the surface takes focus so it is announced first.

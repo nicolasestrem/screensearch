@@ -64,6 +64,29 @@ import type { ToastItem } from "../state/toastStore";
 
 const NOOP = () => {};
 
+/** Twelve invented apps, so the Combobox popup actually overflows its
+ *  `max-h-64` viewport and keyboard scrolling has something to reveal. `Excel`
+ *  is disabled: arrow keys must skip it (as a native select does), hovering it
+ *  must not move the active row, and Enter on it must do nothing. */
+const LONG_APP_LIST = [
+  "VS Code",
+  "Firefox",
+  "Terminal",
+  "Slack",
+  "Figma",
+  "Notion",
+  "Obsidian",
+  "Excel",
+  "PowerPoint",
+  "Outlook",
+  "Spotify",
+  "Zoom",
+].map((label, index) => ({
+  value: index === 0 ? "code" : `app-${index}`,
+  label,
+  ...(label === "Excel" ? { disabled: true } : {}),
+}));
+
 /** A panel-like surface without a border or radius: state samples sit on the
  *  panel surface rather than inside a second card, so a nested control is the
  *  only bordered element in the block. */
@@ -178,6 +201,39 @@ function KitchenDialogDemo() {
         <p className="m-0 text-t-ui text-fg-secondary">
           Deleting is permanent; the next capture starts a fresh range.
         </p>
+      </Dialog>
+    </>
+  );
+}
+
+/**
+ * The trap must ignore focusables whose `hidden` sits on an ancestor. The
+ * collapsed group is the panel's LAST focusable here, so Shift+Tab from the
+ * panel has to skip its button and stop on the visible control above it.
+ */
+function KitchenDialogFocusTrapDemo() {
+  const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <>
+      <Button onClick={() => setOpen(true)}>Open trap specimen</Button>
+      <Dialog
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Focus trap skips collapsed controls"
+        description="Shift+Tab from the panel must reach the visible control, not the button inside the closed group."
+      >
+        <div className="grid gap-3">
+          <Button variant="primary">Last visible control</Button>
+          <Expander
+            title="Advanced capture"
+            intro="The button below cannot take focus while the group is closed."
+            open={expanded}
+            onToggle={() => setExpanded(!expanded)}
+          >
+            <Button variant="ghost">Inside the collapsed group</Button>
+          </Expander>
+        </div>
       </Dialog>
     </>
   );
@@ -500,7 +556,7 @@ export function KitchenGallery() {
         </div>
       </KitchenSpecimen>
 
-      <KitchenSpecimen name="Combobox" note="all five data states, disabled, focus">
+      <KitchenSpecimen name="Combobox" note="all five data states, overflow, disabled, focus">
         <div className="grid w-full max-w-xs gap-4">
           <KitchenState label="populated">
             <Combobox
@@ -512,6 +568,33 @@ export function KitchenGallery() {
               ]}
               value="code"
               onChange={NOOP}
+            />
+          </KitchenState>
+          <KitchenState label="overflow">
+            <Combobox
+              label="App"
+              options={LONG_APP_LIST}
+              value="code"
+              onChange={NOOP}
+              hint="Twelve apps: the popup scrolls to the active option."
+            />
+          </KitchenState>
+          <KitchenState label="overflow, selected last">
+            <Combobox
+              label="App"
+              options={LONG_APP_LIST}
+              value="app-11"
+              onChange={NOOP}
+              hint="Opens on Zoom at the bottom: the popup must open already scrolled."
+            />
+          </KitchenState>
+          <KitchenState label="all disabled">
+            <Combobox
+              label="App"
+              options={LONG_APP_LIST.map((option) => ({ ...option, disabled: true }))}
+              value="code"
+              onChange={NOOP}
+              hint="Nothing is selectable, so no row is active and Enter does nothing."
             />
           </KitchenState>
           <KitchenState label="partial">
@@ -908,6 +991,13 @@ export function KitchenGallery() {
 
       <KitchenSpecimen name="Dialog" note="portalled modal: press the trigger for the open state">
         <KitchenDialogDemo />
+      </KitchenSpecimen>
+
+      <KitchenSpecimen
+        name="Dialog focus trap"
+        note="collapsed group at the end of the dialog: Shift+Tab must skip its button and stop on the visible control"
+      >
+        <KitchenDialogFocusTrapDemo />
       </KitchenSpecimen>
 
       <KitchenSpecimen name="Sheet" note="portalled side panel: press the trigger for the open state">

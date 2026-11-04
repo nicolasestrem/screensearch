@@ -43,7 +43,15 @@ function useModalFocus(
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusable = () =>
       Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-        (node) => node.tabIndex !== -1 && !node.hasAttribute("hidden"),
+        (node) =>
+          node.tabIndex !== -1 &&
+          // `hasAttribute("hidden")` only sees the node's own attribute. A
+          // collapsed Expander body or an inactive Tabs panel keeps its controls
+          // in the DOM with `hidden` on an ancestor; focusing one of those is a
+          // silent no-op, which swallows the Tab wrap. `closest` covers the
+          // ancestor, and the rect test also rejects `display:none` from a class.
+          !node.closest("[hidden]") &&
+          node.getClientRects().length > 0,
       );
 
     // Focus the surface itself: the dialog is announced with its name and

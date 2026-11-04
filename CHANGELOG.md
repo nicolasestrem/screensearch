@@ -58,6 +58,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A keyboard user could select an option they could not see in the new Combobox.** The design
+  system's `Combobox` keeps focus in the input and announces the active option with
+  `aria-activedescendant`, but its popup caps its height, and ArrowDown past the seventh option moved
+  the active row out of the visible band without scrolling. Enter then committed an option that was
+  never on screen. The popup now reveals the active option itself: only its own scroll offset moves
+  (measured from rects, so the popup border and padding stay visible at both ends and the page never
+  jumps), covering arrow keys, Home/End, wrapping, typing a filter and opening with a selection near
+  the bottom. Arrow keys and Home/End also skip disabled options instead of landing on a row that
+  cannot be chosen, which is what a native select does. Verified in a browser over a twelve-option
+  list: 0 of 15 keyboard steps left the active option hidden, against 7 of 15 with the fix disabled.
+
+- **Tab could be swallowed at the edge of the new Dialog and Sheet.** Their focus trap wraps from the
+  last control to the first and back, but it counted a control inside a collapsed group or an
+  inactive tab panel as a candidate, and focusing one of those does nothing, so a Tab at the wrap
+  point did nothing either: focus stayed on the panel and the next press repeated it. The trap now
+  only counts controls it can actually focus. Verified in the browser: the same Shift+Tab that
+  previously left focus on the panel now lands on the visible control, and Escape still returns focus
+  to whatever opened the dialog.
+
 - **Local inference could be permanently unavailable on a rate-limited network.** The app
   resolves its llama.cpp sidecar through GitHub's *anonymous* releases API, which is capped at
   60 requests/hour per IP. On a shared address the quota can be exhausted, and a single `403`

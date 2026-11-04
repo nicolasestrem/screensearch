@@ -2,8 +2,9 @@
 // a text input with role="combobox", a popup listbox, and options. Arrow keys
 // move the active option, Home/End jump to the ends, Enter selects, Escape
 // closes. The input keeps DOM focus throughout; the active option is announced
-// with aria-activedescendant, never by moving focus into the list.
-import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
+// with aria-activedescendant, never by moving focus into the list, and the
+// popup scrolls to keep that option visible when the list overflows.
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { IconChevronDown } from "./icons";
 
@@ -87,17 +88,54 @@ export function Combobox({
       ? options
       : options.filter((option) => option.label.toLowerCase().includes(needle));
   const active =
-    filtered.length === 0
+    filtered.length === 0 || activeIndex < 0
       ? -1
-      : Math.min(Math.max(activeIndex, 0), filtered.length - 1);
+      : Math.min(activeIndex, filtered.length - 1);
   const expanded = open && !disabled;
   const showList = expanded && filtered.length > 0;
+
+  // The popup caps its height and DOM focus never enters it, so the active
+  // option is revealed by scrolling the listbox alone: only `scrollTop` moves,
+  // never the page. Measured from rects, so the popup's border and `py-1`
+  // padding stay visible at either end.
+  const listRef = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!showList || active < 0 || !list) return;
+    const option = list.children[active] as HTMLElement | undefined;
+    if (!option) return;
+    const style = getComputedStyle(list);
+    const inner = list.getBoundingClientRect().top + list.clientTop;
+    const viewTop = inner + (parseFloat(style.paddingTop) || 0);
+    const viewBottom =
+      inner + list.clientHeight - (parseFloat(style.paddingBottom) || 0);
+    const rect = option.getBoundingClientRect();
+    if (rect.top < viewTop) list.scrollTop += rect.top - viewTop;
+    else if (rect.bottom > viewBottom) list.scrollTop += rect.bottom - viewBottom;
+  }, [showList, active, filtered.length]);
 
   const commit = (option: ComboboxOption) => {
     if (option.disabled) return;
     onChange(option.value);
     setQuery(null);
     setOpen(false);
+  };
+
+  // Arrow keys, Home and End land on enabled options only, as a native select
+  // does: landing on a disabled row would leave the user on a row that paints no
+  // highlight (disabled text over the selected wash is below AA in all four
+  // themes) with Enter doing nothing.
+  const stepTo = (from: number, direction: 1 | -1): number => {
+    const count = filtered.length;
+    for (let k = 1; k <= count; k += 1) {
+      const index = (((from + direction * k) % count) + count) % count;
+      if (!filtered[index]?.disabled) return index;
+    }
+    return -1;
+  };
+  const edgeTo = (direction: 1 | -1): number => {
+    const start = direction === 1 ? 0 : filtered.length - 1;
+    return filtered[start]?.disabled ? stepTo(start, direction) : start;
   };
 
   const close = () => {
@@ -108,12 +146,13 @@ export function Combobox({
   const openList = () => {
     if (disabled) return;
     setOpen(true);
-    setActiveIndex(
-      Math.max(
-        0,
-        options.findIndex((option) => option.value === value),
-      ),
-    );
+    // Index into what is actually rendered, so reopening with a filter typed
+    // does not point `aria-activedescendant` at a row that is not in the list.
+    const selectedAt = filtered.findIndex((option) => option.value === value);
+    const start = selectedAt >= 0 ? selectedAt : 0;
+    // `stepTo` returns -1 when every option is disabled: no row is active, which
+    // is the truth, and Enter then has nothing to commit.
+    setActiveIndex(filtered[start]?.disabled ? stepTo(start, 1) : start);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -125,7 +164,8 @@ export function Combobox({
           return;
         }
         if (filtered.length > 0) {
-          setActiveIndex(active < 0 ? 0 : (active + 1) % filtered.length);
+          const next = stepTo(active, 1);
+          if (next >= 0) setActiveIndex(next);
         }
         break;
       case "ArrowUp":
@@ -135,23 +175,24 @@ export function Combobox({
           return;
         }
         if (filtered.length > 0) {
-          setActiveIndex(
-            active < 0
-              ? filtered.length - 1
-              : (active - 1 + filtered.length) % filtered.length,
-          );
+          const next = stepTo(active, -1);
+          if (next >= 0) setActiveIndex(next);
         }
         break;
-      case "Home":
+      case "Home": {
         if (!expanded) return;
         event.preventDefault();
-        setActiveIndex(0);
+        const first = edgeTo(1);
+        if (first >= 0) setActiveIndex(first);
         break;
-      case "End":
+      }
+      case "End": {
         if (!expanded) return;
         event.preventDefault();
-        setActiveIndex(Math.max(0, filtered.length - 1));
+        const last = edgeTo(-1);
+        if (last >= 0) setActiveIndex(last);
         break;
+      }
       case "Enter":
         if (!expanded) return;
         event.preventDefault();
@@ -241,6 +282,7 @@ export function Combobox({
         </span>
         <ul
           id={listboxId}
+          ref={listRef}
           role="listbox"
           aria-label={label}
           hidden={!showList}
@@ -259,11 +301,16 @@ export function Combobox({
                   aria-selected={isSelected}
                   aria-disabled={optionDisabled || undefined}
                   onMouseDown={(event) => event.preventDefault()}
-                  onMouseEnter={() => setActiveIndex(index)}
+                  onMouseEnter={() => {
+                    if (!optionDisabled) setActiveIndex(index);
+                  }}
                   onClick={() => commit(option)}
                   className={cn(
                     "flex min-h-hit-min cursor-pointer items-center px-3 text-t-ui",
                     "motion-reduce:transition-none",
+                    // Keyboard navigation skips disabled options (as a native
+                    // select does), so this branch should be unreachable for
+                    // `active`; it stays as the mouse-hover guard.
                     optionDisabled
                       ? "cursor-not-allowed text-fg-disabled"
                       : isActive

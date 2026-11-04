@@ -131,6 +131,38 @@ ink-dark    1 anti-pattern found.
   P10-owned items this leaves behind (legacy `transition-[width]` bars, the `StatusRail` uppercase
   wordmark, and the flatter look of unconverted screens until the refont) are now tracked as gaps
   in `07`, not only described here.
+- **PR #151 review round (Codex `6dd36eb`, 1 inline finding, valid; two more of the same class found
+  by audit and fixed).** (a) *Reported:* the Combobox popup caps its height and focus stays in the
+  input, so `aria-activedescendant` moved past visible options without revealing the active row,
+  and Enter could commit an option the user could not see. `Combobox` now holds a ref on the listbox
+  and, whenever the active index or the visible set changes, moves only that listbox's `scrollTop` by
+  the rect delta measured against the popup's inner padded band (`clientTop` plus computed
+  `paddingTop`/`paddingBottom`), so the border and `py-1` padding survive at both ends and page
+  scroll never moves. (b) *Found by audit, same finding class:* arrow keys could land on a
+  `disabled` option, which paints no highlight at all, leaving a dead Enter. Painting the active row
+  instead was measured and **rejected**: `--text-disabled` over `--surface-selected` is 4.44 / 3.39 /
+  4.44 / 3.41 across the four themes, below AA, and P2 claims AA even for disabled text. Navigation
+  now skips disabled options (`stepTo`/`edgeTo`, the same rule `RadioGroup` and `Segmented` already
+  follow and what a native `<select>` does), hover on a disabled row no longer moves the active row,
+  and `openList` indexes into the *rendered* set so it cannot point at a row that is not in the list.
+  When every option is disabled no row is active at all (the derived index is `-1`), so
+  `aria-activedescendant` is omitted rather than pointing at a row that paints nothing.
+  (c) *Found by audit:* the Dialog/Sheet focus trap filtered candidates with
+  `!node.hasAttribute("hidden")`, which only sees a node's own attribute, so a control inside a
+  collapsed `Expander` body or an inactive tab panel was accepted as the first/last candidate and
+  `.focus()` on it was a silent no-op, swallowing the Tab wrap. Both traps now require
+  `!node.closest("[hidden]") && node.getClientRects().length > 0`.
+  Evidence, real browser: over a new twelve-option `overflow` specimen, 15 keyboard steps captured
+  as `active label / scrollTop / clientHeight / scrollHeight / fully inside the band / window.scrollY`
+  give **0 of 15 hidden with the fix and 7 of 15 hidden with the reveal disabled** (Excel, PowerPoint,
+  Outlook, Spotify, Zoom, End and the ArrowUp wrap, all at `scrollTop 0`), with `scrollY` fixed at
+  `6078` throughout; opening with the last option selected lands at `scrollTop 138` of a 138 max, the
+  row fully visible; ArrowDown from Obsidian goes to PowerPoint (Excel skipped) and hovering Excel
+  leaves the active row on Zoom. Over a new `Dialog focus trap` specimen, Shift+Tab from the panel
+  stops on the visible `Advanced capture` toggle with no step inside a `[hidden]` subtree and Escape
+  returns focus to the trigger, where the reverted predicate leaves focus stuck **on the panel**.
+  Both control runs restored their file byte-identically. Lint clean, `90 / 90` tests, build ok,
+  `kitchen` still 0 hits in `dist`.
 - **Commits (local branch `feat/0.4.5-p2-design-system`, cut from `origin/main` at `e27f42c`,
   the P1 contract):** `cf56222` PRODUCT.md, `8136179` specs record the pick, `5c9c679` and `8e1935b`
   icon contract wording, `75c77ba` the implementation, `d113a0f` the review round (truthful gallery,

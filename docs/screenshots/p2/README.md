@@ -17,6 +17,7 @@ phase (P10), per `docs/SCREENSHOTS.md`.
 | `kitchen-<theme>-samples.png` | `/kitchen?theme=<theme>`, the five product samples (Settings, search, session, Ask, gallery index) |
 | `kitchen-<theme>-gallery.png` | the primitive gallery, every primitive in every state |
 | `shim-deck.png`, `shim-recall.png`, `shim-timeline.png`, `shim-settings.png` | the four unconverted routes through `tokens.compat.css`, on `pine-light` |
+| `combobox-keyboard-reveal.png` | the twelve-option Combobox after nine ArrowDown presses: the popup has scrolled (`scrollTop 74`) so the active `Outlook` row is fully inside its 256px band |
 
 `<theme>` is one of `pine-light` (default), `pine-dark`, `ink-light`, `ink-dark`. Regenerate by
 running `npm run dev` in `ui/` and capturing the same URLs at 1440x900.

@@ -153,6 +153,22 @@ Recorded by the P2 run so the refont phases inherit them as tracked gaps, not pr
   pine-dark, and the ink pairing is the same. A soft step of 14 to 17 channel points reads as a
   surface but not as a card edge, so v1 screens that relied on panel borders will look flatter
   between now and P10. Owner: P10 (hairline gaps between panes, per `UI_REFERENCE` §8).
+- **The v1 command palette has the same unrevealed-active-option defect P2 just fixed in `Combobox`.**
+  `components/shell/CommandPalette.tsx:296-298` is a `role="listbox"` with `max-h-80 overflow-y-auto`
+  and `aria-activedescendant` (line 288), and no code moves the list's scroll offset, so with more
+  results than fit, ArrowDown walks the active option out of the visible band and Enter runs a command
+  the user cannot see. Found while fixing the PR #151 review finding in `Combobox`; P2 cannot fix it
+  (`P2.md` keeps `components/shell/**` untouched). Owner: P10. The fix shape is the one shipped in
+  `primitives/Combobox.tsx:96-114` (a ref on the `<ul>`, a rect delta against the padded inner band),
+  with one caveat particular to this file: its empty state renders a single `<li>` that is *not* an
+  option, so the active node must be looked up by id (`command-option-${id}`) rather than by child
+  index.
+- **A toast can dismiss itself while one of its own buttons has focus.** `primitives/Toast.tsx:76-81`
+  starts a per-item timer on mount and clears on unmount only, so a focused Dismiss (or a future
+  action) can disappear under a keyboard user when a real duration is set. Nothing auto-dismisses at
+  a focused control today: every gallery toast uses `duration={0}` and `toastStore.push` carries no
+  action, so this is latent. Owner: P10, together with the toast redesign; the fix is to pause the
+  timer while the item contains focus (or on hover), which is what WCAG 2.2.1 expects.
 - **`/kitchen` sits outside the `AppShell` by design.** The dev gallery renders v2 alone, so a
   design review or a detector scan of it measures the design system and not the v1 shell. The route
   is gated on `import.meta.env.DEV` and tree-shaken from the production bundle (`grep -rni kitchen
