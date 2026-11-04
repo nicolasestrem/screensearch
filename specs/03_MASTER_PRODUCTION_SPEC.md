@@ -2515,6 +2515,13 @@ updater. Each is demonstrated, never asserted:
    automated contrast check over the semantic pairs passes AA; a lint rule (or a test) fails on raw
    hex, px font sizes or non-token spacing in `ui/src/components/primitives`; existing screens still
    render through `tokens.compat.css` (screenshots attached to the PR); full verification suite green.
+   *Status (2026-11-04):* met and in review on `feat/0.4.5-p2-design-system` for four themes. Raw
+   output for every item is in `05`; the enforced checks are `ui/test/contrast.test.mjs` and
+   `ui/test/tokens.test.mjs`, each demonstrated failing once before passing. Two evidence gaps stay
+   explicit: populated screenshots need the Tauri app with a seeded DB (`docs/SCREENSHOTS.md`), so
+   the PR carries the `/kitchen` gallery in all four themes instead, and one detector finding
+   (`[layout-transition] transition: width`) is emitted by three v1 `components/domain/**` files
+   outside P2's ownership (`07`, owner P10). Merge is the maintainer's call (D18).
 3. **P3 — baseline schema v14 + settings v2 model.** The rebuild tool runs against a copy of the
    maintainer's real DB with per-table row counts before/after pasted verbatim and a 20-random-frame
    spot check opening in Moment; the app boots on v14 and refuses any other version naming

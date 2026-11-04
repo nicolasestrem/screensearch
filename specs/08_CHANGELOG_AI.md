@@ -11,6 +11,9 @@
   the same properties, 30 primitives rebuilt with the v1 names and props intact, a 55-glyph local
   icon set, a dev-only `/kitchen` gallery outside the AppShell, and two enforcement tests (124 AA
   pairs x 4 themes; a 7-rule token fence over the primitives).
+- **Commits:** `cf56222`, `8136179`, `5c9c679`, `8e1935b` (docs/specs), `75c77ba` (implementation),
+  `d113a0f` (review round), then the documentation commit. Branch `feat/0.4.5-p2-design-system`, PR
+  opened, not merged.
 - **Verified:** lint, 90 UI tests, build, clippy, cargo build and the workspace tests all green;
   the six P2 greps at 0 (0 unresolved tokens), bindings untouched; detect 1 finding per variant,
   attributable to v1 progress bars outside this phase's ownership; AA 0 failures in all four

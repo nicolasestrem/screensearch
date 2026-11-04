@@ -131,6 +131,10 @@ ink-dark    1 anti-pattern found.
   P10-owned items this leaves behind (legacy `transition-[width]` bars, the `StatusRail` uppercase
   wordmark, and the flatter look of unconverted screens until the refont) are now tracked as gaps
   in `07`, not only described here.
+- **Commits (local branch `feat/0.4.5-p2-design-system`, cut from `origin/main` at `e27f42c`,
+  the P1 contract):** `cf56222` PRODUCT.md, `8136179` specs record the pick, `5c9c679` and `8e1935b`
+  icon contract wording, `75c77ba` the implementation, `d113a0f` the review round (truthful gallery,
+  `07` residuals), then the documentation commit that also opens the PR. Merged to `main`: no.
 - **Open.** Populated screenshots need the Tauri app and a seeded database (`docs/SCREENSHOTS.md`),
   which this run did not touch by rule; `/kitchen` in all four themes is the visual record.
   `StatusRail` still renders an uppercase tracked wordmark (v1 shell, P10).

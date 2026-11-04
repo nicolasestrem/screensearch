@@ -398,9 +398,13 @@ no filler. Timestamps human-relative with absolute on hover.
    mock data, zero dead ends, zero "Coming Soon."**
 2. All payload types are `ts-rs`-generated; no hand-written API types in the UI.
 3. `eslint-plugin-react-hooks` passes as an error-level gate; routes have error boundaries.
-4. Tokens are the single source — no hardcoded hex/font/spacing in components.
-5. AA contrast verified; keyboard-only operation of every screen incl. the timeline; reduced-motion
-   honored.
+4. Tokens are the single source: no hardcoded hex/font/spacing in components, and the rule is
+   machine-enforced, not reviewed by eye (`ui/test/tokens.test.mjs` over
+   `ui/src/components/primitives`, plus the two greps in `04`). Components reference semantic and
+   component tokens only.
+5. AA contrast verified **in every shipped theme** (four: `pine-light`, `pine-dark`, `ink-light`,
+   `ink-dark`) by `ui/test/contrast.test.mjs` over the semantic text pairs, and confirmed on rendered
+   surfaces; keyboard-only operation of every screen incl. the timeline; reduced-motion honored.
 6. Performance budgets (§8) met on a realistic DB.
 7. The timeline scrubs smoothly and reflects real capture density — the Scanline Timeline or its v2
    successor, whichever the `§1` pick names (0.4.5 D4).
