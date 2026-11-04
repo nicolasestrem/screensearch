@@ -11,7 +11,7 @@
   on P3 with `cannot update the lock file ... because --locked was passed`. The P3 commit's
   `Cargo.lock` had been written while P4's harness work shared the tree, so it listed five
   harness dependencies P3 does not use. It passed only on the combined tree, which is why the
-  overnight run missed it. Fixed on P3 (`d68a6f5`); P4 re-adds its own edges (`40dee0a`).
+  overnight run missed it. Fixed on P3 (`d68a6f5`); P4 re-adds its own edges (`cedfc73`).
 - **Blocker (review, verified).** A Settings save could undo an API change made in the HTTP API
   panel and stop the listener: `api.enabled/port/bind_address` became typed settings that
   `set_settings` hot-applies, but the Settings draft never refreshed them and `set_api_config`
@@ -21,7 +21,7 @@
   override, so running it would open the real profile, which the run rules forbid. The behavioural
   proof is the maintainer's native check (enable the API in Integrations, change any other
   setting, confirm the listener stays up).
-- **Should-fix, all fixed (`b431bc8`, `cd79f40`, `171219a`):**
+- **Should-fix, all fixed (`b431bc8`, `cd79f40`, `48a9705`, `c437297`):**
   - `ssv2c-rebuild` dropped five live internal markers. Losing `sessions.backfill_done_until`
     re-segments the carried history. Now carried, plus a drift-guard test that scans the shipped
     source for `settings` key constants and fails on any key the rebuild neither carries nor drops
@@ -45,20 +45,31 @@
     varying with `--pairs`. Fixed, report text updated to match.
 - **Accepted, not changed:** the reviewer's nits on vacuous older kernel tests, the rebuild's
   image check resolving paths against the copied DB's folder, and harness edge cases (empty
-  terminal citations event, non-ASCII needles). Recorded here for P5/P6; none changes a result
+  terminal citations event, non-ASCII needles). Recorded in `07`; none changes a result
   tonight's fixture or the maintainer's run depends on.
+- **Blocker regression test (`48a9705`).** The Settings mirror step moved into
+  `ui/src/lib/settingsDraft.ts` and is covered by `ui/test/settingsDraft.test.mjs` (6 tests: the
+  exact revert scenario, App toggles, preserved form edits, same reference when nothing changed,
+  no mutation, the mirrored key set). Removing `api_enabled` from the mirrored set, which is the
+  original bug, fails 3 of the 6.
+- **Reviewed and kept as is:** `text.catalog_filter_version` is not carried. A missing watermark
+  only makes the startup pass re-clean rows whose own `frame_text.filter_version` is below
+  current; the rebuild copies that per-row column verbatim, so the pass finds no frames, writes the
+  watermark, and changes no text.
 - **P2 deliverables.** All four HTML files parse with zero structural errors and no duplicate ids,
   make no network request, and the three directions use no raw colour or px font size outside their
   token blocks. Contrast was **computed from the token values**, not read from the files' own
-  comments: every text-on-background pair the CSS actually renders, and every text token on every
-  page background, clears WCAG AA 4.5:1 in every theme of every direction (lowest 4.52, direction A
-  light, faint text on the document background).
+  comments, at two scopes: every rule that sets both `color` and `background` (worst 5.03:1), and
+  every text token against every page-background token within each theme (worst 4.52:1, direction
+  A light, faint text on the document background). Both clear WCAG AA 4.5:1 in every theme.
+  Inherited combinations (a colour from an ancestor over a descendant's background) were not
+  rendered; for those the evidence is each file's own documented audit.
 - **Final gate, P4 tip (contains all P3 fixes), raw:**
   ```
   === npm ci                                                             exit=0
   === npm run lint                                                       exit=0
   === npm run build                                                      exit=0
-  === npm test               tests 82 / pass 82 / fail 0                 exit=0
+  === npm test               tests 88 / pass 88 / fail 0                 exit=0
   === node scripts/stage-mcp.mjs                                         exit=0
   === cargo fmt --all -- --check                                         exit=0
   === cargo clippy --locked --workspace --all-targets -- -D warnings     exit=0
@@ -67,7 +78,9 @@
   === git diff --exit-code -- ui/src/bindings                            exit=0
   passed: 1241  failed: 0
   ```
-  1241 = the earlier 1233 plus 8 new regression tests. The P3 branch alone was also run green.
+  Run on the final P4 tip `c437297`, which contains every P3 change. 1241 Rust tests = the
+  earlier 1233 plus 8 new regression tests; 88 UI tests = the earlier 82 plus 6 for the blocker.
+  The P3 branch alone was also run green.
 
 ## 2026-11-03: 0.4.5 P4 automatic evaluation harness (branch `feat/0.4.5-p4-auto-eval`)
 

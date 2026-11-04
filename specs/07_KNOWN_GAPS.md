@@ -107,6 +107,12 @@ open, or newly scoped out:
   Harness edge cases: an empty terminal `citations` event is ignored rather than read as zero
   citations, and non-ASCII reference text never matches SQLite's ASCII `lower()`. None changes a
   result tonight; each is a small fix for the phase that next touches the file.
+- **P7 limit: `advanced.toml` provenance is honest only until the first rewrite (2026-11-04,
+  owner P7).** The loader's one-shot rewrite (after an unknown or unparsable entry) writes all 43
+  effective values back into the file, so from the next start every key reads as "from the file".
+  `get_advanced_config`'s `from_file` therefore cannot drive per-key "overridden" badges reliably.
+  P7 shows the full effective list read-only with the file path, and must not promise per-key
+  override flags unless the rewrite is changed to keep only the keys the user actually set.
 
 
 ## 2026-10-19 — Carried forward from the 0.4.2 arc (owner: maintainer unless stated)

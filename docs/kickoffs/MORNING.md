@@ -11,12 +11,12 @@ before the rules took effect: PR #150 (P1) is open from an earlier turn.
 | 2 P1 self-test | done | `feat/0.4.5-p1-specs-contract` | 83e281a |
 | 3 P2 design directions | done, stopped at the checkpoint | `feat/0.4.5-p2-design-directions` | cdf20ba |
 | 4 Phase kickoff files P2 to P10 | done | `feat/0.4.5-p1-specs-contract` | dad1eb2 |
-| 5 P3 baseline schema and settings v2 | done, maintainer run open | `feat/0.4.5-p3-baseline-schema` | cd79f40 |
-| 6 P4 evaluation harness | done, baseline run open | `feat/0.4.5-p4-auto-eval` | 171219a |
+| 5 P3 baseline schema and settings v2 | done, maintainer run open | `feat/0.4.5-p3-baseline-schema` | 48a9705 |
+| 6 P4 evaluation harness | done, baseline run open | `feat/0.4.5-p4-auto-eval` | c437297 |
 
 Full suite on the P4 tip, which contains every P3 change: `npm ci`, `npm run lint`, `npm run
 build`, `npm test`, `stage-mcp`, `cargo fmt --check`, and `clippy`, `build` and `test` on the whole
-workspace with `--locked`, all exit 0: **1241 tests passed, 0 failed**, 82 UI tests. The P3 branch
+workspace with `--locked`, all exit 0: **1241 tests passed, 0 failed**, 88 UI tests. The P3 branch
 was also verified on its own. Raw output: `specs/05_BUILD_REVIEW.md`, 2026-11-04 QA entry.
 
 ## QA pass (2026-11-04): what it found
@@ -37,7 +37,8 @@ fixed, each with a test confirmed to fail on the old code:
 
 **One check only you can do** (I cannot run the app: it would open your real profile): in
 Settings · Integrations, turn the HTTP API on, then change any other setting and save. The API
-must stay listening.
+must stay listening. The logic behind that fix now has its own regression test
+(`ui/test/settingsDraft.test.mjs`); your check confirms it end to end in the real app.
 
 ## The three design directions
 
