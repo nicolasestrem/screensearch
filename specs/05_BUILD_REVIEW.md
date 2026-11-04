@@ -118,6 +118,19 @@ ink-dark    1 anti-pattern found.
   `/` "Can't reach the kernel", `/recall` "Search your screen history", `/timeline` "Couldn't load
   the timeline", `/settings` "Couldn't load settings", all on `rgb(238, 241, 239)` with
   `--accent: #23694f`. No unstyled or transparent surface.
+- **Review round on the residuals.** Three claims from review were checked against the tree:
+  (a) the `nested-cards` findings were cleared structurally by making `Panel` and `Expander`
+  borderless surfaces, not by bending the gallery, so the Panel action chips and the Badge
+  ("Running", "Saved", "Saved") were **restored** afterwards and the count stayed at 1 per variant:
+  the shipped direction keeps those chips, and a gallery that hides them would misreport the design.
+  (b) `--text-tertiary` on `--surface-app` measures 5.22 / 7.52 / 5.24 / 7.48 across the four themes,
+  so no tertiary pair fails; the audit walks it and the static test covers it. (c) Surface separation
+  after the borderless change is real, not invisible: `--surface-raised` renders
+  `rgb(255,255,255)` on `rgb(238,241,239)` (pine-light) and `rgb(27,31,29)` on `rgb(12,15,13)`
+  (pine-dark), a 14 to 17 channel-point step, with the ink pairing identical. The three
+  P10-owned items this leaves behind (legacy `transition-[width]` bars, the `StatusRail` uppercase
+  wordmark, and the flatter look of unconverted screens until the refont) are now tracked as gaps
+  in `07`, not only described here.
 - **Open.** Populated screenshots need the Tauri app and a seeded database (`docs/SCREENSHOTS.md`),
   which this run did not touch by rule; `/kitchen` in all four themes is the visual record.
   `StatusRail` still renders an uppercase tracked wordmark (v1 shell, P10).

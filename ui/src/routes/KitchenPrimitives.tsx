@@ -363,7 +363,7 @@ export function KitchenGallery() {
 
       <KitchenSpecimen name="Panel" note="header, action slot, flush body">
         <div className="grid w-full max-w-xl gap-4">
-          <Panel title="Capture" action={<span className="text-t-xs text-fg-secondary">Running</span>}>
+          <Panel title="Capture" action={<Chip tone="ok" dot>Running</Chip>}>
             <p className="m-0 text-t-ui text-fg-secondary">
               Eight frames a minute from the active display.
             </p>
@@ -767,7 +767,7 @@ export function KitchenGallery() {
             description="Try different words, widen the range, or include app chrome."
             action={<Button variant="primary">Widen the range</Button>}
           />
-          <KitchenSurface title="Excluded apps" action={<span className="text-t-xs text-fg-secondary">Saved</span>}>
+          <KitchenSurface title="Excluded apps" action={<Chip tone="ok">Saved</Chip>}>
             <EmptyState
               align="start"
               icon={<IconSettings size={18} />}
@@ -975,7 +975,7 @@ export function KitchenGallery() {
       </KitchenSpecimen>
 
       <KitchenSpecimen name="Combined row" note="a settings row built from Field, Toggle and Checkbox">
-        <KitchenSurface title="Autosaved row" action={<span className="text-t-xs text-fg-secondary">Saved</span>}>
+        <KitchenSurface title="Autosaved row" action={<Badge tone="ok">Saved</Badge>}>
           <div className="grid gap-3">
             <Field label="Capture interval" hint="Seconds between kept frames." defaultValue="8" />
             <Toggle

@@ -68,7 +68,7 @@ function KitchenSection({
   children: ReactNode;
 }) {
   return (
-    <section id={id} aria-labelledby={`${id}-title`} className="grid gap-3">
+    <section id={id} aria-labelledby={`${id}-title`} className="grid gap-3 border-t border-line-subtle pt-8 first:border-t-0 first:pt-0">
       <div>
         <h2 id={`${id}-title`} className="m-0 font-text text-t-h3 font-medium text-fg-primary">
           {title}

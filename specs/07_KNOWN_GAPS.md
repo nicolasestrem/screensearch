@@ -130,6 +130,35 @@ open, or newly scoped out:
     now be the 27th UI key, so the pick does not resolve that gap.
 
 
+## 2026-11-04: P2 design system v2 follow-ups (owner: P10 refont unless stated)
+
+Recorded by the P2 run so the refont phases inherit them as tracked gaps, not prose:
+
+- **Legacy progress bars still animate `width`.** `components/domain/ModelPanel.tsx:104`,
+  `SetupDetails.tsx:53` and `SetupIndicator.tsx:74` carry `transition-[width]`, which makes Tailwind
+  emit `.transition-[width]` into the stylesheet on every route. The detector reads the stylesheet,
+  so it reports one `layout-transition` finding on a page that does not use the class. P2 cannot fix
+  it (`P2.md` keeps `components/domain/**` untouched) and does not strip the utility, which would
+  break those bars. Owner: P10, together with the refont (transform-based bar, or a width transition
+  on `transform: scaleX`). No P2-owned file contains a layout transition.
+- **`StatusRail` renders an uppercase tracked wordmark.** `components/shell/StatusRail.tsx:55` uses
+  `font-display uppercase tracking-eyebrow`, which the pick retires (`UI_REFERENCE` §1). The class
+  survives as a neutral no-op in `globals.css` so unconverted screens keep rendering; the markup
+  itself goes at P10. Owner: P10.
+- **Borderless panels read flat on unconverted screens until the refont.** P2 rebuilt `Panel` and
+  `Expander` as surfaces without a border or corner radius, so a control inside them is the only
+  bordered element (this is what retired the card-in-card pattern, and it matches the direction's
+  "the gap is the divider"). Measured separation of `--surface-raised` over `--surface-app`:
+  `rgb(255,255,255)` on `rgb(238,241,239)` in pine-light, `rgb(27,31,29)` on `rgb(12,15,13)` in
+  pine-dark, and the ink pairing is the same. A soft step of 14 to 17 channel points reads as a
+  surface but not as a card edge, so v1 screens that relied on panel borders will look flatter
+  between now and P10. Owner: P10 (hairline gaps between panes, per `UI_REFERENCE` §8).
+- **`/kitchen` sits outside the `AppShell` by design.** The dev gallery renders v2 alone, so a
+  design review or a detector scan of it measures the design system and not the v1 shell. The route
+  is gated on `import.meta.env.DEV` and tree-shaken from the production bundle (`grep -rni kitchen
+  ui/dist` is empty). When P7 replaces the shell, re-point the gallery at the new shell only if the
+  review needs it.
+
 ## 2026-10-19 — Carried forward from the 0.4.2 arc (owner: maintainer unless stated)
 
 Resolved decisions, implementation readings and verification detail for the 0.4.2 arc
