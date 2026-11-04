@@ -250,6 +250,11 @@ fn rebuild_carries_history_and_repopulates_indexes() -> Result<()> {
         setting(&conn, "app.tray_toast_done")?.as_deref(),
         Some("true")
     );
+    // The 26th UI key (0.4.5 P2 pick) is carried verbatim too.
+    assert_eq!(
+        setting(&conn, "ui.appearance")?.as_deref(),
+        Some("\"ink-light\"")
+    );
     assert_eq!(
         setting(&conn, "api.read_token")?.as_deref(),
         Some("fixture-read-token")
@@ -282,7 +287,7 @@ fn rebuild_carries_history_and_repopulates_indexes() -> Result<()> {
     }
     // The catalog watermark resets with `chrome_text_catalog`, which is not carried.
     assert_eq!(setting(&conn, "text.catalog_filter_version")?, None);
-    assert_eq!(report.settings_copied, 13);
+    assert_eq!(report.settings_copied, 14);
     assert_eq!(report.settings_dropped.len(), 11);
 
     // A missing image is reported, never a reason to drop the row or its path.
@@ -393,6 +398,7 @@ INSERT INTO settings(key, value) VALUES
   ('capture.interval_ms', '1234'),
   ('capture.diff_threshold', '0.006'),
   ('app.tray_toast_done', 'true'),
+  ('ui.appearance', '"ink-light"'),
   ('memory.telegram.chat_id', '424242'),
   ('api.network_notice_state', 'dismissed'),
   ('capture.event_on_click', 'true'),
