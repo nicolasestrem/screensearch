@@ -7,7 +7,7 @@
   its primitive inventory; `03 §8` gains `ui.appearance` and the closed UI set rises 25 -> 26;
   `07` carries the P3/P7 follow-ups. Code: bundled local variable fonts (Source Sans 3, Cascadia
   Mono, both OFL), three-layer `tokens.css` with four themes (`pine-light` default) and a density
-  token, `tokens.compat.css` shim over 46 v1 names, rewritten `globals.css`, Tailwind mapped onto
+  token, `tokens.compat.css` shim covering 46 v1 names (25 aliases, 21 kept their name), rewritten `globals.css`, Tailwind mapped onto
   the same properties, 30 primitives rebuilt with the v1 names and props intact, a 55-glyph local
   icon set, a dev-only `/kitchen` gallery outside the AppShell, and two enforcement tests (124 AA
   pairs x 4 themes; a 7-rule token fence over the primitives).

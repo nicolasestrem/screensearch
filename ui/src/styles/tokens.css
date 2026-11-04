@@ -42,7 +42,8 @@
 @font-face {
   font-family: "Cascadia Mono";
   src: url("./fonts/CascadiaMono.woff2") format("woff2");
-  font-weight: 400;
+  /* Variable 200-700: the range is what makes the axis usable. */
+  font-weight: 200 700;
   font-style: normal;
   font-display: swap;
 }

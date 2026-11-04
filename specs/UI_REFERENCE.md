@@ -36,7 +36,7 @@ Three layers in `ui/src/styles/tokens.css`: **primitive** (raw scales: colour ra
 - Surfaces: `--surface-app`, `--surface-chrome`, `--surface-pane`, `--surface-raised`, `--surface-inset`, `--surface-hover`, `--surface-selected`.
 - Borders: `--border-subtle`, `--border-strong`, `--border-control`, `--border-focus`.
 - Text: `--text-primary`, `--text-secondary`, `--text-tertiary`.
-- Accent and action: `--accent`, `--accent-strong`, `--accent-wash`, `--accent-line`, `--on-accent`, `--action-primary-bg`, `--action-primary-fg`.
+- Accent and action: `--accent`, `--accent-strong`, `--accent-wash`, `--accent-line`, `--text-on-accent`, `--action-primary-bg`, `--action-primary-fg`.
 - Focus: `--focus-ring`.
 - States: `--status-ok-fg` / `-bg` / `-border`, and the same three-part family for `warn` and `danger`; the success family is the neutral treatment in `§1` under pine.
 - Match highlight: `--mark-bg`, `--mark-fg` - accent wash and accent-inked text; no yellow.
@@ -259,7 +259,7 @@ Loading uses skeletons that match final layout (no spinner-only screens). Empty 
 
 | Primitive | States it ships | Notes |
 | --- | --- | --- |
-| `Button` | default, hover, active, focus-visible, disabled, loading | `variant` primary / secondary / ghost / danger with `size` sm / md, optional `leadingIcon`; `loading` sets `aria-busy` and `aria-disabled`, drops `onClick` and swaps the leading glyph for a spinner; a transparent `--hit-min` 32px target sits under a shorter visual height |
+| `Button` | default, hover, active, focus-visible, disabled, loading | `variant` primary / secondary / ghost / danger with `size` sm / md, optional `leadingIcon`; `loading` sets `aria-busy` and `aria-disabled`, cancels the activation (a click, Enter/Space, and a native submit) and swaps the leading glyph for a spinner; a transparent `--hit-min` 32px target sits under a shorter visual height |
 | `IconButton` | default, hover, focus-visible, disabled, pressed | `label` is required and becomes both `aria-label` and the native tooltip; `active` renders `aria-pressed` on the selected surface, so a toggle needs no second primitive |
 | `Field` | default, hover, focus-visible, disabled, invalid | The labelled-input pattern: `label`, `hint`, `error` (sets `aria-invalid` and the danger border), generated id |
 | `TextInput` | default, hover, focus-visible, disabled, invalid | `size` sm / md from the density scale; `invalid` paints the danger border and sets `aria-invalid` |

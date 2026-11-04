@@ -15,9 +15,10 @@
   this run to continue P2 and to commit locally without pushing, so the branch is cut from
   `origin/main` (which carries the P1 contract, #150) and every commit stays local.
 - **Built:** `ui/src/styles/fonts/` (Source Sans 3 upright + italic variable woff2, Cascadia Mono
-  variable woff2, SIL OFL 1.1 with licence text beside each file); `tokens.css` (251 custom
-  properties: primitives, four semantic theme blocks, scales, density); `tokens.compat.css` (46 v1
-  names aliased); rewritten `globals.css`; `ui/tailwind.config.js` (legacy keys intact, v2 keys
+  variable woff2, SIL OFL 1.1 with licence text beside each file); `tokens.css` (226 distinct custom
+  properties over 357 declarations: 114 `--p-*` primitives plus the semantic layer redeclared in four
+  theme blocks, the scales and the density block); `tokens.compat.css` (25 aliases, which is what the
+  46 v1 names need: 21 of them kept their v2 name); rewritten `globals.css`; `ui/tailwind.config.js` (legacy keys intact, v2 keys
   added, everything var-backed); 30 primitives; `icons/index.tsx` (55 glyphs); `routes/Kitchen.tsx`
   + `KitchenPrimitives.tsx`; `test/contrast.test.mjs` + `test/tokens.test.mjs`; one additive
   dev-only route line.
