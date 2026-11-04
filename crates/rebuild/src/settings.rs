@@ -258,8 +258,6 @@ mod tests {
             "tray.quit",
             "tray.updates",
             "tray.vision",
-            "marks.hotkey",
-            "overlay.hotkey",
             "advanced.toml",
         ];
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

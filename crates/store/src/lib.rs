@@ -188,9 +188,12 @@ impl SqliteStore {
     /// Opens (creating if needed) the store at `path`, the on-disk `screensearch.db`
     /// (`03 §4`, 0.4.5 D2).
     ///
-    /// No file: create it from the v14 baseline and write `schema_version = 14` in the
-    /// same transaction. File present: require `schema_version = 14` and refuse anything
-    /// else with a message naming the version found and the `ssv2c-rebuild` tool.
+    /// Decided by the database's contents, not by whether the file exists. An empty
+    /// database (no file, a zero-byte file, or a first run that rolled back) is created
+    /// from the v14 baseline with `schema_version = 14` in the same transaction. Anything
+    /// with schema objects must be at `schema_version = 14`; every other state, including
+    /// a file that is not SQLite, is refused untouched with a message naming the version
+    /// found and the `ssv2c-rebuild` tool.
     pub fn open_path(path: &Path) -> Result<Self> {
         register_vec_extension();
         let conn = Connection::open(path)?;
