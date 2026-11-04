@@ -119,40 +119,40 @@ impl AdvancedConfig {
     }
 }
 
-/// `[capture]` — event-driven capture and UI Automation tuning (`capture.*`).
+/// `[capture]` - event-driven capture and UI Automation tuning (`capture.*`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 #[serde(default)]
 pub struct CaptureAdvanced {
-    /// `capture.diff_threshold` — frame-diff gate sensitivity.
+    /// `capture.diff_threshold` - frame-diff gate sensitivity.
     pub diff_threshold: f32,
-    /// `capture.event_debounce_ms` — collapse a trigger burst, clamp 100..=10000.
+    /// `capture.event_debounce_ms` - collapse a trigger burst, clamp 100..=10000.
     pub event_debounce_ms: u32,
-    /// `capture.event_driven_enabled` — master switch for the opt-in trigger source.
+    /// `capture.event_driven_enabled` - master switch for the opt-in trigger source.
     pub event_driven_enabled: bool,
-    /// `capture.event_fallback_interval_ms` — static-screen sampling floor.
+    /// `capture.event_fallback_interval_ms` - static-screen sampling floor.
     pub event_fallback_interval_ms: u32,
-    /// `capture.event_idle_threshold_ms` — idle dwell that counts as "gone idle".
+    /// `capture.event_idle_threshold_ms` - idle dwell that counts as "gone idle".
     pub event_idle_threshold_ms: u32,
-    /// `capture.event_min_interval_ms` — the rate ceiling.
+    /// `capture.event_min_interval_ms` - the rate ceiling.
     pub event_min_interval_ms: u32,
-    /// `capture.event_on_foreground` — capture on foreground/app switch.
+    /// `capture.event_on_foreground` - capture on foreground/app switch.
     pub event_on_foreground: bool,
-    /// `capture.event_on_idle` — capture when the user goes idle past the threshold.
+    /// `capture.event_on_idle` - capture when the user goes idle past the threshold.
     pub event_on_idle: bool,
-    /// `capture.uia_latency_budget_ms` — soft per-walk budget.
+    /// `capture.uia_latency_budget_ms` - soft per-walk budget.
     pub uia_latency_budget_ms: u32,
-    /// `capture.uia_max_nodes` — hard node cap per walk.
+    /// `capture.uia_max_nodes` - hard node cap per walk.
     pub uia_max_nodes: u32,
-    /// `capture.uia_max_textpattern_calls` — live `TextPattern` reads per walk.
+    /// `capture.uia_max_textpattern_calls` - live `TextPattern` reads per walk.
     pub uia_max_textpattern_calls: u32,
-    /// `capture.uia_min_text_chars` — thin-yield floor below which OCR is preferred.
+    /// `capture.uia_min_text_chars` - thin-yield floor below which OCR is preferred.
     pub uia_min_text_chars: u32,
-    /// `capture.uia_suppress_during_input_ms` — skip UIA right after keyboard/mouse input.
+    /// `capture.uia_suppress_during_input_ms` - skip UIA right after keyboard/mouse input.
     pub uia_suppress_during_input_ms: u32,
-    /// `capture.uia_text_enabled` — UIA text with OCR fallback.
+    /// `capture.uia_text_enabled` - UIA text with OCR fallback.
     pub uia_text_enabled: bool,
-    /// `capture.uia_view_control_only` — walk the lighter control view.
+    /// `capture.uia_view_control_only` - walk the lighter control view.
     pub uia_view_control_only: bool,
 }
 
@@ -178,20 +178,20 @@ impl Default for CaptureAdvanced {
     }
 }
 
-/// `[enrich]` — enrichment lanes and worker tuning (`enrich.*`).
+/// `[enrich]` - enrichment lanes and worker tuning (`enrich.*`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 #[serde(default)]
 pub struct EnrichAdvanced {
-    /// `enrich.embed_text` — text-embedding lane toggle.
+    /// `enrich.embed_text` - text-embedding lane toggle.
     pub embed_text: bool,
-    /// `enrich.vision_batch_size` — frames a timer/idle tick enqueues.
+    /// `enrich.vision_batch_size` - frames a timer/idle tick enqueues.
     pub vision_batch_size: u32,
-    /// `enrich.vision_idle_enabled` — idle-triggered vision enrichment.
+    /// `enrich.vision_idle_enabled` - idle-triggered vision enrichment.
     pub vision_idle_enabled: bool,
-    /// `enrich.vision_idle_secs` — idle dwell required before an idle vision tick.
+    /// `enrich.vision_idle_secs` - idle dwell required before an idle vision tick.
     pub vision_idle_secs: u32,
-    /// `enrich.worker_concurrency` — enrichment worker count.
+    /// `enrich.worker_concurrency` - enrichment worker count.
     pub worker_concurrency: u32,
 }
 
@@ -207,12 +207,12 @@ impl Default for EnrichAdvanced {
     }
 }
 
-/// `[overlay]` — Flow overlay tuning (`overlay.*`).
+/// `[overlay]` - Flow overlay tuning (`overlay.*`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 #[serde(default)]
 pub struct OverlayAdvanced {
-    /// `overlay.max_results` — top-N results in the overlay.
+    /// `overlay.max_results` - top-N results in the overlay.
     pub max_results: u32,
 }
 
@@ -222,14 +222,14 @@ impl Default for OverlayAdvanced {
     }
 }
 
-/// `[reports]` — report depth beyond the daily UI knob (`reports.*`).
+/// `[reports]` - report depth beyond the daily UI knob (`reports.*`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 #[serde(default)]
 pub struct ReportsAdvanced {
-    /// `reports.map_reduce_min_frames` — frame count above which a range uses map-reduce.
+    /// `reports.map_reduce_min_frames` - frame count above which a range uses map-reduce.
     pub map_reduce_min_frames: u32,
-    /// `reports.weekly_top_k` — weekly report frame cap.
+    /// `reports.weekly_top_k` - weekly report frame cap.
     pub weekly_top_k: u32,
 }
 
@@ -242,12 +242,12 @@ impl Default for ReportsAdvanced {
     }
 }
 
-/// `[resume]` — where-was-i tuning (`resume.*`).
+/// `[resume]` - where-was-i tuning (`resume.*`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 #[serde(default)]
 pub struct ResumeAdvanced {
-    /// `resume.min_dwell_secs` — min sustained-context dwell for where-was-i.
+    /// `resume.min_dwell_secs` - min sustained-context dwell for where-was-i.
     pub min_dwell_secs: u32,
 }
 
@@ -259,26 +259,26 @@ impl Default for ResumeAdvanced {
     }
 }
 
-/// `[sidecar]` — llama.cpp launch and lifecycle knobs (`sidecar.*`).
+/// `[sidecar]` - llama.cpp launch and lifecycle knobs (`sidecar.*`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 #[serde(default)]
 pub struct SidecarAdvanced {
-    /// `sidecar.ctx_size` — `0` = automatic per-lane default; else 512..=32768.
+    /// `sidecar.ctx_size` - `0` = automatic per-lane default; else 512..=32768.
     pub ctx_size: u32,
-    /// `sidecar.device` — optional llama.cpp `--device` selector; blank round-trips as `None`.
+    /// `sidecar.device` - optional llama.cpp `--device` selector; blank round-trips as `None`.
     pub device: Option<String>,
-    /// `sidecar.flash_attn` — flash-attention mode.
+    /// `sidecar.flash_attn` - flash-attention mode.
     pub flash_attn: FlashAttnSetting,
-    /// `sidecar.idle_ttl_secs` — idle TTL, resolved once at supervisor construction.
+    /// `sidecar.idle_ttl_secs` - idle TTL, resolved once at supervisor construction.
     pub idle_ttl_secs: u32,
-    /// `sidecar.kv_cache_type` — KV-cache precision.
+    /// `sidecar.kv_cache_type` - KV-cache precision.
     pub kv_cache_type: KvCacheType,
-    /// `sidecar.ngl` — GPU layers offloaded to the sidecar.
+    /// `sidecar.ngl` - GPU layers offloaded to the sidecar.
     pub ngl: u32,
-    /// `sidecar.recycle_enabled` — recycle on the committed-RAM ceiling.
+    /// `sidecar.recycle_enabled` - recycle on the committed-RAM ceiling.
     pub recycle_enabled: bool,
-    /// `sidecar.recycle_rss_mb` — `0` = automatic ceiling; else 8192..=131072.
+    /// `sidecar.recycle_rss_mb` - `0` = automatic ceiling; else 8192..=131072.
     pub recycle_rss_mb: u32,
 }
 
@@ -297,16 +297,16 @@ impl Default for SidecarAdvanced {
     }
 }
 
-/// `[text]` — chrome-suppression classifier tuning (`text.*`).
+/// `[text]` - chrome-suppression classifier tuning (`text.*`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 #[serde(default)]
 pub struct TextAdvanced {
-    /// `text.chrome_protect_min_chars` — lines at least this long are never suppressed.
+    /// `text.chrome_protect_min_chars` - lines at least this long are never suppressed.
     pub chrome_protect_min_chars: u32,
-    /// `text.chrome_region_buckets` — grid resolution for a span's `region_bucket`.
+    /// `text.chrome_region_buckets` - grid resolution for a span's `region_bucket`.
     pub chrome_region_buckets: u32,
-    /// `text.chrome_suppress_min_seen` — appearances before a signature is marked chrome.
+    /// `text.chrome_suppress_min_seen` - appearances before a signature is marked chrome.
     pub chrome_suppress_min_seen: u32,
 }
 
@@ -323,26 +323,26 @@ impl Default for TextAdvanced {
     }
 }
 
-/// `[throttle]` — under-pressure enrichment governor tuning (`throttle.*`).
+/// `[throttle]` - under-pressure enrichment governor tuning (`throttle.*`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 #[serde(default)]
 pub struct ThrottleAdvanced {
-    /// `throttle.cpu_enter_pct` — CPU busy % at which pressure counts toward raising a level.
+    /// `throttle.cpu_enter_pct` - CPU busy % at which pressure counts toward raising a level.
     pub cpu_enter_pct: f32,
-    /// `throttle.cpu_exit_pct` — CPU busy % below which pressure counts toward lowering.
+    /// `throttle.cpu_exit_pct` - CPU busy % below which pressure counts toward lowering.
     pub cpu_exit_pct: f32,
-    /// `throttle.embed_text_floor` — min concurrent `embed_text` workers at level 2.
+    /// `throttle.embed_text_floor` - min concurrent `embed_text` workers at level 2.
     pub embed_text_floor: u32,
-    /// `throttle.enter_after_ms` — sustained-enter dwell before stepping up.
+    /// `throttle.enter_after_ms` - sustained-enter dwell before stepping up.
     pub enter_after_ms: u32,
-    /// `throttle.exit_after_ms` — recovered-exit dwell before stepping down.
+    /// `throttle.exit_after_ms` - recovered-exit dwell before stepping down.
     pub exit_after_ms: u32,
-    /// `throttle.gpu_enter_pct` — GPU utilization % enter threshold.
+    /// `throttle.gpu_enter_pct` - GPU utilization % enter threshold.
     pub gpu_enter_pct: f32,
-    /// `throttle.gpu_exit_pct` — GPU utilization % exit threshold.
+    /// `throttle.gpu_exit_pct` - GPU utilization % exit threshold.
     pub gpu_exit_pct: f32,
-    /// `throttle.sample_interval_ms` — probe/sample cadence.
+    /// `throttle.sample_interval_ms` - probe/sample cadence.
     pub sample_interval_ms: u32,
 }
 

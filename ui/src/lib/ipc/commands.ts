@@ -208,7 +208,7 @@ export const setSettings = (settings: Settings): Promise<void> =>
 
 /** Read-only `file-only` settings projection (`03 §8`, 0.4.5 D6): the effective
  *  `AdvancedConfig`, the absolute `advanced.toml` path, and which keys the file
- *  supplied. There is no setter — those keys are edited in the file, then restart. */
+ *  supplied. There is no setter - those keys are edited in the file, then restart. */
 export const getAdvancedConfig = (): Promise<AdvancedConfigView> =>
   invoke<AdvancedConfigView>("get_advanced_config");
 

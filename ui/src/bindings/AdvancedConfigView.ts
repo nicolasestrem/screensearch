@@ -13,7 +13,7 @@ import type { AdvancedConfig } from "./AdvancedConfig";
  */
 export type AdvancedConfigView = { 
 /**
- * The effective configuration — exactly what the backend reads.
+ * The effective configuration - exactly what the backend reads.
  */
 config: AdvancedConfig, 
 /**

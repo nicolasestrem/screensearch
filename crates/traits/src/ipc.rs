@@ -485,7 +485,7 @@ pub enum CaptureControl {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 pub struct AdvancedConfigView {
-    /// The effective configuration — exactly what the backend reads.
+    /// The effective configuration - exactly what the backend reads.
     pub config: AdvancedConfig,
     /// Absolute path of `advanced.toml` (the file may not exist; the defaults then apply).
     pub path: String,
@@ -535,7 +535,7 @@ pub enum UiAppearance {
 pub struct Settings {
     // General
     /// Register ScreenSearch to launch at login (`app.run_at_startup`, 0.3.2 PR3;
-    /// `03 §7d`, D3). Default **off** — an explicit user choice, never silently enabled.
+    /// `03 §7d`, D3). Default **off** - an explicit user choice, never silently enabled.
     /// Applied register-before-persist: the OS registration is attempted before the
     /// setting is saved, so a save can't claim a launch-at-login that didn't take.
     pub app_run_at_startup: bool,
@@ -597,7 +597,7 @@ pub struct Settings {
     /// the image file is removed. `0` = keep screenshots forever.
     pub storage_retention_days: u32,
     /// Max stored-image width in px; the capture is downscaled (aspect kept) above it.
-    /// `0` = native (no downscale) — keeps ultra-wide captures legible.
+    /// `0` = native (no downscale) - keeps ultra-wide captures legible.
     pub storage_max_width: u32,
     // Advanced
     /// Smart enrichment-throttle master switch (`throttle.enabled`, `docs/0.2.0.md`

@@ -483,7 +483,7 @@ fn settings_policy_matches_the_spec_table() {
 
 /// A minimal v13 profile: only the tables the carry set reads, with v13-shaped
 /// columns. `text_spans.line_index` and `vision_analysis.created_at` are omitted on
-/// purpose — the destination defaults them via the column intersection, which is
+/// purpose - the destination defaults them via the column intersection, which is
 /// the generic behaviour the tool must have (no v13 DDL is restated in the code).
 const V13_FIXTURE_SQL: &str = r#"
 CREATE TABLE schema_version (version INTEGER NOT NULL);

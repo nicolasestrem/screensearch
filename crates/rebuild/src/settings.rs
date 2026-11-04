@@ -83,7 +83,7 @@ impl SettingsPolicy {
 
     /// True when a source row must be copied into the rebuilt database.
     ///
-    /// Retired keys — including the nine `deleted` rows — are *not* carried: D6's
+    /// Retired keys - including the nine `deleted` rows - are *not* carried: D6's
     /// load rule removes a row that names a key outside the table, so the tool applies
     /// the same rule up front instead of writing rows the app would delete on boot.
     /// The [`CARRIED_INTERNAL_MARKERS`] are carried although they have no table row,

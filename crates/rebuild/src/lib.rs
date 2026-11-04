@@ -1,4 +1,4 @@
-//! # `ssv2c-rebuild` — dev-only v13 → v14 database rebuild (0.4.5 D3)
+//! # `ssv2c-rebuild` - dev-only v13 → v14 database rebuild (0.4.5 D3)
 //!
 //! The app ships **no migration chain** (0.4.5 D2): a database whose
 //! `schema_version` is not 14 is refused, and this tool is the documented way to
@@ -17,7 +17,7 @@
 //!   per-version branch here.
 //! - FTS5 is repopulated from the copied `frame_text` rows (`…_fts(t) VALUES
 //!   ('rebuild')`) and `vec0` receives the embedding rows keyed by the copied
-//!   `embeddings` rows — shadow tables are never copied.
+//!   `embeddings` rows - shadow tables are never copied.
 //! - Settings follow the settings-v2 contract ([`settings::SettingsPolicy`]):
 //!   `UI` + `file-only` keys, the `memory.*` keys owned by `03 §8c/§8d`, the API
 //!   read credential, and the **reserved** history identity and allocator
@@ -143,7 +143,7 @@ pub struct RebuildReport {
     /// Settings rows deliberately not carried (retired or outside the contract).
     pub settings_dropped: Vec<String>,
     /// `frames.image_path` values that do not resolve on disk. The rows and their
-    /// paths are still copied — the tool reports, it never silently drops a path.
+    /// paths are still copied - the tool reports, it never silently drops a path.
     pub missing_images: Vec<String>,
     /// `PRAGMA integrity_check` rows; exactly `["ok"]` on success.
     pub integrity_check: Vec<String>,
@@ -394,7 +394,7 @@ fn copy_settings(source: &Connection, tx: &Transaction<'_>) -> Result<(usize, Ve
 ///
 /// The vectors exist only in the source `vec0` table (the `embeddings` metadata has
 /// no vector column), so they are read from there and inserted keyed by the rows we
-/// just copied — never by copying the `vec0` shadow tables.
+/// just copied - never by copying the `vec0` shadow tables.
 fn copy_embedding_vectors(
     source: &Connection,
     tx: &Transaction<'_>,

@@ -238,7 +238,7 @@ struct AppState {
     /// startup. Settings that are not `UI` read their values from here, not from the typed
     /// [`Settings`] struct.
     advanced: AdvancedConfig,
-    /// `section.field` keys `advanced.toml` actually supplied at startup — the provenance
+    /// `section.field` keys `advanced.toml` actually supplied at startup - the provenance
     /// half of the read-only Settings · Advanced projection (`get_advanced_config`). Frozen
     /// alongside [`Self::advanced`]: the file is read once per launch, and the loader's
     /// one-shot rewrite would otherwise make defaults look file-supplied on a re-read.
@@ -1447,7 +1447,7 @@ pub fn run() {
             // The `file-only` settings are read once, here, from `advanced.toml` beside the
             // database (`03 §8`, 0.4.5 D6). A missing/unreadable file is not an error: the
             // defaults apply and the loader logs why (P7 shows that state under Advanced).
-            // The provenance (`from_file`) is frozen here too — it is what
+            // The provenance (`from_file`) is frozen here too - it is what
             // `get_advanced_config` reports and it cannot be re-derived from the file
             // later, because the loader's one-shot rewrite fills the file with defaults.
             let advanced_load = kernel::settings::load_advanced_config_with_provenance(&data_dir);

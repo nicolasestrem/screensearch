@@ -1,4 +1,4 @@
-//! `ssv2c-rebuild` CLI — dev-only v13 → v14 rebuild (`03 §4`, 0.4.5 D3).
+//! `ssv2c-rebuild` CLI - dev-only v13 → v14 rebuild (`03 §4`, 0.4.5 D3).
 //!
 //! ```text
 //! ssv2c-rebuild --source <v13.db> --dest <new-v14.db> [--sample-frames N]
@@ -40,7 +40,7 @@ fn run() -> Result<()> {
         Command::Counts(path) => {
             let counts = rebuild::table_counts(&path)?;
             println!(
-                "{BINARY_NAME} — per-table row counts for {}",
+                "{BINARY_NAME} - per-table row counts for {}",
                 path.display()
             );
             print_counts(&counts);
@@ -102,7 +102,7 @@ fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<Str
 fn print_usage() {
     println!(
         "\
-{BINARY_NAME} — dev-only ScreenSearch v13 -> v14 database rebuild (03 §4, 0.4.5 D3)
+{BINARY_NAME} - dev-only ScreenSearch v13 -> v14 database rebuild (03 §4, 0.4.5 D3)
 
 USAGE:
   {BINARY_NAME} --source <v13.db> --dest <new-v14.db> [--sample-frames N]
@@ -121,7 +121,7 @@ retired settings keys are dropped. `*.v13.bak` remains a maintainer step.
 }
 
 fn print_report(report: &RebuildReport, options: &RebuildOptions) {
-    println!("{BINARY_NAME} — dev-only v13 -> v14 rebuild (03 §4, 0.4.5 D3)");
+    println!("{BINARY_NAME} - dev-only v13 -> v14 rebuild (03 §4, 0.4.5 D3)");
     println!();
     println!(
         "source: {} (schema_version {}, opened read-only)",

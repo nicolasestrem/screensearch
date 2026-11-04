@@ -5,7 +5,7 @@
 //!
 //! - `UI` keys live in [`Settings`] and ride `get_settings`/`set_settings`. Each is read
 //!   individually; a missing or unparsable value falls back to the corresponding
-//!   [`Settings::default`] field (never an error — capture must be able to start on a
+//!   [`Settings::default`] field (never an error - capture must be able to start on a
 //!   fresh DB). Composite values (`capture.monitors`, `privacy.excluded_apps`, model
 //!   tiers) are stored as JSON.
 //! - `file-only` keys live in [`AdvancedConfig`], loaded **once** at startup from
@@ -77,7 +77,7 @@ pub async fn load_settings(store: &dyn Store) -> Settings {
     })
 }
 
-/// Persists every `UI`-disposition `03 §8` setting back to the key/value `settings` table —
+/// Persists every `UI`-disposition `03 §8` setting back to the key/value `settings` table -
 /// the exact inverse of [`load_settings`], using the **same key strings** so a saved value
 /// round-trips. Numbers are written via `to_string`, bools as `"true"`/`"false"`, and
 /// composite values (`capture.monitors`, `privacy.excluded_apps`, model tiers) as JSON
@@ -86,7 +86,7 @@ pub async fn load_settings(store: &dyn Store) -> Settings {
 ///
 /// Every pair (including the fallible JSON encodings) is built **before** any write, then
 /// committed in one transaction via [`Store::set_settings_batch`]. This is all-or-nothing: a
-/// serialization error short-circuits with zero writes, and a crash mid-commit rolls back —
+/// serialization error short-circuits with zero writes, and a crash mid-commit rolls back -
 /// so [`load_settings`] never observes a mix of new and stale keys (its per-key default
 /// fallback would hide such a split silently).
 ///
@@ -251,7 +251,7 @@ pub fn capture_config(s: &Settings, advanced: &AdvancedConfig) -> CaptureConfig 
 ///
 /// The first nine are the settings-v2 `deleted` rows (0.4.5 D6): each has no live consumer
 /// after the 0.4.5 changes, and no replacement key was promoted into the `UI` ceiling to
-/// refill a slot. They were removed by earlier arcs — the four extra event triggers and the
+/// refill a slot. They were removed by earlier arcs - the four extra event triggers and the
 /// typing-pause threshold by 0.3.0 PR2, the image-embedding lane toggle by 0.3.0 PR4, the
 /// superseded API notice state by the API arc, and `storage.jpeg_quality` +
 /// `capture.uia_run_on_interactive` by 0.3.2 PR5 (both provably inert). The last two are
@@ -273,7 +273,7 @@ pub const RETIRED_SETTINGS_KEYS: &[&str] = &[
 
 /// Deletes any [`RETIRED_SETTINGS_KEYS`] left in the `settings` table by an older version,
 /// logging **once** which keys were dropped. Called once at startup (before the rest of the
-/// maintenance sweep). "Log once" falls out naturally — the keys are gone by the next launch,
+/// maintenance sweep). "Log once" falls out naturally - the keys are gone by the next launch,
 /// so a subsequent run finds nothing and logs nothing. A read or delete error is logged and
 /// swallowed: dropping stale keys is best-effort and must never block startup or capture
 /// (`04 §4`). The reserved history/allocator keys (`03 §7f.8`) are not on this list and the
@@ -354,7 +354,7 @@ pub fn load_advanced_config(data_dir: &Path) -> AdvancedConfig {
 /// Missing file: defaults apply and the reason is logged (the honest degraded path P7
 /// shows under Settings · Advanced). Unreadable or invalid TOML: defaults apply, the reason
 /// is logged, and the file is left untouched so a typo is never destroyed. In every one of
-/// those cases `from_file` is empty — nothing came from the file.
+/// those cases `from_file` is empty - nothing came from the file.
 ///
 /// Strict in the same way as the `settings` table: an unknown section or field, or a field
 /// whose value does not parse, is dropped on a one-shot rewrite, so the file always matches

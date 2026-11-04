@@ -20,7 +20,7 @@ import type { UiAppearance } from "./UiAppearance";
 export type Settings = { 
 /**
  * Register ScreenSearch to launch at login (`app.run_at_startup`, 0.3.2 PR3;
- * `03 §7d`, D3). Default **off** — an explicit user choice, never silently enabled.
+ * `03 §7d`, D3). Default **off** - an explicit user choice, never silently enabled.
  * Applied register-before-persist: the OS registration is attempted before the
  * setting is saved, so a save can't claim a launch-at-login that didn't take.
  */
@@ -98,7 +98,7 @@ answer_thinking: boolean, models_vision_tier: ModelTier, models_answer_tier: Mod
 storage_retention_days: number, 
 /**
  * Max stored-image width in px; the capture is downscaled (aspect kept) above it.
- * `0` = native (no downscale) — keeps ultra-wide captures legible.
+ * `0` = native (no downscale) - keeps ultra-wide captures legible.
  */
 storage_max_width: number, 
 /**

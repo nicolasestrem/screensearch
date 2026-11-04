@@ -3,38 +3,38 @@ import type { FlashAttnSetting } from "./FlashAttnSetting";
 import type { KvCacheType } from "./KvCacheType";
 
 /**
- * `[sidecar]` — llama.cpp launch and lifecycle knobs (`sidecar.*`).
+ * `[sidecar]` - llama.cpp launch and lifecycle knobs (`sidecar.*`).
  */
 export type SidecarAdvanced = { 
 /**
- * `sidecar.ctx_size` — `0` = automatic per-lane default; else 512..=32768.
+ * `sidecar.ctx_size` - `0` = automatic per-lane default; else 512..=32768.
  */
 ctx_size: number, 
 /**
- * `sidecar.device` — optional llama.cpp `--device` selector; blank round-trips as `None`.
+ * `sidecar.device` - optional llama.cpp `--device` selector; blank round-trips as `None`.
  */
 device: string | null, 
 /**
- * `sidecar.flash_attn` — flash-attention mode.
+ * `sidecar.flash_attn` - flash-attention mode.
  */
 flash_attn: FlashAttnSetting, 
 /**
- * `sidecar.idle_ttl_secs` — idle TTL, resolved once at supervisor construction.
+ * `sidecar.idle_ttl_secs` - idle TTL, resolved once at supervisor construction.
  */
 idle_ttl_secs: number, 
 /**
- * `sidecar.kv_cache_type` — KV-cache precision.
+ * `sidecar.kv_cache_type` - KV-cache precision.
  */
 kv_cache_type: KvCacheType, 
 /**
- * `sidecar.ngl` — GPU layers offloaded to the sidecar.
+ * `sidecar.ngl` - GPU layers offloaded to the sidecar.
  */
 ngl: number, 
 /**
- * `sidecar.recycle_enabled` — recycle on the committed-RAM ceiling.
+ * `sidecar.recycle_enabled` - recycle on the committed-RAM ceiling.
  */
 recycle_enabled: boolean, 
 /**
- * `sidecar.recycle_rss_mb` — `0` = automatic ceiling; else 8192..=131072.
+ * `sidecar.recycle_rss_mb` - `0` = automatic ceiling; else 8192..=131072.
  */
 recycle_rss_mb: number, };

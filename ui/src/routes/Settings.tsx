@@ -6,17 +6,17 @@
 // one plain-language sentence (§9).
 //
 // Settings v2 (0.4.5 D6, `03 §8`): this page edits **only** the 25 `UI` keys. The
-// `file-only` keys carry no control here — not a disabled one, not a placeholder row —
+// `file-only` keys carry no control here - not a disabled one, not a placeholder row -
 // because they live in `advanced.toml` and are surfaced read-only by the
 // `get_advanced_config` projection (P7 rebuilds this page around categories). The
 // removed groups are therefore gone rather than greyed out.
 //
-// Presentation-first (D7): zero key renames, zero semantic changes — the form still
+// Presentation-first (D7): zero key renames, zero semantic changes - the form still
 // edits one draft of the typed `Settings` binding; Save persists the whole draft
 // (optimistic + reconcile via useSetSettings). Model tiers additionally hot-apply the
 // moment they change (useSetModelTier). Every field labels *when* it takes effect. The
 // Hotkeys section carries the gap-#100 inline cross-chord conflict warning (fires live
-// while the overlay and marks chords match; clears when they differ) — the loud
+// while the overlay and marks chords match; clears when they differ) - the loud
 // registration-failure warning stays the save-time safety net.
 //
 // States (§4): loading → skeleton; error → load failed + retry; partial → models
@@ -142,13 +142,13 @@ function sanitizeSettings(s: Settings): Settings {
       60_000,
       86_400_000,
     ),
-    // Retrieval + recall reports — mirror the backend clamps (03 §8).
+    // Retrieval + recall reports - mirror the backend clamps (03 §8).
     retrieval_default_top_k: clampInt(s.retrieval_default_top_k, 1, 100),
     reports_daily_top_k: clampInt(s.reports_daily_top_k, 1, 1_000),
     overlay_hotkey: s.overlay_hotkey.trim() || DEFAULT_OVERLAY_HOTKEY,
     // An empty mark chord falls back to the default (mirrors kernel settings.rs).
     marks_hotkey: s.marks_hotkey.trim() || DEFAULT_MARKS_HOTKEY,
-    // 0.4.0 PR4 sessions keys — mirror the backend final clamps.
+    // 0.4.0 PR4 sessions keys - mirror the backend final clamps.
     sessions_min_len_secs: clampInt(s.sessions_min_len_secs, 30, 3_600),
     sessions_gap_close_secs: clampInt(s.sessions_gap_close_secs, 60, 3_600),
   };

@@ -2,7 +2,7 @@
 // Vision tagging is never real-time (`03 §5`): on-demand tagging (from a Moment) is
 // always available; the timer lane is the one editable opt-in (`03 §8` settings v2,
 // 0.4.5 D6). The idle lane and its batch size are `file-only` keys now
-// (`enrich.vision_idle_*`, `enrich.vision_batch_size`), tuned in `advanced.toml` —
+// (`enrich.vision_idle_*`, `enrich.vision_batch_size`), tuned in `advanced.toml` -
 // they deliberately have no control here. The timer threshold is surfaced in minutes
 // for readability and converted to the stored unit (ms) on edit, and applies on the
 // next app restart, labelled honestly here.
@@ -25,7 +25,7 @@ export function ScheduleControl({
   onChange,
 }: ScheduleControlProps) {
   // Shown in minutes; a cleared field shows 0 (a transient value to type over) rather
-  // than snapping back — the Settings save clamps the threshold to its valid range.
+  // than snapping back - the Settings save clamps the threshold to its valid range.
   const timerMinutes = Math.round(timerIntervalMs / 60_000);
 
   return (

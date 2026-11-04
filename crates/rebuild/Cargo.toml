@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 # `store` is used only for the single source of truth this tool must not duplicate:
 # `LATEST_SCHEMA_VERSION` and `create_baseline`/`BASELINE_SQL` (`03 §4`, 0.4.5 D2).
-# The dependency is one-way — no shipped crate depends on `rebuild`.
+# The dependency is one-way - no shipped crate depends on `rebuild`.
 [dependencies]
 anyhow.workspace = true
 rusqlite.workspace = true
