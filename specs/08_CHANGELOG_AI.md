@@ -23,6 +23,14 @@
   coverage, guarded maintainer procedure), plus the records commits. Branch pushed and
   [PR #153](https://github.com/nicolasestrem/screensearch/pull/153) opened against `main` on the
   maintainer's explicit 2026-11-04 instruction (0.4.5 D18 validation given for this PR); not merged.
+- **Review fix (`src-tauri/src/memory.rs`):** PR #153 review found that a queued or blocked report
+  resumed after a restart with an edited `advanced.toml` took the new report depth and sidecar
+  parameters, because P3 moved those keys out of the typed `Settings` that the durable
+  `RunSnapshot` captured. `RunSnapshot` now captures the moved report and sidecar keys at enqueue,
+  recovers the legacy typed fields from pre-settings-v2 snapshots, and only then falls back to the
+  startup configuration, preserving the Retry/restart versus Regenerate distinction in `03 §8c`.
+  Two tests cover the capture/resolve round-trip and the legacy recovery; the full gate re-ran
+  green (1201 passed, 0 failed).
 - **Verified:** all nine verification commands in `04` section 4 exit 0 on the final tree
   (`npm ci`, `lint`, `build`, `stage-mcp`, `fmt`, `clippy`, `cargo build`, `cargo test --workspace`
   1195 passed / 0 failed, bindings diff clean); raw output and the per-item acceptance audit are in

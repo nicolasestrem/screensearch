@@ -9,7 +9,14 @@ key in the typed registry, the kernel load/save pair, the rebuild carry policy a
 bindings; the baseline's drift from `03 §4` is pinned by `crates/store/tests/p3_schema_parity.rs`
 (so `06` #30 is test-guarded while the spec documentation pass stays open); and the kickoff's
 "nine sections" `advanced.toml` wording was corrected to the spec's eight sections plus the
-`app.tray_toast_done` KV marker. Still open, maintainer-only:
+`app.tray_toast_done` KV marker. The report-run snapshot question raised in the PR #153 review is
+settled here too: the moved `file-only` report keys (`reports.weekly_top_k`,
+`reports.map_reduce_min_frames`) and the answer sidecar parameters (`sidecar.ngl`, `device`,
+`ctx_size`, `kv_cache_type`, `flash_attn`) are captured in the durable `RunSnapshot` at enqueue, so
+Retry/restart keeps the configuration the run was created with while Regenerate takes a fresh
+snapshot (`03 §8c`); pre-settings-v2 snapshots are read through their legacy typed fields, and only
+when neither is present does the startup configuration apply. No spec change is needed. Still open,
+maintainer-only:
 
 - Real-database rebuild against a copy, per-table counts before and after, 20-frame Moment spot
   check and the v14 boot: the nine-step procedure is in `docs/kickoffs/P3.md`, never run by an

@@ -587,6 +587,7 @@ mod tests {
             memory: config.clone(),
             report_settings: kernel::settings::load_settings(&store).await,
             model_at_enqueue: None,
+            advanced: None,
         })
         .unwrap();
         let now = stamp("2026-02-02T12:00:00Z");
@@ -656,6 +657,7 @@ mod tests {
             memory: config.clone(),
             report_settings: kernel::settings::load_settings(&store).await,
             model_at_enqueue: None,
+            advanced: None,
         })
         .unwrap();
         let now = stamp("2026-02-02T12:00:00Z");

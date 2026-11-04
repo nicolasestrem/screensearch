@@ -334,7 +334,150 @@ struct RunSnapshot {
     memory: MemorySettings,
     report_settings: Settings,
     model_at_enqueue: Option<String>,
+    /// The `file-only` report and sidecar configuration at enqueue (`03 §8c`). Absent in
+    /// snapshots written before settings v2 moved these keys out of the typed `Settings`;
+    /// `generate` recovers those legacy fields and otherwise falls back to the startup
+    /// configuration.
+    #[serde(default)]
+    advanced: Option<RunAdvancedSnapshot>,
 }
+
+/// The `file-only` slice a saved report depends on (`03 §8`, 0.4.5 D6): report depth and
+/// the answer sidecar launch parameters. Captured at enqueue so Retry/restart keeps the
+/// configuration the run was created with, while Regenerate takes a fresh snapshot
+/// (`03 §8c`). Every field is optional because a pre-settings-v2 snapshot only carries the
+/// ones the old typed `Settings` held.
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct RunAdvancedSnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    weekly_top_k: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    map_reduce_min_frames: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ngl: Option<u32>,
+    /// Captured device selector. The outer option is "was it captured", the inner one is
+    /// the llama.cpp `--device` value (`None` = no explicit device). The custom
+    /// deserializer keeps "captured as null" distinct from "field absent".
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_device",
+        skip_serializing_if = "Option::is_none"
+    )]
+    device: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ctx_size: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kv_cache_type: Option<KvCacheType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    flash_attn: Option<FlashAttnSetting>,
+}
+
+/// Deserializes a present `device` field, mapping JSON `null` to `Some(None)` so a run
+/// whose captured configuration had no explicit device keeps that value.
+fn deserialize_present_device<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
+}
+
+impl RunAdvancedSnapshot {
+    /// The startup configuration of the moment the run is enqueued.
+    fn capture(advanced: &AdvancedConfig) -> Self {
+        Self {
+            weekly_top_k: Some(advanced.reports.weekly_top_k),
+            map_reduce_min_frames: Some(advanced.reports.map_reduce_min_frames),
+            ngl: Some(advanced.sidecar.ngl),
+            device: Some(advanced.sidecar.device.clone()),
+            ctx_size: Some(advanced.sidecar.ctx_size),
+            kv_cache_type: Some(advanced.sidecar.kv_cache_type),
+            flash_attn: Some(advanced.sidecar.flash_attn),
+        }
+    }
+
+    /// The startup configuration with this run's captured values applied. Only the keys a
+    /// report actually reads are overridden, so unrelated file edits still apply.
+    fn resolve(&self, startup: &AdvancedConfig) -> AdvancedConfig {
+        let mut effective = startup.clone();
+        if let Some(value) = self.weekly_top_k {
+            effective.reports.weekly_top_k = value;
+        }
+        if let Some(value) = self.map_reduce_min_frames {
+            effective.reports.map_reduce_min_frames = value;
+        }
+        if let Some(value) = self.ngl {
+            effective.sidecar.ngl = value;
+        }
+        if let Some(device) = &self.device {
+            effective.sidecar.device = device.clone();
+        }
+        if let Some(value) = self.ctx_size {
+            effective.sidecar.ctx_size = value;
+        }
+        if let Some(value) = self.kv_cache_type {
+            effective.sidecar.kv_cache_type = value;
+        }
+        if let Some(value) = self.flash_attn {
+            effective.sidecar.flash_attn = value;
+        }
+        effective
+    }
+}
+
+/// Recovers the moved `file-only` keys from a report snapshot written before settings v2.
+///
+/// Those snapshots carried `reports_weekly_top_k`, `reports_map_reduce_min_frames`,
+/// `sidecar_ngl`, `sidecar_device`, `sidecar_ctx_size`, `sidecar_kv_cache_type` and
+/// `sidecar_flash_attn` as typed members of the old `Settings`. Recovering them keeps the
+/// Retry/restart-preserves-configuration rule (`03 §8c`) for runs enqueued before the
+/// upgrade. Returns `None` when the snapshot has none of them (newer snapshots without the
+/// `advanced` section), where the startup configuration applies.
+fn legacy_advanced(snapshot: &str) -> Option<RunAdvancedSnapshot> {
+    #[derive(Deserialize)]
+    struct LegacySettings {
+        #[serde(default)]
+        reports_weekly_top_k: Option<u32>,
+        #[serde(default)]
+        reports_map_reduce_min_frames: Option<u32>,
+        #[serde(default)]
+        sidecar_ngl: Option<u32>,
+        #[serde(default)]
+        sidecar_ctx_size: Option<u32>,
+        #[serde(default)]
+        sidecar_kv_cache_type: Option<KvCacheType>,
+        #[serde(default)]
+        sidecar_flash_attn: Option<FlashAttnSetting>,
+    }
+    let root: serde_json::Value = serde_json::from_str(snapshot).ok()?;
+    let report_settings = root.get("report_settings")?.as_object()?.clone();
+    let legacy: LegacySettings =
+        serde_json::from_value(serde_json::Value::Object(report_settings.clone())).ok()?;
+    // `sidecar_device` is read from the raw object because JSON `null` means "captured
+    // without an explicit device", which Option<Value> would erase into "absent".
+    let device = report_settings
+        .get("sidecar_device")
+        .map(|value| value.as_str().map(str::to_string));
+    if legacy.reports_weekly_top_k.is_none()
+        && legacy.reports_map_reduce_min_frames.is_none()
+        && legacy.sidecar_ngl.is_none()
+        && device.is_none()
+        && legacy.sidecar_ctx_size.is_none()
+        && legacy.sidecar_kv_cache_type.is_none()
+        && legacy.sidecar_flash_attn.is_none()
+    {
+        return None;
+    }
+    Some(RunAdvancedSnapshot {
+        weekly_top_k: legacy.reports_weekly_top_k,
+        map_reduce_min_frames: legacy.reports_map_reduce_min_frames,
+        ngl: legacy.sidecar_ngl,
+        device,
+        ctx_size: legacy.sidecar_ctx_size,
+        kv_cache_type: legacy.sidecar_kv_cache_type,
+        flash_attn: legacy.sidecar_flash_attn,
+    })
+}
+
 async fn snapshot(state: &AppState, config: MemorySettings) -> Result<String, ReportError> {
     let store = db(state)?;
     let report_settings = kernel::settings::load_settings(store.as_ref()).await;
@@ -348,6 +491,7 @@ async fn snapshot(state: &AppState, config: MemorySettings) -> Result<String, Re
         memory: config,
         report_settings,
         model_at_enqueue,
+        advanced: Some(RunAdvancedSnapshot::capture(&state.advanced)),
     })
     .map_err(storage)
 }
@@ -866,9 +1010,19 @@ async fn generate(state: &AppState, run: &mut ReportRun) -> Result<(), ReportErr
     let store = db(state)?;
     let config: RunSnapshot = serde_json::from_str(&run.config_snapshot).map_err(storage)?;
     let settings = &config.report_settings;
-    // The report depth beyond the daily UI knob is `file-only` (`03 §8`, 0.4.5 D6): read the
-    // startup-frozen values rather than the snapshot, which only carries the `UI` keys.
-    let advanced = state.advanced.clone();
+    // The report depth beyond the daily UI knob is `file-only` (`03 §8`, 0.4.5 D6). It is
+    // captured per run so Retry/restart preserves the configuration the run was created
+    // with, while Regenerate takes a fresh snapshot (`03 §8c`). A snapshot written before
+    // the move has no `advanced` section; its legacy typed fields are recovered, and only
+    // when neither is present does the startup configuration apply.
+    let captured = config
+        .advanced
+        .clone()
+        .or_else(|| legacy_advanced(&run.config_snapshot));
+    let advanced = match &captured {
+        Some(captured) => captured.resolve(&state.advanced),
+        None => state.advanced.clone(),
+    };
     let answer = state.answer.lock().expect("answer slot").clone();
     let report_config = ReportConfig {
         daily_top_k: settings.reports_daily_top_k,
@@ -2906,6 +3060,7 @@ mod tests {
             },
             report_settings: Settings::default(),
             model_at_enqueue: None,
+            advanced: None,
         };
         let mut first = run_fixture();
         first.run_id = uuid();
@@ -2967,7 +3122,92 @@ mod tests {
             },
             report_settings: Settings::default(),
             model_at_enqueue: None,
+            advanced: None,
         }
+    }
+
+    #[test]
+    fn run_snapshot_captures_the_advanced_report_configuration() {
+        let mut advanced = AdvancedConfig::default();
+        advanced.reports.weekly_top_k = 7;
+        advanced.reports.map_reduce_min_frames = 5;
+        advanced.sidecar.ngl = 12;
+        advanced.sidecar.device = None;
+        advanced.sidecar.ctx_size = 4096;
+        advanced.sidecar.kv_cache_type = KvCacheType::F16;
+        advanced.sidecar.flash_attn = FlashAttnSetting::On;
+
+        let snapshot = RunSnapshot {
+            version: 1,
+            memory: MemorySettings::default(),
+            report_settings: Settings::default(),
+            model_at_enqueue: None,
+            advanced: Some(RunAdvancedSnapshot::capture(&advanced)),
+        };
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let restored: RunSnapshot = serde_json::from_str(&json).unwrap();
+
+        // A later `advanced.toml` edit must not change a resumed run's report depth or
+        // inference parameters (`03 §8c` Retry/restart preserves configuration).
+        let mut startup = AdvancedConfig::default();
+        startup.reports.weekly_top_k = 200;
+        startup.reports.map_reduce_min_frames = 20;
+        startup.sidecar.ngl = 99;
+        startup.sidecar.device = Some("Vulkan0".into());
+        startup.sidecar.ctx_size = 8192;
+        startup.sidecar.kv_cache_type = KvCacheType::Q8_0;
+        startup.sidecar.flash_attn = FlashAttnSetting::Auto;
+        let effective = restored
+            .advanced
+            .as_ref()
+            .expect("snapshot carries the advanced config")
+            .resolve(&startup);
+        assert_eq!(effective.reports.weekly_top_k, 7, "run depth wins");
+        assert_eq!(effective.reports.map_reduce_min_frames, 5);
+        assert_eq!(effective.sidecar.ngl, 12);
+        assert_eq!(effective.sidecar.ctx_size, 4096);
+        assert_eq!(effective.sidecar.kv_cache_type, KvCacheType::F16);
+        assert_eq!(effective.sidecar.flash_attn, FlashAttnSetting::On);
+        assert_eq!(effective.sidecar.device, None, "captured null device wins");
+        // A key a report does not read still follows the startup configuration.
+        assert_eq!(
+            effective.sidecar.idle_ttl_secs,
+            startup.sidecar.idle_ttl_secs
+        );
+    }
+
+    #[test]
+    fn legacy_run_snapshots_keep_their_moved_report_configuration() {
+        // The pre-settings-v2 shape: the moved keys were typed fields of `Settings`.
+        let legacy = r#"{
+            "version": 1,
+            "memory": {},
+            "report_settings": {
+                "reports_weekly_top_k": 11,
+                "reports_map_reduce_min_frames": 9,
+                "sidecar_ngl": 7,
+                "sidecar_device": null,
+                "sidecar_ctx_size": 2048,
+                "sidecar_kv_cache_type": "q4_0",
+                "sidecar_flash_attn": "off"
+            },
+            "model_at_enqueue": null
+        }"#;
+        let captured = legacy_advanced(legacy).expect("legacy snapshot fields recovered");
+        let mut startup = AdvancedConfig::default();
+        startup.sidecar.device = Some("Vulkan0".into());
+        let effective = captured.resolve(&startup);
+        assert_eq!(effective.reports.weekly_top_k, 11);
+        assert_eq!(effective.reports.map_reduce_min_frames, 9);
+        assert_eq!(effective.sidecar.ngl, 7);
+        assert_eq!(effective.sidecar.ctx_size, 2048);
+        assert_eq!(effective.sidecar.kv_cache_type, KvCacheType::Q4_0);
+        assert_eq!(effective.sidecar.flash_attn, FlashAttnSetting::Off);
+        assert_eq!(effective.sidecar.device, None);
+
+        // No legacy fields: the caller falls back to the startup configuration.
+        assert!(legacy_advanced(r#"{"report_settings": {}}"#).is_none());
+        assert!(legacy_advanced(r#"{"report_settings": {"sidecar_ngl": 7}}"#).is_some());
     }
 
     /// A saved daily run for one local date, so a weekly note's consumed days can be

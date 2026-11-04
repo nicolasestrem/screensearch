@@ -231,6 +231,20 @@
   maintainer's explicit 2026-11-04 instruction, after the recompute above. **Not merged**; no review
   automation was triggered. The PR body carries the summary, the verification block and the
   maintainer-only items.
+- **Review-driven fix (PR #153, 2026-11-04).** Codex flagged (P2) and Claude confirmed that a
+  queued or blocked report resumed after a restart with an edited `advanced.toml` took the new
+  report depth and sidecar parameters, because P3 moved those keys out of the typed `Settings` that
+  the durable `RunSnapshot` captured. That was a P3 behaviour regression against 0.4.5 D6
+  ("behaviour does not change") and `03 §8c` (Retry/restart preserves configuration, Regenerate
+  takes a fresh snapshot). Fix: `RunSnapshot` carries an optional captured `advanced` section with
+  `reports.weekly_top_k`, `reports.map_reduce_min_frames` and the answer sidecar parameters
+  (`ngl`, `device`, `ctx_size`, `kv_cache_type`, `flash_attn`); `generate` prefers it, then recovers
+  the pre-settings-v2 typed fields (`reports_weekly_top_k`, `reports_map_reduce_min_frames`,
+  `sidecar_*`) from old snapshots, and only then falls back to the startup configuration. Two tests
+  pin the capture/resolve round-trip (including a captured null device) and the legacy recovery.
+  Scope: `src-tauri/src/memory.rs` plus two fixture literals in `memory_weekly.rs`, inside the
+  P3-owned settings-consumer surface. Full gate re-run on the fix: fmt, clippy, build and
+  `cargo test --workspace` all exit 0, **1201 passed / 0 failed**, bindings diff clean.
 - **One ownership note for reviewers.** The 2026-11-04 QA pass's Settings API fix touches
   `ui/src/lib/settingsDraft.ts`, `ui/test/settingsDraft.test.mjs`, `ui/src/lib/ipc/mutations.ts` and
   `ui/src/routes/Settings.tsx`. It is in P3 because P3 introduced the typed `api.*` settings and the

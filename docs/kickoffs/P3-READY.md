@@ -19,7 +19,7 @@ one-time grant), `c039d5e` (Maintainer run + contract text), `79d3976` (first re
 a missing carry table or foreign-key violation, 20-id sample test), `8aca7a5` (settings doc
 comments + regenerated bindings), `244638a` (P3-authored em dashes removed), `9d3a9ee` (restored
 `ctx_size` sentinel and overlay-hotkey persistence coverage), `8833c41` (hardened Maintainer run),
-plus the records commits.
+the review-driven `RunSnapshot` capture fix (PR #153, see below), plus the records commits.
 
 **Acceptance audit:** every non-maintainer item is MET with evidence in `specs/05_BUILD_REVIEW.md`
 under "2026-11-04: 0.4.5 P3 baseline schema + settings v2"; the two maintainer-only items stay open.
@@ -61,6 +61,14 @@ numbered, copy-pasteable PowerShell steps with success criteria, the live path a
 it, a guarded non-destructive swap (no data-dir or db-path override exists), a log-gated
 `*.v13.bak` rename only after the app opens on v14, a 29-day-bounded Moment spot check and an
 idempotent one-command rollback. An agent did not run any of it.
+
+**PR review fix:** [PR #153](https://github.com/nicolasestrem/screensearch/pull/153) review found
+one real P2: a resumed report run took the restarted `advanced.toml` values because P3 moved the
+report depth and sidecar parameters out of the typed `Settings` the durable `RunSnapshot` captured.
+That is fixed on the branch: the run snapshot now captures those moved keys at enqueue, recovers the
+pre-settings-v2 typed fields from old snapshots, and only then falls back to the startup
+configuration, preserving `03 §8c` Retry/restart versus Regenerate semantics. Two tests cover it;
+the full gate re-ran green (1201 passed, 0 failed).
 
 **Verification:** all nine commands from `04` section 4 exit 0 on the hardened tree (npm ci, lint,
 build, stage-mcp, fmt, clippy, cargo build, `cargo test --workspace` 1199 passed / 0 failed,
