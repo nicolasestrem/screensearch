@@ -1,5 +1,35 @@
 # 08 — AI Changelog
 
+## 2026-11-04: 0.4.5 P3 synced onto main, audited and verified
+
+- **Change:** the overnight P3 branch (`feat/0.4.5-p3-baseline-schema`) was rebased from the P1
+  tip onto `origin/main` (P1 #150 + P2 #151/#152), so the baseline v14 schema and the settings v2
+  model now build on the merged four-theme design system. Work landed today: `ui.appearance` as the
+  26th UI key (typed `UiAppearance` enum with the six kebab tokens, `Settings` field with
+  `serde(default)`, `pine-light` default, kernel load/save, rebuild carry at 26, regenerated
+  bindings); a baseline DDL parity test that pins every `03 §4` declaration and the documented
+  `06` #30 deltas against `BASELINE_SQL`; the rebuild fixture now seeds `ui.appearance` and asserts
+  the raw value survives; the last stale retired-key reference (dev-only `/kitchen` gallery) was
+  removed under a one-time maintainer grant; and the kickoff's Maintainer run was rewritten as a
+  nine-step copy-pasteable PowerShell procedure with the non-destructive swap and one-command
+  rollback.
+- **Why:** P3 must ship one baseline schema and one honest settings model for a single user
+  (0.4.5 D2, D6, D1), aligned with the maintainer's P2 pick, with the real-database rebuild left to
+  the maintainer.
+- **Commits:** `31f7c66` (ui.appearance), `47b1f1b` (parity test), `1407e5b` (rebuild fixture),
+  `bbd8976` (kitchen gallery), `c039d5e` (maintainer run + contract text), then `3d9d89a`,
+  `b53db47`, `8aca7a5`, `244638a`, `9d3a9ee` and `8833c41` from an adversarial audit (parity-test
+  strictness, rebuild fidelity failures, settings doc truth, P3-authored em dash removal, restored
+  coverage, guarded maintainer procedure), plus the records commits. Branch pushed and PR opened
+  against `main` on the maintainer's explicit 2026-11-04 instruction (0.4.5 D18 validation given
+  for this PR); not merged.
+- **Verified:** all nine verification commands in `04` section 4 exit 0 on the final tree
+  (`npm ci`, `lint`, `build`, `stage-mcp`, `fmt`, `clippy`, `cargo build`, `cargo test --workspace`
+  1195 passed / 0 failed, bindings diff clean); raw output and the per-item acceptance audit are in
+  `05` under 2026-11-04. No real database, model file, `.env` or secret was touched. Still open:
+  the maintainer's real-DB rebuild, per-table counts, 20-frame Moment spot check, v14 boot and the
+  Settings > Integrations in-app check.
+
 ## 2026-11-04: 0.4.5 P2 design system v2
 
 - **Change:** the v2 foundation lands on `feat/0.4.5-p2-design-system`, cut from `origin/main`

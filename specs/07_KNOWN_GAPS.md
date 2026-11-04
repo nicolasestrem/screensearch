@@ -1,5 +1,25 @@
 # 07 — Known Gaps
 
+## 2026-11-04: P3 synced, audited and verified (owner: maintainer for the two real-DB items)
+
+The 0.4.5 P3 baseline schema v14 + settings v2 work is complete on
+`feat/0.4.5-p3-baseline-schema` (base `origin/main` `3976551`, PR open, not merged) and its evidence
+is in `05` under 2026-11-04. Closed in this pass: the P2 pick's `ui.appearance` is now the 26th UI
+key in the typed registry, the kernel load/save pair, the rebuild carry policy and the regenerated
+bindings; the baseline's drift from `03 §4` is pinned by `crates/store/tests/p3_schema_parity.rs`
+(so `06` #30 is test-guarded while the spec documentation pass stays open); and the kickoff's
+"nine sections" `advanced.toml` wording was corrected to the spec's eight sections plus the
+`app.tray_toast_done` KV marker. Still open, maintainer-only:
+
+- Real-database rebuild against a copy, per-table counts before and after, 20-frame Moment spot
+  check and the v14 boot: the nine-step procedure is in `docs/kickoffs/P3.md`, never run by an
+  agent.
+- The Settings > Integrations in-app check from the 2026-11-04 QA pass: enable the HTTP API, change
+  and save another setting, confirm the listener stays up. The fix and its regression test are on
+  the P3 branch (`ui/src/lib/settingsDraft.ts`, `ui/test/settingsDraft.test.mjs`).
+- `06` #32 (rebuild carry set), `06` #33 (three `§8` defaults) and the existing-profile `file-only`
+  import question below remain undecided.
+
 ## 2026-11-03 — Carried into the 0.4.5 arc (owner: maintainer unless stated)
 
 Decisions and dispositions for the 0.4.5 arc (P9 — work intelligence + design system v2; `02 §5k`,
@@ -118,8 +138,11 @@ open, or newly scoped out:
   in light and dark, selected by the new UI key `ui.appearance` (enum `pine-light` / `pine-dark` /
   `pine-system` / `ink-light` / `ink-dark` / `ink-system`, default `pine-light`), which raises the
   closed UI set from 25 to 26 keys. Open follow-ups:
-  - **P3 must add `ui.appearance` to the settings v2 registry and baseline.** Its branch
-    `feat/0.4.5-p3-baseline-schema` predates the key, so the registry there does not know it.
+  - **RESOLVED in P3 (2026-11-04): `ui.appearance` is in the settings v2 registry and baseline.** Its
+    branch `feat/0.4.5-p3-baseline-schema` predated the key; P3 landed the typed `UiAppearance` enum
+    (six kebab tokens), the `Settings` field with `serde(default)`, the exact `ui.appearance` key in
+    the kernel load/save pair, the rebuild carry policy count at 26 and the regenerated bindings, with
+    the full-set round-trip now covering it. PR open, not merged.
   - **P7 renders the select in Settings > General** and resolves `*-system` through
     `prefers-color-scheme`, applying `data-theme` on the root element. The four `data-theme` values
     are exactly `pine-light` / `pine-dark` / `ink-light` / `ink-dark`; `*-system` is a stored intent,
