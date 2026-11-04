@@ -113,6 +113,21 @@ open, or newly scoped out:
   `get_advanced_config`'s `from_file` therefore cannot drive per-key "overridden" badges reliably.
   P7 shows the full effective list read-only with the file path, and must not promise per-key
   override flags unless the rewrite is changed to keep only the keys the user actually set.
+- **P2 direction pick recorded 2026-11-04: Logbook, two skins, four themes (owner: P2, then P3/P7).**
+  `UI_REFERENCE §1`/`§2` and `03 §8` carry the decision: a pine skin (default) and an ink skin, each
+  in light and dark, selected by the new UI key `ui.appearance` (enum `pine-light` / `pine-dark` /
+  `pine-system` / `ink-light` / `ink-dark` / `ink-system`, default `pine-light`), which raises the
+  closed UI set from 25 to 26 keys. Open follow-ups:
+  - **P3 must add `ui.appearance` to the settings v2 registry and baseline.** Its branch
+    `feat/0.4.5-p3-baseline-schema` predates the key, so the registry there does not know it.
+  - **P7 renders the select in Settings > General** and resolves `*-system` through
+    `prefers-color-scheme`, applying `data-theme` on the root element. The four `data-theme` values
+    are exactly `pine-light` / `pine-dark` / `ink-light` / `ink-dark`; `*-system` is a stored intent,
+    not a fifth theme.
+  - **Until then the app ships `pine-light` by default**, so no screen may assume a dark-only
+    palette in the interim.
+  - **The density token is still keyless.** `06` #29 stays open and unchanged: a density key would
+    now be the 27th UI key, so the pick does not resolve that gap.
 
 
 ## 2026-10-19 — Carried forward from the 0.4.2 arc (owner: maintainer unless stated)

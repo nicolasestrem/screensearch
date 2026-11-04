@@ -1681,15 +1681,17 @@ Every key below lives in the `settings` KV table; the `file-only` keys are addit
 (`[capture]`, `[sidecar]`, …) with the suffix as the field name. Thresholds are settings, never
 hardcoded, per `§3b`/`§5` and the guardrail in `04 §4`.
 
-**Settings v2 (0.4.5 D6, D9).** The Settings UI is a **closed set of 25 keys** — exactly the rows
+**Settings v2 (0.4.5 D6, D9).** The Settings UI is a **closed set of 26 keys**, exactly the rows
 whose Disposition is `UI` below, and nothing else may be added to it; that ceiling is binding (0.4.5
-D6). Every other key is `file-only` (displayed read-only under **Advanced** with the `advanced.toml`
-path) or `deleted`. Classification is deterministic, not taste: (1) no live consumer after the 0.4.5
-changes → `deleted`; (2) live consumer whose value is engine tuning a person cannot make a better
-call on weekly → `file-only`; (3) otherwise → `UI`, and only for a key on the ceiling list. Settings
-autosave per field with an undo toast — there is no global Save (0.4.5 D9); destructive actions
-(data export/wipe, model removal, thread-override reset) confirm first and never depend on the
-autosave toast (0.4.5 D9). **Integrations** hosts `api.*` plus, per `§8c`/`§8d`, the Telegram and
+D6). The count rose from 25 to 26 at the 0.4.5 P2 pick (2026-11-04), which added `ui.appearance` so
+the four themes are user-selectable instead of one hardcoded theme. Every other key is `file-only`
+(displayed read-only under **Advanced** with the `advanced.toml` path) or `deleted`. Classification
+is deterministic, not taste: (1) no live consumer after the 0.4.5 changes → `deleted`; (2) live
+consumer whose value is engine tuning a person cannot make a better call on weekly → `file-only`;
+(3) otherwise → `UI`, and only for a key on the ceiling list. Settings autosave per field with an
+undo toast: there is no global Save (0.4.5 D9); destructive actions (data export/wipe, model
+removal, thread-override reset) confirm first and never depend on the autosave toast (0.4.5 D9).
+**Integrations** hosts `api.*` plus, per `§8c`/`§8d`, the Telegram and
 Obsidian folder settings (`memory.*`, owned by those sections and not counted in this table).
 
 | Key | Default | Disposition | Where | Notes |
@@ -1772,6 +1774,7 @@ Obsidian folder settings (`memory.*`, owned by those sections and not counted in
 | `throttle.gpu_enter_pct` | `90.0` | file-only | advanced.toml | Clamp 1..=100; unused when GPU is unmonitored (`§5`). |
 | `throttle.gpu_exit_pct` | `70.0` | file-only | advanced.toml | Clamp 0..=enter−1; hysteresis, must sit below `gpu_enter_pct`. |
 | `throttle.sample_interval_ms` | `1000` | file-only | advanced.toml | Clamp 250..=10000; governor probe/sample cadence. |
+| `ui.appearance` | `pine-light` | UI | General | Enum `pine-light` / `pine-dark` / `pine-system` / `ink-light` / `ink-dark` / `ink-system`; `*-system` follows the OS light/dark preference within the chosen accent. Consumer: the shell theme applier (sets `data-theme` on the root element) plus Settings > General. P7 renders the select and resolves `*-system` through `prefers-color-scheme`; P3 adds it to the settings v2 registry and baseline (0.4.5 P2 pick, 2026-11-04; `UI_REFERENCE §1`/`§2`). |
 
 **Load rule (0.4.5 D6): retired keys are removed on rewrite.** A `settings` row or `advanced.toml`
 entry naming a key that is not in the table is rewritten once with that key removed; no error, no
@@ -2532,14 +2535,14 @@ updater. Each is demonstrated, never asserted:
 7. **P7 — shell, navigation, Settings v2.** Every UI key in `03 §8` is reachable and round-trips;
    settings search finds every setting by label and by key; a keyboard-only pass through all
    categories; the state matrix (loading / empty / error / partial / populated) holds per category;
-   screenshots in both themes; the external-agent read-credential UI verified natively (closes that
-   `05` gate).
+   screenshots in all four themes (`UI_REFERENCE §1`); the external-agent read-credential UI
+   verified natively (closes that `05` gate).
 8. **P8 — insights + connections engine, agent surface.** Each insight type has a fixture test and a
    real-DB sample pasted; no insight row exists without evidence (insert-time rejection, its test, and
    the zero-row sweep, `§7j`); the 0.4.5 API routes are covered by integration tests behind read
    credentials; the four MCP tools round-trip against the live app.
 9. **P9 — intelligence UI.** Full state matrix per screen (Work list, Thread page, Insights v2, Ask v2
-   conversation); keyboard paths; every rendered claim links to its evidence; screenshots in both
+   conversation); keyboard paths; every rendered claim links to its evidence; screenshots in all four
    themes; a 10-question spot check drawn from the P4 automatic set, asked through the UI, results
    recorded.
 10. **P10 — Recall surfaces refont + shim removal.** Zero legacy tokens (grep pasted); the lint gate
