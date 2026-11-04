@@ -450,8 +450,20 @@ fn legacy_advanced(snapshot: &str) -> Option<RunAdvancedSnapshot> {
     }
     let root: serde_json::Value = serde_json::from_str(snapshot).ok()?;
     let report_settings = root.get("report_settings")?.as_object()?.clone();
-    let legacy: LegacySettings =
-        serde_json::from_value(serde_json::Value::Object(report_settings.clone())).ok()?;
+    let legacy: LegacySettings = match serde_json::from_value(serde_json::Value::Object(
+        report_settings.clone(),
+    )) {
+        Ok(legacy) => legacy,
+        Err(error) => {
+            // Never hide the fallback: one unparsable legacy field means every moved
+            // key falls back to the startup configuration for this run (PR #153 review).
+            tracing::warn!(
+                error = %error,
+                "report snapshot: unparsable legacy advanced fields; falling back to the startup configuration"
+            );
+            return None;
+        }
+    };
     // `sidecar_device` is read from the raw object because JSON `null` means "captured
     // without an explicit device", which Option<Value> would erase into "absent".
     let device = report_settings
@@ -1003,6 +1015,23 @@ fn resolve_answer(
         })
 }
 
+/// The effective `file-only` configuration for a durable run (`03 §8c`): the snapshot's
+/// captured values first, then the pre-settings-v2 legacy typed fields, and only then the
+/// startup configuration. Kept as one function so the resolution order `generate` uses is
+/// directly unit-tested.
+fn run_advanced(
+    state_advanced: &AdvancedConfig,
+    config: &RunSnapshot,
+    raw_snapshot: &str,
+) -> AdvancedConfig {
+    config
+        .advanced
+        .clone()
+        .or_else(|| legacy_advanced(raw_snapshot))
+        .map(|captured| captured.resolve(state_advanced))
+        .unwrap_or_else(|| state_advanced.clone())
+}
+
 async fn generate(state: &AppState, run: &mut ReportRun) -> Result<(), ReportError> {
     if run.result.is_some() {
         return Ok(());
@@ -1015,14 +1044,7 @@ async fn generate(state: &AppState, run: &mut ReportRun) -> Result<(), ReportErr
     // with, while Regenerate takes a fresh snapshot (`03 §8c`). A snapshot written before
     // the move has no `advanced` section; its legacy typed fields are recovered, and only
     // when neither is present does the startup configuration apply.
-    let captured = config
-        .advanced
-        .clone()
-        .or_else(|| legacy_advanced(&run.config_snapshot));
-    let advanced = match &captured {
-        Some(captured) => captured.resolve(&state.advanced),
-        None => state.advanced.clone(),
-    };
+    let advanced = run_advanced(&state.advanced, &config, &run.config_snapshot);
     let answer = state.answer.lock().expect("answer slot").clone();
     let report_config = ReportConfig {
         daily_top_k: settings.reports_daily_top_k,
@@ -3208,6 +3230,44 @@ mod tests {
         // No legacy fields: the caller falls back to the startup configuration.
         assert!(legacy_advanced(r#"{"report_settings": {}}"#).is_none());
         assert!(legacy_advanced(r#"{"report_settings": {"sidecar_ngl": 7}}"#).is_some());
+    }
+
+    #[test]
+    fn generate_resolution_prefers_the_snapshot_over_a_changed_startup_config() {
+        let mut startup = AdvancedConfig::default();
+        startup.reports.weekly_top_k = 200;
+        startup.reports.map_reduce_min_frames = 20;
+
+        let mut captured = AdvancedConfig::default();
+        captured.reports.weekly_top_k = 7;
+        captured.reports.map_reduce_min_frames = 5;
+        let snapshot = RunSnapshot {
+            version: 1,
+            memory: MemorySettings::default(),
+            report_settings: Settings::default(),
+            model_at_enqueue: None,
+            advanced: Some(RunAdvancedSnapshot::capture(&captured)),
+        };
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let effective = run_advanced(&startup, &snapshot, &json);
+        assert_eq!(effective.reports.weekly_top_k, 7);
+        assert_eq!(effective.reports.map_reduce_min_frames, 5);
+
+        // A pre-settings-v2 snapshot resolves its own legacy fields instead.
+        let legacy = RunSnapshot {
+            advanced: None,
+            ..snapshot.clone()
+        };
+        let legacy_json =
+            r#"{"report_settings":{"reports_weekly_top_k":11,"reports_map_reduce_min_frames":9}}"#;
+        let effective = run_advanced(&startup, &legacy, legacy_json);
+        assert_eq!(effective.reports.weekly_top_k, 11);
+        assert_eq!(effective.reports.map_reduce_min_frames, 9);
+
+        // A snapshot with neither uses the startup configuration.
+        let effective = run_advanced(&startup, &legacy, r#"{"report_settings":{}}"#);
+        assert_eq!(effective.reports.weekly_top_k, 200);
+        assert_eq!(effective.reports.map_reduce_min_frames, 20);
     }
 
     /// A saved daily run for one local date, so a weekly note's consumed days can be

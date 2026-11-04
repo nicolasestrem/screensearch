@@ -244,7 +244,10 @@
   pin the capture/resolve round-trip (including a captured null device) and the legacy recovery.
   Scope: `src-tauri/src/memory.rs` plus two fixture literals in `memory_weekly.rs`, inside the
   P3-owned settings-consumer surface. Full gate re-run on the fix: fmt, clippy, build and
-  `cargo test --workspace` all exit 0, **1201 passed / 0 failed**, bindings diff clean.
+  `cargo test --workspace` all exit 0, **1202 passed / 0 failed**, bindings diff clean. The PR
+  re-review at `dc11a22` confirmed the P2 resolved; its two non-blocking notes were then addressed:
+  the legacy-snapshot fallback now logs a warning instead of falling back silently, and
+  `run_advanced` is extracted and unit-tested so `generate`'s resolution order is pinned.
 - **One ownership note for reviewers.** The 2026-11-04 QA pass's Settings API fix touches
   `ui/src/lib/settingsDraft.ts`, `ui/test/settingsDraft.test.mjs`, `ui/src/lib/ipc/mutations.ts` and
   `ui/src/routes/Settings.tsx`. It is in P3 because P3 introduced the typed `api.*` settings and the

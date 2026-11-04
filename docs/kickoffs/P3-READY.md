@@ -67,8 +67,10 @@ one real P2: a resumed report run took the restarted `advanced.toml` values beca
 report depth and sidecar parameters out of the typed `Settings` the durable `RunSnapshot` captured.
 That is fixed on the branch: the run snapshot now captures those moved keys at enqueue, recovers the
 pre-settings-v2 typed fields from old snapshots, and only then falls back to the startup
-configuration, preserving `03 §8c` Retry/restart versus Regenerate semantics. Two tests cover it;
-the full gate re-ran green (1201 passed, 0 failed).
+configuration, preserving `03 §8c` Retry/restart versus Regenerate semantics. The re-review at
+`dc11a22` confirmed the P2 resolved; its two non-blocking notes are also addressed (the legacy
+fallback logs a warning, and `run_advanced` is unit-tested end to end). The full gate re-ran green
+(1202 passed, 0 failed).
 
 **Verification:** all nine commands from `04` section 4 exit 0 on the hardened tree (npm ci, lint,
 build, stage-mcp, fmt, clippy, cargo build, `cargo test --workspace` 1199 passed / 0 failed,

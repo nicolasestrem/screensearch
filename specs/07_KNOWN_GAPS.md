@@ -15,8 +15,9 @@ settled here too: the moved `file-only` report keys (`reports.weekly_top_k`,
 `ctx_size`, `kv_cache_type`, `flash_attn`) are captured in the durable `RunSnapshot` at enqueue, so
 Retry/restart keeps the configuration the run was created with while Regenerate takes a fresh
 snapshot (`03 §8c`); pre-settings-v2 snapshots are read through their legacy typed fields, and only
-when neither is present does the startup configuration apply. No spec change is needed. Still open,
-maintainer-only:
+when neither is present does the startup configuration apply. No spec change is needed, and the
+formerly open question is answered: `file-only` report values are run-stable per snapshot. Still
+open, maintainer-only:
 
 - Real-database rebuild against a copy, per-table counts before and after, 20-frame Moment spot
   check and the v14 boot: the nine-step procedure is in `docs/kickoffs/P3.md`, never run by an

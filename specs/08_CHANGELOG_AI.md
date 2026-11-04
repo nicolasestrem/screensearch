@@ -30,7 +30,7 @@
   recovers the legacy typed fields from pre-settings-v2 snapshots, and only then falls back to the
   startup configuration, preserving the Retry/restart versus Regenerate distinction in `03 §8c`.
   Two tests cover the capture/resolve round-trip and the legacy recovery; the full gate re-ran
-  green (1201 passed, 0 failed).
+  green (1202 passed, 0 failed).
 - **Verified:** all nine verification commands in `04` section 4 exit 0 on the final tree
   (`npm ci`, `lint`, `build`, `stage-mcp`, `fmt`, `clippy`, `cargo build`, `cargo test --workspace`
   1195 passed / 0 failed, bindings diff clean); raw output and the per-item acceptance audit are in
