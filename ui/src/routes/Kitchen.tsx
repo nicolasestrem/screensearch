@@ -38,8 +38,6 @@ import {
 } from "../components/primitives/icons";
 import { KitchenGallery } from "./KitchenPrimitives";
 
-const NOOP = () => {};
-
 type KitchenTheme = "pine-light" | "pine-dark" | "ink-light" | "ink-dark";
 type KitchenDensity = "comfortable" | "compact";
 
@@ -315,12 +313,6 @@ function KitchenSettingsSample() {
             }}
           >
             <div className="grid gap-3">
-              <Checkbox
-                label="Run UI Automation on interactive windows"
-                checked={false}
-                onChange={NOOP}
-                hint="uia_run_on_interactive in advanced.toml."
-              />
               <Field label="Frame poll" defaultValue="250" hint="Milliseconds while an app is interactive." />
               <div className="flex items-center gap-2 text-t-xs text-fg-tertiary">
                 <span>File</span>
