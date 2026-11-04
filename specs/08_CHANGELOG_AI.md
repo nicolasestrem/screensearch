@@ -1,5 +1,40 @@
 # 08 — AI Changelog
 
+## 2026-11-04: 0.4.5 P4 baseline frozen on a committed fixture and merged
+
+- **Change:** the P4 eval branch was rebased `--onto origin/main 48a9705`, so its three commits
+  replay over the merged P3 baseline with no conflicts. Added the dev-only `crates/evalfixture`
+  (`ssv2c-evalfixture`): `gen` writes a seeded six-week synthetic v14 history through the production
+  Store writers (1260 frames, 218 sessions, 30 working days, 13 apps, 12 repositories, 65 absolute
+  paths, 40 domains, 36 ticket refs, 42 documents, text through `insert_ocr_filtered` so the real
+  attention filter decides `content_text`, plus the fixture's text embeddings); `serve` runs the
+  real `crates/api` server over that database with the composition root's Ask grounding, the real
+  fastembed vector arm and the real answer sidecar. Ran the harness for 300 pairs at the committed
+  seed and pasted the report verbatim into `05`, with a new `P5/P6 thresholds (fixture)` table and
+  the full verification output. The rebuild crate's settings drift guard now classifies the new
+  `screensearch.db` file-name constant beside `advanced.toml`.
+- **Why:** the roadmap freezes the P5 and P6 acceptance thresholds from a P4 baseline, and there is
+  no real screen history on this machine and no app data-directory override, so a fixture that the
+  repository can regenerate is the only honest baseline. The generator and seed are committed so
+  both later phases measure the same database; nothing in the new crate is shipped, reachable from
+  the app, or able to write to anything but a fresh fixture directory.
+- **Thresholds frozen (baseline to target):** retrieval recall@10 37.0% (111/300) to at least
+  41.0% (123/300); known-fact answer rate 64.7% (194/300) to at least 71.3% (214/300); citation
+  validity 71.4% (1713/2400) to 100%; entity recovery `n/a (no entity surface)` to at least 80.0%;
+  latency p95 2323 ms to at most 3485 ms.
+- **Decisions:** recorded in `07` (2026-11-04 P4 section) and `06` #35/#36. The fixture is the
+  baseline of record under the maintainer's override; `ask_context` is duplicated in the fixture
+  server as a composition seam, pinned by a test, with P6 owning the eventual move; the entity
+  metric prints `n/a` rather than a fabricated zero while the v14 work-graph tables are empty.
+- **Verified:** the full CLAUDE.md "Build/verify" chain plus the P4 kickoff list on the final tree,
+  raw output in `05`: UI `npm ci`/`lint`/`build`, `stage-mcp`, `fmt`, `clippy --locked`,
+  `build --locked`, `cargo test --locked --workspace` (1269 passed, 0 failed, 16 ignored, 79
+  suites), bindings diff clean, `cargo test -p harness` with all five eval suites, `cargo test -p
+  evalfixture`, and the no-stored-questions grep exiting 1 with no output. No real database,
+  profile, model cache or secret was read or written.
+- **PR:** [\#155](https://github.com/nicolasestrem/screensearch/pull/155), opened and squash-merged
+  by the agent under the maintainer's 2026-11-04 D18 waiver.
+
 ## 2026-11-04: 0.4.5 P3 synced onto main, audited and verified
 
 - **Change:** the overnight P3 branch (`feat/0.4.5-p3-baseline-schema`) was rebased from the P1

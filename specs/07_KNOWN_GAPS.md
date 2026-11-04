@@ -1,5 +1,51 @@
 # 07 — Known Gaps
 
+## 2026-11-04: P4 thresholds measured on a committed synthetic fixture (owner: maintainer for the two deviations)
+
+P4 is executed on `feat/0.4.5-p4-auto-eval`, rebased onto `origin/main` so only its three commits
+replay over the merged P3 baseline. The maintainer's 2026-11-04 overrides are authoritative for
+this run and are recorded here because they contradict the kickoff:
+
+- **D18 is waived for this phase.** The agent pushes the branch, opens the PR and squash-merges it
+  once CI is green. Every kickoff "Maintainer run" section, gate, soak period, debug window and
+  intermediate tag (`v0.4.3`, `v0.4.4`) is ignored, and Gate A/B/C are not stop points.
+- **There is no real history to measure.** This machine has no ScreenSearch profile (no
+  `%APPDATA%\app.screensearchv2c.desktop`, no model cache), the run rules forbid opening or copying
+  the maintainer's database, and the app has no data-directory override, so "start the app on v14
+  and enable the API" cannot be done here without opening the real profile. Decision, taken under
+  the override that the maintainer is the only user and no user data matters: the P5/P6 thresholds
+  are frozen from a **committed synthetic fixture** instead of real history. The generator and its
+  seed ship (`crates/evalfixture`, `DEFAULT_SEED = 0x5cee55ee41520004`), so P5 and P6 regenerate the
+  same database and measure against the same baseline. The deviation from the roadmap sentence
+  ("run it on current Ask and record the baseline") is scope of data, not of method: the runner,
+  the generators and the metrics are the shipped P4 ones.
+- **New dev-only crate `crates/evalfixture` (`ssv2c-evalfixture`), two subcommands.** `gen` writes
+  the fixture through the production Store writers; `serve` runs the real `crates/api` server over
+  it. Both exist because of a hard constraint each way: the harness may not link `store` (it must
+  stay structurally read-only), so something else has to create and populate the database; and the
+  composition root cannot be pointed at a fixture database, so the product's `/v1/search` and
+  `/v1/ask` have to be served by a host that wires the same store paths. Nothing in the crate is
+  reachable from the app, `src-tauri` or the MCP binary, and the dependency edge is one-way.
+- **One composition copy, deliberately.** `src-tauri`'s `ask_context`/`hydrate_ask_context` are
+  private to the app crate. `serve` carries a copy with a pointer comment to those lines. It is the
+  composition seam (hybrid search, OCR hydration, answer provider), not a second retrieval
+  implementation: every ranking, filtering and generation call is the product's own. If P6 changes
+  that composition, both call sites move together; `crates/evalfixture/tests/serve_api.rs` pins the
+  fixture path so a silent divergence fails a test.
+- **Fixture time base is fixed, not the wall clock.** The synthetic timeline starts Monday
+  2026-09-07 at a fixed UTC+02:00 offset, so the content digest is identical on any machine and any
+  day. Consequence: on a machine in another zone the same instants are displayed shifted, and
+  "morning" windows are local to that offset. The harness derives its windows from the database
+  (`frames.captured_at`), so the pairs stay internally consistent either way.
+- **Entity metric baseline reads `n/a`, never zero.** A v14 baseline creates the work-graph tables
+  empty (P5 writes them), so the P4 report prints the literal `n/a (no entity surface)`. P5's
+  target is therefore the absolute floor 0.80 recovery, not `baseline x 1.10`. Printing a fabricated
+  0 would read as a measurement of a surface that does not exist.
+- **Determinism scope for the fixture.** The pair set is a function of `(db, seed, pairs,
+  max_frames)` here, because every fixture session is closed (`now_ms` only affects still-open
+  sessions). On a live database the same seed with a different `now_ms` can change only pairs that
+  depend on an open session.
+
 ## 2026-11-04: P3 synced, audited and verified (owner: maintainer for the two real-DB items)
 
 The 0.4.5 P3 baseline schema v14 + settings v2 work is complete on

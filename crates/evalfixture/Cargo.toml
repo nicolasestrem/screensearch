@@ -1,0 +1,42 @@
+[package]
+name = "evalfixture"
+description = "Dev-only 0.4.5 P4/P5/P6 evaluation fixture (`ssv2c-evalfixture`): generates the seeded synthetic history database the eval harness measures, and serves the product's own local HTTP API over it. Not shipped: workspace crates are never bundled by the NSIS installer, and nothing here is reachable from the app, `src-tauri` or any runtime path."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "evalfixture"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ssv2c-evalfixture"
+path = "src/main.rs"
+
+# `store` is what makes this crate a *writer*: it builds the fixture database through the
+# production Store writers, so the eval harness (which must stay read-only and may never link
+# `store`) measures a database with the real v14 shape. `api`/`inference`/`embeddings` are what
+# let `serve` run the product's own `/v1/search` and `/v1/ask` without launching the app.
+# The dependency graph is one-way: no shipped crate depends on `evalfixture`.
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+api.workspace = true
+chrono.workspace = true
+embeddings.workspace = true
+futures-util.workspace = true
+inference.workspace = true
+kernel.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+store.workspace = true
+tokio = { workspace = true, features = ["signal"] }
+traits.workspace = true
+blake3.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+tempfile.workspace = true
