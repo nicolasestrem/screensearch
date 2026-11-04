@@ -43,7 +43,7 @@ Three layers in `ui/src/styles/tokens.css`: **primitive** (raw scales: colour ra
 
 **Themes** are semantic-layer swaps on `[data-theme]`, whose values are exactly `pine-light` (the `:root` default), `pine-dark`, `ink-light` and `ink-dark` (`§1`); the setting that selects them is `ui.appearance` (`03 §8`), whose `*-system` values resolve against `prefers-color-scheme` in the applier rather than adding a fifth `data-theme`. Every semantic token is declared in all four themes, and a theme value references a primitive only.
 
-**Z-layers** stay `base` / `rail` / `overlay` / `toast`. **Durations** are `fast` 90 ms, `base` 140 ms, `slow` 220 ms with one ease curve (`§1`); `prefers-reduced-motion` disables all three (`§7`). **Icon stroke** is `--stroke-icon` = 1.5: one value for every glyph, so a thicker icon is a new decision recorded here, not a local override.
+**Z-layers** stay `base` / `rail` / `overlay` / `toast`. **Durations** are `fast` 90 ms, `base` 140 ms, `slow` 220 ms with one ease curve (`§1`); `prefers-reduced-motion` disables all three (`§7`). **Icon stroke** is `--stroke-icon` = 1.5, one value for every glyph, so a heavier icon is a decision recorded here and not a call-site override - the wrapper accepts an explicit `strokeWidth` rather than silently swallowing it, and no call site passes one. `size` (default 18 px) is the icon set's only size knob and it sets no `font-size`, so an icon nests inside any type step without disturbing the scale.
 
 Components may reference **semantic and component tokens only**, never a primitive directly. **No component hardcodes a hex, px font, or magic spacing**: everything references a token, and a later theme is another entry in that layer, not a component change.
 
