@@ -1,5 +1,120 @@
 # 05 — Build Review
 
+## 2026-11-04: 0.4.5 P2 directions D and D2 for review (branch `feat/0.4.5-p2-design-directions`, docs-only)
+
+- **Scope:** the maintainer kept direction C's structure (density, logbook chronology, context rail
+  on every screen, tabular figures) and rejected its skin and the A/B looks. Two new static mockups
+  in `docs/kickoffs/P2-directions/`: `direction-d.html` (Logbook, ink skin: cool slate, ink-blue
+  accent) and `direction-d2.html` (Logbook, pine skin: near-neutral graphite, pine accent, success
+  folded into the accent on a neutral wash). D2 is D byte for byte outside the token block and the
+  skin labels (diff hunks: `<title>`, header comment, sections 1a-2 of the token block, two legend
+  swatch rules, the masthead lede and skin note, the Token census and colophon rows).
+  `compare.html` now shows C, D and D2; `PICK.md` states the one decision. No token file, Tailwind
+  config, primitive or app route was written.
+- **Tooling:** impeccable skill 4.8.0. `PRODUCT.md` written by its init (Operate mode, single user)
+  and committed separately (`19380f0`). Critique snapshots persisted under the untracked
+  `.impeccable/critique/` (not committed).
+- **Baseline, C (pinned `impeccable.exe` 0.1.5, summary of 669 lines of raw output):** `323
+  anti-patterns found.` / `6 advisory notes.` Rules: undersized-ui-text 256, tiny-text 48,
+  low-contrast 6, gray-on-color 5, all-caps-body 3, cramped-padding 2, kicker-above-heading 2,
+  marquee 1; advisory numbered-section-labels 5, repeating-stripes-gradient 1. Undersized text by
+  size: 10px 271, 11px 33.
+- **Gate 1, detect (pinned 0.1.5).** First pass on D, raw (the tool's explanation lines trimmed):
+
+```
+$ "C:\Users\nicol\.impeccable\bin\0.1.5\impeccable.exe" detect docs/kickoffs/P2-directions/direction-d.html
+
+C:\Users\nicol\Documents\GitHub\screensearch\docs\kickoffs\P2-directions\direction-d.html
+  [cramped-padding] <div> "querybar": children flush against bg on top/bottom (no inset)
+    → Text is too close to the edge of its container. [explanation trimmed]
+  [cramped-padding] <div> "mx": children flush against bg on all sides (no inset)
+    → Text is too close to the edge of its container. [explanation trimmed]
+
+2 anti-patterns found.
+exit=2
+```
+
+  Fixed (query bar padding, matrix grid drawn with cell borders) together with the craft-floor
+  side stripes on nav, categories, setting rows, results, error box, toast and retrieval stages.
+  D2 generated from the fixed D: 0 on its first pass.
+- **Gate 2, critique.** Method: dual-agent (A: `CritiqueA_D`, `CritiqueA_D2`; B:
+  `CritiqueB_Both`). Scores D 31/40, D2 30/40; P0 0; P1 3 (D) and 1 (D2). Detector evidence (B):
+  pinned 0.1.5 reported 0 on both, the skill's 0.1.18 engine reported 3 low-contrast per file (all
+  disabled specimens composited at opacity 0.55); in-page overlay found nested-cards 13,
+  hard-offset-shadow 9 (advisory, the thumbnail dots), repeated-container-text 2, straggler and
+  unbalanced-heading (advisory). One fix batch (36 items) on D: result and frame rows became
+  links, hit targets reach 32px (one exception: the 14px checkbox and radio inputs, whose 32px
+  labels are the target), nav labels at narrow widths, error ARIA, table roles on the matrix, the
+  retrieval ledger as a `dl`, Ask completed state, count consistency across pane and rail, one
+  danger trigger, yellow match highlight replaced by the accent wash, measured numbers in `.num`
+  only, demo path neutralised, thumbnail dots and the nested containers removed. D2 regenerated
+  from the fixed D plus its skin fixes (success on a neutral wash, shadows retinted to the
+  graphite hue, colophon). Not adopted: `aria-pressed` on category items (they are navigation;
+  `aria-current` stays) and a darker light-theme chrome (it would equal the hover surface).
+- **Gate 1 and 2 confirmation run, after the last edit, raw:**
+
+```
+$ "C:\Users\nicol\.impeccable\bin\0.1.5\impeccable.exe" detect docs/kickoffs/P2-directions/direction-d.html docs/kickoffs/P2-directions/direction-d2.html
+exit=0
+$ "C:\Users\nicol\.impeccable\bin\0.1.5\impeccable.exe" detect --json docs/kickoffs/P2-directions/direction-d.html docs/kickoffs/P2-directions/direction-d2.html
+[]
+exit=0
+```
+
+  Supplementary run with the skill's bundled 0.1.18 engine, raw except that the tool's 4
+  U+2014 characters are replaced with `-` (house rule: no em dash in project files):
+
+```
+$ .agents/skills/impeccable/scripts/impeccable detect docs/kickoffs/P2-directions/direction-d.html docs/kickoffs/P2-directions/direction-d2.html
+
+C:\Users\nicol\Documents\GitHub\screensearch\docs\kickoffs\P2-directions\direction-d.html
+  [low-contrast] 3.9:1 (need 4.5:1) - text #7d8084 on #fafcfe
+    → Text does not meet WCAG AA contrast requirements (4.5:1 for body, 3:1 for large text). Increase the contrast between text and background.
+  [low-contrast] 2.3:1 (need 4.5:1) - text #a4a8ad on #fafcfe
+    → Text does not meet WCAG AA contrast requirements (4.5:1 for body, 3:1 for large text). Increase the contrast between text and background.
+
+C:\Users\nicol\Documents\GitHub\screensearch\docs\kickoffs\P2-directions\direction-d2.html
+  [low-contrast] 3.8:1 (need 4.5:1) - text #7e817f on #fbfcfb
+    → Text does not meet WCAG AA contrast requirements (4.5:1 for body, 3:1 for large text). Increase the contrast between text and background.
+  [low-contrast] 2.3:1 (need 4.5:1) - text #a6a9a7 on #fbfcfb
+    → Text does not meet WCAG AA contrast requirements (4.5:1 for body, 3:1 for large text). Increase the contrast between text and background.
+
+4 anti-patterns found.
+exit=2
+```
+
+  The 4 remaining findings are the gallery's disabled Empty-state specimen (`.empty.is-disabled`,
+  opacity 0.55). WCAG 2.2 SC 1.4.3 exempts inactive components; each disabled specimen carries
+  the justifying HTML comment. C for reference, raw:
+
+```
+$ "C:\Users\nicol\.impeccable\bin\0.1.5\impeccable.exe" detect --quiet docs/kickoffs/P2-directions/direction-c.html
+323 anti-patterns found.
+6 advisory notes (not counted).
+exit=2
+```
+
+- **Gate 3, WCAG AA text contrast** (rendered pages, every visible text node against its
+  effective background, transitions disabled, both themes; throwaway browser script, not
+  committed). Enabled text, AA needs 4.5:1 (3:1 at 24px or 18.66px bold):
+
+| File | Theme | Text pairs | Smallest font | Below AA | Worst pair |
+|---|---|---|---|---|---|
+| C (reference) | light | 700 | 10px | 9 | 1.15:1, `#54646F` on `#A62B26`, "Off" in the legend swatch |
+| C (reference) | dark | 700 | 10px | 6 | 1.01:1, `#869AA9` on `#F2706B`, same swatch |
+| D | light | 758 | 12px | 0 | 4.83:1, `#5E646A` on `#FFE0DB`, "Check to unlock" in the armed delete block |
+| D | dark | 758 | 12px | 0 | 5.39:1, `#EB776C` on `#3A1D1A`, "irreversible" badge |
+| D2 | light | 758 | 12px | 0 | 4.79:1, `#606562` on `#FFE0DB`, "Check to unlock" |
+| D2 | dark | 758 | 12px | 0 | 5.39:1, `#EB776C` on `#3A1D1A`, "irreversible" badge |
+
+  Disabled specimens (exempt, reported for completeness): worst 2.18:1 in light (disabled
+  segmented buttons) and 2.62:1 in dark (disabled error box), same in D and D2. Elements under
+  12px: C 634, D 0, D2 0. Uppercase-transformed text: C 86, D 0, D2 0.
+- **Invariant greps (both files):** `text-transform: uppercase` 0, `font-family: var(--font-mono)`
+  2 (`.num`, `.numfield input`), px font sizes in rules 0, network references 0, glow 0,
+  `repeating-linear-gradient` 0, em dash 0.
+- **Not run:** no build, lint or test (no code changed). Committed locally only.
+
 ## 2026-11-03 — 0.4.5 P1 specs contract (branch `feat/0.4.5-p1-specs-contract`, specs-only)
 
 - **Scope (roadmap `docs/0.4.5.md` P1):** zero code. D1–D18 normalized into the specs so a fresh

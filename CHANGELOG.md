@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   design-system placeholders.** Specs-only; zero code. Roadmap: `docs/0.4.5.md`; contracts:
   `specs/03_MASTER_PRODUCTION_SPEC.md` §4, §7h–§7j, §8, §13d and `specs/UI_REFERENCE.md`.
 
+### Added: design review
+
+- **0.4.5 P2 direction checkpoint: directions D and D2 for the maintainer's pick.** Two static
+  mockups (`docs/kickoffs/P2-directions/direction-d.html`, `direction-d2.html`) keep Signal
+  Console's structure in a calm skin, ink blue on slate or pine on graphite; `compare.html` and
+  `PICK.md` frame the one decision. `PRODUCT.md` records the product context for design work. No
+  app code changed.
+
 ### Added
 
 - **Setup progress and errors are visible in the app.** While ScreenSearch prepares local AI —

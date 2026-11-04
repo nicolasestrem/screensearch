@@ -1,0 +1,2580 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Logbook, ScreenSearch direction D2</title>
+<style>
+/* =====================================================================
+   LOGBOOK / TOKEN SYSTEM
+   Read this block and you have read the design. Everything below it
+   consumes these custom properties. No component owns a colour, a font
+   size, a spacing step, a radius, a shadow, a duration or a layer.
+
+   Order: 1 primitives, 2 semantic per theme, 3 scales, 4 metrics.
+   1a-1d are the only place a colour value is written. Section 2
+   references primitives and nothing else, so a second skin is made by
+   swapping 1a-1d alone.
+
+   The skin is pine: one near-neutral graphite family per theme on hue
+   160, one pine-green accent, two state ramps plus success.
+     --accent  the only accent: action, selection, focus, matched term.
+     states    --warn and --danger are states, never decoration, and
+               never a second accent. --ok reuses the pine ramp on a
+               neutral wash, so success never reads as a second green.
+   Relationship cues (entity chips, thread membership, session links)
+   are neutral surfaces, neutral borders and a small link icon.
+
+   Type: one sans family carries headings, labels, body and interface
+   text. --font-mono exists for measured values only (timestamps, counts,
+   durations, sizes, percentages, frame numbers, metric values) and is
+   applied through .num. Nothing renders below 12px, no label is
+   uppercase, no label is tracked.
+   ===================================================================== */
+
+:root {
+  /* ---- 1a. primitives: neutral ramps, one hue, two families ---- */
+  /* dark graphite ramp, hue 160, near-neutral (chroma 0.007) */
+  --p-graphite-1000: #0C0F0D;
+  --p-graphite-950:  #0F1310;
+  --p-graphite-900:  #101412;
+  --p-graphite-850:  #151816;
+  --p-graphite-800:  #1B1F1D;
+  --p-graphite-750:  #202422;
+  --p-graphite-700:  #272B29;
+  --p-graphite-650:  #323634;
+  --p-graphite-600:  #656B67;
+
+  /* light mist ramp, same hue, chroma 0.004 */
+  --p-mist-000:  #FFFFFF;
+  --p-mist-025:  #FBFCFB;
+  --p-mist-050:  #F5F8F6;
+  --p-mist-100:  #EFF3F1;
+  --p-mist-150:  #EEF1EF;
+  --p-mist-200:  #E9ECEA;
+  --p-mist-300:  #DDE0DF;
+  --p-mist-400:  #CFD2D0;
+  --p-mist-500:  #838785;
+
+  /* ---- 1b. primitives: text ink ---- */
+  --p-ink-d-100: #E9ECEA;
+  --p-ink-d-300: #BBBFBC;
+  --p-ink-d-500: #9EA3A0;
+  --p-ink-l-900: #181C19;
+  --p-ink-l-700: #444946;
+  --p-ink-l-600: #606562;
+
+  /* ---- 1c. primitives: accent ramp, pine, hue 165 ---- */
+  --p-pine-990: #04160E;
+  --p-pine-900: #173528;
+  --p-pine-850: #193127;
+  --p-pine-800: #0A553D;
+  --p-pine-700: #23694F;
+  --p-pine-300: #A3DDC2;
+  --p-pine-250: #8CCAAF;
+  --p-pine-150: #D6EFE3;
+  --p-pine-100: #DDF1E7;
+
+  /* ---- 1d. primitives: state ramps, light then dark ---- */
+  --p-red-l:      #A02A26;
+  --p-red-l-wash: #FFE0DB;
+  --p-red-l-line: #EDB3AE;
+  --p-red-l-on:   #FFFBFA;
+  --p-red-d:      #EB776C;
+  --p-red-d-wash: #3A1D1A;
+  --p-red-d-line: #6B3733;
+  --p-red-d-on:   #22110F;
+
+  --p-amber-l:      #8C5500;
+  --p-amber-l-wash: #F8E4CF;
+  --p-amber-l-line: #E2C7A0;
+  --p-amber-d:      #E8B458;
+  --p-amber-d-wash: #32240A;
+  --p-amber-d-line: #5E4A28;
+
+  /* success folds into the pine accent: a separate leaf green would sit
+     within a few degrees of pine and read as a second accent. Its wash is
+     a neutral ground, so a success badge (pine on neutral) never matches
+     an accent badge (pine on pine wash). */
+  --p-green-l:      #23694F;
+  --p-green-l-wash: #FFFFFF;
+  --p-green-l-line: #A7CFBC;
+  --p-green-d:      #8CCAAF;
+  --p-green-d-wash: #1B1F1D;
+  --p-green-d-line: #274B3C;
+}
+
+/* =====================================================================
+   2. SEMANTIC LAYER, LIGHT (default) AND DARK
+   Every semantic token is declared in both themes, and every value is a
+   reference into 1a-1d. Swapping <html data-theme> swaps this block
+   only; nothing else moves.
+   ===================================================================== */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-app:      var(--p-graphite-1000);
+  --bg-chrome:   var(--p-graphite-900);
+  --bg-pane:     var(--p-graphite-850);
+  --bg-raised:   var(--p-graphite-800);
+  --bg-inset:    var(--p-graphite-950);
+  --bg-hover:    var(--p-graphite-750);
+  --bg-selected: var(--p-pine-850);
+
+  --line:         var(--p-graphite-700);
+  --line-strong:  var(--p-graphite-650);
+  --line-control: var(--p-graphite-600);
+  --line-focus:   var(--p-pine-250);
+
+  --tx-1: var(--p-ink-d-100);
+  --tx-2: var(--p-ink-d-300);
+  --tx-3: var(--p-ink-d-500);
+
+  --accent:        var(--p-pine-250);
+  --accent-strong: var(--p-pine-300);
+  --accent-wash:   var(--p-pine-900);
+  --accent-line:   var(--p-pine-800);
+  --on-accent:     var(--p-pine-990);
+
+  --danger:        var(--p-red-d);
+  --danger-strong: var(--p-red-d);
+  --danger-wash:   var(--p-red-d-wash);
+  --danger-line:   var(--p-red-d-line);
+  --on-danger:     var(--p-red-d-on);
+
+  --warn:      var(--p-amber-d);
+  --warn-wash: var(--p-amber-d-wash);
+  --warn-line: var(--p-amber-d-line);
+
+  --ok:      var(--p-green-d);
+  --ok-wash: var(--p-green-d-wash);
+  --ok-line: var(--p-green-d-line);
+
+  --mark-bg: var(--accent-wash);
+  --mark-tx: var(--tx-1);
+
+  --thumb-bg:     var(--p-graphite-950);
+  --thumb-line:   var(--p-graphite-700);
+  --thumb-chrome: var(--p-graphite-900);
+
+  --focus-ring: var(--p-pine-250);
+
+  --sh-raised: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  --sh-toast: 0 12px 30px rgba(0, 0, 0, 0.48);
+  --sh-inset: inset 0 1px 0 rgba(0, 0, 0, 0.4);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-app:      var(--p-mist-150);
+  --bg-chrome:   var(--p-mist-050);
+  --bg-pane:     var(--p-mist-025);
+  --bg-raised:   var(--p-mist-000);
+  --bg-inset:    var(--p-mist-200);
+  --bg-hover:    var(--p-mist-100);
+  --bg-selected: var(--p-pine-150);
+
+  --line:         var(--p-mist-300);
+  --line-strong:  var(--p-mist-400);
+  --line-control: var(--p-mist-500);
+  --line-focus:   var(--p-pine-700);
+
+  --tx-1: var(--p-ink-l-900);
+  --tx-2: var(--p-ink-l-700);
+  --tx-3: var(--p-ink-l-600);
+
+  --accent:        var(--p-pine-700);
+  --accent-strong: var(--p-pine-800);
+  --accent-wash:   var(--p-pine-100);
+  --accent-line:   var(--p-pine-150);
+  --on-accent:     var(--p-mist-000);
+
+  --danger:        var(--p-red-l);
+  --danger-strong: var(--p-red-l);
+  --danger-wash:   var(--p-red-l-wash);
+  --danger-line:   var(--p-red-l-line);
+  --on-danger:     var(--p-red-l-on);
+
+  --warn:      var(--p-amber-l);
+  --warn-wash: var(--p-amber-l-wash);
+  --warn-line: var(--p-amber-l-line);
+
+  --ok:      var(--p-green-l);
+  --ok-wash: var(--p-green-l-wash);
+  --ok-line: var(--p-green-l-line);
+
+  --mark-bg: var(--accent-wash);
+  --mark-tx: var(--tx-1);
+
+  --thumb-bg:     var(--p-mist-200);
+  --thumb-line:   var(--p-mist-300);
+  --thumb-chrome: var(--p-mist-050);
+
+  --focus-ring: var(--p-pine-700);
+
+  --sh-raised: 0 1px 2px rgba(16, 22, 19, 0.05);
+  --sh-toast: 0 10px 28px rgba(16, 22, 19, 0.16);
+  --sh-inset: inset 0 1px 2px rgba(16, 22, 19, 0.06);
+}
+
+/* =====================================================================
+   CONTRAST
+   Both themes must clear WCAG 2.1 AA: body text 4.5:1, large text and
+   meaning-bearing borders 3:1. The pairs are token to token and are
+   measured by the audit that runs against this direction, not asserted
+   here. Disabled controls use --op-disabled and are exempt as inactive
+   components; every enabled text pair must pass. Theme-local tones exist
+   only inside the two semantic blocks above, never in a component rule.
+   ===================================================================== */
+
+:root {
+  /* ---- 3a. type stacks: system fonts only, no download ---- */
+  --font-mono: "Cascadia Mono", "Cascadia Code", "Consolas", "SF Mono", ui-monospace, monospace;
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+
+  /* ---- 3b. type scale: 12px floor, steps of roughly 1.15 ---- */
+  --fs-xs: 12px;      /* the floor: chips, badges, keys, captions */
+  --fs-data: 13px;    /* measured values only, mono */
+  --fs-sm: 13px;      /* secondary rows, hints, code */
+  --fs-body: 14px;    /* base interface text */
+  --fs-ui: 14px;      /* control labels, setting names, nav */
+  --fs-prose: 15px;   /* answer body, summaries */
+  --fs-h3: 17px;      /* card titles, screen names */
+  --fs-h2: 20px;      /* pane titles */
+  --fs-h1: 26px;      /* question, masthead at 1080 */
+  --fs-display: 30px; /* direction name only */
+
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semi: 600;
+
+  --lh-tight: 1.25;
+  --lh-data: 1.45;
+  --lh-body: 1.6;
+
+  --tr-tight: -0.012em;
+  --tr-mono: 0;
+
+  /* ---- 3c. spacing, 4 based ---- */
+  --sp-1: 2px;  --sp-2: 4px;  --sp-3: 6px;  --sp-4: 8px;
+  --sp-5: 10px; --sp-6: 12px; --sp-7: 16px; --sp-8: 20px;
+  --sp-9: 24px; --sp-10: 32px; --sp-11: 40px; --sp-12: 48px; --sp-13: 64px;
+
+  /* ---- 3d. raw sizes used by primitives ---- */
+  --sz-1: 1px;  --sz-2: 2px;  --sz-3: 3px;  --sz-4: 4px;
+  --sz-6: 6px;  --sz-8: 8px;  --sz-10: 10px; --sz-12: 12px;
+  --sz-14: 14px; --sz-16: 16px; --sz-18: 18px; --sz-20: 20px;
+  --sz-24: 24px; --sz-28: 28px; --sz-32: 32px;
+
+  /* ---- 3e. radii: small by rule, 6 is the ceiling ---- */
+  --r-2: 3px;
+  --r-3: 4px;
+  --r-4: 6px;
+  --r-pill: 999px;
+
+  /* ---- 3f. strokes and motion ---- */
+  --hair: var(--sz-1);
+  --hair-2: var(--sz-2);
+  --hair-3: var(--sz-3);
+  --stroke-ico: 1.5;
+
+  --d-fast: 90ms;
+  --d-base: 140ms;
+  --d-slow: 220ms;
+  --d-lazy: 320ms;
+  --d-spin: 900ms;
+  --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+
+  --op-disabled: 0.55;
+  --op-hint: 0.7;
+
+  /* ---- 3g. z layers ---- */
+  --z-base: 0;
+  --z-rail: 20;
+  --z-sticky: 30;
+  --z-drop: 40;
+  --z-toast: 60;
+  --z-modal: 80;
+
+  /* ---- 4. layout metrics, widened where the larger type needs it ---- */
+  --max-w: 1440px;
+  --nav-w: 188px;
+  --nav-w-sm: 56px;
+  --cat-w: 168px;
+  --cat-w-sm: 152px;
+  --rail-w: 292px;
+  --rail-w-sm: 236px;
+  --row-h: 36px;
+  --row-h-sm: 34px;
+  --ctl-h: 32px;
+  --ctl-h-sm: 32px;
+  --ctl-h-lg: 36px;
+  --ctl-w: 288px;
+  --ctl-w-sm: 240px;
+  --state-w: 56px;
+  --state-w-sm: 48px;
+  --thumb-w: 116px;
+  --thumb-w-sm: 72px;
+  --numfield-w: 56px;
+  --numfield-w-xs: 40px;
+  --sw-w: 34px;
+  --sw-h: 18px;
+  --knob: 14px;
+  --cb: 14px;
+  --track: 4px;
+  --sld-knob: 12px;
+  --app-min-h: 820px;
+  --mx-label: 96px;
+  --mx-cell-h: 66px;
+  --toast-min-w: 320px;
+  --select-sm-w: 128px;
+}
+
+/* ---- reset ---- */
+*, *::before, *::after { box-sizing: border-box; }
+html { background: var(--bg-app); }
+body {
+  margin: 0;
+  background: var(--bg-app);
+  color: var(--tx-1);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+h1, h2, h3, h4, p, ol, ul, dl, dd, figure { margin: 0; padding: 0; }
+ol, ul { list-style: none; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { background: none; border: 0; padding: 0; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+svg { display: block; }
+::selection { background: var(--accent-wash); color: var(--tx-1); }
+h1, h2, h3, .q-text { text-wrap: balance; }
+p { text-wrap: pretty; }
+
+/* ---- icon primitive: one geometry, one stroke width ---- */
+.ico {
+  width: var(--sz-16); height: var(--sz-16);
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--stroke-ico);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: inherit;
+}
+.ico--sm { width: var(--sz-12); height: var(--sz-12); }
+.ico--xs { width: var(--sz-10); height: var(--sz-10); }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* ---- page frame and masthead ---- */
+.wrap {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: var(--sp-9) var(--sp-9) var(--sp-13);
+}
+.mast {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sp-10);
+  align-items: start;
+  padding-bottom: var(--sp-8);
+  border-bottom: var(--hair) solid var(--line-strong);
+  margin-bottom: var(--sp-10);
+}
+.mast-title {
+  font-family: var(--font-sans);
+  font-size: var(--fs-display);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--tr-tight);
+  line-height: var(--lh-tight);
+  margin: 0 0 var(--sp-6);
+}
+.lede p {
+  font-family: var(--font-sans);
+  font-size: var(--fs-prose);
+  line-height: var(--lh-body);
+  color: var(--tx-2);
+  max-width: 78ch;
+}
+.lede p + p { margin-top: var(--sp-1); }
+.lede .skin-note { margin-top: var(--sp-4); font-size: var(--fs-sm); color: var(--tx-3); }
+.mast-side { display: flex; flex-direction: column; align-items: flex-end; gap: var(--sp-4); }
+.theme-btn {
+  display: flex; align-items: center; gap: var(--sp-3);
+  height: var(--ctl-h-lg); padding: 0 var(--sp-5);
+  border: var(--hair) solid var(--line-control);
+  border-radius: var(--r-3);
+  background: var(--bg-raised);
+  color: var(--tx-1);
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  box-shadow: var(--sh-raised);
+  transition: background var(--d-fast) var(--ease), border-color var(--d-fast) var(--ease);
+}
+.theme-btn:hover { background: var(--bg-hover); border-color: var(--tx-3); }
+.theme-btn:focus-visible { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sp-1); }
+.theme-btn .ico { color: var(--accent); }
+.mast-meta { display: flex; gap: var(--sp-4); font-size: var(--fs-xs); color: var(--tx-3); }
+
+/* ---- screen sections ---- */
+.screen + .screen { margin-top: var(--sp-11); }
+.cap { display: flex; align-items: baseline; gap: var(--sp-5); padding-bottom: var(--sp-4); }
+.cap-t { font-family: var(--font-sans); font-size: var(--fs-h3); font-weight: var(--fw-semi); letter-spacing: var(--tr-tight); }
+.cap-d { font-size: var(--fs-sm); color: var(--tx-3); }
+.cap-m { margin-left: auto; font-size: var(--fs-xs); color: var(--tx-3); }
+
+/* ---- app shell: hairline gaps become the dividers ---- */
+.app {
+  display: grid;
+  grid-template-columns: var(--nav-w) minmax(0, 1fr) var(--rail-w);
+  grid-template-areas: "nav pane rail";
+  gap: var(--hair);
+  background: var(--line-strong);
+  border: var(--hair) solid var(--line-strong);
+  border-radius: var(--r-4);
+  overflow: hidden;
+  min-height: var(--app-min-h);
+}
+.app--quad {
+  grid-template-columns: var(--nav-w) var(--cat-w) minmax(0, 1fr) var(--rail-w);
+  grid-template-areas: "nav cat pane rail";
+}
+.nav { grid-area: nav; }
+.pane { grid-area: pane; }
+.rail { grid-area: rail; }
+.cat { grid-area: cat; }
+
+/* ---- nav rail ---- */
+.nav {
+  background: var(--bg-chrome);
+  padding: var(--sp-4) var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  min-width: 0;
+}
+.brand { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2); }
+.brand .ico { color: var(--accent); }
+.brand-name {
+  font-family: var(--font-sans);
+  font-size: var(--fs-ui);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--tr-tight);
+  white-space: nowrap;
+}
+.brand-name span { color: var(--tx-2); font-weight: var(--fw-normal); }
+.brand-v { margin-left: auto; font-size: var(--fs-xs); color: var(--tx-3); }
+.nav-list { display: flex; flex-direction: column; gap: var(--sz-1); }
+.nav-item {
+  display: flex; align-items: center; gap: var(--sp-3);
+  min-height: var(--row-h); padding: 0 var(--sp-3);
+  border-radius: var(--r-2);
+  color: var(--tx-2);
+  font-family: var(--font-sans);
+  font-size: var(--fs-ui);
+  transition: background var(--d-fast) var(--ease), color var(--d-fast) var(--ease);
+}
+.nav-item:hover { background: var(--bg-hover); color: var(--tx-1); }
+.nav-item:focus-visible { outline: var(--hair-2) solid var(--focus-ring); outline-offset: calc(var(--hair-2) * -1); }
+.nav-item.is-active { background: var(--bg-selected); color: var(--tx-1); font-weight: var(--fw-medium); }
+.nav-item.is-active .ico { color: var(--accent); }
+.nav-kbd { margin-left: auto; font-size: var(--fs-xs); color: var(--tx-3); }
+.nav-foot { margin-top: auto; border-top: var(--hair) solid var(--line); padding-top: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-3); }
+.rec { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--tx-2); }
+.rec-dot { width: var(--sz-6); height: var(--sz-6); border-radius: var(--r-pill); background: var(--ok); flex: none; }
+.rec-t { margin-left: auto; color: var(--tx-3); }
+.nav-stat { font-size: var(--fs-xs); color: var(--tx-3); }
+
+/* ---- content pane ---- */
+.pane {
+  background: var(--bg-pane);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.pane-head {
+  display: flex; align-items: flex-start; gap: var(--sp-6);
+  padding: var(--sp-7) var(--sp-8) var(--sp-6);
+  border-bottom: var(--hair) solid var(--line);
+}
+.pane-title {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--tr-tight);
+  line-height: var(--lh-tight);
+}
+.pane-sub { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--tx-3); }
+.pane-head-side { margin-left: auto; display: flex; align-items: center; gap: var(--sp-4); }
+.pane-body { padding: var(--sp-6) var(--sp-8) var(--sp-8); }
+.pane-body--toast { padding-bottom: calc(var(--sp-13) + var(--sp-4)); }
+
+/* ---- right context rail ---- */
+.rail {
+  background: var(--bg-chrome);
+  padding: var(--sp-7) var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  min-width: 0;
+  z-index: var(--z-rail);
+}
+.rail-sec { min-width: 0; }
+.rail-sec + .rail-sec { border-top: var(--hair) solid var(--line); padding-top: var(--sp-6); }
+.rail-head {
+  display: flex; align-items: center; gap: var(--sp-3);
+  font-size: var(--fs-xs); font-weight: var(--fw-medium);
+  color: var(--tx-3);
+  margin-bottom: var(--sp-4);
+}
+.rail-count { margin-left: auto; color: var(--tx-3); font-weight: var(--fw-normal); }
+.rail-note { display: flex; gap: var(--sp-3); font-size: var(--fs-sm); line-height: var(--lh-body); color: var(--tx-3); }
+.rail-note .ico { color: var(--tx-3); margin-top: var(--sz-1); }
+
+/* ---- key/value list ---- */
+.kv { display: flex; flex-direction: column; gap: var(--sp-3); }
+.kv > div { display: flex; gap: var(--sp-4); align-items: baseline; justify-content: space-between; }
+.kv dt { font-size: var(--fs-sm); color: var(--tx-3); white-space: nowrap; }
+.kv dd { font-size: var(--fs-sm); color: var(--tx-1); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- feed list ---- */
+.feed { display: flex; flex-direction: column; gap: var(--sp-3); }
+.feed li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--sp-3); font-size: var(--fs-sm); color: var(--tx-2); }
+.feed .t { color: var(--tx-3); }
+.feed .v { color: var(--tx-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- buttons ---- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
+  height: var(--ctl-h); padding: 0 var(--sp-5);
+  border: var(--hair) solid transparent;
+  border-radius: var(--r-3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-ui);
+  white-space: nowrap;
+  transition: background var(--d-fast) var(--ease), border-color var(--d-fast) var(--ease), color var(--d-fast) var(--ease);
+}
+.btn .ico { width: var(--sz-12); height: var(--sz-12); }
+.btn:focus-visible,
+.btn.is-focus { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sp-1); }
+.btn--primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: var(--fw-medium); }
+.btn--primary:hover, .btn--primary.is-hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+.btn--secondary { background: var(--bg-raised); border-color: var(--line-control); color: var(--tx-1); }
+.btn--secondary:hover, .btn--secondary.is-hover { background: var(--bg-hover); border-color: var(--tx-3); }
+.btn--ghost { background: transparent; border-color: transparent; color: var(--tx-2); }
+.btn--ghost:hover, .btn--ghost.is-hover { background: var(--bg-hover); color: var(--tx-1); }
+.btn--danger { background: var(--danger); border-color: var(--danger); color: var(--on-danger); font-weight: var(--fw-medium); }
+.btn--danger:hover, .btn--danger.is-hover { background: var(--danger-strong); border-color: var(--danger-strong); }
+.btn--sm { height: var(--ctl-h-sm); padding: 0 var(--sp-4); font-size: var(--fs-xs); }
+.btn:disabled, .btn.is-disabled {
+  opacity: var(--op-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ---- fields ---- */
+.field, .select {
+  width: 100%;
+  height: var(--ctl-h);
+  padding: 0 var(--sp-4);
+  background: var(--bg-inset);
+  border: var(--hair) solid var(--line-control);
+  border-radius: var(--r-3);
+  color: var(--tx-1);
+  font-family: var(--font-sans);
+  font-size: var(--fs-ui);
+  transition: border-color var(--d-fast) var(--ease), background var(--d-fast) var(--ease);
+}
+.field::placeholder { color: var(--tx-3); opacity: 1; }
+.field:hover, .select:hover { border-color: var(--tx-3); }
+.field:focus-visible, .select:focus-visible,
+.field.is-focus, .select.is-focus {
+  outline: var(--hair-2) solid var(--focus-ring);
+  outline-offset: var(--sz-1);
+  border-color: var(--accent);
+}
+.field:disabled, .select:disabled,
+.field.is-disabled, .select.is-disabled {
+  opacity: var(--op-disabled);
+  cursor: not-allowed;
+  background: var(--bg-raised);
+}
+.field.is-error, .select.is-error {
+  border-color: var(--danger);
+  background: var(--danger-wash);
+}
+.field.is-error:focus-visible { outline-color: var(--danger); }
+.selectwrap { position: relative; display: block; }
+.select { appearance: none; padding-right: var(--sp-9); cursor: pointer; }
+.selectwrap .ico {
+  position: absolute; right: var(--sp-4); top: 50%;
+  transform: translateY(-50%) rotate(90deg);
+  width: var(--sz-12); height: var(--sz-12);
+  color: var(--tx-3); pointer-events: none;
+}
+.msg { font-size: var(--fs-xs); color: var(--danger); font-family: var(--font-sans); }
+
+/* ---- toggle ---- */
+.switch {
+  position: relative;
+  width: var(--sw-w); height: var(--sw-h);
+  border: var(--hair) solid var(--line-control);
+  border-radius: var(--r-pill);
+  background: var(--bg-inset);
+  flex: none;
+  transition: background var(--d-base) var(--ease), border-color var(--d-base) var(--ease);
+}
+/* 18px of paint, a 32px tall hit box. */
+.switch::after {
+  content: "";
+  position: absolute; left: 0; right: 0; top: 50%;
+  height: var(--sz-32);
+  transform: translateY(-50%);
+}
+.switch .knob {
+  position: absolute; left: var(--sz-2); top: 50%;
+  width: var(--knob); height: var(--knob);
+  margin-top: calc(var(--knob) / -2);
+  border-radius: var(--r-pill);
+  background: var(--tx-3);
+  transition: transform var(--d-base) var(--ease), background var(--d-base) var(--ease);
+}
+.switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+.switch[aria-checked="true"] .knob {
+  background: var(--on-accent);
+  transform: translateX(calc(var(--sw-w) - var(--knob) - var(--sz-6)));
+}
+.switch:hover, .switch.is-hover { border-color: var(--tx-3); }
+.switch[aria-checked="true"]:hover, .switch[aria-checked="true"].is-hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+.switch:focus-visible, .switch.is-focus { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sp-1); }
+.switch:disabled, .switch.is-disabled { opacity: var(--op-disabled); cursor: not-allowed; pointer-events: none; }
+.switch.is-error { border-color: var(--danger); }
+.switch-row { display: flex; align-items: center; gap: var(--sp-3); }
+.sw-state { font-size: var(--fs-xs); color: var(--tx-3); }
+.sw-state b { color: var(--tx-1); font-weight: var(--fw-medium); }
+
+/* ---- checkbox, radio ---- */
+.check { display: inline-flex; align-items: center; gap: var(--sp-3); min-height: var(--sz-32); font-size: var(--fs-sm); color: var(--tx-2); cursor: pointer; }
+.check input {
+  appearance: none;
+  width: var(--cb); height: var(--cb);
+  margin: 0; flex: none;
+  border: var(--hair) solid var(--line-control);
+  border-radius: var(--r-2);
+  background: var(--bg-inset);
+  position: relative;
+  cursor: pointer;
+  transition: background var(--d-fast) var(--ease), border-color var(--d-fast) var(--ease);
+}
+.check input:hover { border-color: var(--tx-3); }
+.check input:focus-visible { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sp-1); }
+.check input:checked { background: var(--accent); border-color: var(--accent); }
+.check input:checked::after {
+  content: "";
+  position: absolute;
+  left: calc(50% - var(--sz-2));
+  top: calc(50% - var(--sz-4));
+  width: var(--sz-3); height: var(--sz-6);
+  border-right: var(--hair-2) solid var(--on-accent);
+  border-bottom: var(--hair-2) solid var(--on-accent);
+  transform: rotate(45deg);
+}
+.check input:disabled { opacity: var(--op-disabled); cursor: not-allowed; }
+.check input.is-error { border-color: var(--danger); background: var(--danger-wash); }
+.radios { display: flex; flex-direction: column; gap: var(--sp-2); }
+.radio { display: inline-flex; align-items: center; gap: var(--sp-2); min-height: var(--sz-32); font-size: var(--fs-sm); color: var(--tx-2); cursor: pointer; }
+.radio input {
+  appearance: none;
+  width: var(--cb); height: var(--cb);
+  margin: 0; flex: none;
+  border: var(--hair) solid var(--line-control);
+  border-radius: var(--r-pill);
+  background: var(--bg-inset);
+  position: relative;
+  cursor: pointer;
+}
+.radio input:hover { border-color: var(--tx-3); }
+.radio input:focus-visible { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sp-1); }
+.radio input:checked { border-color: var(--accent); }
+.radio input:checked::after {
+  content: "";
+  position: absolute; inset: calc(50% - var(--sz-2));
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+.radio input:disabled { opacity: var(--op-disabled); cursor: not-allowed; }
+
+/* ---- segmented ---- */
+.seg {
+  display: inline-flex;
+  border: var(--hair) solid var(--line-control);
+  border-radius: var(--r-3);
+  background: var(--bg-inset);
+  padding: var(--sz-1);
+  gap: var(--sz-1);
+}
+.seg button {
+  position: relative;
+  min-width: var(--sz-32);
+  height: calc(var(--ctl-h) - var(--sz-6));
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-2);
+  color: var(--tx-3);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+/* 26px of paint, a 38px tall hit box, so the 32px target rule holds. */
+.seg button::after { content: ""; position: absolute; inset: calc(var(--sp-3) * -1) 0; }
+.seg button:hover { color: var(--tx-1); background: var(--bg-hover); }
+.seg button:focus-visible, .seg button.is-focus { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sz-1); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.seg.is-disabled { opacity: var(--op-disabled); pointer-events: none; }
+.seg button.is-disabled { opacity: var(--op-disabled); pointer-events: none; }
+
+/* ---- slider ---- */
+.slider {
+  appearance: none;
+  width: 100%;
+  height: var(--sz-32);
+  background: transparent;
+  cursor: pointer;
+}
+.slider::-webkit-slider-runnable-track {
+  height: var(--track);
+  background: var(--bg-inset);
+  border: var(--hair) solid var(--line-control);
+  border-radius: var(--r-pill);
+}
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  width: var(--sld-knob); height: var(--sld-knob);
+  margin-top: calc((var(--track) - var(--sld-knob)) / 2 - var(--hair));
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  border: var(--hair-2) solid var(--bg-pane);
+}
+.slider::-moz-range-track {
+  height: var(--track);
+  background: var(--bg-inset);
+  border: var(--hair) solid var(--line-control);
+  border-radius: var(--r-pill);
+}
+.slider::-moz-range-thumb {
+  width: var(--sld-knob); height: var(--sld-knob);
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  border: var(--hair-2) solid var(--bg-pane);
+}
+.slider:focus-visible, .slider.is-focus { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sp-2); border-radius: var(--r-pill); }
+.slider:disabled, .slider.is-disabled { opacity: var(--op-disabled); cursor: not-allowed; }
+.slider.is-error::-webkit-slider-runnable-track { border-color: var(--danger); background: var(--danger-wash); }
+.numfield {
+  display: flex; align-items: center;
+  height: var(--ctl-h);
+  border: var(--hair) solid var(--line-control);
+  border-radius: var(--r-3);
+  background: var(--bg-inset);
+  padding-right: var(--sp-3);
+  flex: none;
+}
+.numfield:focus-within { border-color: var(--accent); outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sz-1); }
+.numfield input {
+  width: var(--numfield-w);
+  min-height: var(--sz-32);
+  border: 0;
+  background: transparent;
+  color: var(--tx-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-data);
+  text-align: right;
+  padding: 0 var(--sp-2);
+}
+.numfield input:focus-visible { outline: none; }
+.numfield .unit { font-size: var(--fs-xs); color: var(--tx-3); }
+.slider-row { display: flex; align-items: center; gap: var(--sp-4); width: 100%; }
+.slider-row .slider { flex: 1; min-width: 0; }
+
+/* ---- badge, chip, token ---- */
+.badge {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  height: var(--sz-20); padding: 0 var(--sp-3);
+  border: var(--hair) solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--bg-raised);
+  color: var(--tx-2);
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+.badge .ico { width: var(--sz-12); height: var(--sz-12); color: var(--tx-3); }
+.badge--sig { color: var(--accent); border-color: var(--accent-line); background: var(--accent-wash); }
+.badge--rel { color: var(--tx-1); border-color: var(--line-strong); background: var(--bg-inset); }
+.badge--ok { color: var(--ok); border-color: var(--ok-line); background: var(--ok-wash); }
+.badge--warn { color: var(--warn); border-color: var(--warn-line); background: var(--warn-wash); }
+.badge--danger { color: var(--danger); border-color: var(--danger-line); background: var(--danger-wash); }
+.badge.is-hover { border-color: var(--line-control); color: var(--tx-1); }
+.badge.is-focus { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sz-1); }
+.badge.is-disabled { opacity: var(--op-disabled); }
+.badge.is-error { color: var(--danger); border-color: var(--danger); background: var(--danger-wash); }
+.badge.is-loading { color: var(--tx-3); border-style: dashed; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  height: var(--sz-20); padding: 0 var(--sp-3);
+  border: var(--hair) solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--bg-raised);
+  color: var(--tx-1);
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.chip .ico { width: var(--sz-12); height: var(--sz-12); color: var(--tx-3); }
+.chip:hover, .chip.is-hover { border-color: var(--accent-line); background: var(--bg-inset); }
+.chip.is-focus { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sz-1); }
+.chip.is-disabled { opacity: var(--op-disabled); }
+.chip.is-error { border-color: var(--danger); background: var(--danger-wash); }
+.chip.is-loading { border-style: dashed; color: var(--tx-3); }
+.chip-x { margin-left: var(--sz-1); color: var(--tx-3); font-size: var(--fs-xs); }
+
+.token {
+  position: relative;
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  height: var(--sz-20); padding: 0 var(--sp-3);
+  border: var(--hair) solid var(--line-control);
+  border-radius: var(--r-2);
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.token::after { content: ""; position: absolute; inset: calc(var(--sp-3) * -1 - var(--hair)) 0; }
+.token:hover { border-color: var(--accent); background: var(--bg-hover); }
+.token:focus-visible { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sz-1); }
+.token .x { color: var(--accent); }
+
+/* ---- skeleton, empty, error, spinner ---- */
+.sk { display: block; height: var(--sz-8); border-radius: var(--r-2); background: var(--bg-inset); }
+.sk--w70 { width: 70%; } .sk--w45 { width: 45%; } .sk--w100 { width: 100%; }
+.sk--text { height: var(--sz-6); }
+.sk--title { height: var(--sz-10); }
+.spin {
+  width: var(--sz-10); height: var(--sz-10);
+  border: var(--hair-2) solid var(--line-control);
+  border-top-color: var(--accent);
+  border-radius: var(--r-pill);
+  animation: spin var(--d-spin) linear infinite;
+  flex: none;
+}
+.loadline { display: flex; align-items: center; gap: var(--sp-2); width: 100%; }
+.loadline .field, .loadline .selectwrap { flex: 1; min-width: 0; }
+.empty {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2);
+  width: 100%; padding: var(--sp-4);
+  border: var(--hair) dashed var(--line-control);
+  border-radius: var(--r-2);
+  color: var(--tx-3);
+  font-size: var(--fs-xs);
+}
+.empty .ico { color: var(--tx-3); }
+.empty b { color: var(--tx-1); font-weight: var(--fw-medium); font-size: var(--fs-sm); }
+.errbox {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2);
+  width: 100%; padding: var(--sp-4);
+  border: var(--hair) solid var(--danger-line);
+  border-radius: var(--r-2);
+  background: var(--danger-wash);
+  color: var(--tx-2);
+  font-size: var(--fs-xs);
+}
+.errbox .ico { color: var(--danger); }
+.errbox b { color: var(--danger); font-weight: var(--fw-medium); font-size: var(--fs-sm); }
+
+@keyframes spin { to { transform: rotate(1turn); } }
+
+/* ---- toast ---- */
+.toast {
+  position: absolute;
+  right: var(--sp-7); bottom: var(--sp-7);
+  z-index: var(--z-toast);
+  display: flex; align-items: center; gap: var(--sp-4);
+  min-width: var(--toast-min-w);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--bg-raised);
+  border: var(--hair) solid var(--line-control);
+  border-radius: var(--r-3);
+  box-shadow: var(--sh-toast);
+  font-size: var(--fs-sm);
+  color: var(--tx-1);
+}
+.toast .ico { color: var(--ok); }
+.toast .num { color: var(--tx-1); }
+.toast-undo {
+  position: relative;
+  display: inline-flex; align-items: center;
+  margin-left: auto; min-height: var(--sz-20);
+  color: var(--accent); font-size: var(--fs-sm);
+}
+.toast-undo::after { content: ""; position: absolute; inset: calc(var(--sp-3) * -1) calc(var(--sp-2) * -1); }
+.toast-undo:hover { text-decoration: underline; }
+.toast-undo:focus-visible { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sz-1); }
+.toast-x {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  width: var(--sz-20); height: var(--sz-20);
+  color: var(--tx-3);
+}
+.toast-x::after { content: ""; position: absolute; inset: calc(var(--sp-3) * -1); }
+.toast-x:hover { color: var(--tx-1); }
+.toast-x:focus-visible { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sz-1); }
+
+/* ---- shared metadata bits ---- */
+.dim { color: var(--tx-3); }
+.num { font-family: var(--font-mono); font-size: var(--fs-data); font-variant-numeric: tabular-nums; }
+.sep { color: var(--tx-3); }
+.kbd {
+  display: inline-flex; align-items: center; height: var(--sz-20);
+  padding: 0 var(--sp-3);
+  border: var(--hair) solid var(--line);
+  border-radius: var(--r-2);
+  color: var(--tx-3);
+  font-size: var(--fs-xs);
+}
+mark {
+  background: var(--mark-bg);
+  color: var(--mark-tx);
+  border-bottom: var(--hair-2) solid var(--accent);
+  border-radius: var(--r-2) var(--r-2) 0 0;
+  padding: 0 var(--sz-1);
+}
+.cite {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: var(--sz-18); height: var(--sz-18);
+  padding: 0 var(--sz-2);
+  margin-left: var(--sz-1);
+  border: var(--hair) solid var(--line-control);
+  border-radius: var(--r-2);
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-family: var(--font-sans);
+  font-weight: var(--fw-semi);
+  font-size: var(--fs-xs);
+  line-height: 1;
+  text-decoration: none;
+  vertical-align: super;
+}
+.cite::after { content: ""; position: absolute; inset: calc(var(--sp-4) * -1); }
+.cite:hover { border-color: var(--accent); background: var(--bg-selected); }
+.cite:focus-visible { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sz-1); }
+
+/* =====================================================================
+   SCREEN 01, SETTINGS
+   Category column, one autosaving panel, no save control anywhere.
+   ===================================================================== */
+.cat {
+  background: var(--bg-chrome);
+  padding: var(--sp-6) var(--sp-3) var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sz-1);
+  min-width: 0;
+}
+.cat-head {
+  padding: 0 var(--sp-3) var(--sp-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semi);
+  color: var(--tx-3);
+}
+.cat-item {
+  display: flex; align-items: center; gap: var(--sp-3);
+  min-height: var(--row-h); padding: 0 var(--sp-3);
+  border-radius: var(--r-2);
+  color: var(--tx-2);
+  font-size: var(--fs-ui);
+  text-align: left;
+  transition: background var(--d-fast) var(--ease), color var(--d-fast) var(--ease);
+}
+.cat-item:hover { background: var(--bg-hover); color: var(--tx-1); }
+.cat-item:focus-visible { outline: var(--hair-2) solid var(--focus-ring); outline-offset: calc(var(--hair-2) * -1); }
+.cat-item.is-active { background: var(--bg-selected); color: var(--tx-1); font-weight: var(--fw-medium); }
+.cat-n { margin-left: auto; font-size: var(--fs-xs); color: var(--tx-3); }
+.cat-foot {
+  margin-top: auto;
+  border-top: var(--hair) solid var(--line);
+  padding: var(--sp-4) var(--sp-3) 0;
+  display: flex; flex-direction: column; gap: var(--sp-2);
+}
+.cat-file { font-size: var(--fs-xs); color: var(--tx-2); }
+.cat-file span { display: block; color: var(--tx-3); }
+
+.save-live { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--tx-2); }
+.save-live .ico { color: var(--ok); }
+.save-live .num { color: var(--tx-3); }
+
+.slist { border-top: var(--hair) solid var(--line); }
+.srow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--ctl-w)) var(--state-w);
+  gap: var(--sp-6);
+  align-items: center;
+  padding: var(--sp-4) var(--sp-3);
+  transition: background var(--d-fast) var(--ease);
+}
+.srow + .srow { border-top: var(--hair) solid var(--line); }
+.srow:focus-within { background: var(--bg-hover); }
+.srow-label { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+.srow-name { font-family: var(--font-sans); font-size: var(--fs-ui); font-weight: var(--fw-medium); color: var(--tx-1); }
+.srow-key { font-size: var(--fs-sm); color: var(--tx-3); }
+.srow-hint { font-size: var(--fs-xs); color: var(--tx-3); line-height: var(--lh-data); }
+.srow-ctl { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-4); min-width: 0; }
+.srow-ctl .selectwrap { flex: 1; min-width: 0; }
+.saved { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--tx-3); white-space: nowrap; }
+.saved .ico { width: var(--sz-10); height: var(--sz-10); color: var(--ok); }
+.srow-state { display: flex; justify-content: flex-end; }
+
+.danger-card {
+  border: var(--hair) solid var(--danger-line);
+  border-radius: var(--r-3);
+  background: var(--bg-raised);
+  overflow: hidden;
+  margin-top: var(--sp-7);
+}
+.danger-top { display: flex; align-items: flex-start; gap: var(--sp-6); padding: var(--sp-5); }
+.danger-title { display: flex; align-items: center; gap: var(--sp-3); font-family: var(--font-sans); font-size: var(--fs-ui); font-weight: var(--fw-medium); color: var(--tx-1); }
+.danger-title .ico { color: var(--danger); }
+.danger-desc { margin-top: var(--sp-2); font-size: var(--fs-sm); line-height: var(--lh-body); color: var(--tx-2); max-width: 54ch; }
+.confirm {
+  border-top: var(--hair) solid var(--danger-line);
+  background: var(--danger-wash);
+  padding: var(--sp-5);
+  display: flex; flex-direction: column; gap: var(--sp-4);
+}
+.confirm-head {
+  display: flex; align-items: center; gap: var(--sp-3);
+  font-size: var(--fs-xs); font-weight: var(--fw-semi);
+  color: var(--danger);
+}
+.confirm-actions { display: flex; align-items: center; gap: var(--sp-3); }
+.confirm-actions .dim { font-size: var(--fs-xs); }
+.confirm .check { color: var(--tx-1); }
+
+/* =====================================================================
+   SCREEN 02, SEARCH
+   Query bar, filter tokens, shown/total counter, sort, 16:9 thumbs.
+   ===================================================================== */
+.search-head {
+  display: flex; flex-direction: column; gap: var(--sp-4);
+  padding: var(--sp-6) var(--sp-8) var(--sp-5);
+  border-bottom: var(--hair) solid var(--line);
+}
+.querybar {
+  display: flex; align-items: center; gap: var(--sp-4);
+  min-height: var(--ctl-h-lg);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--bg-inset);
+  border: var(--hair) solid var(--line-control);
+  border-radius: var(--r-3);
+  box-shadow: var(--sh-inset);
+}
+.querybar .ico { color: var(--accent); }
+.querybar:focus-within { border-color: var(--accent); outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sz-1); }
+.query-input {
+  flex: 1; min-width: 0;
+  align-self: stretch;
+  min-height: var(--sz-32);
+  border: 0; background: transparent;
+  color: var(--tx-1);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+}
+.query-input:focus-visible { outline: none; }
+.filterbar { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
+.tokens { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+.filter-actions { margin-left: auto; display: flex; align-items: center; gap: var(--sp-3); }
+.sortwrap { display: flex; align-items: center; gap: var(--sp-2); }
+.sort-lab { font-size: var(--fs-xs); color: var(--tx-3); }
+.select--sm { height: var(--ctl-h-sm); font-size: var(--fs-sm); width: auto; min-width: var(--select-sm-w); }
+.selectwrap--sm .ico { width: var(--sz-12); height: var(--sz-12); right: var(--sp-3); }
+.countline {
+  display: flex; align-items: baseline; gap: var(--sp-3);
+  font-size: var(--fs-xs); color: var(--tx-3);
+  flex-wrap: wrap;
+}
+.countline .big { font-size: var(--fs-ui); color: var(--tx-1); }
+.countline .spacer { margin-left: auto; }
+
+.results { display: flex; flex-direction: column; }
+.result {
+  display: grid;
+  grid-template-columns: var(--thumb-w) minmax(0, 1fr) auto;
+  gap: var(--sp-5);
+  align-items: center;
+  padding: var(--sp-4) var(--sp-8);
+  border-bottom: var(--hair) solid var(--line);
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  outline-offset: calc(var(--hair-2) * -1);
+  transition: background var(--d-fast) var(--ease);
+}
+.result:hover { background: var(--bg-hover); }
+.result.is-selected {
+  background: var(--bg-selected);
+  outline: var(--hair) solid var(--accent);
+  outline-offset: calc(var(--hair) * -1);
+}
+.result.is-selected .r-app { font-weight: var(--fw-semi); }
+.result:focus-visible { outline: var(--hair-2) solid var(--focus-ring); outline-offset: calc(var(--hair-2) * -1); }
+.app-dot { width: var(--sz-6); height: var(--sz-6); background: var(--tx-3); flex: none; }
+.result.is-selected .app-dot { background: var(--accent); }
+.r-body { min-width: 0; }
+.r-meta { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; font-size: var(--fs-xs); }
+.r-app { color: var(--tx-1); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; }
+.r-win { color: var(--tx-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r-snip {
+  margin: var(--sp-3) 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-body);
+  color: var(--tx-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.r-foot { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-xs); color: var(--tx-3); }
+.r-side { display: flex; flex-direction: column; align-items: flex-end; gap: var(--sp-2); }
+.r-score { font-size: var(--fs-xs); color: var(--tx-3); }
+.results-foot { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-5) var(--sp-8) 0; }
+.results-foot .dim { margin-left: auto; font-size: var(--fs-xs); }
+
+/* ---- 16:9 thumbnail placeholders, pure CSS ---- */
+.thumb {
+  position: relative;
+  width: var(--thumb-w);
+  aspect-ratio: 16 / 9;
+  background: var(--thumb-bg);
+  border: var(--hair) solid var(--line);
+  border-radius: var(--r-2);
+  overflow: hidden;
+  flex: none;
+}
+.thumb .tb { position: absolute; inset: 0 0 auto 0; height: var(--sz-10); background: var(--thumb-chrome); border-bottom: var(--hair) solid var(--line); }
+.thumb .gut {
+  display: none;
+  position: absolute; left: 0; top: var(--sz-10); bottom: 0;
+  width: var(--sz-8);
+  background: var(--bg-inset);
+  border-right: var(--hair) solid var(--line);
+}
+.thumb .mark { position: absolute; height: var(--sz-2); background: var(--accent); opacity: var(--op-hint); left: var(--sz-4); width: 38%; top: calc(var(--sz-10) + var(--sp-6)); }
+.thumb--sm { width: var(--thumb-w-sm); }
+.t-code .gut { display: block; }
+.t-code .mark { left: var(--sz-14); width: 52%; }
+.t-web .mark { width: 62%; }
+.t-chat .mark { left: var(--sz-10); width: 44%; top: calc(var(--sz-10) + var(--sp-8)); }
+.t-term .mark { width: 70%; top: calc(var(--sz-10) + var(--sp-4)); }
+.t-tree .mark { left: var(--sz-12); width: 34%; }
+
+/* ---- rail data displays ---- */
+.facet { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-2) var(--sp-4); align-items: center; font-size: var(--fs-sm); }
+.facet + .facet { margin-top: var(--sp-3); }
+.facet-k { color: var(--tx-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.facet-v { color: var(--tx-3); font-size: var(--fs-xs); }
+.facet-bar { grid-column: 1 / -1; height: var(--sz-3); background: var(--bg-inset); border-radius: var(--r-2); overflow: hidden; }
+.facet-bar i { display: block; height: 100%; background: var(--tx-3); }
+.b-100 { width: 100%; } .b-62 { width: 62%; } .b-38 { width: 38%; } .b-22 { width: 22%; } .b-12 { width: 12%; } .b-52 { width: 52%; } .b-26 { width: 26%; }
+.spread { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; font-size: var(--fs-xs); color: var(--tx-3); }
+.spread + .spread { margin-top: var(--sp-2); }
+.spread .bar { height: var(--sz-3); background: var(--bg-inset); border-radius: var(--r-2); overflow: hidden; }
+.spread .bar i { display: block; height: 100%; background: var(--tx-3); }
+.rel-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--sp-3); align-items: center;
+  padding: var(--sp-3) 0;
+  font-size: var(--fs-sm); color: var(--tx-2);
+}
+.rel-row + .rel-row { border-top: var(--hair) solid var(--line); }
+.rel-row .ico { color: var(--tx-3); }
+.rel-row b { color: var(--tx-1); font-weight: var(--fw-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rel-row .n { font-size: var(--fs-xs); color: var(--tx-3); }
+
+/* =====================================================================
+   SCREEN 03, SESSION CARD
+   Dense metrics above the prose, entities as neutral relationship chips
+   with a link icon, key frames below.
+   ===================================================================== */
+.session { display: flex; flex-direction: column; flex: 1; }
+.s-head { display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-7) var(--sp-8) var(--sp-6); }
+.s-title-row { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
+.s-title {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--tr-tight);
+  line-height: var(--lh-tight);
+}
+.s-time { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--tx-2); flex-wrap: wrap; }
+.metrics {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+  border-top: var(--hair) solid var(--line);
+  border-bottom: var(--hair) solid var(--line);
+  background: var(--bg-chrome);
+}
+.metric { display: flex; flex-direction: column; gap: var(--sz-1); padding: var(--sp-4) var(--sp-8); border-right: var(--hair) solid var(--line); min-width: 0; }
+.metric:last-child { border-right: 0; }
+.m-k { font-size: var(--fs-xs); color: var(--tx-3); }
+.m-v { font-size: var(--fs-h3); font-weight: var(--fw-medium); color: var(--tx-1); }
+.m-v small { font-size: var(--fs-xs); font-weight: var(--fw-normal); color: var(--tx-3); }
+.s-body { padding: var(--sp-6) var(--sp-8); }
+.s-summary p {
+  font-family: var(--font-sans);
+  font-size: var(--fs-prose);
+  line-height: var(--lh-body);
+  color: var(--tx-2);
+  max-width: 74ch;
+}
+.s-summary p + p { margin-top: var(--sp-3); }
+.ents { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-5); }
+.ent {
+  position: relative;
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  height: var(--sz-20); padding: 0 var(--sp-3);
+  border: var(--hair) solid var(--line-strong);
+  border-radius: var(--r-2);
+  background: var(--bg-inset);
+  color: var(--tx-1);
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.ent::after { content: ""; position: absolute; inset: calc(var(--sp-3) * -1 - var(--hair)) 0; }
+.ent .ico { color: var(--tx-3); }
+.ent-k { color: var(--tx-3); }
+.ent-c { color: var(--tx-3); }
+.ent:hover { border-color: var(--accent); }
+.ent:focus-visible { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sz-1); }
+.split { margin-top: var(--sp-6); }
+.split-head {
+  display: flex; align-items: center; gap: var(--sp-3);
+  font-size: var(--fs-xs); font-weight: var(--fw-medium);
+  color: var(--tx-3);
+  margin-bottom: var(--sp-3);
+}
+.split-head .num { margin-left: auto; color: var(--tx-2); }
+.split-bar { display: flex; gap: var(--hair); height: var(--sz-6); border-radius: var(--r-2); overflow: hidden; background: var(--bg-inset); }
+.split-bar i { display: block; height: 100%; }
+.sp-68 { flex: 68 1 0; background: var(--tx-2); }
+.sp-24 { flex: 24 1 0; background: var(--tx-3); }
+.sp-8 { flex: 8 1 0; background: var(--line-control); }
+.split-legend { display: flex; flex-wrap: wrap; gap: var(--sp-5); margin-top: var(--sp-3); font-size: var(--fs-xs); color: var(--tx-2); }
+.split-legend span { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.split-legend i { width: var(--sz-6); height: var(--sz-6); flex: none; }
+.split-legend b { color: var(--tx-3); font-weight: var(--fw-normal); }
+.dot-1 { background: var(--tx-2); }
+.dot-2 { background: var(--tx-3); }
+.dot-3 { background: var(--line-control); }
+.frames { border-top: var(--hair) solid var(--line); padding: var(--sp-5) var(--sp-8) var(--sp-6); }
+.frames-head {
+  display: flex; align-items: center; gap: var(--sp-3);
+  font-size: var(--fs-xs); font-weight: var(--fw-medium);
+  color: var(--tx-3);
+  margin-bottom: var(--sp-2);
+}
+.frames-head .badge { margin-left: auto; font-weight: var(--fw-medium); }
+.frame-row {
+  display: grid;
+  grid-template-columns: var(--thumb-w-sm) minmax(0, 1fr) auto;
+  gap: var(--sp-4); align-items: center;
+  padding: var(--sp-3) 0;
+  border-top: var(--hair) solid var(--line);
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.frame-row:hover { background: var(--bg-hover); }
+.frame-row:focus-visible { outline: var(--hair-2) solid var(--focus-ring); }
+.f-name { font-size: var(--fs-sm); color: var(--tx-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.f-app { font-size: var(--fs-xs); color: var(--tx-3); }
+.f-time { font-size: var(--fs-xs); color: var(--tx-3); white-space: nowrap; }
+.s-actions {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-5) var(--sp-8) var(--sp-6);
+  border-top: var(--hair) solid var(--line);
+  margin-top: auto;
+}
+.s-actions .dim { margin-left: auto; font-size: var(--fs-xs); }
+
+.thread-title {
+  display: flex; align-items: center; gap: var(--sp-3);
+  font-family: var(--font-sans); font-size: var(--fs-ui);
+  color: var(--tx-1); margin-bottom: var(--sp-4);
+}
+.thread-title .ico { color: var(--tx-3); }
+.members { position: relative; display: flex; flex-direction: column; gap: var(--sp-4); padding-left: var(--sp-5); }
+.members::before {
+  content: ""; position: absolute; left: var(--sz-2); top: var(--sz-6); bottom: var(--sz-6);
+  width: var(--hair-2); background: var(--line-strong);
+}
+.member { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-2); }
+.member::before {
+  content: ""; position: absolute;
+  left: calc(var(--sp-5) * -1); top: calc(50% - var(--sz-3));
+  width: var(--sz-6); height: var(--sz-6);
+  border-radius: var(--r-pill);
+  background: var(--bg-chrome);
+  border: var(--hair-2) solid var(--line-control);
+}
+.member.is-current::before { background: var(--accent); border-color: var(--accent); }
+.m-name { font-size: var(--fs-sm); color: var(--tx-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member.is-current .m-name { color: var(--tx-1); }
+.m-time { font-size: var(--fs-xs); color: var(--tx-3); white-space: nowrap; }
+.member:hover .m-name { color: var(--tx-1); }
+
+/* =====================================================================
+   SCREEN 04, ASK
+   Retrieval path as a stage list, streamed prose, numbered citations.
+   ===================================================================== */
+.ask { display: flex; flex-direction: column; padding: var(--sp-7) var(--sp-8) var(--sp-8); }
+.q-block { display: flex; flex-direction: column; gap: var(--sp-3); }
+.q-meta { font-size: var(--fs-xs); color: var(--tx-3); }
+.q-text {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--tr-tight);
+  line-height: var(--lh-tight);
+  max-width: 36ch;
+}
+.reading { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-6) 0 var(--sp-4); font-size: var(--fs-sm); color: var(--tx-2); }
+.reading .num { color: var(--tx-3); }
+.stages {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: var(--sp-3) var(--sp-6);
+  align-items: center;
+  padding: var(--sp-4) 0;
+  border-top: var(--hair) solid var(--line);
+  border-bottom: var(--hair) solid var(--line);
+  margin-bottom: var(--sp-7);
+}
+.stage { display: contents; }
+.stage-k { font-size: var(--fs-xs); color: var(--tx-3); }
+.stage-v { font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--tx-1); }
+.stage-n { font-size: var(--fs-xs); color: var(--tx-3); text-align: right; }
+.answer { display: flex; flex-direction: column; gap: var(--sp-4); }
+.answer p { font-family: var(--font-sans); font-size: var(--fs-prose); line-height: var(--lh-body); color: var(--tx-1); max-width: 72ch; }
+.answer code, .s-summary code {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  background: var(--bg-inset);
+  border: var(--hair) solid var(--line);
+  border-radius: var(--r-2);
+  padding: 0 var(--sz-2);
+  white-space: nowrap;
+}
+.sources { margin-top: var(--sp-7); border-top: var(--hair) solid var(--line); padding-top: var(--sp-5); }
+.src-head { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-xs); font-weight: var(--fw-medium); color: var(--tx-3); margin-bottom: var(--sp-2); }
+.src-count { color: var(--tx-2); font-weight: var(--fw-normal); }
+.src {
+  display: grid;
+  grid-template-columns: var(--sz-18) var(--sz-16) minmax(0, 1fr) auto;
+  gap: var(--sp-3); align-items: center;
+  padding: var(--sp-3) 0;
+  border-top: var(--hair) solid var(--line);
+}
+.src-n {
+  display: flex; align-items: center; justify-content: center;
+  width: var(--sz-18); height: var(--sz-18);
+  border: var(--hair) solid var(--accent-line);
+  border-radius: var(--r-2);
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+}
+.src > .ico { color: var(--tx-3); }
+.src-t { min-width: 0; }
+.src-name { display: block; font-family: var(--font-sans); font-size: var(--fs-sm); color: var(--tx-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.src-meta { display: block; font-size: var(--fs-xs); color: var(--tx-3); }
+.src-open { position: relative; display: flex; align-items: center; justify-content: center; width: var(--sz-16); height: var(--sz-16); color: var(--tx-3); }
+.src-open::after { content: ""; position: absolute; inset: calc(var(--sp-4) * -1); }
+.src-open:hover { color: var(--accent); }
+.src-open:focus-visible { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sz-1); }
+.composer { display: flex; align-items: center; gap: var(--sp-3); margin-top: var(--sp-7); padding-top: var(--sp-5); border-top: var(--hair) solid var(--line); }
+.composer .field { flex: 1; min-width: 0; }
+.composer .dim { font-size: var(--fs-xs); }
+
+/* =====================================================================
+   SCREEN 05, FORM STATE GALLERY
+   Rendered state matrix: .is-hover mirrors :hover, .is-focus mirrors
+   :focus-visible, so the file shows the same declarations it ships.
+   ===================================================================== */
+.mx {
+  display: grid;
+  grid-template-columns: var(--mx-label) repeat(6, minmax(0, 1fr));
+}
+.mx-row { display: contents; }
+.mx-label, .mx-hcell, .mx-cell {
+  background: transparent; padding: var(--sp-3); min-width: 0;
+  border-right: var(--hair) solid var(--line);
+  border-bottom: var(--hair) solid var(--line);
+}
+.mx-row > :first-child { border-left: var(--hair) solid var(--line); }
+.mx-row:first-child > * { border-top: var(--hair) solid var(--line); }
+.mx-hcell {
+  display: flex; align-items: center; gap: var(--sp-2);
+  background: var(--bg-chrome);
+  font-size: var(--fs-xs); font-weight: var(--fw-medium);
+  color: var(--tx-3);
+}
+.mx-hcell--accent { color: var(--accent); }
+.mx-label { display: flex; flex-direction: column; justify-content: center; gap: var(--sz-1); }
+.mx-name { font-family: var(--font-sans); font-size: var(--fs-ui); font-weight: var(--fw-medium); color: var(--tx-1); }
+.mx-key { font-size: var(--fs-xs); color: var(--tx-3); }
+.mx-cell {
+  display: flex; flex-direction: column; gap: var(--sp-2);
+  justify-content: center; align-items: flex-start;
+  min-height: var(--mx-cell-h);
+}
+.mx-cell .field, .mx-cell .select { height: var(--ctl-h-sm); }
+.mx-cell .field { padding: 0 var(--sp-3); }
+.mx-cell .selectwrap { width: 100%; }
+.mx-cell .msg { max-width: 100%; }
+.btn-stack { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sz-3); width: 100%; }
+.btn-stack .btn { padding: 0 var(--sz-2); }
+.seg--xs button { height: calc(var(--ctl-h-sm) - var(--sz-4)); padding: 0 var(--sp-2); }
+.slider--xs { width: var(--sz-32); }
+.numfield--xs { height: var(--ctl-h-sm); padding-right: var(--sp-2); }
+.numfield--xs input { width: var(--numfield-w-xs); font-size: var(--fs-xs); }
+
+/* ---- rendered-state mirrors, used by the state gallery only ---- */
+.field.is-hover, .select.is-hover, .numfield.is-hover { border-color: var(--tx-3); }
+.check input.is-hover, .radio input.is-hover { border-color: var(--tx-3); }
+.check input.is-focus, .radio input.is-focus { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sp-1); }
+.radio input.is-error, .check input.is-error { border-color: var(--danger); }
+.seg button.is-hover { color: var(--tx-1); background: var(--bg-hover); }
+.slider.is-hover::-webkit-slider-runnable-track { border-color: var(--tx-3); }
+.sk-row { display: flex; flex-direction: column; gap: var(--sp-2); width: 100%; }
+.sk-row.is-hover .sk { background: var(--line-strong); }
+.sk-row.is-focus { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sp-2); }
+.sk-row.is-disabled { opacity: var(--op-disabled); }
+.sk-row.is-error .sk { background: var(--danger-wash); }
+.empty.is-hover { border-style: solid; border-color: var(--tx-3); }
+.empty.is-focus { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sz-1); }
+.empty.is-disabled { opacity: var(--op-disabled); }
+.empty.is-error { border-color: var(--danger-line); }
+.errbox.is-hover { border-color: var(--danger); }
+.errbox.is-focus { outline: var(--hair-2) solid var(--focus-ring); outline-offset: var(--sz-1); }
+.errbox.is-disabled { opacity: var(--op-disabled); }
+
+/* =====================================================================
+   RESPONSIVE: designed at 1440, must hold at 1000 with no h-scroll.
+   Breakpoints are the one place a custom property cannot be read, so the
+   three widths below are the only literal px values left in this file.
+   ===================================================================== */
+@media (max-width: 1240px) {
+  .app { grid-template-columns: var(--nav-w-sm) minmax(0, 1fr) var(--rail-w-sm); }
+  .app--quad { grid-template-columns: var(--nav-w-sm) var(--cat-w-sm) minmax(0, 1fr) var(--rail-w-sm); }
+  .srow { grid-template-columns: minmax(0, 1fr) var(--ctl-w-sm) var(--state-w-sm); }
+  .brand-name, .brand-v, .nav-lab, .nav-kbd, .nav-stat { display: none; }
+  .nav-item { justify-content: center; padding: 0; }
+  .brand { justify-content: center; }
+  .rec { justify-content: center; }
+  .rec span:not(.rec-dot) { display: none; }
+}
+
+@media (max-width: 1080px) {
+  .wrap { padding: var(--sp-7) var(--sp-6) var(--sp-11); }
+  .mast { grid-template-columns: minmax(0, 1fr); gap: var(--sp-6); }
+  .mast-side { flex-direction: row; align-items: center; justify-content: space-between; }
+  .app { grid-template-columns: var(--nav-w-sm) minmax(0, 1fr); grid-template-areas: "nav pane" "nav rail"; }
+  .app--quad { grid-template-columns: var(--nav-w-sm) var(--cat-w-sm) minmax(0, 1fr); grid-template-areas: "nav cat pane" "nav rail rail"; }
+  .rail {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--sp-6) var(--sp-7);
+    border-top: var(--hair) solid var(--line);
+  }
+  .rail-sec + .rail-sec { border-top: 0; padding-top: 0; }
+  .pane-head, .pane-body, .s-head, .s-body, .frames, .s-actions, .ask,
+  .search-head, .result, .results-foot { padding-left: var(--sp-6); padding-right: var(--sp-6); }
+  .metric { padding-left: var(--sp-6); padding-right: var(--sp-6); }
+  .srow { grid-template-columns: minmax(0, 1fr) minmax(0, var(--ctl-w)) var(--state-w); gap: var(--sp-4); }
+  .mast-title { font-size: var(--fs-h1); }
+}
+
+@media (max-width: 1000px) {
+  .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .metric:nth-child(3) { border-right: 0; }
+  .metric:nth-child(n + 4) { border-top: var(--hair) solid var(--line); }
+  .result { grid-template-columns: var(--thumb-w-sm) minmax(0, 1fr); }
+  .result .r-side { grid-column: 2; flex-direction: row; align-items: center; gap: var(--sp-4); }
+  .stages { grid-template-columns: auto auto; }
+  .stage-n { display: none; }
+}
+
+/* ---- colophon: the token families, stated in the page itself ---- */
+.colophon {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--sp-5) var(--sp-8);
+  margin-top: var(--sp-11);
+  padding-top: var(--sp-6);
+  border-top: var(--hair) solid var(--line-strong);
+  font-size: var(--fs-xs);
+  color: var(--tx-3);
+}
+.col-item { display: flex; align-items: center; gap: var(--sp-3); }
+.col-item i { width: var(--sz-10); height: var(--sz-10); flex: none; }
+.col-item b { color: var(--tx-2); font-weight: var(--fw-medium); }
+.col-right { margin-left: auto; }
+.sw-accent { background: var(--accent); }
+.sw-ink { background: var(--tx-2); }
+.sw-graphite { background: var(--p-graphite-800); }
+.sw-mist { background: var(--p-mist-100); border: var(--hair) solid var(--line); }
+.sw-danger { background: var(--danger); }
+
+@media (prefers-reduced-motion: reduce) {
+  /* !important is deliberate: this rule must beat every component
+     animation and transition regardless of source order. */
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-brand" viewBox="0 0 16 16"><path d="M2.5 6V4.5a2 2 0 0 1 2-2H6M10 2.5h1.5a2 2 0 0 1 2 2V6M13.5 10v1.5a2 2 0 0 1-2 2H10M6 13.5H4.5a2 2 0 0 1-2-2V10"/><path d="M4.5 8h7"/></symbol>
+  <symbol id="i-deck" viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="8" rx="1"/><path d="M3.5 13.5h9"/></symbol>
+  <symbol id="i-ask" viewBox="0 0 16 16"><path d="M3 4.2a1.2 1.2 0 0 1 1.2-1.2h7.6A1.2 1.2 0 0 1 13 4.2v5.1a1.2 1.2 0 0 1-1.2 1.2H6.6L3.8 12.8v-2.3H3z"/><path d="M5.6 6.4h4.8"/></symbol>
+  <symbol id="i-work" viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h6"/></symbol>
+  <symbol id="i-recall" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4"/><path d="M10 10l3.5 3.5"/></symbol>
+  <symbol id="i-insights" viewBox="0 0 16 16"><path d="M3 13V8.5M8 13V4M13 13V6.5"/><path d="M2 13.5h12"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 16 16"><path d="M2.5 5.2h11M2.5 10.8h11"/><circle cx="6" cy="5.2" r="1.8"/><circle cx="10.4" cy="10.8" r="1.8"/></symbol>
+  <symbol id="i-link" viewBox="0 0 16 16"><circle cx="4.2" cy="8" r="2"/><circle cx="11.8" cy="8" r="2"/><path d="M6.2 8h3.6"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 4.6V8l2.4 1.4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><path d="M3.4 8.4l3 3 6.2-6.6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 16 16"><path d="M6 3.5l4.5 4.5L6 12.5"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 2.4l6 11.2H2z"/><path d="M8 6.4v3.4M8 11.9v.2"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 16 16"><path d="M2.4 4h11.2l-4.3 5v3.6L6.1 14V9z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3"/><path d="M8 1.4v1.9M8 12.7v1.9M1.4 8h1.9M12.7 8h1.9M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M12.7 3.3l-1.4 1.4M4.7 11.3l-1.4 1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 16 16"><path d="M12.2 9.8A5.2 5.2 0 0 1 6.2 3.8a5.4 5.4 0 1 0 6 6z"/></symbol>
+  <symbol id="i-frame" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="1"/><path d="M2.5 6.5h11"/></symbol>
+  <symbol id="i-session" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 8l3.2-2"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 16 16"><path d="M5.6 5.2H10a3.6 3.6 0 0 1 0 7.2H7.2"/><path d="M7.4 2.6L4.6 5.2l2.8 2.6"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 16 16"><path d="M4.4 11.6L11.6 4.4M6 4.4h5.6V10"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 16 16"><path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M4.8 4.5l.6 8.2h5.2l.6-8.2"/><path d="M7 7v3.5M9 7v3.5"/></symbol>
+  <symbol id="i-sort" viewBox="0 0 16 16"><path d="M4.5 3v10M4.5 13l-2-2M4.5 13l2-2M11.5 13V3M11.5 3l-2 2M11.5 3l2 2"/></symbol>
+  <symbol id="i-db" viewBox="0 0 16 16"><ellipse cx="8" cy="4.2" rx="4.8" ry="1.9"/><path d="M3.2 4.2v7.6c0 1 2.1 1.9 4.8 1.9s4.8-.9 4.8-1.9V4.2"/><path d="M3.2 8c0 1 2.1 1.9 4.8 1.9S12.8 9 12.8 8"/></symbol>
+</svg>
+
+<div class="wrap">
+
+  <header class="mast">
+    <div>
+      <h1 class="mast-title">Logbook</h1>
+      <div class="lede">
+        <p>Your screen history as a logbook: chronological, dense, one context rail on every screen.</p>
+        <p>Density comes from alignment and rhythm, not from small type: nothing below 12px, mono only for measured values.</p>
+        <p>One restrained accent marks action, selection, focus, the matched term and success. Red and amber appear only as states.</p>
+        <p class="skin-note">Skin: pine. The structure is shared with direction D, which differs only in its accent and neutral family.</p>
+      </div>
+    </div>
+    <div class="mast-side">
+      <button class="theme-btn" id="theme-toggle" type="button">
+        <svg class="ico ico--sm" aria-hidden="true"><use id="theme-icon" href="#i-sun"/></svg>
+        <span id="theme-label">Switch to dark</span>
+      </button>
+      <div class="mast-meta"><span>1440 wide</span><span>two themes</span><span>no network</span></div>
+    </div>
+  </header>
+
+  <!-- ============================ 01 SETTINGS ============================ -->
+  <section class="screen" id="s-settings" aria-labelledby="cap-settings">
+    <div class="cap">
+      <h2 class="cap-t" id="cap-settings">Settings</h2>
+      <p class="cap-d">Eight categories, autosave per field, no save control anywhere. Danger zone shown armed.</p>
+      <span class="cap-m">1440 wide</span>
+    </div>
+
+    <div class="app app--quad" role="group" aria-label="Settings screen">
+      <nav class="nav" aria-label="Primary">
+        <div class="brand">
+          <svg class="ico" aria-hidden="true"><use href="#i-brand"/></svg>
+          <span class="brand-name">Screen<span>Search</span></span>
+          <span class="brand-v num">0.4.5</span>
+        </div>
+        <ul class="nav-list">
+          <li><a class="nav-item" href="#s-search" aria-label="Deck" title="Deck"><svg class="ico" aria-hidden="true"><use href="#i-deck"/></svg><span class="nav-lab">Deck</span><span class="nav-kbd" aria-hidden="true">1</span></a></li>
+          <li><a class="nav-item" href="#s-ask" aria-label="Ask" title="Ask"><svg class="ico" aria-hidden="true"><use href="#i-ask"/></svg><span class="nav-lab">Ask</span><span class="nav-kbd" aria-hidden="true">2</span></a></li>
+          <li><a class="nav-item" href="#s-session" aria-label="Work" title="Work"><svg class="ico" aria-hidden="true"><use href="#i-work"/></svg><span class="nav-lab">Work</span><span class="nav-kbd" aria-hidden="true">3</span></a></li>
+          <li><a class="nav-item" href="#s-search" aria-label="Recall" title="Recall"><svg class="ico" aria-hidden="true"><use href="#i-recall"/></svg><span class="nav-lab">Recall</span><span class="nav-kbd" aria-hidden="true">4</span></a></li>
+          <li><a class="nav-item" href="#s-session" aria-label="Insights" title="Insights"><svg class="ico" aria-hidden="true"><use href="#i-insights"/></svg><span class="nav-lab">Insights</span><span class="nav-kbd" aria-hidden="true">5</span></a></li>
+          <li><a class="nav-item is-active" href="#s-settings" aria-current="page" aria-label="Settings" title="Settings"><svg class="ico" aria-hidden="true"><use href="#i-settings"/></svg><span class="nav-lab">Settings</span><span class="nav-kbd" aria-hidden="true">6</span></a></li>
+        </ul>
+        <div class="nav-foot">
+          <div class="rec"><span class="rec-dot"></span><span>Capturing</span><span class="rec-t num">0.8s</span></div>
+          <div class="nav-stat"><span class="num">2</span> displays &middot; <span class="num">41,208</span> frames</div>
+        </div>
+      </nav>
+
+      <div class="cat">
+        <div class="cat-head">Categories</div>
+        <button class="cat-item is-active" type="button" aria-current="true">General<span class="cat-n num">8</span></button>
+        <button class="cat-item" type="button">Capture<span class="cat-n num">4</span></button>
+        <button class="cat-item" type="button">Privacy<span class="cat-n num">3</span></button>
+        <button class="cat-item" type="button">Intelligence<span class="cat-n num">4</span></button>
+        <button class="cat-item" type="button">Models<span class="cat-n num">2</span></button>
+        <button class="cat-item" type="button">Data<span class="cat-n num">3</span></button>
+        <button class="cat-item" type="button">Integrations<span class="cat-n num">3</span></button>
+        <button class="cat-item" type="button">Advanced<span class="cat-n num">5</span></button>
+        <div class="cat-foot">
+          <div class="cat-file">advanced.toml<span>12 engine keys, read once</span></div>
+        </div>
+      </div>
+
+      <main class="pane">
+        <div class="pane-head">
+          <div>
+            <h3 class="pane-title">General</h3>
+            <p class="pane-sub">Seven most-used settings. Fields commit on change; Saved marks the last three writes.</p>
+          </div>
+          <div class="pane-head-side">
+            <div class="save-live"><svg class="ico ico--xs" aria-hidden="true"><use href="#i-check"/></svg>Last write <span class="num">14:32:07</span></div>
+          </div>
+        </div>
+
+        <div class="pane-body pane-body--toast">
+          <div class="slist">
+
+            <div class="srow">
+              <div class="srow-label">
+                <span class="srow-name">Run at startup</span>
+                <span class="srow-key">app.run_at_startup</span>
+                <span class="srow-hint">Starts minimized to the tray, capture begins on login.</span>
+              </div>
+              <div class="srow-ctl">
+                <span class="sw-state"><b>On</b></span>
+                <button class="switch" type="button" role="switch" aria-checked="true" aria-label="Run at startup"><span class="knob"></span></button>
+              </div>
+              <div class="srow-state"></div>
+            </div>
+
+            <div class="srow">
+              <div class="srow-label">
+                <span class="srow-name">Capture interval</span>
+                <span class="srow-key">capture.interval_ms</span>
+                <span class="srow-hint">One frame every 0.8 s across both displays.</span>
+              </div>
+              <div class="srow-ctl">
+                <div class="slider-row">
+                  <input class="slider" type="range" min="250" max="5000" step="50" value="800" aria-label="Capture interval">
+                  <div class="numfield"><input type="text" value="800" aria-label="Capture interval in milliseconds"><span class="unit">ms</span></div>
+                </div>
+              </div>
+              <div class="srow-state"><span class="saved"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>Saved</span></div>
+            </div>
+
+            <div class="srow">
+              <div class="srow-label">
+                <span class="srow-name">Excluded applications</span>
+                <span class="srow-key">privacy.excluded_apps</span>
+                <span class="srow-hint">Dropped before OCR; comma separated.</span>
+              </div>
+              <div class="srow-ctl">
+                <input class="field" type="text" value="1Password, KeePassXC, Bitwarden" aria-label="Excluded applications">
+              </div>
+              <div class="srow-state"></div>
+            </div>
+
+            <div class="srow">
+              <div class="srow-label">
+                <span class="srow-name">Vision model tier</span>
+                <span class="srow-key">models.vision_tier</span>
+                <span class="srow-hint">Used for frame description; runs on the local sidecar.</span>
+              </div>
+              <div class="srow-ctl">
+                <div class="selectwrap">
+                  <select class="select" aria-label="Vision model tier">
+                    <option>Fast &middot; Qwen2.5-VL 3B</option>
+                    <option selected>Balanced &middot; Qwen2.5-VL 7B</option>
+                    <option>Deep &middot; Qwen2.5-VL 32B</option>
+                  </select>
+                  <svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg>
+                </div>
+              </div>
+              <div class="srow-state"></div>
+            </div>
+
+            <div class="srow">
+              <div class="srow-label">
+                <span class="srow-name">Pause on lock</span>
+                <span class="srow-key">privacy.pause_on_lock</span>
+                <span class="srow-hint">Stops capture and OCR while the session is locked.</span>
+              </div>
+              <div class="srow-ctl">
+                <span class="sw-state"><b>On</b></span>
+                <button class="switch" type="button" role="switch" aria-checked="true" aria-label="Pause on lock"><span class="knob"></span></button>
+              </div>
+              <div class="srow-state"></div>
+            </div>
+
+            <div class="srow">
+              <div class="srow-label">
+                <span class="srow-name">Retention</span>
+                <span class="srow-key">storage.retention_days</span>
+                <span class="srow-hint">Frames and sessions older than this are purged at 03:00.</span>
+              </div>
+              <div class="srow-ctl">
+                <div class="selectwrap">
+                  <select class="select" aria-label="Retention">
+                    <option>7 days</option>
+                    <option>30 days</option>
+                    <option selected>90 days</option>
+                    <option>Keep everything</option>
+                  </select>
+                  <svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg>
+                </div>
+              </div>
+              <div class="srow-state"><span class="saved"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>Saved</span></div>
+            </div>
+
+            <div class="srow">
+              <div class="srow-label">
+                <span class="srow-name">Maximum frame width</span>
+                <span class="srow-key">storage.max_width</span>
+                <span class="srow-hint">Frames are downscaled before the database sees them.</span>
+              </div>
+              <div class="srow-ctl">
+                <div class="slider-row">
+                  <input class="slider" type="range" min="1280" max="3840" step="80" value="1920" aria-label="Maximum frame width">
+                  <div class="numfield"><input type="text" value="1920" aria-label="Maximum frame width in pixels"><span class="unit">px</span></div>
+                </div>
+              </div>
+              <div class="srow-state"><span class="saved"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>Saved</span></div>
+            </div>
+
+          </div>
+
+          <div class="danger-card">
+            <div class="danger-top">
+              <div>
+                <div class="danger-title"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-warn"/></svg>Delete all captures<span class="badge badge--danger">irreversible</span></div>
+                <p class="danger-desc">Removes 41,208 frames, 212 sessions, and both vector tables. Settings, models and the thread graph are kept.</p>
+              </div>
+            </div>
+            <div class="confirm">
+              <div class="confirm-head"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-warn"/></svg>Confirm deletion</div>
+              <label class="check"><input type="checkbox"><span>I understand this cannot be undone</span></label>
+              <div class="confirm-actions">
+                <button class="btn btn--danger" type="button" disabled>Delete 41,208 frames</button>
+                <button class="btn btn--ghost" type="button">Cancel</button>
+                <span class="dim">Check to unlock</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="toast" role="status">
+          <svg class="ico ico--sm" aria-hidden="true"><use href="#i-check"/></svg>
+          <span>Interval <span class="num">1500</span> to <span class="num">800 ms</span></span>
+          <button class="toast-undo" type="button">Undo</button>
+          <button class="toast-x" type="button" aria-label="Dismiss"><svg class="ico ico--xs" aria-hidden="true"><use href="#i-x"/></svg></button>
+        </div>
+      </main>
+
+      <aside class="rail" aria-label="Settings context">
+        <div class="rail-sec">
+          <div class="rail-head">Scope<span class="rail-count">this machine</span></div>
+          <dl class="kv">
+            <div><dt>profile</dt><dd>default</dd></div>
+            <div><dt>displays</dt><dd><span class="num">2</span> &middot; <span class="num">2560&times;1440</span>, <span class="num">1920&times;1200</span></dd></div>
+            <div><dt>gpu</dt><dd>RTX <span class="num">4070</span> &middot; <span class="num">12</span> GB</dd></div>
+            <div><dt>database</dt><dd>screensearch.db <span class="num">3.1</span> GB</dd></div>
+            <div><dt>schema</dt><dd>v14 baseline</dd></div>
+            <div><dt>uptime</dt><dd><span class="num">6d 04h 12m</span></dd></div>
+          </dl>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-head">Recent writes<span class="rail-count num">3</span></div>
+          <ul class="feed">
+            <li><span class="t num">14:32:07</span><span class="v">capture.interval_ms = 800</span></li>
+            <li><span class="t num">14:31:44</span><span class="v">storage.retention_days = 90</span></li>
+            <li><span class="t num">14:30:12</span><span class="v">storage.max_width = 1920</span></li>
+          </ul>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-head">Applies to</div>
+          <div class="rel-row">
+            <svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg>
+            <b>Capture pipeline</b>
+            <span class="n">next frame</span>
+          </div>
+          <div class="rel-row">
+            <svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg>
+            <b>OCR worker</b>
+            <span class="n">restart-free</span>
+          </div>
+          <div class="rel-row">
+            <svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg>
+            <b>Retention job</b>
+            <span class="n">03:00</span>
+          </div>
+        </div>
+        <div class="rail-sec">
+          <p class="rail-note"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-db"/></svg>All settings live in one local file. No account, no sync, no remote copy.</p>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============================ 02 SEARCH ============================ -->
+  <section class="screen" id="s-search" aria-labelledby="cap-search">
+    <div class="cap">
+      <h2 class="cap-t" id="cap-search">Search results</h2>
+      <p class="cap-d">Recall: query bar, active filter tokens, shown of total, sort, dense rows.</p>
+      <span class="cap-m">1440 wide</span>
+    </div>
+
+    <div class="app" role="group" aria-label="Search screen">
+      <nav class="nav" aria-label="Primary">
+        <div class="brand">
+          <svg class="ico" aria-hidden="true"><use href="#i-brand"/></svg>
+          <span class="brand-name">Screen<span>Search</span></span>
+          <span class="brand-v num">0.4.5</span>
+        </div>
+        <ul class="nav-list">
+          <li><a class="nav-item" href="#s-search" aria-label="Deck" title="Deck"><svg class="ico" aria-hidden="true"><use href="#i-deck"/></svg><span class="nav-lab">Deck</span><span class="nav-kbd" aria-hidden="true">1</span></a></li>
+          <li><a class="nav-item" href="#s-ask" aria-label="Ask" title="Ask"><svg class="ico" aria-hidden="true"><use href="#i-ask"/></svg><span class="nav-lab">Ask</span><span class="nav-kbd" aria-hidden="true">2</span></a></li>
+          <li><a class="nav-item" href="#s-session" aria-label="Work" title="Work"><svg class="ico" aria-hidden="true"><use href="#i-work"/></svg><span class="nav-lab">Work</span><span class="nav-kbd" aria-hidden="true">3</span></a></li>
+          <li><a class="nav-item is-active" href="#s-search" aria-current="page" aria-label="Recall" title="Recall"><svg class="ico" aria-hidden="true"><use href="#i-recall"/></svg><span class="nav-lab">Recall</span><span class="nav-kbd" aria-hidden="true">4</span></a></li>
+          <li><a class="nav-item" href="#s-session" aria-label="Insights" title="Insights"><svg class="ico" aria-hidden="true"><use href="#i-insights"/></svg><span class="nav-lab">Insights</span><span class="nav-kbd" aria-hidden="true">5</span></a></li>
+          <li><a class="nav-item" href="#s-settings" aria-label="Settings" title="Settings"><svg class="ico" aria-hidden="true"><use href="#i-settings"/></svg><span class="nav-lab">Settings</span><span class="nav-kbd" aria-hidden="true">6</span></a></li>
+        </ul>
+        <div class="nav-foot">
+          <div class="rec"><span class="rec-dot"></span><span>Capturing</span><span class="rec-t num">0.8s</span></div>
+          <div class="nav-stat"><span class="num">2</span> displays &middot; <span class="num">41,208</span> frames</div>
+        </div>
+      </nav>
+
+      <main class="pane">
+        <div class="search-head">
+          <div class="querybar">
+            <svg class="ico" aria-hidden="true"><use href="#i-recall"/></svg>
+            <input class="query-input" type="text" value="schema_version migration" aria-label="Search query">
+            <span class="kbd">Ctrl+K</span>
+          </div>
+          <div class="filterbar">
+            <div class="tokens">
+              <button class="token" type="button">after:2026-11-01<span class="x">&times;</span></button>
+              <button class="token" type="button">monitor:primary<span class="x">&times;</span></button>
+              <button class="token" type="button">ocr:high<span class="x">&times;</span></button>
+            </div>
+            <div class="filter-actions">
+              <button class="btn btn--ghost btn--sm" type="button">Clear filters</button>
+              <div class="sortwrap">
+                <label class="sort-lab" for="sort">Sort</label>
+                <div class="selectwrap selectwrap--sm">
+                  <select class="select select--sm" id="sort">
+                    <option selected>Relevance</option>
+                    <option>Newest first</option>
+                    <option>Oldest first</option>
+                  </select>
+                  <svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="countline">
+            <span><span class="big num">6</span> shown of <span class="num">42</span> matches</span>
+            <span>&middot; <span class="num">41,208</span> frames searched</span>
+            <span>&middot; <span class="num">212</span> sessions &middot; <span class="num">94</span> ms</span>
+            <span class="spacer"></span>
+            <span>bm25 <span class="num">118</span> + vec0 <span class="num">94</span>, reranked to <span class="num">6</span></span>
+          </div>
+        </div>
+
+        <ol class="results">
+          <li>
+            <a class="result is-selected" href="#s-session" aria-current="true">
+              <div class="thumb t-code" aria-hidden="true"><span class="tb"></span><span class="gut"></span><span class="mark"></span></div>
+              <div class="r-body">
+                <div class="r-meta"><i class="app-dot" aria-hidden="true"></i><span class="r-app">Visual Studio Code</span><span class="sep">&middot;</span><span class="r-win">schema.rs - screensearch - Visual Studio Code</span></div>
+                <p class="r-snip">// <mark>schema_version</mark> is written once at create time; the chain is gone</p>
+                <div class="r-foot"><span class="num">2026-11-03 14:22:41</span><span>&middot;</span><span>frame <span class="num">#41822</span></span><span>&middot;</span><span><span class="num">8</span> frames from this window</span></div>
+              </div>
+              <div class="r-side"><span class="badge badge--rel"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg>thread</span><span class="r-score num">0.94</span></div>
+            </a>
+          </li>
+
+          <li>
+            <a class="result" href="#s-session">
+              <div class="thumb t-term" aria-hidden="true"><span class="tb"></span><span class="mark"></span></div>
+              <div class="r-body">
+                <div class="r-meta"><i class="app-dot" aria-hidden="true"></i><span class="r-app">Windows Terminal</span><span class="sep">&middot;</span><span class="r-win">cargo test -p screensearch-store</span></div>
+                <p class="r-snip">error[E0599]: no function named <mark>run_migrations</mark> in this scope</p>
+                <div class="r-foot"><span class="num">2026-11-03 13:58:02</span><span>&middot;</span><span>frame <span class="num">#41704</span></span><span>&middot;</span><span><span class="num">4</span> frames from this window</span></div>
+              </div>
+              <div class="r-side"><span class="badge">session</span><span class="r-score num">0.88</span></div>
+            </a>
+          </li>
+
+          <li>
+            <a class="result" href="#s-session">
+              <div class="thumb t-web" aria-hidden="true"><span class="tb"></span><span class="mark"></span></div>
+              <div class="r-body">
+                <div class="r-meta"><i class="app-dot" aria-hidden="true"></i><span class="r-app">Chrome</span><span class="sep">&middot;</span><span class="r-win">SQLite Foreign Key Support, sqlite.org</span></div>
+                <p class="r-snip">PRAGMA foreign_keys; enforcement is per connection. See the <mark>schema_version</mark> notes.</p>
+                <div class="r-foot"><span class="num">2026-11-02 19:14:55</span><span>&middot;</span><span>frame <span class="num">#40216</span></span><span>&middot;</span><span>domain sqlite.org</span></div>
+              </div>
+              <div class="r-side"><span class="badge">session</span><span class="r-score num">0.81</span></div>
+            </a>
+          </li>
+
+          <li>
+            <a class="result" href="#s-session">
+              <div class="thumb t-chat" aria-hidden="true"><span class="tb"></span><span class="mark"></span></div>
+              <div class="r-body">
+                <div class="r-meta"><i class="app-dot" aria-hidden="true"></i><span class="r-app">Slack</span><span class="sep">&middot;</span><span class="r-win">#store-migrations, screensearch.slack.com</span></div>
+                <p class="r-snip">you: the <mark>migration</mark> chain is gone, v14 baseline only, rebuild script does the carry</p>
+                <div class="r-foot"><span class="num">2026-11-02 16:03:27</span><span>&middot;</span><span>frame <span class="num">#40102</span></span><span>&middot;</span><span><span class="num">2</span> frames from this window</span></div>
+              </div>
+              <div class="r-side"><span class="badge">session</span><span class="r-score num">0.74</span></div>
+            </a>
+          </li>
+
+          <li>
+            <a class="result" href="#s-session">
+              <div class="thumb t-tree" aria-hidden="true"><span class="tb"></span><span class="mark"></span></div>
+              <div class="r-body">
+                <div class="r-meta"><i class="app-dot" aria-hidden="true"></i><span class="r-app">Explorer</span><span class="sep">&middot;</span><span class="r-win">D:\dev\screensearch\crates\store\src</span></div>
+                <p class="r-snip">schema.rs <span class="num">38,712</span> bytes. <mark>migrations</mark> folder deleted 2026-11-02 15:41.</p>
+                <div class="r-foot"><span class="num">2026-11-01 11:47:10</span><span>&middot;</span><span>frame <span class="num">#38690</span></span><span>&middot;</span><span>path under D:\dev</span></div>
+              </div>
+              <div class="r-side"><span class="badge">frame</span><span class="r-score num">0.66</span></div>
+            </a>
+          </li>
+
+          <li>
+            <a class="result" href="#s-session">
+              <div class="thumb t-term" aria-hidden="true"><span class="tb"></span><span class="mark"></span></div>
+              <div class="r-body">
+                <div class="r-meta"><i class="app-dot" aria-hidden="true"></i><span class="r-app">Windows Terminal</span><span class="sep">&middot;</span><span class="r-win">sqlite3 screensearch.db</span></div>
+                <p class="r-snip">sqlite&gt; SELECT value FROM meta WHERE key = '<mark>schema_version</mark>';</p>
+                <div class="r-foot"><span class="num">2026-11-01 09:12:36</span><span>&middot;</span><span>frame <span class="num">#38511</span></span><span>&middot;</span><span><span class="num">3</span> frames from this window</span></div>
+              </div>
+              <div class="r-side"><span class="badge">frame</span><span class="r-score num">0.58</span></div>
+            </a>
+          </li>
+        </ol>
+
+        <div class="results-foot">
+          <button class="btn btn--secondary" type="button">Load 24 more</button>
+          <button class="btn btn--ghost" type="button">Open timeline</button>
+          <span class="dim">Ranked by relevance &middot; 0 results hidden by exclusion</span>
+        </div>
+      </main>
+
+      <aside class="rail" aria-label="Search context">
+        <div class="rail-sec">
+          <div class="rail-head">Matched in<span class="rail-count"><span class="num">5</span> apps</span></div>
+          <div class="facet"><span class="facet-k">Visual Studio Code</span><span class="facet-v num">18</span><span class="facet-bar"><i class="b-100"></i></span></div>
+          <div class="facet"><span class="facet-k">Windows Terminal</span><span class="facet-v num">11</span><span class="facet-bar"><i class="b-62"></i></span></div>
+          <div class="facet"><span class="facet-k">Chrome</span><span class="facet-v num">7</span><span class="facet-bar"><i class="b-38"></i></span></div>
+          <div class="facet"><span class="facet-k">Slack</span><span class="facet-v num">4</span><span class="facet-bar"><i class="b-22"></i></span></div>
+          <div class="facet"><span class="facet-k">Explorer</span><span class="facet-v num">2</span><span class="facet-bar"><i class="b-12"></i></span></div>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-head">Time spread<span class="rail-count"><span class="num">3</span> days</span></div>
+          <div class="spread"><span class="num">11-03</span><span class="bar"><i class="b-100"></i></span><span class="num">24</span></div>
+          <div class="spread"><span class="num">11-02</span><span class="bar"><i class="b-52"></i></span><span class="num">12</span></div>
+          <div class="spread"><span class="num">11-01</span><span class="bar"><i class="b-26"></i></span><span class="num">6</span></div>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-head">Related threads<span class="rail-count"><span class="num">2</span></span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>Store v14 baseline</b><span class="n">4 sessions</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>Retrieval: fts5 + vec0</b><span class="n">3 sessions</span></div>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-head">Retrieval</div>
+          <dl class="kv">
+            <div><dt>candidates</dt><dd><span class="num">212</span></dd></div>
+            <div><dt>fts5</dt><dd><span class="num">118</span></dd></div>
+            <div><dt>vec0</dt><dd><span class="num">94</span></dd></div>
+            <div><dt>rerank</dt><dd><span class="num">6</span> of <span class="num">40</span></dd></div>
+            <div><dt>excluded</dt><dd><span class="num">0</span></dd></div>
+          </dl>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============================ 03 SESSION ============================ -->
+  <section class="screen" id="s-session" aria-labelledby="cap-session">
+    <div class="cap">
+      <h2 class="cap-t" id="cap-session">Session card</h2>
+      <p class="cap-d">Work: metrics first, entities as the relationship layer, thread membership in the rail.</p>
+      <span class="cap-m">1440 wide</span>
+    </div>
+
+    <div class="app" role="group" aria-label="Session screen">
+      <nav class="nav" aria-label="Primary">
+        <div class="brand">
+          <svg class="ico" aria-hidden="true"><use href="#i-brand"/></svg>
+          <span class="brand-name">Screen<span>Search</span></span>
+          <span class="brand-v num">0.4.5</span>
+        </div>
+        <ul class="nav-list">
+          <li><a class="nav-item" href="#s-search" aria-label="Deck" title="Deck"><svg class="ico" aria-hidden="true"><use href="#i-deck"/></svg><span class="nav-lab">Deck</span><span class="nav-kbd" aria-hidden="true">1</span></a></li>
+          <li><a class="nav-item" href="#s-ask" aria-label="Ask" title="Ask"><svg class="ico" aria-hidden="true"><use href="#i-ask"/></svg><span class="nav-lab">Ask</span><span class="nav-kbd" aria-hidden="true">2</span></a></li>
+          <li><a class="nav-item is-active" href="#s-session" aria-current="page" aria-label="Work" title="Work"><svg class="ico" aria-hidden="true"><use href="#i-work"/></svg><span class="nav-lab">Work</span><span class="nav-kbd" aria-hidden="true">3</span></a></li>
+          <li><a class="nav-item" href="#s-search" aria-label="Recall" title="Recall"><svg class="ico" aria-hidden="true"><use href="#i-recall"/></svg><span class="nav-lab">Recall</span><span class="nav-kbd" aria-hidden="true">4</span></a></li>
+          <li><a class="nav-item" href="#s-session" aria-label="Insights" title="Insights"><svg class="ico" aria-hidden="true"><use href="#i-insights"/></svg><span class="nav-lab">Insights</span><span class="nav-kbd" aria-hidden="true">5</span></a></li>
+          <li><a class="nav-item" href="#s-settings" aria-label="Settings" title="Settings"><svg class="ico" aria-hidden="true"><use href="#i-settings"/></svg><span class="nav-lab">Settings</span><span class="nav-kbd" aria-hidden="true">6</span></a></li>
+        </ul>
+        <div class="nav-foot">
+          <div class="rec"><span class="rec-dot"></span><span>Capturing</span><span class="rec-t num">0.8s</span></div>
+          <div class="nav-stat"><span class="num">2</span> displays &middot; <span class="num">41,208</span> frames</div>
+        </div>
+      </nav>
+
+      <main class="pane">
+        <div class="session">
+          <div class="s-head">
+            <div class="s-title-row">
+              <h3 class="s-title">Rewriting the store schema as a baseline (v14)</h3>
+              <span class="badge badge--ok"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>completed</span>
+            </div>
+            <div class="s-time">
+              <span class="num">2026-11-02 14:02:11</span>
+              <span class="dim">to</span>
+              <span class="num">15:47:30</span>
+              <span class="sep">&middot;</span>
+              <span class="num">1 h 45 m</span>
+              <span class="sep">&middot;</span>
+              <span>Visual Studio Code, Windows Terminal, Chrome</span>
+            </div>
+          </div>
+
+          <div class="metrics">
+            <div class="metric"><span class="m-k">frames</span><span class="m-v num">412</span></div>
+            <div class="metric"><span class="m-k">duration</span><span class="m-v num">1h 45m</span></div>
+            <div class="metric"><span class="m-k">apps</span><span class="m-v num">3</span></div>
+            <div class="metric"><span class="m-k">entities</span><span class="m-v num">5</span></div>
+            <div class="metric"><span class="m-k">ocr coverage</span><span class="m-v num">99.2<small>%</small></span></div>
+          </div>
+
+          <div class="s-body">
+            <div class="s-summary">
+              <p>Replaced the forward-only migration chain with a single v14 baseline: <code>schema.rs</code> now holds all 29 tables and <code>schema_version</code> is written once at create time. Ran <code>ssv2c-rebuild</code> against a copy of the dev database, kept the original as <code>screensearch.db.v13.bak</code>, and counted 212 sessions and 41,208 frames on the other side. The last hour went to tightening the CHECK constraint on <code>thread_overrides</code> after the store tests caught a merge row with no target thread.</p>
+            </div>
+            <div class="ents">
+              <button class="ent" type="button"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg><span class="ent-k">repo</span>screensearch<span class="ent-c num">412</span></button>
+              <button class="ent" type="button"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg><span class="ent-k">file</span>schema.rs<span class="ent-c num">96</span></button>
+              <button class="ent" type="button"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg><span class="ent-k">domain</span>sqlite.org<span class="ent-c num">22</span></button>
+              <button class="ent" type="button"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg><span class="ent-k">ref</span>#149<span class="ent-c num">8</span></button>
+              <button class="ent" type="button"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg><span class="ent-k">document</span>0.4.5.md<span class="ent-c num">14</span></button>
+            </div>
+            <div class="split">
+              <div class="split-head">time by app<span class="num">1 h 45 m</span></div>
+              <div class="split-bar" aria-hidden="true"><i class="sp-68"></i><i class="sp-24"></i><i class="sp-8"></i></div>
+              <div class="split-legend">
+                <span><i class="dot-1"></i>Visual Studio Code<b class="num">1 h 11 m</b></span>
+                <span><i class="dot-2"></i>Windows Terminal<b class="num">25 m</b></span>
+                <span><i class="dot-3"></i>Chrome<b class="num">9 m</b></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="frames">
+            <div class="frames-head">Key frames, <span class="num">3</span> of <span class="num">412</span><span class="badge badge--warn"><span class="num">18</span> low confidence</span></div>
+            <a class="frame-row" href="#s-session">
+              <div class="thumb thumb--sm t-code" aria-hidden="true"><span class="tb"></span><span class="gut"></span><span class="mark"></span></div>
+              <div><div class="f-name">schema.rs, 29 CREATE TABLE statements</div><div class="f-app">Visual Studio Code &middot; frame <span class="num">#40611</span></div></div>
+              <span class="f-time num">14:41:08</span>
+            </a>
+            <a class="frame-row" href="#s-session">
+              <div class="thumb thumb--sm t-term" aria-hidden="true"><span class="tb"></span><span class="mark"></span></div>
+              <div><div class="f-name">ssv2c-rebuild --src screensearch.db --dst v14.db</div><div class="f-app">Windows Terminal &middot; frame <span class="num">#40988</span></div></div>
+              <span class="f-time num">15:31:08</span>
+            </a>
+            <a class="frame-row" href="#s-session">
+              <div class="thumb thumb--sm t-term" aria-hidden="true"><span class="tb"></span><span class="mark"></span></div>
+              <div><div class="f-name">cargo test -p screensearch-store, 41 passed</div><div class="f-app">Windows Terminal &middot; frame <span class="num">#41044</span></div></div>
+              <span class="f-time num">15:44:52</span>
+            </a>
+          </div>
+
+          <div class="s-actions">
+            <button class="btn btn--primary" type="button"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg>Open thread</button>
+            <button class="btn btn--secondary" type="button">Export session</button>
+            <button class="btn btn--ghost" type="button">Copy link</button>
+            <!-- Disabled specimen at --op-disabled: WCAG 2.2 SC 1.4.3 exempts inactive UI components from contrast. -->
+            <button class="btn btn--ghost" type="button" disabled aria-describedby="extract-why">Re-run extraction</button>
+            <span class="dim" id="extract-why"><span class="num">412</span> frames indexed &middot; <span class="num">0</span> pending</span>
+          </div>
+        </div>
+      </main>
+
+      <aside class="rail" aria-label="Session context">
+        <div class="rail-sec">
+          <div class="rail-head">Thread<span class="rail-count"><span class="num">4</span> sessions</span></div>
+          <div class="thread-title"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg>Store v14 baseline</div>
+          <div class="members">
+            <div class="member"><span class="m-name">Specs pass: baseline rule</span><span class="m-time num">11-01 09:12</span></div>
+            <div class="member"><span class="m-name">Reading the v13 schema</span><span class="m-time num">11-02 10:30</span></div>
+            <div class="member is-current"><span class="m-name">Rewriting schema as baseline</span><span class="m-time num">11-02 14:02</span></div>
+            <div class="member"><span class="m-name">Rebuild, count, and doc sync</span><span class="m-time num">11-03 09:20</span></div>
+          </div>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-head">Related entities<span class="rail-count"><span class="num">5</span></span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>screensearch</b><span class="n">repo &middot; 412</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>schema.rs</b><span class="n">file &middot; 96</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>sqlite.org</b><span class="n">domain &middot; 22</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>#149</b><span class="n">ref &middot; 8</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>0.4.5.md</b><span class="n">document &middot; 14</span></div>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-head">Coverage</div>
+          <dl class="kv">
+            <div><dt>ocr</dt><dd><span class="num">412 / 412</span></dd></div>
+            <div><dt>low confidence</dt><dd><span class="num">18</span> frames</dd></div>
+            <div><dt>ocr p50</dt><dd><span class="num">84</span> ms</dd></div>
+            <div><dt>vectors</dt><dd><span class="num">412 / 412</span></dd></div>
+            <div><dt>dropped</dt><dd><span class="num">0</span></dd></div>
+          </dl>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============================ 04 ASK ============================ -->
+  <section class="screen" id="s-ask" aria-labelledby="cap-ask">
+    <div class="cap">
+      <h2 class="cap-t" id="cap-ask">Ask answer</h2>
+      <p class="cap-d">Answer with a visible retrieval path and numbered citation chips.</p>
+      <span class="cap-m">1440 wide</span>
+    </div>
+
+    <div class="app" role="group" aria-label="Ask screen">
+      <nav class="nav" aria-label="Primary">
+        <div class="brand">
+          <svg class="ico" aria-hidden="true"><use href="#i-brand"/></svg>
+          <span class="brand-name">Screen<span>Search</span></span>
+          <span class="brand-v num">0.4.5</span>
+        </div>
+        <ul class="nav-list">
+          <li><a class="nav-item" href="#s-search" aria-label="Deck" title="Deck"><svg class="ico" aria-hidden="true"><use href="#i-deck"/></svg><span class="nav-lab">Deck</span><span class="nav-kbd" aria-hidden="true">1</span></a></li>
+          <li><a class="nav-item is-active" href="#s-ask" aria-current="page" aria-label="Ask" title="Ask"><svg class="ico" aria-hidden="true"><use href="#i-ask"/></svg><span class="nav-lab">Ask</span><span class="nav-kbd" aria-hidden="true">2</span></a></li>
+          <li><a class="nav-item" href="#s-session" aria-label="Work" title="Work"><svg class="ico" aria-hidden="true"><use href="#i-work"/></svg><span class="nav-lab">Work</span><span class="nav-kbd" aria-hidden="true">3</span></a></li>
+          <li><a class="nav-item" href="#s-search" aria-label="Recall" title="Recall"><svg class="ico" aria-hidden="true"><use href="#i-recall"/></svg><span class="nav-lab">Recall</span><span class="nav-kbd" aria-hidden="true">4</span></a></li>
+          <li><a class="nav-item" href="#s-session" aria-label="Insights" title="Insights"><svg class="ico" aria-hidden="true"><use href="#i-insights"/></svg><span class="nav-lab">Insights</span><span class="nav-kbd" aria-hidden="true">5</span></a></li>
+          <li><a class="nav-item" href="#s-settings" aria-label="Settings" title="Settings"><svg class="ico" aria-hidden="true"><use href="#i-settings"/></svg><span class="nav-lab">Settings</span><span class="nav-kbd" aria-hidden="true">6</span></a></li>
+        </ul>
+        <div class="nav-foot">
+          <div class="rec"><span class="rec-dot"></span><span>Capturing</span><span class="rec-t num">0.8s</span></div>
+          <div class="nav-stat"><span class="num">2</span> displays &middot; <span class="num">41,208</span> frames</div>
+        </div>
+      </nav>
+
+      <main class="pane">
+        <div class="ask">
+          <div class="q-block">
+            <h3 class="q-text">What did I change about schema version handling, and when did the migration chain come out?</h3>
+            <p class="q-meta">You asked <span class="sep">&middot;</span> <span class="num">2026-11-03 10:14:02</span></p>
+          </div>
+
+          <div class="reading">
+            <svg class="ico ico--sm" aria-hidden="true"><use href="#i-check"/></svg>
+            <span>Read 4 sessions, 61 frames in <span class="num">4.8 s</span></span>
+          </div>
+
+          <dl class="stages" aria-label="Retrieval path">
+            <div class="stage">
+              <dt class="stage-k">threads</dt>
+              <dd class="stage-v"><span class="num">1</span> matched</dd>
+              <dd class="stage-n">Store v14 baseline</dd>
+            </div>
+            <div class="stage">
+              <dt class="stage-k">sessions</dt>
+              <dd class="stage-v"><span class="num">4</span> retrieved</dd>
+              <dd class="stage-n">fts5 + vec0 hybrid</dd>
+            </div>
+            <div class="stage">
+              <dt class="stage-k">frames</dt>
+              <dd class="stage-v"><span class="num">61</span> packed</dd>
+              <dd class="stage-n"><span class="num">3</span> sessions trimmed at <span class="num">30</span></dd>
+            </div>
+            <div class="stage">
+              <dt class="stage-k">assembled</dt>
+              <dd class="stage-v"><span class="num">6.1k / 8k</span></dd>
+              <dd class="stage-n">tokens, <span class="num">2</span> chunks dropped</dd>
+            </div>
+          </dl>
+
+          <div class="answer">
+            <p>On 2026-11-02 the store stopped carrying a migration chain. <code>schema.rs</code> now holds the whole v14 DDL, 29 tables including the eleven work-graph tables, and <code>schema_version</code> is written once when the file is created.<a class="cite" href="#src-1" aria-label="Source 1">1</a> The forward-only steps for 0.2.x through 0.4.2 were removed from the code and kept only as historical notes in the spec.<a class="cite" href="#src-2" aria-label="Source 2">2</a></p>
+            <p>The cutover was a copy, not a migration: <code>ssv2c-rebuild</code> read the old database read-only and wrote a fresh v14 file, leaving <code>screensearch.db.v13.bak</code> beside it.<a class="cite" href="#src-3" aria-label="Source 3">3</a> 212 sessions and 41,208 frames came across, and the only write failure was one frame with a NULL window title. Nothing tolerates a retired settings key any more: the file is rewritten once with that key removed.</p>
+          </div>
+
+          <div class="sources">
+            <div class="src-head">Sources<span class="src-count"><span class="num">3</span> citations</span></div>
+            <ol>
+              <li class="src" id="src-1">
+                <span class="src-n num">1</span>
+                <svg class="ico" aria-hidden="true"><use href="#i-session"/></svg>
+                <span class="src-t"><span class="src-name">Rewriting the store schema as a baseline (v14)</span><span class="src-meta"><span class="num">2026-11-02 14:02</span> to <span class="num">15:47</span> &middot; <span class="num">34</span> of <span class="num">412</span> frames used</span></span>
+                <a class="src-open" href="#s-session" aria-label="Open source session 1"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+              </li>
+              <li class="src" id="src-2">
+                <span class="src-n num">2</span>
+                <svg class="ico" aria-hidden="true"><use href="#i-session"/></svg>
+                <span class="src-t"><span class="src-name">Specs pass, baseline rule in 03 section 4</span><span class="src-meta"><span class="num">2026-11-03 09:20</span> to <span class="num">10:02</span> &middot; <span class="num">9</span> of <span class="num">96</span> frames used</span></span>
+                <a class="src-open" href="#s-session" aria-label="Open source session 2"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+              </li>
+              <li class="src" id="src-3">
+                <span class="src-n num">3</span>
+                <svg class="ico" aria-hidden="true"><use href="#i-frame"/></svg>
+                <span class="src-t"><span class="src-name">ssv2c-rebuild --src screensearch.db --dst v14.db</span><span class="src-meta"><span class="num">2026-11-02 15:31:08</span> &middot; frame <span class="num">#40988</span> &middot; Windows Terminal</span></span>
+                <a class="src-open" href="#s-session" aria-label="Open source frame 3"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+              </li>
+            </ol>
+          </div>
+
+          <div class="composer">
+            <input class="field" type="text" placeholder="Ask a follow-up, or narrow by date: last week, before v14" aria-label="Ask a follow-up">
+            <button class="btn btn--primary" type="button">Ask</button>
+            <span class="dim">Enter sends</span>
+          </div>
+        </div>
+      </main>
+
+      <aside class="rail" aria-label="Answer context">
+        <div class="rail-sec">
+          <div class="rail-head">Retrieval</div>
+          <dl class="kv">
+            <div><dt>model</dt><dd>qwen2.5-vl-7b</dd></div>
+            <div><dt>embedding</dt><dd>bge-m3, <span class="num">768</span>d</dd></div>
+            <div><dt>rerank</dt><dd><span class="num">61</span> to <span class="num">24</span> frames</dd></div>
+            <div><dt>prompt</dt><dd><span class="num">6,140</span> tokens</dd></div>
+            <div><dt>latency</dt><dd><span class="num">4.8</span> s</dd></div>
+            <div><dt>citations</dt><dd><span class="num">2</span> sessions, <span class="num">1</span> frame</dd></div>
+          </dl>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-head">Also in this thread<span class="rail-count"><span class="num">4</span></span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>Rewriting schema as baseline</b><span class="n">cited</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>Specs pass, baseline rule</b><span class="n">cited</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>Reading the v13 schema</b><span class="n">context</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>Rebuild, count, doc sync</b><span class="n">context</span></div>
+        </div>
+        <div class="rail-sec">
+          <p class="rail-note"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-session"/></svg>Two retrieved sessions were used as context but never quoted, so the list cites two sessions and one frame. Nothing left the machine.</p>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============================ 05 FORM GALLERY ============================ -->
+  <section class="screen" id="s-gallery" aria-labelledby="cap-gallery">
+    <div class="cap">
+      <h2 class="cap-t" id="cap-gallery">Form state gallery</h2>
+      <p class="cap-d">13 controls, 6 states, every cell rendered from the shipped declarations.</p>
+      <span class="cap-m">1440 wide</span>
+    </div>
+
+    <div class="app" role="group" aria-label="Form state gallery">
+      <nav class="nav" aria-label="Primary">
+        <div class="brand">
+          <svg class="ico" aria-hidden="true"><use href="#i-brand"/></svg>
+          <span class="brand-name">Screen<span>Search</span></span>
+          <span class="brand-v num">0.4.5</span>
+        </div>
+        <ul class="nav-list">
+          <li><a class="nav-item" href="#s-search" aria-label="Deck" title="Deck"><svg class="ico" aria-hidden="true"><use href="#i-deck"/></svg><span class="nav-lab">Deck</span><span class="nav-kbd" aria-hidden="true">1</span></a></li>
+          <li><a class="nav-item" href="#s-ask" aria-label="Ask" title="Ask"><svg class="ico" aria-hidden="true"><use href="#i-ask"/></svg><span class="nav-lab">Ask</span><span class="nav-kbd" aria-hidden="true">2</span></a></li>
+          <li><a class="nav-item" href="#s-session" aria-label="Work" title="Work"><svg class="ico" aria-hidden="true"><use href="#i-work"/></svg><span class="nav-lab">Work</span><span class="nav-kbd" aria-hidden="true">3</span></a></li>
+          <li><a class="nav-item" href="#s-search" aria-label="Recall" title="Recall"><svg class="ico" aria-hidden="true"><use href="#i-recall"/></svg><span class="nav-lab">Recall</span><span class="nav-kbd" aria-hidden="true">4</span></a></li>
+          <li><a class="nav-item" href="#s-session" aria-label="Insights" title="Insights"><svg class="ico" aria-hidden="true"><use href="#i-insights"/></svg><span class="nav-lab">Insights</span><span class="nav-kbd" aria-hidden="true">5</span></a></li>
+          <li><a class="nav-item" href="#s-settings" aria-label="Settings" title="Settings"><svg class="ico" aria-hidden="true"><use href="#i-settings"/></svg><span class="nav-lab">Settings</span><span class="nav-kbd" aria-hidden="true">6</span></a></li>
+        </ul>
+        <div class="nav-foot">
+          <div class="rec"><span class="rec-dot"></span><span>Capturing</span><span class="rec-t num">0.8s</span></div>
+          <div class="nav-stat"><span class="num">2</span> displays &middot; <span class="num">41,208</span> frames</div>
+        </div>
+      </nav>
+
+      <main class="pane">
+        <div class="pane-head">
+          <div>
+            <h3 class="pane-title">Control matrix</h3>
+            <p class="pane-sub">Hover and focus cells use .is-hover and .is-focus, the same declarations as :hover and :focus-visible. A cell narrows only where a state belongs to one variant.</p>
+          </div>
+          <div class="pane-head-side"><span class="badge badge--sig">78 cells</span></div>
+        </div>
+
+        <div class="pane-body">
+          <div class="mx" role="table" aria-label="Control states by control">
+
+            <div class="mx-row" role="row">
+              <div role="columnheader" class="mx-hcell">Control</div>
+              <div role="columnheader" class="mx-hcell">Default</div>
+              <div role="columnheader" class="mx-hcell">Hover</div>
+              <div role="columnheader" class="mx-hcell mx-hcell--accent">Focus</div>
+              <div role="columnheader" class="mx-hcell">Disabled</div>
+              <div role="columnheader" class="mx-hcell">Error</div>
+              <div role="columnheader" class="mx-hcell">Loading</div>
+            </div>
+
+            <div class="mx-row" role="row">
+              <div role="rowheader" class="mx-label"><span class="mx-name">TextInput</span><span class="mx-key">.field</span></div>
+              <div role="cell" class="mx-cell"><input class="field" type="text" value="schema.rs" aria-label="Text input default"></div>
+              <div role="cell" class="mx-cell"><input class="field is-hover" type="text" value="store.rs" aria-label="Text input hover"></div>
+              <div role="cell" class="mx-cell"><input class="field is-focus" type="text" value="index.rs" aria-label="Text input focus"></div>
+              <div role="cell" class="mx-cell"><input class="field" type="text" value="ocr.rs" disabled aria-label="Text input disabled"></div>
+              <div role="cell" class="mx-cell"><input class="field is-error" type="text" value="paths.rs" aria-label="Text input error" aria-invalid="true" aria-describedby="err-field"><span class="msg" id="err-field">Folder missing, pick another</span></div>
+              <div role="cell" class="mx-cell"><div class="loadline"><input class="field" type="text" value="model.rs" aria-label="Text input loading"><span class="spin" aria-hidden="true"></span></div></div>
+            </div>
+
+            <div class="mx-row" role="row">
+              <div role="rowheader" class="mx-label"><span class="mx-name">Select</span><span class="mx-key">.select</span></div>
+              <div role="cell" class="mx-cell"><div class="selectwrap"><select class="select" aria-label="Select default"><option>Primary</option></select><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></div></div>
+              <div role="cell" class="mx-cell"><div class="selectwrap"><select class="select is-hover" aria-label="Select hover"><option>Primary</option></select><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></div></div>
+              <div role="cell" class="mx-cell"><div class="selectwrap"><select class="select is-focus" aria-label="Select focus"><option>Primary</option></select><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></div></div>
+              <div role="cell" class="mx-cell"><div class="selectwrap"><select class="select" disabled aria-label="Select disabled"><option>Primary</option></select><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></div></div>
+              <div role="cell" class="mx-cell"><div class="selectwrap"><select class="select is-error" aria-label="Select error" aria-invalid="true" aria-describedby="err-select"><option>Display 3</option></select><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></div><span class="msg" id="err-select">Display 3 unplugged</span></div>
+              <div role="cell" class="mx-cell"><div class="loadline"><div class="selectwrap"><select class="select" aria-label="Select loading"><option>Primary</option></select><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></div><span class="spin" aria-hidden="true"></span></div></div>
+            </div>
+
+            <div class="mx-row" role="row">
+              <div role="rowheader" class="mx-label"><span class="mx-name">Toggle</span><span class="mx-key">.switch</span></div>
+              <div role="cell" class="mx-cell"><div class="switch-row"><button class="switch" type="button" role="switch" aria-checked="true" aria-label="Toggle default"><span class="knob"></span></button><span class="sw-state"><b>On</b></span></div></div>
+              <div role="cell" class="mx-cell"><div class="switch-row"><button class="switch is-hover" type="button" role="switch" aria-checked="true" aria-label="Toggle hover"><span class="knob"></span></button><span class="sw-state"><b>On</b></span></div></div>
+              <div role="cell" class="mx-cell"><div class="switch-row"><button class="switch is-focus" type="button" role="switch" aria-checked="true" aria-label="Toggle focus"><span class="knob"></span></button><span class="sw-state"><b>On</b></span></div></div>
+              <div role="cell" class="mx-cell"><div class="switch-row"><button class="switch" type="button" role="switch" aria-checked="false" disabled aria-label="Toggle disabled"><span class="knob"></span></button><span class="sw-state">Off</span></div></div>
+              <div role="cell" class="mx-cell"><div class="switch-row"><button class="switch is-error" type="button" role="switch" aria-checked="false" aria-label="Toggle error" aria-invalid="true" aria-describedby="err-switch"><span class="knob"></span></button><span class="msg" id="err-switch">Required</span></div></div>
+              <div role="cell" class="mx-cell"><div class="loadline"><button class="switch" type="button" role="switch" aria-checked="true" aria-label="Toggle loading"><span class="knob"></span></button><span class="spin" aria-hidden="true"></span></div></div>
+            </div>
+
+            <div class="mx-row" role="row">
+              <div role="rowheader" class="mx-label"><span class="mx-name">Checkbox</span><span class="mx-key">.check</span></div>
+              <div role="cell" class="mx-cell"><label class="check"><input type="checkbox" checked aria-label="Checkbox default"><span>Include</span></label></div>
+              <div role="cell" class="mx-cell"><label class="check"><input type="checkbox" checked class="is-hover" aria-label="Checkbox hover"><span>Include</span></label></div>
+              <div role="cell" class="mx-cell"><label class="check"><input type="checkbox" checked class="is-focus" aria-label="Checkbox focus"><span>Include</span></label></div>
+              <div role="cell" class="mx-cell"><label class="check"><input type="checkbox" checked disabled aria-label="Checkbox disabled"><span>Include</span></label></div>
+              <div role="cell" class="mx-cell"><label class="check"><input type="checkbox" class="is-error" aria-label="Checkbox error" aria-invalid="true" aria-describedby="err-check"><span>Include</span></label><span class="msg" id="err-check">Required</span></div>
+              <div role="cell" class="mx-cell"><div class="loadline"><label class="check"><input type="checkbox" checked aria-label="Checkbox loading"><span>Include</span></label><span class="spin" aria-hidden="true"></span></div></div>
+            </div>
+
+            <div class="mx-row" role="row">
+              <div role="rowheader" class="mx-label"><span class="mx-name">Radio group</span><span class="mx-key">.radio</span></div>
+              <div role="cell" class="mx-cell"><div class="radios"><label class="radio"><input type="radio" name="rg1" checked aria-label="Radio default auto"><span>Auto</span></label><label class="radio"><input type="radio" name="rg1" aria-label="Radio default manual"><span>Manual</span></label></div></div>
+              <div role="cell" class="mx-cell"><div class="radios"><label class="radio"><input type="radio" name="rg2" checked class="is-hover" aria-label="Radio hover auto"><span>Auto</span></label><label class="radio"><input type="radio" name="rg2" aria-label="Radio hover manual"><span>Manual</span></label></div></div>
+              <div role="cell" class="mx-cell"><div class="radios"><label class="radio"><input type="radio" name="rg3" checked class="is-focus" aria-label="Radio focus auto"><span>Auto</span></label><label class="radio"><input type="radio" name="rg3" aria-label="Radio focus manual"><span>Manual</span></label></div></div>
+              <div role="cell" class="mx-cell"><div class="radios"><label class="radio"><input type="radio" name="rg4" checked disabled aria-label="Radio disabled auto"><span>Auto</span></label><label class="radio"><input type="radio" name="rg4" disabled aria-label="Radio disabled manual"><span>Manual</span></label></div></div>
+              <div role="cell" class="mx-cell"><div class="radios"><label class="radio"><input type="radio" name="rg5" class="is-error" aria-label="Radio error auto" aria-invalid="true" aria-describedby="err-radio"><span>Auto</span></label></div><span class="msg" id="err-radio">Pick one</span></div>
+              <div role="cell" class="mx-cell"><div class="loadline"><div class="radios"><label class="radio"><input type="radio" name="rg6" checked aria-label="Radio loading auto"><span>Auto</span></label></div><span class="spin" aria-hidden="true"></span></div></div>
+            </div>
+
+            <div class="mx-row" role="row">
+              <div role="rowheader" class="mx-label"><span class="mx-name">Segmented</span><span class="mx-key">.seg</span></div>
+              <div role="cell" class="mx-cell"><div class="seg seg--xs"><button type="button" aria-pressed="true">All</button><button type="button" aria-pressed="false">1</button><button type="button" aria-pressed="false">2</button></div></div>
+              <div role="cell" class="mx-cell"><div class="seg seg--xs"><button type="button" aria-pressed="true">All</button><button type="button" aria-pressed="false" class="is-hover">1</button><button type="button" aria-pressed="false">2</button></div></div>
+              <div role="cell" class="mx-cell"><div class="seg seg--xs"><button type="button" aria-pressed="true" class="is-focus">All</button><button type="button" aria-pressed="false">1</button><button type="button" aria-pressed="false">2</button></div></div>
+              <!-- Disabled specimen at --op-disabled: WCAG 2.2 SC 1.4.3 exempts inactive UI components from contrast. -->
+              <div role="cell" class="mx-cell"><div class="seg seg--xs is-disabled"><button type="button" aria-pressed="true" disabled>All</button><button type="button" aria-pressed="false" disabled>1</button><button type="button" aria-pressed="false" disabled>2</button></div></div>
+              <div role="cell" class="mx-cell"><div class="seg seg--xs"><button type="button" aria-pressed="true">All</button><button type="button" aria-pressed="false" class="is-disabled" disabled aria-invalid="true" aria-describedby="err-seg">1</button><button type="button" aria-pressed="false">2</button></div><span class="msg" id="err-seg">Display 2 lost</span></div>
+              <div role="cell" class="mx-cell"><div class="loadline"><div class="seg seg--xs"><button type="button" aria-pressed="true">All</button><button type="button" aria-pressed="false">1</button></div><span class="spin" aria-hidden="true"></span></div></div>
+            </div>
+
+            <div class="mx-row" role="row">
+              <div role="rowheader" class="mx-label"><span class="mx-name">Slider</span><span class="mx-key">.slider + .numfield</span></div>
+              <div role="cell" class="mx-cell"><div class="slider-row"><input class="slider slider--xs" type="range" min="250" max="5000" value="800" aria-label="Slider default"><div class="numfield numfield--xs"><input type="text" value="800" aria-label="Slider value default"><span class="unit">ms</span></div></div></div>
+              <div role="cell" class="mx-cell"><div class="slider-row"><input class="slider slider--xs is-hover" type="range" min="250" max="5000" value="800" aria-label="Slider hover"><div class="numfield numfield--xs is-hover"><input type="text" value="800" aria-label="Slider value hover"><span class="unit">ms</span></div></div></div>
+              <div role="cell" class="mx-cell"><div class="slider-row"><input class="slider slider--xs is-focus" type="range" min="250" max="5000" value="800" aria-label="Slider focus"><div class="numfield numfield--xs"><input type="text" value="800" aria-label="Slider value focus"><span class="unit">ms</span></div></div></div>
+              <div role="cell" class="mx-cell"><div class="slider-row"><input class="slider slider--xs" type="range" min="250" max="5000" value="800" disabled aria-label="Slider disabled"><div class="numfield numfield--xs"><input type="text" value="800" disabled aria-label="Slider value disabled"><span class="unit">ms</span></div></div></div>
+              <div role="cell" class="mx-cell"><div class="slider-row"><input class="slider slider--xs is-error" type="range" min="250" max="5000" value="5000" aria-label="Slider error" aria-invalid="true" aria-describedby="err-slider"><div class="numfield numfield--xs"><input type="text" value="9000" aria-label="Slider value error"><span class="unit">ms</span></div></div><span class="msg" id="err-slider">Max 5000</span></div>
+              <div role="cell" class="mx-cell"><div class="loadline"><input class="slider slider--xs" type="range" min="250" max="5000" value="800" aria-label="Slider loading"><span class="spin" aria-hidden="true"></span></div></div>
+            </div>
+
+            <div class="mx-row" role="row">
+              <div role="rowheader" class="mx-label"><span class="mx-name">Button</span><span class="mx-key">.btn, 4 variants</span></div>
+              <div role="cell" class="mx-cell">
+                <div class="btn-stack">
+                  <button class="btn btn--primary" type="button">Run</button>
+                  <button class="btn btn--secondary" type="button">Copy</button>
+                  <button class="btn btn--ghost" type="button">Skip</button>
+                  <button class="btn btn--danger" type="button">Del</button>
+                </div>
+              </div>
+              <div role="cell" class="mx-cell">
+                <div class="btn-stack">
+                  <button class="btn btn--primary is-hover" type="button">Run</button>
+                  <button class="btn btn--secondary is-hover" type="button">Copy</button>
+                  <button class="btn btn--ghost is-hover" type="button">Skip</button>
+                  <button class="btn btn--danger is-hover" type="button">Del</button>
+                </div>
+              </div>
+              <div role="cell" class="mx-cell">
+                <div class="btn-stack">
+                  <button class="btn btn--primary is-focus" type="button">Run</button>
+                  <button class="btn btn--secondary is-focus" type="button">Copy</button>
+                  <button class="btn btn--ghost is-focus" type="button">Skip</button>
+                  <button class="btn btn--danger is-focus" type="button">Del</button>
+                </div>
+              </div>
+              <!-- Disabled specimen at --op-disabled: WCAG 2.2 SC 1.4.3 exempts inactive UI components from contrast. -->
+              <div role="cell" class="mx-cell">
+                <div class="btn-stack">
+                  <button class="btn btn--primary" type="button" disabled>Run</button>
+                  <button class="btn btn--secondary" type="button" disabled>Copy</button>
+                  <button class="btn btn--ghost" type="button" disabled>Skip</button>
+                  <button class="btn btn--danger" type="button" disabled>Del</button>
+                </div>
+              </div>
+              <div role="cell" class="mx-cell">
+                <div class="btn-stack">
+                  <button class="btn btn--secondary" type="button" aria-describedby="err-btn">Retry</button>
+                  <button class="btn btn--secondary" type="button" disabled>Copy</button>
+                </div>
+                <span class="msg" id="err-btn">Index write failed</span>
+              </div>
+              <div role="cell" class="mx-cell">
+                <div class="btn-stack">
+                  <button class="btn btn--primary" type="button" disabled><span class="spin" aria-hidden="true"></span>Run</button>
+                  <button class="btn btn--secondary" type="button" disabled>Copy</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="mx-row" role="row">
+              <div role="rowheader" class="mx-label"><span class="mx-name">Badge</span><span class="mx-key">.badge</span></div>
+              <div role="cell" class="mx-cell"><span class="badge">local</span></div>
+              <div role="cell" class="mx-cell"><span class="badge is-hover">local</span></div>
+              <div role="cell" class="mx-cell"><span class="badge is-focus">local</span></div>
+              <div role="cell" class="mx-cell"><span class="badge is-disabled">local</span></div>
+              <div role="cell" class="mx-cell"><span class="badge is-error">stalled</span></div>
+              <div role="cell" class="mx-cell"><span class="badge is-loading">indexing</span></div>
+            </div>
+
+            <div class="mx-row" role="row">
+              <div role="rowheader" class="mx-label"><span class="mx-name">Chip</span><span class="mx-key">.chip</span></div>
+              <div role="cell" class="mx-cell"><span class="chip"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg>schema.rs<span class="chip-x">&times;</span></span></div>
+              <div role="cell" class="mx-cell"><span class="chip is-hover"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg>store.rs<span class="chip-x">&times;</span></span></div>
+              <div role="cell" class="mx-cell"><span class="chip is-focus"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg>index.rs<span class="chip-x">&times;</span></span></div>
+              <div role="cell" class="mx-cell"><span class="chip is-disabled"><svg class="ico" aria-hidden="true"><use href="#i-link"/></svg>ocr.rs</span></div>
+              <div role="cell" class="mx-cell"><span class="chip is-error">paths.rs</span></div>
+              <div role="cell" class="mx-cell"><span class="chip is-loading">resolving</span></div>
+            </div>
+
+            <div class="mx-row" role="row">
+              <div role="rowheader" class="mx-label"><span class="mx-name">Skeleton</span><span class="mx-key">.sk</span></div>
+              <div role="cell" class="mx-cell"><div class="sk-row"><span class="sk sk--title sk--w70"></span><span class="sk sk--text sk--w100"></span><span class="sk sk--text sk--w45"></span></div></div>
+              <div role="cell" class="mx-cell"><div class="sk-row is-hover"><span class="sk sk--title sk--w70"></span><span class="sk sk--text sk--w100"></span><span class="sk sk--text sk--w45"></span></div></div>
+              <div role="cell" class="mx-cell"><div class="sk-row is-focus"><span class="sk sk--title sk--w70"></span><span class="sk sk--text sk--w100"></span><span class="sk sk--text sk--w45"></span></div></div>
+              <div role="cell" class="mx-cell"><div class="sk-row is-disabled"><span class="sk sk--title sk--w70"></span><span class="sk sk--text sk--w100"></span><span class="sk sk--text sk--w45"></span></div></div>
+              <div role="cell" class="mx-cell"><div class="sk-row is-error"><span class="sk sk--title sk--w70"></span><span class="sk sk--text sk--w100"></span><span class="sk sk--text sk--w45"></span></div></div>
+              <div role="cell" class="mx-cell"><div class="sk-row"><span class="sk sk--title sk--w70"></span><span class="sk sk--text sk--w100"></span><span class="sk sk--text sk--w45"></span></div></div>
+            </div>
+
+            <div class="mx-row" role="row">
+              <div role="rowheader" class="mx-label"><span class="mx-name">Empty state</span><span class="mx-key">.empty</span></div>
+              <div role="cell" class="mx-cell"><div class="empty"><svg class="ico" aria-hidden="true"><use href="#i-frame"/></svg><b>No frames</b><span>Widen the range</span></div></div>
+              <div role="cell" class="mx-cell"><div class="empty is-hover"><svg class="ico" aria-hidden="true"><use href="#i-frame"/></svg><b>No frames</b><span>Widen the range</span></div></div>
+              <div role="cell" class="mx-cell"><div class="empty is-focus"><svg class="ico" aria-hidden="true"><use href="#i-frame"/></svg><b>No frames</b><span>Widen the range</span></div></div>
+              <!-- Disabled specimen at --op-disabled: WCAG 2.2 SC 1.4.3 exempts inactive UI components from contrast. -->
+              <div role="cell" class="mx-cell"><div class="empty is-disabled"><svg class="ico" aria-hidden="true"><use href="#i-frame"/></svg><b>No frames</b><span>Widen the range</span></div></div>
+              <div role="cell" class="mx-cell"><div class="empty is-error"><svg class="ico" aria-hidden="true"><use href="#i-frame"/></svg><b>Index unavailable</b><span>Rebuild it from Settings, Data</span></div></div>
+              <div role="cell" class="mx-cell"><div class="empty"><span class="sk sk--text sk--w70"></span><span class="sk sk--text sk--w45"></span></div></div>
+            </div>
+
+            <div class="mx-row" role="row">
+              <div role="rowheader" class="mx-label"><span class="mx-name">Error state</span><span class="mx-key">.errbox</span></div>
+              <div role="cell" class="mx-cell"><div class="errbox"><svg class="ico" aria-hidden="true"><use href="#i-warn"/></svg><b>Capture stalled</b><span>Retry in 3 s</span></div></div>
+              <div role="cell" class="mx-cell"><div class="errbox is-hover"><svg class="ico" aria-hidden="true"><use href="#i-warn"/></svg><b>Capture stalled</b><span>Retry now</span></div></div>
+              <div role="cell" class="mx-cell"><div class="errbox is-focus"><svg class="ico" aria-hidden="true"><use href="#i-warn"/></svg><b>Capture stalled</b><span>Retry now</span></div></div>
+              <!-- Disabled specimen at --op-disabled: WCAG 2.2 SC 1.4.3 exempts inactive UI components from contrast. -->
+              <div role="cell" class="mx-cell"><div class="errbox is-disabled"><svg class="ico" aria-hidden="true"><use href="#i-warn"/></svg><b>Capture stalled</b><span>Retry disabled</span></div></div>
+              <div role="cell" class="mx-cell"><div class="errbox"><svg class="ico" aria-hidden="true"><use href="#i-warn"/></svg><b>Display lost</b><span>Reconnect monitor</span></div></div>
+              <div role="cell" class="mx-cell"><div class="loadline"><div class="errbox"><svg class="ico" aria-hidden="true"><use href="#i-warn"/></svg><b>Retrying</b><span>attempt 2 of 3</span></div><span class="spin" aria-hidden="true"></span></div></div>
+            </div>
+
+          </div>
+        </div>
+      </main>
+
+      <aside class="rail" aria-label="Gallery context">
+        <div class="rail-sec">
+          <div class="rail-head">Where these appear<span class="rail-count"><span class="num">6</span> surfaces</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>Settings</b><span class="n">9 of 13</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>Recall</b><span class="n">4 of 13</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>Ask</b><span class="n">3 of 13</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>Work</b><span class="n">2 of 13</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>Deck</b><span class="n">3 of 13</span></div>
+          <div class="rel-row"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-link"/></svg><b>Insights</b><span class="n">1 of 13</span></div>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-head">State contract</div>
+          <dl class="kv">
+            <div><dt>hover</dt><dd>border to tx-3</dd></div>
+            <div><dt>focus</dt><dd>2 px pine, offset 2</dd></div>
+            <div><dt>disabled</dt><dd>opacity <span class="num">0.55</span></dd></div>
+            <div><dt>error</dt><dd>danger border, <span class="num">12</span> px message</dd></div>
+            <div><dt>loading</dt><dd>spinner, <span class="num">900</span> ms turn</dd></div>
+          </dl>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-head">Token census</div>
+          <dl class="kv">
+            <div><dt>accent</dt><dd>pine green, 1 ramp</dd></div>
+            <div><dt>graphite</dt><dd>9 steps, hue 160</dd></div>
+            <div><dt>mist</dt><dd>9 steps, same hue</dd></div>
+            <div><dt>ink</dt><dd><span class="num">3</span> tones per theme</dd></div>
+            <div><dt>state</dt><dd>red, amber; success is pine</dd></div>
+            <div><dt>type floor</dt><dd><span class="num">12</span> px</dd></div>
+            <div><dt>controls</dt><dd><span class="num">13</span> rows</dd></div>
+            <div><dt>states</dt><dd><span class="num">6</span> columns</dd></div>
+            <div><dt>cells</dt><dd><span class="num">78</span></dd></div>
+            <div><dt>corner radius</dt><dd><span class="num">6</span> px max</dd></div>
+            <div><dt>row height</dt><dd><span class="num">36</span> px</dd></div>
+          </dl>
+        </div>
+        <div class="rail-sec">
+          <div class="rail-head">Checks</div>
+          <dl class="kv">
+            <div><dt>contrast</dt><dd>AA, all pairs</dd></div>
+            <div><dt>focus ring</dt><dd>never removed</dd></div>
+            <div><dt>motion</dt><dd>reduced mode honoured</dd></div>
+          </dl>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <footer class="colophon">
+    <div class="col-item"><i class="sw-accent" aria-hidden="true"></i><span><b>accent</b> pine: action, selection, focus, match, success</span></div>
+    <div class="col-item"><i class="sw-ink" aria-hidden="true"></i><span><b>ink</b> text tones, three per theme</span></div>
+    <div class="col-item"><i class="sw-graphite" aria-hidden="true"></i><span><b>graphite</b> dark neutrals, one ramp</span></div>
+    <div class="col-item"><i class="sw-mist" aria-hidden="true"></i><span><b>mist</b> light neutrals, same hue</span></div>
+    <div class="col-item"><i class="sw-danger" aria-hidden="true"></i><span><b>state</b> warn, danger, never decorative; success is pine</span></div>
+    <div class="col-item col-right"><span>Logbook, direction D2, 2026-11-04</span></div>
+  </footer>
+
+</div>
+
+<script>
+(function(){var r=document.documentElement,b=document.getElementById('theme-toggle'),u=document.getElementById('theme-icon'),l=document.getElementById('theme-label');
+b.addEventListener('click',function(){var t=r.getAttribute('data-theme')==='dark'?'light':'dark';
+r.setAttribute('data-theme',t);
+u.setAttribute('href',t==='dark'?'#i-moon':'#i-sun');l.textContent=t==='dark'?'Switch to light':'Switch to dark';});})();
+</script>
+</body>
+</html>

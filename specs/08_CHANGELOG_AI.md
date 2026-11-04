@@ -1,5 +1,15 @@
 # 08 — AI Changelog
 
+## 2026-11-04: 0.4.5 P2 directions D and D2 for review
+
+- **Change:** docs only, on `feat/0.4.5-p2-design-directions`. New `PRODUCT.md` (impeccable
+  init: single user, Operate mode). New mockups `direction-d.html` (Logbook, ink: slate neutrals,
+  ink-blue accent) and `direction-d2.html` (Logbook, pine: graphite neutrals, pine accent, success
+  folded into the accent) that keep direction C's structure exactly; `compare.html` now shows C,
+  D and D2; `PICK.md` frames the ink-or-pine decision. Detect (pinned 0.1.5): C 323, D 0, D2 0.
+  Enabled text passes AA in both themes of both files; nothing renders below 12px. Raw output in
+  `05`. No token file, Tailwind config, primitive or route: those wait for the pick (0.4.5 D4).
+
 ## 2026-11-03 — 0.4.5 P1 specs contract
 
 - **Change:** specs only. `03 §4` becomes a baseline (full DDL at `schema_version = 14`, no

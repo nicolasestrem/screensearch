@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ScreenSearch 0.4.5: three design directions</title>
+<title>ScreenSearch 0.4.5: directions C, D and D2</title>
 <style>
   /* ------------------------------------------------------------------
      Comparison page chrome only. It is deliberately neutral: near
      greys, system sans, no accent of its own, so it does not bias the
-     read of the three directions inside the frames.
+     read of the directions inside the frames.
      ------------------------------------------------------------------ */
   :root {
     --bg: #191919;
@@ -39,13 +39,6 @@
     padding: 32px 24px 64px;
   }
   header.page { max-width: 1180px; margin: 0 auto 28px; }
-  .eyebrow {
-    font: 600 11px/1 var(--mono);
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--ink-3);
-    margin: 0 0 10px;
-  }
   h1 { font-size: 26px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -0.01em; }
   .lede { color: var(--ink-2); max-width: 78ch; margin: 0 0 14px; }
   .howto {
@@ -98,7 +91,7 @@
     gap: 8px;
     margin: 0 0 6px;
   }
-  .letter { font: 600 11px/1 var(--mono); color: var(--ink-3); letter-spacing: 0.1em; }
+  .letter { font: 600 12px/1 var(--font); color: var(--ink-3); }
   .name { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
   .thesis { color: var(--ink-2); font-size: 13px; margin: 0 0 10px; min-height: 3.2em; }
 
@@ -140,12 +133,10 @@
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    font-size: 12.5px;
+    font-size: 13px;
   }
   dl.spec dt {
-    font: 600 10.5px/1 var(--mono);
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    font: 600 12px/1.2 var(--font);
     color: var(--ink-3);
     margin: 12px 0 6px;
   }
@@ -160,7 +151,7 @@
     display: flex;
     align-items: center;
     gap: 5px;
-    font: 11px/1 var(--mono);
+    font: 12px/1 var(--mono);
     color: var(--ink-2);
     background: var(--panel-2);
     border: 1px solid var(--line);
@@ -174,12 +165,14 @@
     border-radius: 50%;
     border: 1px solid rgba(255,255,255,0.22);
   }
-  .themes { font: 11px/1.4 var(--mono); color: var(--ink-3); margin-top: 10px; }
+  .themes { font: 12px/1.4 var(--font); color: var(--ink-3); margin-top: 10px; }
+  .detect { font: 12px/1.5 var(--font); color: var(--ink-2); }
+  .detect strong { font: 600 13px/1 var(--mono); color: var(--ink); }
   footer.page {
     max-width: 1180px;
     margin: 36px auto 0;
     color: var(--ink-3);
-    font-size: 12.5px;
+    font-size: 13px;
     border-top: 1px solid var(--line);
     padding-top: 14px;
   }
@@ -189,124 +182,27 @@
 <body>
 
 <header class="page">
-  <p class="eyebrow">ScreenSearch 0.4.5 &middot; P2 direction checkpoint</p>
-  <h1>Three design directions, same content, same five screens</h1>
+  <h1>One structure, two skins, against the original</h1>
   <p class="lede">
-    Each direction is one self-contained HTML file with its CSS inline, system fonts only, no
-    network request. Each renders the same five screens: Settings, search results, a session card,
-    an Ask answer with citations, and a gallery of every control state. Pick one, or name a merge,
-    and the choice is written into <code>specs/UI_REFERENCE.md</code> section 1 before any screen
-    work starts (0.4.5 D4, D5).
+    The maintainer kept Signal Console's content, density, logbook chronology, context rail and
+    tabular figures, and rejected its skin. D and D2 keep that structure exactly and differ from
+    each other only in accent and neutral family. C stays here as the reference. Each file is one
+    self-contained page with inline CSS, system fonts only and no network request, rendering the
+    same five screens: Settings, search results, a session card, an Ask answer with citations, and
+    every control state.
   </p>
   <div class="howto">
     <p><strong>To view one full screen:</strong></p>
     <ol>
-      <li>Run this in the repository root: <span class="cmd">start docs\kickoffs\P2-directions\direction-a.html</span> (replace <span class="cmd">a</span> with <span class="cmd">b</span> or <span class="cmd">c</span>).</li>
+      <li>Run this in the repository root: <span class="cmd">start docs\kickoffs\P2-directions\direction-d.html</span> (replace <span class="cmd">d</span> with <span class="cmd">d2</span> or <span class="cmd">c</span>).</li>
       <li>Or click <em>Open full size</em> under any frame below.</li>
-      <li>Each file has its own theme button at the top. Every direction ships both themes except where noted.</li>
+      <li>Each file has its own theme button at the top right; D and D2 open in light, C in dark.</li>
     </ol>
-    <p style="margin-top:10px">The frames below are the real files, scaled to about 33 percent so all three fit side by side. Scrolling inside a frame works; colours and type read better in the full screen view.</p>
+    <p style="margin-top:10px">The frames below are the real files, scaled to about 33 percent so all three fit side by side. Scrolling inside a frame works; colours and type read better in the full screen view. The decision itself is written up in <span class="cmd">PICK.md</span> next to this file.</p>
   </div>
 </header>
 
 <div class="grid">
-
-  <!-- ================= A ================= -->
-  <div class="col">
-    <div class="frame-head">
-      <span class="letter">A</span>
-      <span class="name">Command Deck, refined</span>
-    </div>
-    <p class="thesis">
-      The v1 console kept and refined: warm graphite, one signal orange, hairline discipline.
-      Nothing is a new language, the change is craft: type scale, density, light theme.
-      Familiar in a minute, precise by the end of a week.
-    </p>
-    <div class="viewport"><iframe src="direction-a.html" title="Direction A, Command Deck refined" loading="lazy"></iframe></div>
-    <a class="open" href="direction-a.html">Open full size</a>
-    <dl class="spec">
-      <dt>Type</dt>
-      <dd>
-        Display <strong>Bahnschrift</strong> (then DIN Alternate, Segoe UI Variable Display)<br>
-        Text <strong>Segoe UI Variable Text</strong><br>
-        Mono <strong>Cascadia Mono</strong> for timestamps, paths and counts
-      </dd>
-      <dt>Colour, dark</dt>
-      <dd class="swatches">
-        <span class="sw"><i style="background:#0E0C09"></i>#0E0C09</span>
-        <span class="sw"><i style="background:#1B1711"></i>#1B1711</span>
-        <span class="sw"><i style="background:#F0E9DC"></i>#F0E9DC</span>
-        <span class="sw"><i style="background:#FF6A1A"></i>#FF6A1A</span>
-        <span class="sw"><i style="background:#E8706A"></i>#E8706A</span>
-      </dd>
-      <dt>Colour, light</dt>
-      <dd class="swatches">
-        <span class="sw"><i style="background:#F4F0E6"></i>#F4F0E6</span>
-        <span class="sw"><i style="background:#FBF8F0"></i>#FBF8F0</span>
-        <span class="sw"><i style="background:#1D1913"></i>#1D1913</span>
-        <span class="sw"><i style="background:#B93D0B"></i>#B93D0B</span>
-      </dd>
-      <dt>Structure</dt>
-      <dd>
-        <ul class="points">
-          <li>The accent is a state channel, not paint: a 2px bar plus a surface shift marks selection, focus and the primary action, and nothing else.</li>
-          <li>Recall carries a CSS-drawn density strip: 48 half-hour ticks, a selection brush, a mono axis. The only data visual in the direction.</li>
-          <li>Autosave is the model: no Save control, per-field Saved flags, a 12 second undo toast, inline destructive confirm.</li>
-        </ul>
-      </dd>
-      <dt>Themes</dt>
-      <dd class="themes">2: dark default, complete light peer</dd>
-    </dl>
-  </div>
-
-  <!-- ================= B ================= -->
-  <div class="col">
-    <div class="frame-head">
-      <span class="letter">B</span>
-      <span class="name">Paper Ledger</span>
-    </div>
-    <p class="thesis">
-      Your screen history as a working paper: a light-led reading surface, printed tables, no dashboard.
-      One serif voice for titles and evidence, a sans for machinery, one ink blue accent.
-      Everything is a document: hairline rules, aligned figures, margin notes.
-    </p>
-    <div class="viewport"><iframe src="direction-b.html" title="Direction B, Paper Ledger" loading="lazy"></iframe></div>
-    <a class="open" href="direction-b.html">Open full size</a>
-    <dl class="spec">
-      <dt>Type</dt>
-      <dd>
-        Display and prose <strong>ui-serif / Georgia</strong> (system serif)<br>
-        Text <strong>ui-sans-serif / Segoe UI</strong><br>
-        Mono <strong>ui-monospace / Cascadia Mono</strong> for figures and citations<br>
-        Scale 54 / 40 / 30 / 22 / 18 / 16 / 14 / 12 / 11
-      </dd>
-      <dt>Colour, light</dt>
-      <dd class="swatches">
-        <span class="sw"><i style="background:#F3EFE5"></i>#F3EFE5</span>
-        <span class="sw"><i style="background:#FBF9F4"></i>#FBF9F4</span>
-        <span class="sw"><i style="background:#1A1917"></i>#1A1917</span>
-        <span class="sw"><i style="background:#2A4B7C"></i>#2A4B7C</span>
-        <span class="sw"><i style="background:#8A2B2B"></i>#8A2B2B</span>
-      </dd>
-      <dt>Colour, dark</dt>
-      <dd class="swatches">
-        <span class="sw"><i style="background:#121110"></i>#121110</span>
-        <span class="sw"><i style="background:#171614"></i>#171614</span>
-        <span class="sw"><i style="background:#F2EEE4"></i>#F2EEE4</span>
-        <span class="sw"><i style="background:#9DBBE6"></i>#9DBBE6</span>
-      </dd>
-      <dt>Structure</dt>
-      <dd>
-        <ul class="points">
-          <li>A sheet with marginalia: every screen is a document with a narrow right margin carrying the facts, not a dashboard with cards.</li>
-          <li>Footnote apparatus on the Ask screen: real superscript numbers and a matching notes block; links are underlined, actions are text with a rule beneath.</li>
-          <li>The form gallery is a labelled state table with <span class="cmd">n/a</span> where a state cannot exist, instead of faking it.</li>
-        </ul>
-      </dd>
-      <dt>Themes</dt>
-      <dd class="themes">2: light default, complete dark peer</dd>
-    </dl>
-  </div>
 
   <!-- ================= C ================= -->
   <div class="col">
@@ -354,6 +250,110 @@
       </dd>
       <dt>Themes</dt>
       <dd class="themes">2: dark default, complete light peer</dd>
+      <dt>Detect findings</dt>
+      <dd class="detect"><strong>323</strong> with the pinned <span class="cmd">impeccable.exe</span> 0.1.5 (plus 6 advisory); 306 with the skill's 0.1.18 engine. 304 are text under 12px, 11 are low contrast or grey on colour.</dd>
+    </dl>
+  </div>
+
+  <!-- ================= D ================= -->
+  <div class="col">
+    <div class="frame-head">
+      <span class="letter">D</span>
+      <span class="name">Logbook, ink skin</span>
+    </div>
+    <p class="thesis">
+      Signal Console's structure and density, kept exactly, in a calm grown-up skin.
+      Cool slate neutrals and one ink-blue accent; red, amber and green only as states.
+      Density from alignment and rhythm: nothing below 12px, mono only for measured values.
+    </p>
+    <div class="viewport"><iframe src="direction-d.html" title="Direction D, Logbook with the ink skin" loading="lazy"></iframe></div>
+    <a class="open" href="direction-d.html">Open full size</a>
+    <dl class="spec">
+      <dt>Type</dt>
+      <dd>
+        Text <strong>Segoe UI Variable Text</strong> (then Segoe UI) for headings, labels, body and data labels<br>
+        Mono <strong>Cascadia Mono</strong> (then Consolas) only for measured values: timestamps, counts, durations, sizes<br>
+        Scale 12 / 13 / 14 / 15 / 17 / 20 / 26 / 30, nothing below 12px, no uppercase labels
+      </dd>
+      <dt>Colour, light</dt>
+      <dd class="swatches">
+        <span class="sw"><i style="background:#EDF0F4"></i>#EDF0F4</span>
+        <span class="sw"><i style="background:#FAFCFE"></i>#FAFCFE</span>
+        <span class="sw"><i style="background:#171B20"></i>#171B20</span>
+        <span class="sw"><i style="background:#3262A9"></i>#3262A9</span>
+        <span class="sw"><i style="background:#A02A26"></i>#A02A26</span>
+      </dd>
+      <dt>Colour, dark</dt>
+      <dd class="swatches">
+        <span class="sw"><i style="background:#0B0F13"></i>#0B0F13</span>
+        <span class="sw"><i style="background:#14181C"></i>#14181C</span>
+        <span class="sw"><i style="background:#E8EBEF"></i>#E8EBEF</span>
+        <span class="sw"><i style="background:#88B4ED"></i>#88B4ED</span>
+        <span class="sw"><i style="background:#EB776C"></i>#EB776C</span>
+      </dd>
+      <dt>Skin</dt>
+      <dd>
+        <ul class="points">
+          <li>One accent, ink blue (hue 258), marks action, selection, focus and the matched term; matches are an accent wash with an accent underline, no yellow.</li>
+          <li>Neutrals are one cool slate family (hue 252, low chroma) per theme: not warm graphite, not paper beige.</li>
+          <li>Success, warning and danger stay green, amber and red, used only as states, never as decoration.</li>
+        </ul>
+      </dd>
+      <dt>Themes</dt>
+      <dd class="themes">2: light default, complete dark peer</dd>
+      <dt>Detect findings</dt>
+      <dd class="detect"><strong>0</strong> with the pinned <span class="cmd">impeccable.exe</span> 0.1.5. The skill's 0.1.18 engine reports 2, both on the gallery's disabled Empty-state specimen (opacity 0.55), which WCAG exempts; each carries a justifying comment.</dd>
+    </dl>
+  </div>
+
+  <!-- ================= D2 ================= -->
+  <div class="col">
+    <div class="frame-head">
+      <span class="letter">D2</span>
+      <span class="name">Logbook, pine skin</span>
+    </div>
+    <p class="thesis">
+      The same file as D, byte for byte outside the token block and the skin labels.
+      Near-neutral graphite and one pine-green accent; success folds into the accent.
+      Fewer hues on screen than D: pine, then red and amber only as states.
+    </p>
+    <div class="viewport"><iframe src="direction-d2.html" title="Direction D2, Logbook with the pine skin" loading="lazy"></iframe></div>
+    <a class="open" href="direction-d2.html">Open full size</a>
+    <dl class="spec">
+      <dt>Type</dt>
+      <dd>
+        Text <strong>Segoe UI Variable Text</strong> (then Segoe UI) for headings, labels, body and data labels<br>
+        Mono <strong>Cascadia Mono</strong> (then Consolas) only for measured values: timestamps, counts, durations, sizes<br>
+        Scale 12 / 13 / 14 / 15 / 17 / 20 / 26 / 30, nothing below 12px, no uppercase labels
+      </dd>
+      <dt>Colour, light</dt>
+      <dd class="swatches">
+        <span class="sw"><i style="background:#EEF1EF"></i>#EEF1EF</span>
+        <span class="sw"><i style="background:#FBFCFB"></i>#FBFCFB</span>
+        <span class="sw"><i style="background:#181C19"></i>#181C19</span>
+        <span class="sw"><i style="background:#23694F"></i>#23694F</span>
+        <span class="sw"><i style="background:#A02A26"></i>#A02A26</span>
+      </dd>
+      <dt>Colour, dark</dt>
+      <dd class="swatches">
+        <span class="sw"><i style="background:#0C0F0D"></i>#0C0F0D</span>
+        <span class="sw"><i style="background:#151816"></i>#151816</span>
+        <span class="sw"><i style="background:#E9ECEA"></i>#E9ECEA</span>
+        <span class="sw"><i style="background:#8CCAAF"></i>#8CCAAF</span>
+        <span class="sw"><i style="background:#EB776C"></i>#EB776C</span>
+      </dd>
+      <dt>Skin</dt>
+      <dd>
+        <ul class="points">
+          <li>One accent, pine green (hue 165), marks action, selection, focus, the matched term and success.</li>
+          <li>Neutrals are near-neutral graphite with a faint green cast (hue 160, chroma 0.004 to 0.007) per theme.</li>
+          <li>Success shares the pine ink but sits on a neutral wash, so a success badge never matches an accent badge.</li>
+        </ul>
+      </dd>
+      <dt>Themes</dt>
+      <dd class="themes">2: light default, complete dark peer</dd>
+      <dt>Detect findings</dt>
+      <dd class="detect"><strong>0</strong> with the pinned <span class="cmd">impeccable.exe</span> 0.1.5. The skill's 0.1.18 engine reports 2, the same disabled Empty-state specimen as D, exempt and commented.</dd>
     </dl>
   </div>
 
@@ -362,9 +362,15 @@
 <footer class="page">
   <p>
     All three files are self-contained: one style block, system fonts, no network request, no build
-    step. Contrast pairs and their ratios are recorded in a comment at the top of each file. Each
-    direction's whole token system is a commented custom property block at the start of its style
-    block, which is what P2 turns into the three layer token file after the pick.
+    step. Each file's whole token system is a commented custom property block at the start of its
+    style block, which is what P2 turns into the three layer token file after the pick. Contrast for
+    D and D2 was measured on the rendered pages in both themes; the worst ratios are in
+    <span class="cmd">specs/05_BUILD_REVIEW.md</span>.
+  </p>
+  <p>
+    Directions A (Command Deck) and B (Paper Ledger) are still in this folder as
+    <span class="cmd">direction-a.html</span> and <span class="cmd">direction-b.html</span>; they are out of
+    the running and no longer shown here.
   </p>
   <p>
     Nothing below happened yet: no token file, no Tailwind config, no primitive component, no app
