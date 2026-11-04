@@ -90,6 +90,23 @@ open, or newly scoped out:
   and treats `app` as the one `03 §7h.1` kind with no unambiguous reference form, so it is not a
   P4 reference kind. Each of these is printed in the report, so a different convention is a
   comparison against a stated baseline rather than a hidden one.
+- **Pre-existing: the e2e capture test fails on `main` too (found 2026-11-04 QA, owner agent).**
+  `src-tauri/tests/e2e_capture.rs` is `#[ignore]`d (it needs a real desktop), so CI never runs it.
+  Run for real on this desktop it captures and OCRs correctly, then fails at
+  `assert_eq!(frame.raw_text, frame.content_text)`, whose comment calls `content_text` "a
+  passthrough copy of raw_text in PR2". It fails identically on unmodified `main` (`4bd120b`), so
+  the 0.4.5 arc did not cause it. Not silenced: it is unclear whether the two texts now differ by
+  design (the chrome filter) or because of a defect, and an assertion should not be deleted before
+  that is known. Next step for P5 or a `fix/` branch: decide which, then correct the assertion or
+  the code.
+- **Review nits accepted but not changed tonight (2026-11-04, owner agent).** Three older kernel
+  settings tests are vacuous (`round_trips_defaults`, `save_settings_never_writes_retired_keys`,
+  `advanced_values_drive_the_same_consumers_the_typed_fields_did`): they pass against a no-op
+  implementation. `ssv2c-rebuild` resolves image paths against the copied DB's folder, so the
+  maintainer run, which copies only the DB, reports every image as missing (noise, no data lost).
+  Harness edge cases: an empty terminal `citations` event is ignored rather than read as zero
+  citations, and non-ASCII reference text never matches SQLite's ASCII `lower()`. None changes a
+  result tonight; each is a small fix for the phase that next touches the file.
 
 
 ## 2026-10-19 — Carried forward from the 0.4.2 arc (owner: maintainer unless stated)

@@ -21,7 +21,7 @@
   override, so running it would open the real profile, which the run rules forbid. The behavioural
   proof is the maintainer's native check (enable the API in Integrations, change any other
   setting, confirm the listener stays up).
-- **Should-fix, all fixed (`b431bc8`, `cc1d916`):**
+- **Should-fix, all fixed (`b431bc8`, `cd79f40`, `171219a`):**
   - `ssv2c-rebuild` dropped five live internal markers. Losing `sessions.backfill_done_until`
     re-segments the carried history. Now carried, plus a drift-guard test that scans the shipped
     source for `settings` key constants and fails on any key the rebuild neither carries nor drops
@@ -34,6 +34,12 @@
     contents: zero schema objects is initialised, anything else takes the strict v14 refusal, a
     non-SQLite file is refused untouched. A simulated crashed first run now recovers to v14.
   - `advanced.toml` rewrite is atomic (temp file then rename).
+  - The `#[ignore]`d e2e capture test still wrote `capture.diff_threshold` to the `settings`
+    table, which the kernel no longer reads, so it silently ran at the default threshold. It now
+    sets the value through `advanced.toml` and asserts it took effect (`cd79f40`). Run for real on
+    this desktop: setup and capture work. The test then fails at `raw_text == content_text`, and
+    **fails identically on unmodified `main` (`4bd120b`)**, so that failure predates the arc; it is
+    recorded in `07`, not silenced.
   - Four P4 metrics did not match their printed definitions: `sequence` ties, `window_recall`
     expecting out-of-window frames, recall@10 never reaching sessions, and the seen-again probe
     varying with `--pairs`. Fixed, report text updated to match.

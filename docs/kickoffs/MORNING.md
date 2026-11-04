@@ -11,8 +11,8 @@ before the rules took effect: PR #150 (P1) is open from an earlier turn.
 | 2 P1 self-test | done | `feat/0.4.5-p1-specs-contract` | 83e281a |
 | 3 P2 design directions | done, stopped at the checkpoint | `feat/0.4.5-p2-design-directions` | cdf20ba |
 | 4 Phase kickoff files P2 to P10 | done | `feat/0.4.5-p1-specs-contract` | dad1eb2 |
-| 5 P3 baseline schema and settings v2 | done, maintainer run open | `feat/0.4.5-p3-baseline-schema` | b431bc8 |
-| 6 P4 evaluation harness | done, baseline run open | `feat/0.4.5-p4-auto-eval` | cc1d916 |
+| 5 P3 baseline schema and settings v2 | done, maintainer run open | `feat/0.4.5-p3-baseline-schema` | cd79f40 |
+| 6 P4 evaluation harness | done, baseline run open | `feat/0.4.5-p4-auto-eval` | 171219a |
 
 Full suite on the P4 tip, which contains every P3 change: `npm ci`, `npm run lint`, `npm run
 build`, `npm test`, `stage-mcp`, `cargo fmt --check`, and `clippy`, `build` and `test` on the whole
