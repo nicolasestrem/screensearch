@@ -1,5 +1,219 @@
 # 05 — Build Review
 
+## 2026-11-04: QA pass on P2, P3 and P4 (branches `feat/0.4.5-p3-baseline-schema`, `feat/0.4.5-p4-auto-eval`)
+
+- **Method.** Each branch was verified on its own (not only the combined tree), an independent
+  read-only reviewer audited the P3 and P4 diff against the kickoffs and `03 §4`/`§8`, and every
+  finding was reproduced in code before it was fixed. Every code fix has a regression test that
+  was **mutation-checked**: the old behaviour was put back and the test was confirmed to fail,
+  then the fix was restored and confirmed byte-identical.
+- **Found by testing the P3 branch alone (merge blocker).** `node scripts/stage-mcp.mjs` failed
+  on P3 with `cannot update the lock file ... because --locked was passed`. The P3 commit's
+  `Cargo.lock` had been written while P4's harness work shared the tree, so it listed five
+  harness dependencies P3 does not use. It passed only on the combined tree, which is why the
+  overnight run missed it. Fixed on P3 (`d68a6f5`); P4 re-adds its own edges (`cedfc73`).
+- **Blocker (review, verified).** A Settings save could undo an API change made in the HTTP API
+  panel and stop the listener: `api.enabled/port/bind_address` became typed settings that
+  `set_settings` hot-applies, but the Settings draft never refreshed them and `set_api_config`
+  never invalidated the `settings` query, so a stale `api_enabled=false` was written back. Fixed:
+  the draft mirrors `api_*` like it already mirrored `app_*`, `set_api_config` invalidates
+  `settings`, `set_settings` invalidates `apiStatus`. **Not run live:** the app has no data-dir
+  override, so running it would open the real profile, which the run rules forbid. The behavioural
+  proof is the maintainer's native check (enable the API in Integrations, change any other
+  setting, confirm the listener stays up).
+- **Should-fix, all fixed (`b431bc8`, `cd79f40`, `48a9705`, `c437297`):**
+  - `ssv2c-rebuild` dropped five live internal markers. Losing `sessions.backfill_done_until`
+    re-segments the carried history. Now carried, plus a drift-guard test that scans the shipped
+    source for `settings` key constants and fails on any key the rebuild neither carries nor drops
+    on purpose. `text.catalog_filter_version` is dropped on purpose: it watermarks
+    `chrome_text_catalog`, which is not carried.
+  - The allocator test could not tell copy from recompute (fixture high-water 7 = max frame id 7).
+    Now 42; a recompute mutant fails with `source Some("42"), destination Some("7")`.
+  - Store open decided fresh vs existing by `path.exists()`, so a first run that failed mid-baseline
+    left an empty file refused forever, and the check raced a file appearing. It now decides by
+    contents: zero schema objects is initialised, anything else takes the strict v14 refusal, a
+    non-SQLite file is refused untouched. A simulated crashed first run now recovers to v14.
+  - `advanced.toml` rewrite is atomic (temp file then rename).
+  - The `#[ignore]`d e2e capture test still wrote `capture.diff_threshold` to the `settings`
+    table, which the kernel no longer reads, so it silently ran at the default threshold. It now
+    sets the value through `advanced.toml` and asserts it took effect (`cd79f40`). Run for real on
+    this desktop: setup and capture work. The test then fails at `raw_text == content_text`, and
+    **fails identically on unmodified `main` (`4bd120b`)**, so that failure predates the arc; it is
+    recorded in `07`, not silenced.
+  - Four P4 metrics did not match their printed definitions: `sequence` ties, `window_recall`
+    expecting out-of-window frames, recall@10 never reaching sessions, and the seen-again probe
+    varying with `--pairs`. Fixed, report text updated to match.
+- **Accepted, not changed:** the reviewer's nits on vacuous older kernel tests, the rebuild's
+  image check resolving paths against the copied DB's folder, and harness edge cases (empty
+  terminal citations event, non-ASCII needles). Recorded in `07`; none changes a result
+  tonight's fixture or the maintainer's run depends on.
+- **Blocker regression test (`48a9705`).** The Settings mirror step moved into
+  `ui/src/lib/settingsDraft.ts` and is covered by `ui/test/settingsDraft.test.mjs` (6 tests: the
+  exact revert scenario, App toggles, preserved form edits, same reference when nothing changed,
+  no mutation, the mirrored key set). Removing `api_enabled` from the mirrored set, which is the
+  original bug, fails 3 of the 6.
+- **Reviewed and kept as is:** `text.catalog_filter_version` is not carried. A missing watermark
+  only makes the startup pass re-clean rows whose own `frame_text.filter_version` is below
+  current; the rebuild copies that per-row column verbatim, so the pass finds no frames, writes the
+  watermark, and changes no text.
+- **P2 deliverables.** All four HTML files parse with zero structural errors and no duplicate ids,
+  make no network request, and the three directions use no raw colour or px font size outside their
+  token blocks. Contrast was **computed from the token values**, not read from the files' own
+  comments, at two scopes: every rule that sets both `color` and `background` (worst 5.03:1), and
+  every text token against every page-background token within each theme (worst 4.52:1, direction
+  A light, faint text on the document background). Both clear WCAG AA 4.5:1 in every theme.
+  Inherited combinations (a colour from an ancestor over a descendant's background) were not
+  rendered; for those the evidence is each file's own documented audit.
+- **Final gate, P4 tip (contains all P3 fixes), raw:**
+  ```
+  === npm ci                                                             exit=0
+  === npm run lint                                                       exit=0
+  === npm run build                                                      exit=0
+  === npm test               tests 88 / pass 88 / fail 0                 exit=0
+  === node scripts/stage-mcp.mjs                                         exit=0
+  === cargo fmt --all -- --check                                         exit=0
+  === cargo clippy --locked --workspace --all-targets -- -D warnings     exit=0
+  === cargo build --locked --workspace                                   exit=0
+  === cargo test --locked --workspace                                    exit=0
+  === git diff --exit-code -- ui/src/bindings                            exit=0
+  passed: 1241  failed: 0
+  ```
+  Run on the final P4 tip `c437297`, which contains every P3 change. 1241 Rust tests = the
+  earlier 1233 plus 8 new regression tests; 88 UI tests = the earlier 82 plus 6 for the blocker.
+  The P3 branch alone was also run green.
+
+## 2026-11-03: 0.4.5 P4 automatic evaluation harness (branch `feat/0.4.5-p4-auto-eval`)
+
+- **Scope (roadmap P4, kickoff `docs/kickoffs/P4.md`):** dev-only eval runner in `crates/harness`.
+  Five self-generated families (last-seen, involvement, sequence, window recall, seen-again),
+  unlabeled entity check, six metrics. **No hand-written question set, no labelling, no golden
+  file** (0.4.5 D17). `D17` is enforced by construction: the only inputs are the fixture database
+  and a seed.
+- **Metrics defined in code and printed in the report:** evidence recall@10 over cited ids (the
+  only evidence a client sees, `03 §7i.3`), a separate `/v1/search` retrieval recall@10 diagnostic
+  that is never mixed in, citation validity (frame exists and captured in window; session exists
+  and overlaps the window, NULL end treated as open), known-fact presence after case and
+  whitespace normalization, latency p50/p95 by nearest rank, entity recovery and invention with
+  `n/a (no entity surface)` when the graph is empty.
+- **Fixture run (not the baseline):** 87 pairs from a 12 session, 36 frame fixture. `pairs.jsonl`,
+  `runs.jsonl`, `report.md`, `report.json`. A fixture yields fewer pairs than real history, and the
+  report prints a pair-shortfall note rather than inventing pairs.
+- **Verification (branch tip, raw):**
+  ```
+  cargo fmt --all -- --check                                       exit=0
+  cargo clippy -p harness --all-targets -- -D warnings              exit=0
+  cargo test -p harness   146 passed / 1 / 3 / 6 / 6 / 3 / 3 passed, 0 failed
+  ```
+  Read-only proof: `PRAGMA query_only=1`, INSERT and CREATE TABLE fail, reads succeed, the file is
+  byte identical afterwards, with a writable negative control on the same file. Determinism:
+  same database and seed produce identical pairs; a different seed does not; editing a frame
+  changes the derived pair.
+- **Maintainer run (not performed by an agent):**
+  `cargo run -p harness --bin harness -- eval --db <db> --api http://127.0.0.1:43210 --out harness-data/eval-baseline`
+- **Not claimed:** the baseline report against real history (maintainer's run), and the P5/P6
+  thresholds, which freeze from that report at Gate A.
+
+## 2026-11-03: 0.4.5 P3 baseline schema and settings v2 (branch `feat/0.4.5-p3-baseline-schema`)
+
+- **Scope (roadmap P3, kickoff `docs/kickoffs/P3.md`):** `crates/store` baseline v14 with the
+  v1 to v13 chain deleted, the dev-only `crates/rebuild` tool (D3), settings v2 in
+  `crates/traits`/`crates/kernel`/`src-tauri` (D6), and the regenerated bindings.
+- **Baseline fidelity.** The chain was dumped before deletion: a throwaway test opened an
+  in-memory database through the old migrations and wrote `sqlite_master` to `target/v13_dump.sql`,
+  then a second throwaway harness rebuilt v13 from that dump and compared it with `create_baseline`
+  table by table (`PRAGMA table_info`, `foreign_key_list`, `index_list`, index and trigger SQL).
+  Result: `parity OK: 41 v13 objects preserved`, `missing (0)`, `added (19)` = the eleven new tables
+  and eight indexes. 31 tables (27 plain plus 4 virtual), 22 indexes, 7 triggers.
+- **Open refusal.** A database that is not v14 fails before any pragma runs, so a refused file is
+  never header rewritten; the message names the found version and `ssv2c-rebuild`. Tests assert the
+  file bytes and mtime are unchanged after a refusal, for a v13 and a v15 fixture.
+- **Settings v2 counts (grep, not assertion):** 25 UI rows = 24 typed fields plus `api.token`;
+  44 file-only = 43 `AdvancedConfig` knobs plus `app.tray_toast_done`; 9 deleted. Retired-key grep
+  hits only the retired list, its doc comments, the retirement test, the rebuild tool's own copy of
+  the retired list and fixtures, and two `uia` doc comments that explain the retirement.
+- **Deleted-key and moved-key greps (raw):**
+  ```
+  grep -rn MIGRATIONS crates                                    -> 0 lines
+  grep -rn ssv2c-rebuild crates/store/src                       -> 4 lines
+  grep -rn advanced.toml crates                                 -> 28 lines
+  capture_diff_threshold / sidecar_device / enrich_embed_text /
+    overlay_max_results in crates/traits/src/ipc.rs             -> 0 each
+  ```
+- **Per-crate gates (raw, from the lanes' logs):**
+  ```
+  cargo fmt --all -- --check                                    exit=0
+  cargo clippy -p store --all-targets -- -D warnings             exit=0
+  cargo test -p store        171 passed (80 lib + 6 baseline + 65 store + others), 0 failed
+  cargo test -p rebuild      4 + 5 passed, 0 failed
+  cargo test -p traits       123 + 4 passed, 0 failed
+  cargo test -p kernel       126 + 9 + 17 + 3 + 31 + 10 + 2 passed, 0 failed
+  cargo test -p harness      146 + 1 + 3 + 6 + 6 + 3 + 3 passed, 0 failed
+  ```
+- **Full suite on the integrated tree (verbatim, one command per line):**
+  ```
+  === npm ci                                                   exit=0
+  === npm run lint                                             exit=0
+  === npm run build                                            exit=0
+  === node scripts/stage-mcp.mjs                               exit=0
+  === cargo fmt --all -- --check                               exit=0
+  === cargo clippy --workspace --all-targets -- -D warnings     exit=0
+  === cargo build --workspace                                  exit=0
+  === cargo test --workspace                                   exit=0
+  ```
+  `cargo test --workspace` summary: **1233 passed, 0 failed**; the four `1 ignored` are the
+  pre-existing `perf` and `seed_demo` gates. Full log kept at `%TEMP%\p3-full-verify.txt`.
+- **UI build was red mid-phase and was repaired.** Removing 44 file-only and 9 deleted keys from
+  the typed `Settings` broke `Settings.tsx`, `ScheduleControl.tsx` and `FlowOverlay.tsx` (157
+  type errors). Repair: 40 controls removed from `Settings.tsx` (that is the D6 subtraction P7 will
+  re-home by category), 3 from `ScheduleControl.tsx`, and the overlay now reads `overlay.max_results`
+  from a new read-only `get_advanced_config` projection instead of a removed field. No hardcoded
+  fallback. `npm test` 82 passed.
+- **Not claimed:** the rebuild run against the maintainer's real database, the per-table counts
+  before and after, and the twenty frame spot check. Those are the maintainer run in
+  `docs/kickoffs/P3.md`; the agent evidence is the synthetic fixture test only.
+- **Gaps recorded:** `06` #30 (the spec's §4 does not describe ten as-built details), #31 (the
+  rebuild tool's home reconciled from `crates/harness` to `crates/rebuild`), #32 (carry set wider
+  than the kickoff list), #33 (three §8 defaults disagree with the as-built code). `07` carries the
+  product questions, including the `advanced.toml` reset for an existing profile.
+
+## 2026-11-03: 0.4.5 P1 specs contract (branch `feat/0.4.5-p1-specs-contract`, specs-only)
+
+- **Scope (roadmap `docs/0.4.5.md` P1):** zero code. D1–D18 normalized into the specs so a fresh
+  agent can start any wave-A phase (P2/P3/P4) from `specs/` alone. Landing sites: `01 §2/§6/§7/§8`
+  (single user, baseline schema, rebuild tool, local-only, next arc); `02 §5k` (arc), `§5d`/`§7`
+  (audio not a priority); `03 §4` (baseline rule at `schema_version = 14`, 11 new tables, migration
+  prose kept as history), `§7c`/`§7f.7` (4 read routes, 4 MCP tools), new `§7h`/`§7i`/`§7j` (work
+  graph, Ask v2, insights), `§8` (settings v2 table, load rule), `§12` (schema failure mode), new
+  `§13d` (gates + per-phase DoD); `04 §1/§2/§3/§4` (0.4.5 pointer, ownership, D2/D18 guardrails);
+  `UI_REFERENCE §1/§2/§5` (placeholders filled at P2), `§3` (v2 IA), `§4` (12 state rows), `§7`,
+  `§8` (v2 shell contract), `§10.7`; v1 identity archived verbatim to
+  `specs/archive/UI_REFERENCE_v1_identity.md`; `07` (0.4.5 section, #75, #82, #104); `CLAUDE.md`
+  hard rule; one-line amendments in `docs/ARCHITECTURE.md` and `docs/memory-api-direction-plan.md`.
+- **Implemented by four disjoint writer lanes** (`03` core sections, `03 §8`, `UI_REFERENCE`, the
+  other specs/docs), integrated by the parent, which also fixed survivors the lanes did not own:
+  `03 §12` still stated forward-only migrations as the current rule, `02` closing status still said
+  "no next arc", `UI_REFERENCE §7` still said "dark-only by design", `07` #82/#104 pointed forward
+  at the superseded rules.
+- **`03 §8` conversion:** 78 key rows — 25 `UI` (the closed list, each with a live consumer;
+  `api.read_token` shares the `api.token` row), 44 `file-only` (live consumer, engine tuning), 9 `deleted` (hits only in the
+  `RETIRED_SETTINGS_KEYS` sweep/tests/doc comments, or none). Two backticked tokens in the old list
+  were not keys (`frames.capture_trigger`, `set_api_config.bind_address`) and stay in prose.
+- **Gates 1–2 (raw output goes in the PR body):** scope — 13 tracked files modified plus the new
+  archive file and `docs/0.4.5.md`, every changed path `*.md`, no `crates/`/`ui/`/`src-tauri/`
+  path; UI rows `25`; tolerance grep over `03` empty (`§8b` byte-identical to `main`); `D1`–`D18`
+  each cited ≥1 file; `CREATE (VIRTUAL) TABLE` count `29` with each of the 11 new names once; every
+  surviving `forward-only` hit is historical or amended; `git diff --check` clean. No build/test
+  run — no code changed.
+- **Gate 3 cold reads:** P3 from `03 §4` alone — **yes** (typed columns, PKs/FKs/CHECKs/indexes for
+  all 11 tables, `schema_version = 14`, refusal naming `ssv2c-rebuild`, no normative migration
+  function); `06` #27 resolved by the maintainer. P2 from `UI_REFERENCE §1/§2/§5` alone —
+  **yes** (each placeholder names who fills it, when, and what unblocks it; `§3`/`§4`/`§8` already
+  authoritative). P5/P8 from `03 §7h` + `§7j` alone — **yes** (six entity kinds, linking rule,
+  ≥0.7 confidence with 7 d → 30 d decay, override precedence, five insight types; `TBD` count `0`).
+- **Resolved (`06` #27, maintainer 2026-11-03):** `api.read_token` shares the `api.token` UI row;
+  `sidecar.device` added as `file-only`. Committed and pushed after the maintainer validated the
+  content and named `nicolasestrem/screensearch` (0.4.5 D18).
+
 ## 2026-10-20 — Setup visibility (branch `feat/setup-progress-visibility`, `06` #26)
 
 - **Scope (approved contract `02 §5j`, `03 §7g`):** additive `SetupStatus` snapshot +

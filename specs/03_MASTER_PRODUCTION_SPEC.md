@@ -195,7 +195,15 @@ with **no backfill** (clean-DB assumption — see `07`).
 
 ## 4. Data model (SQLite, WAL) — authoritative DDL
 
-Single file `screensearch.db`. Migrations are forward-only, tracked in `schema_version`.
+Single file `screensearch.db`. **Baseline rule (0.4.5 D2):** this section holds the complete DDL for
+the current `schema_version = 14`; the app creates a fresh DB from it and ships **no migration
+chain**. A schema change edits this baseline and bumps `schema_version`; there are no populated-DB
+migration tests. A DB whose `schema_version` is not 14 refuses to open with a message naming the
+rebuild tool (`crates/rebuild`'s `ssv2c-rebuild`); that dev-only tool reads the old DB **read-only**
+and writes a fresh v14 file, and the old file is renamed `*.v13.bak` only after the maintainer
+confirms the new one opens — a clean start instead of a rebuild is the maintainer's Gate A choice,
+never automatic (0.4.5 D3). The shipped app never migrates history; the 0.2.x–0.4.2 forward-only
+chain is history, not the rule (0.4.5 D2).
 
 ```sql
 -- frames: one row per stored (changed) capture
@@ -232,7 +240,8 @@ CREATE VIRTUAL TABLE ocr_text_fts USING fts5(text, content='ocr_text', content_r
                                              tokenize='porter');
 -- triggers keep FTS in sync (insert/delete/update) — standard external-content pattern
 
--- 0.2.x text signal (schema_version 2 → 3; clean DB, forward-only migration authored in PR2).
+-- 0.2.x text signal (schema_version 2 → 3; clean DB, forward-only migration authored in PR2 — history
+-- only: from 0.4.5 the baseline rule above governs and no migration chain exists, 0.4.5 D2).
 -- frame_text: preserved raw text + filtered default-retrieval text, one row per frame.
 CREATE TABLE frame_text (
   frame_id            INTEGER PRIMARY KEY REFERENCES frames(id) ON DELETE CASCADE,
@@ -383,6 +392,131 @@ CREATE TABLE jobs (
 );
 CREATE INDEX idx_jobs_ready ON jobs(state, not_before, priority DESC, id);
 
+-- 0.4.5 work graph (0.4.5 D8): entities extracted from captured text, linked to sessions (§7h).
+CREATE TABLE entities (
+  id            INTEGER PRIMARY KEY,
+  kind          TEXT NOT NULL CHECK (kind IN ('repo','file','domain','document','ref','app')),
+  canonical_name TEXT NOT NULL,
+  normalized_key TEXT NOT NULL,          -- lowercase, trimmed, path/URL-normalized; the dedup identity
+  source        TEXT NOT NULL CHECK (source IN ('heuristic','llm')),
+  confidence    REAL NOT NULL,           -- 0..1; the extraction rule's confidence, never invented
+  first_seen_at INTEGER NOT NULL,        -- unix ms
+  last_seen_at  INTEGER NOT NULL,
+  created_at    INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  updated_at    INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  UNIQUE(kind, normalized_key)
+);
+CREATE INDEX idx_entities_last_seen ON entities(last_seen_at DESC);
+CREATE INDEX idx_entities_kind ON entities(kind, last_seen_at DESC);
+
+CREATE TABLE entity_aliases (
+  id         INTEGER PRIMARY KEY,
+  entity_id  INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+  alias      TEXT NOT NULL,
+  source     TEXT NOT NULL CHECK (source IN ('heuristic','llm','user')),
+  confidence REAL NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  UNIQUE(entity_id, alias)
+);
+CREATE INDEX idx_entity_aliases_alias ON entity_aliases(alias);
+
+-- session ↔ entity link. A session touches an entity at most once; hit_count is the evidence weight.
+CREATE TABLE session_entities (
+  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  entity_id  INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+  hit_count  INTEGER NOT NULL DEFAULT 1,
+  confidence REAL NOT NULL,
+  first_seen_at INTEGER NOT NULL,
+  last_seen_at  INTEGER NOT NULL,
+  PRIMARY KEY(session_id, entity_id)
+);
+CREATE INDEX idx_session_entities_entity ON session_entities(entity_id, last_seen_at DESC);
+
+-- 0.4.5 threads: clusters of sessions sharing strong entities within a decaying window (§7h).
+CREATE TABLE threads (
+  id            INTEGER PRIMARY KEY,
+  title         TEXT NOT NULL,
+  cluster_key   TEXT NOT NULL UNIQUE,    -- deterministic clusterer identity; rebuilt, not edited
+  first_seen_at INTEGER NOT NULL,
+  last_seen_at  INTEGER NOT NULL,
+  session_count INTEGER NOT NULL DEFAULT 0,
+  created_at    INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  updated_at    INTEGER NOT NULL DEFAULT (unixepoch()*1000)
+);
+CREATE INDEX idx_threads_last_seen ON threads(last_seen_at DESC);
+
+-- A session belongs to at most ONE thread (UNIQUE session_id); split/merge rewrite these rows.
+CREATE TABLE thread_sessions (
+  thread_id  INTEGER NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  session_id INTEGER NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
+  confidence REAL NOT NULL,
+  PRIMARY KEY(thread_id, session_id)
+);
+CREATE INDEX idx_thread_sessions_thread ON thread_sessions(thread_id);
+
+-- User overrides always beat the clusterer (§7h). payload is typed JSON per kind, validated by traits.
+CREATE TABLE thread_overrides (
+  id               INTEGER PRIMARY KEY,
+  kind             TEXT NOT NULL CHECK (kind IN ('rename','merge','split')),
+  thread_id        INTEGER REFERENCES threads(id) ON DELETE CASCADE,
+  target_thread_id INTEGER REFERENCES threads(id) ON DELETE CASCADE,
+  payload          TEXT NOT NULL,        -- rename: {"title":…} · merge/split: {"session_ids":[…]} / {"thread_id":…,"session_ids":[…]}
+  created_at       INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  CHECK ((kind = 'rename' AND thread_id IS NOT NULL AND target_thread_id IS NULL)
+      OR (kind = 'merge'  AND thread_id IS NOT NULL AND target_thread_id IS NOT NULL)
+      OR (kind = 'split'  AND thread_id IS NOT NULL))
+);
+
+-- 0.4.5 session vectors (§7i): session title+summary embeddings, same model + dim as text embeddings.
+CREATE VIRTUAL TABLE session_vectors USING vec0(
+  session_id INTEGER PRIMARY KEY,        -- == sessions.id
+  embedding  FLOAT[768] distance_metric=cosine
+);
+
+-- 0.4.5 insights (§7j): typed payload is the truth; the model never owns a row.
+CREATE TABLE insights (
+  id             INTEGER PRIMARY KEY,
+  kind           TEXT NOT NULL CHECK (kind IN ('thread_activity','open_loop','recurrence','semantic_neighbour','resumption')),
+  window_start   INTEGER NOT NULL,       -- unix ms
+  window_end     INTEGER NOT NULL,
+  payload        TEXT NOT NULL,          -- typed JSON, rendered without the model
+  generator      TEXT NOT NULL CHECK (generator IN ('heuristic','llm_phrased')),
+  generated_at   INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  stale          INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0,1))
+);
+CREATE INDEX idx_insights_kind ON insights(kind, generated_at DESC);
+CREATE INDEX idx_insights_window ON insights(window_start, window_end);
+
+-- An insight without evidence is a defect (§7j). SQLite has no deferred constraints across tables, so the
+-- rule is enforced by the store API (insight + evidence written in one transaction; zero evidence → Err) + a test.
+CREATE TABLE insight_evidence (
+  insight_id INTEGER NOT NULL REFERENCES insights(id) ON DELETE CASCADE,
+  ordinal    INTEGER NOT NULL,
+  kind       TEXT NOT NULL CHECK (kind IN ('frame','session','thread','entity','mark','report')),
+  ref_id     INTEGER NOT NULL,
+  PRIMARY KEY(insight_id, ordinal)
+);
+
+-- 0.4.5 Ask v2 conversations (§7i).
+CREATE TABLE ask_threads (
+  id         INTEGER PRIMARY KEY,
+  title      TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)
+);
+CREATE TABLE ask_turns (
+  id             INTEGER PRIMARY KEY,
+  thread_id      INTEGER NOT NULL REFERENCES ask_threads(id) ON DELETE CASCADE,
+  ordinal        INTEGER NOT NULL,
+  question       TEXT NOT NULL,
+  answer         TEXT,                   -- NULL while streaming / on failure
+  window_start   INTEGER,
+  window_end     INTEGER,
+  resolved_entities TEXT,                -- JSON array of entity ids resolved for this turn
+  created_at     INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  UNIQUE(thread_id, ordinal)
+);
+
 -- tagging, settings, schema version
 CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL);
 CREATE TABLE frame_tags (frame_id INTEGER REFERENCES frames(id) ON DELETE CASCADE,
@@ -397,10 +531,16 @@ CREATE TABLE schema_version (version INTEGER NOT NULL);
 removes `embeddings`, and an `AFTER DELETE` trigger (or app-side txn) removes the matching
 `embedding_vectors` rows. *(0.3.0 removed the image-embedding lane, so there is no second vec0 sync.)*
 
-**0.3.0 migrations** (forward-only; each bumps `schema_version` by **exactly one** — D15 — and must
-confirm the next integer against `crates/store/src/schema.rs::LATEST_SCHEMA_VERSION` rather than a
-hardcoded number, and ship a populated-DB migration test, the 0.2.1 `frames`-rebuild test as the
-pattern):
+**Historical migrations (0.2.x–0.4.2; context only).** Under the baseline rule above these steps
+exist only in git history and in `CHANGELOG-ARCHIVE.md`; the v14 baseline is the whole story.
+Retained so the provenance of `frames.session_id`, `marks`, `report_runs.kind` and the removed image
+lane stays readable.
+
+**0.3.0 migrations, as shipped** (forward-only; each bumped `schema_version` by **exactly one** —
+D15 — confirming the next integer against `crates/store/src/schema.rs::LATEST_SCHEMA_VERSION` rather
+than a hardcoded number, and shipping a populated-DB migration test, the 0.2.1 `frames`-rebuild test
+as the pattern). Superseded by the baseline rule: no such chain or test exists from 0.4.5 on
+(0.4.5 D2).
 - **PR4 — image-lane drop:** `DROP TABLE image_embedding_vectors; DROP TABLE image_embeddings;` (the
   `AFTER DELETE` trigger goes with its table) and `DELETE FROM jobs WHERE kind = 'embed_image';` (in
   any state). This destroys **derived, re-derivable** vectors only — frames, stored images, text, and
@@ -411,11 +551,12 @@ pattern):
   reconstruction reachable); an unresolved mark never pins a frame or blocks retention. No retention
   pinning in 0.3.0.
 
-**0.4.0 migration** (the arc's **only** schema change — D4; same forward-only mechanics: bumps
-`schema_version` by **exactly one** — 10 → 11 — with the next integer confirmed against
+**0.4.0 migration, as shipped** (the arc's **only** schema change — D4; same forward-only mechanics:
+bumped `schema_version` by **exactly one** — 10 → 11 — with the next integer confirmed against
 `crates/store/src/schema.rs::LATEST_SCHEMA_VERSION` rather than a hardcoded number, and a
 populated-DB migration test, the 0.2.1 `frames`-rebuild test as the pattern; if any **other** 0.4.0
-PR appears to need schema, that PR is wrong — stop and report):
+PR had appeared to need schema, that PR was wrong — a stop-and-report, not a schema edit). Superseded
+by the baseline rule (0.4.5 D2): v14 is created whole, and this step survives only as history.
 - **PR3 — sessions:** creates the `sessions`, `session_artifacts` tables + indexes above and adds
   the `frames.session_id` column + `idx_frames_session` (all shown in the DDL block). **Structure
   only, no backfill** — the migration is fast and creates no session rows; pre-existing frames get
@@ -715,9 +856,20 @@ is a blocked acceptance gate, never a substituted loopback success.
   - `POST /v1/ask` gains an optional **`session_id`** scope — when set, retrieval is restricted to that
     session's frames and the answer cites **only** in-session frames (the arc's strategic payoff:
     *"what did I do in my last Claude Code session?"*). Absent `session_id`, behavior is unchanged (D10).
+- **0.4.5 (P8, 0.4.5 D12 — read-only, no new write scopes):** four additive reads over the work graph
+  and insights (`§7h`/`§7j`), behind the same genuine read-credential authorization as `§7f` and with
+  the same window/`limit` conventions as `GET /v1/sessions`:
+  - `GET /v1/threads` — threads overlapping the requested window, in an explicitly stated order.
+  - `GET /v1/threads/{id}` — one thread with its sessions and its member entities.
+  - `GET /v1/entities` — entities, filterable by kind and by name/alias substring.
+  - `GET /v1/insights` — insights whose window overlaps the request, each with its evidence ids.
+  All four are GETs: none generates, regenerates or writes anything, and a read never starts
+  inference — the rule the 0.4.0 session reads already follow. `docs/API.md` grows with them in the
+  same phase (P8, 0.4.5 D12).
 
 Docs: a hand-written `docs/API.md` (OpenAPI-lite; v1 is small, no codegen), authored by PR7; PR6
-extends it with the sessions endpoints.
+extends it with the sessions endpoints; P8 extends it with the 0.4.5 threads/entities/insights reads
+(0.4.5 D12).
 
 **MCP server (PR8, D13).** A separate workspace **binary** crate `crates/mcp` → `screensearch-mcp.exe`,
 shipped in the NSIS installer — a thin **stdio** wrapper over this HTTP API, with **no store access and
@@ -730,6 +882,9 @@ client config for Claude Desktop / Claude Code + the same threat-model paragraph
 **0.4.0 (PR6, D12):** the wrapper gains `list_sessions`, `get_session`, and `ask_session` (over the
 `§7c` sessions endpoints) — still read-only, still a stdio HTTP client with no store access (0.3.0
 D13 holds); `docs/MCP.md`'s tool table + threat-model boundary grow with them.
+**0.4.5 (P8, 0.4.5 D12):** the wrapper gains `list_threads`, `get_thread`, `find_connections` and
+`list_insights` over the `§7c` 0.4.5 read routes — still read-only, still a stdio HTTP client with no
+store access; `docs/MCP.md` grows with them in the same phase.
 
 ## 7d. App lifecycle (0.3.2): tray, close-to-tray, single instance
 
@@ -1108,6 +1263,10 @@ token. `history.read` is granted to both. No class automatically expands to futu
 | GET /v1/coverage (new) | get_capture_coverage (new) | history.read | allow | allow |
 | GET /v1/reports (new) | list_reports (new, P3) | history.read | allow | allow |
 | GET /v1/reports/{run_id} (new) | get_report (new, P3) | history.read | allow | allow |
+| GET /v1/threads (new) | list_threads (new, P8) | history.read | allow | allow |
+| GET /v1/threads/{id} (new) | get_thread (new, P8) | history.read | allow | allow |
+| GET /v1/entities (new) | find_connections (new, P8) | history.read | allow | allow |
+| GET /v1/insights (new) | list_insights (new, P8) | history.read | allow | allow |
 | Unknown route | unknown tool rejected locally | authenticate first; no implicit grant | 404 | 404 |
 | Any unsupported future mutation/generation route | not registered | default-deny; reports.generate reserved unsupported | no implicit grant | no implicit grant |
 
@@ -1124,6 +1283,11 @@ registry behavior while the HTTP server independently enforces credentials. Unkn
 fall through to arbitrary HTTP. Revocation/rotation affects subsequent requests, not a promise
 to cancel an already authorized in-flight stream. Settings is the only credential-management UI;
 there is no network credential administration endpoint or general scope editor.
+
+The 0.4.5 rows (`list_threads`, `get_thread`, `find_connections`, `list_insights` over the `§7c`
+reads) join `history.read` at the same level as every other read — no new class, no implicit grant.
+P8 updates `docs/API.md` and `docs/MCP.md` in the same phase, and 0.4.5 D12 permits those wire shapes
+to change while the maintainer's own consumers are updated beside them.
 
 ### 7f.8 P0 storage/identity inventory and implementation obligations
 
@@ -1296,104 +1460,336 @@ unknown length, retry reset, digest failure, extraction failure); UI tests for t
 details states; the full CI chain; and a native run of a source-built app on Windows showing
 real engine progress, a failure and reload reconciliation, recorded in `05`.
 
+## 7h. Work graph contract (0.4.5)
+
+The work-graph half of the 0.4.5 arc (`02 §5k`; `docs/0.4.5.md`): ScreenSearch stops only recording
+work and starts linking it. Everything here is **derived-but-persisted** in the `§7e` sense — the
+graph tables are recomputable from frames, text and sessions, and deleting them loses no evidence.
+The schema is in `§4`; this section is the behavioural contract behind it. Implemented by **P5**
+(`crates/graph` — pure logic over `traits` — plus store queries and kernel jobs); the tables ship
+empty in P3's baseline and nothing writes them before P5.
+
+### 7h.1 Entity kinds (0.4.5 D8)
+
+`entities.kind` is a closed set of six: **`repo`**, **`file`**, **`domain`**, **`document`**,
+**`ref`** (an issue/PR/ticket reference such as `#123` or `ABC-123`), **`app`**. People are **out of
+v1**. A "topic" is not a kind: there is no `topic` value, and a topic-shaped name is stored as an
+`app`-or-`document` entity whose display name is carried by `entity_aliases` — it exists only after
+normalization, never as a pre-normalization heuristic row. A seventh kind is a schema change, i.e. a
+baseline edit plus a `schema_version` bump (0.4.5 D2), not a code-only extension.
+
+### 7h.2 Extraction sources and confidence
+
+Heuristic extraction — deterministic, no model — reads: window titles, browser URLs (domain plus
+path shape), filesystem paths, repository names, terminal cwd and prompts, IDE titles, document
+titles, and issue/PR references. It consumes `crates/sessions` tool recognition as **input only**
+(read-only; the sessions read side is not modified here). Every hit carries `source='heuristic'` and
+the confidence of the rule that produced it — the rule's own value, never invented or smoothed.
+
+The optional LLM normalization pass reads session summaries and proposes canonical names and aliases
+(`screensearch-v2c` = `ScreenSearch` = `screensearch.app`). It writes `entity_aliases` rows with
+`source='llm'` and its own confidence; it never rewrites a heuristic entity's `normalized_key`. **An
+LLM pass is additive: heuristic entities never depend on the model**, and the graph is complete and
+useful with the model lane disabled.
+
+Dedup identity is `UNIQUE(kind, normalized_key)` where `normalized_key` is lowercase, trimmed and
+path/URL-normalized; aliases are unique per `(entity_id, alias)`.
+
+### 7h.3 Linking rule
+
+A hit links to the session whose interval contains it: the hit's timestamp falls inside
+`[started_at, ended_at)` (an open session, `ended_at` NULL, is open-ended). The link is one
+`session_entities` row per `(session_id, entity_id)` — a session touches an entity at most once.
+`hit_count` counts **distinct frames** contributing to the link; the link's `confidence` is the
+**maximum** of the contributing hits' confidences, so a session never renders more certain than its
+best evidence.
+
+### 7h.4 Thread clustering rule
+
+Sessions cluster into a `threads` row when they share **at least one** entity with
+`confidence ≥ 0.7`, and the gap between them — measured between `last_seen_at` values — falls inside
+a **decaying window**: full weight at 7 days, decaying **linearly to zero at 30 days**. Beyond 30
+days there is no cluster edge.
+
+Clustering is **deterministic for a given input and override set**. `threads.cluster_key` is the
+sorted list of seed entity ids that produced the thread and is `UNIQUE`, so re-running the clusterer
+over the same data is idempotent: the same sessions land in the same thread under the same key. A
+thread whose membership would change is **rebuilt** (rows replaced), never hand-edited.
+`threads.title` derives from the dominant seed entity's `canonical_name`; `session_count`,
+`first_seen_at` and `last_seen_at` derive from the member sessions. A session belongs to **at most
+one** thread (`thread_sessions.session_id` is `UNIQUE`); merge and split rewrite those rows.
+
+### 7h.5 Override precedence
+
+`thread_overrides` rows (`rename` / `merge` / `split`) are applied **after** clustering and **always
+win** over the clusterer. Precedence is total: for any session, an override-derived assignment beats
+the clustered one, and a later override beats an earlier one of the same kind.
+
+- **rename** sets `threads.title` only; membership is untouched.
+- **merge** folds the source thread's `thread_sessions` rows into `target_thread_id` (the survivor),
+  then removes the emptied source thread. `payload.session_ids` records the source's member set at
+  merge time, for audit and for the undo path; the fold itself follows `thread_sessions`, so the list
+  can never contradict the rows.
+- **split** moves the listed sessions into a **new** thread seeded by the override (its
+  `cluster_key` derives from the override, not from the clusterer), from which clustering continues.
+
+`payload` is typed JSON per kind, validated by the `traits` types (`rename`: `{"title":…}`;
+`merge`: `{"session_ids":[…]}`; `split`: `{"thread_id":…,"session_ids":[…]}`), and the table's CHECK
+constrains which thread ids each kind may carry. The UI writes overrides through the normal store
+API (P9); nothing else inserts them.
+
+### 7h.6 Backfill semantics
+
+Backfill is **one resumable job over the full history**, with progress on the existing setup/job
+status surfaces (`§7g`). It is safe to interrupt at any point: each committed chunk leaves a
+consistent graph, and a re-run continues from the checkpoint without duplicating rows.
+
+### 7h.7 Job kinds (0.4.5 D11)
+
+Four job kinds — `graph_extract` (heuristic extraction + linking), `graph_normalize` (the LLM alias
+pass), `graph_cluster` (threads + overrides), `graph_backfill` (the resumable historical pass) — all
+**on demand or on idle**, all under the existing scheduler and pressure throttle (`§5`). **None runs
+on the capture hot path:** capture, OCR and storage never wait on a graph job, and a throttled graph
+job degrades to "the graph is behind", never to a capture stall. Failure logs and degrades; it never
+blocks capture, search or Ask. The job-kind registry gains these four values in **one** edit (P5
+owns it; P6's own job kind is added beside them).
+
+## 7i. Ask v2 contract (0.4.5)
+
+Ask stops being a frame search that answers and becomes a session-aware, multi-turn conversation over
+history. Implemented by **P6**. The wire changes are explicitly allowed (0.4.5 D12): `/v1/ask` and
+the report projections may change shape, `docs/API.md` / `docs/MCP.md` and the maintainer's own
+consumers are updated in the same phase, and no existing field is repurposed to mean something new.
+
+### 7i.1 Planning
+
+Two planning steps, both before retrieval:
+
+- **Time intent** — relative phrasing ("last week", "before the release", "this morning") resolves to
+  an explicit half-open window `[window_start, window_end)`. With no time intent the window is the
+  whole history. The resolved window is recorded on the turn.
+- **Entity resolution** — entity mentions match against `entities.canonical_name` and
+  `entity_aliases.alias`; a match constrains retrieval to sessions linked to that entity. With no
+  graph row or no match the mention falls back to **plain text** matching, so **P6 does not block on
+  P5**: Ask v2 is fully functional on a DB whose graph tables are still empty.
+
+### 7i.2 Retrieval stages
+
+Stage order is normative; a later stage only ever narrows an earlier one's candidate set.
+
+1. **Threads** — threads whose `[first_seen_at, last_seen_at]` overlaps the planned window, or that
+   contain an entity-resolved session.
+2. **Sessions** — hybrid retrieval over those threads' sessions: FTS on session title/summary
+   combined with `session_vectors` cosine similarity (the vec0 table in `§4`, same model and
+   dimension as text embeddings, maintained and backfilled by a P6 job kind).
+3. **Frames** — the existing hybrid frame search, restricted to frames inside the winning sessions.
+4. **Assembly** — context packed to the existing token budget, best evidence first; truncation drops
+   the tail, never the citations of what remains.
+
+Each stage's candidate count and the assembled token total are recorded per turn so the P4 harness
+can measure them — this section is the contract, the measured numbers live in `05`/`06`; no stage
+silently re-orders another.
+
+### 7i.3 Citations
+
+Every answer cites **both** kinds of evidence, in the wire shape
+`{"sessions":[session_id…],"frames":[frame_id…]}` on the answer turn: the sessions the answer drew
+on and the specific frames. A cited id outside the planned window, or outside the retrieved
+sessions, is a defect, not a display problem.
+
+The existing `/v1/ask` **SSE stream is extended, not replaced** (0.4.5 D12): a new event field carries
+the session citations, every existing field keeps its name and meaning, and a client that ignores the
+new field still renders the answer it renders today. `docs/API.md` is updated in the same phase, and
+`ask_screen_history` / `ask_session` surface the session citations too.
+
+### 7i.4 Multi-turn
+
+`ask_threads` / `ask_turns` persist conversations (`§4`). Each turn stores its question, its answer
+(NULL while streaming and on failure), the resolved `[window_start, window_end)` and
+`resolved_entities` as a JSON array of entity ids. A follow-up **reuses the previous turn's window
+and resolved entities** unless the new question overrides them — "and the day before?" keeps the
+entity scope while moving the window. Turn order is `ordinal`, unique per thread. Turns are
+user-facing conversation state, not evidence: deleting a conversation cascades to its turns and
+never touches frames, sessions, the graph or insights.
+
+## 7j. Insights contract (0.4.5)
+
+Insights are typed, evidenced statements about history. Implemented by **P8**; the storage is in
+`§4`, and P9 renders them. Three rules frame everything below: the payload is the truth, evidence is
+mandatory, and nothing here notifies.
+
+### 7j.1 Insight types (0.4.5 D10)
+
+`insights.kind` is a closed set of five:
+
+| Kind | What it states |
+|---|---|
+| `thread_activity` | time and session counts per thread over a window, plus when it was last touched |
+| `open_loop` | something unresolved — an unresolved mark, an open question from a weekly synthesis, a thread abandoned mid-way |
+| `recurrence` | the same error string / document / ticket seen again after a gap (FTS near-duplicate plus entity match) |
+| `semantic_neighbour` | sessions similar to a given session on other days, via session vectors |
+| `resumption` | a thread picked up after N days, with what it was last doing |
+
+A sixth type is a schema change: baseline edit plus `schema_version` bump (0.4.5 D2).
+
+### 7j.2 Evidence rule
+
+Every `insights` row has **at least one** `insight_evidence` row; an insight without evidence is a
+**defect**. SQLite cannot express a deferred cross-table constraint, so the rule is enforced exactly
+where it can be:
+
+- The store's insert API writes the insight and its evidence **in one transaction** and returns an
+  error when the evidence list is empty — no code path creates an unevidenced insight.
+- A test asserts that rejection.
+- A sweep query — `SELECT id FROM insights WHERE id NOT IN (SELECT insight_id FROM insight_evidence)`
+  — returns zero rows, and runs as a harness invariant.
+
+`insight_evidence.kind` is one of `frame`, `session`, `thread`, `entity`, `mark`, `report`; `ref_id`
+is the referenced row's id and `ordinal` orders the evidence for display. Evidence deletes with its
+insight.
+
+### 7j.3 Generation triggers (0.4.5 D11)
+
+Generation runs **on demand** and **on idle** only, under the existing scheduler and pressure
+throttle (`§5`): never on the capture hot path, never blocking capture, search or Ask. A failing pass
+logs and degrades silently — a missing insight is not a UI error state, and stale insights are
+regenerated rather than repaired in place.
+
+### 7j.4 Never notifies (0.4.5 D13)
+
+Insights are **pull-based**. Nothing in this contract notifies, badges, counts streaks, scores or
+grades; there is no daily prompt, no productivity metric, and no ordering that implies a target.
+Insights describe what happened; they do not judge it. (Kept from 0.3.0/0.4.0 — the maintainer can
+lift it explicitly in a later arc.)
+
+### 7j.5 Storage and staleness
+
+`insights.payload` is typed JSON and is the **truth** of the row: it renders completely without the
+model. `generator='heuristic'` means the payload was produced deterministically;
+`generator='llm_phrased'` means an LLM only **restated** a payload that already existed — phrasing is
+additive and is never the source of a claim.
+
+`stale=1` marks a row whose window, entities or evidence changed since `generated_at`. Regeneration
+**replaces** the row — same kind, new payload and evidence — and never mutates a row in place under a
+reader; the replaced evidence rows disappear with the old row. Windows are unix ms and half-open,
+`[window_start, window_end)`, matching `§7i`.
+
 ## 8. Configuration / settings (keys in `settings`)
 
-`capture.interval_ms` (3000) · `capture.monitors` ([]=all) · `capture.diff_threshold` (0.006) ·
-*(0.3.2 PR5 retires `storage.jpeg_quality` — provably inert, its own UI hint said "has no effect
-today"; the persisted key is tolerated + ignored on load per the unknown-key rule below — D8, no
-migration)* · `storage.max_width` (1280) · `storage.retention_days` (0=keep) ·
-`enrich.embed_text` (true) · *(0.3.0 PR4 removed `enrich.image_embeddings`)* ·
-`enrich.vision_timer_enabled` (false) · `enrich.vision_timer_interval_ms` (3600000) ·
-`enrich.vision_idle_enabled` (false) · `enrich.vision_idle_secs` (300) ·
-`enrich.vision_batch_size` (20, clamped 1–500 — max still-untagged frames a timer/idle tick enqueues) ·
-`enrich.worker_concurrency` (2) ·
-`models.vision_tier` (`default`) · `models.answer_tier` (`default`; each ∈ {`default`,`quality`} —
-0.3.0 retired `beta`: a persisted `beta` selection **maps to `quality` on load**, logged once + the
-mapping persisted, and any Beta GGUF already on disk is left alone with no cleanup logic — D3/D4) ·
-`answer.thinking` (true) · `sidecar.idle_ttl_secs` (180) · `sidecar.ngl` (99) ·
-`sidecar.ctx_size` (0=auto → per-lane default vision 4096 / answer 8192, else clamped 512–32768 —
-the dominant VRAM lever) · `sidecar.kv_cache_type` (`q8_0`; one of `f16`/`q8_0`/`q4_0`, quantized
-only when flash attention is active) · `sidecar.flash_attn` (`auto`; one of `auto`/`on`/`off`) ·
-`sidecar.recycle_enabled` (true — recycle the sidecar process when committed host RAM crosses the
-ceiling; mitigates the upstream llama.cpp multimodal memory leak, `07` #72) ·
-`sidecar.recycle_rss_mb` (0=auto → ceiling derived from total installed RAM, else clamped
-8192–131072 — the committed-RAM ceiling in MiB at which the sidecar is recycled; the 8 GiB floor
-matches the auto-ceiling minimum so an explicit value clears the vision model's ~6.8 GB warmup
-baseline and can't trigger a recycle loop; 0 is recommended for most users. Both keys are resolved
-once at supervisor construction like `sidecar.idle_ttl_secs`, so changes apply on app restart) ·
-`privacy.excluded_apps` (["1Password","KeePass","Bitwarden"]) · `privacy.pause_on_lock` (true).
+Every key below lives in the `settings` KV table; the `file-only` keys are additionally read from
+`advanced.toml` (app data dir, next to `screensearch.db`) at startup — one `[section]` per key prefix
+(`[capture]`, `[sidecar]`, …) with the suffix as the field name. Thresholds are settings, never
+hardcoded, per `§3b`/`§5` and the guardrail in `04 §4`.
 
-**0.2.x text-signal keys** (defaults provisional — finalized/tuned in PR2/PR3; thresholds are
-settings, never hardcoded, per `§3b` and the guardrail in `04 §4`):
-`text.include_chrome_default` (false — default search uses `content_text`) ·
-`text.chrome_suppress_min_seen` (12 — appearances before a signature is marked chrome) ·
-`text.chrome_protect_min_chars` (48 — lines longer than this are never suppressed for repeating) ·
-`text.chrome_region_buckets` (8 — grid resolution for `region_bucket`) ·
-`retrieval.default_top_k` (8 — replaces the hardcoded `ASK_TOP_K`; per-request override allowed) ·
-`reports.daily_top_k` (40) · `reports.weekly_top_k` (200) ·
-`reports.map_reduce_min_frames` (20 — frame count above which a range uses map-reduce, `§8b`; set
-at the worst-case single-pass fit so frames are batched, not dropped, before the 8192 answer context
-overflows: ~400 tok/frame × 20 ≈ 8192).
+**Settings v2 (0.4.5 D6, D9).** The Settings UI is a **closed set of 25 keys** — exactly the rows
+whose Disposition is `UI` below, and nothing else may be added to it; that ceiling is binding (0.4.5
+D6). Every other key is `file-only` (displayed read-only under **Advanced** with the `advanced.toml`
+path) or `deleted`. Classification is deterministic, not taste: (1) no live consumer after the 0.4.5
+changes → `deleted`; (2) live consumer whose value is engine tuning a person cannot make a better
+call on weekly → `file-only`; (3) otherwise → `UI`, and only for a key on the ceiling list. Settings
+autosave per field with an undo toast — there is no global Save (0.4.5 D9); destructive actions
+(data export/wipe, model removal, thread-override reset) confirm first and never depend on the
+autosave toast (0.4.5 D9). **Integrations** hosts `api.*` plus, per `§8c`/`§8d`, the Telegram and
+Obsidian folder settings (`memory.*`, owned by those sections and not counted in this table).
 
-**0.2.1 smart-enrichment-throttle keys** (opt-in CPU/GPU backpressure for the worker pool, `§5`;
-thresholds are settings, never hardcoded — same guardrail as the text-signal keys above and `04 §4`):
-`throttle.enabled` (false — master switch; throttle is opt-in and OFF by default) ·
-`throttle.cpu_enter_pct` (85.0, clamp 1..=100 — busy% at which CPU pressure begins) ·
-`throttle.cpu_exit_pct` (65.0, clamp 0..=enter−1 — hysteresis; must sit below `cpu_enter_pct`) ·
-`throttle.gpu_enter_pct` (90.0, clamp 1..=100 — ignored when GPU is unmonitored, `§5`) ·
-`throttle.gpu_exit_pct` (70.0, clamp 0..=enter−1 — hysteresis; must sit below `gpu_enter_pct`) ·
-`throttle.enter_after_ms` (5000, clamp 500..=120000 — sustained-enter dwell before stepping up a level) ·
-`throttle.exit_after_ms` (8000, clamp 500..=300000 — recovered-exit dwell before stepping down a level) ·
-`throttle.sample_interval_ms` (1000, clamp 250..=10000 — governor probe/sample cadence) ·
-`throttle.embed_text_floor` (1, clamp 1..=16 — min concurrent `embed_text` workers at level 2).
+| Key | Default | Disposition | Where | Notes |
+|---|---|---|---|---|
+| `answer.thinking` | `true` | UI | Intelligence | Ask reasoning toggle; off = faster, shallower answers. |
+| `api.bind_address` | `127.0.0.1` when missing | UI | Integrations | Any IPv4/IPv6 literal, immediate apply (`§7c`); missing defaults to `127.0.0.1` for both fresh and existing profiles. |
+| `api.enabled` | `false` | UI | Integrations | Master switch; the API crate is **not constructed** unless on (D11 of 0.4.0). |
+| `api.network_notice_state` | `—` | deleted | — | Superseded notice state; no live consumer, and no acknowledgement command or notice status remains. |
+| `api.port` | `43210` | UI | Integrations | Clamp 1024..=65535; a bind failure is **loud + guided-change** (`§7c`). |
+| `api.token` | — generated on first enable | UI | Integrations | Bearer token, regenerable in Settings, never blank while enabled; not part of the typed `Settings` struct (`§7c`). **Shares this UI row with `api.read_token`** (maintainer decision 2026-11-03, 0.4.5 D6): the read-only credential is a `settings` KV row (`src-tauri/src/local_api.rs` `API_READ_TOKEN_KEY`) written only through the create / rotate / revoke / reveal commands (`§7f`), never through `get_settings`/`set_settings`; it is shown in the same Integrations credential control and does not count as a separate UI key. |
+| `app.close_to_tray` | `true` | UI | General | Closing the main window hides to tray, capture continues; one-time explanatory toast; off = window close quits cleanly (`§7d`). |
+| `app.run_at_startup` | `false` | UI | General | Registers/unregisters launch-at-login; an explicit user choice, never silently enabled (D3 of 0.3.2). |
+| `app.tray_toast_done` | — set `true` after first show | file-only | — | Internal marker, not part of the typed `Settings` struct: written directly to the `settings` table and read at tray init, never through `get_settings`/`set_settings` or the ts-rs bindings. |
+| `capture.diff_threshold` | `0.006` | file-only | advanced.toml | Frame-diff gate sensitivity. |
+| `capture.event_debounce_ms` | `500` | file-only | advanced.toml | Clamp 100..=10000. |
+| `capture.event_driven_enabled` | `false` | file-only | advanced.toml | Master switch for the opt-in `CaptureTrigger` source (`§5`); off = timer cadence, every frame tagged `Timer`. |
+| `capture.event_fallback_interval_ms` | `30000` | file-only | advanced.toml | Clamp 1000..=3600000; a static screen is still sampled at least this often, tagged `Timer`. |
+| `capture.event_idle_threshold_ms` | `5000` | file-only | advanced.toml | Clamp 1000..=60000. |
+| `capture.event_min_interval_ms` | `1000` | file-only | advanced.toml | Clamp 250..=60000; the rate ceiling. |
+| `capture.event_on_click` | `—` | deleted | — | Removed 0.3.0 PR2; no live consumer, named only by the stale-row sweep. |
+| `capture.event_on_clipboard` | `—` | deleted | — | Removed 0.3.0 PR2; the clipboard listener was a privacy-optics landmine. |
+| `capture.event_on_foreground` | `true` | file-only | advanced.toml | One of the two triggers kept by the 0.3.0 PR2 trim. |
+| `capture.event_on_idle` | `false` | file-only | advanced.toml | One of the two triggers kept by the 0.3.0 PR2 trim. |
+| `capture.event_on_scroll_stop` | `—` | deleted | — | Removed 0.3.0 PR2; no live consumer. |
+| `capture.event_on_typing_pause` | `—` | deleted | — | Removed 0.3.0 PR2; redundant with idle (D1 of 0.3.0). |
+| `capture.event_typing_pause_ms` | `—` | deleted | — | Removed 0.3.0 PR2 with the typing-pause trigger. |
+| `capture.interval_ms` | `3000` | UI | Capture | Timer capture cadence. |
+| `capture.monitors` | `[]` = all | UI | Capture | Monitor selection; empty means every monitor. |
+| `capture.uia_latency_budget_ms` | `150` | file-only | advanced.toml | Clamp 20..=2000; soft per-walk budget, a 2× hard timeout guards a wedged worker. |
+| `capture.uia_max_nodes` | `4000` | file-only | advanced.toml | Clamp 100..=20000; hard cap on nodes visited per walk, replacing the former hardcoded constant. |
+| `capture.uia_max_textpattern_calls` | `64` | file-only | advanced.toml | Clamp 1..=4096; max live `TextPattern` visible-range reads per walk, the one uncacheable cross-process cost. |
+| `capture.uia_min_text_chars` | `16` | file-only | advanced.toml | Clamp 0..=10000; below this the read is a thin yield → OCR. |
+| `capture.uia_run_on_interactive` | `—` | deleted | — | Retired 0.3.2 PR5, inert since the 0.3.0 PR2 trigger trim removed its only firing triggers (`07` #83); no live consumer. |
+| `capture.uia_suppress_during_input_ms` | `500` | file-only | advanced.toml | Clamp 0..=10000; `Timer` frames within this window of the last keyboard/mouse input skip UIA → OCR, `0` disables. The window always applies now that the `uia_run_on_interactive` bypass retired with the knob. |
+| `capture.uia_text_enabled` | `true` | file-only | advanced.toml | Default ON; OCR carries any failure/timeout/thin-yield; hot-applies per frame. |
+| `capture.uia_view_control_only` | `true` | file-only | advanced.toml | Default ON; control view collapses a Chromium page's per-text-run node explosion, off = raw view, far heavier. |
+| `enrich.embed_text` | `true` | file-only | advanced.toml | Text-embedding lane toggle. |
+| `enrich.image_embeddings` | `—` | deleted | — | Removed 0.3.0 PR4 together with the image lane; no live consumer. |
+| `enrich.vision_batch_size` | `20` | file-only | advanced.toml | Clamp 1..=500; max still-untagged frames a timer/idle tick enqueues. |
+| `enrich.vision_idle_enabled` | `false` | file-only | advanced.toml | Idle-triggered vision enrichment. |
+| `enrich.vision_idle_secs` | `300` | file-only | advanced.toml | Idle dwell required before an idle vision tick. |
+| `enrich.vision_timer_enabled` | `false` | UI | Intelligence | Timer-driven vision enrichment. |
+| `enrich.vision_timer_interval_ms` | `3600000` | UI | Intelligence | Timer enrichment cadence (one hour). |
+| `enrich.worker_concurrency` | `2` | file-only | advanced.toml | Enrichment worker count. |
+| `marks.hotkey` | `Ctrl+Alt+M` | UI | General | Mark-this-moment; same loud registration-failure handling as `overlay.hotkey` (D6 of 0.3.2). |
+| `models.answer_tier` | `default` | UI | Models | Each ∈ {`default`,`quality`}; 0.3.0 retired `beta` — a persisted `beta` selection maps to `quality` on load, logged once plus the mapping persisted, and any Beta GGUF already on disk is left alone with no cleanup logic (D3/D4 of 0.3.0). |
+| `models.vision_tier` | `default` | UI | Models | Each ∈ {`default`,`quality`}. |
+| `overlay.hotkey` | `Ctrl+Alt+Z` | UI | General | Global summon; a failed registration is a **visible Settings warning + toast**, never silent (D6 of 0.3.2). |
+| `overlay.max_results` | `8` | file-only | advanced.toml | Clamp 1..=50; top-N results in the overlay. |
+| `privacy.excluded_apps` | `["1Password","KeePass","Bitwarden"]` | UI | Privacy | Skip the frame when the foreground app matches. |
+| `privacy.pause_on_lock` | `true` | UI | Privacy | Pause capture while the session is locked. |
+| `reports.daily_top_k` | `40` | UI | Intelligence | Daily report frame cap. |
+| `reports.map_reduce_min_frames` | `20` | file-only | advanced.toml | Frame count above which a range uses map-reduce (`§8b`); set at the worst-case single-pass fit so frames are batched, not dropped, before the 8192 answer context overflows: ~400 tok/frame × 20 ≈ 8192. |
+| `reports.weekly_top_k` | `200` | file-only | advanced.toml | Weekly report frame cap. |
+| `resume.min_dwell_secs` | `120` | file-only | advanced.toml | Min sustained-context dwell for where-was-i (`§7b`; D9 of 0.3.0). |
+| `retrieval.default_top_k` | `8` | UI | Intelligence | Replaces the hardcoded `ASK_TOP_K`; per-request override allowed. |
+| `sessions.gap_close_secs` | `120` | UI | Intelligence | Pass-1 micro gap close, retuned by the 11-day sweep (usage review 2026-08-01 §6.7); clamp 60..=3600. |
+| `sessions.min_len_secs` | `120` | UI | Intelligence | Minimum session length; mirrors `resume.min_dwell_secs` (`§7e`); clamp 30..=3600. |
+| `sidecar.ctx_size` | `0` = auto | file-only | advanced.toml | Auto → per-lane default vision 4096 / answer 8192, else clamp 512..=32768 — the dominant VRAM lever. |
+| `sidecar.flash_attn` | `auto` | file-only | advanced.toml | One of `auto`/`on`/`off`. |
+| `sidecar.idle_ttl_secs` | `180` | file-only | advanced.toml | Resolved once at supervisor construction, so changes apply on app restart. |
+| `sidecar.kv_cache_type` | `q8_0` | file-only | advanced.toml | One of `f16`/`q8_0`/`q4_0`, quantized only when flash attention is active. |
+| `sidecar.ngl` | `99` | file-only | advanced.toml | GPU layers offloaded to the sidecar. |
+| `sidecar.device` | `None` = llama.cpp default | file-only | advanced.toml | Optional llama.cpp `--device` selector (e.g. `Vulkan0`); blank or whitespace round-trips as `None`. Today a typed `Settings` field in the `settings` KV (`crates/kernel/src/settings.rs`); P3 moves it into `advanced.toml` with the rest of the `file-only` keys. |
+| `sidecar.recycle_enabled` | `true` | file-only | advanced.toml | Recycle the sidecar process when committed host RAM crosses the ceiling; mitigates the upstream llama.cpp multimodal memory leak (`07` #72). |
+| `sidecar.recycle_rss_mb` | `0` = auto | file-only | advanced.toml | Auto → ceiling derived from total installed RAM, else clamp 8192..=131072 — the committed-RAM ceiling in MiB at which the sidecar is recycled. The 8 GiB floor matches the auto-ceiling minimum so an explicit value clears the vision model's ~6.8 GB warmup baseline and cannot trigger a recycle loop; 0 is recommended for most users. Resolved once at supervisor construction like `sidecar.idle_ttl_secs`, so changes apply on app restart. |
+| `storage.jpeg_quality` | `—` | deleted | — | Retired 0.3.2 PR5, provably inert since the lossless-WebP storage path (its own UI hint said it "has no effect today"); no live consumer. |
+| `storage.max_width` | `1280` | UI | Data | Stored frame width cap; OCR runs on the full-res frame before this resize. |
+| `storage.retention_days` | `0` = keep | UI | Data | `0` keeps everything; any other value prunes older frames. |
+| `text.chrome_protect_min_chars` | `48` | file-only | advanced.toml | Lines longer than this are never suppressed for repeating. |
+| `text.chrome_region_buckets` | `8` | file-only | advanced.toml | Grid resolution for `region_bucket`. |
+| `text.chrome_suppress_min_seen` | `12` | file-only | advanced.toml | Appearances before a signature is marked chrome. |
+| `text.include_chrome_default` | `false` | UI | Intelligence | Default search uses `content_text`; on = chrome text included. |
+| `throttle.cpu_enter_pct` | `85.0` | file-only | advanced.toml | Clamp 1..=100; busy% at which CPU pressure begins. |
+| `throttle.cpu_exit_pct` | `65.0` | file-only | advanced.toml | Clamp 0..=enter−1; hysteresis, must sit below `cpu_enter_pct`. |
+| `throttle.embed_text_floor` | `1` | file-only | advanced.toml | Clamp 1..=16; min concurrent `embed_text` workers at level 2. |
+| `throttle.enabled` | `false` | UI | Advanced | Master switch; throttle is opt-in and OFF by default. The eight threshold rows are `file-only`. |
+| `throttle.enter_after_ms` | `5000` | file-only | advanced.toml | Clamp 500..=120000; sustained-enter dwell before stepping up a level. |
+| `throttle.exit_after_ms` | `8000` | file-only | advanced.toml | Clamp 500..=300000; recovered-exit dwell before stepping down a level. |
+| `throttle.gpu_enter_pct` | `90.0` | file-only | advanced.toml | Clamp 1..=100; unused when GPU is unmonitored (`§5`). |
+| `throttle.gpu_exit_pct` | `70.0` | file-only | advanced.toml | Clamp 0..=enter−1; hysteresis, must sit below `gpu_enter_pct`. |
+| `throttle.sample_interval_ms` | `1000` | file-only | advanced.toml | Clamp 250..=10000; governor probe/sample cadence. |
 
-**Event-driven-capture keys** (opt-in `CaptureTrigger` source, `§5`/`07` #47; thresholds are settings,
-never hardcoded — same guardrail as above). **0.3.0 (PR2) trimmed the six triggers to foreground +
-idle**: `capture.event_driven_enabled` (false — master switch; off = timer cadence, every frame tagged
-`Timer`) · `capture.event_on_foreground` (true) · `capture.event_on_idle` (false) ·
-`capture.event_debounce_ms` (500, clamp 100..=10000) · `capture.event_min_interval_ms` (1000, clamp
-250..=60000 — the rate ceiling) · `capture.event_idle_threshold_ms` (5000, clamp 1000..=60000) ·
-`capture.event_fallback_interval_ms` (30000, clamp 1000..=3600000 — a static screen is still sampled at
-least this often, tagged `Timer`). **Removed in 0.3.0 (PR2):** `capture.event_on_clipboard`,
-`capture.event_on_typing_pause`, `capture.event_on_click`, `capture.event_on_scroll_stop`,
-`capture.event_typing_pause_ms` — click / scroll-stop were the **only** consumers of the global
+**Load rule (0.4.5 D6): retired keys are removed on rewrite.** A `settings` row or `advanced.toml`
+entry naming a key that is not in the table is rewritten once with that key removed; no error, no
+migration, no field kept parsed-but-unused. `advanced.toml` is strict in the same way: an unknown
+section or field is dropped on that rewrite, so the file always matches the table.
+
+**Deleted rows (evidence).** The nine `deleted` keys are proven inert: grep across `crates/` and
+`ui/src/` finds no live consumer, and the current code names them only inside the stale-row sweep that
+exists to drop them. `api.network_notice_state` has zero references anywhere. No replacement key is
+promoted into `UI` to refill a retired slot — the ceiling is a maximum, not a target (0.4.5 D6).
+
+**Event-driven capture** (opt-in `CaptureTrigger` source, `§5`/`07` #47): 0.3.0 (PR2) trimmed the six
+triggers to foreground + idle — click / scroll-stop were the **only** consumers of the global
 `WH_MOUSE_LL` mouse hook (deleted with them), the clipboard listener was a privacy-optics landmine, and
-typing-pause was redundant with idle (D1). **Settings load tolerates + drops unknown keys** (log once,
-no error), so a config persisted with any retired key still loads. **No schema change** (D2):
-`frames.capture_trigger` keeps its widened CHECK, so legacy `clipboard`/`typing_pause`/`click`/
-`scroll_stop` tokens stay readable (the Moment "Captured via" row still renders them); new frames simply
-never emit them again.
-
-**0.2.1 UIA text-source keys** (target-window accessibility text with OCR fallback, `07` #48/#71;
-thresholds are settings, never hardcoded): `capture.uia_text_enabled` (true — default ON, OCR carries
-any failure/timeout/thin-yield; hot-applies per frame) · `capture.uia_latency_budget_ms` (150, clamp
-20..=2000 — soft per-walk budget; a 2× hard timeout guards a wedged worker) · `capture.uia_min_text_chars`
-(16, clamp 0..=10000 — below this the read is a thin yield → OCR). UIA-hang-fix keys (`07` #71, all
-baked into the provider at startup → applied on app restart):
-*(0.3.2 PR5 retires `capture.uia_run_on_interactive` — inert-in-practice since the 0.3.0 PR2 trigger
-trim removed its only firing triggers, `07` #83; the persisted key is tolerated + ignored on load —
-D8, no migration)* · `capture.uia_view_control_only` (true — default
-ON; control view collapses a Chromium page's per-text-run node explosion; off = raw view, far heavier) ·
-`capture.uia_max_nodes` (4000, clamp 100..=20000 — hard cap on nodes visited per walk; replaces the
-former hardcoded constant) · `capture.uia_max_textpattern_calls` (64, clamp 1..=4096 — max live
-`TextPattern` visible-range reads per walk, the one uncacheable cross-process cost) ·
-`capture.uia_suppress_during_input_ms` (500, clamp 0..=10000 — `Timer` frames captured within this
-many ms of the last keyboard/mouse input skip UIA → OCR, closing the freeze gap the trigger gate
-leaves in default timer-only capture; `0` disables — the suppress window now always applies, since
-the former `uia_run_on_interactive` bypass retired with the knob).
-
-**0.3.0 flow-recall + API keys** (all hotkeys/thresholds/ports are settings, never hardcoded — same
-guardrail as above; `§7b`/`§7c`):
-`overlay.hotkey` (`Ctrl+Alt+Z` — global summon; a failed registration is a **visible Settings
-warning + toast**, never silent — D6) · `overlay.max_results` (8, clamped `1..=50` — top-N results in the overlay) ·
-`resume.min_dwell_secs` (120 — min sustained-context dwell for where-was-i, `§7b`; D9) ·
-`marks.hotkey` (`Ctrl+Alt+M` — mark-this-moment; same loud registration-failure handling as
-`overlay.hotkey` — D6) ·
-`api.enabled` (false — master switch; the API crate is **not constructed** unless on — D11) ·
-`api.bind_address` (`127.0.0.1` when missing — any IPv4/IPv6 literal, immediate apply, `§7c`) ·
-`api.port` (43210, clamp 1024..=65535; a bind failure is **loud + guided-change**, `§7c`) ·
-`api.token` (generated on first enable; the bearer token, regenerable in Settings — never blank while
-enabled).
+typing-pause was redundant with idle (D1 of 0.3.0). Those five removed keys (four triggers plus the
+typing-pause threshold) are `deleted` rows in the table above. **No schema change** (0.4.5 D2): `frames.capture_trigger`
+keeps its widened CHECK, so legacy `clipboard`/`typing_pause`/`click`/`scroll_stop` tokens stay readable
+(the Moment "Captured via" row still renders them); new frames simply never emit them again.
 
 `ApiStatus.bind_address: String` reports the canonical configured IP literal. The optional
 `set_api_config.bind_address` preserves the current value when omitted; supplied values are
@@ -1401,7 +1797,8 @@ validated before mutation.
 
 **API bind compatibility.** Missing `api.bind_address` defaults to `127.0.0.1` for both
 fresh and existing profiles. Preserve enabled state, token and port. The superseded
-`api.network_notice_state` key is ignored; no acknowledgement command or notice status remains.
+`api.network_notice_state` key is retired: a config that still carries it is rewritten once without it
+(0.4.5 D6); no acknowledgement command or notice status remains.
 This preference uses the existing settings KV table and needs no schema migration.
 
 Startup completion emits `api_status_changed` with a null/unit payload so the main UI
@@ -1410,31 +1807,10 @@ carries a token. Event subscription also refreshes status after registration to 
 subscribe-versus-startup race. Startup must read persisted enabled intent fallibly before
 mutating configuration; a failed read must not silently persist a disabled preference.
 
-**0.3.2 lifecycle keys** (`§7d`; the only new settings surface this arc — new keys exist only where a
-PR names them, `docs/0.3.2.md`). PR3 shipped these two names as proposed; they are **contract** now (D7).
-`app.close_to_tray` (true — closing the main window hides to tray, capture continues; one-time
-explanatory toast; off = window close quits cleanly, `§7d`) ·
-`app.run_at_startup` (false — registers/unregisters launch-at-login; an explicit user choice, never
-silently enabled — D3).
 There is also an **internal marker** `app.tray_toast_done` (not part of the typed `Settings` struct;
 same pattern as `api.token`, `§7c`): set to `true` the first time the one-time close-to-tray toast is
 shown so it never repeats. It is written directly to the `settings` table and read at tray init; it
 never rides through `get_settings`/`set_settings` or the ts-rs bindings.
-
-**0.4.0 sessions keys** (`§7e`; the arc's **only** new settings surface — new keys exist only where a
-PR names them, `docs/0.4.0.md`). The two names, defaults, and clamp ranges are final; PR5 owns only
-their Settings-UI placement:
-`sessions.min_len_secs` (120 — minimum session length; mirrors `resume.min_dwell_secs`, `§7e`;
-clamp `30..=3600`) ·
-`sessions.gap_close_secs` (120 — pass-1 micro gap close, retuned by the 11-day sweep;
-usage review 2026-08-01 §6.7; clamp `60..=3600`).
-Proposed Settings home: a new **Advanced** expander ("Sessions") under the 0.3.2 two-tier IA
-(`UI_REFERENCE §3`) — PR5's call, not settled here.
-
-**Dead-setting removal mechanics (0.3.2, D8):** a key may be retired in this arc only if **provably
-inert** (the two annotated above). Retirement = UI removal + load tolerance for the orphaned key (no
-error, no migration, no write-back requirement); if the config layer would error on an unknown key,
-keep the field deserialized-but-unused rather than build migration machinery.
 
 Capture honors `privacy.excluded_apps` (skip frame if foreground app matches) and
 `privacy.pause_on_lock`; the **self-exclude capture gate also covers the 0.3.0 overlay window** (D7 —
@@ -2000,7 +2376,9 @@ contract:
   item in `§13c` (PR7).
 
 ## 12. Failure modes & rollback
-- **Migrations** forward-only via `schema_version`; each ships an idempotent up-script.
+- **Schema** — baseline DDL at the current `schema_version` (`§4`, 0.4.5 D2); a DB at any other
+  version refuses to open and names the `ssv2c-rebuild` tool (0.4.5 D3). (0.2.x–0.4.2: forward-only
+  migrations via `schema_version`, each with an idempotent up-script — history only.)
 - **Job failure** → retry/backoff → dead-letter (visible), never silent loss.
 - **Sidecar crash** → restart + requeue; repeated failure on a tier → surface a toast, fall back to
   Default tier.
@@ -2100,6 +2478,76 @@ Each item is demonstrated with verbatim command output or a described-and-perfor
 8. Full verification suite green for every PR: `cargo fmt --check` · `cargo clippy --workspace
    --all-targets -D warnings` · `cargo build --workspace` · `cargo test --workspace` · `ui`
    `npm run lint && npm run build` · `git diff --exit-code -- ui/src/bindings` clean.
+
+## 13d. Definition of done (0.4.5 arc)
+
+Each item is demonstrated with verbatim command output or a described-and-performed live check
+(`04 §6`). The per-phase detail lives in `docs/0.4.5.md`; the normative contracts it implements are
+`02 §5k` (scope and waves), `03 §7h`/`§7i`/`§7j` (work graph, Ask v2, insights) and `03 §8`
+(settings v2, 0.4.5 D6). "Executing" ends at merge; the debug window is the maintainer dogfooding
+that merged build; a phase is done only with its acceptance evidence merged, and the next wave
+starts when all three phases of the previous one are merged.
+
+**Gates.** The three gates close a wave's debug window and tag a release through the existing signed
+updater. Each is demonstrated, never asserted:
+
+- **Gate A → v0.4.3:** the design direction is recorded in `UI_REFERENCE §1`; the rebuild tool was
+  used for real (P3's run, counts pasted); the app runs on v14 for **at least 3 working days without
+  a blocker**; P4's baseline numbers are frozen as the P5/P6 thresholds; the F3 native interactive
+  acceptance is performed (closes that `05` gate). Ships the pending `main` increments (#145, setup
+  visibility).
+- **Gate B → v0.4.4:** the P5/P6 thresholds are met on the P4 automatic set (report pasted); Settings
+  v2 is in daily use; the external-agent Settings UI is verified natively.
+- **Gate C → v0.4.5:** the full `04` audit; every `UI_REFERENCE §10` criterion on every screen; the
+  P4 automatic set rerun end to end; the separate-machine API check; `05`–`08` swept and archived per
+  `04 §7`; CHANGELOG and release notes.
+
+**Per-phase acceptance.** Each phase's own acceptance line is binding:
+
+1. **P1 — specs contract.** No code: `git diff --name-only main` shows only `*.md`. Every decision
+   D1–D18 is normalized into the specs at its landing site; the v14 baseline DDL is complete enough
+   that P3 and P5 are implementable from `03` alone; a fresh agent session can start any wave-A phase
+   without reopening `docs/0.4.5.md`.
+2. **P2 — design system v2.** `/kitchen` renders every primitive in every state and theme; an
+   automated contrast check over the semantic pairs passes AA; a lint rule (or a test) fails on raw
+   hex, px font sizes or non-token spacing in `ui/src/components/primitives`; existing screens still
+   render through `tokens.compat.css` (screenshots attached to the PR); full verification suite green.
+3. **P3 — baseline schema v14 + settings v2 model.** The rebuild tool runs against a copy of the
+   maintainer's real DB with per-table row counts before/after pasted verbatim and a 20-random-frame
+   spot check opening in Moment; the app boots on v14 and refuses any other version naming
+   `ssv2c-rebuild`, with `*.v13.bak` created only after the maintainer confirms the new file opens
+   (0.4.5 D3); a settings round-trip test over the v2 key set passes and a retired key is rewritten
+   away on load without error (0.4.5 D6); `cargo test` green; bindings diff committed.
+4. **P4 — automatic intelligence evaluation.** The baseline report is pasted verbatim; the question
+   generators are deterministic for a given DB and seed (test); the harness opens the DB read-only
+   (test asserts it); **zero maintainer input is required to run it** — no hand-written question set,
+   no labelling, no golden file (0.4.5 D17).
+5. **P5 — work graph engine.** Entity recovery on the P4 automatic set is at or above the thresholds
+   frozen at Gate A; the backfill over the real DB completes with counts pasted; a determinism test
+   shows the same input producing the same threads; override precedence is tested (rename, merge and
+   split each).
+6. **P6 — Ask v2.** On the P4 automatic set, recall@10 and the known-fact answer rate beat the
+   baseline by the Gate A margins; citation validity is 100% (both session and frame ids, every one
+   in window and in a retrieved session); p95 latency is within the Gate A budget; full suite green.
+7. **P7 — shell, navigation, Settings v2.** Every UI key in `03 §8` is reachable and round-trips;
+   settings search finds every setting by label and by key; a keyboard-only pass through all
+   categories; the state matrix (loading / empty / error / partial / populated) holds per category;
+   screenshots in both themes; the external-agent read-credential UI verified natively (closes that
+   `05` gate).
+8. **P8 — insights + connections engine, agent surface.** Each insight type has a fixture test and a
+   real-DB sample pasted; no insight row exists without evidence (insert-time rejection, its test, and
+   the zero-row sweep, `§7j`); the 0.4.5 API routes are covered by integration tests behind read
+   credentials; the four MCP tools round-trip against the live app.
+9. **P9 — intelligence UI.** Full state matrix per screen (Work list, Thread page, Insights v2, Ask v2
+   conversation); keyboard paths; every rendered claim links to its evidence; screenshots in both
+   themes; a 10-question spot check drawn from the P4 automatic set, asked through the UI, results
+   recorded.
+10. **P10 — Recall surfaces refont + shim removal.** Zero legacy tokens (grep pasted); the lint gate
+    covers all of `ui/src`; per-screen state matrix; the `UI_REFERENCE §8` performance budgets
+    re-measured and pasted; the overlay is still covered by the self-exclude capture gate (test).
+11. Full verification suite green for every PR: `cargo fmt --check` · `cargo clippy --workspace
+    --all-targets -D warnings` · `cargo build --workspace` · `cargo test --workspace` · `ui`
+    `npm run lint && npm run build` · `git diff --exit-code -- ui/src/bindings` clean.
 
 ---
 

@@ -130,7 +130,8 @@ Where they ever disagree, the specs win — open an issue.
   local `llama-server` sidecar (OpenAI-compatible HTTP over loopback). No Python in the runtime,
   no cloud calls — everything downloads from GitHub / HuggingFace and runs on-device.
 - **Verify, never fabricate.** No stubs/hardcoded results; "done" means observed running. Schema
-  changes are forward-only with a `schema_version` bump.
+  changes are forward-only with a `schema_version` bump. *(0.4.5 onward: baseline edit + version
+  bump, `03 §4`.)*
 
 ---
 
@@ -158,6 +159,7 @@ per-crate file-level guide to where each concern lives is the rest of this docum
 ## 3. Data model (SQLite, WAL)
 
 Single file `screensearch.db`; forward-only migrations tracked in `schema_version` (`store::schema`).
+*(0.4.5 onward: baseline edit + version bump, `03 §4`.)*
 Per-connection pragmas: `journal_mode=WAL`, `foreign_keys=ON`, `recursive_triggers=ON`,
 `busy_timeout=5000`. **Authoritative as-built DDL (every table, column, index, trigger, and the full
 v1→v13 migration chain): `crates/store/src/schema.rs` (`LATEST_SCHEMA_VERSION = 13`)** — this is

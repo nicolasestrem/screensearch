@@ -1,5 +1,120 @@
 # 07 — Known Gaps
 
+## 2026-11-03 — Carried into the 0.4.5 arc (owner: maintainer unless stated)
+
+Decisions and dispositions for the 0.4.5 arc (P9 — work intelligence + design system v2; `02 §5k`,
+`docs/0.4.5.md`), whose normative contracts are `03 §7h`/`§7i`/`§7j`/`§8` and `UI_REFERENCE`. Still
+open, or newly scoped out:
+
+- **Audio / transcription / meetings are out by maintainer decision (2026-11-03).** `02 §7` now
+  records audio as "not a priority" instead of "0.4.x candidate" (`02 §5d` carries the supersession
+  note), and the one extension point stays reserved and unbuilt:
+  `session_artifacts.kind='transcript'` (0.4.5 D14). Row #75's status is updated to match.
+- **#91 monitor hot-unplug is out of scope for the arc and stays open here.** Hot-unplug stalls
+  remain a capture gap; sessions make the silent stalls visible, but neither this arc nor P2–P10
+  fixes them.
+- **Code-signing is out of scope and unchanged.** The NSIS installer stays unsigned; `03 §11b` is
+  the only authority and nothing in the arc touches it.
+- **The Insights "no contract" gap is closed** by `03 §7j`: typed payloads, the evidence rule (an
+  insight without evidence is a defect), on-demand/idle generation and pull-based presentation are
+  contract now, not silence.
+- **Single-user consequences recorded (0.4.5 D1).** The maintainer is the only user, so the arc
+  changes no compatibility surface for other installations: no forward-compat shims, no
+  retired-key load tolerance (`03 §8` rewrites a retired key away once), no populated-DB migration
+  tests (baseline v14, 0.4.5 D2) and no multi-environment pilot validation.
+- **Details decided at P1 (normalization, not new product behaviour — agent, recorded for review).**
+  (a) `insights` windows are unix-ms half-open `[window_start, window_end)`, matching `03 §7i`;
+  thread `session_count`/`first_seen_at`/`last_seen_at` are derived from members (`03 §7h.4`).
+  (b) `advanced.toml` lives next to `screensearch.db`, one `[section]` per key prefix, the suffix is
+  the field name, and unknown entries are dropped on rewrite like the settings rows (`03 §8`).
+  (c) Per-key Settings categories are as tabled in `03 §8` (hotkeys → General; `throttle.enabled` →
+  Advanced; `sessions.*`, retrieval/report top-k, `enrich.vision_timer_*`, `answer.thinking`,
+  `text.include_chrome_default` → Intelligence; `storage.*` → Data; `api.*` → Integrations).
+  (d) Reports stay inside Recall in the v2 IA, and merging the `/recall` and `/timeline` paths is
+  P7's call with deep links preserved (`UI_REFERENCE §3`). (e) `app.tray_toast_done` is an internal
+  marker: `file-only` disposition with no `advanced.toml` home (`Where` = `—`).
+- **RESOLVED by maintainer (2026-11-03): two live settings keys lacked a `03 §8` row.**
+  `api.read_token` (`src-tauri/src/local_api.rs:37`) **shares the `api.token` UI row** as the
+  Integrations credential pair, so the UI ceiling stays 25 (0.4.5 D6); `sidecar.device`
+  (`crates/kernel/src/settings.rs:62`) is `file-only`: today a typed field in the `settings` KV, P3
+  moves it into `advanced.toml`. `api.read_token` stays a `settings` KV row written only by the
+  credential commands. Both now in the `§8` table.
+- **P1 self-test residue (2026-11-03, phase-level design choices, not blockers).** Each phase owns
+  these inside its contract, so a fresh agent can still start P3/P4/P5:
+  - **P6:** `03 §7i.2` fixes the retrieval stage order and requires each stage's candidate count to
+    be recorded per turn, but sets no numeric ceiling per stage. The numbers are a measurement
+    decision for P6, recorded in `05`/`06`; if a cap is wanted as a gate, the maintainer states it at
+    Gate A.
+  - **P8:** `03 §7j` fixes the five insight kinds and requires a typed payload that renders without
+    the model, but does not fix the JSON shape per kind. P8 defines it in `traits` with a fixture
+    test per kind; the shape is additive and never renames an existing field.
+- **Gaps found while writing the phase kickoffs (2026-11-03, each one is a stop condition in the
+  phase file, not an answer invented at P1).**
+  - **P6 / P9: `src-tauri` command glue is assigned to no phase** in `docs/0.4.5.md` §4. P6 needs the
+    ask route and its host methods wired, P9 needs the thread and insight commands. Rule applied: a
+    phase requests an explicit one-time grant in its kickoff and must not duplicate the pipeline in
+    `src-tauri`. The maintainer confirms the grant when the phase starts.
+  - **P6: `ask_turns` has no columns for per-stage counts or assembled tokens.** `03 §7i.2` requires
+    the counts to be recorded per turn. They are carried on the terminal SSE event and logged; adding
+    columns is a P3 schema change, so it is a stop condition, not a silent edit.
+  - **P8: no spec values exist for the recurrence gap, the resumption gap or the neighbour similarity
+    threshold.** P8 owns the values inside the contract and records them in `05`/`06`.
+  - **P9: "connected threads" and "time spent" are undefined**, and `entity` / `mark` evidence kinds
+    have no destination route, so "every claim links to its evidence" cannot be satisfied for those
+    cards until P9 defines the target.
+- **`UI_REFERENCE §8` calls the `compact` density "a choice in Settings", but `03 §8` has no density
+  key** and no phase owns adding one. Recorded in `06` as a spec contradiction.
+- **P3 outcome questions for the maintainer (2026-11-03).**
+  - **An existing profile loses customised file-only values.** `advanced.toml` is now the single
+    source for the 44 file-only keys, so a profile that had set `sidecar.*`, `capture.uia_*`,
+    `throttle.*` and the other demoted keys in the `settings` KV reads the documented defaults until
+    the same values are copied into the file. The old rows stay valid table keys, so they are not
+    purged, but nothing reads them. Options: a one-time import at first boot that seeds
+    `advanced.toml` from the KV, or accept the reset and say so in the release notes. Needs a
+    decision before Gate A.
+  - The rebuild carry set and the three stale defaults are `06` #32 and #33.
+  - `api.enabled`, `api.port` and `api.bind_address` are typed UI keys and now hot-apply through
+    `apply_api_config` when saved. `overlay.max_results` reaches the overlay through the new
+    read-only `get_advanced_config` projection, which P7 also uses for Settings · Advanced.
+- **P3 built the read-only Advanced projection one phase early (2026-11-03).** The P3 kickoff named
+  `get_advanced_config` as P7's projection; it was built in P3 because cutting the 44 file-only fields
+  left `FlowOverlay` and `ScheduleControl` with no honest source for values that must keep flowing,
+  and a hardcoded constant is forbidden (`03 §3b`). It is read-only with no setter, so it is not a
+  second editable surface, and P7 renders Settings · Advanced from it. Evidence: `ui`'s build script
+  is `tsc --noEmit && vite build`, so the typecheck is part of the gate; `npm run build` failed with
+  the removed-field errors after the settings cut and exits 0 after the repair, with 40 controls
+  removed from `Settings.tsx`, 3 from `ScheduleControl.tsx` and 0 from `FlowOverlay.tsx`.
+- **P4 metric conventions to confirm at Gate A (2026-11-03).** The eval runner matches `involvement`
+  on window titles and URLs only (content would be dominated by pasted text, per `03 §7h.2`),
+  treats a `NULL` session end as open-ended for citation validity, uses nearest-rank percentiles,
+  and treats `app` as the one `03 §7h.1` kind with no unambiguous reference form, so it is not a
+  P4 reference kind. Each of these is printed in the report, so a different convention is a
+  comparison against a stated baseline rather than a hidden one.
+- **Pre-existing: the e2e capture test fails on `main` too (found 2026-11-04 QA, owner agent).**
+  `src-tauri/tests/e2e_capture.rs` is `#[ignore]`d (it needs a real desktop), so CI never runs it.
+  Run for real on this desktop it captures and OCRs correctly, then fails at
+  `assert_eq!(frame.raw_text, frame.content_text)`, whose comment calls `content_text` "a
+  passthrough copy of raw_text in PR2". It fails identically on unmodified `main` (`4bd120b`), so
+  the 0.4.5 arc did not cause it. Not silenced: it is unclear whether the two texts now differ by
+  design (the chrome filter) or because of a defect, and an assertion should not be deleted before
+  that is known. Next step for P5 or a `fix/` branch: decide which, then correct the assertion or
+  the code.
+- **Review nits accepted but not changed tonight (2026-11-04, owner agent).** Three older kernel
+  settings tests are vacuous (`round_trips_defaults`, `save_settings_never_writes_retired_keys`,
+  `advanced_values_drive_the_same_consumers_the_typed_fields_did`): they pass against a no-op
+  implementation. `ssv2c-rebuild` resolves image paths against the copied DB's folder, so the
+  maintainer run, which copies only the DB, reports every image as missing (noise, no data lost).
+  Harness edge cases: an empty terminal `citations` event is ignored rather than read as zero
+  citations, and non-ASCII reference text never matches SQLite's ASCII `lower()`. None changes a
+  result tonight; each is a small fix for the phase that next touches the file.
+- **P7 limit: `advanced.toml` provenance is honest only until the first rewrite (2026-11-04,
+  owner P7).** The loader's one-shot rewrite (after an unknown or unparsable entry) writes all 43
+  effective values back into the file, so from the next start every key reads as "from the file".
+  `get_advanced_config`'s `from_file` therefore cannot drive per-key "overridden" badges reliably.
+  P7 shows the full effective list read-only with the file path, and must not promise per-key
+  override flags unless the rewrite is changed to keep only the keys the user actually set.
+
+
 ## 2026-10-19 — Carried forward from the 0.4.2 arc (owner: maintainer unless stated)
 
 Resolved decisions, implementation readings and verification detail for the 0.4.2 arc
@@ -84,18 +199,18 @@ Still open:
 | 72 | 2026-06-29 | **llama.cpp multimodal host-memory leak (build 9842).** ~149 MB committed host RAM leaked **per vision inference** (VRAM flat; isolated 60-frame test 2026-06-29: 6.8 → 16.3 GB committed). Freed only on process exit. | **Open (upstream).** Local mitigation shipped 0.2.1: the **sidecar recycle valve** (`sidecar.recycle_enabled` default true; `sidecar.recycle_rss_mb` default 0=auto, explicit clamp 8192–131072 MiB; the 8 GiB floor clears the 8B vision warmup baseline so it can't recycle-per-request) recycles llama-server at a committed-RAM ceiling. **The real fix is upstream** / a newer bundled llama.cpp build — re-run the 60-frame test when it lands. Shipped-mitigation detail + small-RAM behaviour: `06` #15 and the `08`/CHANGELOG v0.2.x archives. | agent | open (upstream; local mitigation ✅ 0.2.1) |
 | 46 | 2026-06-24 | **Stall-abort can't cancel hf-hub's detached chunk tasks** (PR #26, Codex P1) — the model-download stall watchdog calls `task.abort()` on the outer fetch task, but `hf-hub` 0.4.3 starts its own per-chunk `tokio::spawn`s internally; aborting the parent drops their join handles without stopping them, so a chunk task on a (briefly) revived socket could still write the `.sync.part` after the UI reports `Failed`. | **Open (bounded, deferred):** the blast radius is contained — (a) resume reads the **committed counter** in the `.sync.part` trailer as the authoritative offset, so stale writes past it are re-fetched/overwritten next attempt (committed data isn't corrupted); (b) downloads are **serialized per lane**, so a user-initiated retry never runs a second `ModelDownloader` fetch concurrently. A real fix means replacing the high-level `ApiRepo::download_with_progress` with a cancellable chunked downloader we own (or forking hf-hub) — a larger change than this PR's scope. **Update (0.2.0 PR8):** the default path is now the chunked downloader, whose chunk futures are awaited *inside* the fetch task (`buffer_unordered`, no detached `tokio::spawn`), so `task.abort()` cancels every in-flight chunk — **no orphaned writers on the chunked path**. This gap now applies only to the single-stream hf-hub **fallback** (range-less servers), where the bounded mitigations above still hold. | agent | mostly resolved (chunked path); remains for hf-hub fallback only |
 | 58 | 2026-06-25 | **OPEN — live multi-DPI / secondary-monitor `target_rect` acceptance check (PR3)** — gap #54 marks the `target_rect` DPI mapping *code* resolved, but the runtime behaviour can only be confirmed on real hardware: a `npm run dev` session spanning **≥2 monitors at different DPI scales**, verifying the foreground window's normalized rect maps to the correct monitor band (background/system suppression fires on the right monitor, never the wrong one). CI cannot cover this. Tracked as its own row so it stays visible **after** PR #32 merges and #54 reads ✅. | **Open (manual, owner = user/maintainer):** run the multi-DPI check on a real desktop session; a wrong rect can only *under*-suppress (recoverable via `include_chrome` + preserved `raw_text`), never silently lose content, so it does not block merge — but the check must be done before relying on background/system suppression on multi-monitor setups. Update this row to ✅ once verified. | user | open (before multi-monitor reliance) |
-| 75 | 2026-07-03 | **Audio capture / transcription — deferred (0.3.0 arc, `02 §5c`).** The single most-requested capability in this product category, and explicitly out of 0.3.0. | **Deferred to 0.4.x by user decision:** mic capture, a Whisper lane, and consent UX are a full arc of their own. Not a spec silence — a scoped deferral recorded per the roadmap. | user+agent | 0.4.x candidate |
+| 75 | 2026-07-03 | **Audio capture / transcription — deferred (0.3.0 arc, `02 §5c`).** The single most-requested capability in this product category, and explicitly out of 0.3.0. | **Deferred to 0.4.x by user decision:** mic capture, a Whisper lane, and consent UX are a full arc of their own. Not a spec silence — a scoped deferral recorded per the roadmap. **Reclassified 2026-11-03:** not a priority — out of the 0.4.5 arc, the `'transcript'` extension point stays reserved but unbuilt (0.4.5 D14). | user+agent | not a priority (2026-11-03) |
 | 76 | 2026-07-03 | **Custom GGUF "bring-your-own-model" path — deferred (0.3.0).** The tinkerer escape hatch that replaces the retired Beta tier. | **Deferred:** small, but kept out of 0.3.0 so PR3 stays a pure subtraction (`docs/0.3.0.md`). | user+agent | post-0.3.0 |
 | 77 | 2026-07-03 | **Proactive nudges / notifications — deferred (0.3.0).** "You've been on X for 40 min…" style push. | **Deferred, deliberately:** 0.3.0's where-was-i / marks surfaces are **pull-based only** — no notifications, no shame-analytics. Any push mechanism is a separate, opt-in design conversation (`02 §7`). | user+agent | post-0.3.0 |
 | 78 | 2026-07-03 | **Marks in Recall reports — deferred (0.3.0).** Surfacing unresolved marks inside daily/weekly reports. | **Deferred:** reports stay as shipped in 0.2.x (`03 §8b`); a later refinement. | user+agent | post-0.3.0 |
 | 79 | 2026-07-03 | **API write scopes beyond marks — deferred (0.3.0).** | **Deferred:** the v1 local API is read-only except `POST /v1/marks` (`03 §7c`, D11). | user+agent | post-0.3.0 |
-| 82 | 2026-07-03 | **`jobs.kind` has no `CHECK` constraint (optional hardening; PR #70 gemini review).** The live `jobs.kind` column is `TEXT NOT NULL` with only a comment enumerating values (`crates/store/src/schema.rs:132`); a reviewer suggested a `CHECK (kind IN ('embed_text','vision_tag'))`. | **Declined for the 0.3.0 arc, recorded:** adding a `CHECK` to the `§4` DDL would (a) diverge the spec from the real, un-constrained schema, and (b) if treated as contract, force an unplanned **jobs-table rebuild** in PR4 (SQLite can't add a `CHECK` in place) — scope creep beyond D5 (which only drops the image tables + deletes `embed_image` jobs). Kept as opt-in future hardening: if ever added, it lands as its own forward-only migration (+1, populated-DB test, D15) that rebuilds `jobs`, not silently folded into PR4. | agent | optional / post-0.3.0 |
+| 82 | 2026-07-03 | **`jobs.kind` has no `CHECK` constraint (optional hardening; PR #70 gemini review).** The live `jobs.kind` column is `TEXT NOT NULL` with only a comment enumerating values (`crates/store/src/schema.rs:132`); a reviewer suggested a `CHECK (kind IN ('embed_text','vision_tag'))`. | **Declined for the 0.3.0 arc, recorded:** adding a `CHECK` to the `§4` DDL would (a) diverge the spec from the real, un-constrained schema, and (b) if treated as contract, force an unplanned **jobs-table rebuild** in PR4 (SQLite can't add a `CHECK` in place) — scope creep beyond D5 (which only drops the image tables + deletes `embed_image` jobs). Kept as opt-in future hardening: if ever added, it lands as its own forward-only migration (+1, populated-DB test, D15) that rebuilds `jobs`, not silently folded into PR4. *(2026-11-03: from 0.4.5 on it would be a baseline edit + `schema_version` bump instead, `03 §4`, 0.4.5 D2.)* | agent | optional / post-0.3.0 |
 | 89 | 2026-07-04 | **PR7 v1-API scope residuals (recorded, not built).** Three items sit just outside the PR7 surface. | **Deferred, recorded:** (a) **non-JSON export formats** — `format=` accepts only `json` in v1 (anything else → 400); CSV/NDJSON are future formats. (b) **No rate limiting** on the local surface — 0.4.1 added a 64-active-connection cap and a 30 s request-header deadline on every listener (`03 §7c`), but there is still no per-request rate limit; acceptable behind a bearer token on loopback by default, revisit as the configurable bind widens the surface. (c) **`captured_at`-seeded export cursor** — the keyset cursor scans by `id` from 0 even for a *late* time window, so a huge history with a recent-only `from` still walks early ids (bounded, ordered PK scan; correct, just not optimal). A future optimization can seed the cursor from the first in-window id. | agent | post-0.3.0 |
 | 92 | 2026-07-04 | **UIA circuit-breaker thresholds are named constants, not settings.** `BREAKER_CONSECUTIVE_BAD` (3) and `BREAKER_COOLDOWN_MS` (30 min) in `crates/uia/src/breaker.rs` govern the per-app UIA→OCR back-off, but are not exposed as `capture.*` settings, unlike other thresholds (`03 §3b` says thresholds live in settings). | **User-decided exception, recorded:** the 0.3.0 arc is surface-*reduction*; the user chose breaker-only protection with no new settings surface. The constants are conservative and self-documenting; promote them to settings only if real usage shows the default 3/30-min back-off is wrong for some workflow. **Update (0.3.3):** since `#93` now skips Chromium/Electron windows outright, the breaker only backstops *native* apps (and any browser whose class lookup failed), so its thresholds matter even less — no change warranted. | user+agent | post-0.3.0 (only if defaults prove wrong) |
 | 95 | 2026-07-04 | **UIA client spawn vs. concurrent settings-save has a vanishingly-narrow residual race (PR #79 review follow-up).** `get_or_spawn_uia` now reads the *live* `config.budget` under the `respawn_gate` (was: the caller's pre-gate snapshot), so a single settings save landing during the capture-start → first-spawn window can no longer bake a stale budget into the new client — the realistic bug the reviewer found. The only residual is a *second* settings save whose `apply_settings` teardown interleaves exactly between this spawn's fresh config read and its slot store (both saves changing the budget within the ~ms spawn) — the teardown then no-ops on the still-empty slot and the mismatch persists until the next save. | **Fixed for the reachable case; residual recorded as accepted.** The residual needs two distinct human saves within a single client's spawn window (not reachable by a person) and self-heals on the next save (which tears down the now-populated slot). A full close would need to serialize teardown against the in-flight spawn (e.g. a config generation counter checked under the slot write lock) — disproportionate to a non-reachable micro-race on a latency-budget value. | agent | post-0.3.0 (only if it ever proves reachable) |
 | 91 | 2026-07-04 | **Monitor hot-unplug mid-session stalls capture silently (PR9 audit finding).** The 3440×1440 primary display disconnected (DP power-save) during the PR9 live audit: one `WARN capture::wgc: capture: readback failed monitor=1 error=no frame available from the capture device`, then **no frames stored for ~4 min** despite foreground events, while `/v1/health` kept reporting `capturing:true`; a mark-hotkey press during the transition produced a frame but **no mark row and no visible toast** (silent loss), and later presses did nothing (requests into the stalled worker). | **Open (post-0.3.0 hardening), bounded:** a manual Deck STOP → START immediately restored frame flow (verified live); no data corruption. Fix direction: the capture worker should react to display-topology changes (`WM_DISPLAYCHANGE` / WGC item `Closed`) by recreating its sessions for the surviving monitors — or at minimum flip capture readiness to Error + toast instead of continuing to report capturing=true. Not a release blocker: environmental trigger, loud only in the log today, recoverable in two clicks. **Update (0.4.0):** sessions render such a stall **visible** — a session with a silent hole — which strengthens the case; but capture-worker topology handling is not sessions work, so it stays deferred as a **first-line 0.4.1 candidate, priority raised** (`docs/0.4.0.md` §2/§6). | agent | post-0.3.0 (first-line 0.4.1 candidate) |
 | 103 | 2026-07-05 | **Settings search box — deferred (0.3.2 D6).** The two-tier Settings IA (PR5) should make search unnecessary; adding one now would paper over bad structure. | **Deferred by roadmap decision:** revisit in 0.4.x only if the restructure proves insufficient in practice. | user+agent | 0.4.x, only if the two-tier IA isn't enough |
-| 104 | 2026-07-05 | **Token-level visual refresh — possibility recorded, out of 0.3.2 (D12).** PR4/PR5 are structural (layout + IA); the aesthetic direction (`UI_REFERENCE §1`: warm graphite, one bold accent, scanline identity) is untouched. | **Not planned — recorded so it isn't smuggled in:** a visual refresh is its own conversation that amends `UI_REFERENCE §1` first, then implements. Anything token/palette/typography-shaped inside 0.3.2 is a scope violation. | user+agent | unscheduled (own conversation first) |
+| 104 | 2026-07-05 | **Token-level visual refresh — possibility recorded, out of 0.3.2 (D12).** PR4/PR5 are structural (layout + IA); the aesthetic direction (`UI_REFERENCE §1`: warm graphite, one bold accent, scanline identity) is untouched. | **Not planned — recorded so it isn't smuggled in:** a visual refresh is its own conversation that amends `UI_REFERENCE §1` first, then implements. Anything token/palette/typography-shaped inside 0.3.2 is a scope violation. **Scheduled 2026-11-03:** the 0.4.5 arc is that conversation — v1 identity archived (`specs/archive/UI_REFERENCE_v1_identity.md`), `UI_REFERENCE §1` rewritten at the P2 direction checkpoint (0.4.5 D4). | user+agent | 0.4.5 arc (P2) |
 | 106 | 2026-07-06 | **NavRail ghost/duplication glitch is a WebView2 GPU-compositor stale-surface artifact — not fixable in app code (0.3.2 PR4 Phase A stop condition).** Phase A proved the DOM is invariably clean (rail anchor count constant at 6 across route-cycle/scroll/reload stress; 0 anomalies; no virtualization/remount/transform on the rail) and CDP renderer screenshots are clean; the only app-level mechanism that moves the rail is a banner mount/unmount shifting the whole nav row vertically (measured +40 px for a 40 px banner). The artifact is the rail's pre-shift painted **display surface** persisting after the shift — a WebView2/Chromium compositor class (cf. WebView2Feedback #2421, VS Code #113188: ghost renders with clean DOM), invisible to DOM inspection and CDP screenshots, intermittent (tied to slow-subsystem-init banner transitions). | **Stop condition fired (per `docs/0.3.2.md` PR4 + maintainer decision 2026-07-06): STOP on a direct fix; apply the cleanest CSS mitigation + keep this row open pending field recurrence.** Mitigation shipped in PR4 Phase B (preventive hardening): NavRail gets its own stacking/compositing boundary (`relative` + `z-rail` [consumes the previously-unused `--z-rail` token] + `isolation: isolate`) so it owns an isolated surface that repaints atomically on the shift, and `main` gets `contain: paint` (paint only, never layout) so the scrolling content layer cannot share/bleed a surface with the rail. Cannot be CI-verified (not observable via CDP); re-check on the physical display and on WebView2 runtime updates. Flip to ✅ only if a runtime update fixes it upstream or the mitigation is confirmed durable in the field. | user+agent | open (upstream class; app-side mitigation shipped 0.3.2 PR4) |
 | 107 | 2026-07-07 | **User-editable taxonomy override file — deferred (0.4.0 D6, `03 §7e`).** The AI-tool / meeting recognition taxonomy ships as a versioned in-repo data file compiled into the app; adding a tool = editing that file this arc. A user-supplied override (so a user can teach it about their own tools without a rebuild) is not built. | **Deferred by roadmap decision (D6):** the in-repo file is the mechanism this arc — small, auditable, no new settings/loader surface. A user override file is a later refinement; revisit only if real use shows the built-in taxonomy is too rigid. | user+agent | 0.4.x, only if the in-repo taxonomy proves too rigid |
 | 108 | 2026-07-07 | **Dedicated Sessions NavRail route — possibility recorded, out of 0.4.0 (D13, `docs/0.4.0.md`).** Sessions surface **inside** existing routes (Timeline bands + drill-in, Moment, Deck); the arc adds **no** new NavRail entry. | **Not planned — recorded so it isn't smuggled in:** a dedicated Sessions route is its own 0.4.x conversation, opened only if live use shows the in-route surfaces are insufficient. Anything route-shaped (a new NavRail item) inside 0.4.0 is a scope violation. | user+agent | 0.4.x, only if the in-route surfaces prove insufficient |

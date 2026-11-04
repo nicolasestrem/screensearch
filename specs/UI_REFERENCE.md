@@ -9,78 +9,40 @@
 
 ## 1. Aesthetic direction (the point of view)
 
-**Thesis — a forensic console for your own screen-time.** This is not a productivity dashboard;
-it's an instrument that *reads back a recording* of what you saw. The product literally captures
-screens, so the interface is built from that material: a dark telemetry console where **time is a
-physical filmstrip** you scrub, and a single signal-orange scan-head marks "now / here." Everything
-is quiet and disciplined except that one living element.
+**Placeholder — the v2 identity is chosen by the maintainer at the P2 direction checkpoint (0.4.5 D4) and written here before any screen work starts.** The superseded v1 identity (warm graphite + signal-orange, Windows-native fonts, Scanline Timeline, dark-only) is preserved verbatim at `specs/archive/UI_REFERENCE_v1_identity.md` and is **not** normative for 0.4.5 onward.
 
-This honors the pinned **Command Deck** identity (warm-graphite + a single signal-orange accent,
-Windows-native fonts, dark-only, WCAG-AA) and gives it a reason to exist beyond "dark + accent."
+Until that pick, this section is the only open variable in the UI contract: `§2` (token shape), `§3` (IA), `§4` (state matrix) and `§8` (shell layout) are already authoritative for v2 and do not depend on the direction. P2 renders three complete directions on identical content at a dev-only `/kitchen` route — a real Settings page, a search result list, a session card, an answer with citations, a form with every control state, both themes where the direction has two — and the maintainer picks one (or a merge), which is then recorded **here**. Nothing visual starts before the pick.
 
-**The one aesthetic risk (justified):** treat the timeline as a real instrument — a continuous
-**Scanline Timeline** with a sweeping scan-head and a faint scanline texture on surfaces. The
-scanline is the subject's *native material* (screen capture / CRT / monitoring), not decoration. We
-spend all boldness here; every other surface stays calm.
+Themes: the v2 token architecture supports multiple themes, and the v1 dark-only rule is **superseded** — whether v2 ships dark-only, light-only or both is part of the D4 pick (0.4.5 D5).
 
-### Palette (warm graphite + one bold accent)
-| Token | Hex | Use |
-|---|---|---|
-| `--bg-base` | `#15120D` | app background (warm near-black, not pure black) |
-| `--bg-surface` | `#1E1A13` | panels, cards |
-| `--bg-overlay` | `#262017` | popovers, command palette, modals |
-| `--line` | `#332B20` | hairline dividers, borders |
-| `--ink` | `#ECE4D5` | primary text (warm off-white) |
-| `--ink-muted` | `#9A8F7A` | secondary text, labels |
-| `--ink-faint` | `#6B6253` | tertiary, disabled |
-| `--accent` | `#FF6A1A` | **the only bold color** — scan-head, active state, primary action |
-| `--accent-wash` | `rgba(255,106,26,0.14)` | scanline glow, selection, active row |
+Fonts and icons are **bundled local files** (0.4.5 D15): OFL-licensed variable fonts, one text family and one mono family — display treatment comes from weight and size, not a third face — and one local SVG icon set at a single stroke width. Nothing is fetched over the network; there is no web-font CDN and no icon service.
 
-**Functional-only** (never brand decoration, used solely in status contexts, kept desaturated):
-`--danger #C5524B` · `--warn #D9912F` · `--ok #7FA88B`. If a screen reaches for a fourth hue, stop.
-
-### Typography (Windows-native — a constraint *and* a personality)
-No web-font downloads (privacy/offline/portable). The native stack is the character:
-- `--font-display`: **Bahnschrift** (condensed industrial / DIN-like) → labels, eyebrows,
-  section heads, set in **uppercase with tracking** for an instrument-readout feel.
-- `--font-body`: **Segoe UI** → prose, answers, descriptions.
-- `--font-mono`: **Consolas** → all data: timestamps, counts, durations, model/job state.
-
-**Type scale:** display 28/600 · title 20/600 · subtitle 16/600 · body 14/400 · caption 12/500 ·
-data 13 mono. Long-form RAG answers use `@tailwindcss/typography` (body face).
-
-### Form
-- **Radius:** 4px panels, 2px data chips, **0 on the timeline ribbon** (it's an instrument, not a
-  card). Not zero everywhere — that's the broadsheet default.
-- **Elevation:** surface color steps + hairline, minimal shadow (dark UI).
-- **Motion:** 120–200ms ease for UI; the scan-head moves **linearly**; an ambient scanline drifts
-  *very* slowly. All ambient motion disabled under `prefers-reduced-motion`.
-
-### Signature: the **Scanline Timeline**
-A horizontal time-ribbon: frames appear as density ticks (busier time = denser), thumbnails on
-hover, a sweeping **signal-orange scan-head** at the focused moment, faint scanline texture. It
-encodes real information (when things happened, how much) — never decorative tick-marks. Reused as
-a thin "minimap" strip at the top of every recall view.
+Palette, typography (families, weights, the type scale), form (radius, elevation, motion) and the timeline signature are **P2's to write here** after the D4 pick — everything that section names is a decision the direction checkpoint produces, so none of it is restated now. The binding restatement: the signature surface (the timeline, `§3`) encodes real capture density rather than decoration, and motion — including any ambient drift — is disabled under `prefers-reduced-motion` (`§7`).
 
 ## 2. Design tokens (single source)
-Tokens live in `ui/src/styles/tokens.css` as CSS custom properties; Tailwind theme maps to them.
-**No component hardcodes a hex, px font, or magic spacing** — everything references a token.
-Spacing scale: 4 · 8 · 12 · 16 · 24 · 32 · 48. Z-layers: base / rail / overlay / toast.
+**Placeholder — P2 writes the scales here after the `§1` direction pick (0.4.5 D4).** The architecture is decided now and binds every screen: three layers in `ui/src/styles/tokens.css` — **primitive** (raw scales: colour ramps, type scale, space scale, radii, shadows, durations) → **semantic** (`--surface-raised`, `--text-secondary`, `--border-subtle`, `--action-primary-bg`, `--focus-ring`…) → **component** (only where a component needs its own knob).
+
+Components may reference **semantic and component tokens only** — never a primitive directly. **No component hardcodes a hex, px font, or magic spacing** — everything references a token. Themes are **semantic-layer swaps** (`[data-theme]`), so a new theme never touches a component, and the `§1` pick decides how many ship (0.4.5 D5). Spacing is a 4-based scale with named steps plus a density token (`comfortable` / `compact`, `§8`). Z-layers stay base / rail / overlay / toast.
+
+Tailwind's theme maps onto the same custom properties, so a Tailwind utility and a hand-written `var(--…)` resolve to one value. A raw hex, a px font size or a non-token spacing value in a primitive is a lint failure (P2 acceptance).
 
 ## 3. Information architecture (every screen → a real job)
 ```
 AppShell
  ├─ StatusRail (top): capture state · DB size · queue depth · sidecar/model · readiness · throttle   [telemetry]
- ├─ NavRail (left): Deck · Recall · Timeline · Insights · Settings · footer: version → repo link (0.3.1) · update indicator (0.3.2, presence-only) + a quiet "Check for updates" control (0.3.2 PR2, the quick-menu manual check — gap #99)
+ ├─ NavRail (left): Deck · Ask · Work · Recall · Insights · Settings (0.4.5 D7) · footer: version → repo link (0.3.1) · update indicator (0.3.2, presence-only) + a quiet "Check for updates" control (0.3.2 PR2, the quick-menu manual check — gap #99)
  ├─ CommandPalette (⌘K): jump-to + actions (search, ask, tag, settings)
  └─ Routes:
-     /            Deck      — at-a-glance: capture status, today's activity, jump back in (0.3.0: where-was-i "Jump back" card + Intentions strip)
-     /recall      Recall    — Search · Ask · Reports (0.2.x); content text default, opt-in raw/chrome
-     /timeline    Timeline  — the Scanline Timeline browser
-     /timeline/:id Moment   — one frame: image, OCR text, vision tags, context, actions
-     /timeline/session/:id  Session drill-in (0.4.0 PR5) — one session: title, span, tool/host, frames strip, exchanges, Recap
-     /insights    Insights  — activity analytics (nice-to-have; ships as real or honest-empty)
-     /settings    Settings  — two tiers (0.3.2, D6): Essentials (Capture · Hotkeys · Privacy · Models · Storage · App · Data) + Advanced (collapsed per-group expanders)
+     /            Deck       — at-a-glance: capture status, today's activity, jump back in (0.3.0: where-was-i "Jump back" card + Intentions strip)
+     /ask         Ask        — Ask v2 conversation (0.4.5 P9): persisted threads, session + frame citations, editable scope chips
+     /work        Work       — thread list (0.4.5 P9): sortable by last touched / time spent
+     /work/:id    Thread     — one thread (0.4.5 P9): its sessions as a timeline, entities, open loops, connected threads, Ask scoped to the thread, rename / merge / split
+     /recall      Recall     — Search · Reports (0.2.x); content text default, opt-in raw/chrome
+     /timeline    Recall     — the timeline browser (the Scanline Timeline or its v2 successor, per the `§1` pick); same NavRail entry as `/recall`
+     /timeline/:id Moment    — DETAIL route, never a rail item: one frame — image, OCR text, vision tags, context, actions
+     /timeline/session/:id  Session — DETAIL route, never a rail item (0.4.0 PR5): title, span, tool/host, frames strip, exchanges, Recap
+     /insights    Insights   — cited insight cards grouped by type + window picker (0.4.5 P9 rewrite)
+     /settings    Settings   — category sidebar over `routes/settings/`: General · Capture · Privacy · Intelligence · Models · Data · Integrations · Advanced (0.4.5 D7/D9)
      *            NotFound
 
  ┄ FlowOverlay (0.3.0) — a SEPARATE always-on-top hotkey window, NOT a NavRail route: Ctrl+Alt+Z
@@ -88,8 +50,34 @@ AppShell
                          Enter jumps to the Moment; an empty query shows the where-was-i strip.
  ┄ Tray (0.3.2)       — an OS surface, not a window/route: passive capture-state icon + menu (03 §7d)
 ```
+
+**IA change (0.4.5 D7).** The NavRail carries six entries — **Deck · Ask · Work · Recall (search + timeline) · Insights · Settings** — and **Session and Moment stay detail routes**: reached from a search result, the timeline, a thread or the Deck's Jump-back card, never as rail items. The 0.3.2-era "no new route" fence (D13-of-0.4.0, which kept sessions inside existing routes) is **lifted** for this arc: `/ask`, `/work`, `/work/:id` and the rewritten `/insights` are new routes, and `routes/settings/` replaces the single Settings view. Recall keeps its shipped surfaces — Search and Reports — with the timeline browser as its second surface under the same rail entry (`/timeline`); whether those paths merge into one is P7's call, and the existing deep links (`/timeline/:id`, `/timeline/session/:id`) keep working either way.
+
 Rules: one primary action per screen; every route is reachable from NavRail or a link; no orphan
 screens; deep-linkable (real routes, `/timeline/:id` shareable within the app).
+
+### Screen → job (v2)
+One job per screen, one primary action. A screen whose job cannot be stated in one line is two screens. `§4` owns each screen's loading / empty / error / partial / populated states.
+
+| Route / surface | Screen | The job (one line) | Primary action |
+|---|---|---|---|
+| `/` | Deck | Answer "what was I doing, and what now?" from the last hours | Jump back to that moment |
+| `/ask` | Ask v2 conversation | Answer a question across threads, sessions and frames, with citations | Ask (submit a turn) |
+| `/work` | Work list | Show what is in flight, most recently touched first | Open a thread |
+| `/work/:id` | Thread page | Explain one thread — what it is, what is unfinished, what it connects to | Ask scoped to the thread |
+| `/recall` | Recall · Search | Find one specific thing you saw | Open the moment |
+| `/recall` | Recall · Reports | Turn a span into a written recap | Generate |
+| `/timeline` | Recall · Timeline | Show *when* things happened at a glance | Scrub / select a band |
+| `/timeline/:id` | Moment (detail) | Read one captured moment in full | Open the session it belongs to |
+| `/timeline/session/:id` | Session (detail) | Reconstruct one work session | Recap |
+| `/insights` | Insights v2 | Surface a pattern worth knowing, each with its evidence | Open an insight's evidence |
+| `/settings/*` | Settings (8 categories) | Change one behaviour and see its effect | Edit one row (it autosaves) |
+| Flow overlay | FlowOverlay | Recall without leaving the current app | Jump to the Moment |
+| Tray | Tray | Control capture and models from the OS shell | Pause / Resume |
+
+**Settings v2 (0.4.5 D7/D9; P7 builds it).** Settings is one shell with a **category sidebar** — **General · Capture · Privacy · Intelligence · Models · Data · Integrations · Advanced** — implemented as `routes/settings/`, one file per category (none over ~300 lines) and a search across all settings that finds every key by label and by key name (gap `07` #103). Every category uses **one row pattern**: label, one-line plain-language effect, control, "changed" marker with reset-to-default. **Autosave per field with an undo toast — there is no global Save button** (0.4.5 D9); a failed save keeps the typed value in place, explains, and retries. **Destructive actions** (delete history, revoke a credential, remove an output folder) sit behind a confirm dialog that names exactly what is destroyed (0.4.5 D9). Live status shows inline where a setting has a runtime effect — hotkey registered, API listening on, model loaded. `api.*` and the Telegram/Obsidian credentials live under **Integrations**; `file-only` keys appear read-only under **Advanced** with the `advanced.toml` path. Membership is normative in `03 §8` — only the 25 UI keys are controls; everything else is file-only or gone, with no unknown-key tolerance (0.4.5 D6).
+
+**Identity and navigation notes below are historical (0.4.5 D4/D5/D7).** The rest of this section records what shipped in 0.2.x–0.4.2. Its **behavioural** rules still bind — states, keyboard paths, privacy, no badge counts, one scroll context, honest empty — but every **identity or navigation** reference in it (signal-orange accent, Windows-native fonts, the Scanline signature, the 0.3.2 two-tier Settings, the 0.4.0 "no new route" fence) is superseded by `§1`/`§2` and by the v2 IA above.
 
 **StatusRail "Throttling" chip (0.2.1).** When the smart enrichment throttle is active the rail
 shows a subtle, desaturated **"Throttling"** chip (functional `--warn`, not the bold accent) — shown
@@ -214,6 +202,20 @@ ships with only the happy path; no mock data; no "Coming Soon."
 | Updater indicator (0.3.2) | no update → **zero presence** (nothing rendered) | check/download failed → quiet App-section line ("couldn't check for updates" + retry), never a modal | downloading → indicator present, App line reflects it | presence, never a count; install only on user-initiated restart (`03 §11b`) |
 | Settings · App (0.3.2) | — | startup-registration or update-check failure → inline explain + retry, form kept | update downloading → status line reflects it | run-at-startup + close-to-tray apply optimistic + reconcile, like the rest of Settings |
 | Setup indicator + Settings · Models setup details (2026-10-20, `03 §7g`) | nothing active or failed → **zero presence** (no chip; details list nothing) | an operation `failed` → danger-toned chip "Setup failed" until that operation retries; details show a plain cause line + the next step (engine: "resolve the problem, then restart ScreenSearch"; answer model: the existing "Load answer model" action; vision model: the existing "Start vision tagging" action) + an expandable diagnostic detail | several operations at once → one chip summarizing the most urgent (failed > active); details list each operation independently | chip copy "Preparing local AI" + the active step ("Downloading engine 42%" only when bytes and total are both known, otherwise indeterminate); details = per-operation stage (Checking → Downloading → Verifying → Installing → Done; embeddings "Preparing search model", never a percentage); loading = the snapshot query is pending → no chip, skeleton line in details; chip is a link/button to Settings; progress is `role="progressbar"` with values only when determinate; one polite live region announces phase changes, never byte ticks; reduced-motion disables the indeterminate animation |
+| Ask v2 conversation (0.4.5, `03 §7i`) | no conversation yet → prompt invites a question (or a premade card); a saved thread with no turns shows the same invitation | sidecar unavailable → "answer model not loaded; load it?"; a failed turn keeps the question in the thread with a retry, never a lost turn | streaming (tokens arriving) → citations land as they resolve; scope chips show the window/thread/entity actually applied | persisted `ask_threads`/`ask_turns`; every turn cites **session ids and frame ids**; a turn with no citation is a defect; scope chips (time window · thread · entity) are editable and a follow-up reuses the previous window/entities unless the question overrides them; entity scope degrades to plain text when the graph is empty |
+| Work list (0.4.5, `03 §7h`) | "No threads yet — they appear once enough sessions share a subject" (also the honest state when clustering has not run) | load failed → retry, keep sort | backfill/clustering running → rows appear as they land, with a counts line ("N of M sessions clustered") | sortable by last touched / time spent; low-confidence threads say so; rename / merge / split are written to `thread_overrides` and always beat the clusterer |
+| Thread page (0.4.5, `03 §7h`/`§7j`) | thread has no sessions in this window → widen the range | thread missing or merged away → explain the merge + link to the surviving thread | some sessions still clustering, or the scoped Ask has not assembled context yet → labeled | session timeline + entities + open loops + connected threads + Ask scoped to the thread; every rendered claim links to its evidence; rename/merge/split confirm (destructive of the current grouping) |
+| Insights v2 (0.4.5, `03 §7j`) | "Not enough history yet" (honest) or "no insights for this window" | generation failed → retry, keep the picked window | window partially computed → labeled as partial | cited cards grouped by the five types (thread activity · open loops · recurrence · semantic neighbours · resumption); each card opens its evidence; never a fabricated chart, never a notification, streak, score or grade (0.4.5 D13) |
+| Settings · General (0.4.5) | — (every control holds a value) | save failed → value stays in place, inline explain + retry (there is no global Save) | a setting applies asynchronously → row reads "applying" until the runtime confirms | run at startup · close to tray · version + update status (the 0.3.2 App content folds in here); autosave per field + undo toast (0.4.5 D9) |
+| Settings · Capture (0.4.5) | capture paused → rows stay editable, status line says "Paused" | save failed (interval, monitors, hotkey) → keep the form, retry; a hotkey that will not register is a loud warning + toast, never silent | monitor list refreshing after a hot-plug → the prior list stays usable | interval · monitors · event-driven master toggle · hotkeys with the live cross-chord conflict warning (`07` #100); an unplugged monitor degrades honestly (`07` #91 stays out of scope) |
+| Settings · Privacy (0.4.5) | no excluded apps → "Nothing excluded yet" + add affordance | app picker failed → keep the list, retry | an app just added but not yet confirmed by the capture gate → labeled pending | excluded apps · pause on lock; ScreenSearch always excludes its own window and that is not a setting (`03 §7b`) |
+| Settings · Intelligence (0.4.5) | nothing scheduled → "enrichment runs on demand" | job status unavailable → retry, controls stay live | a job running → progress + cancel, per operation | vision timer + interval, schedule (on-demand / timer / idle), and the graph/insight compute readout: normalization, session embeddings and insights run on demand or on idle under the existing scheduler and pressure throttle, never on the capture hot path (0.4.5 D11) |
+| Settings · Models (0.4.5) | nothing active or failed → **zero presence** (no chip, details list nothing) | download/verify failed → cause line + the next step, retry | several operations → one chip for the most urgent (failed > active), details list each independently | vision tier · answer tier · show thinking · per-model load/unload; the 2026-10-20 `SetupIndicator`/`SetupDetails` row above still binds verbatim |
+| Settings · Data (0.4.5) | no saved reports → "Nothing saved yet" (the section still explains setup) | export/backup failed → keep the panel, explain, retry | retention change applying → "applying" until the sweep confirms | retention days · max image width · Export (`export_data`; works with the API off) · Memory reports (`§11`); deleting history is destructive → confirm naming the span and row counts (0.4.5 D9) |
+| Settings · Integrations (0.4.5) | API off → "API disabled"; no read token → Create action; both independent | port in use → loud warning + toast + inline "pick another port"; credential action failed → no secret echo | enabled but bind error → show both facts, never claim connectivity | `api.enabled` · `api.port` · `api.token` · `api.bind_address` · the read credential (`§12`'s table binds verbatim) · Telegram and Obsidian credentials (write-only, never prefilled, `§11`) |
+| Settings · Advanced (0.4.5) | no tuning keys set → "everything is at its default" | `advanced.toml` unreadable → explain, show the path, state that defaults still apply | the file holds an unknown/retired key → rewritten once with it removed, no error, no migration (0.4.5 D6) | read-only display of the `file-only` keys with the `advanced.toml` path; the file is the control surface and there is no Save |
+
+**Settings v2 relocates, it does not renegotiate (0.4.5 D7/D9).** The rows above for Settings, Settings · Performance throttle, Settings · HTTP API, Settings · App and Settings · Models setup details remain in force: the eight categories are a new grouping and a new row pattern (autosave per field + undo toast, no global Save, destructive confirm), not new contracts for those controls.
 
 **API address and threat model (configurable-bind correction).** Default off, with missing
 bind address defaulting to `127.0.0.1` even for existing enabled installations. Allow any IPv4/IPv6
@@ -228,51 +230,12 @@ Loading uses skeletons that match final layout (no spinner-only screens). Empty 
 **invitations to act**, not mood.
 
 ## 5. Component inventory (built once, reused)
-Shell: `AppShell`, `StatusRail`, `NavRail` (0.3.1: footer version link → opens the GitHub repo in
-the default browser — D4, `§3`), `CommandPalette`, `ReadinessBanner`; 0.3.2: `UpdateIndicator`
-(NavRail footer: the presence indicator + the quiet manual "Check for updates" control —
-`§3`/`§4`) + `TrayMenu` (the native Tauri tray — Rust-built, not a
-React component; listed here so its `§4` states are owned by this file; mechanics `03 §7d`).
-Primitives: `Panel`, `Button`, `IconButton`, `Field`, `Select`, `Toggle`, `Chip`, `Toast`,
-`EmptyState`, `ErrorState`, `Skeleton`, `Tooltip`, `Expander` (0.3.2 PR5: a Panel-shaped
-disclosure for a collapsed-by-default settings group — header row = the disclosure button
-with `aria-expanded`/`aria-controls`, labelled-region body, intro sentence visible while
-collapsed; open state is per-session via the ui store, per `§3` D6).
-Domain: `ScanlineTimeline`, `FrameTile`, `FrameImage` (lazy), `AnswerStream` (markdown + citations),
-`SearchResult`, `MomentDetail` (0.3.1: recognized-text + raw-text regions grow inline — no internal
-max-height, no nested scrollbar; one scroll context — D1, `§4`), `JobQueueMeter`, `ModelTierPicker`
-(Default/Quality — 0.3.0 retired Beta),
-`ScheduleControl` (on-demand/timer/idle), `RetentionControl`.
-Domain (0.2.x): `RecallModeTabs` (Search/Ask/Reports), `TextSourceToggle` (content / include-chrome),
-`ReportBuilder` (daily/weekly/custom range → Generate), `ReportView` (markdown + clickable
-source-frame chips + Copy + `.md` download — 0.3.1 D2: named `screensearch-report-YYYY-MM-DD-HHmm.md`,
-local time, `-2`/`-3` on same-minute collision; 0.3.2 #89: daily/weekly stems carry the kind,
-`screensearch-report-daily-…` / `-weekly-…`, custom unchanged — + footer, 0.3.1 D3: one plain-text line block with
-app version · model id used · time span covered · active filters, plus the existing counts (passes · periods covered · frames summarized);
-no new settings toggle), `PromptCardGrid` (premade Ask
-cards: Day Recap, Standup Update, Time Breakdown, Top of Mind, AI Habits — click fills + submits).
-Domain (0.2.1): `ThrottlePanel` (Settings: master `Toggle` + 8 threshold `Field`s + live readout),
-`ThrottleStatus` (live CPU/GPU pressure + level Normal/High/Sustained, honest "GPU not monitored"
-when PDH counters are absent — five states per `§4`), `ThrottleChip` (subtle StatusRail indicator,
-level ≥ 1 only).
-Domain (0.3.0): `FlowOverlay` (the always-on-top hotkey window: search-as-you-type + Ask over content
-text, where-was-i empty state, five states per `§4`), `WhereWasICard` (Deck "Jump back" card →
-Moment), `IntentionsStrip` (Deck: unresolved marks, newest-first, open/resolve/dismiss, **no badge
-counts**), `HotkeyField` (Settings: records a chord for `overlay.hotkey`/`marks.hotkey`, shows a loud
-warning on registration conflict), `ApiPanel` (Settings: master `Toggle` + port `Field` + token
-reveal/copy/regenerate + threat-model copy + the loud port-in-use "pick another" affordance),
-`ExportPanel` (Settings "Data export": an **Export…** `Button` → `export_data`, streaming
-frames + content text + marks to a JSON file in the user's Downloads folder, **no images**;
-its own panel so it reads as independent of the API — it **works with the API off** — D12).
-Domain (2026-10-20, `03 §7g`): `SetupIndicator` (StatusRail chip: zero presence when idle, one
-summarized active/failed state, links to Settings) and `SetupDetails` (Settings · Models: one row
-per setup operation with stage, determinate-or-indeterminate progress and plain failure copy).
-Domain (0.4.0, names proposal-level — PR5 owns): `SessionBands` (the kind-coded band layer over
-`ScanlineTimeline`, tokens only, one-accent — data via `list_sessions`; exactly four reserved lanes
-in every state, lane-5+ overflow aggregated into the neutral range-preset-focus control), `SessionDrillIn` (the
-`/timeline/session/:id` view: title/span/tool-host chips + frames strip + exchanges + **Recap** via
-the report engine; one scroll context, no nested scrollbars — `§4`/`§8`).
-Each component owns one job; a label labels, an example demonstrates — nothing does double duty.
+**Placeholder — P2 writes the inventory here as the primitives land, after the `§1` direction pick (0.4.5 D4).** Two inputs are authoritative now and do not wait for the pick:
+
+- **The primitive list to build** is P2's item 5 in `docs/0.4.5.md` (`:150-155`): Button (primary / secondary / ghost / danger × sm / md, icon and loading states), IconButton, Field, TextInput, Textarea, Select, Combobox, Toggle, Checkbox, Radio group, Segmented control, Slider with numeric input, Chip/Tag, Badge, Tooltip, Popover, Dialog, Sheet, Toast, Tabs, Panel/Card, List row, Table, Skeleton, EmptyState, ErrorState, Kbd, Divider. Every primitive ships all interaction states, keyboard behaviour, a focus ring, reduced-motion handling and WCAG-AA contrast in every theme.
+- **The shipped v1 inventory** — shell, primitives, domain components, and the arc-by-arc notes explaining why each exists — is preserved verbatim at `specs/archive/UI_REFERENCE_v1_identity.md`. It is provenance, not a list to keep: P10 deletes dead components left behind by the redesign and removes `tokens.compat.css` (P2 item 7 / P10 in `docs/0.4.5.md`), and P2's `tokens.compat.css` aliases keep unconverted screens rendering in the meantime.
+
+Still binding without a pick: **each component owns one job** — a label labels, an example demonstrates, nothing does double duty; components reference semantic and component tokens only (`§2`); and the *behavioural* contracts these components carried do **not** lapse with their v1 visuals — full state coverage per `§4`, one scroll context and no nested scrollbars per `§8`, honest empty states, no badge counts. The v2 inventory is written here by P2 as primitives land, extended by P9 (`ConnectionsPanel`, `EntityChips` — built there, placed in Session and Moment by P10) and by P10's refonted domain components.
 
 ## 6. Data & state (reliability by construction)
 - **Typed IPC only.** Every command/event payload is a Rust struct exported via **`ts-rs`** and
@@ -296,7 +259,8 @@ AA contrast for all text/controls (palette chosen for it); visible keyboard focu
 interactive element; full keyboard nav incl. the timeline (arrow scrub, Enter to open) and, for
 0.4.0, the **session bands** (keyboard-operable, Enter opens the drill-in) and the **drill-in** view
 (fully keyboard-navigable); ARIA on custom widgets (timeline = slider semantics); `prefers-reduced-motion`
-disables scan/ambient (incl. session-band motion); respects OS dark (app is dark-only by design);
+disables scan/ambient (incl. session-band motion); respects the OS colour scheme for every theme the
+v2 pick ships (v1 was dark-only by design; superseded by 0.4.5 D5);
 hit targets ≥ 32px.
 
 ## 8. Performance budgets
@@ -330,6 +294,16 @@ latency < 100 ms; no layout shift on data arrival (skeletons reserve space).
   later view violating a line above is a regression against this section. Moment is not optional here:
   it is the origin of the one-scroll-context principle (0.3.1 #59).
 
+### Shell layout contract — v2 restatement (0.4.5; binds P2 and everything after it)
+The 0.3.2 contract above stays in force **verbatim**; v2 restates the shell it is verified against, so P2's layout tokens and P7's shell are built to one sentence rather than to the roadmap.
+
+- **Fixed shell, one scrolling pane:** `StatusRail` across the top (telemetry only, one row, chip widths stable) and `NavRail` down the left (six entries per `§3` — Deck · Ask · Work · Recall · Insights · Settings — plus the version footer and the update presence). Both rails are fixed; only the content pane scrolls, and a route never introduces a second vertical scroller.
+- **12-column content grid:** wide screens lay the content pane out on a **12-column grid** with container widths taken from `§2`'s scales; below the wide breakpoint the grid collapses to one column instead of scrolling sideways. Every grid item carries `min-w-0` — the pre-block exemption above depends on it, and so does the no-horizontal-scrollbar rule.
+- **One density token:** row height, control height and grid gap come from a single **density token** (`comfortable` / `compact`, `§2`); no screen hardcodes a row height. `comfortable` is the default; `compact` is a choice in Settings, not a per-screen tweak.
+- **Same verification, wider matrix:** the screenshot matrix keeps its size/DPI set and extends to every v2 route and state — Deck, Ask v2 conversation, Work list, Thread page, Recall (search + reports) and the timeline, Moment, Session, Insights v2, and each of the eight Settings categories — in every theme the `§1` pick ships. The one-scroll, no-horizontal-scrollbar and no-CLS rules are unchanged, including the timeline layer's four reserved band lanes (or the equivalent fixed reservation of its v2 successor, `docs/0.4.5.md` P10).
+
+**The performance budgets above are unchanged by v2** — initial JS ≤ 250 KB gzip, route-split per page, virtualized frame grids and timeline, lazy `FrameImage`, results rendered < 100 ms after data, interaction latency < 100 ms, no layout shift on data arrival. A v2 direction that cannot meet them is a regression against this section, not a renegotiation of it.
+
 ## 9. Voice & copy (interface speaks plainly, from the user's side)
 Name things by what the user controls ("Pause capture", not "halt pipeline"). Actions keep their
 name through the flow ("Tag with vision" → toast "Vision tagged"). Errors explain what happened and
@@ -345,7 +319,8 @@ no filler. Timestamps human-relative with absolute on hover.
 5. AA contrast verified; keyboard-only operation of every screen incl. the timeline; reduced-motion
    honored.
 6. Performance budgets (§8) met on a realistic DB.
-7. The Scanline Timeline scrubs smoothly and reflects real capture density.
+7. The timeline scrubs smoothly and reflects real capture density — the Scanline Timeline or its v2
+   successor, whichever the `§1` pick names (0.4.5 D4).
 8. Verified by **running the app and capturing screenshots** of each screen in each state — not by
    "it compiles" (`04 §6`).
 9. The `§8` shell layout contract holds: one scroll context per route, fixed rails, no nested or

@@ -184,6 +184,7 @@ The 0.3.x line is shipped (0.3.0 through the 0.3.3 hotfix), and **0.4.0 (P8)** s
   insufficient, `07` #108); **audio / transcripts** (D14 — the `'transcript'` `session_artifacts`
   kind is the reserved extension point, `07` #75); and monitor hot-unplug hardening (`07` #91 —
   sessions make its silent stalls *visible*, raising it to a first-line 0.4.1 candidate).
+  *(Superseded 2026-11-03: audio is not a priority — see `§7` and 0.4.5 D14.)*
 
 ## 5e. Network API increment — Gate A contract (2026-10-15)
 
@@ -366,6 +367,51 @@ resume machinery, schema change, setting, network destination, in-app engine re-
 (`07` #94) or automatic Ask replay. Normative contract: `03 §7g`; UI: `UI_REFERENCE §4`/`§5`.
 Approval covers implementation; merge and release each need separate authorization.
 
+## 5k. Post-1.0 arc — 0.4.5 (work intelligence + design system v2)
+
+The 0.4.x line is shipped through v0.4.2, and **0.4.5 (P9)** is the next arc — two problems, one arc.
+This section states only the strategic *what/why*; phase order, per-phase acceptance and file
+ownership live in `docs/0.4.5.md`, and the normative contracts are `03 §4`/`§7h`/`§7i`/`§7j`/`§8`
+and `UI_REFERENCE`. **One user makes an arc this size affordable:** the single-user fact (0.4.5 D1)
+removes the compatibility, retired-key-tolerance and multi-environment obligations the earlier arcs
+carried.
+
+- **The problem — it records the work but does not understand it.** Insights is counts
+  (`InsightsSummary` totals, capture density, top apps, an activity breakdown). Ask is frame-level:
+  it cannot resolve "the Dockhouse project" or "last week, before the release", and cannot hop from
+  a session to the three earlier sessions on the same thing. Nothing links a repo, document, error
+  string or ticket seen on Monday with the same thing seen again on Thursday. The second half is
+  **the interface, Settings worst of it**: one 1,362-line `routes/Settings.tsx` with fourteen stacked
+  panels and around sixty keys, many of them engine internals no person should reason about —
+  because 0.3.2 was deliberately structural-only (D12-of-0.3.2) and 0.4.0 parked the token-level
+  refresh as #104 "its own conversation amending `UI_REFERENCE §1` first". **This arc is that
+  conversation**, and it is the whole of #104.
+- **What it builds.** The **work graph** — `entities` / `entity_aliases` / `session_entities`
+  extracted from what was actually looked at, clustered into `threads` / `thread_sessions` with
+  `thread_overrides` (rename / merge / split) and `session_vectors` — plus a **session-aware Ask v2**
+  (time intent + entity resolution, threads → sessions → frames retrieval, session *and* frame
+  citations, persisted turns), a **typed, cited insights engine** (thread activity, open loops,
+  recurrence, semantic neighbours, resumption — an insight without evidence is a defect), and the
+  **full v2 design system**: a primitive → semantic → component token architecture applied to every
+  screen, with Settings rebuilt on it.
+- **Waves and gates.** P1 (the specs contract) runs alone; then **Wave A: P2 · P3 · P4** → Gate A →
+  `v0.4.3`, **Wave B: P5 · P6 · P7** → Gate B → `v0.4.4`, **Wave C: P8 · P9 · P10** → Gate C →
+  `v0.4.5`. A wave starts only when **every phase of the previous wave is merged** — not when that
+  wave's debug window closes; the previous wave's debug window runs alongside it.
+
+```
+P1 ──► Wave A: P2 · P3 · P4 ──► Wave B: P5 · P6 · P7 ──► Wave C: P8 · P9 · P10 ──► Gate C ► v0.4.5
+                 └─ debug A ──────────┘ (Gate A ► v0.4.3)
+                                         └─ debug B ─────────────┘ (Gate B ► v0.4.4)
+```
+
+- **Pointer and out-of-scope.** Phase order, acceptance per phase and the file-ownership rule are
+  `docs/0.4.5.md`; the contracts are `03 §4` (baseline v14), `§7h` (work graph), `§7i` (Ask v2),
+  `§7j` (insights) and `§8` (settings v2), with `UI_REFERENCE` for identity, tokens, IA and
+  components. **Out:** audio / meetings (0.4.5 D14) and people as entities. **Commits:** 0.4.5 D18
+  — no agent commit or push before the maintainer validates the content and names
+  `nicolasestrem/screensearch`.
+
 ## 6. Risks & mitigations
 
 | Risk | Mitigation |
@@ -385,9 +431,10 @@ with explicitly selected HTTP/HTTPS remote destinations; it uses `.no_proxy()`, 
 and leaves app/capture/inference Windows-only, inference loopback-only, and API listener/CORS
 unchanged; approval is not implementation evidence) · OS automation (v1.0) · cloud/telemetry · accounts/multi-user · real-time vision ·
 V1 data import · **proactive nudges / notifications** (0.3.0 recall is pull-based only; sessions stay
-non-shaming — no streaks/scores, D11-of-0.4.0) · **audio capture / transcription** (*for now* — a
-0.4.x candidate, `§5d`; the `session_artifacts.kind='transcript'` extension point is reserved but
-unbuilt, D14).
+non-shaming — no streaks/scores, D11-of-0.4.0) · **audio capture / transcription — not a
+priority** (maintainer decision 2026-11-03; `07` #75 moves from "0.4.x candidate" to "not a
+priority"; the `session_artifacts.kind='transcript'` extension point stays reserved and unbuilt,
+0.4.5 D14).
 **No telemetry — a permanent product commitment (D15-of-0.4.0).** The app never phones home beyond
 the existing signed-updater manifest fetch (`03 §11b`). "Is anyone else using this?" is answered by
 **passive repo-side signals** (GitHub release-asset `download_count`, Insights → Traffic, stars/
@@ -411,7 +458,8 @@ issues), never by in-app instrumentation — the reading procedure lives in `07`
   local schedules and the Telegram digest (`§5f`/`§5g`; schema 11 → 12). **v0.4.2 shipped**
   (2026-10-19): the external-agent memory API (`§5h`, `03 §7f`) and F3 deeper memory G1–G6
   (`§5i`, `03 §8e`; schema 12 → 13). Open native acceptance gates for both increments are tracked
-  in `05`; no next arc is defined yet (pending maintainer decision).
+  in `05`. **Next arc (2026-11-03): 0.4.5** — work intelligence + design system v2 (`§5k`,
+  `docs/0.4.5.md`).
 
 ---
 

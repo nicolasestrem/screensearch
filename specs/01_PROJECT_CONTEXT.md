@@ -23,7 +23,9 @@ it proved which engines are reliable and which approaches failed (see §5).
 - **Product:** an open-source, local-first Windows app that continuously captures the screen,
   makes it searchable by **text and meaning**, and answers questions about what was seen.
 - **Distribution intent:** unsigned NSIS installer (signing pending), website **screensearch.app**.
-- **Primary users:** privacy-conscious Windows power users.
+- **Audience: a single user — the maintainer.** Distribution intent (public repo, NSIS installer)
+  is unchanged, but no compatibility, adaptation, pilot-validation or multi-installation
+  obligation exists toward anyone else (0.4.5 D1).
 - **Privacy stance (non-negotiable):** all data local; no cloud upload; no telemetry by default.
 
 ## 3. Target environment
@@ -78,6 +80,15 @@ plan and spec build on a fixed base:
 - **OCR must run on the full-resolution frame** before any JPEG resize.
 - **Sidecar must not orphan:** the llama.cpp child must die with the app (crash included).
 - **No deadline:** correctness is prioritized over speed; phasing is unconstrained by time.
+- **Single user (0.4.5 D1):** no forward-compat shims, no retired-key tolerance, no
+  multi-environment validation.
+- **Baseline schema, not a migration chain (0.4.5 D2):** `03 §4` holds the full DDL at
+  `schema_version = 14`; a schema change edits the baseline and bumps the version. No
+  populated-DB migration tests. The 0.2.x–0.4.2 forward-only migrations are history, not the rule.
+- **History is carried, not migrated (0.4.5 D3):** the dev-only `ssv2c-rebuild` tool copies a v13
+  DB into v14 read-only; the old file is kept as `*.v13.bak`.
+- **Local-only (0.4.5 D15):** no new network destination; inference stays on the local sidecar;
+  fonts and icons ship as bundled files.
 
 ## 7. Explicit non-goals (today)
 
@@ -85,7 +96,9 @@ macOS/Linux desktop/capture support (the approved standalone stdio HTTP-client w
 permits other OSes and explicitly selected HTTP/HTTPS remote destinations; it uses `.no_proxy()`,
 refuses redirects and leaves app/inference Windows-only, inference loopback-only, and API listener/
 CORS unchanged; approval is not implementation evidence) · OS automation (deferred to a later phase) · cloud sync or default telemetry ·
-mobile · multi-user / accounts / tenancy · real-time vision · importing V1 data.
+mobile · multi-user / accounts / tenancy · real-time vision · importing V1 data · compatibility
+obligations toward other installations, retired-key load tolerance, and multi-environment pilot
+validation (0.4.5 D1).
 
 ## 8a. Approved external-agent increment versus observed base (2026-10-16)
 
@@ -121,12 +134,20 @@ for self-contained contracts and source-inspected inventory.
   interactive acceptance has not been performed, and the external-agent API's native Settings
   UI and separate-machine network gates remain open. Only the Windows NSIS installer, its
   updater `.sig` and `latest.json` are release assets; standalone MCP wrapper archives are not
-  published. No next arc is defined yet (pending maintainer decision). Post-release increments on
+  published. Post-release increments on
   `main`/branches: llama.cpp bootstrap recovery (#145, merged) and setup visibility (`02 §5j`,
   `03 §7g`, branch `feat/setup-progress-visibility`). The full app is a
   15-crate Rust workspace plus a React/TS UI; active work is tracked in `05`–`08`, shipped
   history in `CHANGELOG-ARCHIVE.md` and `specs/archive/`. Code-signing is the lone packaging
   follow-up (`03 §11b`).
+
+- **Next arc (2026-11-03):** the **0.4.5 arc (P9 — work intelligence + design system v2)**, stated
+  strategically in `02 §5k` and sequenced in `docs/0.4.5.md`. It runs **P1 first (the specs
+  contract — this change; specs-only, no code)**, then three waves: Wave A (P2/P3/P4) → tag
+  v0.4.3, Wave B (P5/P6/P7) → tag v0.4.4, Wave C (P8/P9/P10) → tag v0.4.5. P1 has not merged
+  anything: the working schema stays **13** until **P3** cuts the baseline **v14** (`03 §4`,
+  0.4.5 D2). Until Wave A starts, `01`–`04`/`UI_REFERENCE` are the contract for it and the roadmap
+  is context.
 
 ---
 
