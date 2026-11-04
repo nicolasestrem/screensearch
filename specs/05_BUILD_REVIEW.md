@@ -1,5 +1,127 @@
 # 05 — Build Review
 
+## 2026-11-04: 0.4.5 P2 design system v2 (branch `feat/0.4.5-p2-design-system`)
+
+- **Specs first (P2 precondition, 0.4.5 D4).** The pick is recorded before any visual code:
+  `UI_REFERENCE` §1 (direction **Logbook**: C's structure kept, two skins as four themes, pine
+  default, success rule, Source Sans 3 + Cascadia Mono at a 12px floor, mono only for measured
+  values, motion state-only, one local SVG icon set at one 1.5 stroke), §2 (three layers, the
+  semantic families, the four `data-theme` values, density, z-layers, durations), §5 (primitive
+  inventory), `03 §8` (`ui.appearance`, six-value enum, `pine-light` default; the closed UI set
+  rises 25 -> 26), `07` (P3 adds the key to the settings v2 registry; P7 renders it and resolves
+  `*-system`), `docs/0.4.5.md` (D6 ceiling 26; P7/P9 acceptance "all four themes").
+- **Deviation, stated.** `P2.md` expects the pick merged to `main` before this branch exists and
+  says not to commit until the maintainer validates and names the repo. The maintainer instructed
+  this run to continue P2 and to commit locally without pushing, so the branch is cut from
+  `origin/main` (which carries the P1 contract, #150) and every commit stays local.
+- **Built:** `ui/src/styles/fonts/` (Source Sans 3 upright + italic variable woff2, Cascadia Mono
+  variable woff2, SIL OFL 1.1 with licence text beside each file); `tokens.css` (251 custom
+  properties: primitives, four semantic theme blocks, scales, density); `tokens.compat.css` (46 v1
+  names aliased); rewritten `globals.css`; `ui/tailwind.config.js` (legacy keys intact, v2 keys
+  added, everything var-backed); 30 primitives; `icons/index.tsx` (55 glyphs); `routes/Kitchen.tsx`
+  + `KitchenPrimitives.tsx`; `test/contrast.test.mjs` + `test/tokens.test.mjs`; one additive
+  dev-only route line.
+- **Font axes, measured** (`fontTools`, not asserted):
+
+```
+CascadiaMono.woff2           | Cascadia Mono | axes: [('wght', 200.0, 400.0, 700.0)]
+SourceSans3-Italic.ttf.woff2 | SourceSans3VF | axes: [('wght', 200.0, 200.0, 900.0)]
+SourceSans3-Upright.ttf.woff2| SourceSans3VF | axes: [('wght', 200.0, 200.0, 900.0)]
+digit widths: uniform in both faces, so tabular figures need no tnum feature
+```
+
+- **Verification, P2.md's order, raw.** `npm ci` first ran while the Vite dev server held
+  `node_modules` open and failed on locked files; the server was stopped, `npm ci` then exited 0.
+
+```
+=== npm run lint
+npm notice run screensearch-ui@0.4.2 lint
+npm notice run eslint .
+=== npm run test
+ℹ tests 90
+ℹ pass 90
+ℹ fail 0
+=== npm run build
+dist/assets/react-vendor-LgzazqmD.js                 143.35 kB │ gzip: 45.97 kB
+✓ built in 2.29s
+=== node scripts/stage-mcp.mjs
+[stage-mcp] up to date: ...screensearch-mcp-x86_64-pc-windows-msvc.exe
+=== cargo fmt --all -- --check
+FMT-OK
+=== cargo clippy --workspace --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 21.64s
+=== cargo build --workspace
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 39.22s
+=== cargo test --workspace
+test result: ok. 12 passed; 0 failed
+test result: ok. 113 passed; 0 failed
+test result: ok. 4 passed; 0 failed
+test result: ok. 26 passed; 0 failed; 4 ignored
+```
+
+```
+$ grep -rnE "#[0-9a-fA-F]{3,8}\b|rgb\(|hsl\(" ui/src/components/primitives
+0
+$ grep -rn "font-size: *[0-9]" ui/src/components/primitives
+0
+$ grep -rniE "url\(http|fonts\.googleapis|fonts\.gstatic|cdn\." ui/src/styles
+0
+$ grep -rni kitchen ui/dist
+0
+$ grep -rn "data-theme" ui/src/styles/tokens.css
+4
+$ git diff --exit-code -- ui/src/bindings
+bindings-diff-exit=0
+```
+
+- **Enforcement fails when it should, then passes.** `contrast.test.mjs` with pine-light
+  `--status-warn-fg` set to `#e8b458` fails with `pine-light: status-warn-fg on status-warn-bg =
+  1.53:1`; restored, 5/5 pass and print 124 pairs (31 x 4 themes) with minima 4.90 / 5.39 / 4.88 /
+  5.39. `tokens.test.mjs` with `border-[#8ccaaf]` appended to `Button.tsx` fails with
+  `Button.tsx:120 [colour-literal] #8ccaaf";`; restored, 3/3 pass, 0 hits over 30 primitives x 7
+  rules. Both restorations verified by sha256 against the pre-demo snapshot.
+- **Four-variant detect gate** (`vite` dev server, URL scan at 1440x900, pinned 0.1.5):
+
+```
+pine-light  1 anti-pattern found.
+pine-dark   1 anti-pattern found.
+ink-light   1 anti-pattern found.
+ink-dark    1 anti-pattern found.
+  [layout-transition] transition: width
+```
+
+  The single remaining finding is not in P2's code. Tailwind emits `.transition-[width]` because
+  three v1 files still use it (`components/domain/ModelPanel.tsx:104`, `SetupDetails.tsx:53`,
+  `SetupIndicator.tsx:74`), and `P2.md` forbids touching `components/domain/**`. For P10:
+  `grep -rn "transition-\[width\]" ui/src` lists exactly those call sites. Nothing P2 owns has a
+  layout transition (`grep -rn "transition-\[width\]|transition-\[height\]|transition-all"` over
+  `primitives`, `Kitchen*`, `styles` returns 0). The pass converged 27 -> 9 -> 6 -> 2 -> 1 by real
+  fixes: card-in-card specimens un-nested, `Panel` and `Expander` restyled as borderless surfaces
+  (a control inside them is then the only bordered element), 8px inner padding on Segmented, Badge,
+  Chip, Kbd and table cells, no `transition-[grid-template-rows]`, state icons inlined beside their
+  titles, and `/kitchen` moved out of the AppShell so the scan measures v2 and not v1 chrome.
+- **AA, all four variants** (`/kitchen?theme=<theme>`, every visible text node against its effective
+  background, transitions frozen):
+
+| variant | pairs | min font | under 12px | enabled below AA | disabled below AA | worst |
+|---|---|---|---|---|---|---|
+| pine-light | 516 | 12px | 0 | 0 | 0 | 4.90:1 |
+| pine-dark | 516 | 12px | 0 | 0 | 0 | 5.39:1 |
+| ink-light | 516 | 12px | 0 | 0 | 0 | 4.88:1 |
+| ink-dark | 516 | 12px | 0 | 0 | 0 | 5.39:1 |
+
+  Disabled text clears AA too: each theme gained one ink step (`--p-mist-ink-550`,
+  `--p-graphite-ink-450`, `--p-paper-ink-550`, `--p-slate-ink-450`) solved to 4.5:1 on
+  `--surface-inset`, so `--text-disabled` does not rely on the SC 1.4.3 exemption and inertness is
+  carried by surface, border and absent hover instead of washed-out text.
+- **Shim proof.** In a plain browser (no Tauri backend, so each screen shows its real error state):
+  `/` "Can't reach the kernel", `/recall` "Search your screen history", `/timeline` "Couldn't load
+  the timeline", `/settings` "Couldn't load settings", all on `rgb(238, 241, 239)` with
+  `--accent: #23694f`. No unstyled or transparent surface.
+- **Open.** Populated screenshots need the Tauri app and a seeded database (`docs/SCREENSHOTS.md`),
+  which this run did not touch by rule; `/kitchen` in all four themes is the visual record.
+  `StatusRail` still renders an uppercase tracked wordmark (v1 shell, P10).
+
 ## 2026-11-04: QA pass on P2, P3 and P4 (branches `feat/0.4.5-p3-baseline-schema`, `feat/0.4.5-p4-auto-eval`)
 
 - **Method.** Each branch was verified on its own (not only the combined tree), an independent

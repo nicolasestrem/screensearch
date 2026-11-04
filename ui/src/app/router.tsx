@@ -51,4 +51,10 @@ export const router = createBrowserRouter([
       { path: "*", lazy: () => import("../routes/NotFound") },
     ],
   },
+  // Dev-only design-system specimen. It sits OUTSIDE the AppShell on purpose:
+  // /kitchen renders the v2 primitives and tokens alone, so a P2 review measures
+  // the design system and not the v1 shell that P7 replaces. Tree-shaken in prod.
+  ...(import.meta.env.DEV
+    ? [{ path: "/kitchen", lazy: () => import("../routes/Kitchen"), errorElement: <RouteError /> }]
+    : []),
 ]);

@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   design-system placeholders.** Specs-only; zero code. Roadmap: `docs/0.4.5.md`; contracts:
   `specs/03_MASTER_PRODUCTION_SPEC.md` §4, §7h–§7j, §8, §13d and `specs/UI_REFERENCE.md`.
 
+### Added: design system v2 foundation
+
+- **The UI is rebuilt on one token system with four themes.** `ui/src/styles/tokens.css` carries
+  primitives, a four-theme semantic layer (pine light and dark, ink light and dark; pine is the
+  default) and a density token, with bundled local variable fonts and a compatibility shim so every
+  existing screen keeps rendering. 30 primitives and one local icon set are rebuilt on it, and two
+  tests enforce AA contrast in every theme and forbid raw colours or pixel font sizes in components.
+  A dev-only `/kitchen` route shows every primitive in every state. The `ui.appearance` setting
+  (26th UI key) is recorded for P3 and P7.
+
 ### Added
 
 - **Setup progress and errors are visible in the app.** While ScreenSearch prepares local AI —
