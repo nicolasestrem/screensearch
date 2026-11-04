@@ -338,8 +338,8 @@ fn cell(text: &str) -> String {
 }
 
 const METRIC_DEFINITIONS: &str = "\
-**1. Evidence recall@10 (the comparator).** For one pair: the pair's expected ids in generator \
-order (expected frame ids first, then expected session ids), first 10 taken, score = matched / \
+**1. Evidence recall@10 (the comparator).** For one pair: the pair's expected ids with sessions \
+and frames interleaved, a session first (s1, f1, s2, f2, and so on), first 10 taken, score = matched / \
 min(10, expected count). A cited id set is the turn's cited frame ids plus its cited session ids; \
 an expected **session** id also counts as matched when a cited frame's `session_id` equals it. The \
 aggregate is the arithmetic mean of the per-pair scores, overall and per generator. Citations are \
@@ -367,7 +367,7 @@ terminal `done` or `error` event, over successful turns only, nearest-rank perce
 (`ceil(p*n)`). Failures are counted separately by class: `api_unavailable`, `timeout`, \
 `empty_answer`, `http_error`.
 
-**Generator ground truth (the field scope each family matches).** `last_seen` matches the reference, ASCII-case-insensitively, in `frames.window_title`, `frames.browser_url` or content text (`frame_text.content_text`, falling back to legacy `ocr_text.text`), newest first. `involvement` matches `window_title`/`browser_url` only - the fields a repository or domain appears in per `03 §7h.2` - and orders the owning sessions by `started_at`. `sequence` takes the session with the greatest `started_at` strictly below the target session's. `window_recall` takes the sessions whose interval overlaps the local `[06:00, 12:00)` window of that date. `seen_again` takes the exact FTS5 match set (`frame_text_fts`, porter tokenizer) of a whitespace-collapsed line of 24 to 160 characters that occurs in at least two and at most 50 frames. Each pair keeps at most ten expected ids of each kind, because the comparator is `@10`.
+**Generator ground truth (the field scope each family matches).** `last_seen` matches the reference, ASCII-case-insensitively, in `frames.window_title`, `frames.browser_url` or content text (`frame_text.content_text`, falling back to legacy `ocr_text.text`), newest first. `involvement` matches `window_title`/`browser_url` only - the fields a repository or domain appears in per `03 §7h.2` - and orders the owning sessions by `started_at`. `sequence` takes the session with the greatest `started_at` strictly below the target session's, and skips the pair when that is not unique (another session starts at the same instant as either one). `window_recall` takes the sessions whose interval overlaps the local `[06:00, 12:00)` window of that date, and of their frames only those captured inside that window, so expected evidence is never an out-of-window citation. `seen_again` takes the exact FTS5 match set (`frame_text_fts`, porter tokenizer) of a whitespace-collapsed line of 24 to 160 characters that occurs in at least two and at most 50 frames. Each pair keeps at most ten expected ids of each kind, because the comparator is `@10`.
 
 An expected string for `seen_again` is the quoted line itself, so that family's known-fact check can be satisfied by echoing the question; it is reported per generator for exactly that reason, never only in the overall mean.
 

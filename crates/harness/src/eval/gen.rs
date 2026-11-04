@@ -126,19 +126,30 @@ pub struct Pair {
 }
 
 impl Pair {
-    /// The ordered expected-id list the recall metric reads: frames first, then sessions.
+    /// The ordered expected-id list the recall metric reads: sessions and frames
+    /// interleaved, a session first (`s1, f1, s2, f2, …`), then whichever list is longer
+    /// continues alone.
+    ///
+    /// The interleave matters because recall reads only the first 10: with frames first,
+    /// a pair carrying ten expected frames (the cap) never had a session inside the slice,
+    /// so a correct citation of a frame from another expected session scored nothing.
     pub fn expected_order(&self) -> Vec<ExpectedId> {
-        self.expected_frames
+        let mut sessions = self
+            .expected_sessions
             .iter()
             .copied()
-            .map(ExpectedId::Frame)
-            .chain(
-                self.expected_sessions
-                    .iter()
-                    .copied()
-                    .map(ExpectedId::Session),
-            )
-            .collect()
+            .map(ExpectedId::Session);
+        let mut frames = self.expected_frames.iter().copied().map(ExpectedId::Frame);
+        let mut out = Vec::with_capacity(self.expected_sessions.len() + self.expected_frames.len());
+        loop {
+            let s = sessions.next();
+            let f = frames.next();
+            if s.is_none() && f.is_none() {
+                return out;
+            }
+            out.extend(s);
+            out.extend(f);
+        }
     }
 }
 
@@ -543,7 +554,18 @@ impl GenCtx<'_> {
         };
         for i in picked {
             let z = &self.sessions[i];
+            // Ground truth is the session with the greatest `started_at` *strictly below*
+            // Z's (the definition the report prints). Rows are ordered by
+            // `(started_at, id)`, so it is the previous row, but only when that row started
+            // strictly earlier than Z and no other session shares its start instant. Either
+            // tie leaves "before Z" without a unique answer, so the pair is skipped rather
+            // than scored against an arbitrary choice.
             let prev = &self.sessions[i - 1];
+            let tied_with_z = prev.started_at == z.started_at;
+            let tied_below = i >= 2 && self.sessions[i - 2].started_at == prev.started_at;
+            if tied_with_z || tied_below {
+                continue;
+            }
             let Some((dominant, _)) = dominant_reference(self.db, prev.id)? else {
                 continue;
             };
@@ -599,7 +621,13 @@ impl GenCtx<'_> {
                 strings.push(dominant.text);
                 session_ids.push(s.id);
                 for f in self.db.session_frames(s.id, MAX_EXPECTED_IDS)? {
-                    frames.push((f.captured_at, f.frame_id));
+                    // Only frames inside the pair's window are expected evidence: a session
+                    // that straddles the window edge contributes its in-window frames only.
+                    // Otherwise the same id would be required for recall and rejected by
+                    // citation validity ("outside the pair window") at once.
+                    if f.captured_at >= start && f.captured_at < end {
+                        frames.push((f.captured_at, f.frame_id));
+                    }
                 }
             }
             if strings.is_empty() {
@@ -637,7 +665,10 @@ impl GenCtx<'_> {
             });
         }
         let ids: Vec<i64> = self.discovery.iter().map(|f| f.frame_id).collect();
-        let probe = SEEN_AGAIN_PROBE_FRAMES.max(cap * 4).min(ids.len());
+        // A fixed probe size, independent of `--pairs`: the requested count may only change
+        // how many pairs are kept, never which frames are sampled or which lines qualify,
+        // so `--pairs 10 --seed N` stays a prefix of `--pairs 300 --seed N`.
+        let probe = SEEN_AGAIN_PROBE_FRAMES.min(ids.len());
         let sampled = sample(
             &mut SplitMix64::new(subseed(self.opts.seed, "seen_again")),
             &ids,
