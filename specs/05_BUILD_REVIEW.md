@@ -1,5 +1,261 @@
 # 05 — Build Review
 
+## 2026-11-04: 0.4.5 P3 baseline schema + settings v2, synced to main, audited and re-verified
+
+- **Scope and method.** The overnight P3 branch (`feat/0.4.5-p3-baseline-schema`, tip `48a9705`,
+  base `dad1eb2`) was synced onto `origin/main`, audited against its acceptance criteria by four
+  independent read-only reviewers, and re-verified end to end. Five commits were added today:
+  `31f7c66` (ui.appearance), `47b1f1b` (DDL parity test), `1407e5b` (rebuild fixture),
+  `bbd8976` (dev-gallery stale specimen), `c039d5e` (maintainer run + contract text). No real
+  database, model file, `.env` or secret was opened; the maintainer run was prepared, never
+  performed. No em dash was used in new text.
+- **STEP 1, sync.** `git fetch --all --prune`; working tree clean. Tips recorded:
+  P1 `3d15756`, P2 directions `71030f6`, P3 `48a9705`, P4 `c437297`, `origin/main` `3976551`.
+  `git diff 3d15756 e27f42c` is empty, so the P1 tip tree is exactly main's #150 squash and main
+  contains the P1 tip by content even though the squash leaves the P1 commits non-ancestors. P3 was
+  rebased with `git rebase --onto origin/main dad1eb2 feat/0.4.5-p3-baseline-schema`: clean, five
+  commits replayed, new base `3976551`, new tip `0404dd4` before today's fixes. No conflict touched
+  `03` section 4 or section 8. P4 was not moved, and the Settings fix (`ui/src/lib/settingsDraft.ts`)
+  stays where last night left it: on P3, rebased as `0404dd4` (original hash `48a9705`); it is also
+  present in P4's ancestry.
+- **STEP 2, what the P2 pick means for P3.** The literal command
+  `git diff 3d15756 feat/0.4.5-p2-design-directions -- specs/` changes no section 8 settings key: it
+  flips only section 4's rebuild-crate sentence and the build-loop records. The P2 pick that the
+  maintainer merged to main (`7e73e30`) does change section 8, so it was escalated before the
+  rebase. Exact hunk:
+  ```diff
+  -**Settings v2 (0.4.5 D6, D9).** The Settings UI is a **closed set of 25 keys**
+  +**Settings v2 (0.4.5 D6, D9).** The Settings UI is a **closed set of 26 keys**
+   D6). The count rose from 25 to 26 at the 0.4.5 P2 pick (2026-11-04), which added `ui.appearance` so
+   the four themes are user-selectable instead of one hardcoded theme.
+  ...
+  +| `ui.appearance` | `pine-light` | UI | General | Enum `pine-light` / `pine-dark` / `pine-system` / `ink-light` / `ink-dark` / `ink-system`; ... P3 adds it to the settings v2 registry and baseline (0.4.5 P2 pick, 2026-11-04; `UI_REFERENCE §1`/`§2`). |
+  ```
+  Maintainer answer: land it in P3. Landed in `31f7c66`: `UiAppearance` enum with the six kebab-case
+  wire tokens, `Settings.ui_appearance` with `#[serde(default)]` for pre-v2 config snapshots,
+  default `PineLight`, kernel load/save of the `ui.appearance` key, rebuild policy count 26 plus
+  carry assertions, and the regenerated bindings. The shell theme applier and the Settings select
+  stay P7's, as the section 8 row states.
+
+- **STEP 3, acceptance audit.** Verdicts with evidence; the maintainer-only rows stay OPEN.
+
+  | Item | Verdict | Evidence |
+  |---|---|---|
+  | a. `crates/store/src/schema.rs` holds the v14 DDL from `03` section 4, proven by a comparison test | MET | New `crates/store/tests/p3_schema_parity.rs` (commit `47b1f1b`, hardened in `3d9d89a`). Parses section 4 from `include_str!` of the spec (bounded by the next `##` heading, with sentinel objects), token-normalizes after stripping `--` comments, and asserts every section 4 table column/constraint, `CREATE VIRTUAL TABLE`, index and ALTER-added column exists in `BASELINE_SQL` with the identical definition; the three documented table-definition extras (`frames.image_purged`, `text_spans.line_index`, `embeddings` UNIQUE) are required present, not merely allowed; the seven carried FTS/vec triggers are existence-checked by name because section 4 declares no `CREATE TRIGGER` (their bodies are covered by the functional FTS/vec tests); the two declarations v3 dropped (`ocr_text`, `ocr_text_fts`) are pinned absent; a fresh store materialises exactly the baseline. Mutation-tested five ways: missing `idx_entities_kind` fails with "03 section 4 declares index `idx_entities_kind` but the v14 baseline does not create it"; narrowed `entities.canonical_name` fails with the definition diff; `session_vectors` cosine -> l2 fails with "virtual table `session_vectors` differs"; missing carried `embeddings_ad` fails with "documented carried trigger ... is missing"; removing the `embeddings` UNIQUE fails with "the documented carried extra ... is missing" (both tests red, then restored and green). Raw run on the final tree: `test result: ok. 2 passed; 0 failed`. |
+  | b. A DB not at v14 refuses to open, naming the rebuild tool | MET | `crates/store/src/lib.rs:157-207` validates before any pragma and refuses with "database schema_version is {found}, but this build requires 14; rebuild the database with the dev-only `ssv2c-rebuild` tool". `crates/store/tests/baseline.rs:174` builds synthetic v13 and v15 files, asserts both messages contain `ssv2c-rebuild`, the found version and 14, and asserts bytes and mtime are unchanged after the refusal. Raw: `test result: ok. 8 passed; 0 failed` for `cargo test -p store --test baseline`. |
+  | c. Rebuild tool: read-only source, hash/mtime unchanged, carry set, derived drops, no rename | MET | `crates/rebuild/src/lib.rs:633-636` opens the source with `SQLITE_OPEN_READ_ONLY`; the only mutating PRAGMA is `foreign_keys=OFF` on the destination (no VACUUM, no checkpoint, no write to the source); `crates/rebuild/tests/rebuild.rs:127-143` asserts source bytes and mtime unchanged; destination must not exist (`lib.rs:170-176`, test `rebuild_refuses_an_existing_destination_and_leaves_it_alone`); carry set `lib.rs:59-73` covers the P3 list plus the documented wider set (`text_spans`, `vision_analysis`, `tags`, `frame_tags`, `report_deliveries`, `06` #32), and the hardened copy loop (`b53db47`) now bails with the table name if a carry table is missing from either side instead of silently skipping it; `jobs` and `chrome_text_catalog` dropped and FTS5/vec0 re-derived from copied rows (`lib.rs:384-437`); the settings policy is embedded from `03` section 8 at build time and parsed at runtime (`crates/rebuild/src/settings.rs:29,132-174`), reserved `api.history_id`/allocator high-water copied verbatim (test high-water 42 vs source max frame id 7), nine deleted keys dropped; `integrity_check`/`foreign_key_check`/schema 14 enforced and tested, and a violation now reports the exact rows (`table`, `rowid`, `parent`, `fkid`) instead of a count; `--counts` and `--sample-frames N` implemented and the 20-id sample is exercised by a dedicated 23-frame fixture test (`b53db47`); no rename flag exists at all, so the rename stays the maintainer's manual step. `cargo test -p rebuild` on the final tree: `test result: ok. 6 passed` (lib) and `ok. 8 passed` (integration). |
+  | d. Settings v2: every section 8 row per its disposition; retired keys gone; file-only from `advanced.toml`; rewrite once; round-trip; 26 UI keys | MET (26, not the kickoff's pre-pick 25) | Spec table on main: 26 `UI` (25 typed fields plus `api.token`; `api.read_token` shares that row; `app.tray_toast_done` is a KV marker), 44 `file-only`, 9 `deleted` (`03` section 8 lines 1697-1777). `load_settings`/`save_settings` use the same 25 typed key strings, including `ui.appearance` (`crates/kernel/src/settings.rs:30-77`, `:95-180`); no typed field is also a file field; eight `advanced.toml` sections plus the `app.tray_toast_done` KV marker (`03` section 8 gives it no file home, `07` P1 entry (e)). Rewrite-once and unknown-section/field tests pass (`crates/kernel/tests/settings.rs:1039`, `:459`, `:512`); the full-set round-trip sets all 25 typed fields including `ui_appearance: UiAppearance::InkDark` (`:38-76`) and asserts struct equality, 33/33 pass on the final tree; exactly 26 UI / 44 file-only / 9 deleted is asserted from the parsed table (`crates/rebuild/src/settings.rs:185-190`, test `settings_policy_matches_the_spec_table`); reserved history/allocator keys survive every settings path (store `history_allocator` 10/10, kernel `:534`); `get_advanced_config` is read-only with no setter. |
+  | e. Eleven new tables created empty, nothing writes them outside tests | MET | `crates/store/tests/baseline.rs:14-26` lists the eleven tables and `:138-148` asserts each is declared and `COUNT(*) = 0` with "must be created empty: no writer exists in P3". Write grep outside `tests/` returns only the four test-only CHECK fixtures pasted below; read grep for the eleven names returns no SQL access; `JobKind` has only `EmbedText` and `VisionTag`; no command, job or route names them. |
+  | f. Bindings regenerated and committed | MET | `cargo test -p traits` regenerated them (124 export tests), then `git diff --exit-code -- ui/src/bindings` printed nothing and exited 0; `31f7c66` commits `Settings.ts` and the new `UiAppearance.ts`. |
+  | Maintainer-only: rebuild run against a copy of the real DB, per-table counts before/after, 20-frame Moment spot check, app boots on v14 | OPEN (maintainer) | Prepared as a nine-step procedure in `docs/kickoffs/P3.md` (`c039d5e`); never run by an agent. Raw output to paste back is specified in step 6. |
+  | Maintainer-only: in-app Settings > Integrations check from the 2026-11-04 QA pass (turn the HTTP API on, change and save another setting, confirm the API is still listening) | OPEN (maintainer) | The fix is on this branch: `ui/src/lib/settingsDraft.ts` plus `ui/test/settingsDraft.test.mjs`, committed as `0404dd4` (original hash `48a9705`). The regression test covers the exact revert scenario; only the native run is missing. |
+
+- **STEP 3 evidence: greps (raw).**
+  ```
+  $ git grep -n 'MIGRATIONS' -- crates
+  (no output)
+
+  $ git grep -n 'ssv2c-rebuild' -- crates/store/src
+  crates/store/src/lib.rs:144:                 missing; rebuild the database with the dev-only `ssv2c-rebuild` tool \
+  crates/store/src/lib.rs:176:         rebuild the database with the dev-only `ssv2c-rebuild` tool (`03 §4`, 0.4.5 D2)",
+  crates/store/src/lib.rs:196:    /// found and the `ssv2c-rebuild` tool.
+  crates/store/src/lib.rs:206:        //   refuse that last case forever (`ssv2c-rebuild` cannot repair it either), and
+  crates/store/src/schema.rs:8://! rebuilt with the dev-only `ssv2c-rebuild` tool (`03 §4`, 0.4.5 D2/D3).
+
+  $ git grep -n 'advanced.toml' -- crates
+  lines=29
+
+  $ moved typed fields still in crates/traits/src/ipc.rs
+  capture_diff_threshold: 0
+  sidecar_device: 0
+  enrich_embed_text: 0
+  overlay_max_results: 0
+  uia_latency_budget_ms: 0
+
+  $ git grep -nE 'jpeg_quality|event_on_click|event_on_clipboard|event_on_scroll_stop|event_on_typing_pause|event_typing_pause_ms|uia_run_on_interactive|image_embeddings|network_notice_state' -- ui/src
+  (no output)
+
+  $ git grep -nE '\b(INTO|UPDATE|DELETE[[:space:]]+FROM)[[:space:]]+(entities|...|ask_turns)\b' -- crates/ src-tauri/src ui/src
+  crates/store/tests/baseline.rs:374:            "INSERT INTO entities (kind, canonical_name, normalized_key, source, confidence,
+  crates/store/tests/baseline.rs:386:            "INSERT INTO insights (kind, window_start, window_end, payload, generator)
+  crates/store/tests/baseline.rs:396:        "INSERT INTO threads (id, title, cluster_key, first_seen_at, last_seen_at)
+  crates/store/tests/baseline.rs:403:            "INSERT INTO thread_overrides (kind, thread_id, target_thread_id, payload)
+  ```
+  The retired-key grep across `crates` and `ui/src` returns 42 hits, all in the allowed places: the
+  single retired list and its doc comments (`crates/kernel/src/settings.rs:256-269`), the retirement
+  tests and the pre-v2 snapshot fixture (`crates/kernel/tests/settings.rs:164,478`), the rebuild
+  tool's own deleted list and fixtures (`crates/rebuild/src/settings.rs:207-215`,
+  `crates/rebuild/tests/rebuild.rs:28-36,397-411`), and two `crates/uia` doc comments explaining the
+  retirement. Before `bbd8976` the dev-only P2 kitchen gallery was the one non-allowed hit
+  (`ui/src/routes/Kitchen.tsx:322`); it was removed with the maintainer's one-time grant and the
+  `ui/src` grep is now empty.
+
+- **STEP 4, maintainer run.** Rewritten as a numbered, copy-pasteable PowerShell procedure in
+  `docs/kickoffs/P3.md` (`c039d5e`), nine steps: quit and prove no process remains; the live path as
+  the code resolves it (Tauri `app_data_dir()` joined with `screensearch.db`, `src-tauri/src/lib.rs:1439,1444`,
+  `%APPDATA%\app.screensearchv2c.desktop\screensearch.db`); copy the db plus `-wal`/`-shm` and print
+  sizes; build the tool; rebuild the copy into a new v14 file with per-table counts; what to paste
+  back; the swap (no data-dir or db-path override exists, cited) with the `*.v13.bak` rename only
+  after the maintainer confirms the new file opens; the Moment spot check via one read-only
+  `sqlite3` query and the `/timeline/<id>` route; and a one-command rollback. An adversarial audit
+  then hardened it: the swap is guarded and error-stop, the log confirmation is separate from and
+  gates the `*.v13.bak` rename, the sample is bounded to the 30-day range the Timeline can reach,
+  the Moment expectations accept a localized minute match and a retention-purged reconstruction,
+  and the rollback is idempotent. Nothing that existed before the run is deleted (only the rebuild
+  tool removes the destination it created on failure). Never run by an agent.
+
+- **STEP 5, verification, raw output.** Run in this order from the repository root on the code/docs
+  tip `c039d5e`, one command per shell, Windows PowerShell. (The audit hardening below landed after
+  this run; the whole list was run again on the final tree, see "Re-verification" below.)
+  ```
+  === npm ci ===
+  added 347 packages, and audited 348 packages in 5s
+  152 packages are looking for funding
+  13 vulnerabilities (12 moderate, 1 high)
+  npm warn install-scripts 1 package had install scripts blocked because they are not covered by allowScripts:
+  npm warn install-scripts   esbuild@0.25.12 (postinstall: node install.js)
+  === npm ci exit=0 ===
+  === npm run lint ===
+  npm notice run screensearch-ui@0.4.2 lint
+  npm notice run eslint .
+  === npm run lint exit=0 ===
+  === npm run build ===
+  ✓ built in 1.90s
+  === npm run build exit=0 ===
+  === node scripts/stage-mcp.mjs ===
+  [stage-mcp] building screensearch-mcp (release)...
+      Finished `release` profile [optimized] target(s) in 0.23s
+  [stage-mcp] up to date: C:\Users\nicol\Documents\GitHub\screensearch\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
+  === node scripts/stage-mcp.mjs exit=0 ===
+  === cargo fmt --all -- --check ===
+  (no output)
+  === cargo fmt exit=0 ===
+  === cargo clippy --workspace --all-targets -- -D warnings ===
+      Checking rebuild v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\rebuild)
+      Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.50s
+  === cargo clippy exit=0 ===
+  === cargo build --workspace ===
+      Compiling screensearch v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\src-tauri)
+      Finished `dev` profile [unoptimized + debuginfo] target(s) in 36.98s
+  === cargo build exit=0 ===
+  === cargo test --workspace ===
+  ```
+  The command exited 0. Raw `test result:` lines for the P3-owned and settings-relevant binaries,
+  copied verbatim from the run (in command order):
+  ```
+  test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+  test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+  test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+  test result: ok. 124 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+  test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+  test result: ok. 80 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+  test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+  test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+  test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+  test result: ok. 65 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+  ```
+  Across every binary in the workspace the run printed only `test result: ok` lines; their sum is
+  1195 passed, 0 failed. The full raw log of the command is at
+  `%TEMP%\p3-cargo-test-2026-11-04.log` on the machine that ran it.
+  ```
+  $ git diff --exit-code -- ui/src/bindings
+  (no output)
+  === git diff bindings exit=0 ===
+  ```
+- **Open items handed to the maintainer (not P3 code gaps).** `06` #30 (`03` section 4 does not
+  describe ten as-built details; the parity test pins the documented deltas and the doc pass is
+  still open), `06` #32 (the wider rebuild carry set needs maintainer confirmation), `06` #33 (three
+  section 8 defaults disagree with the as-built code: `storage.max_width`, `storage.retention_days`,
+  `text.chrome_suppress_min_seen`), and the `07` question about an existing profile's demoted
+  `file-only` values not being imported into `advanced.toml`. None of them changes tonight's code,
+  the synthetic rebuild evidence or the verification above.
+
+- **Independent adversarial validation (2026-11-04, 16 subagents in two waves).** Sixteen fresh
+  read-only reviewers attacked the branch from separate angles: schema parity test, rebuild tool,
+  settings v2, maintainer-run procedure, P3-READY and 05 record truthfulness, patch ownership and
+  hygiene, topology and publication state, an isolated clean-worktree build, plus three
+  cross-checkers. Wave 1 found six should-fix defects plus record nits; wave 2 independently
+  confirmed the still-open ones, rejected the claims already fixed in-tree, and surfaced two more
+  (`ctx_size` sentinel and overlay-hotkey coverage, P3-authored em dashes). The clean-worktree run
+  (`git worktree add --detach` at the then-tip, then `cargo fmt --all -- --check`,
+  `cargo clippy -p store -p rebuild --all-targets -- -D warnings`, `cargo test -p store -p rebuild`)
+  exited 0/0/0, and the worktree plus its temp target were removed. No reviewer edited a tracked
+  file; no real database, model, `.env` or secret was touched.
+- **Hardening and record corrections landed from the audit (one fix per commit).**
+  - `3d9d89a`: the parity test now *requires* the documented as-built extras instead of merely
+    allowing them, anchors the section 4 extraction at the next heading with sentinel objects, and
+    corrects the trigger claim (section 4 declares none; the carried triggers are name-checked and
+    their bodies are covered by the functional FTS/vec tests). Mutation check: removing the
+    `embeddings` UNIQUE made both tests fail with "the documented carried extra ... is missing",
+    then the tree was restored, forced to rebuild and re-verified green.
+  - `b53db47`: the rebuild now refuses a source or destination missing a carry table instead of
+    silently skipping it, reports the exact `pragma_foreign_key_check` rows (`table`, `rowid`,
+    `parent`, `fkid`) instead of only a count, and three new tests cover a dropped carry table, an
+    orphan artifact row and a 20-id sample from a fixture extended to 23 frames.
+  - `8aca7a5`: the `UiAppearance` doc comment no longer claims six `data-theme` ids (four are;
+    `*-system` is a stored intent), and the `Settings`/`AdvancedConfig` headers no longer claim
+    exact `03 §8` default parity while `06` #33 is open.
+  - `244638a`: all 83 em-dash characters the overnight commits introduced in P3-authored lines
+    (comments, four CLI help strings, generated bindings) were replaced with ASCII hyphens; Rust
+    sources were fixed and `ui/src/bindings` regenerated, never hand-edited. Pre-existing text
+    outside the P3 additions keeps its characters.
+  - `9d3a9ee`: restored the `sidecar.ctx_size = 0` auto-sentinel test and the raw-DB assertion in
+    the custom overlay-hotkey test, both of which the settings refactor had dropped.
+  - Record corrections in this entry: the trigger-parity, typed-key-count, rebuild-parse and
+    "only PRAGMA" wordings above; test-function names replace line citations where line drift is
+    possible; and the maintainer-run description now matches the hardened procedure.
+- **Re-verification on the hardened tree (raw).** The full list was run again from the repository
+  root on the final tree (`9d3a9ee` with the em-dash and coverage commits), one command per shell.
+  Every command exited 0:
+  ```
+  === npm ci exit=0 ===
+  === npm run lint exit=0 ===
+  === npm run build exit=0 ===        (✓ built in 2.03s)
+  === node scripts/stage-mcp.mjs exit=0 ===
+  === cargo fmt --all -- --check exit=0 ===
+  === cargo clippy --workspace --all-targets -- -D warnings exit=0 ===
+  === cargo build --workspace exit=0 ===
+  === cargo test --workspace exit=0 ===  (TOTAL passed=1199 failed=0)
+  === git diff --exit-code -- ui/src/bindings exit=0 ===
+  ```
+  The P3-owned binaries in that run: rebuild lib 6, rebuild integration 8 (was 5), kernel settings
+  33 (was 32), traits 124 + sessions_contract 4, store parity 2, store baseline 8,
+  history_allocator 10, store integration 65. Raw tails included
+  `test result: ok. 8 passed; 0 failed` for `tests/rebuild.rs` and
+  `test result: ok. 33 passed; 0 failed` for `kernel --test settings`. Full log kept at
+  `%TEMP%\p3-cargo-test3-2026-11-04.log`. The clean-worktree build above independently re-ran
+  `cargo fmt`, `cargo clippy -p store -p rebuild` and `cargo test -p store -p rebuild` from a detached
+  checkout with its own target directory, so the branch is not relying on the shared build cache.
+- **Publication.** Branch `feat/0.4.5-p3-baseline-schema` pushed to `origin` and opened as
+  [PR #153](https://github.com/nicolasestrem/screensearch/pull/153) against `main` on the
+  maintainer's explicit 2026-11-04 instruction, after the recompute above. **Not merged**; no review
+  automation was triggered. The PR body carries the summary, the verification block and the
+  maintainer-only items.
+- **Review-driven fix (PR #153, 2026-11-04).** Codex flagged (P2) and Claude confirmed that a
+  queued or blocked report resumed after a restart with an edited `advanced.toml` took the new
+  report depth and sidecar parameters, because P3 moved those keys out of the typed `Settings` that
+  the durable `RunSnapshot` captured. That was a P3 behaviour regression against 0.4.5 D6
+  ("behaviour does not change") and `03 §8c` (Retry/restart preserves configuration, Regenerate
+  takes a fresh snapshot). Fix: `RunSnapshot` carries an optional captured `advanced` section with
+  `reports.weekly_top_k`, `reports.map_reduce_min_frames` and the answer sidecar parameters
+  (`ngl`, `device`, `ctx_size`, `kv_cache_type`, `flash_attn`); `generate` prefers it, then recovers
+  the pre-settings-v2 typed fields (`reports_weekly_top_k`, `reports_map_reduce_min_frames`,
+  `sidecar_*`) from old snapshots, and only then falls back to the startup configuration. Two tests
+  pin the capture/resolve round-trip (including a captured null device) and the legacy recovery.
+  Scope: `src-tauri/src/memory.rs` plus two fixture literals in `memory_weekly.rs`, inside the
+  P3-owned settings-consumer surface. Full gate re-run on the fix: fmt, clippy, build and
+  `cargo test --workspace` all exit 0, **1202 passed / 0 failed**, bindings diff clean. The PR
+  re-review at `dc11a22` confirmed the P2 resolved; its two non-blocking notes were then addressed:
+  the legacy-snapshot fallback now logs a warning instead of falling back silently, and
+  `run_advanced` is extracted and unit-tested so `generate`'s resolution order is pinned.
+- **One ownership note for reviewers.** The 2026-11-04 QA pass's Settings API fix touches
+  `ui/src/lib/settingsDraft.ts`, `ui/test/settingsDraft.test.mjs`, `ui/src/lib/ipc/mutations.ts` and
+  `ui/src/routes/Settings.tsx`. It is in P3 because P3 introduced the typed `api.*` settings and the
+  `set_settings` hot-apply that the stale draft reverted, so it is a settings-consumer regression
+  fix, not new behaviour; it was recorded in `05` and the maintainer asked for the branch that
+  carries it. The only file outside the stated P3 boundary that P3 changed without that causal
+  link is `ui/src/routes/Kitchen.tsx`, removed under the explicit one-time maintainer grant.
+
 ## 2026-11-04: 0.4.5 P2 design system v2 (branch `feat/0.4.5-p2-design-system`)
 
 - **Specs first (P2 precondition, 0.4.5 D4).** The pick is recorded before any visual code:

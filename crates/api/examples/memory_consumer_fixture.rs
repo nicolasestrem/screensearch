@@ -424,7 +424,7 @@ impl FixtureHost {
             "restore target already exists; the fixture directory is not fresh"
         );
         std::fs::copy(&self.config.backup_path, &restored_path)?;
-        // Production open on the restored copy: migrations are a no-op, history
+        // Production open on the restored copy: the v14 baseline check passes, history
         // metadata comes from the backup, WAL/foreign keys are configured as usual.
         let store = Arc::new(SqliteStore::open_path(&restored_path)?);
         let metadata = store
@@ -868,7 +868,8 @@ impl ApiHost for FixtureHost {
     async fn where_was_i(&self) -> anyhow::Result<Option<ResumeContext>> {
         let inner = self.inner();
         let settings = kernel::settings::load_settings(inner.store.as_ref()).await;
-        kernel::resume::where_was_i(inner.store.as_ref(), &settings).await
+        let advanced = inner.kernel.advanced_config();
+        kernel::resume::where_was_i(inner.store.as_ref(), &settings, &advanced).await
     }
 
     async fn export_frames_page(
@@ -1677,7 +1678,7 @@ async fn run() -> anyhow::Result<i32> {
     };
     let counters = Arc::new(Counters::default());
 
-    // 1. Isolated real store; `open_path` runs the production migrations and history
+    // 1. Isolated real store; `open_path` creates the v14 baseline and runs history
     //    setup (identity + allocator) exactly like the app.
     let store = Arc::new(SqliteStore::open_path(&db_path)?);
     let metadata = store

@@ -22,6 +22,7 @@ import type { TimeRange } from "../../bindings/TimeRange";
 import type { TimelineBucket } from "../../bindings/TimelineBucket";
 import type { InsightsSummary } from "../../bindings/InsightsSummary";
 import type { Settings } from "../../bindings/Settings";
+import type { AdvancedConfigView } from "../../bindings/AdvancedConfigView";
 import type { StorageStats } from "../../bindings/StorageStats";
 import type { MonitorInfo } from "../../bindings/MonitorInfo";
 import type { AppSuppression } from "../../bindings/AppSuppression";
@@ -204,6 +205,12 @@ export const getSettings = (): Promise<Settings> =>
 /** Persist user settings; tiers hot-apply, the rest on restart / next capture. */
 export const setSettings = (settings: Settings): Promise<void> =>
   invoke<void>("set_settings", { settings });
+
+/** Read-only `file-only` settings projection (`03 §8`, 0.4.5 D6): the effective
+ *  `AdvancedConfig`, the absolute `advanced.toml` path, and which keys the file
+ *  supplied. There is no setter - those keys are edited in the file, then restart. */
+export const getAdvancedConfig = (): Promise<AdvancedConfigView> =>
+  invoke<AdvancedConfigView>("get_advanced_config");
 
 /** Per-app text-filter suppression metric — the guardrail against silent
  *  over-suppression (PR3, `03 §3b`). */

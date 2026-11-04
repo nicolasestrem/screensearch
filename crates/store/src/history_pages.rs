@@ -298,8 +298,8 @@ mod tests {
         }
     }
 
-    // Production migrations/setup, FTS triggers and foreign keys, not a parallel
-    // test schema. Explicit fixture writes below use the production allocator.
+    // The production baseline, FTS triggers and foreign keys, not a parallel test
+    // schema. Explicit fixture writes below use the production allocator.
     fn fixture() -> SqliteStore {
         SqliteStore::open_in_memory().expect("open production SQLite store")
     }

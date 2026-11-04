@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::advanced::AdvancedConfig;
 use crate::domain::{CaptureTrigger, TextSource, VisionAnalysis};
 use crate::jobs::{JobKind, JobStats};
 use crate::sessions::{Session, SessionArtifact, SessionHost, SessionKind};
@@ -441,10 +442,10 @@ pub enum FlashAttnSetting {
     Off,
 }
 
-/// The llama.cpp launch knobs derived from [`Settings`], threaded to both inference
-/// providers and on into the sidecar's argument list. Bundled into one struct so adding
-/// a knob does not ripple through every provider/`resolve_spec` signature. Not an IPC
-/// type (constructed in the core from [`Settings`]), so it carries no `ts-rs` derive.
+/// The llama.cpp launch knobs derived from [`crate::AdvancedConfig`], threaded to both
+/// inference providers and on into the sidecar's argument list. Bundled into one struct so
+/// adding a knob does not ripple through every provider/`resolve_spec` signature. Not an
+/// IPC type (constructed in the core), so it carries no `ts-rs` derive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidecarParams {
     pub ngl: u32,
@@ -454,18 +455,6 @@ pub struct SidecarParams {
     pub ctx_size: u32,
     pub kv_cache_type: KvCacheType,
     pub flash_attn: FlashAttnSetting,
-}
-
-impl From<&Settings> for SidecarParams {
-    fn from(s: &Settings) -> Self {
-        Self {
-            ngl: s.sidecar_ngl,
-            device: s.sidecar_device.clone(),
-            ctx_size: s.sidecar_ctx_size,
-            kv_cache_type: s.sidecar_kv_cache_type,
-            flash_attn: s.sidecar_flash_attn,
-        }
-    }
 }
 
 /// Input to `set_model_tier`.
@@ -485,214 +474,159 @@ pub enum CaptureControl {
     Stop,
 }
 
-/// User-facing settings (`get_settings`/`set_settings`). Field defaults mirror
-/// `03 §8`; persisted as key/value rows in the `settings` table.
+/// Read-only projection of the `file-only` settings for Settings · Advanced
+/// (`get_advanced_config`, `03 §8`, 0.4.5 D6).
 ///
-/// Deferred vision tagging is never real-time (`03 §5`). On-demand tagging
-/// (UI-triggered) is always available; **timed** and **idle** enrichment are each
-/// independent opt-in toggles, off by default, with a user-set threshold. (This
-/// replaces `03 §8`'s single `enrich.vision_mode` enum — see specs/06_PATCH_PLAN.)
+/// Carries the **effective** [`AdvancedConfig`] the backend is running with (file values
+/// clamped by `AdvancedConfig::sanitized`), the absolute path of `advanced.toml`, and the
+/// `section.field` keys whose value the file actually supplied. There is deliberately no
+/// setter and no writable surface: a `file-only` key is changed by editing that file and
+/// restarting, never from the UI.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct AdvancedConfigView {
+    /// The effective configuration - exactly what the backend reads.
+    pub config: AdvancedConfig,
+    /// Absolute path of `advanced.toml` (the file may not exist; the defaults then apply).
+    pub path: String,
+    /// `section.field` keys parsed from the file, e.g. `overlay.max_results`. Every key
+    /// absent from this list still holds its compiled default. A listed value may have
+    /// been clamped into its `03 §8` range by `AdvancedConfig::sanitized`.
+    pub from_file: Vec<String>,
+}
+
+/// Theme appearance select (`ui.appearance`, `03 §8`; 0.4.5 P2 pick 2026-11-04).
 ///
-/// `sidecar_device` is the optional llama.cpp `--device` selector (for example,
-/// `Vulkan0`); `None` lets llama.cpp choose its default device.
+/// The shell theme applier sets `data-theme` on the root element from this value, and the
+/// `*-system` variants follow the OS light/dark preference inside the chosen accent. P7
+/// renders the select and resolves `*-system` through `prefers-color-scheme`; P3 owns this
+/// registry entry and its persistence only. The four concrete tokens are exactly the
+/// `data-theme` ids defined in `ui/src/styles/tokens.css`; `*-system` is a stored intent,
+/// not a fifth theme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub enum UiAppearance {
+    /// Default; matches the shipped pine-light theme.
+    #[default]
+    PineLight,
+    PineDark,
+    PineSystem,
+    InkLight,
+    InkDark,
+    InkSystem,
+}
+
+/// User-facing settings (`get_settings`/`set_settings`): **exactly** the `UI` rows of the
+/// `03 §8` table (settings v2, 0.4.5 D6), with that table's defaults and clamps. The three
+/// places where the as-built value still differs from the table are tracked in
+/// `specs/06_PATCH_PLAN.md` #33, pending a maintainer ruling. Persisted as key/value rows
+/// in the `settings` table.
+///
+/// The `file-only` keys do not live here: they are typed in [`crate::AdvancedConfig`] and
+/// read once at startup from `advanced.toml`. `api.token` / `api.read_token` are
+/// credentials owned by the API commands (they share one Integrations row), and
+/// `app.tray_toast_done` is a direct KV marker, so none of the three is a field here.
+///
+/// Deferred vision tagging is never real-time (`03 §5`). On-demand tagging is always
+/// available; timed enrichment is opt-in (`enrich.vision_timer_*`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 pub struct Settings {
+    // General
+    /// Register ScreenSearch to launch at login (`app.run_at_startup`, 0.3.2 PR3;
+    /// `03 §7d`, D3). Default **off** - an explicit user choice, never silently enabled.
+    /// Applied register-before-persist: the OS registration is attempted before the
+    /// setting is saved, so a save can't claim a launch-at-login that didn't take.
+    pub app_run_at_startup: bool,
+    /// Closing the main window hides it to the tray and keeps capturing
+    /// (`app.close_to_tray`, 0.3.2 PR3; `03 §7d`, D3). Default **on**. A one-time toast
+    /// explains it on the first restore from the tray; with this off, window close quits
+    /// cleanly (the sidecar is torn down via the Job-Object lifecycle, `03 §6`).
+    pub app_close_to_tray: bool,
+    /// Global Flow overlay summon hotkey (`overlay.hotkey`, 0.3.0 PR5). The shell
+    /// validates and registers the chord so a bad/colliding value becomes the D6
+    /// Settings warning instead of being silently rewritten here.
+    pub overlay_hotkey: String,
+    /// Global mark-this-moment hotkey (`marks.hotkey`, 0.3.0 PR6; `03 §7b`, D6). Same
+    /// shell-registered/validated posture as `overlay_hotkey`: a bad/colliding value
+    /// surfaces as the D6 Settings warning + toast, never a silent rewrite.
+    pub marks_hotkey: String,
+    /// Theme appearance (`ui.appearance`, `03 §8`; 0.4.5 P2 pick 2026-11-04). Persisted
+    /// like every other UI key; the shell theme applier and P7's Settings > General select
+    /// consume it. `#[serde(default)]` keeps a `config_snapshot` written before settings v2
+    /// deserializable (`03 §8c`).
+    #[serde(default)]
+    pub ui_appearance: UiAppearance,
+    // Capture
     pub capture_interval_ms: u32,
     /// Empty = all monitors.
     pub capture_monitors: Vec<u32>,
-    pub capture_diff_threshold: f32,
-    /// Max stored-image width in px; the capture is downscaled (aspect kept) above it.
-    /// `0` = native (no downscale) — keeps ultra-wide captures legible.
-    pub storage_max_width: u32,
-    /// Days to keep the *screenshot* before it degrades to text-only proof. The frame row
-    /// and its raw/content text + spans are always kept (they are the durable proof); only
-    /// the image file is removed. `0` = keep screenshots forever.
-    pub storage_retention_days: u32,
-    pub enrich_embed_text: bool,
+    // Privacy
+    pub privacy_excluded_apps: Vec<String>,
+    pub privacy_pause_on_lock: bool,
+    // Intelligence
     /// Opt-in: tag up to a batch of untagged frames every `vision_timer_interval_ms`.
     pub enrich_vision_timer_enabled: bool,
     pub enrich_vision_timer_interval_ms: u32,
-    /// Opt-in: tag while the user has been idle for at least `vision_idle_secs`.
-    pub enrich_vision_idle_enabled: bool,
-    pub enrich_vision_idle_secs: u32,
-    /// Max still-untagged frames a timer/idle tick enqueues per run (the scheduler
-    /// batch size). Already-queued frames are skipped, so this caps fresh work per run.
-    pub enrich_vision_batch_size: u32,
-    pub enrich_worker_concurrency: u32,
-    pub models_vision_tier: ModelTier,
-    pub models_answer_tier: ModelTier,
-    pub answer_thinking: bool,
-    pub sidecar_idle_ttl_secs: u32,
-    pub sidecar_ngl: u32,
-    pub sidecar_device: Option<String>,
-    /// Sidecar context window in tokens (`--ctx-size`). `0` = automatic: a small
-    /// per-lane default (vision 4096, answer 8192). A non-zero value overrides both
-    /// lanes. Lower = less VRAM (smaller KV cache); too low can truncate long answers.
-    pub sidecar_ctx_size: u32,
-    /// KV-cache precision (`--cache-type-k`/`--cache-type-v`). A quantized cache uses
-    /// less VRAM and is applied only when flash attention is active.
-    pub sidecar_kv_cache_type: KvCacheType,
-    /// Flash-attention mode (`--flash-attn`). Reduces attention memory and unlocks KV
-    /// quantization; `Auto` enables it when the bundled binary supports it.
-    pub sidecar_flash_attn: FlashAttnSetting,
-    /// Recycle (restart) the sidecar when its committed host RAM crosses the ceiling,
-    /// reclaiming the upstream llama.cpp multimodal leak that otherwise grows the vision
-    /// sidecar ~150 MB per frame during long tagging. On by default.
-    pub sidecar_recycle_enabled: bool,
-    /// Committed-RAM ceiling in MiB that triggers a sidecar recycle. `0` = automatic
-    /// (derived from total system RAM). Ignored when `sidecar_recycle_enabled` is false.
-    pub sidecar_recycle_rss_mb: u32,
-    pub privacy_excluded_apps: Vec<String>,
-    pub privacy_pause_on_lock: bool,
-    /// Default value of the Recall search "include app chrome / raw text" toggle
-    /// (`03 §8` `text.include_chrome_default`). `false` → default search uses
-    /// `content_text` only; the per-query `SearchQuery.include_chrome` can still opt in.
-    pub text_include_chrome_default: bool,
-    /// Appearances of a span signature before it is marked static chrome and dropped
-    /// from `content_text` (`03 §8` `text.chrome_suppress_min_seen`). A threshold, never
-    /// hardcoded (`03 §3b`).
-    pub text_chrome_suppress_min_seen: u32,
-    /// Lines at least this many characters are never suppressed for merely repeating
-    /// (`03 §8` `text.chrome_protect_min_chars`) — protects long, information-rich text.
-    pub text_chrome_protect_min_chars: u32,
-    /// Grid resolution for a span's `region_bucket` in the chrome signature
-    /// (`03 §8` `text.chrome_region_buckets`); an N×N grid over the normalized frame.
-    pub text_chrome_region_buckets: u32,
     /// Default Ask retrieval depth (`03 §8` `retrieval.default_top_k`), replacing the
     /// former hardcoded `ASK_TOP_K`. The per-request `AskRequest.top_k` overrides it.
     pub retrieval_default_top_k: u32,
     /// Recall-report target sampled frames **per active period** (`03 §8`
     /// `reports.daily_top_k`). Report depth scales as this × active periods (`§8b`).
     pub reports_daily_top_k: u32,
-    /// Recall-report **global** cap on frames summarized across all periods
-    /// (`03 §8` `reports.weekly_top_k`); bounds the sidecar pass count on weak HW.
-    pub reports_weekly_top_k: u32,
-    /// Frame count at/below which a report uses a single pass; above it, map-reduce
-    /// (`03 §8` `reports.map_reduce_min_frames`, `§8b`).
-    pub reports_map_reduce_min_frames: u32,
-    /// Event-driven capture master switch (`capture.event_driven_enabled`,
-    /// `docs/0.2.0.md`). Opt-in, default `false`: capture stays the 0.2.0 timer/idle
-    /// cadence and no input hooks are installed unless this is on.
-    pub capture_event_driven_enabled: bool,
-    /// Capture on foreground/app switch when event-driven capture is on
-    /// (`capture.event_on_foreground`). *(0.3.0 PR2 trimmed the six event triggers to
-    /// foreground + idle — `docs/0.3.0.md`.)*
-    pub capture_event_on_foreground: bool,
-    /// Capture when the user goes idle past the threshold (`capture.event_on_idle`).
-    pub capture_event_on_idle: bool,
-    /// Collapse a burst of triggers within this window into one capture, ms
-    /// (`capture.event_debounce_ms`). A threshold, never hardcoded.
-    pub capture_event_debounce_ms: u32,
-    /// Minimum gap between any two event-driven captures, ms — the rate ceiling
-    /// (`capture.event_min_interval_ms`).
-    pub capture_event_min_interval_ms: u32,
-    /// Idle time that counts as "gone idle", ms (`capture.event_idle_threshold_ms`).
-    pub capture_event_idle_threshold_ms: u32,
-    /// Fallback capture interval in event mode, ms — a static screen is still sampled
-    /// at least this often (`capture.event_fallback_interval_ms`).
-    pub capture_event_fallback_interval_ms: u32,
-    /// Use Windows UI Automation for the target window's text, with OCR fallback
-    /// (`capture.uia_text_enabled`, `docs/0.2.0.md` #48). Default ON: UIA yields more
-    /// structured text than OCR; on any failure/timeout/thin-yield the frame falls back to
-    /// OCR. Hot-applies per frame (no capture restart).
-    pub capture_uia_text_enabled: bool,
-    /// Per-frame UIA latency budget, ms (`capture.uia_latency_budget_ms`). The tree walk
-    /// abandons past this and a 2× hard timeout guards a wedged worker; over budget → OCR
-    /// fallback. A threshold, never hardcoded. Baked into the provider at startup — applied
-    /// on app restart (a capture stop/start reuses the existing provider).
-    pub capture_uia_latency_budget_ms: u32,
-    /// Minimum UIA text length, chars, below which the read is a thin yield → OCR fallback
-    /// (`capture.uia_min_text_chars`). Catches GPU/canvas/custom-drawn windows where OCR is
-    /// strictly better. Baked into the provider at startup — applied on app restart (a
-    /// capture stop/start reuses the existing provider).
-    pub capture_uia_min_text_chars: u32,
-    /// Walk the UIA **control view** rather than the raw view
-    /// (`capture.uia_view_control_only`, `07` #71). Default **ON**: control view collapses a
-    /// Chromium page's per-text-run node explosion to the elements that carry text, slashing
-    /// cross-process calls. Off = raw view (legacy; far heavier on browsers). Baked at startup.
-    pub capture_uia_view_control_only: bool,
-    /// Hard cap on accessibility nodes visited per UIA walk (`capture.uia_max_nodes`, `07`
-    /// #71; replaces the former hardcoded constant). Bounds the walk on a pathological tree.
-    /// A threshold, never hardcoded (`03 §3b`). Baked into the provider at startup.
-    pub capture_uia_max_nodes: u32,
-    /// Max live `TextPattern` visible-range reads per UIA walk
-    /// (`capture.uia_max_textpattern_calls`, `07` #71). TextPattern ranges are the one
-    /// uncacheable cross-process cost; bounding them stops a document-heavy page from
-    /// reopening the call storm. A threshold, never hardcoded. Baked into the provider.
-    pub capture_uia_max_textpattern_calls: u32,
-    /// Skip the UIA walk for periodic `Timer` frames captured within this many ms of the
-    /// last keyboard/mouse input, falling back to OCR (`capture.uia_suppress_during_input_ms`,
-    /// `07` #71). Closes the residual freeze gap the scroll/click trigger gate leaves in the
-    /// default timer-only capture path, where every frame is a `Timer` and a tick can land
-    /// mid-scroll on a heavy Chromium/Electron tree. `0` disables the gate — it always
-    /// applies otherwise (0.3.2 PR5 retired the former `capture.uia_run_on_interactive`
-    /// bypass with the knob, `07` #83). A threshold, never hardcoded. Baked into the
-    /// provider at startup — applied on app restart.
-    pub capture_uia_suppress_during_input_ms: u32,
-    /// Global Flow overlay summon hotkey (`overlay.hotkey`, 0.3.0 PR5). The shell
-    /// validates and registers the chord so a bad/colliding value becomes the D6
-    /// Settings warning instead of being silently rewritten here.
-    pub overlay_hotkey: String,
-    /// Top-N results in the Flow overlay (`overlay.max_results`, 0.3.0 PR5).
-    pub overlay_max_results: u32,
-    /// Minimum dwell for the where-was-i heuristic, seconds (`resume.min_dwell_secs`,
-    /// 0.3.0 PR6; `03 §7b`, D9). A context must persist at least this long to count as a
-    /// "sustained context" worth resuming, and the same threshold decides whether a
-    /// brief excursion breaks a run. One knob, never hardcoded (`03 §3b` stance).
-    pub resume_min_dwell_secs: u32,
     /// Minimum emitted session length (`sessions.min_len_secs`, 0.4.0 PR4). Final clamp
-    /// 30..=3600 seconds; this is one of the arc's exactly two typed settings keys.
+    /// 30..=3600 seconds.
     pub sessions_min_len_secs: u32,
     /// Pass-1 micro gap close (`sessions.gap_close_secs`, 0.4.0 PR4). Default 120 seconds:
     /// the 11-day sweep improved F1, positive F1, and tool accuracy versus 300 seconds
     /// (usage review 2026-08-01 §6.7). Final clamp 60..=3600 seconds.
     pub sessions_gap_close_secs: u32,
-    /// Global mark-this-moment hotkey (`marks.hotkey`, 0.3.0 PR6; `03 §7b`, D6). Same
-    /// shell-registered/validated posture as `overlay_hotkey`: a bad/colliding value
-    /// surfaces as the D6 Settings warning + toast, never a silent rewrite.
-    pub marks_hotkey: String,
+    /// Default value of the Recall search "include app chrome / raw text" toggle
+    /// (`03 §8` `text.include_chrome_default`). `false` → default search uses
+    /// `content_text` only; the per-query `SearchQuery.include_chrome` can still opt in.
+    pub text_include_chrome_default: bool,
+    /// Ask reasoning toggle; off = faster, shallower answers.
+    pub answer_thinking: bool,
+    // Models
+    pub models_vision_tier: ModelTier,
+    pub models_answer_tier: ModelTier,
+    // Data
+    /// Days to keep the *screenshot* before it degrades to text-only proof. The frame row
+    /// and its raw/content text + spans are always kept (they are the durable proof); only
+    /// the image file is removed. `0` = keep screenshots forever.
+    pub storage_retention_days: u32,
+    /// Max stored-image width in px; the capture is downscaled (aspect kept) above it.
+    /// `0` = native (no downscale) - keeps ultra-wide captures legible.
+    pub storage_max_width: u32,
+    // Advanced
     /// Smart enrichment-throttle master switch (`throttle.enabled`, `docs/0.2.0.md`
     /// former PR5, `03 §8`). Opt-in, default `false`: when off the pressure-probe loop
     /// never runs and enrichment drains at full configured concurrency, exactly as
     /// before. When on, sustained CPU/GPU pressure pauses `vision_tag` and floors
     /// `embed_text` concurrency; capture/OCR/storage never throttle (`03 §5`).
     pub throttle_enabled: bool,
-    /// CPU busy % at/above which pressure counts toward raising a throttle level
-    /// (`throttle.cpu_enter_pct`). A threshold, never hardcoded (`03 §3b` stance).
-    pub throttle_cpu_enter_pct: f32,
-    /// CPU busy % below which pressure counts toward lowering a level
-    /// (`throttle.cpu_exit_pct`). Kept strictly below the enter % for hysteresis.
-    pub throttle_cpu_exit_pct: f32,
-    /// GPU utilization % enter threshold (`throttle.gpu_enter_pct`). Ignored when the GPU
-    /// is unmonitored (no Windows GPU perf counters) — the throttle is then CPU-only.
-    pub throttle_gpu_enter_pct: f32,
-    /// GPU utilization % exit threshold (`throttle.gpu_exit_pct`); strictly below enter.
-    pub throttle_gpu_exit_pct: f32,
-    /// How long pressure must stay above the enter threshold before stepping up one
-    /// throttle level, ms (`throttle.enter_after_ms`) — the sustained-enter dwell.
-    pub throttle_enter_after_ms: u32,
-    /// How long pressure must stay below the exit threshold before stepping down one
-    /// level, ms (`throttle.exit_after_ms`) — the recovered-exit dwell (longer = stickier).
-    pub throttle_exit_after_ms: u32,
-    /// Pressure sampling cadence, ms (`throttle.sample_interval_ms`). The floor keeps
-    /// sampling cheap.
-    pub throttle_sample_interval_ms: u32,
-    /// Minimum concurrent `embed_text` jobs at the Sustained level
-    /// (`throttle.embed_text_floor`). Clamped ≥ 1 so text indexing never fully stalls.
-    /// Hot-applied by the governor each sample tick, like the other `throttle.*` knobs —
-    /// no worker-pool restart.
-    pub throttle_embed_text_floor: u32,
-    /// Closing the main window hides it to the tray and keeps capturing
-    /// (`app.close_to_tray`, 0.3.2 PR3; `03 §7d`, D3). Default **on**. A one-time toast
-    /// explains it on the first restore from the tray; with this off, window close quits
-    /// cleanly (the sidecar is torn down via the Job-Object lifecycle, `03 §6`).
-    pub app_close_to_tray: bool,
-    /// Register ScreenSearch to launch at login (`app.run_at_startup`, 0.3.2 PR3;
-    /// `03 §7d`, D3). Default **off** — an explicit user choice, never silently enabled.
-    /// Applied register-before-persist: the OS registration is attempted before the
-    /// setting is saved, so a save can't claim a launch-at-login that didn't take.
-    pub app_run_at_startup: bool,
+    // Integrations (`api.token` / `api.read_token` are credentials, not fields here).
+    // These three joined the struct in settings v2 (0.4.5 D6); `#[serde(default)]` keeps a
+    // `config_snapshot` written by a pre-v2 build deserializable (`03 §8c`) without making
+    // every other field optional.
+    /// Master switch; the API crate is not constructed unless on.
+    #[serde(default)]
+    pub api_enabled: bool,
+    /// Port the local API binds; clamp 1024..=65535.
+    #[serde(default = "default_api_port")]
+    pub api_port: u16,
+    /// Canonical configured IPv4/IPv6 literal; missing defaults to `127.0.0.1`.
+    #[serde(default = "default_api_bind_address")]
+    pub api_bind_address: String,
+}
+
+fn default_api_port() -> u16 {
+    43_210
+}
+
+fn default_api_bind_address() -> String {
+    "127.0.0.1".to_string()
 }
 
 impl Default for Settings {
@@ -700,7 +634,6 @@ impl Default for Settings {
         Self {
             capture_interval_ms: 3000,
             capture_monitors: Vec::new(),
-            capture_diff_threshold: 0.006,
             // 0 = capture at the monitor's native width (no downscale) — keeps ultra-wide
             // captures legible; any positive value caps the stored image width.
             storage_max_width: 0,
@@ -708,121 +641,55 @@ impl Default for Settings {
             // + raw/content text + spans always survive). Non-zero by default so storage is
             // bounded out of the box; 0 = keep screenshots forever.
             storage_retention_days: 30,
-            enrich_embed_text: true,
-            // Timed/idle vision enrichment are opt-in (off by default); on-demand is
-            // always available. Thresholds chosen with the user (07 gap #1), used only
-            // when the matching toggle is enabled. All user-adjustable in settings.
+            // Timed vision enrichment is opt-in (off by default); on-demand is always
+            // available. Thresholds chosen with the user (07 gap #1).
             enrich_vision_timer_enabled: false,
             enrich_vision_timer_interval_ms: 3_600_000, // 60 min
-            enrich_vision_idle_enabled: false,
-            enrich_vision_idle_secs: 300, // 5 min
-            enrich_vision_batch_size: 20, // frames per scheduled tick
-            enrich_worker_concurrency: 2,
             models_vision_tier: ModelTier::Default,
             models_answer_tier: ModelTier::Default,
             answer_thinking: true,
-            sidecar_idle_ttl_secs: 180,
-            sidecar_ngl: 99,
-            sidecar_device: None,
-            // Memory-tuning defaults (balanced): pin a small per-lane context (0 =
-            // auto → vision 4096 / answer 8192), quantize the KV cache to q8_0, and let
-            // flash attention turn on where the bundled llama.cpp build supports it.
-            // Together these cut VRAM well below the uncontrolled-context default with
-            // no expected quality loss; the f16 / larger-context escape hatches let a
-            // user trade memory back for quality.
-            sidecar_ctx_size: 0,
-            sidecar_kv_cache_type: KvCacheType::Q8_0,
-            sidecar_flash_attn: FlashAttnSetting::Auto,
-            sidecar_recycle_enabled: true,
-            sidecar_recycle_rss_mb: 0,
             privacy_excluded_apps: vec![
                 "1Password".to_string(),
                 "KeePass".to_string(),
                 "Bitwarden".to_string(),
             ],
             privacy_pause_on_lock: true,
-            // 0.2.x attention-first text signal (03 §8). Thresholds are settings, never
-            // hardcoded (03 §3b). suppress_min_seen=4 (lowered from 12 after the PR3 audit,
-            // docs/AUDIT_0.2.0_PR3_2026-06-26.md): a repeated short edge label is caught
-            // within a few captures instead of leaking through a long cold-start window;
-            // long lines, interior body, and rect-less frames stay protected, and the
-            // filter_version backfill + include_chrome/raw text recover any false positive.
+            // 0.2.x attention-first text signal (03 §8): whether default search includes
+            // chrome text. The classifier thresholds themselves are `file-only`.
             text_include_chrome_default: false,
-            text_chrome_suppress_min_seen: 4,
-            text_chrome_protect_min_chars: 48,
-            text_chrome_region_buckets: 8,
             // 0.2.x retrieval + recall reports (03 §8). default_top_k replaces the
-            // hardcoded ASK_TOP_K; daily/weekly_top_k are the per-period budget and
-            // the global cap for temporal-coverage reports (03 §8b).
+            // hardcoded ASK_TOP_K; daily_top_k is the per-period budget for
+            // temporal-coverage reports (03 §8b).
             retrieval_default_top_k: 8,
             reports_daily_top_k: 40,
-            reports_weekly_top_k: 200,
-            reports_map_reduce_min_frames: 20,
-            // 0.2.1 event-driven capture (docs/0.2.0.md, 07 #47), trimmed by 0.3.0 PR2
-            // (docs/0.3.0.md) to foreground + idle. Opt-in master OFF: flipping it on
-            // gives a sane out-of-box set (foreground on; idle off as the noisier
-            // trigger), 500 ms debounce, a 1 s rate ceiling, and a 30 s fallback so a
-            // static screen is still sampled. Every threshold is a setting, never
-            // hardcoded (mirrors the PR3 stance).
-            capture_event_driven_enabled: false,
-            capture_event_on_foreground: true,
-            capture_event_on_idle: false,
-            capture_event_debounce_ms: 500,
-            capture_event_min_interval_ms: 1000,
-            capture_event_idle_threshold_ms: 5000,
-            capture_event_fallback_interval_ms: 30_000,
-            // UIA text (docs/0.2.0.md #48): default ON with OCR fallback. 150 ms keeps the
-            // walk well under the capture cadence; 16 chars is the thin-yield floor below
-            // which OCR is preferred. Thresholds, never hardcoded (mirrors the PR3 stance).
-            capture_uia_text_enabled: true,
-            capture_uia_latency_budget_ms: 150,
-            capture_uia_min_text_chars: 16,
-            // 0.2.1 UIA hang fix (`07` #71): use the lighter control view and bound nodes +
-            // live TextPattern reads. These are settings, never hardcoded (PR3 stance);
-            // max_nodes/textpattern replace the former worker.rs consts. (0.3.2 PR5 retired
-            // the `run_on_interactive` knob — inert since the 0.3.0 trigger trim, `07` #83.)
-            capture_uia_view_control_only: true,
-            capture_uia_max_nodes: 4000,
-            capture_uia_max_textpattern_calls: 64,
-            // 500 ms: long enough to span the gaps between wheel/scroll events so an active
-            // scroll keeps UIA off the target app, short enough that a paused user's next
-            // timer tick resumes UIA promptly. 0 disables. (`07` #71 residual-gap fix.)
-            capture_uia_suppress_during_input_ms: 500,
             // 0.3.0 Flow overlay (docs/0.3.0.md PR5): a configurable non-OS-reserved
-            // summon chord plus the top-N result cap. Chord validity/conflicts are
-            // shell concerns so registration failure can surface loudly in Settings.
-            // Changed from the original "Ctrl+Alt+Space", which collided with Claude Desktop's
-            // global quick-entry shortcut. Existing installs still holding the old default are
-            // migrated once on load (`kernel::settings::load_overlay_hotkey`).
+            // summon chord. Chord validity/conflicts are shell concerns so registration
+            // failure can surface loudly in Settings. Changed from the original
+            // "Ctrl+Alt+Space", which collided with Claude Desktop's global quick-entry
+            // shortcut. Existing installs still holding the old default are migrated once
+            // on load (`kernel::settings::load_overlay_hotkey`).
             overlay_hotkey: "Ctrl+Alt+Z".to_string(),
-            overlay_max_results: 8,
-            // 0.3.0 flow recall (docs/0.3.0.md PR6): 120 s min sustained-context dwell
-            // for where-was-i (D9), and the mark-this-moment chord (D6, non-OS-reserved,
-            // shell-registered so a conflict surfaces loudly in Settings).
-            resume_min_dwell_secs: 120,
+            // 0.3.0 flow recall (docs/0.3.0.md PR6): the mark-this-moment chord (D6,
+            // non-OS-reserved, shell-registered so a conflict surfaces loudly in Settings).
             sessions_min_len_secs: 120,
             sessions_gap_close_secs: 120,
             marks_hotkey: "Ctrl+Alt+M".to_string(),
+            // Four-theme design system (0.4.5 P2 pick, 2026-11-04): pine is the shipped
+            // default, matching the `:root` token block in `ui/src/styles/tokens.css`.
+            ui_appearance: UiAppearance::PineLight,
             // 0.2.1 smart enrichment throttle (docs/0.2.0.md former PR5, 07 #49). Opt-in
-            // master OFF: flipping it on backs enrichment off under sustained load. Enter
-            // above 85% CPU / 90% GPU held 5 s; exit below 65% / 70% held 8 s (exit < enter
-            // = hysteresis, so a value between the bands holds the level instead of
-            // flapping); sample every 1 s; keep ≥1 embed_text worker at L2 so text indexing
-            // never fully stalls. Every threshold is a setting, never hardcoded (PR3 stance).
+            // master OFF: flipping it on backs enrichment off under sustained load. The
+            // thresholds/dwells themselves are `file-only`.
             throttle_enabled: false,
-            throttle_cpu_enter_pct: 85.0,
-            throttle_cpu_exit_pct: 65.0,
-            throttle_gpu_enter_pct: 90.0,
-            throttle_gpu_exit_pct: 70.0,
-            throttle_enter_after_ms: 5000,
-            throttle_exit_after_ms: 8000,
-            throttle_sample_interval_ms: 1000,
-            throttle_embed_text_floor: 1,
             // 0.3.2 app lifecycle (03 §7d, D3): close-to-tray ON by default (closing the
             // window keeps ScreenSearch running with capture live); run-at-startup OFF by
             // default (never silently enable launch-at-login).
             app_close_to_tray: true,
             app_run_at_startup: false,
+            // Integrations: API off until enabled; loopback-only by default.
+            api_enabled: false,
+            api_port: 43_210,
+            api_bind_address: "127.0.0.1".to_string(),
         }
     }
 }

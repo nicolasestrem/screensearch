@@ -34,13 +34,23 @@ async fn capture_pipeline_stores_frames_ocr_and_enqueues_embed_jobs() {
         .await
         .unwrap();
     store
-        .set_setting("capture.diff_threshold", "0.0")
-        .await
-        .unwrap();
-    store
         .set_setting("privacy.pause_on_lock", "false")
         .await
         .unwrap();
+    // `capture.diff_threshold` is a file-only key (settings v2, `03 §8`): the kernel reads it
+    // from `advanced.toml`, not the `settings` table, so it is set the way the app does,
+    // through the file and the loader. A `settings` row here would be silently ignored and
+    // the test would run at the default threshold.
+    std::fs::write(
+        tmp.path().join(traits::ADVANCED_CONFIG_FILE),
+        "[capture]\ndiff_threshold = 0.0\n",
+    )
+    .unwrap();
+    let advanced = kernel::settings::load_advanced_config(tmp.path());
+    assert_eq!(
+        advanced.capture.diff_threshold, 0.0,
+        "advanced.toml must take effect"
+    );
 
     let ocr: Arc<dyn OcrProvider> = Arc::new(WinRtOcr::spawn().expect("spawn OCR"));
     let factory: CaptureFactory =
@@ -53,6 +63,7 @@ async fn capture_pipeline_stores_frames_ocr_and_enqueues_embed_jobs() {
         frames_dir.clone(),
         Readiness::default(),
     );
+    kernel.set_advanced_config(advanced);
 
     kernel.start_capture().await.expect("start capture");
     tokio::time::sleep(Duration::from_secs(3)).await;

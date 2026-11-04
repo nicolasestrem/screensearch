@@ -18,11 +18,12 @@ use std::sync::{Arc, RwLock};
 use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
 use traits::{
-    AnswerProvider, BackfillControl, CaptureConfig, CaptureNowReceiver, CaptureNowRequest,
-    CaptureSource, ComponentReadiness, ComponentStatus, EmbeddingProvider, JobKind,
-    ModelDownloadPhase, ModelDownloadStatus, ModelLane, NewJob, OcrProvider, PressureProbe,
-    Readiness, SessionSegmenter, SetupOperation, SetupPhase, SetupStatus, SetupStep, SidecarState,
-    SidecarStatus, Store, ThrottleStatus, Toast, ToastLevel, VisionProvider, VisionTarget,
+    AdvancedConfig, AnswerProvider, BackfillControl, CaptureConfig, CaptureNowReceiver,
+    CaptureNowRequest, CaptureSource, ComponentReadiness, ComponentStatus, EmbeddingProvider,
+    JobKind, ModelDownloadPhase, ModelDownloadStatus, ModelLane, NewJob, OcrProvider,
+    PressureProbe, Readiness, SessionSegmenter, SetupOperation, SetupPhase, SetupStatus, SetupStep,
+    SidecarState, SidecarStatus, Store, ThrottleStatus, Toast, ToastLevel, VisionProvider,
+    VisionTarget,
 };
 
 mod capture_loop;
@@ -731,6 +732,10 @@ pub struct Kernel {
     /// Serializes `capture_now` demands so two rapid mark presses each complete fully
     /// (one frame + one mark each) instead of racing the single `pending_demand` slot.
     capture_now_gate: Mutex<()>,
+    /// The `file-only` settings (`03 §8`, 0.4.5 D6), loaded once at startup from
+    /// `advanced.toml`. Defaults until the composition root injects the parsed file, so a
+    /// bare [`Kernel::new`] (tests) behaves exactly like a default install.
+    advanced: RwLock<AdvancedConfig>,
 }
 
 impl Kernel {
@@ -823,7 +828,26 @@ impl Kernel {
             throttle: Mutex::new(None),
             pending_demand: Arc::new(std::sync::Mutex::new(None)),
             capture_now_gate: Mutex::new(()),
+            advanced: RwLock::new(AdvancedConfig::default()),
         }
+    }
+
+    /// Injects the parsed `advanced.toml` (`03 §8`, 0.4.5 D6). Called once by the
+    /// composition root at startup; the kernel then serves those values for its lifetime
+    /// (file-only knobs apply on app restart, unlike the `UI` keys it re-reads per use).
+    pub fn set_advanced_config(&self, advanced: AdvancedConfig) {
+        *self
+            .advanced
+            .write()
+            .expect("advanced config lock poisoned") = advanced;
+    }
+
+    /// The live `file-only` settings snapshot.
+    pub fn advanced_config(&self) -> AdvancedConfig {
+        self.advanced
+            .read()
+            .expect("advanced config lock poisoned")
+            .clone()
     }
 
     /// Subscribe to the kernel event bus (the composition root forwards these to
@@ -912,7 +936,8 @@ impl Kernel {
         self.set_capture_readiness(ComponentStatus::Initializing, None);
 
         let settings = settings::load_settings(self.store.as_ref()).await;
-        let cfg = settings::capture_config(&settings);
+        let advanced = self.advanced_config();
+        let cfg = settings::capture_config(&settings, &advanced);
         // The mark-this-moment demand channel for this capture session (`03 §7b`, D8):
         // the source holds the receiver, the handle keeps the sender. Bounded + small —
         // demands are serialized by `capture_now_gate`, so one is ever in flight.
@@ -934,11 +959,11 @@ impl Kernel {
             ocr: self.ocr.clone(),
             frames_dir: self.frames_dir.clone(),
             events: self.events.clone(),
-            enrich_embed_text: settings.enrich_embed_text,
+            enrich_embed_text: advanced.enrich.embed_text,
             max_width: settings.storage_max_width,
-            chrome_suppress_min_seen: settings.text_chrome_suppress_min_seen,
-            chrome_protect_min_chars: settings.text_chrome_protect_min_chars,
-            chrome_region_buckets: settings.text_chrome_region_buckets,
+            chrome_suppress_min_seen: advanced.text.chrome_suppress_min_seen,
+            chrome_protect_min_chars: advanced.text.chrome_protect_min_chars,
+            chrome_region_buckets: advanced.text.chrome_region_buckets,
             pending_demand: self.pending_demand.clone(),
         };
         let id = self.capture_generation.fetch_add(1, Ordering::Relaxed);
@@ -1161,10 +1186,10 @@ impl Kernel {
         if guard.is_some() {
             return;
         }
-        let settings = settings::load_settings(self.store.as_ref()).await;
+        let advanced = self.advanced_config();
         let embedder_ready = self.embedder.read().expect("embedder slot lock").is_some();
         let vision_ready = self.vision.read().expect("vision slot lock").is_some();
-        let has_embed_lane = embedder_ready && settings.enrich_embed_text;
+        let has_embed_lane = embedder_ready && advanced.enrich.embed_text;
         if !has_embed_lane && !vision_ready {
             tracing::debug!("start_workers: no provider-backed worker lanes available");
             return;
@@ -1185,16 +1210,16 @@ impl Kernel {
             store: self.store.clone(),
             embedder: self.embedder.clone(),
             vision: self.vision.clone(),
-            enable_embed_text: settings.enrich_embed_text,
+            enable_embed_text: advanced.enrich.embed_text,
             active_jobs: Arc::new(std::sync::Mutex::new(HashSet::new())),
             data_dir,
             events: self.events.clone(),
-            concurrency: settings.enrich_worker_concurrency.max(1) as usize,
+            concurrency: advanced.enrich.worker_concurrency.max(1) as usize,
             throttle_level: self.throttle_level.clone(),
             embed_text_floor: {
                 // Seed the shared floor from settings; the governor keeps it current per tick.
                 self.throttle_embed_text_floor.store(
-                    settings.throttle_embed_text_floor.max(1) as usize,
+                    advanced.throttle.embed_text_floor.max(1) as usize,
                     Ordering::Relaxed,
                 );
                 self.throttle_embed_text_floor.clone()
@@ -1463,7 +1488,12 @@ impl Kernel {
         if guard.is_some() {
             return;
         }
-        *guard = Some(vision_scheduler::spawn(self.store.clone(), idle, backfill));
+        *guard = Some(vision_scheduler::spawn(
+            self.store.clone(),
+            self.advanced_config().enrich,
+            idle,
+            backfill,
+        ));
         tracing::info!("vision scheduler started");
     }
 
@@ -1513,8 +1543,8 @@ impl Kernel {
             match probe {
                 Some(probe) => {
                     *guard = Some(throttle::spawn(
-                        self.store.clone(),
                         probe,
+                        self.advanced_config().throttle,
                         self.throttle_level.clone(),
                         self.throttle_embed_text_floor.clone(),
                         self.throttle_status.clone(),

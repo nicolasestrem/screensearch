@@ -149,12 +149,17 @@ for self-contained contracts and source-inspected inventory.
   0.4.5 D2). Until Wave A starts, `01`–`04`/`UI_REFERENCE` are the contract for it and the roadmap
   is context.
 
-- **Wave A in flight (2026-11-04):** **P2 (design system v2) is merged** to `main` as `7e73e30`:
-  the Logbook direction with four themes (`pine-light` default) from
-  two accents, three-layer tokens, bundled OFL variable fonts, 30 primitives, a local icon set, a v1
-  token shim, and two enforcement tests. The schema is still **13** and no screen is refonted: P3
-  cuts v14 and P10 does the screens. `ui.appearance` is the 26th UI key (`03 §8`); P3 adds it to the
-  settings registry and P7 renders it.
+- **Wave A in flight (2026-11-04, updated):** **P2 is merged** to `main` as `7e73e30` (design system
+  v2, Logbook, four themes, `pine-light` default). **P3 is implemented, synced onto main and opened
+  for review** on `feat/0.4.5-p3-baseline-schema` (base `origin/main` `3976551`,
+  [PR #153](https://github.com/nicolasestrem/screensearch/pull/153) open, not
+  merged): code now carries the baseline schema **v14** instead of the migration chain (`03 §4`,
+  0.4.5 D2), the dev-only `ssv2c-rebuild` carrier, settings v2 (26 UI keys including
+  `ui.appearance`, 44 `file-only`, 9 `deleted`) with `advanced.toml` and `get_advanced_config`, and a
+  baseline DDL parity test. The shipped database is still **13** until this branch merges; the
+  maintainer's real-DB rebuild, per-table counts, 20-frame Moment spot check and v14 boot remain
+  open, as does the Settings > Integrations in-app check. P7 renders `ui.appearance` and removes the
+  demoted Settings rows. P4 is unchanged and needs a rebase onto the P3 tip before its turn.
 
 ---
 

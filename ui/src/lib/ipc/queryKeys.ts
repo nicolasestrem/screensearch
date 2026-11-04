@@ -16,6 +16,7 @@ export const queryKeys = {
   throttleStatus: ["throttleStatus"] as const,
   hotkeyStatus: ["hotkeyStatus"] as const,
   settings: ["settings"] as const,
+  advancedConfig: ["advancedConfig"] as const,
   textFilterStats: ["textFilterStats"] as const,
   // `*Prefix` keys match every variant of a family for bulk invalidation (e.g.
   // a `capture_tick` invalidates all timeline ranges/bucket-counts at once; a

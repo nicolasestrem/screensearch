@@ -6,9 +6,12 @@
 //! identically. The server lives in an [`ApiRuntime`] slot; enabling/disabling toggles it
 //! at runtime, mirroring the capture handle's idempotent start/stop.
 //!
-//! The `api.enabled`/`api.port`/`api.bind_address`/`api.token` keys are read/written directly on the `settings`
-//! table here — deliberately **not** fields of the `Settings` struct — so the bearer token
-//! never rides the `get_settings` response into `Settings.ts`.
+//! `api.enabled` / `api.port` / `api.bind_address` are `UI` keys (fields of the typed
+//! `Settings` since settings v2, `03 §8`), but their *apply* path lives here: the config is
+//! validated, persisted and bound under one lock. The credentials (`api.token` and the
+//! read-only `api.read_token`) are deliberately **not** fields of `Settings`, so a bearer
+//! token never rides the `get_settings` response into `Settings.ts`; they share one
+//! Integrations credential control and are written only by the create/rotate/revoke commands.
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -211,7 +214,8 @@ impl ApiHost for TauriApiHost {
 
     async fn where_was_i(&self) -> anyhow::Result<Option<ResumeContext>> {
         let settings = kernel::settings::load_settings(self.store.as_ref()).await;
-        kernel::resume::where_was_i(self.store.as_ref(), &settings).await
+        let advanced = self.kernel.advanced_config();
+        kernel::resume::where_was_i(self.store.as_ref(), &settings, &advanced).await
     }
 
     async fn export_frames_page(
@@ -367,7 +371,8 @@ fn map_capture_observations(observations: kernel::CaptureObservations) -> Captur
 }
 
 /// Reads the persisted API config, applying the port clamp and treating a blank/absent
-/// token as `None`. Unknown/malformed values fall back to defaults (tolerant load, `03 §8`).
+/// token as `None`. Malformed values fall back to the documented defaults so a damaged row
+/// cannot stop the server from reporting its status.
 async fn read_api_config(store: &SqliteStore) -> (bool, u16, Option<String>) {
     let enabled = store
         .get_setting(API_ENABLED_KEY)

@@ -16,10 +16,9 @@ use std::time::Duration;
 
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
-use traits::{PressureProbe, PressureSample, Store, ThrottleStatus};
+use traits::{PressureProbe, PressureSample, ThrottleAdvanced, ThrottleStatus};
 
 use crate::events::KernelEvent;
-use crate::settings;
 
 /// How throttled enrichment currently is. The `u8` value is what the worker pool reads
 /// from the shared atomic: `0` claims everything, `>= 1` pauses `vision_tag`, `2` also
@@ -47,7 +46,7 @@ impl ThrottleLevel {
 }
 
 /// Hysteresis band + dwell timing for [`ThrottleMachine`]. `*_exit_pct` are kept strictly
-/// below `*_enter_pct` by `settings::sanitize_settings`, so a value between the two holds
+/// below `*_enter_pct` by `AdvancedConfig::sanitized`, so a value between the two holds
 /// the current level instead of flapping.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ThrottleConfig {
@@ -77,12 +76,6 @@ impl ThrottleMachine {
             over_since: None,
             under_since: None,
         }
-    }
-
-    /// Hot-applies edited thresholds without resetting the current level (a threshold
-    /// tweak shouldn't jolt the level — only pressure does).
-    pub(crate) fn set_config(&mut self, cfg: ThrottleConfig) {
-        self.cfg = cfg;
     }
 
     #[cfg(test)]
@@ -139,15 +132,15 @@ impl ThrottleMachine {
     }
 }
 
-/// Builds a [`ThrottleConfig`] from the live settings.
-pub(crate) fn config_from_settings(s: &traits::Settings) -> ThrottleConfig {
+/// Builds a [`ThrottleConfig`] from the `file-only` advanced settings.
+pub(crate) fn config_from_advanced(s: &ThrottleAdvanced) -> ThrottleConfig {
     ThrottleConfig {
-        cpu_enter_pct: s.throttle_cpu_enter_pct,
-        cpu_exit_pct: s.throttle_cpu_exit_pct,
-        gpu_enter_pct: s.throttle_gpu_enter_pct,
-        gpu_exit_pct: s.throttle_gpu_exit_pct,
-        enter_after_ms: s.throttle_enter_after_ms as i64,
-        exit_after_ms: s.throttle_exit_after_ms as i64,
+        cpu_enter_pct: s.cpu_enter_pct,
+        cpu_exit_pct: s.cpu_exit_pct,
+        gpu_enter_pct: s.gpu_enter_pct,
+        gpu_exit_pct: s.gpu_exit_pct,
+        enter_after_ms: i64::from(s.enter_after_ms),
+        exit_after_ms: i64::from(s.exit_after_ms),
     }
 }
 
@@ -175,11 +168,11 @@ impl Drop for ThrottleHandle {
 
 /// Spawns the governor loop: sample the probe on the configured cadence, drive the
 /// machine, publish the level into `level` (read by the worker pool) and the latest
-/// status into `status` (read by the IPC query), keep `embed_text_floor` current from
-/// settings, and broadcast `ThrottleChanged`.
+/// status into `status` (read by the IPC query), seed `embed_text_floor` from the
+/// `file-only` advanced settings, and broadcast `ThrottleChanged`.
 pub(crate) fn spawn(
-    store: Arc<dyn Store>,
     probe: Arc<dyn PressureProbe>,
+    advanced: ThrottleAdvanced,
     level: Arc<AtomicU8>,
     embed_text_floor: Arc<AtomicUsize>,
     status: Arc<RwLock<ThrottleStatus>>,
@@ -187,8 +180,8 @@ pub(crate) fn spawn(
 ) -> ThrottleHandle {
     let (stop_tx, stop_rx) = watch::channel(false);
     let join = tokio::spawn(governor_loop(
-        store,
         probe,
+        advanced,
         level,
         embed_text_floor,
         status,
@@ -201,41 +194,31 @@ pub(crate) fn spawn(
     }
 }
 
-/// Floor on the sample cadence, mirroring `settings::sanitize_settings`, so a bad DB value
+/// Floor on the sample cadence, mirroring `AdvancedConfig::sanitized`, so a bad file value
 /// can't busy-loop the probe.
 const MIN_SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
 
 async fn governor_loop(
-    store: Arc<dyn Store>,
     probe: Arc<dyn PressureProbe>,
+    advanced: ThrottleAdvanced,
     level: Arc<AtomicU8>,
     embed_text_floor: Arc<AtomicUsize>,
     status: Arc<RwLock<ThrottleStatus>>,
     events: broadcast::Sender<KernelEvent>,
     mut stop: watch::Receiver<bool>,
 ) {
-    let mut machine: Option<ThrottleMachine> = None;
+    // The thresholds are `file-only` (`03 §8`, 0.4.5 D6), so they are resolved once when the
+    // governor starts; a changed `advanced.toml` applies on app restart.
+    let interval =
+        Duration::from_millis(u64::from(advanced.sample_interval_ms)).max(MIN_SAMPLE_INTERVAL);
+    embed_text_floor.store(advanced.embed_text_floor.max(1) as usize, Ordering::Relaxed);
+    let mut machine = ThrottleMachine::new(config_from_advanced(&advanced));
     loop {
-        // Re-read settings each tick so threshold + cadence + floor edits hot-apply (mirrors
-        // the vision scheduler's timer_loop).
-        let s = settings::load_settings(store.as_ref()).await;
-        let interval =
-            Duration::from_millis(s.throttle_sample_interval_ms as u64).max(MIN_SAMPLE_INTERVAL);
         if wait_or_stop(&mut stop, interval).await {
             break;
         }
-        // Keep the worker pool's level-2 floor current with edits (clamp mirrors
-        // `settings::sanitize_settings`), seamlessly — no pool restart.
-        embed_text_floor.store(
-            s.throttle_embed_text_floor.max(1) as usize,
-            Ordering::Relaxed,
-        );
-        let cfg = config_from_settings(&s);
-        let m = machine.get_or_insert_with(|| ThrottleMachine::new(cfg));
-        m.set_config(cfg);
-
         let sample = probe.sample();
-        let lvl = m.observe(&sample, sample.sampled_at);
+        let lvl = machine.observe(&sample, sample.sampled_at);
         let prev = level.swap(lvl as u8, Ordering::Relaxed);
 
         let snapshot = {

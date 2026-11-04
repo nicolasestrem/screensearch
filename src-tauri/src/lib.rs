@@ -18,14 +18,15 @@ use async_trait::async_trait;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 use traits::{
-    AnswerEvent, AnswerOpts, AppSuppression, AskRequest, CaptureControl, CaptureSource,
-    CapturedFrame, ComponentReadiness, ComponentStatus, FrameMeta, InsightsSummary, JobStats, Mark,
-    ModelLane, MonitorInfo, OcrProvider, OcrResult, Readiness, ReportConfig, ReportKind,
-    ReportMode, ReportProgress, ReportRange, ReportRequest, ReportResponse, RetrievedChunk,
-    SearchHit, SearchQuery, Session, SessionArtifactKind, SessionDetail, SessionFilter,
-    SessionQuery, SessionRecapRequest, SetModelTier, Settings, SetupOperation, SetupPhase,
-    SetupStatus, SetupStep, StorageStats, Store, TextSpan, ThrottleStatus, TimeRange,
-    TimelineBucket, ToastLevel, UiFrameDetail, UiResumeContext, VisionTarget,
+    AdvancedConfig, AdvancedConfigView, AnswerEvent, AnswerOpts, AppSuppression, AskRequest,
+    CaptureControl, CaptureSource, CapturedFrame, ComponentReadiness, ComponentStatus, FrameMeta,
+    InsightsSummary, JobStats, Mark, ModelLane, MonitorInfo, OcrProvider, OcrResult, Readiness,
+    ReportConfig, ReportKind, ReportMode, ReportProgress, ReportRange, ReportRequest,
+    ReportResponse, RetrievedChunk, SearchHit, SearchQuery, Session, SessionArtifactKind,
+    SessionDetail, SessionFilter, SessionQuery, SessionRecapRequest, SetModelTier, Settings,
+    SetupOperation, SetupPhase, SetupStatus, SetupStep, StorageStats, Store, TextSpan,
+    ThrottleStatus, TimeRange, TimelineBucket, ToastLevel, UiFrameDetail, UiResumeContext,
+    VisionTarget,
 };
 
 use embeddings::FastEmbedProvider;
@@ -185,8 +186,9 @@ async fn session_recap_has_evidence(store: &dyn Store, session_id: i64) -> trait
 async fn load_ui_resume_context(
     store: &dyn Store,
     settings: &Settings,
+    advanced: &AdvancedConfig,
 ) -> traits::Result<Option<UiResumeContext>> {
-    let Some(context) = kernel::resume::where_was_i(store, settings).await? else {
+    let Some(context) = kernel::resume::where_was_i(store, settings, advanced).await? else {
         return Ok(None);
     };
     let session = store.session_reference_for_frame(context.frame_id).await?;
@@ -232,6 +234,18 @@ struct AppState {
     embed_models_dir: PathBuf,
     db_path: PathBuf,
     frames_dir: PathBuf,
+    /// The `file-only` settings (`03 §8`, 0.4.5 D6), parsed from `advanced.toml` once at
+    /// startup. Settings that are not `UI` read their values from here, not from the typed
+    /// [`Settings`] struct.
+    advanced: AdvancedConfig,
+    /// `section.field` keys `advanced.toml` actually supplied at startup - the provenance
+    /// half of the read-only Settings · Advanced projection (`get_advanced_config`). Frozen
+    /// alongside [`Self::advanced`]: the file is read once per launch, and the loader's
+    /// one-shot rewrite would otherwise make defaults look file-supplied on a re-read.
+    advanced_from_file: Vec<String>,
+    /// Absolute path of `advanced.toml` (beside the DB), reported by
+    /// `get_advanced_config` so Settings · Advanced can name the file to edit.
+    advanced_config_path: PathBuf,
     /// The opt-in local HTTP API runtime (0.3.0 PR7). Holds the server slot + live token;
     /// the server is constructed only when `api.enabled` (`03 §7c`).
     api_runtime: Arc<local_api::ApiRuntime>,
@@ -492,7 +506,7 @@ async fn where_was_i(state: State<'_, AppState>) -> Result<Option<UiResumeContex
         .clone()
         .ok_or_else(|| "database unavailable".to_string())?;
     let settings = kernel::settings::load_settings(store.as_ref()).await;
-    load_ui_resume_context(store.as_ref(), &settings)
+    load_ui_resume_context(store.as_ref(), &settings, &state.advanced)
         .await
         .map_err(|e| e.to_string())
 }
@@ -735,8 +749,8 @@ async fn generate_report(
     let settings = kernel::settings::load_settings(store.as_ref()).await;
     let cfg = ReportConfig {
         daily_top_k: settings.reports_daily_top_k,
-        weekly_top_k: settings.reports_weekly_top_k,
-        map_reduce_min_frames: settings.reports_map_reduce_min_frames,
+        weekly_top_k: state.advanced.reports.weekly_top_k,
+        map_reduce_min_frames: state.advanced.reports.map_reduce_min_frames,
         reply_budget: REPORT_REPLY_BUDGET,
     };
     let range = match request.kind {
@@ -854,8 +868,8 @@ async fn session_recap(
     let settings = kernel::settings::load_settings(store.as_ref()).await;
     let cfg = ReportConfig {
         daily_top_k: settings.reports_daily_top_k,
-        weekly_top_k: settings.reports_weekly_top_k,
-        map_reduce_min_frames: settings.reports_map_reduce_min_frames,
+        weekly_top_k: state.advanced.reports.weekly_top_k,
+        map_reduce_min_frames: state.advanced.reports.map_reduce_min_frames,
         reply_budget: REPORT_REPLY_BUDGET,
     };
     let answer = kernel
@@ -1215,6 +1229,21 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
     Ok(kernel::settings::load_settings(store.as_ref()).await)
 }
 
+/// Read-only projection of the `file-only` settings for Settings · Advanced (`03 §8`,
+/// 0.4.5 D6). Returns the effective [`AdvancedConfig`] the backend is running with, the
+/// absolute `advanced.toml` path, and which `section.field` keys the file supplied.
+///
+/// There is deliberately **no setter**: a `file-only` key is not editable from the UI. The
+/// file is read once at startup, so editing it takes effect on the next launch.
+#[tauri::command]
+fn get_advanced_config(state: State<'_, AppState>) -> AdvancedConfigView {
+    AdvancedConfigView {
+        config: state.advanced.clone(),
+        path: state.advanced_config_path.display().to_string(),
+        from_file: state.advanced_from_file.clone(),
+    }
+}
+
 /// Persist user settings (`set_settings`, `03 §7/§8`). All keys are written durably.
 /// Model tiers **hot-apply** to the live providers here (same path as
 /// `set_model_tier`); `answer.thinking` is read per-`ask`; capture/storage/privacy
@@ -1235,12 +1264,21 @@ async fn set_settings(
     // must pick up new values. Without this, capture/privacy changes silently waited for the
     // next manual capture start — the user-reported "Excluded Apps never applies" bug.
     let prev_settings = kernel::settings::load_settings(store.as_ref()).await;
-    let prev_capture_cfg = kernel::settings::capture_config(&prev_settings);
+    let prev_capture_cfg = kernel::settings::capture_config(&prev_settings, &state.advanced);
     // Clamp once up front so the values handed to the live providers below are exactly what
     // gets persisted. `save_settings` sanitizes internally too, but a direct IPC call could
-    // pass out-of-range values (e.g. a huge `sidecar_ctx_size`); without this, the DB would
-    // store the clamped value while the next sidecar spawn ran the raw one until restart.
+    // pass out-of-range values; without this, the DB would store the clamped value while the
+    // live provider ran the raw one until restart.
     let settings = kernel::settings::sanitize_settings(settings);
+    // `api.bind_address` is a literal or nothing: reject a bad value loudly before persisting,
+    // instead of storing an address the server can never bind (`03 §8`, `§7c`).
+    if settings
+        .api_bind_address
+        .parse::<std::net::IpAddr>()
+        .is_err()
+    {
+        return Err("API bind address must be an IPv4 or IPv6 literal".to_string());
+    }
 
     // Register-before-persist for launch-at-login (0.3.2 PR3, `03 §7d`; sister-app B1
     // pattern): when `app.run_at_startup` changed, apply the OS registration BEFORE saving,
@@ -1287,14 +1325,36 @@ async fn set_settings(
     // restart. Disabling UIA here also releases the client, so Chromium/Electron apps leave
     // accessibility mode (`docs/0.2.0.md` #48; the "disable didn't stop the hangs" fix).
     if let Some(uia) = &state.uia {
-        uia.apply_settings(&settings);
+        uia.apply_settings(&state.advanced);
+    }
+
+    // Widen or narrow the local API to match the persisted intent. The credential rows are
+    // never part of the typed `Settings`; a changed enable/port/bind goes through the same
+    // locked apply path as `set_api_config` (loud on a bind failure, never a silent drop).
+    if settings.api_enabled != prev_settings.api_enabled
+        || settings.api_port != prev_settings.api_port
+        || settings.api_bind_address != prev_settings.api_bind_address
+    {
+        if let Some(host) = state.api_host.clone() {
+            if let Err(e) = local_api::apply_api_config(
+                store.as_ref(),
+                &state.api_runtime,
+                host,
+                settings.api_enabled,
+                Some(settings.api_port),
+                Some(settings.api_bind_address.clone()),
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "local API config apply after settings change failed");
+            }
+        }
     }
 
     // Hot-apply sidecar lane settings; embedding workers are handled below. The launch
-    // params (ngl/device/ctx/KV/flash) are all launch args, so they take effect when the
-    // supervisor relaunches on the next request (a changed param makes `needs_restart`
-    // true) — no immediate process kill here.
-    let sidecar_params = traits::SidecarParams::from(&settings);
+    // params (ngl/device/ctx/KV/flash) are `file-only`, so they come from the advanced config
+    // and change only on app restart; re-applying the unchanged snapshot is a no-op.
+    let sidecar_params = traits::SidecarParams::from(&state.advanced);
     if let Some(v) = state.vision.lock().expect("vision slot").clone() {
         v.set_tier(settings.models_vision_tier);
         v.set_launch_options(sidecar_params.clone());
@@ -1304,7 +1364,7 @@ async fn set_settings(
         a.set_launch_options(sidecar_params);
     }
     if let Some(kernel) = state.kernel.clone() {
-        let embeddings_enabled = settings.enrich_embed_text;
+        let embeddings_enabled = state.advanced.enrich.embed_text;
         let embed_status = kernel.readiness().embed_model.status;
         if embeddings_enabled
             && matches!(
@@ -1316,12 +1376,7 @@ async fn set_settings(
                 ComponentStatus::Initializing,
                 Some("loading embedding model".to_string()),
             );
-            let dyn_store: Arc<dyn Store> = store.clone();
-            tauri::async_runtime::spawn(init_embeddings(
-                kernel,
-                dyn_store,
-                state.embed_models_dir.clone(),
-            ));
+            tauri::async_runtime::spawn(init_embeddings(kernel, state.embed_models_dir.clone()));
         } else {
             kernel.reconfigure_enrichment().await;
         }
@@ -1336,7 +1391,7 @@ async fn set_settings(
     // CaptureConfig — e.g. a freshly excluded app — takes effect now, not on the next manual
     // start). No-op when nothing capture-relevant changed or capture isn't running.
     if let Some(kernel) = state.kernel.clone() {
-        if kernel::settings::capture_config(&settings) != prev_capture_cfg {
+        if kernel::settings::capture_config(&settings, &state.advanced) != prev_capture_cfg {
             if let Err(e) = kernel.reload_capture().await {
                 tracing::warn!(error = %e, "capture reload after settings change failed");
             }
@@ -1389,6 +1444,16 @@ pub fn run() {
             let db_path = data_dir.join("screensearch.db");
             let frames_dir = data_dir.join("frames");
             let embed_models_dir = data_dir.join("models").join("fastembed");
+            // The `file-only` settings are read once, here, from `advanced.toml` beside the
+            // database (`03 §8`, 0.4.5 D6). A missing/unreadable file is not an error: the
+            // defaults apply and the loader logs why (P7 shows that state under Advanced).
+            // The provenance (`from_file`) is frozen here too - it is what
+            // `get_advanced_config` reports and it cannot be re-derived from the file
+            // later, because the loader's one-shot rewrite fills the file with defaults.
+            let advanced_load = kernel::settings::load_advanced_config_with_provenance(&data_dir);
+            let advanced_from_file = advanced_load.from_file;
+            let advanced = advanced_load.config;
+            let advanced_config_path = kernel::settings::advanced_config_path(&data_dir);
 
             let (store, db_readiness) = open_store(&db_path);
             app.manage(overlay::OverlayState::default());
@@ -1430,6 +1495,7 @@ pub fn run() {
             if let Some(store) = &store {
                 let store = store.clone();
                 let purge_dir = data_dir.clone();
+                let advanced = advanced.clone();
                 tauri::async_runtime::spawn(async move {
                     // Purge any settings keys retired by a past version (0.3.0 PR2 event
                     // triggers) so a config persisted with them still loads and the stale
@@ -1439,14 +1505,13 @@ pub fn run() {
                     // exclude), then re-clean the remaining frames against the warm
                     // chrome catalog.
                     purge_self_captures(store.clone(), purge_dir).await;
-                    let s = kernel::settings::load_settings(store.as_ref()).await;
                     match store
                         .backfill_filter_version(
                             store::FILTER_VERSION,
-                            s.text_chrome_suppress_min_seen,
-                            s.text_chrome_protect_min_chars,
-                            s.text_chrome_region_buckets,
-                            s.enrich_embed_text,
+                            advanced.text.chrome_suppress_min_seen,
+                            advanced.text.chrome_protect_min_chars,
+                            advanced.text.chrome_region_buckets,
+                            advanced.enrich.embed_text,
                         )
                         .await
                     {
@@ -1474,9 +1539,9 @@ pub fn run() {
             let mut uia_composite: Option<Arc<UiaWithOcrFallback>> = None;
             let kernel = store.as_ref().map(|store| {
                 let dyn_store: Arc<dyn Store> = store.clone();
-                let (ocr, uia, ocr_unavailable) = spawn_ocr(store);
+                let (ocr, uia, ocr_unavailable) = spawn_ocr(&advanced);
                 uia_composite = uia;
-                match ocr_unavailable {
+                let kernel = match ocr_unavailable {
                     Some(reason) => Arc::new(Kernel::new_with_ocr_unavailable(
                         dyn_store,
                         ocr,
@@ -1492,7 +1557,9 @@ pub fn run() {
                         frames_dir.clone(),
                         readiness.clone(),
                     )),
-                }
+                };
+                kernel.set_advanced_config(advanced.clone());
+                kernel
             });
 
             // Slots filled off the launch thread (P4 inference), shared with command
@@ -1539,10 +1606,8 @@ pub fn run() {
                     ComponentStatus::Initializing,
                     Some("loading embedding model".to_string()),
                 );
-                let dyn_store: Arc<dyn Store> = store.clone();
                 tauri::async_runtime::spawn(init_embeddings(
                     kernel.clone(),
-                    dyn_store,
                     embed_models_dir.clone(),
                 ));
 
@@ -1610,6 +1675,9 @@ pub fn run() {
                 embed_models_dir,
                 db_path,
                 frames_dir,
+                advanced,
+                advanced_from_file,
+                advanced_config_path,
                 api_runtime: Arc::new(local_api::ApiRuntime::new()),
                 memory_runtime,
                 api_host,
@@ -1699,6 +1767,7 @@ pub fn run() {
             get_insights,
             get_settings,
             set_settings,
+            get_advanced_config,
             get_text_filter_stats,
             get_throttle_status,
             overlay::get_hotkey_status,
@@ -1832,9 +1901,8 @@ pub(crate) async fn graceful_shutdown(app: &tauri::AppHandle) {
 /// first-run download; `embed_model` readiness reflects progress
 /// (Initializing → Ready / Unavailable / Disabled). Skips loading entirely when text
 /// embeddings are off.
-async fn init_embeddings(kernel: Arc<Kernel>, store: Arc<dyn Store>, models_dir: PathBuf) {
-    let settings = kernel::settings::load_settings(store.as_ref()).await;
-    if !settings.enrich_embed_text {
+async fn init_embeddings(kernel: Arc<Kernel>, models_dir: PathBuf) {
+    if !kernel.advanced_config().enrich.embed_text {
         kernel.set_embed_readiness(
             ComponentStatus::Disabled,
             Some("embeddings disabled in settings".to_string()),
@@ -2041,17 +2109,21 @@ async fn init_inference(
     let caps = tokio::task::spawn_blocking(move || inference::probe_caps(&binary_for_probe))
         .await
         .unwrap_or_else(|_| inference::SidecarCaps::conservative());
+    // `sidecar.idle_ttl_secs` / `sidecar.recycle_*` are `file-only`, resolved once here at
+    // supervisor construction (`03 §8`, 0.4.5 D6): a changed `advanced.toml` applies on the
+    // next app start, exactly as before the key moved.
+    let advanced = kernel.advanced_config();
     let config = SupervisorConfig {
         binary,
         reap_binaries,
         pidfile,
         sidecar_log: Some(sidecar_dir.join("llama-server.log")),
-        idle_ttl: Duration::from_secs(settings.sidecar_idle_ttl_secs as u64),
+        idle_ttl: Duration::from_secs(u64::from(advanced.sidecar.idle_ttl_secs)),
         health_timeout: SIDECAR_HEALTH_TIMEOUT,
         caps,
         recycle_ceiling_bytes: inference::resolve_recycle_ceiling(
-            settings.sidecar_recycle_enabled,
-            settings.sidecar_recycle_rss_mb,
+            advanced.sidecar.recycle_enabled,
+            advanced.sidecar.recycle_rss_mb,
         ),
     };
     let supervisor = match ModelSupervisor::new(config) {
@@ -2073,7 +2145,7 @@ async fn init_inference(
         }
     };
 
-    let sidecar_params = traits::SidecarParams::from(&settings);
+    let sidecar_params = traits::SidecarParams::from(&advanced);
     // One downloader, shared by both lanes: it serializes per-lane fetches (no concurrent
     // races) and broadcasts progress for the UI.
     let downloader = inference::ModelDownloader::new(models_root.clone());
@@ -2581,12 +2653,13 @@ fn reconcile_autostart(app: &tauri::AppHandle, desired: bool) {
 /// initialized (capture start is blocked in that state). The recognizer is a composite:
 /// **UI Automation primary, OCR fallback** (`docs/0.2.0.md` #48). OCR is the mandatory
 /// floor, so if WinRT OCR is unavailable we return it alone (capture stays blocked) and do
-/// not attempt UIA. Otherwise we read the UIA settings, seed the shared enable flag, and —
-/// if `UiaTextProvider::spawn` succeeds (its own capability probe) — wrap UIA over OCR.
-/// On any UIA spawn failure, fall back to OCR-only. The capture loop is unchanged: it still
+/// not attempt UIA. Otherwise we take the `file-only` UIA knobs from the advanced config
+/// (`03 §8`, 0.4.5 D6) and, if `UiaTextProvider::spawn` succeeds (its own capability probe),
+/// wrap UIA over OCR. The client itself is spawned lazily on the first eligible frame. On
+/// any UIA spawn failure, fall back to OCR-only. The capture loop is unchanged: it still
 /// calls a single `Arc<dyn OcrProvider>`.
 fn spawn_ocr(
-    store: &Arc<SqliteStore>,
+    advanced: &AdvancedConfig,
 ) -> (
     Arc<dyn OcrProvider>,
     Option<Arc<UiaWithOcrFallback>>,
@@ -2615,15 +2688,10 @@ fn spawn_ocr(
         return (ocr, None, ocr_unavailable);
     }
 
-    // Read the UIA settings (sync setup context → block on the async load). Every UIA knob now
-    // hot-applies: the composite tears down + lazily respawns its UI Automation client on a
-    // settings save, so nothing is "baked at spawn" anymore. The worker itself is spawned
-    // lazily on the first eligible frame (its `CoCreateInstance` is the capability probe); a
-    // session where UIA can't initialize just runs OCR-only from then on.
-    let settings = kernel::settings::sanitize_settings(tauri::async_runtime::block_on(
-        kernel::settings::load_settings(store.as_ref()),
-    ));
-    let config = uia_runtime_config(&settings);
+    // The UIA knobs are `file-only` (`03 §8`, 0.4.5 D6), read once from `advanced.toml`; the
+    // worker itself is spawned lazily on the first eligible frame (its `CoCreateInstance` is
+    // the capability probe); a session where UIA can't initialize just runs OCR-only.
+    let config = uia_runtime_config(advanced);
     tracing::info!(
         enabled = config.enabled,
         control_view = config.budget.control_view,
@@ -2635,9 +2703,8 @@ fn spawn_ocr(
     (dyn_ocr, Some(composite), None)
 }
 
-/// All the UIA-composite knobs, snapshotted from [`Settings`]. Swapped atomically on a
-/// settings save; a change tears the client down so the next frame respawns with the new
-/// values (so every UIA setting hot-applies — no app restart).
+/// All the UIA-composite knobs, snapshotted from the `file-only` advanced config. Applied
+/// once at startup; a change requires an app restart (`03 §8`, 0.4.5 D6).
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct UiaRuntimeConfig {
     enabled: bool,
@@ -2645,17 +2712,17 @@ struct UiaRuntimeConfig {
     suppress_during_input_ms: u32,
 }
 
-fn uia_runtime_config(s: &Settings) -> UiaRuntimeConfig {
+fn uia_runtime_config(advanced: &AdvancedConfig) -> UiaRuntimeConfig {
     UiaRuntimeConfig {
-        enabled: s.capture_uia_text_enabled,
+        enabled: advanced.capture.uia_text_enabled,
         budget: uia::UiaBudget {
-            latency_ms: u64::from(s.capture_uia_latency_budget_ms),
-            min_text_chars: s.capture_uia_min_text_chars as usize,
-            max_nodes: s.capture_uia_max_nodes,
-            max_textpattern_calls: s.capture_uia_max_textpattern_calls,
-            control_view: s.capture_uia_view_control_only,
+            latency_ms: u64::from(advanced.capture.uia_latency_budget_ms),
+            min_text_chars: advanced.capture.uia_min_text_chars as usize,
+            max_nodes: advanced.capture.uia_max_nodes,
+            max_textpattern_calls: advanced.capture.uia_max_textpattern_calls,
+            control_view: advanced.capture.uia_view_control_only,
         },
-        suppress_during_input_ms: s.capture_uia_suppress_during_input_ms,
+        suppress_during_input_ms: advanced.capture.uia_suppress_during_input_ms,
     }
 }
 
@@ -2834,11 +2901,11 @@ impl UiaWithOcrFallback {
     }
 
     /// Swap in fresh UIA settings and, if anything changed, tear the client down so the next
-    /// frame respawns with the new values — this is what makes every UIA knob hot-apply. A
-    /// no-op when the UIA config is unchanged, so unrelated settings saves don't churn the
-    /// client. Called from `set_settings`.
-    fn apply_settings(&self, settings: &Settings) {
-        let cfg = uia_runtime_config(settings);
+    /// frame respawns with the new values. A no-op when the config is unchanged, so unrelated
+    /// settings saves don't churn the client. The knobs are `file-only`, so this only ever
+    /// changes when the injected advanced config does (startup).
+    fn apply_settings(&self, advanced: &AdvancedConfig) {
+        let cfg = uia_runtime_config(advanced);
         let changed = {
             let mut guard = self.config.lock().expect("uia config lock");
             if *guard == cfg {
@@ -3272,10 +3339,14 @@ mod tests {
             .await
             .unwrap();
 
-        let joined = load_ui_resume_context(store.as_ref(), &Settings::default())
-            .await
-            .unwrap()
-            .unwrap();
+        let joined = load_ui_resume_context(
+            store.as_ref(),
+            &Settings::default(),
+            &AdvancedConfig::default(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(joined.context.frame_id, ids[1]);
         assert_eq!(
             joined.session.as_ref().map(|session| session.id),
@@ -3283,10 +3354,14 @@ mod tests {
         );
 
         assert!(store.delete_unfrozen_session(session_id).await.unwrap());
-        let deleted = load_ui_resume_context(store.as_ref(), &Settings::default())
-            .await
-            .unwrap()
-            .unwrap();
+        let deleted = load_ui_resume_context(
+            store.as_ref(),
+            &Settings::default(),
+            &AdvancedConfig::default(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(deleted.context.frame_id, ids[1]);
         assert!(deleted.session.is_none());
     }

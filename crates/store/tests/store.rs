@@ -93,40 +93,14 @@ fn frame_at(captured_at: i64) -> NewFrame {
     }
 }
 
-/// Opening a fresh store applies the forward-only migrations and lands at the
-/// latest schema version (`03 §4`, `12`).
+/// Opening a fresh store creates the v14 baseline and lands at the latest schema
+/// version (`03 §4`, 0.4.5 D2).
 #[tokio::test]
-async fn open_in_memory_migrates_to_latest_schema_version() {
+async fn open_in_memory_creates_the_baseline_schema() {
     let store = SqliteStore::open_in_memory().expect("open in-memory store");
     assert_eq!(
         store.schema_version().expect("read schema_version"),
         store::LATEST_SCHEMA_VERSION,
-    );
-}
-
-#[test]
-fn open_path_rejects_future_schema_version() {
-    let dir = tempfile::tempdir().unwrap();
-    let db = dir.path().join("screensearch.db");
-
-    {
-        let conn = rusqlite::Connection::open(&db).unwrap();
-        conn.execute_batch("CREATE TABLE schema_version (version INTEGER NOT NULL);")
-            .unwrap();
-        conn.execute(
-            "INSERT INTO schema_version (version) VALUES (?1)",
-            [store::LATEST_SCHEMA_VERSION + 1],
-        )
-        .unwrap();
-    }
-
-    let err = match SqliteStore::open_path(&db) {
-        Ok(_) => panic!("future schema opened successfully"),
-        Err(e) => e.to_string(),
-    };
-    assert!(
-        err.contains("newer schema_version"),
-        "future schema should be rejected, got {err:?}"
     );
 }
 
@@ -2351,99 +2325,6 @@ async fn export_frames_page_zero_limit_is_empty() {
         .await
         .unwrap()
         .is_empty());
-}
-
-/// Gate 0 (D5, `docs/0.4.0.md` §3 PR3): proves the 10 → 11 migration is fast and clean
-/// on the REAL live-shaped DB *without touching the live file*. Manual, env-gated, and
-/// `#[ignore]`d — `cargo test --workspace` skips it. Run it against a THROWAWAY copy of the
-/// live database:
-///
-/// ```text
-/// $env:SCREENSEARCH_MIGRATION_CHECK_DB = "D:\path\to\THROWAWAY-COPY\screensearch.db"
-/// cargo test -p store --test store live_db_copy -- --ignored --nocapture
-/// ```
-///
-/// This test MIGRATES the file it is pointed at. Point it ONLY at a throwaway copy — never
-/// at the live `%APPDATA%\app.screensearchv2c.desktop\screensearch.db`, and never at the
-/// pristine dated backup. (Copy the DB with the app closed so the WAL is checkpointed.) The
-/// installed v0.3.3 rejects a schema-11 DB, so a migrated copy must stay away from the app
-/// data dir.
-#[test]
-#[ignore = "manual Gate 0: set SCREENSEARCH_MIGRATION_CHECK_DB to a THROWAWAY copy of the live DB"]
-fn live_db_copy_migrates_to_v11_fast_and_clean() {
-    let path = std::path::PathBuf::from(
-        std::env::var_os("SCREENSEARCH_MIGRATION_CHECK_DB")
-            .expect("set SCREENSEARCH_MIGRATION_CHECK_DB to a throwaway copy of screensearch.db"),
-    );
-    assert!(path.is_file(), "no file at {}", path.display());
-
-    // Guard: this must be a genuine pre-migration (schema-10) copy, otherwise the timing
-    // below would measure a no-op re-open of an already-migrated file.
-    {
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        let v: i32 = conn
-            .query_row("SELECT version FROM schema_version", [], |r| r.get(0))
-            .expect("read schema_version from the copy");
-        assert_eq!(
-            v,
-            store::LATEST_SCHEMA_VERSION - 1,
-            "expected a schema-10 copy (make a fresh copy of the live DB); found version {v}"
-        );
-    }
-
-    // The real migration runs inside open_path.
-    let started = std::time::Instant::now();
-    let s = SqliteStore::open_path(&path).expect("open_path must migrate the copy cleanly");
-    let elapsed = started.elapsed();
-    assert_eq!(
-        s.schema_version().unwrap(),
-        store::LATEST_SCHEMA_VERSION,
-        "the copy must land at the latest schema"
-    );
-    drop(s);
-
-    // Re-open raw to assert structure-only migration + integrity on the migrated copy.
-    let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-    let fk_rows: i64 = {
-        let mut stmt = conn.prepare("PRAGMA foreign_key_check").unwrap();
-        let mut rows = stmt.query([]).unwrap();
-        let mut n = 0;
-        while rows.next().unwrap().is_some() {
-            n += 1;
-        }
-        n
-    };
-    assert_eq!(
-        fk_rows, 0,
-        "migrated live-shaped DB must have no FK violations"
-    );
-    let sessions: i64 = conn
-        .query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))
-        .unwrap();
-    let artifacts: i64 = conn
-        .query_row("SELECT count(*) FROM session_artifacts", [], |r| r.get(0))
-        .unwrap();
-    let assigned: i64 = conn
-        .query_row(
-            "SELECT count(*) FROM frames WHERE session_id IS NOT NULL",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(
-        (sessions, artifacts, assigned),
-        (0, 0, 0),
-        "structure only — no session rows, no artifacts, no backfilled frames"
-    );
-    let frames: i64 = conn
-        .query_row("SELECT count(*) FROM frames", [], |r| r.get(0))
-        .unwrap();
-    println!("Gate 0: migrated {frames} frames 10 -> 11 in {elapsed:?} (fk clean, sessions empty)");
-    assert!(
-        elapsed < std::time::Duration::from_secs(30),
-        "structure-only migration must stay fast on the live-shaped DB (took {elapsed:?})"
-    );
 }
 
 // --- 0.4.0 PR6: session-scoped hybrid search (`hybrid_search_in_session`, D12) ---------------

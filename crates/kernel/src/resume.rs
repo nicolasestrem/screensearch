@@ -23,7 +23,9 @@
 
 use std::collections::HashMap;
 
-use traits::{is_excluded, FrameContextRow, Result, ResumeContext, Settings, Store};
+use traits::{
+    is_excluded, AdvancedConfig, FrameContextRow, Result, ResumeContext, Settings, Store,
+};
 
 /// Upper bound on frames the where-was-i query scans (an engineering cap, not a user
 /// threshold — the COUNT_SCAN_CAP precedent). ~4k frames ≈ 100 min of dense
@@ -219,11 +221,16 @@ pub fn last_sustained_context(
 
 /// Reads the recent-frame window and runs [`last_sustained_context`] with the live
 /// settings (`03 §7b`). Free function — no `Kernel` instance needed — so the
-/// `where_was_i` command and the local API (`03 §7c`) share one code path.
-pub async fn where_was_i(store: &dyn Store, settings: &Settings) -> Result<Option<ResumeContext>> {
+/// `where_was_i` command and the local API (`03 §7c`) share one code path. The dwell
+/// threshold is `file-only` and comes from the advanced config (`03 §8`, 0.4.5 D6).
+pub async fn where_was_i(
+    store: &dyn Store,
+    settings: &Settings,
+    advanced: &AdvancedConfig,
+) -> Result<Option<ResumeContext>> {
     let rows = store.recent_frame_contexts(RESUME_SCAN_CAP).await?;
     let params = ResumeParams {
-        min_dwell_ms: i64::from(settings.resume_min_dwell_secs) * 1000,
+        min_dwell_ms: i64::from(advanced.resume.min_dwell_secs) * 1000,
         excluded_apps: settings.privacy_excluded_apps.clone(),
     };
     Ok(last_sustained_context(&rows, &params))
