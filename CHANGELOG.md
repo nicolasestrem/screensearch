@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: automatic evaluation baseline and the P5/P6 thresholds
+
+- **The intelligence work has a measurable baseline, and P5/P6 must beat it.** A dev-only fixture
+  generator (`crates/evalfixture`, never shipped) builds a seeded six-week history through the real
+  store writers, and a second subcommand serves the app's own local HTTP API over it with the real
+  embedder and answer model, so the evaluation harness measures shipped code. The committed seed
+  lets both later phases regenerate the same database. Thresholds frozen from the run: retrieval
+  recall@10 37.0% to 41.0%, known-fact answer rate 64.7% to 71.3%, citation validity to 100%,
+  entity recovery to 80.0%, p95 latency to 3485 ms or lower. Evidence: `specs/05_BUILD_REVIEW.md`.
+
 ### Added — specs
 
 - **0.4.5 arc (P9) contract: work graph, Ask v2, insights, baseline schema v14, settings v2, v2
