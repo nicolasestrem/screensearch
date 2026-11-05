@@ -372,27 +372,29 @@ impl SqliteStore {
     pub async fn ask_resolve_entities(&self, question: &str) -> Result<Vec<AskEntityMatch>> {
         let question = question.to_string();
         self.with_conn(move |conn| {
+            // No SQL `instr`/`lower` prefilter: SQLite's `lower()` folds ASCII only, so a
+            // prefilter would drop a valid mention before the boundary check could see it
+            // (`Équipe` in `équipe`). Both sides are lowered by Rust below, which is
+            // Unicode-aware, and the scan is bounded by the graph's own size — a few thousand
+            // rows for a long history, not by the frame table.
             let mut stmt = conn.prepare(
                 "SELECT e.id, e.canonical_name
                  FROM entities e
                  WHERE length(e.canonical_name) > 0
-                   AND instr(lower(?1), lower(e.canonical_name)) > 0
                  UNION ALL
                  SELECT a.entity_id, a.alias
                  FROM entity_aliases a
-                 WHERE length(a.alias) > 0
-                   AND instr(lower(?1), lower(a.alias)) > 0",
+                 WHERE length(a.alias) > 0",
             )?;
             let mut rows = stmt
-                .query_map([&question], |row| {
+                .query_map([], |row| {
                     Ok(AskEntityMatch {
                         entity_id: row.get(0)?,
                         matched: row.get(1)?,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
-            // The `instr` above is a cheap prefilter; precision is decided here, because a
-            // substring hit is not a mention: `api` inside "capital" must not resolve, or the
+            // A substring hit is not a mention: `api` inside "capital" must not resolve, or the
             // turn would be scoped (and persisted) to an unrelated workspace (`03 §7i.1`).
             let lowered = question.to_lowercase();
             rows.retain(|candidate| bounded_mention(&lowered, &candidate.matched.to_lowercase()));

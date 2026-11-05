@@ -266,6 +266,59 @@ async fn ask_entity_resolution_requires_whole_mentions_not_substrings() {
 }
 
 #[tokio::test]
+async fn ask_entity_resolution_is_unicode_case_insensitive() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let session = store
+        .insert_session(ai_session(100, Some(200)))
+        .await
+        .unwrap();
+    let frame = seed_frame(&store, 120, "Équipe planning").await;
+    let equipe = seed_entity(
+        &store,
+        session,
+        frame,
+        GraphHit {
+            kind: EntityKind::Repo,
+            canonical_name: "Équipe".to_string(),
+            normalized_key: "repo:equipe".to_string(),
+            confidence: 0.9,
+            aliases: vec!["équipe interne".to_string()],
+        },
+    )
+    .await;
+
+    // SQLite's `lower()` folds ASCII only, so a SQL prefilter would drop these before the
+    // boundary check ever ran. Both sides are lowered in Rust instead.
+    for question in ["équipe planning", "ÉQUIPE planning", "the Équipe repo"] {
+        let matches = store.ask_resolve_entities(question).await.unwrap();
+        assert_eq!(
+            matches.len(),
+            1,
+            "`{question}` should resolve the accented canonical name"
+        );
+        assert_eq!(matches[0].entity_id, equipe);
+    }
+
+    // The alias form is folded the same way.
+    let via_alias = store
+        .ask_resolve_entities("revue ÉQUIPE INTERNE")
+        .await
+        .unwrap();
+    assert_eq!(via_alias.len(), 1);
+    assert_eq!(via_alias[0].entity_id, equipe);
+
+    // And the boundary rule still applies to non-ASCII names.
+    assert!(
+        store
+            .ask_resolve_entities("prééquipe")
+            .await
+            .unwrap()
+            .is_empty(),
+        "`équipe` inside `prééquipe` is not a mention"
+    );
+}
+
+#[tokio::test]
 async fn ask_entity_resolution_is_empty_without_a_graph_and_matches_seeded_aliases() {
     let store = SqliteStore::open_in_memory().unwrap();
 
