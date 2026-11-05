@@ -59,7 +59,10 @@ const TEMP_SESSION_FTS: &str = "temp.ask_session_fts";
 /// [`SqliteStore::session_embed_pending`] so the candidate predicate and the write gate in
 /// [`SqliteStore::upsert_session_vector`] cannot disagree. `NULL` when both columns are
 /// `NULL`, which the `<> ''` comparison rejects (a `NULL` comparison is not true).
-const SESSION_TEXT_SQL: &str = "CASE
+///
+/// `crate`-visible because the title/summary writers in `sessions.rs` compare the text they
+/// produced against the text the stored vector was built from, to invalidate a stale vector.
+pub(crate) const SESSION_TEXT_SQL: &str = "CASE
          WHEN title IS NOT NULL AND summary IS NOT NULL THEN title || char(10) || summary
          WHEN title IS NOT NULL THEN title
          ELSE summary

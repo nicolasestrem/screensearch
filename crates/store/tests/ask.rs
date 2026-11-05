@@ -1070,6 +1070,90 @@ async fn ask_session_vectors_row_is_deleted_with_its_session_and_kept_for_a_froz
 }
 
 #[tokio::test]
+async fn ask_title_summary_changes_invalidate_the_stale_session_vector() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let db_path = temp.path().join("ask-vectors-stale.sqlite");
+    let store = SqliteStore::open_path(&db_path).expect("open store");
+
+    let session = store
+        .insert_session(ai_session(1_000, Some(2_000)))
+        .await
+        .unwrap();
+    store
+        .set_session_title_summary(session, "Deploy runbook", "kubernetes rollout", "test")
+        .await
+        .unwrap();
+
+    let conn = Connection::open(&db_path).expect("second connection");
+    let vector_rows = |session_id: i64| -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM session_vectors WHERE session_id = ?1",
+            [session_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+
+    let embedding = unit_vector(1.0, 0.0);
+    assert!(store
+        .upsert_session_vector(session, "Deploy runbook\nkubernetes rollout", &embedding)
+        .await
+        .unwrap());
+    assert_eq!(vector_rows(session), 1);
+    assert!(
+        store.session_embed_candidates(10).await.unwrap().is_empty(),
+        "a session that already has a vector is not a backfill candidate"
+    );
+
+    // Re-writing the same text must not cause re-embed churn.
+    store
+        .set_session_title_summary(session, "Deploy runbook", "kubernetes rollout", "test")
+        .await
+        .unwrap();
+    assert_eq!(
+        vector_rows(session),
+        1,
+        "an unchanged text keeps its vector"
+    );
+
+    // A regenerated summary must invalidate it, or the session is ranked by stale text forever
+    // (the backfill only selects sessions with no vector row).
+    store
+        .set_session_title_summary(session, "Deploy runbook", "argocd sync failed", "test")
+        .await
+        .unwrap();
+    assert_eq!(
+        vector_rows(session),
+        0,
+        "a changed text drops the vector in the same transaction as the write"
+    );
+    let candidates = store.session_embed_candidates(10).await.unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].session_id, session);
+    assert_eq!(
+        candidates[0].text, "Deploy runbook\nargocd sync failed",
+        "the rebuild uses the new text"
+    );
+
+    // Clearing invalidates too, and then there is nothing to embed at all.
+    assert!(store
+        .upsert_session_vector(session, "Deploy runbook\nargocd sync failed", &embedding)
+        .await
+        .unwrap());
+    assert_eq!(vector_rows(session), 1);
+    store.clear_session_title_summary(session).await.unwrap();
+    assert_eq!(
+        vector_rows(session),
+        0,
+        "a cleared summary must not keep contributing stale vector evidence"
+    );
+    assert!(
+        store.session_embed_candidates(10).await.unwrap().is_empty(),
+        "both NULL is never embedded"
+    );
+}
+
+#[tokio::test]
 async fn ask_session_embed_candidates_skip_empty_sessions_and_gate_the_upsert() {
     let store = SqliteStore::open_in_memory().unwrap();
     let embedding = unit_vector(1.0, 0.0);
