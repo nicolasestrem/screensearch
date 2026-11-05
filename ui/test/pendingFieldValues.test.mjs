@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   clearPendingField,
+  nextPendingToken,
   pendingFieldValue,
   setPendingField,
   subscribePendingField,
@@ -56,4 +57,16 @@ test("a change notifies subscribers once, and clearing what it does not own does
   setPendingField("api.port", 1, 1);
   assert.equal(calls, 2, "unsubscribed listeners are not called");
   clearPendingField("api.port", 1);
+});
+
+test("a remount never re-uses a live commit's token", () => {
+  // A remount used to restart its counter at 1, so its first edit took the same token
+  // as the previous mount's in-flight save and that save could retire the newer value.
+  const first = nextPendingToken();
+  const second = nextPendingToken();
+  assert.notEqual(first, second);
+  setPendingField(FIELD, ["A", "B"], second);
+  clearPendingField(FIELD, first);
+  assert.deepEqual(pendingFieldValue(FIELD), ["A", "B"]);
+  clearPendingField(FIELD, second);
 });

@@ -11,6 +11,8 @@ import { useSettings, useTextFilterStats } from "../../lib/ipc/queries";
 import { CategoryState } from "./CategoryState";
 import { categoryFrameState, failureMessage } from "./frameState";
 import { NumberFieldRow } from "./NumberFieldRow";
+import { nextPendingToken } from "./pendingFieldValues";
+import { clearedIfOwned } from "./pendingState";
 import { SETTINGS_DEFAULTS, settingDef } from "./registry";
 import { SettingRow } from "./SettingRow";
 import { SuppressionReadout } from "./SuppressionReadout";
@@ -32,7 +34,10 @@ export function IntelligenceCategory() {
   // The interval is a draft until blur/Enter: `ScheduleControl` emits on every
   // keystroke, so committing directly made clearing the field throw the number back
   // and out-of-range entries vanish instead of staying correctable (review, PR #161).
-  const [intervalDraft, setIntervalDraft] = useState<number | null>(null);
+  const [intervalDraft, setIntervalDraft] = useState<{
+    value: number;
+    issued: number;
+  } | null>(null);
 
   const timerDef = settingDef(TIMER_KEY);
   const intervalDef = settingDef(INTERVAL_KEY);
@@ -51,7 +56,11 @@ export function IntelligenceCategory() {
    */
   function onScheduleChange(patch: Partial<Settings>): void {
     if (patch.enrich_vision_timer_interval_ms !== undefined) {
-      setIntervalDraft(patch.enrich_vision_timer_interval_ms);
+      // A fresh edit supersedes any draft, so it gets a fresh ownership token.
+      setIntervalDraft({
+        value: patch.enrich_vision_timer_interval_ms,
+        issued: nextPendingToken(),
+      });
       return;
     }
     setIntervalDraft(null);
@@ -61,16 +70,18 @@ export function IntelligenceCategory() {
   /** Commit the drafted interval once the user is done with it. */
   function commitIntervalDraft(): void {
     if (intervalDraft === null) return;
-    const drafted = intervalDraft;
+    const { value: drafted, issued } = intervalDraft;
     if (drafted === intervalMs) {
-      setIntervalDraft(null);
+      setIntervalDraft((current) => clearedIfOwned(current, issued));
       return;
     }
     void commitSchedule({ enrich_vision_timer_interval_ms: drafted }).then(
       (stored) => {
         // On failure the draft stays, so the number the user typed is still there to
-        // correct beside the error — a rollback would contradict the message.
-        if (stored) setIntervalDraft(null);
+        // correct beside the error — a rollback would contradict the message. On success
+        // it retires only this draft: typing the next value while the save was queued
+        // must not be undone by it.
+        if (stored) setIntervalDraft((current) => clearedIfOwned(current, issued));
       },
     );
   }
@@ -172,7 +183,7 @@ export function IntelligenceCategory() {
           >
             <ScheduleControl
               timerEnabled={timerEnabled}
-              timerIntervalMs={intervalDraft ?? intervalMs}
+              timerIntervalMs={intervalDraft?.value ?? intervalMs}
               onChange={onScheduleChange}
             />
           </div>

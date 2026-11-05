@@ -48,3 +48,14 @@ export function failed<V>(
   if (issued !== state.latest) return state;
   return { latest: state.latest, pending: null, failure: { value, message } };
 }
+
+/**
+ * Retire a draft only when the completed save is the one that owns it: a success that
+ * arrives after the user started typing the next value must not erase that value.
+ */
+export function clearedIfOwned<T extends { issued: number }>(
+  entry: T | null,
+  issued: number,
+): T | null {
+  return entry !== null && entry.issued === issued ? null : entry;
+}

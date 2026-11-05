@@ -21,6 +21,17 @@ interface PendingEntry {
 const entries = new Map<string, PendingEntry>();
 const listeners = new Set<() => void>();
 
+// Tokens come from one process-wide counter, not a per-mount one: a remount would
+// otherwise start again at 1 and its first edit could re-use the token of a save the
+// previous mount still has in flight, letting that older save retire the newer value.
+let lastToken = 0;
+
+/** Allocate the ownership token for one commit. Never repeats within a session. */
+export function nextPendingToken(): number {
+  lastToken += 1;
+  return lastToken;
+}
+
 function notify(): void {
   for (const listener of listeners) listener();
 }

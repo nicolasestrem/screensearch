@@ -11,6 +11,7 @@ import test from "node:test";
 
 import {
   begun,
+  clearedIfOwned,
   failed,
   initialRowState,
   settled,
@@ -60,4 +61,12 @@ test("beginning a commit clears an earlier failure", () => {
   state = failed(begun(["A"], 1), 1, ["A"], "refused");
   assert.notEqual(state.failure, null);
   assert.equal(begun(["B"], 2).failure, null);
+});
+
+test("a newer draft survives an earlier save's success", () => {
+  // Commit 10 minutes, then type 20 while the write is queued: the 10-minute save's
+  // success must not clear the 20-minute draft.
+  const typedLater = { value: 20, issued: 2 };
+  assert.deepEqual(clearedIfOwned(typedLater, 1), typedLater);
+  assert.equal(clearedIfOwned(typedLater, 2), null);
 });

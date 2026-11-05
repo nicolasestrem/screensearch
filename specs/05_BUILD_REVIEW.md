@@ -450,6 +450,15 @@ store instead of the component. The entry now carries the commit number that set
 commit retires it (`clearPendingField(field, issued)`); dropping the check fails two tests, including
 "an older save settling does not retire a newer queued value". Suite: 128/128.
 
+**Round five (`06` #82, #83)** closed the same ownership class in the two places the earlier fixes
+introduced it. The tokens themselves were mount-local, so a remount's first edit could take the token
+of a still-running save from the previous mount; they now come from one process-wide counter. And the
+interval draft was retired by whichever save completed, so typing the next value while a save was
+queued lost it; the draft now carries its own token and only that commit clears it. Both guards were
+proved by neutering — a mount-local counter fails "a remount never re-uses a live commit's token",
+and an unconditional draft clear fails "a newer draft survives an earlier save's success". Suite:
+130/130.
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate

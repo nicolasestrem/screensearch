@@ -13,6 +13,7 @@ import { queryKeys } from "../../lib/ipc/queryKeys";
 import { useSettings } from "../../lib/ipc/queries";
 import {
   clearPendingField,
+  nextPendingToken,
   pendingFieldValue,
   setPendingField,
   subscribePendingField,
@@ -118,7 +119,6 @@ export function useSettingField<F extends SettingsField>(
   // One state object so a settlement can be attributed to the commit that owns it:
   // an older save must not clear a newer edit's pending value (`pendingState.ts`).
   const [row, setRow] = useState(() => initialRowState<Settings[F]>());
-  const issued = useRef(0);
   // The pending value lives beside the write queue, not in this component: the layout
   // unmounts a category, and a queued save must still show through when it comes back.
   const sharedPending = useSyncExternalStore(
@@ -142,13 +142,13 @@ export function useSettingField<F extends SettingsField>(
     const current =
       qc.getQueryData<Settings>(queryKeys.settings) ?? settings.data;
     if (!current) {
-      const mine = (issued.current += 1);
+      const mine = nextPendingToken();
       setRow((state) =>
         failed(state, mine, next, saveFailure(def.label, new Error("settings have not loaded yet"))),
       );
       return;
     }
-    const mine = (issued.current += 1);
+    const mine = nextPendingToken();
     setRow(begun(next, mine));
     setPendingField(field, next, mine);
     // Queued: `set_settings` writes the whole struct, so an earlier write's refetch
