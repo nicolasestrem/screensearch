@@ -5,7 +5,7 @@
 import { useState } from "react";
 
 import { Field } from "../../components/primitives";
-import { settingDef, type SettingsField } from "./registry";
+import { numberEntryError, settingDef, type SettingsField } from "./registry";
 import { SettingRow } from "./SettingRow";
 import { useSettingField } from "./useSettingField";
 
@@ -49,16 +49,15 @@ export function NumberFieldRow({ settingKey, zeroNote }: NumberFieldRowProps) {
     if (draft === null) return;
     const trimmed = draft.trim();
     const parsed = Number(trimmed);
-    const range = def.range;
-    if (trimmed === "" || !Number.isInteger(parsed)) {
+    if (trimmed === "") {
       setRangeError(`${def.label} needs a whole number.`);
       return;
     }
-    if (range && (parsed < range.min || parsed > range.max)) {
-      setRangeError(
-        `${def.label} must be between ${range.min} and ${range.max}` +
-          `${range.unit ? ` ${range.unit}` : ""}.`,
-      );
+    // Bounds and the `0 = sentinel` rule live in `registry.ts` so the row and the
+    // test assert the same thing the kernel clamps.
+    const rejected = numberEntryError(def, parsed);
+    if (rejected !== null) {
+      setRangeError(rejected);
       return;
     }
     setRangeError(null);

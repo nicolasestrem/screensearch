@@ -46,6 +46,38 @@ export interface NumberRange {
   min: number;
   max: number;
   unit?: string;
+  /**
+   * A sentinel `min` that is the only value allowed below this floor. The kernel
+   * keeps `0` as "native / no downscale" and clamps every other value up to 320
+   * (`crates/kernel/src/settings.rs` `sanitize_settings`), so a UI that accepted
+   * 1-319 would report a save for a width the backend never stores.
+   */
+  zeroOrAtLeast?: number;
+  /** What the sentinel means, for the rejection message ("native width"). */
+  zeroLabel?: string;
+}
+
+/** Why a numeric entry cannot be saved, or null when it is acceptable. */
+export function numberEntryError(
+  def: SettingDef,
+  parsed: number,
+): string | null {
+  if (!Number.isInteger(parsed)) return `${def.label} needs a whole number.`;
+  const range = def.range;
+  if (!range) return null;
+  if (parsed < range.min || parsed > range.max) {
+    return (
+      `${def.label} must be between ${range.min} and ${range.max}` +
+      `${range.unit ? ` ${range.unit}` : ""}.`
+    );
+  }
+  const floor = range.zeroOrAtLeast;
+  if (floor !== undefined && parsed !== range.min && parsed < floor) {
+    const unit = range.unit ? ` ${range.unit}` : "";
+    const meaning = range.zeroLabel ? ` (${range.zeroLabel})` : "";
+    return `${def.label} must be ${range.min}${meaning} or at least ${floor}${unit}.`;
+  }
+  return null;
 }
 
 export interface SettingDef {
@@ -140,7 +172,9 @@ export const SETTING_DEFS: readonly SettingDef[] = [
   { key: "storage.max_width", category: "data", field: "storage_max_width",
     label: "Stored image width",
     effect: "Screenshots wider than this are scaled down; 0 keeps the native width.",
-    range: { min: 0, max: 7_680, unit: "px" } },
+    range: {
+      min: 0, max: 7_680, unit: "px", zeroOrAtLeast: 320, zeroLabel: "native width",
+    } },
   { key: "storage.retention_days", category: "data", field: "storage_retention_days",
     label: "Keep screenshots for",
     effect: "Days before a screenshot is deleted and only its text stays; 0 keeps them forever.",
