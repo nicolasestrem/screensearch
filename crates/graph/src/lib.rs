@@ -8,8 +8,8 @@
 //!
 //! - [`extraction`] - the closed heuristic rule table: every hit carries its rule's own
 //!   confidence and the shared `normalized_key` dedup identity (`03 §7h.2`).
-//! - [`linking`] - the session interval rule (`03 §7h.3`), as a pure helper the store's SQL
-//!   and the tests both express.
+//! - [`linking`] - the retained `03 §7h.3` interval primitive and its database-free tests;
+//!   production linking is ownership-only (`03 §7e`, `06` #41), so extraction does not use it.
 //! - [`clustering`] - deterministic thread components and titles (`03 §7h.4`).
 //! - [`overrides`] - rename/merge/split precedence applied after clustering (`03 §7h.5`).
 //! - [`normalize`] - validation for the optional LLM normalization proposals (`03 §7h.2`);

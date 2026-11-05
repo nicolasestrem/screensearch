@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed: work-graph links now follow session ownership changes
+
+- **The work graph repairs its session links instead of treating the first extraction as final.**
+  Sessions are created, re-created, moved and deleted while history is captured; the database
+  cascades removed the graph's session links, and a frame extracted before its session existed
+  never gained one. The graph now re-extracts a changed session's owned frames, computes its links
+  exactly, and replaces them in one transaction when the graph is idle, so links are restored or
+  moved without inflated counts and threads are re-planned afterwards. The historical backfill also
+  waits for the one-shot sessions pass, so a frame is never extracted before its session exists.
+  Linked evidence now always follows the authoritative frame owner, never a time-interval guess.
+  Renaming a thread no longer freezes it against new sessions, merging a split-created thread stays
+  merged across runs, and a split that names a since-deleted session can no longer stall thread
+  updates. No schema, setting or surface change.
+
 ### Added: work graph engine
 
 - **ScreenSearch now derives the work graph behind its history: entities, session links and

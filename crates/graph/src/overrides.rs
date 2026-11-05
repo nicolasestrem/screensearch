@@ -1,5 +1,5 @@
 //! Override precedence (`03 §7h.5`): rename, merge and split applied **after** clustering,
-//! plus the deletion/retention rule that makes them durable across runs.
+//! plus the retention rule that makes them durable across runs.
 //!
 //! Rows are read in `(created_at, id)` order and applied in that order, so a later override of
 //! the same kind beats an earlier one. For any session, an override-derived assignment beats
@@ -7,13 +7,22 @@
 //!
 //! # Override-managed threads
 //!
-//! A stored thread is **override-managed** when any override row references its id (as
+//! A stored thread is **override-managed** when a **merge or split** row references its id (as
 //! `thread_id` or `target_thread_id`) or when its `cluster_key` starts with
-//! [`OVERRIDE_CLUSTER_KEY_PREFIX`]. Managed threads are **not re-clustered**: their sessions
-//! are removed from the clustering input by [`crate::clustering::plan_threads`], and their
-//! draft comes from the persisted row (membership, `cluster_key` and title from storage; times
-//! and member confidences recomputed from the input where the session is present). This is
-//! what keeps a merge or a split applied on later runs.
+//! [`OVERRIDE_CLUSTER_KEY_PREFIX`]. A **rename** row does not manage membership: `03 §7h.5`
+//! says a rename sets `threads.title` only, so the renamed thread stays clusterer-managed and
+//! can gain newly matching sessions. Its title is re-applied after clustering by resolving the
+//! row's stored thread id to that thread's current `cluster_key`.
+//!
+//! Managed threads are **not re-clustered**: their sessions are removed from the clustering
+//! input by [`crate::clustering::plan_threads`], and their draft comes from the persisted row
+//! (membership, `cluster_key` and title from storage; times and member confidences recomputed
+//! from the input where the session is present). A stored member whose session no longer exists
+//! in the input is dropped: `thread_sessions.session_id` is a foreign key and the sessions
+//! scheduler deletes sessions, so carrying a deleted id would fail the whole clustering pass
+//! (and block unrelated threads) on every retry. A managed thread that loses all its members
+//! stays as an empty retained row because an override row references it. This is what keeps a
+//! merge or a split applied on later runs.
 //!
 //! A fresh draft whose `cluster_key` collides with a managed stored thread's key never
 //! overwrites it: the managed thread keeps its persisted key and the fresh draft appends the
@@ -30,54 +39,65 @@
 //! 3. the working model starts as the fresh drafts plus one draft per managed stored thread;
 //! 4. overrides are applied to that model in order;
 //! 5. the result is one [`ThreadPlan`] the store persists atomically (upsert by cluster_key,
-//!    sync members, delete named threads, rewrite merge rows).
+//!    sync members, delete named threads). An emptied merge or split source row is retained in
+//!    the plan with zero members instead of being deleted; no override row is rewritten.
 //!
 //! # Kind semantics (`03 §7h.5`)
 //!
 //! - **rename** sets `threads.title` only. The row's `thread_id` names a persisted thread; it
 //!   is resolved to the current draft through `stored`'s id -> `cluster_key` map and skipped
-//!   when that draft no longer exists, never applied to a different thread.
-//! - **merge** folds the source's members into `target_thread_id` (the survivor) and removes
-//!   the emptied source from the model. `payload.session_ids` is recorded evidence and is
-//!   never used to decide the fold. The durable state has to survive two constraints at once:
-//!   the `thread_overrides` foreign keys are `ON DELETE CASCADE`, so deleting a thread a row
-//!   points at would delete that override, and clustering keeps recomputing the source
-//!   component from the unchanged `session_entities` links. The rule is:
-//!   * when no other override row references the source id, the source row is deleted and
-//!     **this** merge row is rewritten to `(thread_id = target, target_thread_id = target)`, a
-//!     self-merge marker. The target is then managed, its sessions are excluded from
-//!     clustering, and the next run applies the self-merge as a no-op, so the fold is durable
-//!     and the deleted source is not recreated;
-//!   * when another override row still references the source id, the emptied source row is
-//!     retained (and this row is not rewritten), because deleting it would cascade-delete
-//!     that other override. The merge re-applies as a no-op each run because the source is
-//!     empty and the target is managed.
+//!   when that draft no longer exists, never applied to a different thread. Rename does not
+//!   make the thread membership-managed, so the clusterer can still add sessions and the title
+//!   is re-applied on every run.
+//! - **merge** folds the source's members into `target_thread_id` (the survivor) and **retains
+//!   the emptied source thread row in the plan** with an empty member set; the merge override
+//!   row itself is never rewritten. `payload.session_ids` is recorded evidence and is never
+//!   used to decide the fold. Two constraints hold at once:
+//!   * `thread_overrides.thread_id` and `target_thread_id` are `ON DELETE CASCADE`, so deleting
+//!     a thread an override row points at would delete that override and lose the user's edit;
+//!   * overrides replay in `(created_at, id)` order on every run, and clustering keeps
+//!     recomputing the source component from the unchanged `session_entities` links.
 //!
-//!   This is the recorded resolution of the `03 §7h.5` "removes the emptied source thread"
-//!   sentence versus the `ON DELETE CASCADE` foreign keys (`specs/06_PATCH_PLAN.md`, P5).
+//!   Retaining the emptied source row and never rewriting the merge row satisfies both: the
+//!   source is already empty when the merge re-applies, so the fold is a no-op, and a split
+//!   that created the source replays before the later merge does (its `created_at` is earlier)
+//!   and is folded again. This supersedes the earlier "delete the source and rewrite the merge
+//!   row to a `(target, target)` self-merge marker" resolution of the `03 §7h.5` "removes the
+//!   emptied source thread" sentence versus the `ON DELETE CASCADE` foreign keys
+//!   (`specs/06_PATCH_PLAN.md` #37): the self-merge marker was undone whenever an earlier split
+//!   recreated the thread it had removed. Emptied rows stay in the plan because they are part
+//!   of the deterministic model; P9 should filter `session_count = 0` threads from the Work
+//!   screen.
 //! - **split** moves the payload's sessions out of wherever they currently are into a new
 //!   thread seeded by the override: `cluster_key = override:<override id>`, a stable key that
-//!   survives re-clustering. Its title, in order, is the source thread's title as it stands in
-//!   the model (so an earlier rename in the same plan is respected), the stored source title,
-//!   the title of the thread the first moved session currently belongs to, then the split
-//!   `cluster_key`. Its times derive from the moved sessions, and a moved session keeps the
-//!   member confidence it carried; a session outside every thread falls back to its best
-//!   stored link confidence. The source row is kept in the plan even when it is emptied: the
-//!   split row references it and a later run applies the same split again (the "clustering
-//!   continues from the override" reading of `03 §7h.5`).
+//!   survives re-clustering. Payload session ids that are absent from the current
+//!   [`GraphClusterInput::sessions`] are skipped: the sessions scheduler deletes unfrozen
+//!   sessions (the `thread_sessions` row cascades away, but the id stays in the payload JSON),
+//!   and planning one would fail `graph_apply_thread_plan`'s foreign-key check and roll back
+//!   the whole clustering pass. The split thread row is always kept (its override row
+//!   references it) and holds the surviving sessions. Its title, in order, is the source
+//!   thread's title as it stands in the model (so an earlier rename in the same plan is
+//!   respected), the stored source title, the title of the thread the first surviving moved
+//!   session currently belongs to, then the split `cluster_key`. Its times derive from the
+//!   moved sessions, and a moved session keeps the member confidence it carried; a session
+//!   outside every thread falls back to its best stored link confidence. The source row is
+//!   kept in the plan even when it is emptied: the split row references it and a later run
+//!   applies the same split again (the "clustering continues from the override" reading of
+//!   `03 §7h.5`).
 //! - Overrides referencing stored thread ids are resolved through `stored`'s id ->
 //!   `cluster_key` map. Threads created by an earlier split have override-derived keys and
 //!   are rebuilt by the same override each run, never re-clustered.
 //!
-//! The plan is deterministic: threads are sorted by `cluster_key`, delete ids are sorted, and
-//! override rewrites are sorted by override id.
+//! The plan is deterministic: threads are sorted by `cluster_key` and delete ids are sorted.
+//! [`ThreadPlan::override_updates`] stays empty: merge durability no longer rewrites an
+//! override row (the field remains part of the `traits` contract).
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use traits::{
     GraphClusterInput, GraphClusterLink, GraphSessionInterval, StoredThread, ThreadDraft,
-    ThreadMemberDraft, ThreadOverridePayload, ThreadOverrideRow, ThreadOverrideUpdate, ThreadPlan,
+    ThreadMemberDraft, ThreadOverridePayload, ThreadOverrideRow, ThreadPlan,
 };
 
 use crate::clustering::{CLUSTER_KEY_PREFIX, SEED_CONFIDENCE_MIN};
@@ -115,7 +135,13 @@ impl ModelThread {
         }
     }
 
-    fn from_stored(thread: &StoredThread) -> Self {
+    /// Builds a managed draft from a persisted row. Members whose session is no longer in the
+    /// input are dropped: the sessions scheduler deletes sessions freely (a merge target, a
+    /// split-created thread and a retained emptied source can each lose a member), and planning
+    /// one would fail the store's `thread_sessions.session_id` foreign-key check and roll back
+    /// the whole clustering pass. A managed thread that loses every member stays in the plan as
+    /// an empty retained row, because an override row references it.
+    fn from_stored(thread: &StoredThread, sessions: &BTreeMap<i64, &GraphSessionInterval>) -> Self {
         Self {
             cluster_key: thread.cluster_key.clone(),
             title: thread.title.clone(),
@@ -124,6 +150,7 @@ impl ModelThread {
             members: thread
                 .sessions
                 .iter()
+                .filter(|member| sessions.contains_key(&member.session_id))
                 .map(|member| (member.session_id, member.confidence))
                 .collect(),
         }
@@ -147,10 +174,18 @@ impl ModelThread {
     }
 }
 
-/// Every stored thread id any override row points at.
-fn referenced_thread_ids(overrides: &[ThreadOverrideRow]) -> BTreeSet<i64> {
+/// Every stored thread id a **merge or split** override row points at. These rows manage
+/// membership; a rename row only sets a title (`03 §7h.5`), so it is deliberately excluded and
+/// the renamed thread stays clusterer-managed.
+fn membership_referenced_thread_ids(overrides: &[ThreadOverrideRow]) -> BTreeSet<i64> {
     let mut ids = BTreeSet::new();
     for row in overrides {
+        if !matches!(
+            &row.payload,
+            ThreadOverridePayload::Merge { .. } | ThreadOverridePayload::Split { .. }
+        ) {
+            continue;
+        }
         if let Some(thread_id) = row.thread_id {
             ids.insert(thread_id);
         }
@@ -161,10 +196,10 @@ fn referenced_thread_ids(overrides: &[ThreadOverrideRow]) -> BTreeSet<i64> {
     ids
 }
 
-/// The stored thread ids that are override-managed: referenced by an override row, or carrying
-/// an override-derived `cluster_key`.
+/// The stored thread ids that are override-managed: referenced by a merge or split row, or
+/// carrying an override-derived `cluster_key`.
 fn managed_stored_ids(stored: &[StoredThread], overrides: &[ThreadOverrideRow]) -> BTreeSet<i64> {
-    let referenced = referenced_thread_ids(overrides);
+    let referenced = membership_referenced_thread_ids(overrides);
     stored
         .iter()
         .filter(|thread| {
@@ -176,7 +211,8 @@ fn managed_stored_ids(stored: &[StoredThread], overrides: &[ThreadOverrideRow]) 
 }
 
 /// Sessions that belong to an override-managed stored thread; `crate::clustering::plan_threads`
-/// removes them from the clustering input so managed threads are never re-clustered.
+/// removes them from the clustering input so managed threads are never re-clustered. A
+/// rename-only thread is not managed, so its sessions keep participating in clustering.
 pub(crate) fn managed_session_ids(
     stored: &[StoredThread],
     overrides: &[ThreadOverrideRow],
@@ -299,7 +335,9 @@ fn insert_model_thread(
 /// persisted threads, producing the plan the store persists (`03 §7h.5`).
 ///
 /// The result is an error when two threads would share a `cluster_key` after collision
-/// disambiguation (`06` #40); sessions are never silently dropped.
+/// disambiguation (`06` #40); a clustered session is never silently dropped. The one exception
+/// is a split payload id for a session the input no longer contains: that session does not
+/// exist, so it is skipped instead of failing the plan on the store's foreign-key check.
 pub fn apply(
     clustered: Vec<ThreadDraft>,
     stored: &[StoredThread],
@@ -329,7 +367,7 @@ pub fn apply(
         if !managed_ids.contains(&stored_thread.id) {
             continue;
         }
-        let mut thread = ModelThread::from_stored(stored_thread);
+        let mut thread = ModelThread::from_stored(stored_thread, &sessions);
         recompute_times(&mut thread, &sessions, input.now_ms);
         recompute_member_confidences(&mut thread, &links_by_session);
         insert_model_thread(&mut model, thread)?;
@@ -347,7 +385,6 @@ pub fn apply(
 
     let mut ordered_overrides: Vec<&ThreadOverrideRow> = overrides.iter().collect();
     ordered_overrides.sort_by_key(|row| (row.created_at, row.id));
-    let mut override_updates: Vec<ThreadOverrideUpdate> = Vec::new();
 
     for row in ordered_overrides {
         match &row.payload {
@@ -375,48 +412,26 @@ pub fn apply(
                 let source_key = source_stored.cluster_key.clone();
                 let target_key = target_stored.cluster_key.clone();
                 if source_key == target_key {
-                    // A self-merge marker left by an earlier run: already applied.
+                    // Defensive only: an earlier build persisted a rewritten `(target,target)`
+                    // self-merge row. A self-merge is already applied, and the source row it
+                    // names is the survivor itself, which is retained as usual.
                     continue;
                 }
                 if !model.contains_key(&source_key) || !model.contains_key(&target_key) {
                     continue;
                 }
-                let source = model
-                    .remove(&source_key)
+                // Fold the source into the survivor and keep the emptied source row in the
+                // model: `thread_overrides` references it and the fold has to replay on every
+                // run, so it is never deleted and the override row is never rewritten.
+                let session = model
+                    .get_mut(&source_key)
                     .expect("source thread membership checked above");
-                let retained_title = source.title;
-                let retained_first_seen_at = source.first_seen_at;
-                let retained_last_seen_at = source.last_seen_at;
+                let folded = std::mem::take(&mut session.members);
                 let target = model
                     .get_mut(&target_key)
                     .expect("target thread membership checked above");
-                for (session_id, confidence) in source.members {
+                for (session_id, confidence) in folded {
                     target.members.entry(session_id).or_insert(confidence);
-                }
-                let referenced_elsewhere = overrides.iter().any(|other| {
-                    other.id != row.id
-                        && (other.thread_id == Some(source_id)
-                            || other.target_thread_id == Some(source_id))
-                });
-                if referenced_elsewhere {
-                    // Keep the emptied source row alive so the other override's foreign key
-                    // survives, and never rewrite this row: it re-applies as a no-op.
-                    model.insert(
-                        source_key.clone(),
-                        ModelThread {
-                            cluster_key: source_key,
-                            title: retained_title,
-                            first_seen_at: retained_first_seen_at,
-                            last_seen_at: retained_last_seen_at,
-                            members: BTreeMap::new(),
-                        },
-                    );
-                } else {
-                    override_updates.push(ThreadOverrideUpdate {
-                        override_id: row.id,
-                        thread_id: target_id,
-                        target_thread_id: target_id,
-                    });
                 }
             }
             ThreadOverridePayload::Split { session_ids, .. } => {
@@ -425,7 +440,16 @@ pub fn apply(
                 };
                 let source_stored = stored_by_id.get(&source_id).copied();
                 let source_key = source_stored.map(|thread| thread.cluster_key.clone());
-                let first_moved_title = session_ids.first().and_then(|session_id| {
+                // Sessions the sessions scheduler deleted are still listed in the payload but
+                // absent from the input: their `thread_sessions` row cascaded away with them.
+                // Planning one would fail the store's foreign-key check and roll back the whole
+                // clustering pass, so only sessions that still exist are moved.
+                let surviving_session_ids: Vec<i64> = session_ids
+                    .iter()
+                    .copied()
+                    .filter(|session_id| sessions.contains_key(session_id))
+                    .collect();
+                let first_moved_title = surviving_session_ids.first().and_then(|session_id| {
                     model
                         .values()
                         .find(|thread| thread.members.contains_key(session_id))
@@ -443,10 +467,10 @@ pub fn apply(
                 if let (Some(key), Some(thread)) = (source_key.as_ref(), source_stored) {
                     model
                         .entry(key.clone())
-                        .or_insert_with(|| ModelThread::from_stored(thread));
+                        .or_insert_with(|| ModelThread::from_stored(thread, &sessions));
                 }
-                let mut moved: Vec<(i64, f64)> = Vec::with_capacity(session_ids.len());
-                for session_id in session_ids {
+                let mut moved: Vec<(i64, f64)> = Vec::with_capacity(surviving_session_ids.len());
+                for session_id in &surviving_session_ids {
                     let confidence = take_session(&mut model, *session_id)
                         .unwrap_or_else(|| best_link_confidence(*session_id, &links_by_session));
                     moved.push((*session_id, confidence));
@@ -485,12 +509,13 @@ pub fn apply(
         .map(|thread| thread.id)
         .collect();
     delete_thread_ids.sort_unstable();
-    override_updates.sort_by_key(|update| update.override_id);
 
     Ok(ThreadPlan {
         threads,
         delete_thread_ids,
-        override_updates,
+        // Merge durability is retention plus replay order, never a row rewrite (module docs);
+        // the field stays empty for every plan this planner produces.
+        override_updates: Vec::new(),
     })
 }
 
@@ -686,6 +711,53 @@ mod tests {
             .unwrap_or_else(|| panic!("stored thread {key} is missing: {threads:?}"))
     }
 
+    fn stored_member_ids(thread: &StoredThread) -> Vec<i64> {
+        thread
+            .sessions
+            .iter()
+            .map(|member| member.session_id)
+            .collect()
+    }
+
+    /// The plan-level invariant: a `thread_sessions` row is inserted for every planned member,
+    /// so every planned member must still exist in the clustering input or the store rolls the
+    /// whole pass back on its foreign-key check.
+    fn assert_plan_members_exist(input: &GraphClusterInput, plan: &ThreadPlan) {
+        let input_sessions: BTreeSet<i64> = input
+            .sessions
+            .iter()
+            .map(|session| session.session_id)
+            .collect();
+        for thread in &plan.threads {
+            for member in &thread.sessions {
+                assert!(
+                    input_sessions.contains(&member.session_id),
+                    "planned thread {} holds a member session that is not in the input",
+                    thread.cluster_key
+                );
+            }
+        }
+    }
+
+    /// A stored model with three managed threads, two of whose sessions have since been deleted
+    /// by the sessions scheduler: the merge target lost session 3 and the split-created thread
+    /// lost session 8. Sessions 9,10 are unmanaged and re-cluster normally.
+    fn managed_threads_with_deleted_members(
+    ) -> (GraphClusterInput, Vec<StoredThread>, ThreadOverrideRow) {
+        let input = cluster_input(&[
+            (101, ALPHA, &[1, 2]),
+            (102, BETA, &[4, 5]),
+            (104, GAMMA, &[6, 7]),
+            (105, ALPHA, &[9, 10]),
+        ]);
+        let target = stored_thread_for(&input, 1, &cluster_key(&[101]), ALPHA, &[1, 2, 3], 0.9);
+        let source = stored_thread_for(&input, 2, &cluster_key(&[102]), BETA, &[4, 5], 0.9);
+        let split_created =
+            stored_thread_for(&input, 3, &split_cluster_key(7), GAMMA, &[6, 7, 8], 0.9);
+        let merge = merge_override(1, 10, &source, &target);
+        (input, vec![target, source, split_created], merge)
+    }
+
     fn rename_override(id: i64, created_at: i64, thread_id: i64, title: &str) -> ThreadOverrideRow {
         ThreadOverrideRow {
             id,
@@ -741,7 +813,8 @@ mod tests {
     }
 
     /// Simulates the store's atomic application of one plan: upsert by `cluster_key` keeping
-    /// existing ids, delete the named ids, and apply the merge rewrites.
+    /// existing ids, delete the named ids, and apply planned override rewrites (the graph
+    /// planner no longer emits any; the store contract still supports them).
     fn apply_plan(
         plan: &ThreadPlan,
         stored: &[StoredThread],
@@ -796,7 +869,7 @@ mod tests {
     }
 
     /// Plans once, applies the plan, plans again from its own output, and requires a stable
-    /// model with an empty delete list and no repeated merge rewrites.
+    /// model with an empty delete list and no repeated override rewrites.
     fn assert_stable_after_apply(
         input: &GraphClusterInput,
         stored: &[StoredThread],
@@ -872,7 +945,31 @@ mod tests {
     }
 
     #[test]
-    fn merge_folds_the_source_members_and_names_the_source_for_deletion() {
+    fn rename_does_not_freeze_thread_membership() {
+        let first_input = cluster_input(&[(101, ALPHA, &[1, 2])]);
+        let first_plan = plan_threads(&first_input, &[], &[]);
+        let (stored, _) = apply_plan(&first_plan, &[], &[]);
+        let alpha = stored_by_key(&stored, &cluster_key(&[101]));
+
+        // A rename sets the title only (`03 §7h.5`), so a later session that matches the same
+        // strong seed must still join the thread instead of being frozen out of clustering.
+        let rename = rename_override(1, 10, alpha.id, "Release train");
+        let grown_input = cluster_input(&[(101, ALPHA, &[1, 2, 3, 4])]);
+        let (plan, stored_after, overrides_after) =
+            assert_stable_after_apply(&grown_input, &stored, std::slice::from_ref(&rename));
+
+        assert_eq!(plan.threads.len(), 1, "{:?}", plan.threads);
+        let thread = thread_by_key(&plan.threads, &alpha.cluster_key);
+        assert_eq!(member_ids(thread), vec![1, 2, 3, 4]);
+        assert_eq!(thread.title, "Release train");
+        assert!(plan.delete_thread_ids.is_empty());
+        assert!(plan.override_updates.is_empty());
+        assert_eq!(stored_after.len(), 1);
+        assert_eq!(overrides_after, vec![rename]);
+    }
+
+    #[test]
+    fn merge_folds_the_source_members_and_retains_the_emptied_source_row() {
         let input = three_components();
         let plan = plan_threads(&input, &[], &[]);
         let (stored, _) = apply_plan(&plan, &[], &[]);
@@ -880,33 +977,33 @@ mod tests {
         let beta = stored_by_key(&stored, &cluster_key(&[102]));
 
         let merge = merge_override(1, 10, beta, alpha);
-        let plan = plan_threads(&input, &stored, std::slice::from_ref(&merge));
-        assert_eq!(plan.threads.len(), 2, "{:?}", plan.threads);
+        let (plan, stored_after, overrides_after) =
+            assert_stable_after_apply(&input, &stored, std::slice::from_ref(&merge));
+        // Alpha holds the folded members, beta is retained empty, gamma is untouched.
+        assert_eq!(plan.threads.len(), 3, "{:?}", plan.threads);
 
         let merged = thread_by_key(&plan.threads, &alpha.cluster_key);
-        let expected_members: Vec<i64> = stored
+        let expected_members: Vec<i64> = [alpha, beta]
             .iter()
-            .filter(|thread| {
-                thread.cluster_key == alpha.cluster_key || thread.cluster_key == beta.cluster_key
-            })
             .flat_map(|thread| thread.sessions.iter().map(|member| member.session_id))
             .collect();
         let mut expected_members = expected_members;
         expected_members.sort_unstable();
         assert_eq!(member_ids(merged), expected_members);
         assert_eq!(merged.title, ALPHA);
-        assert!(plan
-            .threads
-            .iter()
-            .all(|thread| thread.cluster_key != beta.cluster_key));
-        assert_eq!(plan.delete_thread_ids, vec![beta.id]);
+
+        // The emptied source row is retained in the plan, neither deleted nor rewritten into
+        // a self-merge marker; the merge override row keeps naming the original source.
+        let retained = thread_by_key(&plan.threads, &beta.cluster_key);
+        assert!(retained.sessions.is_empty());
+        assert_eq!(retained.title, BETA);
+        assert!(plan.delete_thread_ids.is_empty());
+        assert!(plan.override_updates.is_empty());
+        assert_eq!(overrides_after, vec![merge]);
+        assert!(stored_member_ids(stored_by_key(&stored_after, &beta.cluster_key)).is_empty());
         assert_eq!(
-            plan.override_updates,
-            vec![ThreadOverrideUpdate {
-                override_id: merge.id,
-                thread_id: alpha.id,
-                target_thread_id: alpha.id,
-            }]
+            stored_member_ids(stored_by_key(&stored_after, &alpha.cluster_key)),
+            expected_members
         );
     }
 
@@ -922,7 +1019,8 @@ mod tests {
         let first = merge_override(1, 10, beta, alpha);
         let second = merge_override(2, 20, alpha, gamma);
         // Reverse input order: the planner sorts by (created_at, id).
-        let plan = plan_threads(&input, &stored, &[second.clone(), first.clone()]);
+        let (plan, _, overrides_after) =
+            assert_stable_after_apply(&input, &stored, &[second.clone(), first.clone()]);
 
         let survivor = thread_by_key(&plan.threads, &gamma.cluster_key);
         let mut expected_members: Vec<i64> = [alpha, beta, gamma]
@@ -933,30 +1031,59 @@ mod tests {
         assert_eq!(member_ids(survivor), expected_members);
         assert_eq!(survivor.title, GAMMA);
 
-        // The first merge's source is deleted; the first merge's target is retained empty
-        // because the rewritten first merge row still references it.
-        assert_eq!(plan.delete_thread_ids, vec![beta.id]);
-        let retained = thread_by_key(&plan.threads, &alpha.cluster_key);
-        assert!(retained.sessions.is_empty());
-        assert_eq!(
-            plan.override_updates,
-            vec![ThreadOverrideUpdate {
-                override_id: first.id,
-                thread_id: alpha.id,
-                target_thread_id: alpha.id,
-            }]
-        );
-
-        // Re-planning the applied model is stable.
-        let (stored_after, overrides_after) = apply_plan(&plan, &stored, &[second, first]);
-        let replanned = plan_threads(&input, &stored_after, &overrides_after);
-        assert_eq!(replanned.threads, plan.threads);
-        assert!(replanned.delete_thread_ids.is_empty());
-        assert!(replanned.override_updates.is_empty());
+        // Both emptied sources stay in the plan; replaying the two merges in (created_at, id)
+        // order restores the same fold every run without rewriting either row.
+        assert!(plan.delete_thread_ids.is_empty());
+        assert!(plan.override_updates.is_empty());
+        assert!(thread_by_key(&plan.threads, &alpha.cluster_key)
+            .sessions
+            .is_empty());
+        assert!(thread_by_key(&plan.threads, &beta.cluster_key)
+            .sessions
+            .is_empty());
+        assert_eq!(overrides_after, vec![second, first]);
     }
 
     #[test]
-    fn merge_retains_a_source_that_another_override_references() {
+    fn split_then_later_merge_is_restored_on_every_replan() {
+        let input = three_components();
+        let clustered = plan_threads(&input, &[], &[]);
+        let (stored, _) = apply_plan(&clustered, &[], &[]);
+        let alpha = stored_by_key(&stored, &cluster_key(&[101]));
+
+        // Earlier split: session 2 moves out of alpha into the override-seeded thread.
+        let split = split_override(1, 10, alpha, &[2]);
+        let split_plan = plan_threads(&input, &stored, std::slice::from_ref(&split));
+        let (split_stored, split_overrides) =
+            apply_plan(&split_plan, &stored, std::slice::from_ref(&split));
+        assert_eq!(split_overrides, vec![split.clone()]);
+        let split_thread = stored_by_key(&split_stored, &split_cluster_key(1));
+        assert_eq!(stored_member_ids(split_thread), vec![2]);
+        let beta = stored_by_key(&split_stored, &cluster_key(&[102]));
+
+        // A later merge of the split-created thread into beta. The earlier split replays first
+        // and recreates the thread, and this merge folds it again on every run; the merge row
+        // is never rewritten into the self-merge marker that used to undo it.
+        let merge = merge_override(2, 20, split_thread, beta);
+        let (plan, stored_after, overrides_after) =
+            assert_stable_after_apply(&input, &split_stored, &[split.clone(), merge.clone()]);
+
+        let survivor = thread_by_key(&plan.threads, &beta.cluster_key);
+        assert_eq!(member_ids(survivor), vec![2, 3, 4]);
+        assert_eq!(
+            stored_member_ids(stored_by_key(&stored_after, &beta.cluster_key)),
+            vec![2, 3, 4]
+        );
+        assert!(thread_by_key(&plan.threads, &split_cluster_key(1))
+            .sessions
+            .is_empty());
+        assert!(plan.delete_thread_ids.is_empty());
+        assert!(plan.override_updates.is_empty());
+        assert_eq!(overrides_after, vec![split, merge]);
+    }
+
+    #[test]
+    fn merge_keeps_the_title_of_a_renamed_source_it_retains() {
         let input = three_components();
         let plan = plan_threads(&input, &[], &[]);
         let (stored, _) = apply_plan(&plan, &[], &[]);
@@ -1039,6 +1166,156 @@ mod tests {
     }
 
     #[test]
+    fn split_skips_session_ids_that_no_longer_exist() {
+        let input = cluster_input(&[(101, ALPHA, &[1, 2]), (103, GAMMA, &[5, 6])]);
+        let plan = plan_threads(&input, &[], &[]);
+        let (stored, _) = apply_plan(&plan, &[], &[]);
+        let alpha = stored_by_key(&stored, &cluster_key(&[101]));
+        let gamma_key = cluster_key(&[103]);
+
+        // Session 3 was deleted by the sessions scheduler: its foreign-key cascade removed the
+        // thread_sessions row, but the older split payload still lists the id.
+        let stale_split = split_override(1, 10, alpha, &[2, 3]);
+        // Session 7 now matches gamma, so an unrelated thread updates in the same pass.
+        let changed = cluster_input(&[(101, ALPHA, &[1, 2]), (103, GAMMA, &[5, 6, 7])]);
+        let plan = plan_threads(&changed, &stored, std::slice::from_ref(&stale_split));
+
+        assert!(
+            plan.threads
+                .iter()
+                .all(|thread| !member_ids(thread).contains(&3)),
+            "a deleted session id must never reach the plan"
+        );
+        assert_eq!(
+            member_ids(thread_by_key(&plan.threads, &alpha.cluster_key)),
+            vec![1]
+        );
+        assert_eq!(
+            member_ids(thread_by_key(&plan.threads, &split_cluster_key(1))),
+            vec![2]
+        );
+        assert_eq!(
+            member_ids(thread_by_key(&plan.threads, &gamma_key)),
+            vec![5, 6, 7]
+        );
+        assert!(plan.delete_thread_ids.is_empty());
+        assert!(plan.override_updates.is_empty());
+
+        // The whole plan equals the plan a payload naming only the surviving sessions produces:
+        // the stale id is filtered, never an error and never a rolled-back pass.
+        let filtered = split_override(1, 10, alpha, &[2]);
+        assert_eq!(
+            plan,
+            plan_threads(&changed, &stored, std::slice::from_ref(&filtered))
+        );
+
+        // Re-planning the applied model is stable.
+        let (stored_after, overrides_after) =
+            apply_plan(&plan, &stored, std::slice::from_ref(&stale_split));
+        let replanned = plan_threads(&changed, &stored_after, &overrides_after);
+        assert_eq!(replanned.threads, plan.threads);
+        assert!(replanned.delete_thread_ids.is_empty());
+        assert!(replanned.override_updates.is_empty());
+    }
+
+    #[test]
+    fn merge_target_drops_a_member_session_that_no_longer_exists() {
+        // Session 3 was deleted after the stored merge target was written.
+        let input = cluster_input(&[
+            (101, ALPHA, &[1, 2]),
+            (102, BETA, &[4, 5]),
+            (103, GAMMA, &[6, 7]),
+        ]);
+        let target = stored_thread_for(&input, 1, &cluster_key(&[101]), ALPHA, &[1, 2, 3], 0.9);
+        let source = stored_thread_for(&input, 2, &cluster_key(&[102]), BETA, &[4, 5], 0.9);
+        let merge = merge_override(1, 10, &source, &target);
+        let (plan, _, overrides_after) =
+            assert_stable_after_apply(&input, &[target, source], std::slice::from_ref(&merge));
+
+        // The target keeps its surviving members and the folded source; the deleted session is
+        // dropped instead of reaching the store's foreign-key check.
+        let merged = thread_by_key(&plan.threads, &cluster_key(&[101]));
+        assert_eq!(member_ids(merged), vec![1, 2, 4, 5]);
+        assert_plan_members_exist(&input, &plan);
+        assert!(plan
+            .threads
+            .iter()
+            .all(|thread| !member_ids(thread).contains(&3)));
+        assert!(thread_by_key(&plan.threads, &cluster_key(&[102]))
+            .sessions
+            .is_empty());
+        assert!(plan.delete_thread_ids.is_empty());
+        assert!(plan.override_updates.is_empty());
+        assert_eq!(overrides_after, vec![merge]);
+    }
+
+    #[test]
+    fn split_created_thread_drops_a_member_session_that_no_longer_exists() {
+        // Session 6 was deleted after the split-created thread was written.
+        let input = cluster_input(&[(101, ALPHA, &[1, 2]), (102, BETA, &[4, 5])]);
+        let split_created =
+            stored_thread_for(&input, 3, &split_cluster_key(7), GAMMA, &[4, 5, 6], 0.9);
+        let plan = plan_threads(&input, std::slice::from_ref(&split_created), &[]);
+
+        assert_eq!(
+            member_ids(thread_by_key(&plan.threads, &split_cluster_key(7))),
+            vec![4, 5]
+        );
+        assert_plan_members_exist(&input, &plan);
+        assert!(plan.delete_thread_ids.is_empty());
+        assert!(plan.override_updates.is_empty());
+
+        let (stored_after, overrides_after) =
+            apply_plan(&plan, std::slice::from_ref(&split_created), &[]);
+        let replanned = plan_threads(&input, &stored_after, &overrides_after);
+        assert_eq!(replanned, plan);
+        assert_plan_members_exist(&input, &replanned);
+    }
+
+    #[test]
+    fn every_planned_member_exists_in_the_clustering_input() {
+        let (input, stored, merge) = managed_threads_with_deleted_members();
+        let plan = plan_threads(&input, &stored, std::slice::from_ref(&merge));
+
+        assert_plan_members_exist(&input, &plan);
+        assert_eq!(
+            member_ids(thread_by_key(&plan.threads, &cluster_key(&[101]))),
+            vec![1, 2, 4, 5]
+        );
+        assert_eq!(
+            member_ids(thread_by_key(&plan.threads, &split_cluster_key(7))),
+            vec![6, 7]
+        );
+        assert_eq!(
+            member_ids(thread_by_key(&plan.threads, &cluster_key(&[105]))),
+            vec![9, 10]
+        );
+        assert!(thread_by_key(&plan.threads, &cluster_key(&[102]))
+            .sessions
+            .is_empty());
+        assert!(plan.delete_thread_ids.is_empty());
+        assert!(plan.override_updates.is_empty());
+    }
+
+    #[test]
+    fn plan_with_deleted_managed_members_is_stable_on_replan() {
+        let (input, stored, merge) = managed_threads_with_deleted_members();
+        let plan = plan_threads(&input, &stored, std::slice::from_ref(&merge));
+        let (stored_after, overrides_after) =
+            apply_plan(&plan, &stored, std::slice::from_ref(&merge));
+        let replanned = plan_threads(&input, &stored_after, &overrides_after);
+
+        // Full plan equality: the same threads, no deletions and no override rewrites.
+        assert_eq!(replanned, plan);
+        assert_plan_members_exist(&input, &replanned);
+
+        let (stored_again, overrides_again) =
+            apply_plan(&replanned, &stored_after, &overrides_after);
+        let replanned_again = plan_threads(&input, &stored_again, &overrides_again);
+        assert_eq!(replanned_again, replanned);
+    }
+
+    #[test]
     fn split_falls_back_to_the_moved_sessions_thread_title_when_the_source_is_gone() {
         let input = cluster_input(&[(101, ALPHA, &[1, 2])]);
         // No stored source thread: the row points at a thread id that does not exist.
@@ -1101,9 +1378,15 @@ mod tests {
         let renamed = thread_by_key(&plan.threads, &alpha.cluster_key);
         assert_eq!(renamed.title, "Pinned");
         assert_eq!(member_ids(renamed), vec![1, 2, 3, 4]);
-        assert_eq!(plan.delete_thread_ids, vec![beta.id]);
-        assert_eq!(plan.override_updates.len(), 1);
-        assert_eq!(plan.override_updates[0].override_id, 2);
+        assert!(plan.delete_thread_ids.is_empty());
+        assert!(plan.override_updates.is_empty());
+
+        // The merge source is retained empty, and the split keeps its source row while moving
+        // only its listed session out.
+        let retained_source = thread_by_key(&plan.threads, &beta.cluster_key);
+        assert!(retained_source.sessions.is_empty());
+        let remaining = thread_by_key(&plan.threads, &gamma.cluster_key);
+        assert_eq!(member_ids(remaining), vec![5]);
 
         let split_thread = thread_by_key(&plan.threads, &split_cluster_key(3));
         assert_eq!(member_ids(split_thread), vec![6]);
@@ -1111,7 +1394,7 @@ mod tests {
         assert!(stored_after
             .iter()
             .any(|thread| thread.cluster_key == split_cluster_key(3)));
-        assert_eq!(overrides_after.len(), 3);
+        assert_eq!(overrides_after, overrides);
     }
 
     #[test]
@@ -1209,31 +1492,43 @@ mod tests {
 
     #[test]
     fn a_fresh_component_colliding_with_a_managed_key_keeps_the_managed_thread() {
-        let input = hiatus_input();
+        let input = GraphClusterInput {
+            now_ms: NOW_MS,
+            sessions: vec![
+                session_at(1, 0),
+                session_at(2, 2),
+                session_at(3, 45),
+                session_at(4, 47),
+                session_at(5, 60),
+                session_at(6, 62),
+            ],
+            links: vec![
+                link_at(1, 10, ALPHA, 0),
+                link_at(2, 10, ALPHA, 2),
+                link_at(3, 10, ALPHA, 45),
+                link_at(4, 10, ALPHA, 47),
+                link_at(5, 20, BETA, 60),
+                link_at(6, 20, BETA, 62),
+            ],
+        };
         let base = cluster_key(&[10]);
-        // Sessions 3,4 are held by an override-managed stored thread that persisted the
-        // unsuffixed base key; sessions 1,2 re-cluster to the same base key.
+        // A merge management edge holds sessions 3,4 in a stored thread that persisted the
+        // unsuffixed base key, and sessions 5,6 in its (retained, emptied) source. Sessions
+        // 1,2 are unmanaged and re-cluster to the same base key.
         let managed = stored_thread_for(&input, 1, &base, BETA, &[3, 4], 0.95);
-        let rename = rename_override(1, 10, managed.id, BETA);
-        let overrides = std::slice::from_ref(&rename);
-        let plan = plan_threads(&input, std::slice::from_ref(&managed), overrides);
+        let source = stored_thread_for(&input, 2, &cluster_key(&[20]), ALPHA, &[5, 6], 0.95);
+        let merge = merge_override(1, 10, &source, &managed);
+        let (plan, _, _) =
+            assert_stable_after_apply(&input, &[managed, source], std::slice::from_ref(&merge));
 
-        assert_eq!(plan.threads.len(), 2, "{:?}", plan.threads);
+        assert_eq!(plan.threads.len(), 3, "{:?}", plan.threads);
         let managed_thread = thread_by_key(&plan.threads, &base);
-        assert_eq!(member_ids(managed_thread), vec![3, 4]);
+        assert_eq!(member_ids(managed_thread), vec![3, 4, 5, 6]);
+        assert_eq!(managed_thread.title, BETA);
         let fresh_thread = thread_by_key(&plan.threads, &format!("{base}#1"));
         assert_eq!(member_ids(fresh_thread), vec![1, 2]);
         assert!(plan.delete_thread_ids.is_empty());
         assert!(plan.override_updates.is_empty());
-
-        // The applied model is stable: the managed key survives and the fresh thread keeps
-        // its discriminator.
-        let (stored_after, overrides_after) =
-            apply_plan(&plan, std::slice::from_ref(&managed), overrides);
-        let replanned = plan_threads(&input, &stored_after, &overrides_after);
-        assert_eq!(replanned.threads, plan.threads);
-        assert!(replanned.delete_thread_ids.is_empty());
-        assert!(replanned.override_updates.is_empty());
     }
 
     #[test]
@@ -1263,13 +1558,17 @@ mod tests {
         let suffixed = format!("{base}#1");
         let managed_base = stored_thread_for(&input, 1, &base, ALPHA, &[3, 4], 0.95);
         let managed_suffixed = stored_thread_for(&input, 2, &suffixed, BETA, &[5, 6], 0.95);
-        let overrides = vec![
-            rename_override(1, 10, managed_base.id, ALPHA),
-            rename_override(2, 20, managed_suffixed.id, BETA),
-        ];
+        // The merge row is what makes both stored threads membership-managed; a rename row no
+        // longer does. Sessions 1,2 then cluster to seed:10, take the `#1` discriminator, and
+        // collide with the second managed key.
+        let merge = merge_override(1, 10, &managed_suffixed, &managed_base);
 
-        let error = run_plan_threads(&input, &[managed_base, managed_suffixed], &overrides)
-            .expect_err("a key that is still duplicated must be a loud error");
+        let error = run_plan_threads(
+            &input,
+            &[managed_base, managed_suffixed],
+            std::slice::from_ref(&merge),
+        )
+        .expect_err("a key that is still duplicated must be a loud error");
         let message = error.to_string();
         assert!(
             message.contains(&suffixed),

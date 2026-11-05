@@ -4,9 +4,14 @@
 //! One frame per job. The body reads the frame's stored context and filtered content
 //! text, asks the `sessions` read-side helper for the bundled taxonomy's recognition
 //! (input data only, never a model call), runs the pure `graph` rule table and persists
-//! the hits through one [`Store::graph_apply_hits`] transaction. A frame with no
-//! containing session still contributes its entities; it simply has no link row
-//! (`03 §7h.3`).
+//! the hits through one [`Store::graph_apply_hits`] transaction.
+//!
+//! Linking is **ownership-only** (`03 §7e`, the 0.4.5 P5 review ruling): a frame's evidence
+//! belongs to the session named by `frames.session_id`, so the store reports `Some(session)`
+//! only for an owned frame whose owner row exists. An unowned frame (or one whose owner row
+//! vanished) still contributes its entities but never a link row. The
+//! `[started_at, ended_at)` interval rule remains a documented primitive of its own
+//! (`Store::graph_session_at`), not a linking fallback.
 //!
 //! Deterministic and model-free (`03 §7h.2`): with no answer model attached, extraction
 //! and linking still run, so the graph never depends on the LLM lane.
@@ -60,8 +65,9 @@ pub(crate) async fn extract_frame(
     if hits.is_empty() {
         return Ok(ExtractOutcome::Noop);
     }
-    // The store resolves the containing session on the frame input; no second lookup is
-    // needed. A `None` session persists entities without a link row (`03 §7h.3`).
+    // Linking is ownership-only: the store resolves the frame's owner from `frames.session_id`
+    // and reports `None` for an unowned frame, which then persists entities without a link
+    // row. The interval rule is never a linking fallback (`03 §7e`).
     let session_id = frame.session.as_ref().map(|session| session.session_id);
     store
         .graph_apply_hits(session_id, frame.frame_id, frame.captured_at, &hits)
@@ -137,12 +143,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn extract_links_only_when_a_session_contains_the_frame() {
+    async fn extract_links_only_to_the_owning_session() {
         let store = test_store().await;
-        // A closed session, then an open one; the middle frame falls between both.
-        let first_session = insert_session(store.as_ref(), 1_000, Some(2_000)).await;
+        // Ownership (`frames.session_id`), not the interval rule, decides linking: the
+        // closed and open sessions below are only containers for the ownership fixtures.
+        let closed_session = insert_session(store.as_ref(), 1_000, Some(2_000)).await;
         let open_session = insert_session(store.as_ref(), 5_000, None).await;
-        let inside_closed = insert_frame(
+        let owned_in_closed = insert_frame(
             store.as_ref(),
             1_500,
             Some("https://github.com/acme/widgets/pull/42"),
@@ -150,24 +157,52 @@ mod tests {
             "see #7 for the follow up",
         )
         .await;
-        let between_sessions = insert_frame(
+        // Owned by the closed session even though its timestamp is outside that session's
+        // interval: ownership wins and the interval rule is never a linking fallback.
+        let owned_outside_interval = insert_frame(
             store.as_ref(),
-            2_500,
-            Some("https://example.org/no-session"),
-            Some("Between sessions"),
-            "nothing to link",
-        )
-        .await;
-        let inside_open = insert_frame(
-            store.as_ref(),
-            6_000,
+            3_000,
             Some("https://github.com/acme/widgets/pull/42"),
             Some("Add the work graph"),
             "see #7 for the follow up",
         )
         .await;
+        let unowned_between = insert_frame(
+            store.as_ref(),
+            2_500,
+            Some("https://example.org/no-owner"),
+            Some("Unowned between sessions"),
+            "nothing to link",
+        )
+        .await;
+        // Inside the open session's interval but unowned: entities only, never a link.
+        let unowned_inside_open = insert_frame(
+            store.as_ref(),
+            6_000,
+            Some("https://example.net/no-owner"),
+            Some("Unowned inside the open interval"),
+            "nothing to link",
+        )
+        .await;
 
-        for frame_id in [inside_closed, between_sessions, inside_open] {
+        assert_eq!(
+            store
+                .assign_frames_session(
+                    &[owned_in_closed, owned_outside_interval],
+                    Some(closed_session)
+                )
+                .await
+                .expect("assign the owned frames"),
+            2,
+            "the fixture assigns exactly the two owned frames"
+        );
+
+        for frame_id in [
+            owned_in_closed,
+            owned_outside_interval,
+            unowned_between,
+            unowned_inside_open,
+        ] {
             assert_eq!(
                 extract_frame(store.as_ref(), frame_id)
                     .await
@@ -181,38 +216,56 @@ mod tests {
             .graph_cluster_input(10_000)
             .await
             .expect("cluster input");
-        // The linked sessions are exactly the two whose interval contains a frame.
+        // Only the owning session gets links: an unowned frame never links, even when a
+        // session's interval contains its timestamp (the open session here).
         let linked_sessions: std::collections::BTreeSet<i64> =
             input.links.iter().map(|link| link.session_id).collect();
         assert_eq!(
             linked_sessions,
-            std::collections::BTreeSet::from([first_session, open_session])
+            std::collections::BTreeSet::from([closed_session]),
+            "only the owning session links; the open session and unowned frames never do"
         );
-        // All three frames contributed entities, including the unlinked one.
+        assert!(input
+            .links
+            .iter()
+            .all(|link| link.session_id == closed_session));
+        assert!(
+            !input
+                .links
+                .iter()
+                .any(|link| link.session_id == open_session),
+            "an unowned frame inside the open session's interval never links"
+        );
+        // The outside-interval frame is linked through ownership, and the link window
+        // records its capture time rather than the session's ended_at.
+        let domain_link = input
+            .links
+            .iter()
+            .find(|link| link.canonical_name == "github.com")
+            .expect("the owned frames produced the shared domain link");
+        assert_eq!(
+            domain_link.last_seen_at, 3_000,
+            "ownership links the outside-interval frame"
+        );
+        // All four frames contributed entities, including the two unlinked ones.
         let catalog = store
             .graph_entity_catalog(100)
             .await
             .expect("entity catalog");
-        assert!(
-            catalog
-                .iter()
-                .any(|entity| entity.canonical_name == "example.org"),
-            "an unlinked frame still contributes its entities"
-        );
-        // The link carries the rule's own confidence, not a smoothed value (03 §7h.2).
-        let domain_links: Vec<f64> = input
-            .links
-            .iter()
-            .filter(|link| link.canonical_name == "github.com")
-            .map(|link| link.confidence)
-            .collect();
-        assert_eq!(domain_links.len(), 2);
-        for confidence in domain_links {
+        for expected in ["github.com", "example.org", "example.net"] {
             assert!(
-                (confidence - graph::extraction::confidence::URL_DOMAIN_SCHEME).abs() < 1e-9,
-                "link confidence is the URL domain rule confidence"
+                catalog
+                    .iter()
+                    .any(|entity| entity.canonical_name == expected),
+                "the unlinked frames still contribute their entities: {expected}"
             );
         }
+        // The link carries the rule's own confidence, not a smoothed value (03 §7h.2).
+        assert!(
+            (domain_link.confidence - graph::extraction::confidence::URL_DOMAIN_SCHEME).abs()
+                < 1e-9,
+            "link confidence is the URL domain rule confidence"
+        );
     }
 
     #[tokio::test]

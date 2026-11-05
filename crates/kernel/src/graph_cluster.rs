@@ -9,8 +9,9 @@
 //! than editing them.
 //!
 //! Overrides are applied here too, after clustering, always winning (`03 §7h.5`); P5 never
-//! inserts one itself, so the plan's only override writes are the merge-row rewrites the
-//! persistence contract needs to keep a fold durable.
+//! inserts one itself, and the current planner emits **no** override-row rewrites: merge
+//! durability is retention of the emptied source row plus replay order (`06` #37 revised), so
+//! `ThreadPlan.override_updates` stays empty even though the store contract can apply one.
 //!
 //! This job also owns the `03 §7h.6` completion evidence line: after a successful plan apply,
 //! and only when the graph is drained (`cursor >= max_frame_id` and no pending extraction),
@@ -18,8 +19,7 @@
 //! the counts necessarily post-cluster, so a restart's second pass reports identical numbers.
 //! The backfill job never logs it, and neither does a refill batch.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use traits::{GraphTableCounts, Store};
 
@@ -35,24 +35,83 @@ pub(crate) const COMPLETION_MARKER: &str = "graph backfill complete";
 /// successful pass from a dead-lettered one. Without it, a cluster job that dead-letters
 /// would leave `done_extract` unchanged and the scheduler would never retry, permanently
 /// suppressing the completion line.
-pub(crate) struct ClusterProgress(AtomicU64);
+///
+/// The generation guards the reverse race: the reconcile pass can invalidate the marker while a
+/// cluster job is already planning. The job snapshots the generation before it plans and records
+/// only if the generation is unchanged, so a stale plan cannot erase the invalidation and leave
+/// repaired links unplanned until extraction moves again. A mutex keeps the generation check and
+/// the marker write atomic (no lost-update window between two atomics).
+pub(crate) struct ClusterProgress {
+    state: Mutex<ClusterState>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ClusterState {
+    done_extract: u64,
+    generation: u64,
+}
 
 impl ClusterProgress {
     /// Sentinel for "no cluster pass has succeeded in this process yet".
     pub(crate) const NEVER: u64 = u64::MAX;
 
     pub(crate) fn new() -> Self {
-        Self(AtomicU64::new(Self::NEVER))
+        Self {
+            state: Mutex::new(ClusterState {
+                done_extract: Self::NEVER,
+                generation: 0,
+            }),
+        }
     }
 
-    /// Records that a plan covering this `done_extract` value was applied successfully.
+    fn lock(&self) -> std::sync::MutexGuard<'_, ClusterState> {
+        self.state.lock().expect("cluster progress lock")
+    }
+
+    /// Records that a plan covering this `done_extract` value was applied successfully. The job
+    /// body uses [`Self::record_generation`]; this direct form exists for tests that simulate a
+    /// settled pass.
+    #[cfg(test)]
     pub(crate) fn record(&self, done_extract: u64) {
-        self.0.store(done_extract, Ordering::Relaxed);
+        self.lock().done_extract = done_extract;
+    }
+
+    /// The generation a cluster job must pass back to [`Self::record_generation`].
+    pub(crate) fn generation(&self) -> u64 {
+        self.lock().generation
+    }
+
+    /// Records success only when no invalidation happened since `generation` was snapshotted.
+    /// Returns `false` when the pass is stale: the marker stays invalidated so the next drained
+    /// tick enqueues another pass.
+    pub(crate) fn record_generation(&self, done_extract: u64, generation: u64) -> bool {
+        let mut state = self.lock();
+        if state.generation != generation {
+            return false;
+        }
+        state.done_extract = done_extract;
+        true
+    }
+
+    /// Forces the next drained scheduler tick to enqueue a cluster pass: the generation advances
+    /// and the marker returns to [`Self::NEVER`]. A cluster job that snapshotted the previous
+    /// generation cannot record over this.
+    pub(crate) fn invalidate(&self) {
+        let mut state = self.lock();
+        state.generation = state.generation.wrapping_add(1);
+        state.done_extract = Self::NEVER;
+    }
+
+    /// `true` when the last successful plan does not cover `done_extract`. Invalidating the
+    /// marker makes this true, so repaired links are re-planned even when extraction itself
+    /// has not moved.
+    pub(crate) fn needs_cluster(&self, done_extract: u64) -> bool {
+        self.last_clustered_done_extract() != done_extract
     }
 
     /// The `done_extract` value the last successful plan covered, or [`Self::NEVER`].
     pub(crate) fn last_clustered_done_extract(&self) -> u64 {
-        self.0.load(Ordering::Relaxed)
+        self.lock().done_extract
     }
 }
 
@@ -79,6 +138,10 @@ async fn run_job(
     now_ms: i64,
     progress: Option<&ClusterProgress>,
 ) -> anyhow::Result<()> {
+    // Snapshot the reconcile generation before planning: an invalidation that happens while this
+    // pass runs must not be erased by the record below, or repaired links would stay unplanned
+    // until extraction moves again.
+    let generation = progress.map(ClusterProgress::generation);
     // Snapshot before planning: the recorded progress must never claim more extraction state
     // than the plan actually covered, or a newer `done_extract` would suppress a needed
     // re-cluster. Extraction can only add links after this point, so the plan sees at least
@@ -92,8 +155,12 @@ async fn run_job(
     if crate::graph_backfill::is_drained(&status) {
         log_completion(store).await?;
     }
-    if let Some(progress) = progress {
-        progress.record(status.done_extract);
+    if let (Some(progress), Some(generation)) = (progress, generation) {
+        if !progress.record_generation(status.done_extract, generation) {
+            tracing::debug!(
+                "graph cluster: links were repaired during the pass; keeping progress invalidated"
+            );
+        }
     }
     Ok(())
 }
@@ -207,16 +274,45 @@ mod tests {
     /// Seeds two linked sessions (same host) and drains their extraction through the
     /// production queue path, leaving a drained graph that warrants one thread.
     async fn seed_drained_thread_graph(store: &Arc<dyn Store>) -> (i64, i64) {
+        // The graph producer waits for the sessions historical pass; this fixture has its
+        // sessions, so it marks that gate complete the same way the sessions scheduler does.
+        store
+            .set_setting(
+                crate::sessions_scheduler::BACKFILL_MARKER,
+                r#"{"cursor_ms":1,"target_ms":1}"#,
+            )
+            .await
+            .expect("write sessions history marker");
         let first_session = insert_session(store.as_ref(), 0, Some(1_000_000)).await;
         let second_session = insert_session(store.as_ref(), 2_000_000, Some(3_000_000)).await;
-        for captured_at in [100_000_i64, 2_100_000] {
-            insert_frame(
-                store.as_ref(),
-                captured_at,
-                "https://github.com/acme/widgets/pull/42",
-            )
-            .await;
-        }
+        let first_frame = insert_frame(
+            store.as_ref(),
+            100_000,
+            "https://github.com/acme/widgets/pull/42",
+        )
+        .await;
+        let second_frame = insert_frame(
+            store.as_ref(),
+            2_100_000,
+            "https://github.com/acme/widgets/pull/42",
+        )
+        .await;
+        // Ownership is the graph's link source (P5 review fix), so the fixture assigns the
+        // frames the same way the sessions scheduler would.
+        assert_eq!(
+            store
+                .assign_frames_session(&[first_frame], Some(first_session))
+                .await
+                .expect("assign first frame"),
+            1
+        );
+        assert_eq!(
+            store
+                .assign_frames_session(&[second_frame], Some(second_session))
+                .await
+                .expect("assign second frame"),
+            1
+        );
         assert_eq!(
             enqueue_next_batch(store.as_ref(), 10, u64::MAX)
                 .await
@@ -263,6 +359,7 @@ mod tests {
     ) -> Vec<String> {
         let idle: crate::graph_scheduler::IdleSlot = Arc::new(RwLock::new(None));
         let answer: AnswerSlot = Arc::new(RwLock::new(None));
+        let dirty = crate::graph_reconcile::new_dirty_sessions();
         let mut state = TickState::default();
         tick(
             store.as_ref(),
@@ -270,6 +367,7 @@ mod tests {
             &idle,
             &answer,
             progress,
+            &dirty,
             &mut state,
         )
         .await;
@@ -311,6 +409,15 @@ mod tests {
             } else {
                 second_session
             };
+            // Linking is ownership-only (P5 review ruling): the frame must be assigned to
+            // its session before extraction, or it would carry entities without a link.
+            assert_eq!(
+                store
+                    .assign_frames_session(&[frame_id], Some(session))
+                    .await
+                    .expect("assign frame"),
+                1
+            );
             let input = store
                 .graph_frame_input(frame_id)
                 .await
@@ -319,7 +426,7 @@ mod tests {
             assert_eq!(
                 input.session.as_ref().map(|value| value.session_id),
                 Some(session),
-                "fixture frame falls inside its session"
+                "the frame's owning session is its link target"
             );
             crate::graph_extract::extract_frame(store.as_ref(), frame_id)
                 .await
@@ -416,17 +523,35 @@ mod tests {
     #[tokio::test]
     async fn sessions_without_a_shared_strong_entity_form_no_thread() {
         let store = test_store().await;
-        insert_session(store.as_ref(), 0, Some(1_000_000)).await;
-        insert_session(store.as_ref(), 2_000_000, Some(3_000_000)).await;
-        for (captured_at, url) in [
-            (100_000_i64, "https://site-one.test/work"),
-            (2_100_000, "https://site-two.test/work"),
+        let first_session = insert_session(store.as_ref(), 0, Some(1_000_000)).await;
+        let second_session = insert_session(store.as_ref(), 2_000_000, Some(3_000_000)).await;
+        for (captured_at, url, session) in [
+            (100_000_i64, "https://site-one.test/work", first_session),
+            (2_100_000, "https://site-two.test/work", second_session),
         ] {
             let frame_id = insert_frame(store.as_ref(), captured_at, url).await;
+            // Ownership-only linking: assign the frame so its link exists; the two sessions
+            // still share no strong entity, which is what this test is about.
+            assert_eq!(
+                store
+                    .assign_frames_session(&[frame_id], Some(session))
+                    .await
+                    .expect("assign frame"),
+                1
+            );
             crate::graph_extract::extract_frame(store.as_ref(), frame_id)
                 .await
                 .expect("extract frame");
         }
+        assert!(
+            !store
+                .graph_cluster_input(10_000_000)
+                .await
+                .expect("cluster input")
+                .links
+                .is_empty(),
+            "the fixture sessions do have links, they just share no strong entity"
+        );
         run_pass(store.as_ref(), 10_000_000)
             .await
             .expect("cluster pass");
@@ -517,5 +642,30 @@ mod tests {
         assert_ne!(progress.last_clustered_done_extract(), 0);
         progress.record(0);
         assert_eq!(progress.last_clustered_done_extract(), 0);
+    }
+
+    #[test]
+    fn a_stale_pass_cannot_erase_a_concurrent_invalidation() {
+        let progress = ClusterProgress::new();
+        let generation = progress.generation();
+        // A pass that started before the repair finishes normally.
+        assert!(progress.record_generation(7, generation));
+        assert_eq!(progress.last_clustered_done_extract(), 7);
+
+        // A repair invalidates while another pass is running: that pass must not record over it,
+        // otherwise the repaired links would never be re-planned on an otherwise idle graph.
+        progress.invalidate();
+        assert!(!progress.record_generation(7, generation));
+        assert_eq!(
+            progress.last_clustered_done_extract(),
+            ClusterProgress::NEVER
+        );
+        assert!(progress.needs_cluster(7));
+
+        // The pass that snapshotted the new generation records normally.
+        let next_generation = progress.generation();
+        assert!(progress.record_generation(7, next_generation));
+        assert_eq!(progress.last_clustered_done_extract(), 7);
+        assert!(!progress.needs_cluster(7));
     }
 }

@@ -1,14 +1,18 @@
-//! The session linking rule (`03 §7h.3`), as a pure helper.
+//! The session interval rule (`03 §7h.3`), retained as a pure, database-free primitive.
 //!
-//! A hit links to the session whose `[started_at, ended_at)` contains the hit's timestamp;
-//! an open session (`ended_at` NULL) is open-ended. The store resolves the same rule in SQL
-//! (one query per frame extraction job); this module states it once as executable code so
-//! the closed-interval and open-session cases have a database-free test, and so the store's
-//! SQL can be checked against the same examples.
+//! A hit described by this rule would link to the session whose `[started_at, ended_at)`
+//! contains the hit's timestamp, with an open session (`ended_at` NULL) open-ended. That rule is
+//! **not used for production linking**: `03 §7e` makes `frames.session_id` the authoritative
+//! owner, and the #157 review-fix pass resolved the conflict ownership-only (a frame links to its
+//! owner or to no session; see `crates/traits/src/contracts.rs::graph_frame_input` and `06` #41).
+//! The interval logic survives as `Store::graph_session_at` and as these executable examples, so
+//! the retained primitive and its tests stay honest; it is not evidence that extraction links by
+//! interval.
 //!
 //! Linking itself is persisted by `Store::graph_apply_hits` (`03 §7h.3`): one
 //! `session_entities` row per `(session_id, entity_id)`, `hit_count` counting distinct
-//! contributing frames, and `confidence` the maximum of the contributing hits.
+//! contributing frames (an exact per-session rebuild can replace it absolutely), and
+//! `confidence` the maximum of the contributing hits.
 
 use traits::GraphSessionInput;
 

@@ -15,11 +15,14 @@ use traits::{
     SessionDraft, SessionFilter, SessionKind, SessionSegmenter, Settings, Store,
 };
 
+use crate::graph_reconcile::{mark_dirty, DirtySessions};
 use crate::{settings, worker_pool, KernelEvent};
 
 const CADENCE: Duration = Duration::from_secs(60);
 const BACKFILL_CHUNK_MS: i64 = 6 * 60 * 60 * 1000;
-const BACKFILL_MARKER: &str = "sessions.backfill_done_until";
+/// The internal setting that stores the historical sessions checkpoint. `pub(crate)` so the
+/// work-graph gate, its tests and the graph scheduler tests all reference one spelling.
+pub(crate) const BACKFILL_MARKER: &str = "sessions.backfill_done_until";
 
 pub(crate) struct SchedulerHandle {
     stop: watch::Sender<bool>,
@@ -46,6 +49,7 @@ pub(crate) fn spawn(
     segmenter: Arc<dyn SessionSegmenter>,
     throttle_level: Arc<AtomicU8>,
     events: broadcast::Sender<KernelEvent>,
+    dirty: DirtySessions,
 ) -> SchedulerHandle {
     let (stop_tx, stop_rx) = watch::channel(false);
     let join = tokio::spawn(scheduler_loop(
@@ -53,6 +57,7 @@ pub(crate) fn spawn(
         segmenter,
         throttle_level,
         events,
+        dirty,
         stop_rx,
     ));
     SchedulerHandle {
@@ -66,6 +71,7 @@ async fn scheduler_loop(
     segmenter: Arc<dyn SessionSegmenter>,
     throttle_level: Arc<AtomicU8>,
     events: broadcast::Sender<KernelEvent>,
+    dirty: DirtySessions,
     mut stop: watch::Receiver<bool>,
 ) {
     loop {
@@ -78,12 +84,43 @@ async fn scheduler_loop(
             &current,
             throttle_level.load(Ordering::Relaxed) != 0,
             &events,
+            &dirty,
         )
         .await;
         if wait_or_stop(&mut stop, CADENCE).await {
             break;
         }
     }
+}
+
+/// `true` when the one-shot historical sessions pass has reached its fixed target
+/// (`sessions.backfill_done_until`: `cursor_ms >= target_ms`). The work graph must not extract
+/// frames before their sessions exist (P5 review finding), so the graph scheduler waits for
+/// this marker. A missing or unparsable marker is incomplete: the sessions scheduler writes
+/// it on its first pass.
+pub(crate) async fn history_backfill_complete(store: &dyn Store) -> bool {
+    let value = match store.get_setting(BACKFILL_MARKER).await {
+        Ok(Some(value)) => value,
+        Ok(None) => return false,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "sessions: reading the historical backfill marker failed; treated as incomplete"
+            );
+            return false;
+        }
+    };
+    let checkpoint: BackfillCheckpoint = match serde_json::from_str(&value) {
+        Ok(checkpoint) => checkpoint,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "sessions: the historical backfill marker is not a checkpoint; treated as incomplete"
+            );
+            return false;
+        }
+    };
+    checkpoint.cursor_ms >= checkpoint.target_ms
 }
 
 /// Runs one scheduler iteration and broadcasts only after at least one pass reports a semantic
@@ -97,9 +134,10 @@ pub(crate) async fn run_scheduler_pass(
     current: &Settings,
     historical_throttled: bool,
     events: &broadcast::Sender<KernelEvent>,
+    dirty: &DirtySessions,
 ) {
     let mut changed = false;
-    match run_incremental_pass(store, segmenter, now, current).await {
+    match run_incremental_pass(store, segmenter, now, current, dirty).await {
         Ok(pass_changed) => changed |= pass_changed,
         Err(error) => {
             changed = true;
@@ -245,6 +283,7 @@ pub(crate) async fn run_incremental_pass(
     segmenter: &dyn SessionSegmenter,
     now_ms: i64,
     current: &Settings,
+    dirty: &DirtySessions,
 ) -> anyhow::Result<bool> {
     let params = params_from_settings(now_ms, current);
     let existing = store.unfrozen_sessions().await?;
@@ -296,7 +335,12 @@ pub(crate) async fn run_incremental_pass(
                 .filter(|id| !desired.contains(id))
                 .copied()
                 .collect();
-            changed |= store.assign_frames_session(&stale, None).await? > 0;
+            if store.assign_frames_session(&stale, None).await? > 0 {
+                changed = true;
+                // A frame left this session, so its link evidence must be recomputed
+                // exactly; a stale link would otherwise keep citing the wrong session.
+                mark_dirty(dirty, [session.id]);
+            }
         }
         owned_by_existing.insert(session.id, ids.into_iter().collect::<HashSet<_>>());
     }
@@ -323,12 +367,19 @@ pub(crate) async fn run_incremental_pass(
                         continue;
                     }
                     changed = true;
+                    // The session's interval or context changed: links derived from it may
+                    // have moved.
+                    mark_dirty(dirty, [id]);
                 }
                 id
             }
             None => {
                 changed = true;
-                store.insert_session(draft.as_new_session(false)).await?
+                let inserted = store.insert_session(draft.as_new_session(false)).await?;
+                // A brand new session can own frames that were extracted before it existed
+                // (the P5 review finding), so it always needs an initial link rebuild.
+                mark_dirty(dirty, [inserted]);
+                inserted
             }
         };
         let already_owned = owned_by_existing.get(&session_id);
@@ -338,10 +389,18 @@ pub(crate) async fn run_incremental_pass(
             .filter(|id| !already_owned.is_some_and(|owned| owned.contains(id)))
             .copied()
             .collect();
-        changed |= store
+        if store
             .assign_frames_session(&to_assign, Some(session_id))
             .await?
-            > 0;
+            > 0
+        {
+            changed = true;
+            // Newly owned frames may have been extracted while assigned elsewhere (or
+            // unassigned), so this session's links need a rebuild.
+            mark_dirty(dirty, [session_id]);
+        }
+        // Best-effort exchange extraction for AI sessions: the graph dirty mark above must
+        // never replace this artifact refresh (historical pass calls the same helper).
         if draft.kind == SessionKind::Ai {
             changed |= refresh_exchanges(store, segmenter, session_id, draft).await?;
         }
@@ -668,5 +727,367 @@ async fn wait_or_stop(stop: &mut watch::Receiver<bool>, duration: Duration) -> b
         biased;
         _ = stop.changed() => true,
         _ = tokio::time::sleep(duration) => *stop.borrow(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use store::SqliteStore;
+    use traits::{NewFrame, NewSession, Store};
+
+    use super::*;
+    use crate::graph_reconcile::new_dirty_sessions;
+
+    async fn test_store() -> Arc<dyn Store> {
+        Arc::new(SqliteStore::open_in_memory().expect("in-memory store"))
+    }
+
+    async fn insert_codex_frames(store: &dyn Store, count: i64) {
+        for index in 0..count {
+            let captured_at = index * 30_000;
+            store
+                .insert_frame(NewFrame {
+                    captured_at,
+                    monitor_index: 0,
+                    width: 1920,
+                    height: 1080,
+                    image_path: format!("frames/{captured_at}.webp"),
+                    content_hash: format!("hash-{captured_at}"),
+                    app_hint: Some("codex".to_string()),
+                    window_title: Some("Codex".to_string()),
+                    browser_url: None,
+                    capture_trigger: None,
+                })
+                .await
+                .expect("insert frame");
+        }
+    }
+
+    fn dirty_ids(dirty: &DirtySessions) -> Vec<i64> {
+        dirty
+            .lock()
+            .expect("dirty sessions lock")
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn history_backfill_complete_requires_a_reached_target() {
+        let store = test_store().await;
+        assert!(
+            !history_backfill_complete(store.as_ref()).await,
+            "a missing marker means the historical pass has not run yet"
+        );
+        store
+            .set_setting(BACKFILL_MARKER, "not a checkpoint")
+            .await
+            .expect("write bad marker");
+        assert!(
+            !history_backfill_complete(store.as_ref()).await,
+            "an unparsable marker is incomplete, never assumed done"
+        );
+        store
+            .set_setting(BACKFILL_MARKER, r#"{"cursor_ms":5,"target_ms":10}"#)
+            .await
+            .expect("write partial marker");
+        assert!(
+            !history_backfill_complete(store.as_ref()).await,
+            "a cursor short of the target is incomplete"
+        );
+        store
+            .set_setting(BACKFILL_MARKER, r#"{"cursor_ms":10,"target_ms":10}"#)
+            .await
+            .expect("write complete marker");
+        assert!(
+            history_backfill_complete(store.as_ref()).await,
+            "a reached target completes the history gate"
+        );
+    }
+
+    #[tokio::test]
+    async fn incremental_pass_marks_inserted_and_assigned_sessions_dirty() {
+        let store = test_store().await;
+        insert_codex_frames(store.as_ref(), 7).await;
+        let engine = sessions::SessionEngine::new().expect("session engine");
+        let dirty = new_dirty_sessions();
+        run_incremental_pass(
+            store.as_ref(),
+            &engine,
+            200_000,
+            &Settings::default(),
+            &dirty,
+        )
+        .await
+        .expect("incremental pass");
+        let sessions = store.unfrozen_sessions().await.expect("sessions");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            dirty_ids(&dirty),
+            vec![sessions[0].id],
+            "the inserted session and its assigned frames mark it dirty"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_identical_incremental_pass_marks_nothing() {
+        let store = test_store().await;
+        insert_codex_frames(store.as_ref(), 7).await;
+        let engine = sessions::SessionEngine::new().expect("session engine");
+        run_incremental_pass(
+            store.as_ref(),
+            &engine,
+            200_000,
+            &Settings::default(),
+            &new_dirty_sessions(),
+        )
+        .await
+        .expect("first pass");
+
+        let clean = new_dirty_sessions();
+        run_incremental_pass(
+            store.as_ref(),
+            &engine,
+            200_000,
+            &Settings::default(),
+            &clean,
+        )
+        .await
+        .expect("second pass");
+        assert!(
+            dirty_ids(&clean).is_empty(),
+            "a pass with no ownership mutation marks nothing dirty"
+        );
+    }
+
+    #[tokio::test]
+    async fn incremental_pass_marks_updated_sessions_dirty() {
+        let store = test_store().await;
+        insert_codex_frames(store.as_ref(), 7).await;
+        let engine = sessions::SessionEngine::new().expect("session engine");
+        run_incremental_pass(
+            store.as_ref(),
+            &engine,
+            200_000,
+            &Settings::default(),
+            &new_dirty_sessions(),
+        )
+        .await
+        .expect("first pass");
+        let session = store
+            .unfrozen_sessions()
+            .await
+            .expect("sessions")
+            .into_iter()
+            .next()
+            .expect("one session");
+        // Mutate the stored row so the next pass has to update it.
+        assert!(store
+            .update_unfrozen_session(
+                session.id,
+                NewSession {
+                    started_at: session.started_at,
+                    ended_at: session.ended_at,
+                    kind: session.kind,
+                    tool: session.tool.clone(),
+                    host: session.host,
+                    context_key: session.context_key.clone(),
+                    confidence: 0.1,
+                    frozen: false,
+                },
+            )
+            .await
+            .expect("mutate stored row"));
+        let dirty = new_dirty_sessions();
+        run_incremental_pass(
+            store.as_ref(),
+            &engine,
+            200_000,
+            &Settings::default(),
+            &dirty,
+        )
+        .await
+        .expect("update pass");
+        assert_eq!(
+            dirty_ids(&dirty),
+            vec![session.id],
+            "a session row update marks that session dirty"
+        );
+    }
+
+    #[tokio::test]
+    async fn incremental_pass_marks_stale_unassigns_dirty() {
+        let store = test_store().await;
+        insert_codex_frames(store.as_ref(), 7).await;
+        let engine = sessions::SessionEngine::new().expect("session engine");
+        run_incremental_pass(
+            store.as_ref(),
+            &engine,
+            200_000,
+            &Settings::default(),
+            &new_dirty_sessions(),
+        )
+        .await
+        .expect("first pass");
+        let session_id = store
+            .unfrozen_sessions()
+            .await
+            .expect("sessions")
+            .into_iter()
+            .next()
+            .expect("one session")
+            .id;
+        // A frame outside the incremental window owns evidence in this session: the next
+        // pass removes that stale ownership and must mark the old session.
+        let future_frame = store
+            .insert_frame(NewFrame {
+                captured_at: 500_000,
+                monitor_index: 0,
+                width: 1920,
+                height: 1080,
+                image_path: "frames/500000.webp".to_string(),
+                content_hash: "hash-future".to_string(),
+                app_hint: Some("codex".to_string()),
+                window_title: Some("Codex".to_string()),
+                browser_url: None,
+                capture_trigger: None,
+            })
+            .await
+            .expect("insert future frame");
+        assert_eq!(
+            store
+                .assign_frames_session(&[future_frame], Some(session_id))
+                .await
+                .expect("stale assignment"),
+            1
+        );
+
+        let dirty = new_dirty_sessions();
+        run_incremental_pass(
+            store.as_ref(),
+            &engine,
+            200_000,
+            &Settings::default(),
+            &dirty,
+        )
+        .await
+        .expect("stale unassign pass");
+        assert_eq!(
+            dirty_ids(&dirty),
+            vec![session_id],
+            "the session that lost stale ownership is marked dirty"
+        );
+        assert!(
+            store
+                .session_frames_meta(session_id)
+                .await
+                .expect("frames")
+                .iter()
+                .all(|frame| frame.id != future_frame),
+            "the stale frame is no longer owned by the session"
+        );
+    }
+
+    #[tokio::test]
+    async fn incremental_ai_pass_still_refreshes_exchange_artifacts() {
+        let store = test_store().await;
+        for index in 0..7 {
+            let captured_at = index * 30_000;
+            let frame_id = store
+                .insert_frame(NewFrame {
+                    captured_at,
+                    monitor_index: 0,
+                    width: 1920,
+                    height: 1080,
+                    image_path: format!("frames/{captured_at}.webp"),
+                    content_hash: format!("hash-claude-{captured_at}"),
+                    app_hint: Some("claude".to_string()),
+                    window_title: Some("Claude".to_string()),
+                    browser_url: None,
+                    capture_trigger: None,
+                })
+                .await
+                .expect("insert ai frame");
+            store
+                .insert_ocr(
+                    frame_id,
+                    traits::OcrResult {
+                        text: "User: review the diff\nClaude: it looks good".to_string(),
+                        mean_confidence: 0.9,
+                        engine: "test".to_string(),
+                        spans: Vec::new(),
+                    },
+                )
+                .await
+                .expect("insert ai ocr");
+        }
+        let engine = sessions::SessionEngine::new().expect("session engine");
+        let dirty = new_dirty_sessions();
+        run_incremental_pass(
+            store.as_ref(),
+            &engine,
+            200_000,
+            &Settings::default(),
+            &dirty,
+        )
+        .await
+        .expect("incremental pass");
+        let session = store
+            .unfrozen_sessions()
+            .await
+            .expect("sessions")
+            .into_iter()
+            .next()
+            .expect("one ai session");
+        assert_eq!(session.kind, SessionKind::Ai);
+        let artifacts = store
+            .list_session_artifacts(session.id)
+            .await
+            .expect("session artifacts");
+        assert!(
+            artifacts
+                .iter()
+                .any(|artifact| artifact.kind == SessionArtifactKind::Exchange),
+            "the incremental AI pass still refreshes exchange artifacts"
+        );
+        assert_eq!(
+            dirty_ids(&dirty),
+            vec![session.id],
+            "the same pass still marks the AI session's graph links dirty"
+        );
+    }
+
+    #[tokio::test]
+    async fn scheduler_pass_forwards_the_dirty_marks() {
+        let store = test_store().await;
+        insert_codex_frames(store.as_ref(), 7).await;
+        let engine = sessions::SessionEngine::new().expect("session engine");
+        let (events, _receiver) = broadcast::channel(8);
+        let dirty = new_dirty_sessions();
+        run_scheduler_pass(
+            store.as_ref(),
+            &engine,
+            200_000,
+            &Settings::default(),
+            true,
+            &events,
+            &dirty,
+        )
+        .await;
+        let session_id = store
+            .unfrozen_sessions()
+            .await
+            .expect("sessions")
+            .into_iter()
+            .next()
+            .expect("one session")
+            .id;
+        assert_eq!(
+            dirty_ids(&dirty),
+            vec![session_id],
+            "the scheduler pass threads its incremental dirty marks through"
+        );
     }
 }

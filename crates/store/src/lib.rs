@@ -649,6 +649,13 @@ impl Store for SqliteStore {
     ) -> Result<()> {
         SqliteStore::graph_apply_hits(self, session_id, frame_id, captured_at, hits).await
     }
+    async fn graph_replace_session_links(
+        &self,
+        session_id: i64,
+        links: &[traits::GraphSessionLinkAggregate],
+    ) -> Result<bool> {
+        SqliteStore::graph_replace_session_links(self, session_id, links).await
+    }
     async fn graph_cluster_input(&self, now_ms: i64) -> Result<traits::GraphClusterInput> {
         SqliteStore::graph_cluster_input(self, now_ms).await
     }

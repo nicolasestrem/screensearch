@@ -618,21 +618,36 @@ mod tests {
     async fn run_to_completion_logs_one_post_cluster_line_and_the_second_pass_repeats_it() {
         let store = test_store().await;
         // Two sessions linked by a shared host: the cluster pass must create a thread, so a
-        // pre-cluster line would visibly lack the thread counts.
-        insert_session(store.as_ref(), 0, Some(1_000_000)).await;
-        insert_session(store.as_ref(), 2_000_000, Some(3_000_000)).await;
-        insert_frame(
+        // pre-cluster line would visibly lack the thread counts. Linking is ownership-only,
+        // so each frame is assigned to its session before the backfill extracts it.
+        let first_session = insert_session(store.as_ref(), 0, Some(1_000_000)).await;
+        let second_session = insert_session(store.as_ref(), 2_000_000, Some(3_000_000)).await;
+        let first_frame = insert_frame(
             store.as_ref(),
             100_000,
             "https://github.com/acme/widgets/pull/42",
         )
         .await;
-        insert_frame(
+        let second_frame = insert_frame(
             store.as_ref(),
             2_100_000,
             "https://github.com/acme/widgets/pull/42",
         )
         .await;
+        assert_eq!(
+            store
+                .assign_frames_session(&[first_frame], Some(first_session))
+                .await
+                .expect("assign first frame"),
+            1
+        );
+        assert_eq!(
+            store
+                .assign_frames_session(&[second_frame], Some(second_session))
+                .await
+                .expect("assign second frame"),
+            1
+        );
 
         let first_capture = new_capture();
         let first = {
