@@ -305,14 +305,222 @@ verification. Neither edited anything. Findings and resolutions:
 7. **Model independence: PASS.** Kernel tests prove a missing or absent answer provider leaves the
    graph unchanged and that the normalization job no-ops without summaries or with a malformed
    answer.
-8. **Records: PASS.** This section, `06` #37-#39, `07` (P5 section), `08`, and `CHANGELOG.md`.
+8. **Records: PASS.** This section, `06` #37-#42, `07` (2026-11-05 section), `08`, and
+   `CHANGELOG.md`.
+
+#### Acceptance evidence (raw)
+
+The evidence below was re-collected on the final post-audit tree (same committed fixture, seed
+`6696384177732976644`, model-free fixture server). The dev-only runner is
+`cargo run -q -p evalfixture --bin ssv2c-evalfixture -- graph --db <fixture copy>`; the harness ran
+`harness eval --db <graph-populated copy> --api http://127.0.0.1:43210 --seed 6696384177732976644
+--pairs 300 --out <temp>`. `/v1/ask` answers 503 without an answer model, so the report's
+retrieval/answer metrics cover only the first turns; the entity check is database-only and ran over
+the full 176-reference sample.
+
+````text
+=== graph pass 1
+2026-11-05T10:40:53.382678Z  INFO kernel::graph_cluster: graph backfill complete entities=243 entity_aliases=11 session_entities=1385 threads=1 thread_sessions=217
+graph backfill returned counts: entities=243 entity_aliases=11 session_entities=1385 threads=1 thread_sessions=217
+graph backfill elapsed: 9.9s
+exit=0
+
+=== graph pass 2
+2026-11-05T10:40:53.478053Z  INFO kernel::graph_cluster: graph backfill complete entities=243 entity_aliases=11 session_entities=1385 threads=1 thread_sessions=217
+graph backfill returned counts: entities=243 entity_aliases=11 session_entities=1385 threads=1 thread_sessions=217
+graph backfill elapsed: 0.0s
+exit=0
+
+=== serve (model-free)
+ssv2c-evalfixture: serving C:\Users\nicol\AppData\Local\Temp\p5-final-eval\screensearch.db at http://127.0.0.1:43210 (embeddings: off (FTS-only, the product's own degradation), answer sidecar: off (--no-answer, /v1/ask answers 503))
+
+=== harness eval --db <graph-populated copy> --api http://127.0.0.1:43210 --seed 6696384177732976644 --pairs 300 --out <temp>
+## Entity check (independent reference extractor vs. the work graph)
+
+- Work-graph surface: present (243 entities, 11 aliases)
+- Reference entities sampled from the discovery frames: 176 of 176
+- Recovery: 90.3% (159/176)
+- Invention: 0 invented of 243 checked
+
+Report identity lines:
+- Run id: `20261105-114056`
+- Seed: `6696384177732976644` (`--seed 6696384177732976644` reproduces this exact pair set against this database)
+- Database: `C:\Users\nicol\AppData\Local\Temp\p5-final-eval\screensearch.db` (opened read-only: `SQLITE_OPEN_READ_ONLY` + `PRAGMA query_only`)
+- Schema version: 14
+- Pairs requested: 300 · generated: 300
+- Frames: 1260 scanned for reference discovery (of 1260 total) · 1260 in the exact reference pass
+- Sessions: 218
+
+=== cargo test -p harness
+test result: ok. 146 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.34s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.30s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.19s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+````
 
 ### Verification (raw)
 
 Run in this order in `C:\Users\nicol\Documents\GitHub\ss-p5` (UI first: `src-tauri` embeds
 `ui/dist`). Commands and exit codes verbatim; the raw output of each commands follows.
 
-VERIFICATION_RAW_PLACEHOLDER
+Rows below are the raw per-command output with exit codes, collected on the committed tree
+(`e4740b6`) in `C:\Users\nicol\Documents\GitHub\ss-p5`. Per-test lines are trimmed to result
+lines only. The machine has a warm shared cargo target directory (`CARGO_TARGET_DIR`) and the
+stage-mcp step runs against the worktree-local target so `tauri-build` resolves the staged
+`externalBin`; neither changes a command's semantics or result. Node was 26.12.1, the documented
+CI Node is 22; `ui/package-lock.json` is unchanged, and the UI gates ran on the same scripts CI
+runs.
+
+````text
+=== cd ui && npm ci
+added 347 packages, and audited 348 packages in 7s
+...
+npm warn install-scripts
+npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+exit=0
+
+=== cd ui && npm run lint
+npm notice run screensearch-ui@0.4.2 lint
+npm notice run eslint .
+exit=0
+
+=== cd ui && npm run build
+npm notice run screensearch-ui@0.4.2 build
+...
+dist/assets/CitationTile-DFhMdEJO.js                157.84 kB │ gzip: 47.99 kB
+✓ built in 2.21s
+exit=0
+
+=== cd .. && node scripts/stage-mcp.mjs
+[stage-mcp] building screensearch-mcp (release)...
+    Finished `release` profile [optimized] target(s) in 0.30s
+[stage-mcp] up to date: C:\Users\nicol\Documents\GitHub\ss-p5\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
+exit=0
+
+=== cargo fmt --all -- --check
+exit=0
+
+=== cargo clippy --workspace --all-targets -- -D warnings
+    Checking traits v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p5\crates\traits)
+...
+    Checking evalfixture v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p5\crates\evalfixture)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 21.28s
+exit=0
+
+=== cargo build --workspace
+   Compiling tokio v1.52.3
+...
+   Compiling mcp v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p5\crates\mcp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 00s
+exit=0
+
+=== cargo test --workspace
+... (81 test targets; per-target lines trimmed)
+1386 passed, 0 failed, 16 ignored across 81 targets
+exit=0
+
+=== git diff --exit-code -- ui/src/bindings
+exit=0
+
+=== cargo test -p graph
+running 58 tests
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+
+=== cargo test -p store graph
+running 15 tests
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 80 filtered out; finished in 0.06s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 65 filtered out; finished in 0.00s
+exit=0
+
+=== cargo test -p kernel graph
+running 35 tests
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 126 filtered out; finished in 0.14s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+exit=0
+
+=== cargo tree -p graph --depth 1
+graph v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p5\crates\graph)
+├── anyhow v1.0.102
+└── traits v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p5\crates\traits)
+exit=0
+
+=== cargo test -p harness
+running 146 tests
+test result: ok. 146 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.31s
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.71s
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+
+=== cargo test -p evalfixture
+running 15 tests
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.60s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+
+````
+
+Totals from the log: every command above exited 0; `cargo test --workspace` ran 81 test targets
+with **1386 passed, 0 failed, 16 ignored** (the 16 ignored are the pre-existing environment-gated
+tests); `git diff --exit-code -- ui/src/bindings` printed nothing; `cargo tree -p graph --depth 1`
+lists only `graph`, `anyhow` and `traits` (no store/kernel/sessions/rusqlite/sqlite entry).
+`cargo test -p graph` 58 passed, `cargo test -p store graph` 15 passed, `cargo test -p kernel
+graph` 35 passed, `cargo test -p harness` 172 passed across its 9 targets, `cargo test -p
+evalfixture` 20 passed across its 5 targets.
+
 
 ## 2026-11-04: 0.4.5 P4 baseline, P5/P6 thresholds frozen on the committed fixture, verified and merged
 
