@@ -95,7 +95,7 @@
   `08` and `CHANGELOG.md` get the fix entry; `CLAUDE.md` gets the maintainer-only merge rule.
 - **Verification (raw).** Full kickoff list re-run on this branch; raw output pasted in
   "Review-fix verification (raw)" below.
-- **PR.** [P5FIX_PR_PLACEHOLDER](https://github.com/nicolasestrem/screensearch/pull/000), left **open** for maintainer review. The agent does not merge.
+- **PR.** [#159](https://github.com/nicolasestrem/screensearch/pull/159), left **open** for maintainer review. The agent does not merge.
 
 ### Review-fix verification (raw)
 

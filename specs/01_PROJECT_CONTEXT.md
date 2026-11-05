@@ -163,7 +163,8 @@ for self-contained contracts and source-inspected inventory.
 
 - **P5 review-fix pass (2026-11-05):** the merged P5 work graph (`722f29e`, PR #157) still had one
   P1 and three P2 automated-review findings unresolved at merge time. The fixes are on
-  `fix/p5-157-review-findings` (P5FIX_PR_PLACEHOLDER, open, not merged): per-session link
+  `fix/p5-157-review-findings` ([#159](https://github.com/nicolasestrem/screensearch/pull/159),
+  open, not merged): per-session link
   reconciliation after session ownership changes, ownership-only linking, a sessions-history
   ordering gate, and the override-model corrections (rename membership, merge retention,
   stale-session filtering). No schema, settings, job-kind, command or UI change. The repository now

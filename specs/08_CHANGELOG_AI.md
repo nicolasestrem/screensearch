@@ -37,7 +37,7 @@
 - **Tests:** graph crate 65, store graph 22, kernel graph 47 (plus full-crate regressions), harness
   172, evalfixture 20; new regression tests reproduce each review finding and the restored exchange
   refresh.
-- **PR:** [P5FIX_PR_PLACEHOLDER](https://github.com/nicolasestrem/screensearch/pull/000), left **open** for maintainer review; the agent does not merge.
+- **PR:** [#159](https://github.com/nicolasestrem/screensearch/pull/159), left **open** for maintainer review; the agent does not merge.
 
 ## 2026-11-05: 0.4.5 P5 work graph engine implemented and measured on the fixture
 
