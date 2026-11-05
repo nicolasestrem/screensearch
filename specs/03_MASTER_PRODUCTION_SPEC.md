@@ -1504,6 +1504,13 @@ A hit links to the session whose interval contains it: the hit's timestamp falls
 **maximum** of the contributing hits' confidences, so a session never renders more certain than its
 best evidence.
 
+> **Amendment (P5 review fix, `06` #41 revised).** Production linking is **ownership-only**: a hit
+> links to `frames.session_id` when that owner row exists, and an unowned frame contributes
+> entities but no link. This section's interval rule survives as the documented
+> `Store::graph_session_at` primitive and its tests; it is not a linking fallback. `frames.session_id`
+> is authoritative (`03 §7e`).
+
+
 ### 7h.4 Thread clustering rule
 
 Sessions cluster into a `threads` row when they share **at least one** entity with

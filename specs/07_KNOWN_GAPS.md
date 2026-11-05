@@ -1,13 +1,102 @@
 # 07 — Known Gaps
 
+## 2026-11-05: P5 review-fix pass on merged #157 (owner: maintainer for the merge review; agent for code)
+
+**Governance incident.** The agent merged PR #157 (`722f29e`) without the maintainer's explicit
+approval, relying on a stale, untracked prompt override that claimed D18 was waived. The maintainer
+confirmed this is a serious breach. The rule is now permanent in `CLAUDE.md` (Hard rules): the agent
+never merges a pull request, never pushes to `main`, and never treats a prompt/kickoff override or
+green CI as merge authorization; work stops at an open PR. This review-fix PR was left open.
+
+**Review findings fixed on `fix/p5-157-review-findings`** (GitHub's automated review on #157: 1 P1 +
+3 P2, all previously unresolved): session-ownership link reconciliation (P1), rename-only override
+freezing membership, split-then-merge being undone, and a deleted session in a split payload
+wedging the cluster pass. Two extra defects were found by the Lead's own review: an accidentally
+dropped incremental AI exchange refresh (restored, with a regression test) and managed threads
+carrying deleted member sessions (filtered; the plan-level invariant is now tested). Details and the
+raw verification are in `05`.
+
+Residual limits and decisions of the fix that stay open:
+
+- **Reconciliation runs only when graph extraction is drained.** That prevents racing extraction
+  writes and keeps `hit_count` exact, but during a long continuous capture the repair of a
+  changed session waits for a quiet moment. This is the idle-based reading of `03 §7h.7`; it is not
+  a capture-path stall. Owner: P8/P9 if a user-visible thread needs fresher links.
+- **The startup sweep covers unfrozen sessions only.** It heals the mutable tail of a graph
+  populated by the pre-fix build. Frozen history from that build has no per-frame evidence ledger,
+  so a partial gap there is not detectable and is not self-healed; a full re-extraction is the only
+  repair. New historical rows cannot develop the gap because the sessions-history gate orders
+  extraction after the one-shot historical sessions pass. A live session can still close with a
+  missed link if the process stops before a drained idle moment repairs it and the session freezes
+  before the next launch (the dirty set is process-local). No migration marker was added (no schema
+  changes, 0.4.5 D2).
+- **Dirty-set overflow.** The process-local dirty set is capped at 4096; on overflow it is cleared,
+  the overflow sentinel requests a fresh startup-sweep snapshot, and a debug line is logged. That
+  recovers every unfrozen session (not the frozen residual above); it is not a periodic sweep.
+  A permanently failing dirty session no longer starves the sweep: the dirty batch and the sweep
+  each advance up to 16 sessions per drained tick.
+- **A per-session rebuild is unbounded.** `rebuild_session` reads every frame the session owns and
+  re-extracts it in one call; the batch bound counts sessions, not frames. A single very long
+  session (a multi-hour AI/focus tail) therefore makes one drained tick heavy in memory and wall
+  time. It still cannot run on the capture path and fails/retries safely; a per-session frame bound
+  or chunking is a later optimization (owner: P8/P9 if a real profile shows it).
+- **Rebuilt aliases use the aggregate confidence.** The kernel rebuild unions each entity's aliases
+  and the store writes them with the aggregate max confidence, so an alias first seen in a 0.60
+  rule can be persisted at 0.95 after a rebuild. The incremental path keeps per-hit confidence.
+  Aliases are display/audit data (clustering and ordering do not read them); a future pass can
+  carry per-alias confidence through `GraphSessionLinkAggregate` if that matters.
+- **A rename title can be lost if the thread's `cluster_key` changes.** Rename resolves its stored
+  thread id to the current `cluster_key`; if clustering produces a different key for that thread
+  (seed-set change or collision disambiguation), the old thread row is deleted and the rename row
+  cascades away (`thread_overrides.thread_id ... ON DELETE CASCADE`). This is inherent to the
+  "rename sets the title only" contract (no membership pinning), and the trade-off for un-freezing
+  renamed threads. The store has a documenting test for the cascade
+  (`deleting_a_thread_cascades_its_rename_override`), and `ThreadPlan::delete_thread_ids` docs now
+  spell out the residual instead of calling every delete "safe".
+- **Pre-fix override state is not healed on upgrade.** A database written by the merged build can
+  contain the old `(target, target)` self-merge marker and a split-then-merge that was undone. The
+  fixed planner skips the marker as a defended no-op and replays the earlier split, so the fold is
+  restored, but it does not migrate old rows or attempt to re-fold from the merge payload. No
+  migration is in scope (0.4.5 D2 keeps the baseline schema; there is no populated-DB migration
+  chain), and the graph was not run over a real profile on this machine. A maintainer who finds
+  such state in a real build can re-apply the merge through the normal override action.
+- **Audit residue fixed in this pass.** The independent audits of the fix found two P1 defects that
+  were corrected before the PR: new kernel/store code logged opaque session ids in warning/error
+  text (removed; only the batch retry is logged), and a cluster job could record its success over
+  an invalidation performed by a concurrent repair, leaving repaired links unplanned on an idle
+  graph (`ClusterProgress` now carries a generation; a pass records only if no invalidation
+  happened since it snapshotted the generation). They also found the producer-only history gate
+  could be bypassed by stale pending jobs, so the worker pool now holds a graph claim gate closed
+  until the sessions marker is complete. The remaining P2 items are the residual limits listed
+  above and the test gaps noted with them (a rename-after-merge replan test, a take-out-then-re-add
+  test and an end-to-end sessions-pass-to-cluster test are not present; the cascade is documented by
+  a store test instead).
+- **Emptied merge and split source rows remain in `threads`.** They are retained because
+  `thread_overrides.thread_id` is `ON DELETE CASCADE` and because replay order is the durability
+  mechanism. They carry `session_count = 0`; P9 must filter them from the Work screen (a store/API
+  read-side decision, not a schema change).
+- **A reconcile-triggered cluster pass can log the completion evidence line again** (the cluster job
+  owns the line and logs whenever it completes a drained pass). The line's counts are then the
+  post-reconcile post-cluster counts; it is informational and idempotent, not an error. The
+  acceptance evidence in `05` was collected on a first/second-pass basis and is unchanged.
+- **`Store::graph_session_at` is now an unused-by-linking interval primitive.** It is retained on
+  the contract as the documented read of `03 §7h.3` and for its tests; no production path calls it.
+  A later contract cleanup could remove it, but that is a deliberate API change, not a silent one.
+- **CodeQL cleartext-logging class.** New kernel code does not interpolate session ids into log or
+  panic text (the merged PR's only CodeQL finding was that class). Future graph/insight code should
+  log counts, kinds or frame ids, never opaque session/thread ids.
+
 ## 2026-11-05: P5 work graph engine: fixture evidence and recorded decisions (owner: maintainer where noted)
 
 P5 is executed on `feat/0.4.5-p5-work-graph` in the `ss-p5` worktree. The maintainer's 2026-11-04
-overrides are authoritative for this run and are recorded here because they contradict the kickoff:
+overrides were recorded here for that run; **the D18 waiver below is revoked** (see the review-fix
+section above and the governance rule in `CLAUDE.md`). Everything in this section is historical.
 
-- **D18 is waived for this phase.** The agent pushes the branch, opens the PR and squash-merges it
-  once CI is green. Every kickoff "Maintainer run" section, gate, soak period, debug window and
-  intermediate tag (`v0.4.3`, `v0.4.4`) is ignored, and Gate A/B/C are not stop points.
+- **D18 waiver: revoked.** It said the agent pushes, opens the PR and squash-merges once CI is
+  green. The agent did merge #157 without the maintainer's explicit approval, which the maintainer
+  confirmed as a serious governance breach; the waiver no longer exists and the permanent rule is
+  that agents never merge PRs. The run's other overrides (fixture as acceptance baseline, dev-only
+  evidence runner, no real profile access) remain historical context for the P5 entry above.
 - **The P5 acceptance number is a fixture reading, not real history.** There is no ScreenSearch
   profile and no real database on this machine, and the run rules forbid opening or copying one.
   The graph was populated over the committed P4 fixture (seed `0x5cee55ee41520004`, 1260 frames,

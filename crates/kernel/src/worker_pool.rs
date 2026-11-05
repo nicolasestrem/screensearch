@@ -126,6 +126,13 @@ pub(crate) struct Shared {
     /// kinds are model-free (extraction, linking, clustering, backfill) except the optional
     /// normalization pass, so the lane works with no inference provider attached.
     pub graph_enabled: Arc<AtomicBool>,
+    /// Shared ordering gate for the four work-graph job kinds (`03 §7h.6`, `06` #43): `true`
+    /// only once the sessions historical pass has reached its target. Pending graph jobs left by
+    /// a previous process must not be claimed before that, or the first launch after an upgrade
+    /// could extract historical frames before their sessions exist (the P1 review finding).
+    /// The producer sets it every tick; jobs already claimed are still bounded by the job body's
+    /// own writes and retry safely.
+    pub graph_ready: Arc<AtomicBool>,
     /// The answer provider, read live by the optional `graph_normalize` job (`03 §7h.2`).
     pub answer: AnswerSlot,
     /// Kernel-local cluster success marker, written by a successful `graph_cluster` job and
@@ -260,8 +267,13 @@ fn claim_kinds(shared: &Shared, level: u8, allow_embed_text: bool) -> ([JobKind;
         len += 1;
     }
     // The work graph is producer-driven and degrades to "the graph is behind" (`03 §7h.7`):
-    // no claim at throttle level >= 1, no claim until the scheduler starts.
-    if shared.graph_enabled.load(Ordering::Relaxed) && level == 0 {
+    // no claim at throttle level >= 1, no claim until the scheduler starts, and no claim while
+    // the sessions historical pass has not reached its target (`06` #43) so a job left by a
+    // previous process cannot extract historical frames before their sessions exist.
+    if shared.graph_enabled.load(Ordering::Relaxed)
+        && shared.graph_ready.load(Ordering::Relaxed)
+        && level == 0
+    {
         for kind in [
             JobKind::GraphExtract,
             JobKind::GraphNormalize,
@@ -617,6 +629,7 @@ mod tests {
             embed_text_floor: Arc::new(AtomicUsize::new(1)),
             active_embed_text: Arc::new(AtomicUsize::new(0)),
             graph_enabled: Arc::new(AtomicBool::new(false)),
+            graph_ready: Arc::new(AtomicBool::new(true)),
             answer: Arc::new(RwLock::new(None)),
             cluster_progress: Arc::new(crate::graph_cluster::ClusterProgress::new()),
         }
@@ -673,6 +686,14 @@ mod tests {
             ],
             "the four graph kinds are claimable with no inference provider attached"
         );
+
+        shared.graph_ready.store(false, Ordering::Relaxed);
+        let (_, len) = claim_kinds(&shared, 0, true);
+        assert_eq!(
+            len, 0,
+            "stale graph jobs wait for the sessions historical pass (06 #43)"
+        );
+        shared.graph_ready.store(true, Ordering::Relaxed);
 
         let (_, len) = claim_kinds(&shared, 1, true);
         assert_eq!(len, 0, "the enrichment throttle pauses the graph lane");

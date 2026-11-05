@@ -1,5 +1,44 @@
 # 08 — AI Changelog
 
+## 2026-11-05: P5 review fixes for the merged #157 code (open PR, not merged by the agent)
+
+- **Change:** fixed the one P1 and three P2 automated-review findings that were still unresolved
+  when PR #157 merged. P1: new `crates/kernel/src/graph_reconcile.rs` rebuilds a session's graph
+  links exactly after any ownership change (re-extracts the session's owned frames, aggregates
+  absolute hit counts/confidence/seen windows and calls the new additive
+  `Store::graph_replace_session_links`, which replaces only that session's links in one transaction
+  and reports "unchanged" without writes when the links are already exact); the sessions scheduler
+  marks inserted/updated/assigned/unassigned sessions dirty, the graph scheduler reconciles bounded
+  batches only once extraction is drained and never on the capture path, a changed rebuild
+  invalidates `ClusterProgress` so threads re-plan, and a one-time sweep rebuilds unfrozen sessions.
+  A sessions-history gate (`sessions.backfill_done_until` complete) prevents extraction from running
+  before the one-shot historical sessions pass exists. Linking is now ownership-only everywhere:
+  the `03 §7h.3` interval rule remains `Store::graph_session_at` but no production path links by it
+  (`06` #41 revised). P2: rename-only overrides no longer make a thread membership-managed; merge
+  durability is retention of the emptied source row plus replay order (no override row is ever
+  rewritten; `06` #37 revised); split payloads and managed-thread membership drop session ids whose
+  rows were deleted instead of failing the plan's foreign key. Extra: restored the incremental AI
+  exchange refresh that the P1 edit had accidentally dropped (regression test), shared the
+  identity-preserving entity upsert between both write paths, persisted alias-only differences on
+  an otherwise unchanged rebuild, and kept new panic/log text free of session ids.
+- **Why:** the merged P5 work graph treated links as final after the first extraction. Sessions are
+  created, re-created, moved and deleted continuously; the database cascades removed links, and
+  frames extracted before their session existed never gained one. The external review flagged this
+  as P1; the three P2 findings were override-model defects with concrete reproductions. The fix
+  needs no schema, setting, job-kind, command or event change (0.4.5 D2/D6): the rebuild and the
+  dirty signals are kernel-local, and one additive Store contract carries the exact values.
+- **Governance:** the agent had merged #157 without the maintainer's approval; the never-merge rule
+  is now permanent in `CLAUDE.md`, and this PR is left open for the maintainer. The incident is
+  recorded in `05`/`07`.
+- **Evidence:** the committed P4 fixture still reports identical graph counts
+  (`entities=243 entity_aliases=11 session_entities=1385 threads=1 thread_sessions=217`, identical
+  second pass) and **90.3% (159/176)** entity recovery, 0 invention; `cargo test -p harness` green
+  (172 tests); full kickoff verification list green (raw output in `05`).
+- **Tests:** graph crate 65, store graph 22, kernel graph 47 (plus full-crate regressions), harness
+  172, evalfixture 20; new regression tests reproduce each review finding and the restored exchange
+  refresh.
+- **PR:** [P5FIX_PR_PLACEHOLDER](https://github.com/nicolasestrem/screensearch/pull/000), left **open** for maintainer review; the agent does not merge.
+
 ## 2026-11-05: 0.4.5 P5 work graph engine implemented and measured on the fixture
 
 - **Change:** added the 0.4.5 work-graph engine (`03 §7h`, `docs/kickoffs/P5.md`). New pure crate

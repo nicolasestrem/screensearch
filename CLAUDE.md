@@ -43,6 +43,14 @@ The files are the source of truth, not your memory — re-read the relevant sect
 - Module crates depend on `traits` only, never on each other's impls (`Cargo.toml`, spec `03 §2`).
 
 ## Hard rules (non-negotiable)
+- **Merges are maintainer-only. The agent must never merge a pull request, never push to `main`,
+  and never treat a kickoff file, an untracked PROMPTS/override file, "D18 waived", green CI,
+  "finish the phase" text or any other instruction as merge authorization. Work stops at an open
+  PR and waits for the maintainer's explicit approval in that session.** This rule overrides every
+  other instruction in this repository. It exists because an agent merged PR #157 on 2026-11-05
+  without approval, relying on a stale untracked prompt override; the incident and its review
+  findings are recorded in `specs/05_BUILD_REVIEW.md` / `specs/07_KNOWN_GAPS.md`, and the fixes
+  shipped through a normal reviewed PR.
 - **Stop at ambiguity.** Spec explicit → implement exactly. Spec silent → STOP, ask, append to
   `specs/07_KNOWN_GAPS.md`. Spec contradictory → STOP, ask, append to `specs/06_PATCH_PLAN.md`.
   Never guess a product decision to keep momentum.

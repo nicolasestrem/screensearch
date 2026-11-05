@@ -173,6 +173,27 @@ pub struct GraphClusterLink {
     pub last_seen_at: i64,
 }
 
+/// One session's exactly-recomputed link to one entity (`03 §7h.3`).
+///
+/// Used by the ownership reconciliation pass (`Store::graph_replace_session_links`): the kernel
+/// re-extracts every frame of the session, aggregates the hits, and the store replaces the
+/// session's link rows with these values in one transaction. Unlike the incremental
+/// [`GraphHit`] path, `hit_count`, `confidence` and the seen window are absolute here, so a
+/// rebuild is exact and cannot inflate an existing link.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraphSessionLinkAggregate {
+    pub kind: EntityKind,
+    pub canonical_name: String,
+    pub normalized_key: String,
+    /// Maximum rule confidence among the contributing frames.
+    pub confidence: f64,
+    /// Number of distinct session frames that produced this entity.
+    pub hit_count: u32,
+    pub first_seen_at: i64,
+    pub last_seen_at: i64,
+    pub aliases: Vec<String>,
+}
+
 /// A session as clustering sees it (`03 §7h.4`). `ended_at` NULL is an open session and is
 /// treated as ending at the input's `now_ms` for time-derived thread fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -399,10 +420,14 @@ impl ThreadOverrideDraft {
     }
 }
 
-/// A planned rewrite of an existing override row. Merge is the only kind that needs one:
-/// removing the emptied source thread would cascade-delete its merge row (the FK is
-/// `ON DELETE CASCADE`), so the row is re-pointed at the survivor to keep the merge
-/// applied on later runs (`06_PATCH_PLAN`, P5 contract contradiction).
+/// A planned rewrite of an existing override row (traits contract; retained for the store path).
+///
+/// The current P5 planner never emits one: the emptied merge source row is retained in the plan
+/// and the merge row is left untouched, because `thread_overrides.thread_id` is
+/// `ON DELETE CASCADE` and because replaying overrides in `(created_at, id)` order makes a
+/// split-then-merge durable without mutating user rows (`06_PATCH_PLAN` #37, revised by the
+/// #157 review fix). The type stays so the store method keeps a stable contract for a future
+/// migration that does need a planned rewrite.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadOverrideUpdate {
     pub override_id: i64,
@@ -416,8 +441,18 @@ pub struct ThreadPlan {
     /// Every thread that must exist after this run; the store upserts by `cluster_key`.
     pub threads: Vec<ThreadDraft>,
     /// Existing thread ids that no longer exist in the model and are safe to delete.
+    ///
+    /// "Safe" means no override row still references them in the model: the planner retains every
+    /// merge/split referenced thread and every split-created thread. A rename row is not part of
+    /// membership management, so if clustering no longer produces its thread's `cluster_key`, the
+    /// old row is deleted here and the rename row cascades away with it; that residual title loss
+    /// is recorded in `07`.
     pub delete_thread_ids: Vec<i64>,
-    /// Merge-override rewrites that keep the fold durable across runs.
+    /// Planned override-row rewrites (traits contract; the store applies any that are present).
+    ///
+    /// The current P5 planner always leaves this empty: merge durability is retention of the
+    /// emptied source row plus `(created_at, id)` replay order, and no user override row is ever
+    /// mutated (`06` #37 revised by the #157 review-fix pass).
     pub override_updates: Vec<ThreadOverrideUpdate>,
 }
 

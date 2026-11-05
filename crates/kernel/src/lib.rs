@@ -33,6 +33,7 @@ pub mod graph_backfill;
 mod graph_cluster;
 mod graph_extract;
 mod graph_normalize;
+mod graph_reconcile;
 mod graph_scheduler;
 pub mod memory_schedule;
 pub mod report_service;
@@ -492,11 +493,13 @@ mod sessions_scheduler_contract_tests {
                 .unwrap();
         }
         let engine = sessions::SessionEngine::new().unwrap();
+        let dirty = crate::graph_reconcile::new_dirty_sessions();
         crate::sessions_scheduler::run_incremental_pass(
             &store,
             &engine,
             200_000,
             &traits::Settings::default(),
+            &dirty,
         )
         .await
         .unwrap();
@@ -509,6 +512,7 @@ mod sessions_scheduler_contract_tests {
             &engine,
             250_000,
             &traits::Settings::default(),
+            &dirty,
         )
         .await
         .unwrap();
@@ -548,6 +552,7 @@ mod sessions_scheduler_contract_tests {
             &traits::Settings::default(),
             false,
             &events,
+            &crate::graph_reconcile::new_dirty_sessions(),
         )
         .await;
 
@@ -592,6 +597,7 @@ mod sessions_scheduler_contract_tests {
             &traits::Settings::default(),
             false,
             &events,
+            &crate::graph_reconcile::new_dirty_sessions(),
         )
         .await;
         assert!(matches!(
@@ -606,6 +612,7 @@ mod sessions_scheduler_contract_tests {
             &traits::Settings::default(),
             false,
             &events,
+            &crate::graph_reconcile::new_dirty_sessions(),
         )
         .await;
 
@@ -719,9 +726,17 @@ pub struct Kernel {
     /// durable graph jobs on idle/on-demand and never touches the capture path. `None`
     /// until [`Kernel::attach_segmenter`] starts it.
     graph_scheduler: Mutex<Option<graph_scheduler::SchedulerHandle>>,
+    /// Sessions whose graph links may be missing or stale after a session-ownership change.
+    /// The sessions scheduler writes it, the graph scheduler drains it in bounded batches
+    /// (`crate::graph_reconcile`); process-local memory, never a setting or table.
+    dirty_sessions: graph_reconcile::DirtySessions,
     /// Shared gate for the four graph job kinds: set when the graph scheduler starts, so
     /// the worker pool claims graph jobs only while a producer exists (`03 §7h.7`).
     graph_enabled: Arc<AtomicBool>,
+    /// Second claim gate: cleared until the sessions historical pass reports complete, so a
+    /// stale graph job from a previous process cannot extract frames before their sessions
+    /// exist (`06` #43). The graph scheduler flips it once per tick.
+    graph_ready: Arc<AtomicBool>,
     /// Kernel-local cluster success marker, shared between the producer loop and the
     /// `graph_cluster` job: a successful pass records the extraction state it covered, and
     /// the scheduler only re-enqueues cluster when that marker is stale. A dead-lettered
@@ -837,7 +852,9 @@ impl Kernel {
             session_segmenter: RwLock::new(None),
             sessions_scheduler: Mutex::new(None),
             graph_scheduler: Mutex::new(None),
+            dirty_sessions: graph_reconcile::new_dirty_sessions(),
             graph_enabled: Arc::new(AtomicBool::new(false)),
+            graph_ready: Arc::new(AtomicBool::new(false)),
             graph_cluster_progress: Arc::new(graph_cluster::ClusterProgress::new()),
             graph_idle: Arc::new(std::sync::RwLock::new(None)),
             pressure_probe: RwLock::new(None),
@@ -1256,6 +1273,7 @@ impl Kernel {
             },
             active_embed_text: Arc::new(AtomicUsize::new(0)),
             graph_enabled: self.graph_enabled.clone(),
+            graph_ready: self.graph_ready.clone(),
             answer: self.answer.clone(),
             cluster_progress: self.graph_cluster_progress.clone(),
         });
@@ -1340,6 +1358,7 @@ impl Kernel {
                 segmenter,
                 self.throttle_level.clone(),
                 self.events.clone(),
+                self.dirty_sessions.clone(),
             ));
             tracing::info!("sessions scheduler started");
         }
@@ -1352,11 +1371,15 @@ impl Kernel {
         if graph_scheduler.is_none() {
             *graph_scheduler = Some(graph_scheduler::spawn(
                 self.store.clone(),
-                self.graph_enabled.clone(),
+                graph_scheduler::GraphClaimGates {
+                    enabled: self.graph_enabled.clone(),
+                    ready: self.graph_ready.clone(),
+                },
                 self.throttle_level.clone(),
                 self.graph_idle.clone(),
                 self.answer.clone(),
                 self.graph_cluster_progress.clone(),
+                self.dirty_sessions.clone(),
             ));
             tracing::info!("graph scheduler started");
         }
