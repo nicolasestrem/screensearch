@@ -494,6 +494,17 @@ the field published its value and the next edit composed from it. A failure is n
 while its commit still owns the field; dropping the check fails "an older write failing cannot publish
 over a newer edit". Fixed on a follow-up branch off `main` with the suite at 135/135.
 
+Round nine closed the review's remaining edges on that follow-up. Publication now keys on a per-field
+`lastIssued` token that outlives the pending entry, so the rule cannot depend on an entry a settlement
+removed. And the vision schedule gained the draft behaviour it was still missing: typing an interval
+and toggling the timer (no blur, no Enter) used to discard the number, and the toggle now carries it
+in the same patch — while an out-of-range draft cannot veto the toggle. Native proof:
+
+```
+field="45", store_interval=3600000        (typed, no Enter, no blur)
+toggled off → enabled=false interval=2700000   (one save carried the draft)
+```
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate

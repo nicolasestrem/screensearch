@@ -26,6 +26,9 @@ interface FailureEntry {
 }
 
 const entries = new Map<string, PendingEntry>();
+// The newest token issued for each field, kept after the pending entry retires: whether a
+// failure may be published cannot depend on an entry that a settlement already removed.
+const lastIssued = new Map<string, number>();
 // A failure belongs here for the same reason a pending value does: it can arrive after
 // the category unmounted, and losing it shows the old saved value with no error and no
 // Retry — the submitted edit disappears without explanation.
@@ -50,6 +53,7 @@ function notify(): void {
 /** Show `value` for this field, owned by commit `issued`. */
 export function setPendingField(field: string, value: unknown, issued: number): void {
   entries.set(field, { value, issued });
+  lastIssued.set(field, issued);
   notify();
 }
 
@@ -72,8 +76,7 @@ export function setPendingFailure(
   message: string,
   issued: number,
 ): void {
-  const pending = entries.get(field);
-  if (pending !== undefined && pending.issued !== issued) return;
+  if (lastIssued.get(field) !== issued) return;
   failures.set(field, { value, message, issued });
   notify();
 }

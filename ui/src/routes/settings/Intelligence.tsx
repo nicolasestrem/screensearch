@@ -2,7 +2,7 @@
 // sessions behave — the eight keys whose `Where` column names this category. Every
 // row autosaves; the vision schedule pairs two keys in one control and writes them
 // through `useSettingsPatch`, so one edit gets one toast and one undo for the pair.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { Settings } from "../../bindings/Settings";
 import { ScheduleControl } from "../../components/domain";
@@ -49,6 +49,14 @@ export function IntelligenceCategory() {
   // the schedule row's "nothing scheduled" status, so the rows never hide.
   const state = categoryFrameState(settings, stats.isError);
 
+  // A draft the saved value has caught up with (a reset, or an undo) must not keep
+  // masking it.
+  useEffect(() => {
+    setIntervalDraft((current) =>
+      current !== null && current.value === intervalMs ? null : current,
+    );
+  }, [intervalMs]);
+
   /**
    * `ScheduleControl`'s toggle is a discrete decision and saves at once; the interval
    * field only updates the draft. A cleared field reports 0, which stays visible (and
@@ -63,8 +71,25 @@ export function IntelligenceCategory() {
       });
       return;
     }
+    // The toggle saves at once, and carries any drafted interval with it: toggling
+    // before blurring must not discard the number the user just typed.
+    const drafted = intervalDraft;
+    const typed = drafted !== null && drafted.value !== intervalMs ? drafted : null;
+    if (typed !== null && !intervalInRange(typed.value)) {
+      // The interval is invalid on its own, so it must not veto the toggle: save the
+      // toggle, keep the number on screen with the reason.
+      setScheduleNote(rangeNote());
+      void commitSchedule(patch);
+      return;
+    }
     setIntervalDraft(null);
-    commitSchedule(patch);
+    const merged =
+      typed === null
+        ? patch
+        : { ...patch, enrich_vision_timer_interval_ms: typed.value };
+    void commitSchedule(merged).then((stored) => {
+      if (!stored && typed !== null) setIntervalDraft(typed);
+    });
   }
 
   /** Commit the drafted interval once the user is done with it. */
@@ -91,18 +116,24 @@ export function IntelligenceCategory() {
    * registry maximum through; the backend rejects both, so an interval outside the
    * range is explained inline instead of firing a write that cannot succeed.
    */
+  function intervalInRange(ms: number): boolean {
+    const range = intervalDef.range;
+    if (!range) return true;
+    return ms >= range.min && ms <= range.max;
+  }
+
+  function rangeNote(): string {
+    const range = intervalDef.range;
+    const low = range ? Math.ceil(range.min / MS_PER_MINUTE) : 0;
+    const high = range ? Math.floor(range.max / MS_PER_MINUTE) : 0;
+    return `${intervalDef.label} must be between ${low} and ${high} minutes. The interval was not saved.`;
+  }
+
   function commitSchedule(patch: Partial<Settings>): Promise<boolean> {
     const nextInterval = patch.enrich_vision_timer_interval_ms;
-    const range = intervalDef.range;
-    if (nextInterval !== undefined && range) {
-      if (nextInterval < range.min || nextInterval > range.max) {
-        const low = Math.ceil(range.min / MS_PER_MINUTE);
-        const high = Math.floor(range.max / MS_PER_MINUTE);
-        setScheduleNote(
-          `${intervalDef.label} must be between ${low} and ${high} minutes. The interval was not saved.`,
-        );
-        return Promise.resolve(false);
-      }
+    if (nextInterval !== undefined && !intervalInRange(nextInterval)) {
+      setScheduleNote(rangeNote());
+      return Promise.resolve(false);
     }
     setScheduleNote(null);
     // The toast names the key the edit actually touched; the undo behind it restores
