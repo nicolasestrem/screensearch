@@ -30,7 +30,11 @@ export function IntelligenceCategory() {
     "text.include_chrome_default",
   );
   const schedule = useSettingsPatch();
-  const [scheduleNote, setScheduleNote] = useState<string | null>(null);
+  // Only the range explanation lives here. It is deliberately separate from the save
+  // outcome: `useSetSettings` is optimistic, so a comparison against `intervalMs` cannot
+  // tell a persisted value from a pending one, and a toggle-only patch must not erase the
+  // reason the drafted interval was left out (review, PR #162).
+  const [rangeError, setRangeError] = useState<string | null>(null);
   // The interval is a draft until blur/Enter: `ScheduleControl` emits on every
   // keystroke, so committing directly made clearing the field throw the number back
   // and out-of-range entries vanish instead of staying correctable (review, PR #161).
@@ -61,10 +65,33 @@ export function IntelligenceCategory() {
         value: patch.enrich_vision_timer_interval_ms,
         issued: nextPendingToken(),
       });
+      if (intervalInRange(patch.enrich_vision_timer_interval_ms)) setRangeError(null);
       return;
     }
-    setIntervalDraft(null);
-    commitSchedule(patch);
+    // The toggle saves at once, and carries any drafted interval with it: toggling
+    // before blurring must not discard the number the user just typed.
+    const drafted = intervalDraft;
+    const typed = drafted !== null && drafted.value !== intervalMs ? drafted : null;
+    if (typed !== null && !intervalInRange(typed.value)) {
+      // The interval is invalid on its own, so it must not veto the toggle: save the
+      // toggle, keep the number on screen, and keep the reason it was left out.
+      setRangeError(rangeNote());
+      void commitSchedule(patch);
+      return;
+    }
+    const merged =
+      typed === null
+        ? patch
+        : { ...patch, enrich_vision_timer_interval_ms: typed.value };
+    void commitSchedule(merged).then((stored) => {
+      // Retire only the draft this save carried, and only once it is stored. Clearing it up
+      // front and restoring it on failure could resurrect a draft the user had since reset or
+      // replaced; leaving it until success means there is nothing to resurrect (review, PR #162).
+      if (!stored || typed === null) return;
+      setIntervalDraft((current) =>
+        current !== null && current.issued === typed.issued ? null : current,
+      );
+    });
   }
 
   /** Commit the drafted interval once the user is done with it. */
@@ -91,20 +118,28 @@ export function IntelligenceCategory() {
    * registry maximum through; the backend rejects both, so an interval outside the
    * range is explained inline instead of firing a write that cannot succeed.
    */
+  function intervalInRange(ms: number): boolean {
+    const range = intervalDef.range;
+    if (!range) return true;
+    return ms >= range.min && ms <= range.max;
+  }
+
+  function rangeNote(): string {
+    const range = intervalDef.range;
+    const low = range ? Math.ceil(range.min / MS_PER_MINUTE) : 0;
+    const high = range ? Math.floor(range.max / MS_PER_MINUTE) : 0;
+    return `${intervalDef.label} must be between ${low} and ${high} minutes. The interval was not saved.`;
+  }
+
   function commitSchedule(patch: Partial<Settings>): Promise<boolean> {
     const nextInterval = patch.enrich_vision_timer_interval_ms;
-    const range = intervalDef.range;
-    if (nextInterval !== undefined && range) {
-      if (nextInterval < range.min || nextInterval > range.max) {
-        const low = Math.ceil(range.min / MS_PER_MINUTE);
-        const high = Math.floor(range.max / MS_PER_MINUTE);
-        setScheduleNote(
-          `${intervalDef.label} must be between ${low} and ${high} minutes. The interval was not saved.`,
-        );
-        return Promise.resolve(false);
-      }
+    if (nextInterval !== undefined && !intervalInRange(nextInterval)) {
+      setRangeError(rangeNote());
+      return Promise.resolve(false);
     }
-    setScheduleNote(null);
+    // A patch that carries a valid interval supersedes the explanation; a toggle-only
+    // patch says nothing about the interval, so its note stays until the draft changes.
+    if (nextInterval !== undefined) setRangeError(null);
     // The toast names the key the edit actually touched; the undo behind it restores
     // every field the patch carried.
     return schedule.commitPatch(
@@ -154,12 +189,14 @@ export function IntelligenceCategory() {
         settingKey={TIMER_KEY}
         labelInControl
         changed={timerEnabled !== SETTINGS_DEFAULTS.enrich_vision_timer_enabled}
-        onReset={() =>
+        onReset={() => {
+          setIntervalDraft(null);
+          setRangeError(null);
           schedule.commitPatch(
             { enrich_vision_timer_enabled: SETTINGS_DEFAULTS.enrich_vision_timer_enabled },
             timerDef.label,
-          )
-        }
+          );
+        }}
         saving={schedule.saving}
         error={schedule.error}
         onRetry={schedule.retry}
@@ -177,7 +214,7 @@ export function IntelligenceCategory() {
                 commitIntervalDraft();
               } else if (event.key === "Escape") {
                 setIntervalDraft(null);
-                setScheduleNote(null);
+                setRangeError(null);
               }
             }}
           >
@@ -198,14 +235,19 @@ export function IntelligenceCategory() {
       <SettingRow
         settingKey={INTERVAL_KEY}
         changed={intervalMs !== SETTINGS_DEFAULTS.enrich_vision_timer_interval_ms}
-        onReset={() =>
+        onReset={() => {
+          // The reset is a deliberate discard of the drafted number, so the draft and its
+          // explanation retire with it — no effect watching the value, which cannot tell a
+          // persisted write from an optimistic one.
+          setIntervalDraft(null);
+          setRangeError(null);
           schedule.commitPatch(
             { enrich_vision_timer_interval_ms: SETTINGS_DEFAULTS.enrich_vision_timer_interval_ms },
             intervalDef.label,
-          )
-        }
+          );
+        }}
         saving={schedule.saving}
-        error={scheduleNote}
+        error={rangeError ?? schedule.error}
         status={
           timerEnabled
             ? "Set by the schedule above."

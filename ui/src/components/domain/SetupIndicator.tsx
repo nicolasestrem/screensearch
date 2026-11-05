@@ -2,7 +2,7 @@
 // §5) — a quiet StatusRail chip, present ONLY while an operation is active or
 // failed. Zero presence otherwise: the element does not exist, it is not "shown
 // as zero" (same discipline as the updater indicator). It summarizes the most
-// urgent state (failed > active) and links to Settings, where SetupDetails
+// urgent state (failed > active) and links to Settings · Models, where SetupDetails
 // lists each operation. No modal, no toast, no badge count.
 //
 // A11y: determinate progress is a `role="progressbar"` with values only when

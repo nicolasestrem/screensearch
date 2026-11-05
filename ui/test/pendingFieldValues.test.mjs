@@ -93,6 +93,7 @@ test("a failure that arrives after unmount is still there with its value", () =>
 
 test("a newer edit supersedes an older failure even though its token differs", () => {
   const first = nextPendingToken();
+  setPendingField(FIELD, ["A"], first);
   setPendingFailure(FIELD, ["A"], "refused", first);
   // A new edit carries a fresh token, so an ownership check would never clear this.
   const second = nextPendingToken();
@@ -101,4 +102,35 @@ test("a newer edit supersedes an older failure even though its token differs", (
   assert.notEqual(pendingFailure(FIELD), undefined, "the ownership clear is not the tool");
   supersedePendingFailure(FIELD);
   assert.equal(pendingFailure(FIELD), undefined);
+});
+
+test("an older write failing cannot publish over a newer edit", () => {
+  const first = nextPendingToken();
+  const second = nextPendingToken();
+  setPendingField(FIELD, ["A"], first);
+  setPendingField(FIELD, ["A", "B"], second);
+  // The older write fails while the newer one still owns the field: publishing its
+  // value would make the row show [A] and the next edit submit [A, C], dropping B.
+  setPendingFailure(FIELD, ["A"], "refused", first);
+  assert.equal(pendingFailure(FIELD), undefined);
+  assert.deepEqual(pendingFieldValue(FIELD), ["A", "B"]);
+  // The owner failing does publish, with the value to retry.
+  clearPendingField(FIELD, second);
+  setPendingFailure(FIELD, ["A", "B"], "refused", second);
+  assert.deepEqual(pendingFailure(FIELD)?.value, ["A", "B"]);
+  supersedePendingFailure(FIELD);
+});
+
+test("a stale failure is dropped even after the field's entry retired", () => {
+  const first = nextPendingToken();
+  const second = nextPendingToken();
+  setPendingField(FIELD, ["A"], first);
+  setPendingField(FIELD, ["A", "B"], second);
+  clearPendingField(FIELD, second);   // the newer save settled; no entry remains
+  setPendingFailure(FIELD, ["A"], "refused", first);
+  assert.equal(pendingFailure(FIELD), undefined, "only the newest token may publish");
+  // The newest token still may, which is how a retry gets its value back.
+  setPendingFailure(FIELD, ["A", "B"], "refused", second);
+  assert.deepEqual(pendingFailure(FIELD)?.value, ["A", "B"]);
+  supersedePendingFailure(FIELD);
 });

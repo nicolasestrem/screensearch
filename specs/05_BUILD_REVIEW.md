@@ -488,6 +488,42 @@ Patch-level errors (`useSettingsPatch`) stay local on purpose: a failed toggle o
 nothing, so leaving the category shows an unchanged row rather than a silently lost edit, and the
 control that failed is the row that reports it.
 
+**Round eight (`06` #87)** arrived after the merge, on the squashed commit: the *publication* of a
+failure was the one ownership step left unguarded, so an older write failing while a newer edit owned
+the field published its value and the next edit composed from it. A failure is now published only
+while its commit still owns the field; dropping the check fails "an older write failing cannot publish
+over a newer edit". Fixed on a follow-up branch off `main` with the suite at 135/135.
+
+Round nine closed the review's remaining edges on that follow-up. Publication now keys on a per-field
+`lastIssued` token that outlives the pending entry, so the rule cannot depend on an entry a settlement
+removed. And the vision schedule gained the draft behaviour it was still missing: typing an interval
+and toggling the timer (no blur, no Enter) used to discard the number, and the toggle now carries it
+in the same patch — while an out-of-range draft cannot veto the toggle. Native proof:
+
+```
+field="45", store_interval=3600000        (typed, no Enter, no blur)
+toggled off → enabled=false interval=2700000   (one save carried the draft)
+```
+
+The review of that follow-up found two more (`06` #90, #91), both in the code this pass introduced.
+The catch-up `useEffect` compared the draft against `intervalMs`, which `useSetSettings` updates
+optimistically — so a failed save could lose the draft while the error claimed it was kept; the effect
+is gone and a reset now retires the draft explicitly. And the range note was cancelled by the
+toggle-only patch's own note reset, so an out-of-range draft was silently omitted. The explanation is
+now its own state. Native fail-without/pass-with, same sequence on both builds (enable, type 5000,
+toggle off without Enter):
+
+```
+buggy build  → enabled=false | note=null
+fixed build  → enabled=false | note="Vision timer interval must be between 1 and 1440 minutes. The interval was not s…"
+```
+
+Round three of that PR (`06` #92) rejected my clear-then-restore shape: a restore on failure is a
+write into state the user may have replaced by then. The toggle now leaves the draft in place until
+the save resolves and retires it only on success, which removes the restore entirely rather than
+guarding it. Native: typed 45, toggled off → `enabled=false interval=2700000`; re-enabled → the field
+reads 45 from the store with no stale draft.
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate
