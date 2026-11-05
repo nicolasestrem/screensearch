@@ -1,7 +1,6 @@
 // Settings · Data (`UI_REFERENCE §4`, `03 §8`): what is stored, for how long, and how
 // it leaves the machine. Storage rows autosave like every other row; export and the
 // memory reports are actions rather than keys, so they sit in sections of their own.
-import { RetentionControl } from "../../components/domain";
 // The barrel does not export MemoryPanel; the deep import is the documented way to
 // reach it (see `components/domain/index.ts`).
 import { MemoryPanel } from "../../components/domain/MemoryPanel";
@@ -11,13 +10,11 @@ import { ExportRow } from "./ExportRow";
 import { formatBytes } from "./formatBytes";
 import { categoryFrameState, failureMessage } from "./frameState";
 import { NumberFieldRow } from "./NumberFieldRow";
-import { SettingRow, SettingSection } from "./SettingRow";
-import { useSettingField } from "./useSettingField";
+import { SettingSection } from "./SettingRow";
 
 export function DataCategory() {
   const settings = useSettings();
   const storage = useStorageStats();
-  const retention = useSettingField<"storage_retention_days">("storage.retention_days");
 
   // Four frame states come from the shared resolver; `empty` for this category is
   // the embedded report panel's own "nothing saved yet" copy, not a blank pane.
@@ -41,26 +38,25 @@ export function DataCategory() {
       }}
       partialNote="The storage footprint couldn’t be read, so the sizes below are missing. Every row still saves."
     >
-      <NumberFieldRow
+        {footprint ? (
+          <p className="min-w-0 text-t-xs text-fg-tertiary">{footprint}</p>
+        ) : null}
+        <NumberFieldRow
         settingKey="storage.max_width"
         zeroNote="0 — every capture keeps its native width; nothing is scaled."
       />
 
-      <SettingRow
+      {/*
+        Retention is a NumberFieldRow, not `RetentionControl`: that component calls
+        `onChange` on every keystroke, so a user replacing 30 with 365 would persist
+        a three-day window mid-typing, and the hourly retention sweep would delete
+        the screenshots it covers — irreversibly, before the edit is even finished
+        (P7 review, PR #161). The row keeps a draft, validates it and commits on
+        Enter or blur, which is the same contract as every other numeric setting.
+      */}
+      <NumberFieldRow
         settingKey="storage.retention_days"
-        labelInControl
-        changed={retention.changed}
-        onReset={retention.reset}
-        saving={retention.saving}
-        error={retention.error}
-        onRetry={retention.retry}
-        status={footprint}
-        control={
-          <RetentionControl
-            days={retention.value ?? retention.defaultValue}
-            onChange={retention.commit}
-          />
-        }
+        zeroNote="0 — screenshots are kept forever; only their text stays searchable."
       />
 
       <ExportRow />
