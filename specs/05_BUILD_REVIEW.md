@@ -17,6 +17,8 @@
   opens the PR and squash-merges once CI is green). The fixture below replaces the kickoff's
   "Maintainer run". No real database, profile, model file, token or secret was opened, copied or
   modified; the app was never run.
+- **PR.** [\#157](https://github.com/nicolasestrem/screensearch/pull/157), opened and squash-merged
+  by the agent under the maintainer's 2026-11-04 D18 waiver.
 - **Baseline of record.** P5 is measured with the committed P4 fixture: seed
   `0x5cee55ee41520004` (decimal `6696384177732976644`), regenerated with the committed
   `ssv2c-evalfixture gen` (1260 frames, 218 sessions, zero embeddings so no model download; the

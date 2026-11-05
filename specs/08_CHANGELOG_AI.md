@@ -34,7 +34,8 @@
   `graph backfill complete entities=243 entity_aliases=11 session_entities=1385 threads=1
   thread_sessions=217` with an identical second pass over the same database; determinism and
   override-precedence suites; full verification raw output in `05`.
-- **PR:** P5_PR_PLACEHOLDER
+- **PR:** [\#157](https://github.com/nicolasestrem/screensearch/pull/157), opened and squash-merged
+  by the agent under the maintainer's 2026-11-04 D18 waiver.
 
 ## 2026-11-04: 0.4.5 P4 baseline frozen on a committed fixture and merged
 
