@@ -20,6 +20,7 @@ import {
   setPendingFailure,
   setPendingField,
   subscribePendingField,
+  supersedePendingFailure,
 } from "./pendingFieldValues";
 import {
   begun,
@@ -164,8 +165,9 @@ export function useSettingField<F extends SettingsField>(
     const mine = nextPendingToken();
     setRow(begun(next, mine));
     setPendingField(field, next, mine);
-    // A new edit supersedes a recorded failure for this field.
-    clearPendingFailure(field, mine);
+    // A new edit supersedes a recorded failure for this field. This cannot be an
+    // ownership check: `mine` is a fresh token, so it never equals the failed commit's.
+    supersedePendingFailure(field);
     // Queued: `set_settings` writes the whole struct, so an earlier write's refetch
     // must never be able to erase this value from the base of a later one (see
     // `settingsWrites.ts`). The undo payload is read from the fresh base, so Undo

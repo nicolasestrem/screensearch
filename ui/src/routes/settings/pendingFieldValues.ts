@@ -72,6 +72,16 @@ export function setPendingFailure(
   notify();
 }
 
+/**
+ * Drop any recorded failure for this field: a newer edit supersedes it, whatever its
+ * token (a new commit's token differs from the failed one, so an ownership check here
+ * would never clear anything).
+ */
+export function supersedePendingFailure(field: string): void {
+  if (!failures.delete(field)) return;
+  notify();
+}
+
 /** Retire a recorded failure, but only if `issued` is still the commit that set it. */
 export function clearPendingFailure(field: string, issued: number): void {
   const entry = failures.get(field);

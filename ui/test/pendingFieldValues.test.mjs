@@ -11,6 +11,7 @@ import {
   pendingFieldValue,
   setPendingFailure,
   setPendingField,
+  supersedePendingFailure,
   subscribePendingField,
 } from "../src/routes/settings/pendingFieldValues.ts";
 
@@ -90,13 +91,14 @@ test("a failure that arrives after unmount is still there with its value", () =>
   assert.equal(pendingFailure(FIELD), undefined);
 });
 
-test("a newer edit clears an older failure, and an older save cannot clear a newer one", () => {
+test("a newer edit supersedes an older failure even though its token differs", () => {
   const first = nextPendingToken();
-  const second = nextPendingToken();
   setPendingFailure(FIELD, ["A"], "refused", first);
-  // The user edits again: the recorded failure is superseded.
+  // A new edit carries a fresh token, so an ownership check would never clear this.
+  const second = nextPendingToken();
+  assert.notEqual(first, second);
   clearPendingFailure(FIELD, second);
-  assert.notEqual(pendingFailure(FIELD), undefined, "a non-owning commit clears nothing");
-  clearPendingFailure(FIELD, first);
+  assert.notEqual(pendingFailure(FIELD), undefined, "the ownership clear is not the tool");
+  supersedePendingFailure(FIELD);
   assert.equal(pendingFailure(FIELD), undefined);
 });

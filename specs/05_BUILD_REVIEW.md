@@ -479,6 +479,15 @@ store=[1]  ·  DISPLAY2 renders (disabled)  ·  clicking it → store=[1]   (no 
 
 Suite: 134/134.
 
+**Round seven (`06` #86).** Sharing the failure needed a second rule: an ownership check cannot
+clear it, because a new edit's token is fresh and never matches the failed commit's — so after one
+failed save the row showed the failed value and its error forever, and later edits were composed from
+it. Beginning an edit now supersedes the failure outright, while settlements keep the ownership check.
+Proved by removing the supersede (the test fails and asserts the ownership clear does not cover it).
+Patch-level errors (`useSettingsPatch`) stay local on purpose: a failed toggle or interval writes
+nothing, so leaving the category shows an unchanged row rather than a silently lost edit, and the
+control that failed is the row that reports it.
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate
