@@ -14,14 +14,17 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
-use traits::{ChunkSource, EmbeddingProvider, Job, JobCompleted, JobKind, Store, VisionProvider};
+use traits::{
+    AnswerProvider, ChunkSource, EmbeddingProvider, Job, JobCompleted, JobKind, Store,
+    VisionProvider,
+};
 
 use crate::events::KernelEvent;
 
@@ -35,6 +38,11 @@ pub(crate) type EmbedderSlot = Arc<RwLock<Option<Arc<dyn EmbeddingProvider>>>>;
 /// is attached). Behind an `Arc<RwLock>` so the kernel can attach the provider after
 /// the pool is already running without restarting it (`03 §6`).
 pub(crate) type VisionSlot = Arc<RwLock<Option<Arc<dyn VisionProvider>>>>;
+
+/// Shared, runtime-settable answer provider slot (`None` until inference attaches). The
+/// optional work-graph normalization pass reads it live; a normalize job that runs before
+/// the sidecar is up degrades to a logged no-op (`03 §7h.2`).
+pub(crate) type AnswerSlot = Arc<RwLock<Option<Arc<dyn AnswerProvider>>>>;
 
 /// Idle poll floor — how long a worker waits after an empty claim before retrying.
 const IDLE_MIN: Duration = Duration::from_millis(250);
@@ -65,8 +73,9 @@ fn backoff_ms(attempts: i64) -> i64 {
         .min(BACKOFF_CAP_MS)
 }
 
-/// What to do with a job after running its provider.
-enum Outcome {
+/// What to do with a job after running its provider. Shared with the work-graph job
+/// modules (`03 §7h.7`), which return the same three outcomes the pool already maps.
+pub(crate) enum Outcome {
     /// Done (or nothing to do) → `complete_job`.
     Complete { changed_data: bool },
     /// Unrecoverable (malformed job, missing file) → dead-letter now, no retry.
@@ -112,6 +121,17 @@ pub(crate) struct Shared {
     /// Live count of in-flight `embed_text` jobs across the pool — the level-2 floor gate.
     /// Fresh per pool (an in-flight count is meaningless across a restart).
     pub active_embed_text: Arc<AtomicUsize>,
+    /// Shared gate for the four work-graph job kinds (`03 §7h.7`): set by the kernel when
+    /// the graph scheduler starts, so the graph lane exists only while a producer does. The
+    /// kinds are model-free (extraction, linking, clustering, backfill) except the optional
+    /// normalization pass, so the lane works with no inference provider attached.
+    pub graph_enabled: Arc<AtomicBool>,
+    /// The answer provider, read live by the optional `graph_normalize` job (`03 §7h.2`).
+    pub answer: AnswerSlot,
+    /// Kernel-local cluster success marker, written by a successful `graph_cluster` job and
+    /// read by the producer loop so a dead-lettered cluster job is retried instead of
+    /// suppressing the completion line (`crate::graph_cluster::ClusterProgress`).
+    pub cluster_progress: Arc<crate::graph_cluster::ClusterProgress>,
 }
 
 /// Handle to the running pool: a stop signal and the spawned task joins.
@@ -217,14 +237,18 @@ impl Drop for EmbedTextGuard {
 /// and the throttle: at `level >= 1` `vision_tag` is dropped; at level 2 `embed_text` is
 /// dropped too when the in-flight count has reached the floor (`allow_embed_text` is
 /// precomputed by the caller so the level read + count read are a single snapshot).
-fn claim_kinds(shared: &Shared, level: u8, allow_embed_text: bool) -> ([JobKind; 2], usize) {
+///
+/// The four work-graph kinds are additive (`03 §7h.7`): claimed only once the graph
+/// scheduler has started and paused by the same `level >= 1` throttle that pauses vision.
+/// `embed_text` and `vision_tag` keep their exact previous conditions.
+fn claim_kinds(shared: &Shared, level: u8, allow_embed_text: bool) -> ([JobKind; 6], usize) {
     let embedder_ready = shared
         .embedder
         .read()
         .expect("embedder slot lock")
         .is_some();
     let vision_ready = shared.vision.read().expect("vision slot lock").is_some();
-    let mut kinds = [JobKind::EmbedText; 2];
+    let mut kinds = [JobKind::EmbedText; 6];
     let mut len = 0;
     if embedder_ready && shared.enable_embed_text && allow_embed_text {
         kinds[len] = JobKind::EmbedText;
@@ -234,6 +258,19 @@ fn claim_kinds(shared: &Shared, level: u8, allow_embed_text: bool) -> ([JobKind;
     if vision_ready && level == 0 {
         kinds[len] = JobKind::VisionTag;
         len += 1;
+    }
+    // The work graph is producer-driven and degrades to "the graph is behind" (`03 §7h.7`):
+    // no claim at throttle level >= 1, no claim until the scheduler starts.
+    if shared.graph_enabled.load(Ordering::Relaxed) && level == 0 {
+        for kind in [
+            JobKind::GraphExtract,
+            JobKind::GraphNormalize,
+            JobKind::GraphCluster,
+            JobKind::GraphBackfill,
+        ] {
+            kinds[len] = kind;
+            len += 1;
+        }
     }
     (kinds, len)
 }
@@ -277,10 +314,13 @@ async fn worker_loop(shared: Arc<Shared>, mut stop: watch::Receiver<bool>) {
                 // so missing providers here are defensive against races.
                 let embedder = shared.embedder.read().expect("embedder slot lock").clone();
                 let vision = shared.vision.read().expect("vision slot lock").clone();
+                let answer = shared.answer.read().expect("answer slot lock").clone();
                 let completed = match process_job_with_providers(
                     &shared.store,
                     embedder.as_ref(),
                     vision.as_ref(),
+                    answer.as_ref(),
+                    Some(&shared.cluster_progress),
                     &shared.data_dir,
                     job,
                 )
@@ -309,7 +349,9 @@ async fn worker_loop(shared: Arc<Shared>, mut stop: watch::Receiver<bool>) {
 
 /// Runs one already-claimed job to a terminal state: executes the provider, then
 /// `complete_job` / `fail_job` (with backoff) / dead-letter. Exposed so tests can
-/// drive a single job deterministically without the polling loop.
+/// drive a single job deterministically without the polling loop. Graph jobs that need
+/// the optional answer model see no provider through this seam; `graph_extract`,
+/// `graph_cluster` and `graph_backfill` are model-free.
 pub async fn process_job(
     store: &Arc<dyn Store>,
     embedder: &Arc<dyn EmbeddingProvider>,
@@ -317,7 +359,7 @@ pub async fn process_job(
     data_dir: &Path,
     job: Job,
 ) -> Result<()> {
-    process_job_with_providers(store, Some(embedder), vision, data_dir, job)
+    process_job_with_providers(store, Some(embedder), vision, None, None, data_dir, job)
         .await
         .map(|_| ())
 }
@@ -326,6 +368,8 @@ async fn process_job_with_providers(
     store: &Arc<dyn Store>,
     embedder: Option<&Arc<dyn EmbeddingProvider>>,
     vision: Option<&Arc<dyn VisionProvider>>,
+    answer: Option<&Arc<dyn AnswerProvider>>,
+    cluster_progress: Option<&crate::graph_cluster::ClusterProgress>,
     data_dir: &Path,
     job: Job,
 ) -> Result<Option<CompletedJobInfo>> {
@@ -338,6 +382,10 @@ async fn process_job_with_providers(
             None => Outcome::Retry("embedding provider not attached".to_string()),
         },
         JobKind::VisionTag => vision_tag_outcome(store, vision, data_dir, job.frame_id).await,
+        JobKind::GraphExtract => crate::graph_extract::run(store, job.frame_id).await,
+        JobKind::GraphBackfill => crate::graph_backfill::run(store).await,
+        JobKind::GraphCluster => crate::graph_cluster::run(store, now_ms(), cluster_progress).await,
+        JobKind::GraphNormalize => crate::graph_normalize::run(store, answer).await,
     };
     match outcome {
         Outcome::Complete { changed_data } => {
@@ -552,6 +600,177 @@ async fn load_rgba(path: PathBuf) -> Result<image::RgbaImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use traits::{Embedding, NewFrame, NewJob, OcrResult, VisionAnalysis};
+
+    fn test_shared(store: Arc<dyn Store>) -> Shared {
+        let (events, _receiver) = broadcast::channel(8);
+        Shared {
+            store,
+            embedder: Arc::new(RwLock::new(None)),
+            vision: Arc::new(RwLock::new(None)),
+            enable_embed_text: true,
+            active_jobs: Arc::new(Mutex::new(HashSet::new())),
+            data_dir: PathBuf::new(),
+            events,
+            concurrency: 1,
+            throttle_level: Arc::new(AtomicU8::new(0)),
+            embed_text_floor: Arc::new(AtomicUsize::new(1)),
+            active_embed_text: Arc::new(AtomicUsize::new(0)),
+            graph_enabled: Arc::new(AtomicBool::new(false)),
+            answer: Arc::new(RwLock::new(None)),
+            cluster_progress: Arc::new(crate::graph_cluster::ClusterProgress::new()),
+        }
+    }
+
+    fn test_store() -> Arc<dyn Store> {
+        Arc::new(store::SqliteStore::open_in_memory().expect("in-memory store"))
+    }
+
+    struct FixedEmbedder;
+
+    #[async_trait::async_trait]
+    impl EmbeddingProvider for FixedEmbedder {
+        fn dim(&self) -> usize {
+            2
+        }
+
+        async fn embed_texts(&self, inputs: &[String]) -> Result<Vec<Embedding>> {
+            Ok(inputs
+                .iter()
+                .map(|_| Embedding(vec![0.0_f32, 0.0]))
+                .collect())
+        }
+
+        fn text_model_name(&self) -> &str {
+            "test-embedder"
+        }
+    }
+
+    struct UnusedVision;
+
+    #[async_trait::async_trait]
+    impl VisionProvider for UnusedVision {
+        async fn analyze(&self, _image: &image::RgbaImage) -> Result<VisionAnalysis> {
+            anyhow::bail!("the vision provider is not exercised by these tests")
+        }
+    }
+
+    #[test]
+    fn graph_kinds_are_claimed_only_when_enabled_and_not_throttled() {
+        let shared = test_shared(test_store());
+        let (_, len) = claim_kinds(&shared, 0, true);
+        assert_eq!(len, 0, "no provider lane and no graph producer yet");
+
+        shared.graph_enabled.store(true, Ordering::Relaxed);
+        let (kinds, len) = claim_kinds(&shared, 0, true);
+        assert_eq!(
+            &kinds[..len],
+            &[
+                JobKind::GraphExtract,
+                JobKind::GraphNormalize,
+                JobKind::GraphCluster,
+                JobKind::GraphBackfill,
+            ],
+            "the four graph kinds are claimable with no inference provider attached"
+        );
+
+        let (_, len) = claim_kinds(&shared, 1, true);
+        assert_eq!(len, 0, "the enrichment throttle pauses the graph lane");
+    }
+
+    #[test]
+    fn the_graph_lane_does_not_change_the_embed_and_vision_claim_rules() {
+        let shared = test_shared(test_store());
+        *shared.embedder.write().expect("embedder slot lock") = Some(Arc::new(FixedEmbedder));
+        *shared.vision.write().expect("vision slot lock") = Some(Arc::new(UnusedVision));
+        shared.graph_enabled.store(true, Ordering::Relaxed);
+
+        let (kinds, len) = claim_kinds(&shared, 0, true);
+        assert_eq!(
+            &kinds[..len],
+            &[
+                JobKind::EmbedText,
+                JobKind::VisionTag,
+                JobKind::GraphExtract,
+                JobKind::GraphNormalize,
+                JobKind::GraphCluster,
+                JobKind::GraphBackfill,
+            ]
+        );
+
+        // Level 1 drops vision but keeps embed_text, exactly as before the graph lane.
+        let (kinds, len) = claim_kinds(&shared, 1, true);
+        assert_eq!(&kinds[..len], &[JobKind::EmbedText]);
+        // Level 2 with the floor reached also drops embed_text.
+        let (_, len) = claim_kinds(&shared, 2, false);
+        assert_eq!(len, 0);
+    }
+
+    #[tokio::test]
+    async fn process_job_dispatches_a_graph_extract_job() {
+        let store = test_store();
+        let frame_id = store
+            .insert_frame(NewFrame {
+                captured_at: 1_000,
+                monitor_index: 0,
+                width: 1920,
+                height: 1080,
+                image_path: "frames/1.webp".to_string(),
+                content_hash: "hash-1".to_string(),
+                app_hint: Some("firefox".to_string()),
+                window_title: None,
+                browser_url: Some("https://github.com/acme/widgets".to_string()),
+                capture_trigger: None,
+            })
+            .await
+            .expect("insert frame");
+        store
+            .insert_ocr(
+                frame_id,
+                OcrResult {
+                    text: "work graph".to_string(),
+                    mean_confidence: 0.9,
+                    engine: "test".to_string(),
+                    spans: Vec::new(),
+                },
+            )
+            .await
+            .expect("insert ocr");
+        store
+            .enqueue_job(NewJob {
+                kind: JobKind::GraphExtract,
+                frame_id: Some(frame_id),
+                priority: 0,
+                max_attempts: 3,
+                not_before: 0,
+            })
+            .await
+            .expect("enqueue graph job");
+        let mut jobs = store
+            .claim_jobs(&[JobKind::GraphExtract], 1, now_ms())
+            .await
+            .expect("claim graph job");
+        let job = jobs.pop().expect("one claimed graph job");
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(FixedEmbedder);
+        process_job(&store, &embedder, None, Path::new("."), job)
+            .await
+            .expect("process graph job");
+        assert_eq!(
+            store.job_stats().await.expect("job stats").done,
+            1,
+            "the graph job completed through the public test seam"
+        );
+        let catalog = store
+            .graph_entity_catalog(10)
+            .await
+            .expect("entity catalog");
+        assert!(
+            catalog
+                .iter()
+                .any(|entity| entity.canonical_name == "github.com"),
+            "the graph extract body persisted the frame's domain entity"
+        );
+    }
 
     #[test]
     fn active_job_guard_tracks_in_flight_job_until_drop() {

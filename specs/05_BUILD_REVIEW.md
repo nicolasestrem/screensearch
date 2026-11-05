@@ -1,5 +1,529 @@
 # 05 — Build Review
 
+## 2026-11-05: 0.4.5 P5 work graph engine (branch `feat/0.4.5-p5-work-graph`)
+
+- **Scope (roadmap P5, kickoff `docs/kickoffs/P5.md`, maintainer overrides 2026-11-04).** The
+  work-graph engine from `03 §7h`: heuristic extraction with per-rule confidence, the shared
+  `normalized_key` dedup identity, session linking, deterministic thread clustering, override
+  precedence, the optional LLM normalization pass, and the resumable historical backfill. Shipped
+  as a new pure crate `crates/graph` (depends on `traits` + `anyhow` only), additive `Store`
+  contracts and SQL in `crates/store/src/graph.rs`, four job kinds and their scheduler in
+  `crates/kernel/src/graph_*.rs`, and one read-only helper in `crates/sessions`. No UI, API, MCP,
+  command or route reads the graph (`P8` owns the read routes, `P9` the screens).
+- **Branch state and method.** The worktree `ss-p5` was created from `origin/main` `beb9ab3` on
+  `feat/0.4.5-p5-work-graph`. There is no `v0.4.3` tag on this machine; the maintainer override
+  says to branch from `origin/main`, ignore every "Maintainer run" section, gate, soak period,
+  debug window and intermediate tag, and to treat D18 as waived (the agent pushes the branch,
+  opens the PR and squash-merges once CI is green). The fixture below replaces the kickoff's
+  "Maintainer run". No real database, profile, model file, token or secret was opened, copied or
+  modified; the app was never run.
+- **PR.** [\#157](https://github.com/nicolasestrem/screensearch/pull/157), opened and squash-merged
+  by the agent under the maintainer's 2026-11-04 D18 waiver.
+- **Baseline of record.** P5 is measured with the committed P4 fixture: seed
+  `0x5cee55ee41520004` (decimal `6696384177732976644`), regenerated with the committed
+  `ssv2c-evalfixture gen` (1260 frames, 218 sessions, zero embeddings so no model download; the
+  content digest is embedding-independent). The P5 threshold is the `P5/P6 thresholds (fixture)`
+  row in this file: entity recovery at or above 80.0%.
+- **The crate is pure.** `cargo tree -p graph --depth 1` lists `graph`, `traits` and `anyhow` only;
+  no `store`, `kernel`, `session(s)`, `rusqlite` or `sqlite` entry. Every entry point takes plain
+  input structs (times are unix ms passed in) and returns plain output; there is no clock, I/O,
+  network or model call. That is what lets the determinism tests run without a database.
+- **Entity kinds are the closed six** (`03 §7h.1`): `repo`, `file`, `domain`, `document`, `ref`,
+  `app`. `app` is never produced by heuristic extraction (`03 §7h.2` names no app-name source); it
+  exists only when the optional normalization pass promotes a topic-shaped name.
+
+### Extraction rule table (P5 decision)
+
+`03 §7h.2` fixes the mechanism, not the numbers; the kickoff asks this phase to take the numeric
+decision and record it. The constants live once in `crates/graph/src/extraction.rs` (`confidence`
+module) and a unit test asserts each rule's output and confidence.
+
+| Source | Rule | Kind | Confidence |
+|---|---|---|---|
+| browser URL | scheme plus host | `domain` | 0.95 |
+| browser URL | host only, no scheme | `domain` | 0.90 |
+| browser URL | path ending in a document extension | `document` | 0.85 |
+| browser URL | path `/pull/<n>`, `/issues/<n>`, `/merge_requests/<n>` | `ref` | 0.95 |
+| any text | repository identity `<host>/<owner>/<repo>` | `repo` | 0.95 |
+| any text | absolute Windows path with a drive letter and an extension | `file` | 0.95 |
+| window title | document name ending in a document extension | `document` | 0.90 |
+| IDE title | leading file segment (`file - workspace - editor`) | `file` | 0.90 |
+| IDE title | workspace segment | `repo` | 0.80 |
+| terminal cwd or prompt | absolute directory path | `repo` | 0.80 |
+| any text | `ABC-123` style ticket key | `ref` | 0.85 |
+| any text | `#123` with an adjacent issue/PR/ticket word | `ref` | 0.85 |
+| any text | bare `#123` | `ref` | 0.60 |
+
+- **Closed lists, one place each.** Document extensions, code hosts, IDE/terminal app stems, IDE
+  editor title suffixes, shell suffixes and the issue-word list are `pub const` slices in the same
+  module. A form outside a list is simply not a reference (for example `src/main.rs` is not a
+  `file` entity unless the path is absolute with a drive letter).
+- **Host lane.** The IDE and terminal title rules need to know what kind of window the title
+  belongs to. The lane is resolved in this order: the persisted session `host`, then the taxonomy
+  recognition passed in by the job, then the app hint, then the title shape. A recognized
+  non-IDE/non-terminal app (a browser, a chat app) closes the question, so a browser tab title can
+  never be read as an IDE title.
+- **Dedup within a frame.** Duplicate hits for one `(kind, normalized_key)` collapse to one hit:
+  highest rule confidence, first-seen canonical display form, union of aliases.
+- **Heuristic aliases.** A hit may carry display aliases written with `source='heuristic'`. The only
+  current use is a `#42` reference derived from a `/pull/42` URL path: the canonical display is
+  `#42`, the alias is `/pull/42`, so the invention metric can find the evidence in the captured
+  text. Heuristic extraction never writes an alias that is just the canonical name.
+- **No model.** Extraction never depends on the answer model; a test asserts that the graph is
+  unchanged when no model is attached (`crates/kernel/src/graph_normalize.rs` tests and
+  `crates/graph` tests with no model surface at all).
+
+### Dedup identity (P5 decision)
+
+Defined once as `graph::extraction::normalized_key(kind, raw)`: lowercase, trim, backslashes to
+forward slashes; strip `http://`, `https://` and a leading `www.`; drop a URL fragment; drop a
+trailing slash; collapse repeated `/` separators; keep the path for `file`, `document` and `repo`;
+`domain` also drops the query string (its identity is the host the rule names); `ref` keeps its
+token form (`#123` has no URL fragment). Empty keys are never emitted. `UNIQUE(kind,
+normalized_key)` does the dedup; `canonical_name` is the display form of the first hit that
+created the row (the store never rewrites it on conflict), while `entities.confidence` widens to
+the maximum rule confidence seen and `first/last_seen_at` widen to the min/max frame times.
+`entity_aliases` is unique per `(entity_id, alias)`.
+
+### Linking (P5 decision)
+
+`03 §7e` makes `frames.session_id` the authoritative owner of a frame, and different tracks may
+overlap in time (a focus session and an AI track can span the same clock time). Linking therefore
+resolves the session ownership-first: the `frames.session_id` row when it is set, and only for an
+unassigned frame the `03 §7h.3` interval rule over `[started_at, ended_at)` with an open session
+open-ended and the lowest session id winning an overlap (matching the store's `ORDER BY id LIMIT
+1`). This is the resolution of the §7e/§7h.3 contradiction recorded as `06` #41; the pure
+`graph::linking` helper states the interval rule as a database-free test oracle. The kernel job uses
+the session the store resolved with the frame input; a frame with no session at all still
+contributes its entities but no link row. One `session_entities` row per `(session_id, entity_id)`;
+`hit_count` accumulates one per processed frame; link `confidence` is the maximum of the
+contributing hits; `first/last_seen_at` are min/max of the contributing frame times.
+
+### Clustering and threads (P5 decisions)
+
+- Edge: two sessions join when they share at least one entity whose `session_entities.confidence`
+  is at least 0.7 on both sides; the gap between their `session_entities.last_seen_at` values is at
+  most 30 days; weight is 1.0 up to 7 days and decays linearly to 0.0 at 30 days. A gap of exactly
+  30 days is still an edge with weight 0.0 ("beyond 30 days" means greater than 30 days); the
+  window is the only membership threshold, the decay only orders titles and weights.
+- Only sessions with at least one strong link participate; a single-session component is not a
+  thread (the override planner can still create a thread from explicitly split sessions).
+- `threads.cluster_key` base form = `seed:` plus the sorted, deduplicated ids of the component's
+  seed entities (entities that produced at least one in-window session pair inside that component),
+  joined by `,`. **The same seed entity can seed two components when every cross-pair gap exceeds
+  30 days** (a project resumed after a long hiatus), so the base form alone is not a component
+  identity. When more than one component in one run shares a base key, every component in that
+  collision group appends `#<min member session id>`, which is unique and deterministic; a fresh
+  component that collides with an override-managed stored thread's key is disambiguated the same
+  way while the managed draft keeps its stored key. If a duplicate key somehow survives that, the
+  planner returns an error instead of silently dropping a component. Unique base keys keep the
+  spec's exact `seed:<ids>` form, so thread ids stay stable in normal use. This is the
+  resolution of the `03 §7h.4` contract defect recorded as `06` #40 (the kickoff's own stop
+  condition).
+- `threads.title` is the dominant seed entity's `canonical_name`, where each seed entity's score is
+  the sum of its own edge weights over the component's member pairs; ties break to the lowest
+  entity id.
+- `threads.session_count`, `first_seen_at` (earliest member `started_at`) and `last_seen_at`
+  (latest member end, an open session ending at the run's `now_ms`) derive from the members;
+  `thread_sessions.confidence` is the maximum link confidence the member holds for any component
+  seed entity.
+- Duplicate `(session, entity)` rows are deduped defensively (highest confidence, earliest
+  `last_seen_at` on a tie) even though the table primary key prevents them.
+- Membership depends on the 30-day boundary; the decay only orders titles and weights. This is
+  stated in the clustering module documentation so nobody hunts for a hidden threshold.
+
+### Overrides (P5 decision; one contract contradiction resolved)
+
+Rows are read in `(created_at, id)` order and applied after clustering, in that order, so a later
+override of the same kind beats an earlier one. `rename` sets `threads.title` only and resolves its
+thread id through the stored thread's `cluster_key` (a rename for a thread that no longer exists is
+skipped). `merge` folds the source's `thread_sessions` rows into `target_thread_id` (the survivor);
+`split` moves the listed sessions into a new thread whose `cluster_key` is `override:<override
+id>` (stable across runs), retaining an emptied source row because the split row references it.
+Overrides referencing missing thread ids are skipped; a split still applies through its title
+fallback chain (source title as it stands in the model, stored source title, current thread title
+of the first moved session, the override-derived key).
+
+- **Managed threads.** A stored thread is override-managed when any override row references its id
+  or its `cluster_key` starts with `override:`. Sessions in managed threads are filtered out of
+  fresh clustering, and their membership/title come from storage (times and seed-link confidences
+  are recomputed where the input has them). This is what makes an override durable: a merged target
+  keeps its folded members on later runs and a deleted source is not recreated.
+- **Contradiction resolved (`06` #37).** `03 §7h.5` says a merge "removes the emptied source
+  thread", but `thread_overrides.thread_id` is `ON DELETE CASCADE`, so deleting the source would
+  also delete the merge row and let the next cluster pass undo the merge. Resolution: when no other
+  override row references the emptied source, the source thread is deleted and its merge row is
+  rewritten to a self-merge marker `(thread_id = target, target_thread_id = target)`, which keeps
+  the target managed and the merge durable; when another override row still references the source,
+  the emptied source row is retained and the merge row is left untouched (it re-applies as a no-op
+  each run). The merge fold always follows `thread_sessions`, never the payload list; the payload's
+  `session_ids` is audit evidence.
+- **Split payload.** `03 §7h.5` types the split payload as `{"thread_id":…,"session_ids":[…]}` but
+  does not say which thread `thread_id` names. P5 takes it as the source thread the sessions are
+  moved out of (the new thread is identified by the override-derived `cluster_key`); recorded in
+  `07`.
+- **Later-merge edge case.** Two merges naming the same already-emptied source: the later one is a
+  no-op under the FK-retention rule; a different same-source-later-wins rule would need an explicit
+  amendment (`07`).
+
+### Normalization pass (P5 decisions)
+
+`graph_normalize` reads a bounded, most-recent-first batch of sessions with a cached title or
+summary plus the entity catalog, asks the attached answer provider for typed JSON proposals, and
+validates them with `graph::normalize::validate_proposals`: closed kinds; a new row may only be
+`app` or `document` (a topic-shaped name is stored as an alias-backed app/document entity), while
+an alias-only proposal may target any existing entity; the dedup key is recomputed with the same
+`normalized_key`; aliases are trimmed, unique, at most 12 per proposal and never just the
+canonical name; confidence is finite in `(0, 1]`; the output is sorted and exact duplicates are
+removed. The pass writes `entity_aliases` with `source='llm'` and new rows with
+`entities.source='llm'`; it never rewrites a heuristic `normalized_key` and never deletes a row.
+Without an attached model it is skipped and logged, and the graph stays complete: every extraction,
+link, cluster and backfill path is model-free. There is no settings key for it (the `03 §8` table is
+closed, 0.4.5 D6); the idle dwell and batch bounds are kernel constants. Model transport/store
+errors retry with queue backoff; a malformed or inadmissible answer is a logged no-op; at most one
+normalization pass runs per idle episode, so an idle machine cannot loop model calls. Session
+summaries reach the provider as in-memory `RetrievedChunk`s whose `frame_id` field carries the
+session id; no session id is ever persisted into `jobs.frame_id`.
+
+### Backfill and scheduling (P5 decisions)
+
+- `graph_backfill` is the only checkpoint holder: the queue is the checkpoint (`03 §7h.6`). Each
+  job body reads `graph_backfill_status()` (cursor = `MAX(jobs.frame_id)` over `graph_extract`,
+  target = `MAX(frames.id)`), enqueues one bounded batch of `graph_extract` jobs carrying real
+  frame ids for frames above the cursor, and completes; the scheduler refills when pending
+  extraction drops below the low-water mark. A frame with a `done` job is never re-enqueued, a
+  replayed chunk cannot duplicate entity/link rows (upserts on the `UNIQUE` keys), and interrupting
+  the app leaves pending/failed job rows intact for the next run.
+- Batch sizes, low-water, tick and idle dwell are kernel constants, never settings (`graph_backfill`
+  BATCH 200 / LOW_WATER 32; scheduler TICK 30 s / NORMALIZE_IDLE_MS 300 s; normalize session limit
+  24, catalog limit 128, max tokens 1024), because a new settings key would violate the closed v2
+  settings table (0.4.5 D6).
+- On completion the backfill job logs one line carrying the five table counts:
+  `graph backfill complete entities=N entity_aliases=N session_entities=N threads=N
+  thread_sessions=N`. The scheduler requests it once per drained pass; a later extraction pass
+  clears the request so the next completion logs again. A second full pass over the same database
+  changes no count and logs identical values.
+- Four job kinds (`graph_extract`, `graph_normalize`, `graph_cluster`, `graph_backfill`) are added
+  additively to the one shared registry (`traits/jobs.rs`, `store/jobs.rs`, `kernel/worker_pool.rs`);
+  `embed_text` and `vision_tag` keep their strings, order and behaviour. Graph kinds are claimable
+  only when the graph scheduler is enabled and the pressure throttle level is 0, so a throttled
+  graph degrades to "the graph is behind" and never touches the capture path. The scheduler starts
+  with the sessions scheduler (`attach_segmenter`), works with no inference attached, and only the
+  optional normalization job requires an answer model plus idle.
+- `attach_segmenter` now also starts the worker pool when the graph lane is enabled even with no
+  embedder or vision provider attached, so model-free graph work drains on an install that has not
+  loaded a model. The `embed_text`/`vision_tag` claim conditions are unchanged.
+
+### Files outside the kickoff's owned paths (recorded, necessary)
+
+| Path | Change | Why |
+|---|---|---|
+| root `Cargo.toml` | `crates/graph` workspace member + `graph` workspace dependency | a new crate cannot be built otherwise |
+| `crates/traits/Cargo.toml` | `serde_json` dependency | typed `thread_overrides.payload` JSON lives in `traits` |
+| `crates/traits/src/graph.rs` | new module: graph domain types, typed override payload, normalization proposal types | the kickoff's additive-`traits` scope: shared types the pure crate and the store both need |
+| `crates/traits/src/contracts.rs` | fourteen additive `Store` methods with default bodies | the kickoff names the additive store methods; defaults keep every existing fake working |
+| `crates/traits/src/jobs.rs` | four additive `JobKind` variants | the one shared registry edit the kickoff assigns to P5 |
+| `crates/traits/src/sessions.rs` | additive `ToolRecognition` value type | the recognition data the job passes into the pure crate |
+| `crates/traits/src/lib.rs` | module registration and re-exports | same module |
+| `crates/kernel/Cargo.toml` | `graph` and `sessions` moved to `[dependencies]` | the kickoff names the `sessions` promotion; the job modules need both |
+| `crates/kernel/src/lib.rs` | module registration and additive `Kernel` wiring | composition point for the new modules; no existing behaviour changed |
+| `crates/evalfixture/**` | dev-only `graph` subcommand (new `graph.rs` + wiring + two tracing deps) | the acceptance evidence runner; the crate is dev-only and nothing shipped depends on it (`07`) |
+| `ui/src/bindings/JobKind.ts` | regenerated by `cargo test` (four additive variants) | `JobKind` is `ts-rs`-exported; see the wire note below |
+
+### Wire note (`06` #38)
+
+The kickoff expects `git diff --exit-code -- ui/src/bindings` to print nothing and calls this "no
+wire type changes in this phase". The command does print nothing once the regenerated file is
+committed, but the change itself is unavoidable and additive: `JobKind` is a `ts-rs`-exported enum,
+and the phase must add the four variants to it. The only diff is the union in `JobKind.ts`; no IPC
+command signature, event shape or payload type changed, and no UI code branches on `JobKind`
+today. Recorded as a contradiction between the kickoff's parenthetical and its own required edit.
+
+### Independent audit round
+
+Two read-only auditors (A: the pure engine against `03 §7h` and the rule table; B: SQL, jobs,
+scheduler, registry and wiring against `03 §4/§5/§7h`) audited the uncommitted tree before final
+verification. Neither edited anything. Findings and resolutions:
+
+- **P0, fixed: `cluster_key` was not a component identity.** A seed entity can recur in two
+  components whose cross-pair gaps all exceed 30 days (a project resumed after a hiatus); both got
+  `seed:<ids>` and the planner's map silently dropped one component's sessions. Fixed with the
+  collision disambiguation and loud-failure rule described under clustering (`06` #40); new tests
+  cover the hiatus input, a fresh/managed-key collision and the duplicate-key error.
+- **P1, fixed: linking ignored the authoritative `frames.session_id` owner.** During overlapping
+  tracks a frame could link its evidence to a lower-id session. Linking is now ownership-first with
+  the interval rule as the unassigned-frame fallback (`06` #41); store tests cover owner wins,
+  fallback, and no-session.
+- **P1, fixed: the production completion line could be logged before the first cluster pass.** The
+  line now comes from the cluster job after a successful plan apply and only when extraction is
+  drained, so its five counts are the completed graph's counts; a second drained pass logs
+  identical values. The scheduler no longer requests a separate completion job, and a refill
+  backfill job can never log the line.
+- **P1, recorded (`07`): session reconciliation can delete graph links.** `session_entities` /
+  `thread_sessions` cascade with the mutable-tail sessions the sessions scheduler deletes and
+  recreates, and extraction never re-links a `done` frame. This needs a session-change re-extract
+  trigger (cross-phase); recorded with owner P6/P8 rather than hidden.
+- **P2, fixed: `thread_overrides.payload` JSON was internally tagged.** The spec documents
+  untagged forms; the type now serializes exactly `{"title":…}`, `{"session_ids":[…]}`,
+  `{"thread_id":…,"session_ids":[…]}` and rejects a split whose payload names a different source
+  thread or that carries a target. Merge drafts must name two different threads.
+- **P2, fixed: graph read defaults returned zero counts** (which would read as a completed empty
+  graph); they now fail explicitly as unsupported.
+- **P2, fixed: the extraction confidence tests compared against the same constants.** A literal
+  pin test asserts the thirteen table values, so a changed constant fails.
+- **P2, recorded:** the production scheduler only clusters a drained extraction state, so during
+  continuous capture threads can lag an active session (spec allows idle); a dead-lettered
+  `graph_extract` frame is skipped by the cursor and the completion line cannot reveal it; the
+  backfill cursor depends on graph job rows never being pruned and `jobs` has no kind-leading
+  index; P6 must extend the `claim_kinds` array as well as the three registry sites. All in `07`.
+- **P2, recorded (`06` #42):** the `03 §4` `jobs.kind` comment still lists only the two pre-P5
+  tokens while the code legitimately persists six; the DDL prose update belongs to the schema
+  documentation owner, not to a silent P5 edit.
+
+### Acceptance evidence
+
+1. **Entity recovery on the P4 automatic set: PASS, 90.3% (159/176) against the 80.0% threshold.**
+   The graph was populated over the committed fixture, then the P4 harness ran model-free
+   (`--no-answer`; retrieval/answer metrics cover only the first turns) and produced, verbatim:
+   `Work-graph surface: present (243 entities, 11 aliases)`, `Recovery: 90.3% (159/176)`,
+   `Invention: 0 invented of 243 checked`. Because this is the committed synthetic fixture, it is
+   labelled a fixture reading, not a real-history number; the maintainer runs the same harness
+   against live history at Gate B.
+2. **Backfill counts pasted, second pass unchanged: PASS.** Completion line from the dev fixture
+   runner: `graph backfill complete entities=243 entity_aliases=11 session_entities=1385 threads=1
+   thread_sessions=217`; the same command over the same database printed the identical five counts
+   (0.1 s, no new jobs). `threads=1` is the fixture's connected-component shape, not a threshold.
+3. **Determinism: PASS.** `crates/graph` proves the same input twice, and once with shuffled
+   session order, produces identical threads, `cluster_key` values and titles; `crates/kernel`
+   proves the cluster job is idempotent against the real store.
+4. **Override precedence: PASS.** Pure-crate tests cover rename, merge and split each beating the
+   clusterer, later-same-kind wins, the FK-retention merge case, an emptied split source, and a
+   whole-plan idempotence test (merge + rename + split, replanned from its own output: identical
+   threads, empty delete list, empty override rewrites).
+5. **Extraction confidence table: PASS.** Every row above has a test asserting output and
+   confidence; a bare `#123` at 0.60 is asserted below the 0.7 clustering threshold.
+6. **Linking: PASS.** `crates/graph`, `crates/store` and `crates/kernel` tests cover the closed
+   interval, the open session, overlap resolution and the maximum-confidence rule.
+7. **Model independence: PASS.** Kernel tests prove a missing or absent answer provider leaves the
+   graph unchanged and that the normalization job no-ops without summaries or with a malformed
+   answer.
+8. **Records: PASS.** This section, `06` #37-#42, `07` (2026-11-05 section), `08`, and
+   `CHANGELOG.md`.
+
+#### Acceptance evidence (raw)
+
+The evidence below was re-collected on the final post-audit tree (same committed fixture, seed
+`6696384177732976644`, model-free fixture server). The dev-only runner is
+`cargo run -q -p evalfixture --bin ssv2c-evalfixture -- graph --db <fixture copy>`; the harness ran
+`harness eval --db <graph-populated copy> --api http://127.0.0.1:43210 --seed 6696384177732976644
+--pairs 300 --out <temp>`. `/v1/ask` answers 503 without an answer model, so the report's
+retrieval/answer metrics cover only the first turns; the entity check is database-only and ran over
+the full 176-reference sample.
+
+````text
+=== graph pass 1
+2026-11-05T10:40:53.382678Z  INFO kernel::graph_cluster: graph backfill complete entities=243 entity_aliases=11 session_entities=1385 threads=1 thread_sessions=217
+graph backfill returned counts: entities=243 entity_aliases=11 session_entities=1385 threads=1 thread_sessions=217
+graph backfill elapsed: 9.9s
+exit=0
+
+=== graph pass 2
+2026-11-05T10:40:53.478053Z  INFO kernel::graph_cluster: graph backfill complete entities=243 entity_aliases=11 session_entities=1385 threads=1 thread_sessions=217
+graph backfill returned counts: entities=243 entity_aliases=11 session_entities=1385 threads=1 thread_sessions=217
+graph backfill elapsed: 0.0s
+exit=0
+
+=== serve (model-free)
+ssv2c-evalfixture: serving C:\Users\nicol\AppData\Local\Temp\p5-final-eval\screensearch.db at http://127.0.0.1:43210 (embeddings: off (FTS-only, the product's own degradation), answer sidecar: off (--no-answer, /v1/ask answers 503))
+
+=== harness eval --db <graph-populated copy> --api http://127.0.0.1:43210 --seed 6696384177732976644 --pairs 300 --out <temp>
+## Entity check (independent reference extractor vs. the work graph)
+
+- Work-graph surface: present (243 entities, 11 aliases)
+- Reference entities sampled from the discovery frames: 176 of 176
+- Recovery: 90.3% (159/176)
+- Invention: 0 invented of 243 checked
+
+Report identity lines:
+- Run id: `20261105-114056`
+- Seed: `6696384177732976644` (`--seed 6696384177732976644` reproduces this exact pair set against this database)
+- Database: `C:\Users\nicol\AppData\Local\Temp\p5-final-eval\screensearch.db` (opened read-only: `SQLITE_OPEN_READ_ONLY` + `PRAGMA query_only`)
+- Schema version: 14
+- Pairs requested: 300 · generated: 300
+- Frames: 1260 scanned for reference discovery (of 1260 total) · 1260 in the exact reference pass
+- Sessions: 218
+
+=== cargo test -p harness
+test result: ok. 146 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.34s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.30s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.19s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+````
+
+### Verification (raw)
+
+Run in this order in `C:\Users\nicol\Documents\GitHub\ss-p5` (UI first: `src-tauri` embeds
+`ui/dist`). Commands and exit codes verbatim; the raw output of each commands follows.
+
+Rows below are the raw per-command output with exit codes, collected on the committed tree
+(`e4740b6`) in `C:\Users\nicol\Documents\GitHub\ss-p5`. Per-test lines are trimmed to result
+lines only. The machine has a warm shared cargo target directory (`CARGO_TARGET_DIR`) and the
+stage-mcp step runs against the worktree-local target so `tauri-build` resolves the staged
+`externalBin`; neither changes a command's semantics or result. Node was 26.12.1, the documented
+CI Node is 22; `ui/package-lock.json` is unchanged, and the UI gates ran on the same scripts CI
+runs.
+
+````text
+=== cd ui && npm ci
+added 347 packages, and audited 348 packages in 7s
+...
+npm warn install-scripts
+npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+exit=0
+
+=== cd ui && npm run lint
+npm notice run screensearch-ui@0.4.2 lint
+npm notice run eslint .
+exit=0
+
+=== cd ui && npm run build
+npm notice run screensearch-ui@0.4.2 build
+...
+dist/assets/CitationTile-DFhMdEJO.js                157.84 kB │ gzip: 47.99 kB
+✓ built in 2.21s
+exit=0
+
+=== cd .. && node scripts/stage-mcp.mjs
+[stage-mcp] building screensearch-mcp (release)...
+    Finished `release` profile [optimized] target(s) in 0.30s
+[stage-mcp] up to date: C:\Users\nicol\Documents\GitHub\ss-p5\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
+exit=0
+
+=== cargo fmt --all -- --check
+exit=0
+
+=== cargo clippy --workspace --all-targets -- -D warnings
+    Checking traits v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p5\crates\traits)
+...
+    Checking evalfixture v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p5\crates\evalfixture)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 21.28s
+exit=0
+
+=== cargo build --workspace
+   Compiling tokio v1.52.3
+...
+   Compiling mcp v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p5\crates\mcp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 00s
+exit=0
+
+=== cargo test --workspace
+... (81 test targets; per-target lines trimmed)
+1386 passed, 0 failed, 16 ignored across 81 targets
+exit=0
+
+=== git diff --exit-code -- ui/src/bindings
+exit=0
+
+=== cargo test -p graph
+running 58 tests
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+
+=== cargo test -p store graph
+running 15 tests
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 80 filtered out; finished in 0.06s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 65 filtered out; finished in 0.00s
+exit=0
+
+=== cargo test -p kernel graph
+running 35 tests
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 126 filtered out; finished in 0.14s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+exit=0
+
+=== cargo tree -p graph --depth 1
+graph v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p5\crates\graph)
+├── anyhow v1.0.102
+└── traits v0.4.2 (C:\Users\nicol\Documents\GitHub\ss-p5\crates\traits)
+exit=0
+
+=== cargo test -p harness
+running 146 tests
+test result: ok. 146 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.31s
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.71s
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+
+=== cargo test -p evalfixture
+running 15 tests
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.60s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+
+````
+
+Totals from the log: every command above exited 0; `cargo test --workspace` ran 81 test targets
+with **1386 passed, 0 failed, 16 ignored** (the 16 ignored are the pre-existing environment-gated
+tests); `git diff --exit-code -- ui/src/bindings` printed nothing; `cargo tree -p graph --depth 1`
+lists only `graph`, `anyhow` and `traits` (no store/kernel/sessions/rusqlite/sqlite entry).
+`cargo test -p graph` 58 passed, `cargo test -p store graph` 15 passed, `cargo test -p kernel
+graph` 35 passed, `cargo test -p harness` 172 passed across its 9 targets, `cargo test -p
+evalfixture` 20 passed across its 5 targets.
+
+
 ## 2026-11-04: 0.4.5 P4 baseline, P5/P6 thresholds frozen on the committed fixture, verified and merged
 
 - **Scope (roadmap P4, kickoff `docs/kickoffs/P4.md`, plus the maintainer's threshold task).** The

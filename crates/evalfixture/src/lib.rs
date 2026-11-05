@@ -11,6 +11,10 @@
 //!   providers, so the harness measures the shipped retrieval/answer code instead of a
 //!   re-implementation. It is the fixture stand-in for "start the app and enable the API in
 //!   Settings" - it never touches the maintainer's profile, database or models.
+//! - `graph` runs the **production work-graph pipeline** (`kernel::graph_backfill::
+//!   run_to_completion`) to completion over that fixture database, so the P5 completion
+//!   line with the five table counts and the second-pass idempotence check come from the
+//!   shipped backfill driver, not from a harness-side re-implementation.
 //!
 //! Why the fixture exists at all (`docs/kickoffs/P4.md`, extended for the threshold task):
 //! there is no real history to measure on this machine, and the P5/P6 acceptance thresholds
@@ -26,6 +30,7 @@
 //! ```
 
 pub mod gen;
+pub mod graph;
 pub mod serve;
 
 use std::path::{Path, PathBuf};

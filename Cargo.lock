@@ -1442,6 +1442,8 @@ dependencies = [
  "store",
  "tempfile",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "traits",
 ]
 
@@ -1980,6 +1982,14 @@ dependencies = [
  "glib-sys",
  "libc",
  "system-deps",
+]
+
+[[package]]
+name = "graph"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "traits",
 ]
 
 [[package]]
@@ -2748,6 +2758,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "chrono-tz",
+ "graph",
  "image",
  "serde",
  "serde_json",
@@ -6038,6 +6049,7 @@ dependencies = [
  "async-trait",
  "image",
  "serde",
+ "serde_json",
  "tokio",
  "ts-rs",
 ]

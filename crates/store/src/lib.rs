@@ -32,6 +32,7 @@ use traits::{
 
 mod embeddings;
 mod frames;
+mod graph;
 mod history;
 mod history_pages;
 mod insights;
@@ -628,5 +629,64 @@ impl Store for SqliteStore {
     }
     fn set_embedder(&self, embedder: Arc<dyn EmbeddingProvider>) {
         SqliteStore::set_embedder(self, embedder);
+    }
+
+    async fn graph_frame_input(&self, frame_id: i64) -> Result<Option<traits::GraphFrameInput>> {
+        SqliteStore::graph_frame_input(self, frame_id).await
+    }
+    async fn graph_session_at(&self, at_ms: i64) -> Result<Option<traits::GraphSessionInput>> {
+        SqliteStore::graph_session_at(self, at_ms).await
+    }
+    async fn graph_frame_ids_after(&self, after_id: Option<i64>, limit: u32) -> Result<Vec<i64>> {
+        SqliteStore::graph_frame_ids_after(self, after_id, limit).await
+    }
+    async fn graph_apply_hits(
+        &self,
+        session_id: Option<i64>,
+        frame_id: i64,
+        captured_at: i64,
+        hits: &[traits::GraphHit],
+    ) -> Result<()> {
+        SqliteStore::graph_apply_hits(self, session_id, frame_id, captured_at, hits).await
+    }
+    async fn graph_cluster_input(&self, now_ms: i64) -> Result<traits::GraphClusterInput> {
+        SqliteStore::graph_cluster_input(self, now_ms).await
+    }
+    async fn graph_stored_threads(&self) -> Result<Vec<traits::StoredThread>> {
+        SqliteStore::graph_stored_threads(self).await
+    }
+    async fn graph_thread_overrides(&self) -> Result<Vec<traits::ThreadOverrideRow>> {
+        SqliteStore::graph_thread_overrides(self).await
+    }
+    async fn graph_insert_thread_override(
+        &self,
+        draft: &traits::ThreadOverrideDraft,
+        now_ms: i64,
+    ) -> Result<i64> {
+        SqliteStore::graph_insert_thread_override(self, draft, now_ms).await
+    }
+    async fn graph_apply_thread_plan(&self, plan: &traits::ThreadPlan) -> Result<()> {
+        SqliteStore::graph_apply_thread_plan(self, plan).await
+    }
+    async fn graph_table_counts(&self) -> Result<traits::GraphTableCounts> {
+        SqliteStore::graph_table_counts(self).await
+    }
+    async fn graph_backfill_status(&self) -> Result<traits::GraphBackfillStatus> {
+        SqliteStore::graph_backfill_status(self).await
+    }
+    async fn graph_sessions_with_summaries(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<traits::SessionSummaryInput>> {
+        SqliteStore::graph_sessions_with_summaries(self, limit).await
+    }
+    async fn graph_entity_catalog(&self, limit: u32) -> Result<Vec<traits::EntityCatalogRow>> {
+        SqliteStore::graph_entity_catalog(self, limit).await
+    }
+    async fn graph_apply_normalization(
+        &self,
+        proposals: &[traits::NormalizationProposal],
+    ) -> Result<traits::NormalizationOutcome> {
+        SqliteStore::graph_apply_normalization(self, proposals).await
     }
 }

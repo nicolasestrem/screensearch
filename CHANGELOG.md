@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: work graph engine
+
+- **ScreenSearch now derives the work graph behind its history: entities, session links and
+  threads.** On idle and on startup, model-free rules read what was already captured (window
+  titles, browser URLs, file and repository paths, document names, ticket references and the
+  session's recognized tool) and persist deduplicated entities, their links to sessions and
+  deterministic threads. The optional annotation pass can add aliases when a local answer model is
+  loaded; without it the graph is complete and every entity still comes from the deterministic
+  rules. Threads are clusters of sessions that share a strong entity within a 30-day decaying
+  window, with rename/merge/split overrides always winning once the UI writes them. Everything is
+  derived and recomputable, so clearing it loses no evidence. There is no new screen in this phase:
+  the read routes arrive with P8 and the Work screen with P9. Evidence: entity recovery 90.3% on
+  the committed fixture against the frozen 80.0% threshold, backfill counts pasted and idempotent
+  in `specs/05_BUILD_REVIEW.md`.
+
 ### Added: automatic evaluation baseline and the P5/P6 thresholds
 
 - **The intelligence work has a measurable baseline, and P5/P6 must beat it.** A dev-only fixture

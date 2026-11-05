@@ -12,7 +12,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
@@ -29,6 +29,11 @@ use traits::{
 mod capture_loop;
 mod capture_observations;
 mod events;
+pub mod graph_backfill;
+mod graph_cluster;
+mod graph_extract;
+mod graph_normalize;
+mod graph_scheduler;
 pub mod memory_schedule;
 pub mod report_service;
 pub mod reports;
@@ -699,8 +704,9 @@ pub struct Kernel {
     /// The vision provider, shared live with the worker pool so it can be attached
     /// after the pool is running (`03 §6`). `None` until [`Kernel::attach_inference`].
     vision: worker_pool::VisionSlot,
-    /// The answer provider (backs the `ask` command); `None` until attached.
-    answer: Mutex<Option<Arc<dyn AnswerProvider>>>,
+    /// The answer provider (backs the `ask` command and the optional work-graph
+    /// normalization pass); shared live with the worker pool. `None` until attached.
+    answer: worker_pool::AnswerSlot,
     /// The running timer/idle vision scheduler; `None` until inference is attached.
     scheduler: Mutex<Option<vision_scheduler::SchedulerHandle>>,
     /// The session segmenter supplied by the composition root. The kernel owns only
@@ -709,6 +715,22 @@ pub struct Kernel {
     /// The incremental + resumable historical session scheduler. Independent of
     /// capture and enrichment so a failure degrades to no sessions, never lost frames.
     sessions_scheduler: Mutex<Option<sessions_scheduler::SchedulerHandle>>,
+    /// The work-graph producer scheduler (`03 §7h.6/.7`). Producer-only: it enqueues
+    /// durable graph jobs on idle/on-demand and never touches the capture path. `None`
+    /// until [`Kernel::attach_segmenter`] starts it.
+    graph_scheduler: Mutex<Option<graph_scheduler::SchedulerHandle>>,
+    /// Shared gate for the four graph job kinds: set when the graph scheduler starts, so
+    /// the worker pool claims graph jobs only while a producer exists (`03 §7h.7`).
+    graph_enabled: Arc<AtomicBool>,
+    /// Kernel-local cluster success marker, shared between the producer loop and the
+    /// `graph_cluster` job: a successful pass records the extraction state it covered, and
+    /// the scheduler only re-enqueues cluster when that marker is stale. A dead-lettered
+    /// cluster job therefore cannot permanently suppress the completion line.
+    graph_cluster_progress: Arc<graph_cluster::ClusterProgress>,
+    /// The platform idle source, shared live with the graph scheduler so the optional
+    /// normalization pass can wait for an idle period (`03 §7h.2`). Filled by
+    /// [`Kernel::attach_inference`].
+    graph_idle: graph_scheduler::IdleSlot,
     /// System-pressure probe for the enrichment throttle (`03 §5/§8`); injected by the
     /// composition root (the kernel forbids `unsafe`). `None` if the platform probe
     /// couldn't be built — the throttle then stays off.
@@ -810,10 +832,14 @@ impl Kernel {
             embedder: Arc::new(RwLock::new(None)),
             workers: Mutex::new(None),
             vision: Arc::new(RwLock::new(None)),
-            answer: Mutex::new(None),
+            answer: Arc::new(RwLock::new(None)),
             scheduler: Mutex::new(None),
             session_segmenter: RwLock::new(None),
             sessions_scheduler: Mutex::new(None),
+            graph_scheduler: Mutex::new(None),
+            graph_enabled: Arc::new(AtomicBool::new(false)),
+            graph_cluster_progress: Arc::new(graph_cluster::ClusterProgress::new()),
+            graph_idle: Arc::new(std::sync::RwLock::new(None)),
             pressure_probe: RwLock::new(None),
             throttle_level: Arc::new(AtomicU8::new(0)),
             // Min clamp; the real value is written from settings by `start_workers` and the
@@ -1190,7 +1216,11 @@ impl Kernel {
         let embedder_ready = self.embedder.read().expect("embedder slot lock").is_some();
         let vision_ready = self.vision.read().expect("vision slot lock").is_some();
         let has_embed_lane = embedder_ready && advanced.enrich.embed_text;
-        if !has_embed_lane && !vision_ready {
+        // The work-graph lane is model-free (`03 §7h.7`): once its producer exists, the
+        // pool runs even with no embedder or inference provider attached, so extraction,
+        // linking, clustering and backfill drain independently of the model lanes.
+        let graph_enabled = self.graph_enabled.load(Ordering::Relaxed);
+        if !has_embed_lane && !vision_ready && !graph_enabled {
             tracing::debug!("start_workers: no provider-backed worker lanes available");
             return;
         }
@@ -1225,6 +1255,9 @@ impl Kernel {
                 self.throttle_embed_text_floor.clone()
             },
             active_embed_text: Arc::new(AtomicUsize::new(0)),
+            graph_enabled: self.graph_enabled.clone(),
+            answer: self.answer.clone(),
+            cluster_progress: self.graph_cluster_progress.clone(),
         });
         *guard = Some(pool);
         tracing::info!("enrichment workers started");
@@ -1269,7 +1302,13 @@ impl Kernel {
         backfill: Option<Arc<dyn BackfillControl>>,
     ) {
         *self.vision.write().expect("vision slot lock") = Some(vision);
-        *self.answer.lock().await = Some(answer);
+        *self.answer.write().expect("answer slot lock") = Some(answer);
+        // Latch the platform idle source for the work-graph scheduler too (`03 §7h.2`):
+        // the optional normalization pass waits for idle time; no new setting gates it.
+        if idle.is_some() {
+            let mut slot = self.graph_idle.write().expect("graph idle slot lock");
+            *slot = idle.clone();
+        }
         self.start_workers().await;
         self.start_vision_scheduler(idle, backfill).await;
         tracing::info!("inference providers attached");
@@ -1277,7 +1316,7 @@ impl Kernel {
 
     /// The attached answer provider, if any (backs the `ask` command).
     pub async fn answer_provider(&self) -> Option<Arc<dyn AnswerProvider>> {
-        self.answer.lock().await.clone()
+        self.answer.read().expect("answer slot lock").clone()
     }
 
     /// Attaches the pure session engine and starts its independent background
@@ -1304,6 +1343,27 @@ impl Kernel {
             ));
             tracing::info!("sessions scheduler started");
         }
+        drop(scheduler);
+
+        // The work-graph producers start with the session engine (`03 §7h.7`): the graph
+        // depends on sessions for linking, and its jobs are model-free, so this is the
+        // one attachment point that must not wait for the inference sidecar.
+        let mut graph_scheduler = self.graph_scheduler.lock().await;
+        if graph_scheduler.is_none() {
+            *graph_scheduler = Some(graph_scheduler::spawn(
+                self.store.clone(),
+                self.graph_enabled.clone(),
+                self.throttle_level.clone(),
+                self.graph_idle.clone(),
+                self.answer.clone(),
+                self.graph_cluster_progress.clone(),
+            ));
+            tracing::info!("graph scheduler started");
+        }
+        drop(graph_scheduler);
+        // The graph lane is now enabled; start the pool so backfill can drain even when
+        // no embedder or inference provider has attached yet (`03 §7h.7`).
+        self.start_workers().await;
     }
 
     /// Stops the sessions scheduler (idempotent). Called on application shutdown.
@@ -1311,6 +1371,18 @@ impl Kernel {
         if let Some(handle) = self.sessions_scheduler.lock().await.take() {
             handle.stop().await;
             tracing::info!("sessions scheduler stopped");
+        }
+    }
+
+    /// Stops the work-graph producer scheduler (idempotent) and closes the graph claim
+    /// gate so the worker pool stops claiming graph jobs. Available for a graceful
+    /// shutdown; the app currently does not call it and relies on the scheduler handle's
+    /// `Drop` at process exit instead.
+    pub async fn stop_graph_scheduler(&self) {
+        if let Some(handle) = self.graph_scheduler.lock().await.take() {
+            handle.stop().await;
+            self.graph_enabled.store(false, Ordering::Relaxed);
+            tracing::info!("graph scheduler stopped");
         }
     }
 

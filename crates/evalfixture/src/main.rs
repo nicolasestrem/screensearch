@@ -3,14 +3,15 @@
 //! ```text
 //! ssv2c-evalfixture gen   --out <dir> [--seed <n>] [--weeks <n>] [--frames-per-week <n>]
 //! ssv2c-evalfixture serve --db <path> --data <dir> [--port <n>] [--embed] [--no-answer]
+//! ssv2c-evalfixture graph --db <path>
 //! ```
 //!
-//! Exit code 0 on success, 1 when generation or serving fails.
+//! Exit code 0 on success, 1 when generation, serving or the graph backfill fails.
 
 use std::process::ExitCode;
 
 use anyhow::{bail, Result};
-use evalfixture::{gen, serve};
+use evalfixture::{gen, graph, serve};
 
 const USAGE: &str = "\
 ssv2c-evalfixture - dev-only 0.4.5 evaluation fixture (never shipped)
@@ -18,6 +19,7 @@ ssv2c-evalfixture - dev-only 0.4.5 evaluation fixture (never shipped)
 USAGE:
   ssv2c-evalfixture gen   --out <dir> [--seed <n>] [--weeks <n>] [--frames-per-week <n>]
   ssv2c-evalfixture serve --db <path> --data <dir> [--port <n>] [--embed] [--no-answer]
+  ssv2c-evalfixture graph --db <path>
 
 COMMANDS:
   gen     Build the seeded synthetic v14 history (frames, sessions, text, embeddings,
@@ -27,6 +29,10 @@ COMMANDS:
           --embed attaches the real text embedder (vector arm); --no-answer skips the
           answer sidecar so /v1/ask answers 503. Both default to off/on respectively:
           the model-free default is what tests use.
+  graph   Run the production work-graph backfill, extraction and clustering to completion
+          over the fixture database (read-write), printing the completion log line with the
+          five table counts (P5 acceptance evidence). Run it twice over the same database:
+          the second pass must print identical counts.
 ";
 
 fn main() -> ExitCode {
@@ -49,6 +55,7 @@ fn run() -> Result<()> {
                 .build()?;
             runtime.block_on(serve::run(&args[1..]))
         }
+        Some("graph") => graph::run(&args[1..]),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");
             Ok(())

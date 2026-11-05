@@ -10,6 +10,8 @@ repository.workspace = true
 
 [dependencies]
 traits.workspace = true
+graph.workspace = true
+sessions.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
@@ -24,4 +26,3 @@ toml.workspace = true
 [dev-dependencies]
 store.workspace = true
 tempfile.workspace = true
-sessions.workspace = true

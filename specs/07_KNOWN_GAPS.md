@@ -1,5 +1,121 @@
 # 07 — Known Gaps
 
+## 2026-11-05: P5 work graph engine: fixture evidence and recorded decisions (owner: maintainer where noted)
+
+P5 is executed on `feat/0.4.5-p5-work-graph` in the `ss-p5` worktree. The maintainer's 2026-11-04
+overrides are authoritative for this run and are recorded here because they contradict the kickoff:
+
+- **D18 is waived for this phase.** The agent pushes the branch, opens the PR and squash-merges it
+  once CI is green. Every kickoff "Maintainer run" section, gate, soak period, debug window and
+  intermediate tag (`v0.4.3`, `v0.4.4`) is ignored, and Gate A/B/C are not stop points.
+- **The P5 acceptance number is a fixture reading, not real history.** There is no ScreenSearch
+  profile and no real database on this machine, and the run rules forbid opening or copying one.
+  The graph was populated over the committed P4 fixture (seed `0x5cee55ee41520004`, 1260 frames,
+  218 sessions) and the P4 harness reported 90.3% (159/176) entity recovery against the frozen
+  80.0% threshold. The maintainer reruns the same harness against live history at Gate B; that
+  number replaces this one.
+- **The evidence runner is a dev-only addition outside the kickoff's owned paths.**
+  `crates/evalfixture` gained a `graph --db <path>` subcommand (new `src/graph.rs` plus wiring and
+  two `tracing` dependencies, `tracing`/`tracing-subscriber`) so the production kernel entry point
+  `kernel::graph_backfill::run_to_completion` can be run over a fixture database without launching
+  the app. The crate is dev-only and nothing shipped depends on it; the dependency edge stays
+  one-way. The alternative (an app launch) was forbidden by the run rules and has no data-directory
+  override anyway.
+- **Same evidence shape as P4, deliberately.** The fixture is regenerated with `--no-embeddings`
+  (no model download on this machine), which leaves the content digest and all graph-relevant data
+  identical per the P4 record; `/v1/ask` is 503 in the model-free server, so the harness report's
+  retrieval/answer metrics cover only the first turns. The entity check is database-only and ran
+  over the full 176-reference sample, which is why the P5 number is unaffected.
+- **Threads are not measurable as "interesting" on this fixture.** The fixture's synthetic projects
+  share enough entities that the graph yields one connected component (`threads=1`,
+  `thread_sessions=217`). That is the fixture's data shape, not a clustering threshold: the
+  connected-component rule is proven by unit tests with multi-component fixtures.
+- **No answer model was present, so the normalization pass was never exercised against a real
+  model here.** It is additive and optional by contract; tests cover the no-model no-op, malformed
+  and inadmissible answers, retryable transport errors, and validated proposals applied to the
+  store. Real-model quality is a Gate B observation, not a P5 acceptance line.
+
+Decisions taken while the specs were silent (all implemented and tested; recorded here as the
+`04 §5` resolution):
+
+- **Split payload semantics.** `03 §7h.5` types the split payload as
+  `{"thread_id":…,"session_ids":[…]}` without saying which thread `thread_id` names. P5 reads it as
+  the source thread the listed sessions are moved out of; the new thread is identified by the
+  override-derived `cluster_key` `override:<override id>`. If P9's UI wants the payload to carry the
+  new thread id instead, the store insert path and the planner must change together.
+- **Later merge of the same already-emptied source.** Two merge rows naming the same source after it
+  has been emptied: the later one is a no-op under the FK-retention rule (`06` #37). A different
+  "later same-source merge wins" rule would need an explicit amendment.
+- **Empty split source rows stay visible.** A split whose source thread has no remaining sessions
+  keeps the emptied row because the split override references it. P9 should filter
+  `session_count = 0` threads from the Work screen (or a later store API may offer an
+  override-row deletion path).
+- **`hit_count` is not provably "distinct frames" under a lost acknowledgement.** `session_links`
+  has no per-frame ledger and the schema is frozen (0.4.5 D2), so a graph job that commits its
+  transaction and then loses the `complete_job` acknowledgement can, when requeued by the stale-run
+  sweep, increment `hit_count` a second time. Rows themselves cannot duplicate (`UNIQUE` keys), and
+  a normal backfill never re-runs a `done` frame. Owner: P8/P9 if thread weights ever become
+  user-visible metrics; a fix would need a schema decision, not a silent workaround.
+- **A dead-lettered `graph_extract` job leaves its frame unextracted.** The backfill cursor is
+  `MAX(jobs.frame_id)` over the kind, so a job that exhausts its attempts (after retries) is skipped
+  and the frame is not re-enqueued automatically; the dead job is visible in the queue diagnostics
+  but the graph is behind for that frame. This is the honest "queue is the checkpoint" reading of
+  `03 §7h.6`; a re-drive would be an operator action, not new state. Owner: maintainer if a dead
+  graph job ever appears in practice.
+- **Normalization new-entity timestamps.** `NormalizationProposal` carries no timestamp, so a new
+  `llm`-sourced app/document row uses the store clock for `first_seen_at`/`last_seen_at` at promotion
+  time. Additive rows only; if `03 §7h.2` ever wants evidence-time provenance, the trait type gains
+  a timestamp field first.
+- **Absolute directory paths outside terminal context are not entities.** The kickoff's only
+  directory-path rule is "terminal cwd or prompt"; a bare absolute directory path in another
+  window title (for example a File Explorer folder title) does not match the `file` rule (which
+  requires an extension) and is not extracted. P5 measured 90.3% recovery against the 80.0%
+  threshold, so this gap did not block acceptance; it is recorded for a future extraction tuning
+  pass rather than widened silently now. Owner: next graph/entity tuning phase.
+- **`graph_frame_input` reads `frame_text.content_text` only.** v14 has no legacy `ocr_text` table
+  (dropped at v3), so the store reports `content_text = None` for a frame without a `frame_text`
+  row; there is nothing to fall back to and no legacy path is invented.
+- **No user-facing on-demand trigger for graph work.** The kickoff forbids adding a command, route
+  or UI to read the graph, and the settings table is closed, so model-free work is produced on
+  startup/idle under the scheduler's kernel constants; the optional normalization pass runs once
+  per idle episode. `03 §7h.7`'s "on demand" is satisfied structurally by the store API's
+  `graph_insert_thread_override`, which enqueues `graph_cluster` atomically for P9's UI.
+
+Post-audit findings that stay open (two independent read-only audits; the fixed items are recorded
+in `05` and `06` #37-#42):
+
+- **P1: session reconciliation can delete graph links (owner: P6/P8, cross-phase).** The sessions
+  scheduler routinely deletes and recreates unfrozen tail sessions (`crates/store/src/sessions.rs`,
+  `crates/kernel/src/sessions_scheduler.rs`), and `session_entities.session_id` /
+  `thread_sessions.session_id` are `ON DELETE CASCADE`. A frame extracted while its session is
+  still in the mutable six-hour tail can lose its session evidence when that session is re-created
+  with a new id; extraction is one-shot (the backfill cursor only moves forward), so nothing
+  re-links the frame. The graph then silently shrinks for that frame. A real fix needs a
+  session-change re-extract trigger or a reconciliation pass over the mutable window, which is a
+  cross-phase decision; recorded rather than worked around inside P5.
+- **P2: threads can lag an active session.** The scheduler only clusters a fully drained extraction
+  state (cursor at `MAX(frames.id)`), which during continuous capture may wait for an idle moment.
+  `03 §7h.7` allows "on demand or on idle", so this is permitted, but P9's Work screen and the
+  maintainer evidence run should know the graph catches up when extraction pauses, not mid-burst.
+- **P2: a dead-lettered `graph_extract` frame is invisible in the completion line.** The cursor is
+  `MAX(jobs.frame_id)` over the kind, so a frame whose job exhausted its attempts is skipped and
+  the five-count line reports a "complete" graph that does not include it. The dead job is visible
+  in queue diagnostics only. Owner: maintainer if a dead graph job appears in practice.
+- **P2: the backfill checkpoint depends on graph job rows surviving.** The cursor is derived from
+  `jobs.frame_id`; any future pruning of `graph_extract` job rows would rewind it and replay
+  history (row dedup holds, but `hit_count` would inflate, see below). `jobs` also has no
+  kind-leading index, so `graph_backfill_status` scans the table on every scheduler tick. P5 does
+  not add an index (schema is P3-owned and frozen). Owner: whoever introduces job retention.
+- **P2: P6 handoff, registry is additive but incomplete if P6 copies its kickoff literally.** The
+  three registry sites (`traits/jobs.rs`, `store/jobs.rs`, `kernel/worker_pool.rs` dispatch) are
+  additive-safe, but `claim_kinds` is a fixed `[JobKind; 6]` array with its own gating logic; P6
+  must extend that too (and the array size) or its jobs will be enqueued but never claimed.
+  Recorded here so the P6 kickoff's "three registry sites" sentence does not mislead.
+- **P2: `Kernel::stop_graph_scheduler` is available but not part of the app's graceful shutdown.**
+  `src-tauri`'s shutdown stops the sessions/vision/workers handles; the graph producer's handle
+  stops through its `Drop` at process exit (no task leak). The method is kept for a future
+  graceful-stop wiring and its doc says so.
+
 ## 2026-11-04: P4 thresholds measured on a committed synthetic fixture (owner: maintainer for the two deviations)
 
 P4 is executed on `feat/0.4.5-p4-auto-eval`, rebased onto `origin/main` so only its three commits
