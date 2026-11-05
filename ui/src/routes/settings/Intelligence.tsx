@@ -79,13 +79,18 @@ export function IntelligenceCategory() {
       void commitSchedule(patch);
       return;
     }
-    setIntervalDraft(null);
     const merged =
       typed === null
         ? patch
         : { ...patch, enrich_vision_timer_interval_ms: typed.value };
     void commitSchedule(merged).then((stored) => {
-      if (!stored && typed !== null) setIntervalDraft(typed);
+      // Retire only the draft this save carried, and only once it is stored. Clearing it up
+      // front and restoring it on failure could resurrect a draft the user had since reset or
+      // replaced; leaving it until success means there is nothing to resurrect (review, PR #162).
+      if (!stored || typed === null) return;
+      setIntervalDraft((current) =>
+        current !== null && current.issued === typed.issued ? null : current,
+      );
     });
   }
 

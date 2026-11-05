@@ -518,6 +518,12 @@ buggy build  → enabled=false | note=null
 fixed build  → enabled=false | note="Vision timer interval must be between 1 and 1440 minutes. The interval was not s…"
 ```
 
+Round three of that PR (`06` #92) rejected my clear-then-restore shape: a restore on failure is a
+write into state the user may have replaced by then. The toggle now leaves the draft in place until
+the save resolves and retires it only on success, which removes the restore entirely rather than
+guarding it. Native: typed 45, toggled off → `enabled=false interval=2700000`; re-enabled → the field
+reads 45 from the store with no stale draft.
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate
