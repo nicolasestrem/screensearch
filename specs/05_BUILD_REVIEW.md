@@ -505,6 +505,19 @@ field="45", store_interval=3600000        (typed, no Enter, no blur)
 toggled off → enabled=false interval=2700000   (one save carried the draft)
 ```
 
+The review of that follow-up found two more (`06` #90, #91), both in the code this pass introduced.
+The catch-up `useEffect` compared the draft against `intervalMs`, which `useSetSettings` updates
+optimistically — so a failed save could lose the draft while the error claimed it was kept; the effect
+is gone and a reset now retires the draft explicitly. And the range note was cancelled by the
+toggle-only patch's own note reset, so an out-of-range draft was silently omitted. The explanation is
+now its own state. Native fail-without/pass-with, same sequence on both builds (enable, type 5000,
+toggle off without Enter):
+
+```
+buggy build  → enabled=false | note=null
+fixed build  → enabled=false | note="Vision timer interval must be between 1 and 1440 minutes. The interval was not s…"
+```
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate

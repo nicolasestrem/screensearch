@@ -2,7 +2,7 @@
 // sessions behave — the eight keys whose `Where` column names this category. Every
 // row autosaves; the vision schedule pairs two keys in one control and writes them
 // through `useSettingsPatch`, so one edit gets one toast and one undo for the pair.
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import type { Settings } from "../../bindings/Settings";
 import { ScheduleControl } from "../../components/domain";
@@ -30,7 +30,11 @@ export function IntelligenceCategory() {
     "text.include_chrome_default",
   );
   const schedule = useSettingsPatch();
-  const [scheduleNote, setScheduleNote] = useState<string | null>(null);
+  // Only the range explanation lives here. It is deliberately separate from the save
+  // outcome: `useSetSettings` is optimistic, so a comparison against `intervalMs` cannot
+  // tell a persisted value from a pending one, and a toggle-only patch must not erase the
+  // reason the drafted interval was left out (review, PR #162).
+  const [rangeError, setRangeError] = useState<string | null>(null);
   // The interval is a draft until blur/Enter: `ScheduleControl` emits on every
   // keystroke, so committing directly made clearing the field throw the number back
   // and out-of-range entries vanish instead of staying correctable (review, PR #161).
@@ -49,14 +53,6 @@ export function IntelligenceCategory() {
   // the schedule row's "nothing scheduled" status, so the rows never hide.
   const state = categoryFrameState(settings, stats.isError);
 
-  // A draft the saved value has caught up with (a reset, or an undo) must not keep
-  // masking it.
-  useEffect(() => {
-    setIntervalDraft((current) =>
-      current !== null && current.value === intervalMs ? null : current,
-    );
-  }, [intervalMs]);
-
   /**
    * `ScheduleControl`'s toggle is a discrete decision and saves at once; the interval
    * field only updates the draft. A cleared field reports 0, which stays visible (and
@@ -69,6 +65,7 @@ export function IntelligenceCategory() {
         value: patch.enrich_vision_timer_interval_ms,
         issued: nextPendingToken(),
       });
+      if (intervalInRange(patch.enrich_vision_timer_interval_ms)) setRangeError(null);
       return;
     }
     // The toggle saves at once, and carries any drafted interval with it: toggling
@@ -77,8 +74,8 @@ export function IntelligenceCategory() {
     const typed = drafted !== null && drafted.value !== intervalMs ? drafted : null;
     if (typed !== null && !intervalInRange(typed.value)) {
       // The interval is invalid on its own, so it must not veto the toggle: save the
-      // toggle, keep the number on screen with the reason.
-      setScheduleNote(rangeNote());
+      // toggle, keep the number on screen, and keep the reason it was left out.
+      setRangeError(rangeNote());
       void commitSchedule(patch);
       return;
     }
@@ -132,10 +129,12 @@ export function IntelligenceCategory() {
   function commitSchedule(patch: Partial<Settings>): Promise<boolean> {
     const nextInterval = patch.enrich_vision_timer_interval_ms;
     if (nextInterval !== undefined && !intervalInRange(nextInterval)) {
-      setScheduleNote(rangeNote());
+      setRangeError(rangeNote());
       return Promise.resolve(false);
     }
-    setScheduleNote(null);
+    // A patch that carries a valid interval supersedes the explanation; a toggle-only
+    // patch says nothing about the interval, so its note stays until the draft changes.
+    if (nextInterval !== undefined) setRangeError(null);
     // The toast names the key the edit actually touched; the undo behind it restores
     // every field the patch carried.
     return schedule.commitPatch(
@@ -185,12 +184,14 @@ export function IntelligenceCategory() {
         settingKey={TIMER_KEY}
         labelInControl
         changed={timerEnabled !== SETTINGS_DEFAULTS.enrich_vision_timer_enabled}
-        onReset={() =>
+        onReset={() => {
+          setIntervalDraft(null);
+          setRangeError(null);
           schedule.commitPatch(
             { enrich_vision_timer_enabled: SETTINGS_DEFAULTS.enrich_vision_timer_enabled },
             timerDef.label,
-          )
-        }
+          );
+        }}
         saving={schedule.saving}
         error={schedule.error}
         onRetry={schedule.retry}
@@ -208,7 +209,7 @@ export function IntelligenceCategory() {
                 commitIntervalDraft();
               } else if (event.key === "Escape") {
                 setIntervalDraft(null);
-                setScheduleNote(null);
+                setRangeError(null);
               }
             }}
           >
@@ -229,14 +230,19 @@ export function IntelligenceCategory() {
       <SettingRow
         settingKey={INTERVAL_KEY}
         changed={intervalMs !== SETTINGS_DEFAULTS.enrich_vision_timer_interval_ms}
-        onReset={() =>
+        onReset={() => {
+          // The reset is a deliberate discard of the drafted number, so the draft and its
+          // explanation retire with it — no effect watching the value, which cannot tell a
+          // persisted write from an optimistic one.
+          setIntervalDraft(null);
+          setRangeError(null);
           schedule.commitPatch(
             { enrich_vision_timer_interval_ms: SETTINGS_DEFAULTS.enrich_vision_timer_interval_ms },
             intervalDef.label,
-          )
-        }
+          );
+        }}
         saving={schedule.saving}
-        error={scheduleNote}
+        error={rangeError ?? schedule.error}
         status={
           timerEnabled
             ? "Set by the schedule above."
