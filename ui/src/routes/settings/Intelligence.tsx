@@ -29,6 +29,10 @@ export function IntelligenceCategory() {
   );
   const schedule = useSettingsPatch();
   const [scheduleNote, setScheduleNote] = useState<string | null>(null);
+  // The interval is a draft until blur/Enter: `ScheduleControl` emits on every
+  // keystroke, so committing directly made clearing the field throw the number back
+  // and out-of-range entries vanish instead of staying correctable (review, PR #161).
+  const [intervalDraft, setIntervalDraft] = useState<number | null>(null);
 
   const timerDef = settingDef(TIMER_KEY);
   const intervalDef = settingDef(INTERVAL_KEY);
@@ -41,11 +45,42 @@ export function IntelligenceCategory() {
   const state = categoryFrameState(settings, stats.isError);
 
   /**
+   * `ScheduleControl`'s toggle is a discrete decision and saves at once; the interval
+   * field only updates the draft. A cleared field reports 0, which stays visible (and
+   * correctable) rather than being replaced by the saved value.
+   */
+  function onScheduleChange(patch: Partial<Settings>): void {
+    if (patch.enrich_vision_timer_interval_ms !== undefined) {
+      setIntervalDraft(patch.enrich_vision_timer_interval_ms);
+      return;
+    }
+    setIntervalDraft(null);
+    commitSchedule(patch);
+  }
+
+  /** Commit the drafted interval once the user is done with it. */
+  function commitIntervalDraft(): void {
+    if (intervalDraft === null) return;
+    const drafted = intervalDraft;
+    if (drafted === intervalMs) {
+      setIntervalDraft(null);
+      return;
+    }
+    void commitSchedule({ enrich_vision_timer_interval_ms: drafted }).then(
+      (stored) => {
+        // On failure the draft stays, so the number the user typed is still there to
+        // correct beside the error — a rollback would contradict the message.
+        if (stored) setIntervalDraft(null);
+      },
+    );
+  }
+
+  /**
    * `ScheduleControl` reports a cleared interval as 0 and lets a value above the
    * registry maximum through; the backend rejects both, so an interval outside the
    * range is explained inline instead of firing a write that cannot succeed.
    */
-  function commitSchedule(patch: Partial<Settings>): void {
+  function commitSchedule(patch: Partial<Settings>): Promise<boolean> {
     const nextInterval = patch.enrich_vision_timer_interval_ms;
     const range = intervalDef.range;
     if (nextInterval !== undefined && range) {
@@ -55,13 +90,13 @@ export function IntelligenceCategory() {
         setScheduleNote(
           `${intervalDef.label} must be between ${low} and ${high} minutes. The interval was not saved.`,
         );
-        return;
+        return Promise.resolve(false);
       }
     }
     setScheduleNote(null);
     // The toast names the key the edit actually touched; the undo behind it restores
     // every field the patch carried.
-    schedule.commitPatch(
+    return schedule.commitPatch(
       patch,
       patch.enrich_vision_timer_interval_ms !== undefined
         ? intervalDef.label
@@ -123,11 +158,24 @@ export function IntelligenceCategory() {
             : "Nothing is scheduled — enrichment runs on demand, and tagging a single moment stays available."
         }
         control={
-          <ScheduleControl
-            timerEnabled={timerEnabled}
-            timerIntervalMs={intervalMs}
-            onChange={commitSchedule}
-          />
+          <div
+            onBlur={commitIntervalDraft}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitIntervalDraft();
+              } else if (event.key === "Escape") {
+                setIntervalDraft(null);
+                setScheduleNote(null);
+              }
+            }}
+          >
+            <ScheduleControl
+              timerEnabled={timerEnabled}
+              timerIntervalMs={intervalDraft ?? intervalMs}
+              onChange={onScheduleChange}
+            />
+          </div>
         }
       />
 
