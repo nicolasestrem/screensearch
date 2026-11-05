@@ -91,6 +91,11 @@ first reading might place elsewhere are owned: `ui/src/app/router.tsx` (route me
 - **`models.vision_tier` was rendered but not switched** during acceptance (vision model mid-download).
   Its write path is the pre-existing `set_model_tier`, proven by the answer lane.
 - **Screenshot evidence is committed under `docs/screenshots/p7/`** (65 files: 32 theme PNGs, 17 top-level PNGs, 16 forced-state WebPs), the same treatment P2's evidence got (`06` #34): the folder is not in any phase's owned write set, and the maintainer's batch answers authorised the live run, not the binary evidence. Recorded here rather than added silently. Two capture channels are mixed deliberately — 32 native `.png` theme frames plus the shell surfaces, and 16 `.webp` forced-state frames from a headless Chromium against the dev server.
+- **Second one-file widening (review fix, 2026-11-05).** `ui/src/components/domain/SetupIndicator.tsx`
+  (P10's file) now links to `/settings/models` instead of `/settings`, because the category split
+  made the bare path resolve to General while the setup panel lives in Models — a regression this
+  phase introduced, fixed where it lives rather than by adding a redirect that would have hidden it.
+  Recorded as `06` #77.
 - **Spec amendments made while recording P7 (2026-11-05, disclosed rather than silent).**
   `specs/UI_REFERENCE.md` was amended in four sentences — the §3 shell tree, the §3 IA paragraph, the
   §8 fixed-shell sentence (all now say the rail ships **four** entries and P9 adds Ask/Work with their

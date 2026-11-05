@@ -410,6 +410,13 @@ are proved by the unit tests only — reproducing them needs an interleaved refe
 physically disconnected display, neither of which can be produced on this host without hand-editing
 the store in an encoding the app parses, so they are recorded as test-verified rather than observed.
 
+**A sixth finding arrived with the re-review of `e6d220a`** (`SetupIndicator` linking to the bare
+`/settings`, which the split resolves to General while `SetupDetails` lives in Models — `06` #77).
+Valid, and a regression the split introduced: the chip's own `aria-label` says "open Settings ·
+Models". Fixed in one line to `/settings/models` and verified natively — during an active
+preparation the chip navigated to `http://localhost:5173/settings/models` with the Models pane
+rendered. No unit surface exists for a literal route target, so the navigation is the evidence.
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate
