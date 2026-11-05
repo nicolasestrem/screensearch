@@ -57,7 +57,7 @@
 - **Second review round (2026-11-05).** A second Codex pass on `2452eb3` raised two more P2s, both
   valid and both fixed with tests proven to fail without them (`05`). (1) Entity mentions were matched
   as substrings, so a short name like `api` resolved out of "capital" and mis-scoped the turn (and
-  its follow-ups); a boundary check now decides precision, with the `instr` scan kept as a prefilter.
+  its follow-ups); a boundary check now decides precision over Unicode-aware lowering on both sides (the SQL prefilter went away once its `lower()` proved ASCII-only).
   (2) When an entity resolved but stage 2 had no winners, the frame stage fell back to the whole
   window and discarded the constraint; the constraint is now kept whenever the entity's sessions are
   in scope, while `§7i.1`'s plain-text fallback still covers a mention with no usable match. The

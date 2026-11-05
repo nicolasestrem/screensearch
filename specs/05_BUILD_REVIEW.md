@@ -275,6 +275,29 @@ entity had no candidate session in the window. That is stricter than the spec li
 match by plain-text matching, so an empty candidate set falls back to the window instead of
 dead-ending. The shipped rule, and the reasoning, are in the code comment and in `07`.
 
+### Third review round (resolved)
+
+A third Codex pass on `410e36f` caught a defect **in the previous fix**: the SQL prefilter used
+`instr(lower(question), lower(name))`, and SQLite's `lower()` folds ASCII only, so a non-ASCII
+mention (`Équipe` vs `équipe`) was discarded before the Rust boundary check could see it — the turn
+then silently lost its entity constraint, or inherited the previous turn's.
+
+| Finding | Verdict | Fix |
+|---|---|---|
+| **ASCII-only prefilter dropped valid Unicode mentions** before the Unicode-aware check ran | **valid** — the Rust pass was correct but never received the row | The prefilter is gone: both the question and every `entities.canonical_name`/`entity_aliases.alias` row are lowered by Rust (`to_lowercase`, Unicode-aware) and matched with the same `bounded_mention` rule. The scan is bounded by the graph's size (entities + aliases), not by the frame table, and runs once per turn off the capture path |
+
+```
+# old ASCII-only prefilter restored
+test ask_entity_resolution_is_unicode_case_insensitive ... FAILED
+assertion `left == right` failed: `équipe planning` should resolve the accented canonical name
+test result: FAILED. 0 passed; 1 failed
+# fixed
+test result: ok. 3 passed (entity suite); store ask: 3 unit + 16 integration
+```
+
+The test covers a lowercased accented question, an uppercased one, a mid-sentence one, the accented
+alias form, and the boundary rule on non-ASCII (`prééquipe` must not resolve `équipe`).
+
 ### End-to-end smoke (beyond the test suites)
 
 The verification list is tests plus a compile gate, so the changed HTTP path was also run for real:

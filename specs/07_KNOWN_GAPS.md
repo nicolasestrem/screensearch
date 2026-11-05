@@ -95,7 +95,9 @@ per-query temporary FTS5 index over the candidate sessions, dropped before retur
   short name (`api`) resolve out of an unrelated word ("capital"), which mis-scopes retrieval *and is
   persisted on the turn for follow-ups*. Chosen: a match must be flanked by non-alphanumeric
   characters on both sides, applied identically to canonical names and aliases (`bounded_mention`).
-  `_` counts as a boundary, so `api` does not resolve out of `api_v2`. (2) **"No usable match"
+  `_` counts as a boundary, so `api` does not resolve out of `api_v2`. Matching is done entirely in
+  Rust over Unicode-aware lowercasing on both sides: SQLite's `lower()` folds ASCII only, so a SQL
+  prefilter silently dropped `Équipe` for a `équipe` question (third review round, `06` #59). (2) **"No usable match"
   falls back to plain text, and only then.** When an entity resolves but no session linked to it
   survives the window, `§7i.1`'s "with no match the mention falls back to plain text" applies, so
   the frame stage searches the window rather than returning a dead answer; when the entity *does*
