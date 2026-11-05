@@ -557,8 +557,9 @@ The P5 branch was four commits on `feat/0.4.5-p5-work-graph`, all on top of `ori
   codebase etiquette note: opaque session ids do not belong in log or panic text.
 - **Post-merge `main` runs on `722f29e`, all green:** CI (run 42018142351), MCP native packages
   (run 42018142144) and Push on main (run 42018140728).
-- **This addendum** is the docs-only follow-up branch `docs/0.4.5-p5-work-record`, left as an open
-  PR for review; it changes no code. DOCS_PR_PLACEHOLDER
+- **This addendum** is the docs-only follow-up
+  [\#158](https://github.com/nicolasestrem/screensearch/pull/158) on
+  `docs/0.4.5-p5-work-record`, left open for review; it changes no code.
 
 ### Merged-tree verification (raw)
 

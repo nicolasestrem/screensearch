@@ -44,7 +44,8 @@
   information` alerts in graph test panic messages and `4e16f83` fixed them without touching
   production code; `main` CI, MCP native and Push-on-main runs on the merge commit are green; and
   the full verification list re-ran green on the merged tree (81 targets, 1386 passed, 0 failed).
-  A docs-only follow-up branch records this in `05`; PR: DOCS_PR_PLACEHOLDER.
+  A docs-only follow-up branch records this in `05`; PR:
+  [\#158](https://github.com/nicolasestrem/screensearch/pull/158), left open for review.
 
 ## 2026-11-04: 0.4.5 P4 baseline frozen on a committed fixture and merged
 

@@ -128,8 +128,8 @@ Post-merge findings (P5 merged to `main` as `722f29e`, PR #157):
 - **Closed: the branch is merged and the merged tree re-verified.** The full kickoff verification
   list ran green again on `main` at `722f29e` (81 targets, 1386 passed, 0 failed, 16 ignored) and
   main CI, MCP native and Push-on-main runs on the merge commit are green (`05`, post-merge
-  record). The closed PR is not re-opened; this documentation addendum is its own docs-only PR:
-  DOCS_PR_PLACEHOLDER
+  record). The closed PR is not re-opened; this documentation addendum is its own docs-only PR,
+  [\#158](https://github.com/nicolasestrem/screensearch/pull/158), left open for review.
 - **Open, unchanged:** every gap listed above (session-reconciliation link loss, dead-letter
   visibility, cursor retention dependency, P6 `claim_kinds` handoff, `stop_graph_scheduler`
   shutdown wiring) stays open with its owner; nothing in the post-merge documentation pass changes
