@@ -80,6 +80,47 @@ fn session_text(title: Option<&str>, summary: Option<&str>) -> String {
     }
 }
 
+/// Whether `needle` occurs in `haystack` as a **whole mention**: neither character flanking the
+/// occurrence is alphanumeric, so a short workspace name such as `api` does not resolve out of
+/// "capital expenditure" (`03 §7i.1`). Both sides must already be lowercased by the caller.
+///
+/// The DB prefilter stays a substring `instr` so the scan is bounded by the graph's size; this
+/// is the precision pass over its result, and it applies identically to canonical names and to
+/// aliases.
+fn bounded_mention(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let mut search_from = 0usize;
+    while let Some(found) = haystack[search_from..].find(needle) {
+        let start = search_from + found;
+        let end = start + needle.len();
+        let before_ok = haystack[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric());
+        let after_ok = haystack[end..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric());
+        if before_ok && after_ok {
+            return true;
+        }
+        // Advance one character past this occurrence's start so overlapping candidates are
+        // still considered (`snake_api` → `api` must not match, `api_v2` is a separate name).
+        search_from = start
+            + haystack[start..]
+                .chars()
+                .next()
+                .map(char::len_utf8)
+                .unwrap_or(1);
+        if search_from >= haystack.len() {
+            break;
+        }
+    }
+    false
+}
+
 /// `?first,?first+1,…` — a run of **explicitly numbered** placeholders. Explicit numbering
 /// keeps a chunked `IN (…)` list usable together with later bound values regardless of the
 /// textual order of the clauses (a bare `?` is numbered by its position in the statement).
@@ -350,6 +391,11 @@ impl SqliteStore {
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
+            // The `instr` above is a cheap prefilter; precision is decided here, because a
+            // substring hit is not a mention: `api` inside "capital" must not resolve, or the
+            // turn would be scoped (and persisted) to an unrelated workspace (`03 §7i.1`).
+            let lowered = question.to_lowercase();
+            rows.retain(|candidate| bounded_mention(&lowered, &candidate.matched.to_lowercase()));
             // Longest match first, ties by entity id. The first row of an entity is then that
             // entity's longest matched form, which is the one the turn records.
             rows.sort_by(|left, right| {

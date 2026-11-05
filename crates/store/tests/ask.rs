@@ -194,6 +194,78 @@ async fn seed_threads(store: &SqliteStore) -> ThreadFixture {
 }
 
 #[tokio::test]
+async fn ask_entity_resolution_requires_whole_mentions_not_substrings() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let session = store
+        .insert_session(ai_session(100, Some(200)))
+        .await
+        .unwrap();
+    let frame = seed_frame(&store, 120, "workspace api notes").await;
+    let api_id = seed_entity(
+        &store,
+        session,
+        frame,
+        GraphHit {
+            kind: EntityKind::Repo,
+            canonical_name: "api".to_string(),
+            normalized_key: "repo:api".to_string(),
+            confidence: 0.9,
+            aliases: vec!["api gateway".to_string()],
+        },
+    )
+    .await;
+
+    // A substring hit is not a mention: `api` sits inside "capital", and resolving it would
+    // scope retrieval (and persist that scope on the turn) to an unrelated workspace.
+    assert!(
+        store
+            .ask_resolve_entities("What was the capital expenditure?")
+            .await
+            .unwrap()
+            .is_empty(),
+        "a short name must not resolve out of a longer word"
+    );
+
+    // A whole mention resolves, in any case…
+    let direct = store
+        .ask_resolve_entities("where are the API docs?")
+        .await
+        .unwrap();
+    assert_eq!(direct.len(), 1);
+    assert_eq!(direct[0].entity_id, api_id);
+    assert_eq!(direct[0].matched, "api");
+
+    // …and the same boundary rule applies to aliases.
+    let via_alias = store
+        .ask_resolve_entities("debug the API GATEWAY today")
+        .await
+        .unwrap();
+    assert_eq!(via_alias.len(), 1);
+    assert_eq!(via_alias[0].entity_id, api_id);
+    assert_eq!(via_alias[0].matched, "api gateway");
+
+    // Punctuation and string ends are boundaries too.
+    assert_eq!(
+        store.ask_resolve_entities("api?").await.unwrap().len(),
+        1,
+        "trailing punctuation is a boundary"
+    );
+    assert_eq!(
+        store.ask_resolve_entities("api").await.unwrap().len(),
+        1,
+        "the question itself may be the mention"
+    );
+    assert!(
+        store
+            .ask_resolve_entities("rapid response")
+            .await
+            .unwrap()
+            .is_empty(),
+        "`api` inside `rapid` is not a mention"
+    );
+}
+
+#[tokio::test]
 async fn ask_entity_resolution_is_empty_without_a_graph_and_matches_seeded_aliases() {
     let store = SqliteStore::open_in_memory().unwrap();
 
