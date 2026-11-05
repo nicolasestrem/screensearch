@@ -1383,6 +1383,134 @@ async fn ask_aborts_a_provider_that_never_observes_closure() {
 }
 
 #[tokio::test]
+async fn ask_entity_scope_survives_a_session_ranking_gap() {
+    // Two sessions inside the window, both matching the question text. Only session 5 is
+    // linked to the resolved entity. Stage 2 cannot rank anything here (no summaries, no
+    // vectors), which used to make stage 3 search the whole window and cite the unrelated
+    // session — discarding the entity constraint `§7i.1` establishes.
+    let date = date_days_ago(1);
+    let mut fixture = AskStore::new();
+    fixture.add_session(
+        5,
+        local_ms(date, 0),
+        local_ms(date, 23),
+        "Screensearch work",
+    );
+    fixture.add_session(
+        7,
+        local_ms(date, 0),
+        local_ms(date, 23),
+        "Unrelated reading",
+    );
+    let scoped = fixture
+        .seed_frame(
+            local_ms(date, 10),
+            Some(5),
+            &format!("screensearch deployment on {date}"),
+        )
+        .await;
+    let decoy = fixture
+        .seed_frame(
+            local_ms(date, 11),
+            Some(7),
+            &format!("screensearch deployment on {date}"),
+        )
+        .await;
+    // The entity the question names, linked only to session 5.
+    fixture.entities.push(("screensearch".to_string(), 42));
+    fixture.entity_sessions.insert(42, vec![5]);
+    let store = Arc::new(fixture);
+    let dyn_store: Arc<dyn Store> = store.clone();
+
+    let (kernel, _temp) = kernel_with_answer(
+        dyn_store,
+        Arc::new(CitingAnswer {
+            budget: None,
+            answer: "grounded".to_string(),
+        }),
+    )
+    .await;
+
+    let mut stream = kernel
+        .ask_turn(request(&format!("screensearch deployment on {date}"), None))
+        .await
+        .expect("the turn starts");
+
+    let mut cited: Vec<i64> = Vec::new();
+    while let Some(delta) = stream.deltas.recv().await {
+        match delta {
+            AnswerDelta::Citation { frame_id } => cited.push(frame_id),
+            AnswerDelta::Done { .. } => break,
+            _ => {}
+        }
+    }
+
+    assert!(
+        cited.contains(&scoped),
+        "the entity-linked session's evidence is still retrieved"
+    );
+    assert!(
+        !cited.contains(&decoy),
+        "an unrelated session must not be cited when the mention constrained retrieval"
+    );
+}
+
+#[tokio::test]
+async fn ask_unusable_entity_match_falls_back_to_plain_text() {
+    // The mention resolves to an entity, but none of its linked sessions survives the window.
+    // `§7i.1` answers a mention with no usable match by plain-text matching, so the window's
+    // evidence is still retrieved — a dead answer would be worse than the baseline.
+    let date = date_days_ago(1);
+    let mut fixture = AskStore::new();
+    fixture.add_session(
+        5,
+        local_ms(date, 0),
+        local_ms(date, 23),
+        "Unrelated reading",
+    );
+    let frame = fixture
+        .seed_frame(
+            local_ms(date, 10),
+            Some(5),
+            &format!("screensearch deployment on {date}"),
+        )
+        .await;
+    fixture.entities.push(("screensearch".to_string(), 42));
+    // Linked session 9 does not exist in the window (or at all).
+    fixture.entity_sessions.insert(42, vec![9]);
+    let store = Arc::new(fixture);
+    let dyn_store: Arc<dyn Store> = store.clone();
+
+    let (kernel, _temp) = kernel_with_answer(
+        dyn_store,
+        Arc::new(CitingAnswer {
+            budget: None,
+            answer: "grounded".to_string(),
+        }),
+    )
+    .await;
+
+    let mut stream = kernel
+        .ask_turn(request(&format!("screensearch deployment on {date}"), None))
+        .await
+        .expect("the turn starts");
+
+    let mut cited: Vec<i64> = Vec::new();
+    while let Some(delta) = stream.deltas.recv().await {
+        match delta {
+            AnswerDelta::Citation { frame_id } => cited.push(frame_id),
+            AnswerDelta::Done { .. } => break,
+            _ => {}
+        }
+    }
+
+    assert!(
+        cited.contains(&frame),
+        "an entity whose sessions are outside the window falls back to plain-text matching"
+    );
+}
+
+#[tokio::test]
 async fn ask_citations_name_exactly_the_frames_it_streamed() {
     let date = date_days_ago(1);
     let mut fixture = AskStore::new();

@@ -184,8 +184,8 @@ impl Kernel {
         // planning produces (`AskEntityMatch`), and the store joins it to `session_entities`
         // to reach the "entity-resolved sessions" stages 1 and 2 narrow on (`§7i.2`,
         // `§7h.3`). An empty scope is the documented no-graph fallback.
-        let (threads, winning_sessions) = match request.session_id {
-            Some(id) => (Vec::new(), vec![id]),
+        let (threads, candidates, winning_sessions) = match request.session_id {
+            Some(id) => (Vec::new(), vec![id], vec![id]),
             None => {
                 // Stage 1 — threads (empty graph ⇒ empty, the documented fallback).
                 let threads = self
@@ -209,20 +209,38 @@ impl Kernel {
                     .iter()
                     .map(|hit| hit.session_id)
                     .collect::<Vec<_>>();
-                (threads, winners)
+                (threads, candidates, winners)
             }
         };
-        // Stage 3 — frames restricted to the winning sessions; with no winner the search
-        // runs over the window alone (the mandated non-blocking path).
         let search = SearchQuery {
             text: question.clone(),
             limit: request.top_k.max(1),
             time_range: window,
             include_chrome: false,
         };
+        // Stage 3 — frames inside the winning sessions. Reaching "no winner" has two meanings
+        // and they must not be conflated:
+        //  * no entity resolved and nothing ranked (no summaries, no vectors yet) ⇒ the
+        //    mandated non-blocking fallback: the existing frame search over the window alone
+        //    (`§7i.1`, "never worse than the previous Ask"), i.e. no session restriction.
+        //  * an entity resolved **and its linked sessions are in scope** ⇒ the mention is a
+        //    constraint (`§7i.1`), so the search stays inside those candidate sessions even
+        //    when stage 2 could not rank them (no summaries or vectors yet); without this the
+        //    frame stage would silently discard the constraint and cite unrelated sessions.
+        //  * an entity resolved but no candidate session survives the window ⇒ the mention has
+        //    no usable match, which `§7i.1` answers with plain-text matching, so the window
+        //    fallback applies rather than a dead answer.
+        let entity_constrained = !entity_scope.is_empty() && !candidates.is_empty();
+        let frame_scope: Vec<i64> = if !winning_sessions.is_empty() {
+            winning_sessions.clone()
+        } else if entity_constrained {
+            candidates.clone()
+        } else {
+            Vec::new()
+        };
         let hits = self
             .store
-            .ask_search_frames(&search, &winning_sessions)
+            .ask_search_frames(&search, &frame_scope)
             .await
             .map_err(AskTurnError::Failed)?;
         let stage_counts = StageCounts {
