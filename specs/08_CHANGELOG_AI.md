@@ -1,5 +1,89 @@
 # 08 — AI Changelog
 
+## 2026-11-05: P7 app shell + Settings v2 — v2 shell rebuild and the 26-key Settings surface (branch `feat/0.4.5-p7-shell-settings`, from `main` `6d906a7`; **not committed, not pushed, not merged** — 0.4.5 D18)
+
+Phase: `docs/kickoffs/P7.md`. Build record, gate output, acceptance tables and screenshots: `05`
+(2026-11-05 P7 section). Decisions, silences and deviations: `07`. Contradiction rows `#60`–`#70`:
+`06`.
+
+- **Change:** the app shell was rebuilt on the P2 v2 primitives and tokens and Settings was replaced
+  wholesale. `ui/src/app`: `nav.ts` (one ordered metadata list — Deck · Recall · Insights · Settings,
+  each entry `{ id, label, icon, path, hint }`, no feature flags), `theme.ts`
+  (`APPEARANCE_OPTIONS` + `useAppliedTheme`, which writes `data-theme` and resolves the four
+  concrete themes plus their `*-system` variants through `prefers-color-scheme`, following the OS
+  live and leaving `data-theme` untouched when the user picked a concrete theme), and
+  `router.tsx` (`/settings` and `/settings/:category` now point at the rewrite; `/timeline*` stays a
+  route owned by Recall's `match`, so the palette's "Go to Timeline" still works).
+  `ui/src/components/shell`: `AppShell` (rail + main + status rail + overlay hosts on v2 surface
+  tokens, the two pre-existing bracketed utilities untouched), `NavRail` rendered from
+  `NAV_ENTRIES` with the v2 active treatment and no dead entries, `StatusRail` (kernel/disk/model
+  readiness on `--surface` + `--border` instead of the old caption grey), `CommandPalette` with
+  `useShellCommands` (navigate, every settings category by name, quick actions) so the palette is
+  the only global keyboard surface, `QuickActions`, `ReadinessBanner`, `UpdateIndicator`, a new
+  `ToastHost` and `actionToast` (`pushActionToast`/`toastActionFor`/`clearToastAction`) that keep a
+  toast-id → action map beside the unmodified `useToastStore` so a destructive or reversible action
+  can offer Undo without touching `ui/src/state`.
+- **Change — Settings v2 (`ui/src/routes/settings/`, 28 files):** one row pattern for all **26** UI
+  keys (`03 §8` governs; `ui.appearance` is included, `06` #60), organised into eight categories —
+  General, Capture, Privacy, Intelligence, Models, Data, Integrations, Advanced. Each row is a
+  registry entry (`registry.ts`: key, category, label, effect, control kind, unit, bounds,
+  default) so labels, help text, search and reset all come from one place; `SettingRow` renders
+  label/effect on the left and the control on the right, or — for labelled P2 primitives —
+  hands label and effect into the control (`labelInControl`, `06` #70) so nothing is announced
+  twice. Every row saves on change through `useSettingField` → `set_settings` (numbers debounce and
+  clamp to bounds, hotkeys normalise and check cross-row conflicts, lists chip-edit), shows its own
+  saving/saved/failed state, and raises the undo toast; there is **no global Save**. Destructive
+  actions go through `ConfirmAction` with the target named (history export; legacy-token
+  regeneration). `CategoryState` + `frameState.ts` implement the four frame states (loading
+  skeletons, per-category error with Retry, partial notices in-frame, populated) and never hide
+  sibling rows. `SettingsSearch` matches label, dotted key, snake_case field and effect text,
+  keeps category then registry order, highlights the match, supports ↑/↓/Enter and clears on
+  Escape without leaving the category. Models keeps both lanes (answer/vision) with live
+  load/unload and the setup-details progress; Data embeds `MemoryPanel` whole plus the export
+  confirm; Integrations keeps the legacy bearer actions and embeds the P10 read credential;
+  Advanced is the throttle switch over the 43 read-only values. `ui/src/routes/Settings.tsx` (the
+  v1 file with its own `chordsConflict` local) is deleted, so the conflict rule now exists once, in
+  `routes/settings/hotkeys.ts`.
+- **Why:** `03 §8` and `UI_REFERENCE §1–§12` make the shell and settings the arc's structural
+  surfaces; the old shell carried v1 spacing/colour and the old Settings was one long scroll with a
+  global Save, which cannot express per-field autosave or search.
+- **Verification:** the kickoff's ordered gate, raw in `05` — `npm ci` (347 packages), `npm run
+  lint` exit 0, `npm run build` ✓ (settings chunk 28.60 kB gzip; entry 11.91 kB gzip), `node
+  scripts/stage-mcp.mjs` ✓, `cargo fmt --check` 0, `cargo clippy -D warnings` ✓, `cargo build` ✓,
+  `cargo test --workspace` exit 0 with no failures, `git diff --exit-code -- ui/src/bindings` 0, and
+  `npm test` 96/96. Plus the P7 greps: `Settings.tsx` absent, the 26 key literals are the only
+  dotted literals in the new tree, no legacy compat class or raw design value in the three owned
+  surfaces, and the two `tokens.compat` hits are a P2 comment and the stylesheet import.
+- **Native acceptance (real Tauri app, fresh profile):** 26 of 26 rows reached; 24 keys written and
+  read back from the `settings` table (`answer.thinking`, `api.bind_address`, `api.enabled`,
+  `api.port`, `api.token`, `app.close_to_tray`, `app.run_at_startup`, `capture.interval_ms`,
+  `capture.monitors`, `enrich.vision_timer_enabled`, `enrich.vision_timer_interval_ms`,
+  `marks.hotkey`, `models.answer_tier`, `models.vision_tier`, `overlay.hotkey`,
+  `privacy.excluded_apps`, `privacy.pause_on_lock`, `reports.daily_top_k`,
+  `retrieval.default_top_k`, `sessions.gap_close_secs`, `sessions.min_len_secs`,
+  `storage.max_width`, `storage.retention_days`, `text.include_chrome_default`,
+  `throttle.enabled`, `ui.appearance`), the undo toast proven to write back through `set_settings`,
+  all four themes rendered across all eight categories (32 screenshots), 26/26 label searches and
+  26/26 key-name searches, the keyboard tab order recorded for all eight categories with Escape
+  behaviour from search, the 8×5 state matrix (loading and error forced through the documented
+  `?__devState=` seam in a managed browser; empty/partial/populated observed live), and the
+  external-agent read-credential gate closed — Create → Reveal → Copy → Rotate → Revoke with no
+  secret echo and no dependence on the legacy bearer.
+- **Fixed during acceptance:** `ThrottleReadout` read on/off from `get_throttle_status`, which a
+  settings save does not invalidate, so it printed "Throttle is off" after the switch was turned on.
+  It now takes `enabled` from the **saved** setting and shows a truthful intermediate line while the
+  first pressure sample is pending; recorded as a `lib/ipc` invalidation gap for the owner of that
+  file (`07`). Also fixed on the maintainer's explicit authorization: `ApiReadTokenControls` (P10's
+  file, widened to P7 by one file) now confirms a read-token revoke in a dialog that names what stops
+  working, focuses Cancel, and states that already authorized requests may continue — verified
+  natively (dialog, Escape-cancel, confirmed revoke). Previously a single click destroyed the
+  credential.
+- **Recorded, not fixed (outside the write set):** `marks.hotkey`'s seeded chord failed to register
+  on this host (loud, value unchanged), `models.vision_tier` was rendered but not switched during
+  acceptance, and the embedded domain components still render v1 compat classes until P10's refont.
+
+
+
 ## 2026-11-05: P6 Ask v2 — retrieval planning, staged retrieval, multi-turn conversations ([#160](https://github.com/nicolasestrem/screensearch/pull/160), open, not merged)
 
 - **Change:** Ask became a planned, session-aware, multi-turn pipeline (`03 §7i`), built as four

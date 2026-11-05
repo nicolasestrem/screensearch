@@ -1,15 +1,19 @@
-// StatusRail (top) — live telemetry: capture · DB · queue · sidecar/model, plus an
-// aggregate readiness chip (UI_REFERENCE §3). All values come from TanStack Query
-// caches that the live event stream keeps fresh (useLiveEvents). Outside the Tauri
-// shell the readiness query errors and the rail shows an honest "Kernel offline".
+// StatusRail (top) — live telemetry, one row (UI_REFERENCE §3/§8). Capture state ·
+// data size · queue depth · sidecar/model, plus the aggregate readiness chip, the
+// setup chip and the throttle chip. All values come from TanStack Query caches that
+// the live event stream keeps fresh (useLiveEvents), so the rail never polls.
+//
+// Layout: the rail is fixed and its height comes from the density token (`h-row`) —
+// no screen hardcodes a row height. Chip floors keep every chip's width stable across
+// loading → populated (no layout shift), and the loading skeletons reserve exactly the
+// same footprints. The rail is telemetry only: every control lives in Settings.
+//
+// Outside the Tauri shell the readiness query errors and the rail says so honestly
+// ("Kernel offline") instead of rendering an empty rail.
 import { Chip, Skeleton, Tooltip } from "../primitives";
 import { SetupIndicator } from "../domain";
-import {
-  IconCapture,
-  IconCpu,
-  IconDatabase,
-  IconQueue,
-} from "../icons";
+import { IconCapture, IconCpu, IconDatabase, IconQueue } from "../icons";
+import { cn } from "../../lib/cn";
 import {
   useJobStats,
   useReadiness,
@@ -44,27 +48,36 @@ export function StatusRail() {
   const sidecar = useSidecarStatus();
   const throttle = useThrottleStatus();
 
-  // Only present under real pressure (level >= 1) — genuinely subtle, hidden when idle or
-  // when the throttle is off. Tells the user why enrichment slowed without hunting Settings.
+  // Only present under real pressure (level >= 1) — genuinely subtle, hidden when idle
+  // or when the throttle is off. `get_throttle_status` is kept live by the
+  // `throttle_changed` event, so this reads the current level, not a stale fetch.
   const throttling =
     throttle.data?.enabled && throttle.data.level >= 1 ? throttle.data : null;
+  const level = readiness.data ? worstStatus(readiness.data) : null;
 
   return (
-    <header className="flex items-center justify-between gap-4 h-12 px-4 bg-surface border-b border-line overflow-x-clip">
-      <div className="flex items-baseline gap-3">
-        <span className="font-display uppercase tracking-eyebrow text-subtitle text-ink">
+    <header
+      className={cn(
+        "flex h-row items-center justify-between gap-4 overflow-x-clip",
+        "border-b border-line-subtle bg-surface-chrome px-4",
+      )}
+    >
+      <div className="flex min-w-0 items-baseline gap-3">
+        <span className="text-t-ui font-text font-semibold text-fg-primary">
           ScreenSearch
         </span>
-        {/* Sub-brand eyebrow is the first thing to yield at narrow widths so the live
-            chips never overflow the fixed-height rail (D9). */}
-        <span className="hidden lg:inline eyebrow text-ink-faint">Command Deck</span>
+        {/* Sub-brand yields first at narrow widths so the live chips never overflow
+            the fixed-height rail. */}
+        <span className="hidden text-t-sm font-text text-fg-tertiary lg:inline">
+          Command Deck
+        </span>
       </div>
 
-      <div className="flex items-center gap-2 min-w-0">
+      <div className="flex min-w-0 items-center gap-2">
         {/* Setup chip (03 §7g): the one rail indicator for every setup operation —
-            engine, search model and the vision/answer model downloads (which the
-            kernel mirrors from `model_download`), so no second download chip.
-            Present only while something is active/failed; zero presence otherwise. */}
+            engine, search model and the model downloads the kernel mirrors from
+            `model_download` — so no second download chip. Present only while something
+            is active or failed; zero presence otherwise. */}
         <SetupIndicator />
         {throttling && (
           <Tooltip
@@ -88,14 +101,15 @@ export function StatusRail() {
         )}
 
         {readiness.isLoading && (
-          // Five skeletons at the same floor widths as the five populated chips below,
-          // so loading -> populated swaps in place with zero layout shift (D9).
+          // Same floors as the populated chips below, so loading → populated swaps in
+          // place. `h-8` matches a Chip's own height (text-t-xs × leading-data + padding
+          // + border) inside the `h-row` rail.
           <>
-            <Skeleton className="w-24 h-6" />
-            <Skeleton className="w-20 h-6" />
-            <Skeleton className="w-16 h-6" />
-            <Skeleton className="w-28 h-6" />
-            <Skeleton className="w-20 h-6" />
+            <Skeleton className="h-8 w-24" />
+            <Skeleton className="h-8 w-20" />
+            <Skeleton className="h-8 w-16" />
+            <Skeleton className="h-8 w-28" />
+            <Skeleton className="h-8 w-20" />
           </>
         )}
 
@@ -186,13 +200,15 @@ export function StatusRail() {
               </Chip>
             </Tooltip>
 
-            <Chip
-              tone={statusTone(worstStatus(readiness.data))}
-              dot
-              className="min-w-20 justify-center"
-            >
-              {statusLabel(worstStatus(readiness.data))}
-            </Chip>
+            {level && (
+              <Chip
+                tone={statusTone(level)}
+                dot
+                className="min-w-20 justify-center"
+              >
+                {statusLabel(level)}
+              </Chip>
+            )}
           </>
         )}
       </div>

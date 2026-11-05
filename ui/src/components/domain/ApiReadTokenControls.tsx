@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { ApiStatus } from "../../bindings/ApiStatus";
 import { useApiReadTokenAction, useApiReadTokenStatus } from "../../lib/ipc/apiReadToken";
 import type { ReadTokenAction } from "../../lib/ipc/apiReadTokenOptions";
-import { Button, Skeleton } from "../primitives";
+import { Button, Dialog, Skeleton } from "../primitives";
 
 const results: Record<ReadTokenAction, string> = {
   create: "Read token created and hidden. Reveal or copy it to configure your client. API settings are unchanged.",
@@ -25,9 +25,13 @@ export function ApiReadTokenControls({ apiStatus }: { apiStatus?: ApiStatus }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [lastAction, setLastAction] = useState<ReadTokenAction | null>(null);
+  // Revoking destroys a credential another machine may be using, so it reads a
+  // confirmation first (0.4.5 D9) instead of firing on the button press.
+  const [confirmingRevoke, setConfirmingRevoke] = useState(false);
   const mounted = useRef(true);
   const inFlight = useRef(false);
   const actionGroup = useRef<HTMLDivElement | null>(null);
+  const revokeCancelRef = useRef<HTMLDivElement | null>(null);
   const action = useApiReadTokenAction({
     reveal: setSecret,
     copy: (token) => navigator.clipboard.writeText(token),
@@ -47,6 +51,17 @@ export function ApiReadTokenControls({ apiStatus }: { apiStatus?: ApiStatus }) {
   useEffect(() => {
     if (!configured) setSecret(null);
   }, [configured]);
+  // A confirmation must not outlive the credential it would destroy.
+  useEffect(() => {
+    if (!configured) setConfirmingRevoke(false);
+  }, [configured]);
+  useEffect(() => {
+    if (!confirmingRevoke) return;
+    const frame = requestAnimationFrame(() => {
+      revokeCancelRef.current?.querySelector("button")?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [confirmingRevoke]);
 
   const run = (next: ReadTokenAction) => {
     if (inFlight.current) return;
@@ -116,7 +131,7 @@ export function ApiReadTokenControls({ apiStatus }: { apiStatus?: ApiStatus }) {
             onClick={() => secret ? hide() : run("reveal")}>{secret ? "Hide read token" : "Reveal read token"}</Button>
           <Button data-read-action="copy" size="sm" variant="ghost" disabled={busy || !configured} onClick={() => run("copy")}>Copy read token</Button>
           <Button data-read-action="rotate" size="sm" variant="ghost" disabled={busy || !configured} onClick={() => run("rotate")}>Rotate read token</Button>
-          <Button data-read-action="revoke" size="sm" variant="danger" disabled={busy || !configured} onClick={() => run("revoke")}>Revoke read token</Button>
+          <Button data-read-action="revoke" size="sm" variant="danger" disabled={busy || !configured} onClick={() => setConfirmingRevoke(true)}>Revoke read token</Button>
         </div>
         <p className="text-caption text-ink-muted font-body">
           Create works only when absent. Rotate replaces the existing read token; update your clients afterward.
@@ -136,6 +151,32 @@ export function ApiReadTokenControls({ apiStatus }: { apiStatus?: ApiStatus }) {
           </div>}
         </div>}
       </div>
+      <Dialog
+        open={confirmingRevoke}
+        onClose={() => setConfirmingRevoke(false)}
+        title="Revoke the read token?"
+        size="sm"
+        actions={
+          <div ref={revokeCancelRef} className="flex flex-wrap items-center justify-end gap-2">
+            <Button variant="secondary" onClick={() => setConfirmingRevoke(false)}>Cancel</Button>
+            <Button
+              variant="danger"
+              loading={busy}
+              onClick={() => {
+                setConfirmingRevoke(false);
+                run("revoke");
+              }}
+            >
+              Revoke read token
+            </Button>
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-2 text-t-ui text-fg-secondary">
+          <p>Every agent using this read token stops being able to read your history. The token cannot be restored — a new one would have to be created and configured in each client.</p>
+          <p>Requests already authorized may continue. The HTTP API and the legacy token are not affected.</p>
+        </div>
+      </Dialog>
     </section>
   );
 }

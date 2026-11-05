@@ -1,5 +1,320 @@
 # 05 — Build Review
 
+## 2026-11-05: P7 app shell + Settings v2 — build, verification and native acceptance (branch `feat/0.4.5-p7-shell-settings`, from `main` 6d906a7; no commit, no push, no PR — 0.4.5 D18)
+
+Phase: `docs/kickoffs/P7.md`. Contradictions: `06` #60–#70. Decisions, silences and deferrals:
+`07` (2026-11-05 P7 section).
+
+### What shipped
+
+- **Shell (P7-owned):** `ui/src/app/{nav.ts,theme.ts,router.tsx}` (route metadata list, theme
+  applier, `/settings` + `/settings/:category` repoint) and `ui/src/components/shell/`
+  (`NavRail`, `StatusRail`, `CommandPalette` + `useShellCommands`, `QuickActions`,
+  `ReadinessBanner`, `UpdateIndicator`, `AppShell`, new `ToastHost`, new `actionToast`), rebuilt on
+  v2 primitives/tokens. `NavRail` renders from one ordered list (`NAV_ENTRIES`: Deck · Recall ·
+  Insights · Settings) with no `/ask`, `/work` or `/timeline` entry and no placeholder screen;
+  `/timeline*` stays a real route (Recall's `match` covers it) and the palette still offers
+  "Go to Timeline".
+- **Settings v2 (P7-owned):** `ui/src/routes/settings/` — `index.tsx`, `SettingsLayout.tsx`,
+  `SettingsSearch.tsx`, `registry.ts` (26 defs, `SETTINGS_DEFAULTS`, `searchSettings`),
+  `SettingRow.tsx` (+`labelInControl`), `useSettingField.ts`, `ConfirmAction.tsx`,
+  `CategoryState.tsx`, `frameState.ts`, and the eight categories plus their helpers. **26 UI rows**,
+  not 25 (`06` #60). `ui/src/routes/Settings.tsx` **deleted**.
+- Per-field autosave with an undo toast that writes back through `set_settings`; no global Save.
+  Destructive `ConfirmAction` on export and on legacy-token regeneration.
+- Shell file sizes: max 217 lines. `routes/settings/` max 294 (`Integrations.tsx`); every file
+  under the ~300 cap.
+
+### Verification, kickoff order, raw
+
+```
+$ cd ui && npm ci
+added 347 packages in 4s
+npm warn install-scripts 1 package had install scripts blocked … esbuild@0.25.12 …
+
+$ npm run lint
+npm notice run screensearch-ui@0.4.2 lint
+npm notice run eslint .
+LINT_EXIT=0
+
+$ npm run build
+dist/assets/main-BcEiRuMp.js                     39.25 kB │ gzip: 11.91 kB
+dist/assets/index-DqNsiDCK.js                   102.39 kB │ gzip: 28.60 kB
+✓ built in 2.15s
+
+$ cd .. && node scripts/stage-mcp.mjs
+[stage-mcp] staging C:\…\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
+
+$ cargo fmt --all -- --check
+FMT_EXIT=0
+
+$ cargo clippy --workspace --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.99s
+
+$ cargo build --workspace
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 30.59s
+
+$ cargo test --workspace        # EXIT=0, no FAILED, no panics
+     201 passed; 0 failed   (store)
+      65 passed; 0 failed   (×2)
+      52 passed; 0 failed; 1 ignored
+      33/26/25/24/22/21/9/8/6/4/3/1 passed; 0 failed   (remaining crates + doc-tests)
+
+$ git diff --exit-code -- ui/src/bindings
+BINDINGS_DIFF_EXIT=0
+```
+
+`index-DqNsiDCK.js` is the **settings route chunk** (`index.html` loads `main-BcEiRuMp.js`), so
+route-splitting holds and the entry chunk is 11.91 kB gzip against the 250 kB budget.
+
+### P7-specific checks, raw
+
+```
+$ test ! -f ui/src/routes/Settings.tsx   →  Settings.tsx: ABSENT
+$ wc -l ui/src/routes/settings/*.tsx     →  max 294 (Integrations.tsx), total 2,882
+$ grep -rnoE '"[a-z_]+\.[a-z_0-9]+"' ui/src/routes/settings | sort -u
+  → exact set: the 26 UI keys, no other dotted literal, no `memory.*` literal
+$ grep -rn 'tokens.compat' ui/src
+ui/src/styles/globals.css:15:@import "./tokens.compat.css";
+ui/src/styles/tokens.css:22: * z layers and durations. v1 token names live in tokens.compat.css.
+$ cd ui && npm test
+ℹ tests 96 · pass 96 · fail 0
+```
+
+The second `tokens.compat` hit is a **pre-existing comment in P2's `tokens.css`** (untouched by
+P7); no component references the shim.
+
+Token scan over the three owned surfaces (`routes/settings`, `components/shell`, `app`):
+no raw hex, no `px` font size, no arbitrary `[…]` design value; zero legacy compat keys
+(`bg-surface`, `bg-base`, `text-ink*`, `text-caption|subtitle|title|body|display`,
+`rounded-panel|chip`, `font-display|body`, `tracking-eyebrow`, bare `border-line`). The two
+bracketed utilities left in `AppShell` are `[scrollbar-gutter:stable]` and `[contain:paint]`
+(non-design CSS from the 0.3.2 shell; they set no colour, size, radius or font).
+
+### Acceptance table — the 26 `UI` keys, driven natively on a **fresh profile**
+
+Every row below was reached and driven in the running app (`npm run dev`, Tauri + WebView2) and the
+value read back from the `settings` KV table — the same source `get_settings` returns.
+
+| # | Key | Category | Control (as rendered) | Write path | Read back |
+|---|---|---|---|---|---|
+| 1 | `answer.thinking` | Intelligence | Toggle "Show reasoning while answering" | `set_settings` | `true` → `false` |
+| 2 | `api.bind_address` | Integrations | Field "Bind address" | `set_settings` | `127.0.0.1` → `"::1"`; status read `[::1]:43211` |
+| 3 | `api.enabled` | Integrations | Toggle "HTTP API" | `set_settings` | `false` → `true`; "Listening on 127.0.0.1:43210" |
+| 4 | `api.port` | Integrations | number "Port" | `set_settings` | `43210` → `43211` |
+| 5 | `api.token` | Integrations | legacy bearer row (Reveal/Copy/Regenerate) | `regenerate_api_token` / `ApiStatus.token` | token auto-issued on first enable; Reveal/Copy became enabled, value masked until Reveal |
+| 6 | `app.close_to_tray` | General | Toggle "Close to tray" | `set_settings` | `true` → `false` |
+| 7 | `app.run_at_startup` | General | Toggle "Launch at startup" | `set_settings` | `false` → `true` (OS registration succeeded, no rollback) → `false` (key removed) |
+| 8 | `capture.interval_ms` | Capture | number "Interval between captures" | `set_settings` | `3000` → `4000` |
+| 9 | `capture.monitors` | Capture | monitor chips | `set_settings` | `[]` → `[0]` |
+| 10 | `enrich.vision_timer_enabled` | Intelligence | Toggle "Tag on a timer" | `set_settings` | `false` → `true` → `false` |
+| 11 | `enrich.vision_timer_interval_ms` | Intelligence | "Timer interval (minutes)" (schedule control) | `set_settings` (patch, one undo) | `3600000` → `36300000` (605 min) |
+| 12 | `marks.hotkey` | Capture | `HotkeyField` | `set_settings` | unchanged `"Ctrl+Alt+M"`; registration **failed loudly** (see limits) |
+| 13 | `models.answer_tier` | Models | tier buttons (Default/Quality + model name) | `set_model_tier` | `default` → `quality` → `default` |
+| 14 | `models.vision_tier` | Models | tier buttons | `set_model_tier` | `"default"` rendered with both lanes' live status; not switched (limits) |
+| 15 | `overlay.hotkey` | Capture | `HotkeyField` | `set_settings` | `"Ctrl+Alt+Z"` → `"Ctrl+Shift+Y"`; "Registered — Ctrl+Shift+Y works from any app." |
+| 16 | `privacy.excluded_apps` | Privacy | chip list + "Add an app" | `set_settings` | `[1Password, KeePass, Bitwarden]` → `+ "Notepad"` |
+| 17 | `privacy.pause_on_lock` | Privacy | Toggle "Pause capture when the screen locks" | `set_settings` | `true` → `false` |
+| 18 | `reports.daily_top_k` | Intelligence | number "Frames sampled per period" | `set_settings` | `40` → `41` |
+| 19 | `retrieval.default_top_k` | Intelligence | number "Search results to retrieve" | `set_settings` | `8` → `9` |
+| 20 | `sessions.gap_close_secs` | Intelligence | number "Session gap to close" | `set_settings` | `120` → `130` |
+| 21 | `sessions.min_len_secs` | Intelligence | number "Shortest session" | `set_settings` | `120` → `150` |
+| 22 | `storage.max_width` | Data | number "Stored image width" | `set_settings` | `0` → `1920` |
+| 23 | `storage.retention_days` | Data | `RetentionControl` "Keep screenshots (days)" | `set_settings` | `30` → `14` |
+| 24 | `text.include_chrome_default` | Intelligence | Toggle "Include window chrome in search by default" | `set_settings` | `false` → `true` |
+| 25 | `throttle.enabled` | Advanced | Toggle "Back off under load" | `set_settings` | `false` → `true`; readout `CPU 20% · GPU 2% · Level: Normal` |
+| 26 | `ui.appearance` | General | Select "Theme" | `set_settings` | `pine-light` → `pine-dark` → **Undo** → `pine-light` (all four concretes rendered) |
+
+**Edited-control count = 26.** No control outside the 26 exists: the only non-key inputs on the
+surface are actions/readouts (Export, update check, model load/unload, legacy bearer
+reveal/copy/regenerate, the read credential, the embedded `MemoryPanel`, and the read-only
+`file-only` list under Advanced).
+
+**Undo proof (0.4.5 D9):** `Pine light → Pine dark` wrote `ui.appearance` and raised one toast;
+pressing **Undo** returned the select *and* the persisted row to `pine-light`, i.e. the undo is a
+`set_settings` write, not a local revert.
+
+**API status is live, not derived:** after enabling, the row read "Listening on 127.0.0.1:43210";
+changing the address showed `[::1]:43210`; changing the port showed `[::1]:43211` — the actual
+listener, re-read from `get_api_status`.
+
+### Search — label and key name (gap #103)
+
+Label queries returned the target row for **26/26** keys (one pass, `listitem` titles carry
+"<label> <category> <dotted.key>"). Key-name queries: 24/26 matched in the first automated pass;
+the two apparent misses (`app.close_to_tray`, `capture.interval_ms`) plus a hyphenated label
+(`Mark-this-moment hotkey`) were re-run individually and **each returned exactly its row**:
+
+```
+q="app.close_to_tray"         field="app.close_to_tray"         results: "Close to tray General app.close_to_tray"
+q="capture.interval_ms"       field="capture.interval_ms"       results: "Interval between captures Capture capture.interval_ms"
+q="Mark-this-moment hotkey"   field="Mark-this-moment hotkey"   results: "Mark-this-moment hotkey Capture marks.hotkey"
+```
+
+The two negatives were AX title-read races in the harness, not search misses; the re-run is the
+evidence. Example per category: `launch at startup` (General), `hotkey` (Capture, 2 rows),
+`never captured` (Privacy), `timer` (Intelligence), `tier`/`model` (Models), `retention` (Data),
+`api` (Integrations), `throttle` (Advanced). Matching covers label, dotted key, snake_case field
+and effect text; matched text is highlighted with the `mark-*` tokens.
+
+### Keyboard-only pass
+
+From the sidebar, `Tab` walks the category links in order and then that category's controls; focus
+never enters the browser chrome and never traps. Recorded sequences (excerpt):
+
+```
+General      -> link:Capture > link:Privacy > link:Intelligence > link:Models > link:Data >
+                link:Integrations > link:Advanced > button:Launch at startup >
+                button:Reset to default > button:Close to tray
+Capture      -> … > spinner:Interval between captures > button:Reset to default >
+                button:\\.\DISPLAY1 … > button:\\.\DISPLAY2 …
+Privacy      -> … > button:Stop excluding 1Password > … > button:Stop excluding Bitwarden
+Intelligence -> … > button:Show reasoning while answering > button:Reset to default >
+                button:Tag on a timer > spinner:Timer interval (minutes)
+Models       -> … > button:Default — Ministral-3-3B-Reasoning > button:Quality — Qwen3-4B-Thinking >
+                button:Default — Qwen3-VL-4B-Instruct > button:Quality — Qwen3-VL-8B-Instruct > button:Load answer model
+Data         -> … > spinner:Stored image width > button:Reset to default >
+                spinner:Keep screenshots (days) > button:Reset to default > button:Export history… >
+                button:Schedule daily memory
+Integrations -> … > button:HTTP API > button:Reset to default > textfield:Bind address >
+                button:Reset to default > spinner:Port > button:Reset to default > button:Reveal…
+Advanced     -> button:Back off under load > button:Reset to default > … > link:Settings >
+                button:Command Ctrl K > button:Load answer model …
+```
+
+**Escape from search** cleared the query and kept the current category (Integrations pane still
+rendered afterwards; the eight category links stayed). Activation: `Enter`/`Space` on every
+control above produced the write recorded in the table. Focus **rings** are the `focus-visible`
+outline from the token layer (`--focus-ring`); they were not captured as pixels — the accessibility
+gate is the AX focus walk above (`ui/test/contrast.test.mjs` and the token fence cover the values).
+
+### State matrix — 8 categories × 5 states
+
+`loading`/`error` are forced through the documented seam (`?__devState=<state>&__devStateKey=settings`,
+`lib/dev/devState.ts`, which synthesises flags only and never payloads); `empty` is the in-frame
+condition `UI_REFERENCE §4` words for that category; `partial`/`populated` come from live data.
+
+| Category | loading | empty (as specified) | error | partial | populated |
+|---|---|---|---|---|---|
+| General | skeleton rows (`states/general-loading.webp`) | "—" (every control holds a value; no empty frame) | "Couldn't read your general settings" + Retry (`states/general-error.webp`) | status probe failed → rows stay usable | live; update/version section |
+| Capture | `capture-loading.webp` (13 skeletons) | paused-capture line, rows editable ("Paused — capture is stopped…") | "Couldn't read your capture settings" | **observed natively:** mark hotkey could not register → inline warning + toast | interval/monitors/hotkeys live |
+| Privacy | `privacy-loading.webp` | "Nothing excluded yet" + add field (code path; the default profile ships 3 apps) | "Couldn't read your privacy settings" | settings refetch failed (no IPC for a "pending app") | 3 chips + add field + lock row |
+| Intelligence | `intelligence-loading.webp` (25) | "Nothing is scheduled — enrichment runs on demand…" (`intelligence-empty.png`) | "Couldn't read your intelligence settings" | status probe failed | 8 rows live |
+| Models | `models-loading.webp` | zero presence: setup section not rendered when nothing is active/failed | "Couldn't read your model settings" | **observed natively:** "Preparing local AI — Downloading vision model 73%" chip + progressbar | two lanes with live load state |
+| Data | `data-loading.webp` | "Nothing saved yet" inside the memory section | "Couldn't read your storage settings" | export failure keeps the panel (inline "Try again") | footprint line + export + panel |
+| Integrations | `integrations-loading.webp` | "API disabled — nothing is listening" (`integrations-api-off.png`) | "Couldn't load the API settings" | bind error/enabled-not-running note | listening address + both credentials |
+| Advanced | `advanced-loading.webp` | "Everything is at its default — the tuning file sets none of these values." | "Couldn't load the throttle setting" | advanced read failed / partly from file | throttle readout + 43 read-only values |
+
+Screenshots: `docs/screenshots/p7/states/*.webp` (16) for the forced pair, plus
+`advanced-throttle-on.png`, `intelligence-empty.png`, `integrations-api-off.png`.
+
+### Screenshots — themes and shell surfaces
+
+4 themes × 8 categories = 32 PNGs, all distinct hashes (each theme repainted every surface):
+`docs/screenshots/p7/{pine-light,pine-dark,ink-light,ink-dark}/{general,capture,privacy,intelligence,models,data,integrations,advanced}.png`.
+`NavRail` and `StatusRail` appear in every one of those 32 captures, so both rails are covered in
+all four themes.
+
+Shell surfaces named by `P7.md` ("NavRail, StatusRail, palette, toast, readiness banner, in both
+themes"), each with its own capture:
+
+| Surface | Light | Dark |
+|---|---|---|
+| NavRail + StatusRail (whole shell frame) | `shell-frame-pine-light.png` (also the 32 theme shots) | `shell-frame-pine-dark.png` (also the 32 theme shots) |
+| Command palette (⌘K, "Go to Settings" + all eight "Settings · <category>") | `palette-pine-light.png` | `palette-pine-dark.png` |
+| Toast with Undo (raised by the theme change itself) | `toast-undo-pine-light.png` | `toast-undo-pine-dark.png` |
+| Readiness banner (real `Starting up` state, captured during boot) | `readiness-banner-pine-light.png` — chips read `Embeddings: Starting — loading embedding model` | `readiness-banner-pine-dark.png` |
+
+The banner is state, not a notice (`readiness.tsx` renders nothing when every subsystem is ready), so
+it was captured during a real cold start by restarting the app and polling the accessibility tree for
+the strip — no state was faked. Its health->absent behaviour is the reason it is missing from the 32
+theme frames: those were taken on a healthy app, where it correctly reserves zero height. The
+"Preparing local AI — Downloading vision model 73%" chip seen earlier lives in the status rail /
+setup sections, not in the banner.
+
+Two further observations from that capture session, both about behaviour rather than pixels:
+**`ui.appearance` survives a restart** — after selecting *Pine dark*, a cold start came back in
+*Pine dark* (the select read "Pine dark" before any interaction), and the app then returned to
+*Pine light* through the same select. And **the palette jump works end to end**: `Ctrl K` → type
+`Settings · General` → `Enter` landed on `/settings/general` with the theme row focused in view.
+
+Other evidence: `data-export-confirm.png` (confirm naming what is written),
+`integrations-revoke-confirm.png` (read-token revoke confirmation),
+`integrations-read-token-{created,revoked}.png`, `advanced-throttle-on.png`, `intelligence-empty.png`,
+`integrations-api-off.png`, `privacy-after-restore.png`.
+Evidence volume: 15 MB, 64 files (same convention as `docs/screenshots/p2/**`).
+
+### External-agent read credential (closes the carried-forward `05` gate)
+
+Native sequence on Integrations, with the API off and on independently:
+
+```
+off  → "API disabled — the read credential does not enable a listener."
+     → "No read token configured. Create one to give an agent read-only access."
+Create → "Read token configured." + "Read token hidden"; Create disabled;
+         Reveal/Copy/Rotate/Revoke enabled; status "Read token created and hidden. Reveal or copy it…"
+Reveal → one 64-char secret rendered (button becomes "Hide read token"); nothing else changed
+Copy   → clipboard held the token (verified without printing it)
+Rotate → "Read token rotated and hidden. Update your clients with the new token." (secret cleared)
+Revoke → **confirmation first**: "Revoke the read token?" with Cancel focused and the consequences
+         named (`integrations-revoke-confirm.png`); Escape left the token configured; confirming
+         produced "Read token revoked for subsequent requests…" and "No read token configured."
+```
+
+No secret echo: the token never appeared in row copy, a status line, an error, or a toast; the
+reveal is the only place it renders and Escape/Hide clears it. The legacy bearer stays independently
+revealable and its status is unchanged by any read-credential action.
+
+### Deviations and honest limits (all recorded in `07`)
+
+1. **Read-token Revoke now confirms.** Original finding: `ApiReadTokenControls` (P10's file, outside
+   this phase's write set) revoked the external-agent read credential on one click, while P7's
+   `ConfirmAction` covered only export and legacy-token regeneration. The maintainer authorized a
+   one-file widening on 2026-11-05, so the component now opens a confirmation that names what stops
+   working, focuses Cancel, and states that already authorized requests may continue; verified
+   natively (dialog, Escape-cancel, confirmed revoke). The write-set widening is recorded in `07`.
+2. **`marks.hotkey` registration fails on this machine** (`Ctrl+Alt+M` is taken): the row showed
+   "Could not register mark hotkey: HotKey already registered…" with the row's error and a toast —
+   the loud-failure requirement, and it is the native `partial` evidence for Capture, but the key
+   was not *written* to a new value.
+3. **`models.vision_tier` was not switched**: the vision model was mid-download, and a tier switch
+   during that transfer was not worth risking on the maintainer's link. The row renders both lanes,
+   both options and live load state; the write path (`set_model_tier`) is pre-existing and the
+   answer lane proved it round-trips.
+4. **Hotkey capture needed a real chord**: `Ctrl+K` was swallowed by the palette shortcut, and the
+   recorder only records from a focused field, so `Ctrl+Shift+Y` was used.
+5. **Domain components still carry v1 compat classes** (`text-caption`, `text-ink-*`, `font-body`,
+   `rounded-panel`) — `ApiPanel`/`AppPanel` are unused now, but `HotkeyField`, `ModelTierPicker`,
+   `ScheduleControl`, `RetentionControl`, `ModelPanel`, `SetupDetails`, `MemoryPanel`,
+   `ApiReadTokenControls` render as they are today. That is what `P7.md` asks for; P10's refont
+   retires them. The token scan above covers only P7's own files.
+6. **Two small label duplications** remain where a domain control prints its own label under a row
+   that also prints it (`Monitors to capture`, `Access token`, `Read-only token`,
+   `Vision timer interval`), because the row-label ruling (`labelInControl`) applies to P2
+   primitives and these components take no label prop. Recorded, not hidden.
+7. **Commit/push/PR only after validation.** `P7.md` and `CLAUDE.md` forbid committing until the
+   maintainer validates the content and names `nicolasestrem/screensearch` (0.4.5 D18). That
+   authorization was given on 2026-11-05 ("commit on the branch, push, open PR"), together with the
+   one-file revoke-confirm widening; nothing is merged — `main` stays untouched.
+8. **Machine restoration.** The acceptance ran on a **fresh profile** (this host had no
+   `%APPDATA%\app.screensearchv2c.desktop` before the run). Afterwards `app.run_at_startup` was
+   turned back off (verified: no `HKCU\…\Run` entry), the app was stopped and the created profile
+   directory was deleted; nothing was left behind. The one exported JSON stayed on the maintainer's
+   Downloads volume (`E:\Downloads\screensearch-export-…`) as part of the export proof.
+
+### Fix applied after the first native pass
+
+The native run exposed a stale-status bug in my own surface: `ThrottleReadout` took the on/off line
+from the `get_throttle_status` snapshot, which a settings save does not invalidate (`lib/ipc` is not
+this phase's file), so turning the throttle on still read "Throttle is off" until the next
+`throttle_changed`. Fixed inside `routes/settings/` by passing the **saved** setting
+(`<ThrottleReadout enabled={throttle.value === true} />`) and adding a truthful intermediate line
+("Turning on — waiting for the first pressure sample.") instead of printing stale state; the measured
+numbers still come from the probe. Re-verified live after HMR (`CPU 20% · GPU 2% · Level: Normal`) and
+the full UI gate was re-run afterwards (lint 0, build ok, 96/96 tests, bindings unchanged).
+
+
+
 ## 2026-11-05: P6 Ask v2 (branch `feat/0.4.5-p6-ask-v2`, [#160](https://github.com/nicolasestrem/screensearch/pull/160), open, not merged)
 
 Branch base: `main` @ `b84c164` (P1–P5 merged). There is no `v0.4.3` tag, so Gate A is not closed

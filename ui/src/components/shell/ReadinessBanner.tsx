@@ -1,10 +1,13 @@
-// ReadinessBanner — a thin, truthful strip shown only while a subsystem is
-// starting, unavailable, or errored (UI_REFERENCE §3/§4). It mirrors live
-// readiness; when everything resolves it disappears (no dismiss — it is state,
-// not a notice). `disabled` (intentionally off) and `ready` never raise it.
+// ReadinessBanner — a thin, truthful strip shown only while a subsystem is starting,
+// unavailable or errored (UI_REFERENCE §3/§4). It mirrors live readiness; when
+// everything resolves it disappears (no dismiss — it is state, not a notice), and
+// `disabled` (intentionally off) and `ready` never raise it. The banner is the one
+// surface allowed to reserve space (§8); it does so only while a concern exists, so a
+// healthy app pays zero height for it.
 import { Chip } from "../primitives";
 import { useReadiness } from "../../lib/ipc/queries";
 import { statusLabel, statusTone } from "../../lib/status";
+import { cn } from "../../lib/cn";
 import type { ComponentStatus } from "../../bindings/ComponentStatus";
 
 const SUBSYSTEMS = [
@@ -37,9 +40,17 @@ export function ReadinessBanner() {
   return (
     <div
       role="status"
-      className="flex flex-wrap items-center gap-3 px-4 py-2 border-b border-line bg-surface"
+      className={cn(
+        "flex flex-wrap items-center gap-3",
+        "border-b border-line-subtle bg-surface-pane px-pane py-2",
+      )}
     >
-      <span className={anyError ? "eyebrow text-danger" : "eyebrow text-warn"}>
+      <span
+        className={cn(
+          "text-t-xs font-text font-medium",
+          anyError ? "text-status-danger-fg" : "text-status-warn-fg",
+        )}
+      >
         {anyError ? "Attention" : "Starting up"}
       </span>
       {issues.map((s) => (

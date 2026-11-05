@@ -1,5 +1,101 @@
 # 07 — Known Gaps
 
+## 2026-11-05: P7 app shell + Settings v2 — grants, maintainer decisions and deferrals (owner: maintainer for the decisions; agent for code; branch `feat/0.4.5-p7-shell-settings`, not pushed, not merged)
+
+Phase: `docs/kickoffs/P7.md`, branched from `main` `6d906a7` (P2–P6 merged; no `v0.4.3` tag exists,
+which is not a stop — Gate A was still open when P7 started, so the branch base is `main` HEAD).
+Every kickoff stop condition and every spec silence the two read-only scouts surfaced was put to
+the maintainer in one batched round **before** any code was written; the contradiction rows are
+`specs/06_PATCH_PLAN.md` #60–#70. Answers, verbatim in effect:
+
+**Grants.** None needed. The mapping proved every write lands inside the owned paths
+(`ui/src/components/shell`, `ui/src/routes/settings/`, `ui/src/app`) plus the five build-loop logs;
+`ui/src/routes/Settings.tsx` is deleted, which the kickoff names explicitly. Two files that a
+first reading might place elsewhere are owned: `ui/src/app/router.tsx` (route metadata and the
+`/settings` repoint) and `ui/src/app/providers.tsx`. Files imported but **not** edited:
+`ui/src/components/domain/*` (P10's), `ui/src/components/primitives/*` (P2's),
+`ui/src/styles/*`, `ui/src/bindings/*`, `ui/src/lib/*`, `ui/src/state/*`, every other route file.
+
+**Maintainer decisions (2026-11-05).**
+- **Density:** `comfortable` only; no density switch in the UI; the shell consumes the density
+  tokens and never sets `data-density`. The promise in `UI_REFERENCE §8` still needs a key decision
+  — `06` #29 stays open (owner: maintainer/P3).
+- **Key set:** `03 §8` governs — **26** UI rows, `ui.appearance` in General, plus a theme applier in
+  `ui/src/app` that resolves `*-system` through `prefers-color-scheme`. The kickoff's 25-key list
+  and its grep wording are stale (`06` #60); the acceptance table in `05` has 26 rows.
+- **API/App surfaces:** `api.enabled`, `api.port`, `api.bind_address` and the two `app.*` keys are
+  autosave rows written through `set_settings` (which hot-applies the listener on the same locked
+  path as `set_api_config`), so the undo toast works through one write path. `ApiPanel` and
+  `AppPanel` are therefore unused by Settings and were **not** edited; the `api.token` row carries
+  the legacy bearer actions plus the embedded `ApiReadTokenControls`.
+- **MemoryPanel:** embedded whole and unmodified in **Data**. It keeps its own explicit Save; it is
+  the one deliberate exception to the row pattern and was neither forked nor re-implemented (`06` #68).
+- **History deletion:** no IPC command exists, so Data ships export (behind the confirm) and the
+  storage rows only. **Deferred, owner maintainer:** add a history-deletion command + confirm row
+  (`06` #64). No stub and no disabled control was shipped.
+- **Hotkeys:** Capture (`UI_REFERENCE §4`), with the cross-chord warning (`06` #61).
+- **Reset-to-default:** the UI mirrors the as-built defaults from `crates/traits/src/ipc.rs:632`.
+  **Gap, owner maintainer/P3:** nothing exposes defaults over IPC, so a future `get_settings_defaults`
+  would remove the mirrored copy; until then the mirror is cited at its one authoring site and
+  `SETTINGS_DEFAULTS` is the only copy.
+- **Native acceptance runs on the live profile** (`%APPDATA%\app.screensearchv2c.desktop`): the
+  maintainer authorised it with the settings snapshot restored afterwards.
+
+**Recorded silences (no decision available, implementer's call, stated here rather than guessed).**
+- `ReadinessBanner` has no behavioural contract beyond "may reserve space" (`UI_REFERENCE §8:371`);
+  it keeps today's data sources and its `role="status"` announcement.
+- `CommandPalette` is one line in `§3` ("jump-to + actions"); the keyboard model for settings
+  entries mirrors the palette's existing ↑/↓/Enter/Esc rather than inventing a second one.
+- Settings search has no specified matching rule, minimum query length, ordering or highlight; the
+  implementation matches label, dotted key, snake_case field and effect text, is case-insensitive,
+  keeps category then registry order, and highlights the matched term with the `mark-*` tokens.
+- `QuickActions` has no `UI_REFERENCE` paragraph at all; it keeps its current commands
+  (load/unload answer model, start/stop vision) on v2 tokens.
+- `memory.*` has no disposition table, so its controls sit inside `MemoryPanel` and are not counted
+  among the 26 (`06` #68).
+
+**Deviations found during the native acceptance run (P7, 2026-11-05) — recorded, not hidden.**
+
+- **Read-token Revoke now confirms (fixed in-phase on the maintainer's authorization, 2026-11-05).**
+  `ApiReadTokenControls` (P10's file) used to revoke the external-agent read credential on a single
+  click. It now opens a `Dialog` that names what stops working ("Every agent using this read token
+  stops being able to read your history. The token cannot be restored…"), states that already
+  authorized requests may continue and that the HTTP API and legacy token are untouched, and focuses
+  **Cancel**. Verified natively on a fresh profile: Create → Revoke raised the dialog with the
+  credential still "configured"; Escape left it configured; confirming produced "No read token
+  configured." plus the existing revoked message (`docs/screenshots/p7/integrations-revoke-confirm.png`).
+  This is a **one-file widening of P7's write set**, disclosed here rather than folded silently into
+  the phase. P10's refont should keep a confirm on this action.
+
+- **`marks.hotkey` cannot register on this host** (`Ctrl+Alt+M` is already registered). The row
+  failed loudly — inline error on the hotkey row plus a toast — and the stored value was unchanged,
+  which is the required behaviour, but it means the mark chord was the one key whose *write* was not
+  proven; `overlay.hotkey` proved the recorder and the registration path. **Gap, owner P8/P9 or
+  maintenance:** the seeded default chord should be collision-checked when it is first applied.
+- **Settings saves do not invalidate `throttleStatus`.** `useSetSettings.onSettled`
+  (`ui/src/lib/ipc/mutations.ts`, not this phase's file) invalidates `settings`, `hotkeyStatus` and
+  `apiStatus` only, so any readout built on `useThrottleStatus()` shows pre-save state until the
+  next `throttle_changed` event. Worked around inside `routes/settings` by keying the on/off line to
+  the saved setting; **gap, owner whoever owns `lib/ipc`:** add `throttleStatus` to that list (and
+  audit the rest of the invalidation map the same way).
+- **Domain components render v1 compat classes** (`text-caption`, `text-ink-*`, `font-body`,
+  `rounded-panel`): `HotkeyField`, `ModelTierPicker`, `ScheduleControl`, `RetentionControl`,
+  `ModelPanel`, `SetupDetails`, `MemoryPanel`, `ApiReadTokenControls`. P7 composes them as
+  `P7.md` instructs and does not restyle them; the legacy token fence therefore still has live
+  consumers and cannot be deleted until P10's refont. `ApiPanel` and `AppPanel` are now **unused** by
+  Settings (dead code kept for the same reason).
+- **Three label duplications** remain where a domain control prints its own label beneath a row that
+  also prints it: `Monitors to capture`, `Access token`, `Read-only token`, plus the vision-timer
+  interval inside `ScheduleControl`. The `labelInControl` ruling only reaches P2 primitives, which
+  take a label prop; these components do not.
+- **`models.vision_tier` was rendered but not switched** during acceptance (vision model mid-download).
+  Its write path is the pre-existing `set_model_tier`, proven by the answer lane.
+- **Machine state:** the acceptance used a profile that did not exist before the run; it was deleted
+  afterwards and `app.run_at_startup` was returned to off (no `HKCU\…\Run` entry). The maintainer's
+  own profile was never touched.
+
+
+
 ## 2026-11-05: P6 Ask v2 — grants, maintainer decisions and stop-condition resolutions (owner: maintainer for the decisions; agent for code; [#160](https://github.com/nicolasestrem/screensearch/pull/160) open, not merged)
 
 Phase: `docs/kickoffs/P6.md`, branch `feat/0.4.5-p6-ask-v2`. Every item below was either a kickoff

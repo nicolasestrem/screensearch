@@ -1,0 +1,190 @@
+// Settings · Intelligence (`UI_REFERENCE §4`, `03 §8`): how enrichment, retrieval and
+// sessions behave — the eight keys whose `Where` column names this category. Every
+// row autosaves; the vision schedule pairs two keys in one control and writes them
+// through `useSettingsPatch`, so one edit gets one toast and one undo for the pair.
+import { useState } from "react";
+
+import type { Settings } from "../../bindings/Settings";
+import { ScheduleControl } from "../../components/domain";
+import { Chip, Toggle } from "../../components/primitives";
+import { useSettings, useTextFilterStats } from "../../lib/ipc/queries";
+import { CategoryState } from "./CategoryState";
+import { categoryFrameState, failureMessage } from "./frameState";
+import { NumberFieldRow } from "./NumberFieldRow";
+import { SETTINGS_DEFAULTS, settingDef } from "./registry";
+import { SettingRow } from "./SettingRow";
+import { SuppressionReadout } from "./SuppressionReadout";
+import { useSettingField, useSettingsPatch } from "./useSettingField";
+
+const TIMER_KEY = "enrich.vision_timer_enabled" as const;
+const INTERVAL_KEY = "enrich.vision_timer_interval_ms" as const;
+const MS_PER_MINUTE = 60_000;
+
+export function IntelligenceCategory() {
+  const settings = useSettings();
+  const stats = useTextFilterStats();
+  const thinking = useSettingField<"answer_thinking">("answer.thinking");
+  const chrome = useSettingField<"text_include_chrome_default">(
+    "text.include_chrome_default",
+  );
+  const schedule = useSettingsPatch();
+  const [scheduleNote, setScheduleNote] = useState<string | null>(null);
+
+  const timerDef = settingDef(TIMER_KEY);
+  const intervalDef = settingDef(INTERVAL_KEY);
+  const timerEnabled = settings.data?.enrich_vision_timer_enabled ?? false;
+  const intervalMs = settings.data?.enrich_vision_timer_interval_ms ?? 0;
+  const minutes = Math.round(intervalMs / MS_PER_MINUTE);
+
+  // Four frame states come from the shared resolver; `empty` for this category is
+  // the schedule row's "nothing scheduled" status, so the rows never hide.
+  const state = categoryFrameState(settings, stats.isError);
+
+  /**
+   * `ScheduleControl` reports a cleared interval as 0 and lets a value above the
+   * registry maximum through; the backend rejects both, so an interval outside the
+   * range is explained inline instead of firing a write that cannot succeed.
+   */
+  function commitSchedule(patch: Partial<Settings>): void {
+    const nextInterval = patch.enrich_vision_timer_interval_ms;
+    const range = intervalDef.range;
+    if (nextInterval !== undefined && range) {
+      if (nextInterval < range.min || nextInterval > range.max) {
+        const low = Math.ceil(range.min / MS_PER_MINUTE);
+        const high = Math.floor(range.max / MS_PER_MINUTE);
+        setScheduleNote(
+          `${intervalDef.label} must be between ${low} and ${high} minutes. The interval was not saved.`,
+        );
+        return;
+      }
+    }
+    setScheduleNote(null);
+    // The toast names the key the edit actually touched; the undo behind it restores
+    // every field the patch carried.
+    schedule.commitPatch(
+      patch,
+      patch.enrich_vision_timer_interval_ms !== undefined
+        ? intervalDef.label
+        : timerDef.label,
+    );
+  }
+
+  return (
+    <CategoryState
+      category="intelligence"
+      state={state}
+      rows={8}
+      error={{
+        title: "Couldn’t read your intelligence settings",
+        message: failureMessage(settings.error),
+        onRetry: () => void settings.refetch(),
+      }}
+      partialNote="The per-app suppression readout is unavailable right now; every row below still saves."
+    >
+      <SettingRow
+        settingKey="answer.thinking"
+        labelInControl
+        changed={thinking.changed}
+        onReset={thinking.reset}
+        saving={thinking.saving}
+        error={thinking.error}
+        onRetry={thinking.retry}
+        control={
+          <Toggle
+            label={thinking.def.label}
+            hint={thinking.def.effect}
+            checked={thinking.value ?? thinking.defaultValue}
+            onChange={thinking.commit}
+          />
+        }
+      />
+
+      {/*
+        The timer pairs `enrich.vision_timer_enabled` with its interval, so one
+        control owns both keys and reports a single patch. `ScheduleControl` renders
+        its own labels (it takes no label/hint props), hence `labelInControl`.
+      */}
+      <SettingRow
+        settingKey={TIMER_KEY}
+        labelInControl
+        changed={timerEnabled !== SETTINGS_DEFAULTS.enrich_vision_timer_enabled}
+        onReset={() =>
+          schedule.commitPatch(
+            { enrich_vision_timer_enabled: SETTINGS_DEFAULTS.enrich_vision_timer_enabled },
+            timerDef.label,
+          )
+        }
+        saving={schedule.saving}
+        error={schedule.error}
+        onRetry={schedule.retry}
+        status={
+          timerEnabled
+            ? `Scheduled — a background pass runs every ${minutes} minute${minutes === 1 ? "" : "s"}.`
+            : "Nothing is scheduled — enrichment runs on demand, and tagging a single moment stays available."
+        }
+        control={
+          <ScheduleControl
+            timerEnabled={timerEnabled}
+            timerIntervalMs={intervalMs}
+            onChange={commitSchedule}
+          />
+        }
+      />
+
+      {/*
+        The interval has no editor of its own: the schedule above edits it, so this
+        row is a readback that keeps the key searchable, resettable and truthfully
+        marked as changed rather than offering a second control for one value.
+      */}
+      <SettingRow
+        settingKey={INTERVAL_KEY}
+        changed={intervalMs !== SETTINGS_DEFAULTS.enrich_vision_timer_interval_ms}
+        onReset={() =>
+          schedule.commitPatch(
+            { enrich_vision_timer_interval_ms: SETTINGS_DEFAULTS.enrich_vision_timer_interval_ms },
+            intervalDef.label,
+          )
+        }
+        saving={schedule.saving}
+        error={scheduleNote}
+        status={
+          timerEnabled
+            ? "Set by the schedule above."
+            : "Set by the schedule above; it applies once the timer is on."
+        }
+        control={
+          <Chip>
+            <span className="font-mono text-t-data tabular-nums">
+              {`${minutes} min`}
+            </span>
+          </Chip>
+        }
+      />
+
+      <NumberFieldRow settingKey="reports.daily_top_k" />
+      <NumberFieldRow settingKey="retrieval.default_top_k" />
+      <NumberFieldRow settingKey="sessions.gap_close_secs" />
+      <NumberFieldRow settingKey="sessions.min_len_secs" />
+
+      <SettingRow
+        settingKey="text.include_chrome_default"
+        labelInControl
+        changed={chrome.changed}
+        onReset={chrome.reset}
+        saving={chrome.saving}
+        error={chrome.error}
+        onRetry={chrome.retry}
+        control={
+          <Toggle
+            label={chrome.def.label}
+            hint={chrome.def.effect}
+            checked={chrome.value ?? chrome.defaultValue}
+            onChange={chrome.commit}
+          />
+        }
+      >
+        <SuppressionReadout />
+      </SettingRow>
+    </CategoryState>
+  );
+}
