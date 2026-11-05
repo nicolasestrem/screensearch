@@ -94,7 +94,10 @@ bracketed utilities left in `AppShell` are `[scrollbar-gutter:stable]` and `[con
 ### Acceptance table — the 26 `UI` keys, driven natively on a **fresh profile**
 
 Every row below was reached and driven in the running app (`npm run dev`, Tauri + WebView2) and the
-value read back from the `settings` KV table — the same source `get_settings` returns.
+value read back from the `settings` KV table — the same source `get_settings` returns. One caveat so
+the table is not over-read: the store holds a row for **every** setting (a save writes the struct),
+so a key being present says nothing about whether it was edited; the read-back column therefore shows
+the specific value change observed, not presence.
 
 | # | Key | Category | Control (as rendered) | Write path | Read back |
 |---|---|---|---|---|---|
@@ -108,7 +111,7 @@ value read back from the `settings` KV table — the same source `get_settings` 
 | 8 | `capture.interval_ms` | Capture | number "Interval between captures" | `set_settings` | `3000` → `4000` |
 | 9 | `capture.monitors` | Capture | monitor chips | `set_settings` | `[]` → `[0]` |
 | 10 | `enrich.vision_timer_enabled` | Intelligence | Toggle "Tag on a timer" | `set_settings` | `false` → `true` → `false` |
-| 11 | `enrich.vision_timer_interval_ms` | Intelligence | "Timer interval (minutes)" (schedule control) | `set_settings` (patch, one undo) | `3600000` → `36300000` (605 min) |
+| 11 | `enrich.vision_timer_interval_ms` | Intelligence | "Timer interval (minutes)" (schedule control) | `set_settings` (patch, one undo) | `3600000` → `36300000` (605 min) — the 605 was an edit that did not clear the field first; the round-trip is what this row proves, not the number |
 | 12 | `marks.hotkey` | Capture | `HotkeyField` | `set_settings` | unchanged `"Ctrl+Alt+M"`; registration **failed loudly** (see limits) |
 | 13 | `models.answer_tier` | Models | tier buttons (Default/Quality + model name) | `set_model_tier` | `default` → `quality` → `default` |
 | 14 | `models.vision_tier` | Models | tier buttons | `set_model_tier` | `"default"` rendered with both lanes' live status; not switched (limits) |
@@ -190,20 +193,37 @@ gate is the AX focus walk above (`ui/test/contrast.test.mjs` and the token fence
 
 ### State matrix — 8 categories × 5 states
 
-`loading`/`error` are forced through the documented seam (`?__devState=<state>&__devStateKey=settings`,
-`lib/dev/devState.ts`, which synthesises flags only and never payloads); `empty` is the in-frame
-condition `UI_REFERENCE §4` words for that category; `partial`/`populated` come from live data.
+**Where each row was rendered.** `loading` and `error` cannot be reached by clicking, so they were
+forced through the documented seam (`?__devState=<state>&__devStateKey=settings`,
+`lib/dev/devState.ts`, which synthesises *flags* only and never payloads) — and that seam is read from
+`window.location.search`, which the Tauri WebView2 window cannot be navigated to. Those two columns
+were therefore captured in a **managed headless Chromium driven against the Vite dev server**
+(`browser.open`, `relay: false`), i.e. the real dev bundle with no Tauri backend — the shell shows
+"Kernel offline" in those frames. Frame rendering is backend-independent (the state lives in the
+query-result flags), but the provenance matters: **only `empty`, `partial` and `populated` were
+observed natively in the Tauri app**; the other two are dev-browser captures of the same components.
+Cells that were never produced at all say `not forced` with the reason, rather than being described
+from the code.
+
+`empty` is the in-frame condition `UI_REFERENCE §4` words for that category.
 
 | Category | loading | empty (as specified) | error | partial | populated |
 |---|---|---|---|---|---|
-| General | skeleton rows (`states/general-loading.webp`) | "—" (every control holds a value; no empty frame) | "Couldn't read your general settings" + Retry (`states/general-error.webp`) | status probe failed → rows stay usable | live; update/version section |
-| Capture | `capture-loading.webp` (13 skeletons) | paused-capture line, rows editable ("Paused — capture is stopped…") | "Couldn't read your capture settings" | **observed natively:** mark hotkey could not register → inline warning + toast | interval/monitors/hotkeys live |
-| Privacy | `privacy-loading.webp` | "Nothing excluded yet" + add field (code path; the default profile ships 3 apps) | "Couldn't read your privacy settings" | settings refetch failed (no IPC for a "pending app") | 3 chips + add field + lock row |
-| Intelligence | `intelligence-loading.webp` (25) | "Nothing is scheduled — enrichment runs on demand…" (`intelligence-empty.png`) | "Couldn't read your intelligence settings" | status probe failed | 8 rows live |
-| Models | `models-loading.webp` | zero presence: setup section not rendered when nothing is active/failed | "Couldn't read your model settings" | **observed natively:** "Preparing local AI — Downloading vision model 73%" chip + progressbar | two lanes with live load state |
-| Data | `data-loading.webp` | "Nothing saved yet" inside the memory section | "Couldn't read your storage settings" | export failure keeps the panel (inline "Try again") | footprint line + export + panel |
-| Integrations | `integrations-loading.webp` | "API disabled — nothing is listening" (`integrations-api-off.png`) | "Couldn't load the API settings" | bind error/enabled-not-running note | listening address + both credentials |
-| Advanced | `advanced-loading.webp` | "Everything is at its default — the tuning file sets none of these values." | "Couldn't load the throttle setting" | advanced read failed / partly from file | throttle readout + 43 read-only values |
+| General | skeleton rows (`states/general-loading.webp`) | — none: every control holds a value, so the category has no empty frame | "Couldn't read your general settings" + Retry (`states/general-error.webp`) | **not forced** (needs a failing status probe; no seam for it) | live, native: toggles, theme select, update section |
+| Capture | `capture-loading.webp` (13 skeletons) | paused-capture line, rows still editable ("Paused — capture is stopped…") — **not forced** (capture ran throughout) | "Couldn't read your capture settings" | **observed natively:** the mark hotkey could not register → inline row warning + toast | native: interval, monitor chips, both hotkeys with live registration |
+| Privacy | `privacy-loading.webp` | "Nothing excluded yet" + add field — **not forced** (the default profile ships three apps) | "Couldn't read your privacy settings" | **not forced** | native: three chips, add field, lock row |
+| Intelligence | `intelligence-loading.webp` (25) | "Nothing is scheduled — enrichment runs on demand…" (native, `intelligence-empty.png`, reached by switching the timer off) | "Couldn't read your intelligence settings" | **not forced** | native: eight rows |
+| Models | `models-loading.webp` | no setup section when nothing is active or failed (`SetupDetails` renders nothing) — **not forced** | "Couldn't read your model settings" | **observed natively:** "Preparing local AI — Downloading vision model 73%" chip + progressbar | native: two lanes with live load state |
+| Data | `data-loading.webp` | "Nothing saved yet" inside the memory section — **not forced** | "Couldn't read your storage settings" | **not forced** (export succeeded) | native: footprint line, export row, memory panel |
+| Integrations | `integrations-loading.webp` | "API disabled — nothing is listening" (native, `integrations-api-off.png`) | "Couldn't load the API settings" | **not forced:** no bind conflict was produced (the port was free), so `last_error` and the enabled-but-not-listening copy were never rendered | native: listening address, legacy bearer, read credential |
+| Advanced | `advanced-loading.webp` | "Everything is at its default — the tuning file sets none of these values." (native) | "Couldn't load the throttle setting" | **not forced** | native: throttle readout + 43 read-only values |
+
+Forced-state captures are `states/<category>-{loading,error}.webp` (16).
+
+Two format notes so the folder is not read as a P2-convention mismatch: the 16 forced-state files are
+**`.webp`** (that is what the headless-Chromium capture returns), while the 32 theme frames and the
+shell surfaces are **`.png`** (native window captures). Both are lossless screenshots; the extension
+differs only because the capture channels differ.
 
 Screenshots: `docs/screenshots/p7/states/*.webp` (16) for the forced pair, plus
 `advanced-throttle-on.png`, `intelligence-empty.png`, `integrations-api-off.png`.
@@ -288,9 +308,8 @@ revealable and its status is unchanged by any read-credential action.
    `ScheduleControl`, `RetentionControl`, `ModelPanel`, `SetupDetails`, `MemoryPanel`,
    `ApiReadTokenControls` render as they are today. That is what `P7.md` asks for; P10's refont
    retires them. The token scan above covers only P7's own files.
-6. **Two small label duplications** remain where a domain control prints its own label under a row
-   that also prints it (`Monitors to capture`, `Access token`, `Read-only token`,
-   `Vision timer interval`), because the row-label ruling (`labelInControl`) applies to P2
+6. **Four label duplications** remain where a domain control prints its own label under a row that
+   also prints it (`Monitors to capture`, `Access token`, `Read-only token`, `Vision timer interval`), because the row-label ruling (`labelInControl`) applies to P2
    primitives and these components take no label prop. Recorded, not hidden.
 7. **Commit/push/PR only after validation.** `P7.md` and `CLAUDE.md` forbid committing until the
    maintainer validates the content and names `nicolasestrem/screensearch` (0.4.5 D18). That

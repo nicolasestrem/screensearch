@@ -84,12 +84,13 @@ first reading might place elsewhere are owned: `ui/src/app/router.tsx` (route me
   `P7.md` instructs and does not restyle them; the legacy token fence therefore still has live
   consumers and cannot be deleted until P10's refont. `ApiPanel` and `AppPanel` are now **unused** by
   Settings (dead code kept for the same reason).
-- **Three label duplications** remain where a domain control prints its own label beneath a row that
+- **Four label duplications** remain where a domain control prints its own label beneath a row that
   also prints it: `Monitors to capture`, `Access token`, `Read-only token`, plus the vision-timer
   interval inside `ScheduleControl`. The `labelInControl` ruling only reaches P2 primitives, which
   take a label prop; these components do not.
 - **`models.vision_tier` was rendered but not switched** during acceptance (vision model mid-download).
   Its write path is the pre-existing `set_model_tier`, proven by the answer lane.
+- **Screenshot evidence is committed under `docs/screenshots/p7/`** (64 files), the same treatment P2's evidence got (`06` #34): the folder is not in any phase's owned write set, and the maintainer's batch answers authorised the live run, not the binary evidence. Recorded here rather than added silently. Two capture channels are mixed deliberately — 32 native `.png` theme frames plus the shell surfaces, and 16 `.webp` forced-state frames from a headless Chromium against the dev server.
 - **Machine state:** the acceptance used a profile that did not exist before the run; it was deleted
   afterwards and `app.run_at_startup` was returned to off (no `HKCU\…\Run` entry). The maintainer's
   own profile was never touched.
