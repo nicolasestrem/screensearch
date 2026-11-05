@@ -1,11 +1,12 @@
 # 05 — Build Review
 
-## 2026-11-05: P6 Ask v2 (branch `feat/0.4.5-p6-ask-v2`)
+## 2026-11-05: P6 Ask v2 (branch `feat/0.4.5-p6-ask-v2`, [#160](https://github.com/nicolasestrem/screensearch/pull/160), open, not merged)
 
 Branch base: `main` @ `b84c164` (P1–P5 merged). There is no `v0.4.3` tag, so Gate A is not closed
 as a tag; the maintainer directed the branch from `main` HEAD under the same override basis P4 and
-P5 ran under (`01 §8`). Nothing was committed to `main`, pushed, merged or sent for review. Work
-stops here for the maintainer's validation (0.4.5 D18) and their acceptance run.
+P5 ran under (`01 §8`). The maintainer validated the content in-session and instructed the push,
+the PR and the review request (0.4.5 D18), naming `nicolasestrem/screensearch` as the target.
+**Merging remains maintainer-only.**
 
 - **Grants (all recorded in `07`).** The kickoff's owned list was incomplete in ways the mapping
   exposed before any code was written; every addition was put to the maintainer in one batch and

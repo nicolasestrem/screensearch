@@ -100,7 +100,12 @@ merged to `main` as `0dfa2f5` (PR #153); the committed tree is the code of recor
 settings and the rebuild tool, and `docs/kickoffs/P3-READY.md` is its hand-off. P4 (the
 fixture-backed automatic evaluation and the frozen P5/P6 thresholds) is merged as `aceca58` (PR
 #155), and P5 (the work graph engine) is merged as `722f29e` (PR #157); read its acceptance
-evidence and recorded decisions in `05`/`06` #37-#42/`07` before starting P6 or P7 work.
+evidence and recorded decisions in `05`/`06` #37-#42/`07` before starting P7 work. P6 (Ask v2) is
+**implemented and open for review** as `feat/0.4.5-p6-ask-v2`
+([#160](https://github.com/nicolasestrem/screensearch/pull/160)), not merged: read its build record,
+the fourteen maintainer decisions/grants and the eight contradiction rows in `05`/`07`/`06` #46-#53
+before touching the ask path, the `session_vectors` lane or `Kernel::ask_turn`. Its acceptance
+numbers are the maintainer's live-DB run and are not yet recorded.
 
 Three hard arc constraints, all decided: **baseline schema instead of a migration chain** — `03 §4`
 holds the full DDL at v14, a schema change edits it and bumps the version, there are no populated-DB

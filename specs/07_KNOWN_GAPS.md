@@ -1,10 +1,12 @@
 # 07 — Known Gaps
 
-## 2026-11-05: P6 Ask v2 — grants, maintainer decisions and stop-condition resolutions (owner: maintainer for the decisions; agent for code)
+## 2026-11-05: P6 Ask v2 — grants, maintainer decisions and stop-condition resolutions (owner: maintainer for the decisions; agent for code; [#160](https://github.com/nicolasestrem/screensearch/pull/160) open, not merged)
 
 Phase: `docs/kickoffs/P6.md`, branch `feat/0.4.5-p6-ask-v2`. Every item below was either a kickoff
-stop condition or a spec silence; each resolution was put to the maintainer in one batch before any
-code was written, and the contradiction rows are `specs/06_PATCH_PLAN.md` #46–#53.
+stop condition or a spec silence; each resolution was put to the maintainer before the slice that
+depended on it landed (the one exception — two mechanical fixup files edited before their grant
+answer — is recorded below rather than glossed over), and the contradiction rows are
+`specs/06_PATCH_PLAN.md` #46–#53.
 
 **Grant — ask wiring (kickoff "Known gap").** Granted, widened from the three named sites because
 the kickoff's list was incomplete in two ways the mapping exposed:

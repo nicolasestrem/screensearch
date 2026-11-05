@@ -1,6 +1,6 @@
 # 08 — AI Changelog
 
-## 2026-11-05: P6 Ask v2 — retrieval planning, staged retrieval, multi-turn conversations
+## 2026-11-05: P6 Ask v2 — retrieval planning, staged retrieval, multi-turn conversations ([#160](https://github.com/nicolasestrem/screensearch/pull/160), open, not merged)
 
 - **Change:** Ask became a planned, session-aware, multi-turn pipeline (`03 §7i`), built as four
   disjoint slices behind one additive contract. `crates/traits`: `RetrievedChunk` gained
@@ -35,15 +35,21 @@
   conversation state — the gaps `02 §5`/`03 §7i` close for Gate B.
 - **Governance:** the maintainer's grant covered the kickoff's three wiring sites plus (widened at
   the mapping stage) `crates/api/src/lib.rs`, `src-tauri/src/local_api.rs`, `crates/traits/src/contracts.rs`,
-  `crates/mcp`, one `useAsk` case, six files for mechanical compile fixups, and later
-  `crates/evalfixture/src/serve.rs`. Every decision and stop-condition resolution is in `07`;
-  contradictions are `06` #46–#53. Nothing was committed to `main`, pushed, merged or reviewed.
+  `crates/mcp`, one `useAsk` case, the mechanical compile-fixup files (the exact split between what
+  the maintainer named and two files edited earlier under the same class is in `07`),
+  `crates/rebuild/src/settings.rs`, and `crates/evalfixture/src/serve.rs`. Every decision and
+  stop-condition resolution is in `07`; contradictions are `06` #46–#53. Nothing was committed to
+  `main` and nothing was merged. The maintainer validated the content in-session and instructed the
+  branch push, the PR ([#160](https://github.com/nicolasestrem/screensearch/pull/160)) and the
+  review request; **the merge decision remains the maintainer's alone.**
 - **Evidence:** full kickoff verification list green (raw output in `05`); new suites: store
   `ask` (13 integration + 3 unit), kernel `ask` (10 integration + 17 planner/assembly unit),
   api `ask_v2` (8), app crate relay/legacy-delegation tests (4), MCP citations tests, inference
-  prompt-parity tests. The acceptance measurement (evidence recall@10, known-fact rate, citation
-  validity, p95) is the maintainer's run against the live database — this workspace has no live
-  DB, so no acceptance number is claimed here.
+  prompt-parity tests. An end-to-end fixture smoke (generate → serve → unchanged P4 harness) proved
+  the wiring runs, recorded in `05` as a three-stage wiring check and **not** as a measurement. The
+  acceptance measurement (evidence recall@10, known-fact rate, citation validity, p95) is the
+  maintainer's run against the live database — this workspace has no live DB, so no acceptance
+  number is claimed here.
 
 ## 2026-11-05: P5 review fixes for the merged #157 code (open PR, not merged by the agent)
 
