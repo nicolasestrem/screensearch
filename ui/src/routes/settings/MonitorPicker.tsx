@@ -6,6 +6,7 @@
 import type { MonitorInfo } from "../../bindings/MonitorInfo";
 import { Skeleton } from "../../components/primitives";
 import { cn } from "../../lib/cn";
+import { toggleMonitor } from "./monitorSelection";
 
 export interface MonitorPickerProps {
   /** The connected displays, or undefined while they are still being read. */
@@ -19,26 +20,6 @@ export interface MonitorPickerProps {
   loading?: boolean;
   /** Plain-language reason the display list could not be read. */
   error?: string | null;
-}
-
-/**
- * The next selection after clicking one display. An empty selection means "all",
- * so clicking a display then excludes just that one; re-including every display
- * collapses back to "all" (the same statement, stored once).
- */
-function toggleMonitor(
-  selected: readonly number[],
-  index: number,
-  available: readonly number[],
-): number[] {
-  const next =
-    selected.length === 0
-      ? available.filter((candidate) => candidate !== index)
-      : selected.includes(index)
-        ? selected.filter((candidate) => candidate !== index)
-        : [...selected, index].sort((a, b) => a - b);
-  if (available.length > 0 && next.length === available.length) return [];
-  return next;
 }
 
 const OPTION = cn(
