@@ -161,6 +161,15 @@ for self-contained contracts and source-inspected inventory.
   open, as does the Settings > Integrations in-app check. P7 renders `ui.appearance` and removes the
   demoted Settings rows. P4 is unchanged and needs a rebase onto the P3 tip before its turn.
 
+- **P5 review-fix pass (2026-11-05):** the merged P5 work graph (`722f29e`, PR #157) still had one
+  P1 and three P2 automated-review findings unresolved at merge time. The fixes are on
+  `fix/p5-157-review-findings` ([#159](https://github.com/nicolasestrem/screensearch/pull/159),
+  open, not merged): per-session link
+  reconciliation after session ownership changes, ownership-only linking, a sessions-history
+  ordering gate, and the override-model corrections (rename membership, merge retention,
+  stale-session filtering). No schema, settings, job-kind, command or UI change. The repository now
+  carries a hard rule in `CLAUDE.md`: agents never merge pull requests; merges are maintainer-only.
+
 ---
 
 *Next layer:* `02_STRATEGIC_PLAN.md` — "what should change, and why" (the capture-cheap /

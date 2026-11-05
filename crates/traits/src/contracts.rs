@@ -695,15 +695,20 @@ pub trait Store: Send + Sync {
     // implement the work graph" behaviour, never fabricated data.
 
     /// Everything heuristic extraction may read for one frame (`03 §7h.2`), including the
-    /// filtered content text and the session the frame belongs to. Ownership follows
-    /// `03 §7e`: `frames.session_id` is authoritative when set (tracks may overlap in time);
-    /// the interval rule is only the fallback for unassigned frames.
+    /// filtered content text and the session the frame belongs to. Ownership is authoritative
+    /// (`03 §7e`): `session` is `Some` only when `frames.session_id` resolves to an existing
+    /// session row. An unowned frame contributes its entities but no link row; the `03 §7h.3`
+    /// interval rule is deliberately not used for linking because it cannot be reconciled with a
+    /// per-frame ledger (the `03 §7e`/`03 §7h.3` conflict resolution, `06` #41, revised by the
+    /// #157 review fix).
     async fn graph_frame_input(&self, _frame_id: i64) -> Result<Option<crate::GraphFrameInput>> {
         Ok(None)
     }
 
     /// The session whose `[started_at, ended_at)` contains `at_ms`; an open session is
-    /// open-ended (`03 §7h.3`). Default returns no session for stores without sessions.
+    /// open-ended (`03 §7h.3`). This is the interval primitive, retained on the store contract
+    /// for the recorded rule and its tests; **linking does not use it** (see
+    /// [`Self::graph_frame_input`]). Default returns no session for stores without sessions.
     async fn graph_session_at(&self, _at_ms: i64) -> Result<Option<crate::GraphSessionInput>> {
         Ok(None)
     }
@@ -732,6 +737,22 @@ pub trait Store: Send + Sync {
         _captured_at: i64,
         _hits: &[crate::GraphHit],
     ) -> Result<()> {
+        anyhow::bail!("work-graph storage is unsupported")
+    }
+
+    /// Replaces one session's entity links with an exactly recomputed set in one transaction
+    /// (`03 §7h.3`, P5 review fix). The kernel rebuilds the links after a session ownership change
+    /// (frames assigned or moved, session deleted and re-created) so a link that cascaded away or
+    /// missed the first extraction is restored, and a stale link from a moved frame is removed.
+    /// Existing entity rows are widened, never rewritten or deleted; only this session's
+    /// `session_entities` rows are replaced. Returns `true` only when the link set actually
+    /// changed, so an unchanged rebuild cannot trigger a needless re-cluster. Default fails as
+    /// unsupported.
+    async fn graph_replace_session_links(
+        &self,
+        _session_id: i64,
+        _links: &[crate::GraphSessionLinkAggregate],
+    ) -> Result<bool> {
         anyhow::bail!("work-graph storage is unsupported")
     }
 

@@ -384,6 +384,15 @@ mod tests {
             )
             .await
             .expect("insert ocr");
+        // Linking is ownership-only (P5 review ruling), so the fixture assigns the frame to
+        // its session before extracting the shared entity and its link.
+        assert_eq!(
+            store
+                .assign_frames_session(&[frame_id], Some(session_id))
+                .await
+                .expect("assign frame"),
+            1
+        );
         crate::graph_extract::extract_frame(store.as_ref(), frame_id)
             .await
             .expect("extract frame");

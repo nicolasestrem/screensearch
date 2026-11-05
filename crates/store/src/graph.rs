@@ -16,6 +16,14 @@
 //! - `session_entities` upserts on `(session_id, entity_id)`: `hit_count` grows by one
 //!   per processed frame (a frame contributes at most once per entity), confidence is
 //!   the maximum, and the seen window is min/max (`03 §7h.3`).
+//! - Frame-to-session resolution for linking is **ownership-only** (`03 §7e`, final ruling
+//!   on the `§7h.3` conflict recorded in `06` #41): the frame's `session_id` is the only
+//!   source of a session, and the interval rule survives solely as the `graph_session_at`
+//!   primitive, which extraction does not use.
+//! - `graph_replace_session_links` is the exact-rebuild sibling of that incremental path:
+//!   one session's links are replaced with absolute aggregates (so an ownership
+//!   reconciliation can never inflate `hit_count`), entities are widened identically,
+//!   and an unchanged link set writes only any missing additive aliases.
 //! - `threads` upsert by the `UNIQUE` `cluster_key` and keep their existing id, so a
 //!   re-run of the deterministic clusterer rewrites the same rows instead of creating
 //!   new ones (`03 §7h.4`).
@@ -31,14 +39,16 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension};
+use rusqlite::{
+    params, params_from_iter, types::Value, Connection, OptionalExtension, Transaction,
+};
 
 use traits::{
     AliasSource, EntityCatalogRow, EntityKind, GraphBackfillStatus, GraphClusterInput,
     GraphClusterLink, GraphFrameInput, GraphHit, GraphSessionInput, GraphSessionInterval,
-    GraphTableCounts, NormalizationOutcome, NormalizationProposal, Result, SessionHost,
-    SessionSummaryInput, StoredThread, ThreadDraft, ThreadMemberDraft, ThreadOverrideDraft,
-    ThreadOverrideKind, ThreadOverridePayload, ThreadOverrideRow, ThreadPlan,
+    GraphSessionLinkAggregate, GraphTableCounts, NormalizationOutcome, NormalizationProposal,
+    Result, SessionHost, SessionSummaryInput, StoredThread, ThreadDraft, ThreadMemberDraft,
+    ThreadOverrideDraft, ThreadOverrideKind, ThreadOverridePayload, ThreadOverrideRow, ThreadPlan,
 };
 
 use crate::SqliteStore;
@@ -122,9 +132,11 @@ fn read_session_by_id(
     .optional()
 }
 
-/// The interval fallback for a frame with no usable owner (`03 §7h.3`): the session whose
-/// `[started_at, ended_at)` contains the timestamp, open-ended when `ended_at` is NULL,
-/// the lowest session id when intervals overlap.
+/// The interval primitive (`03 §7h.3`): the session whose `[started_at, ended_at)`
+/// contains the timestamp, open-ended when `ended_at` is NULL, the lowest session id when
+/// intervals overlap. Retained as the documented [`SqliteStore::graph_session_at`]
+/// contract; extraction and linking do **not** use it (resolution is ownership-only,
+/// `03 §7e`, `06` #41).
 fn read_session_at(conn: &Connection, at_ms: i64) -> rusqlite::Result<Option<GraphSessionInput>> {
     conn.query_row(
         "SELECT id, started_at, ended_at, tool, host
@@ -146,18 +158,160 @@ fn read_session_at(conn: &Connection, at_ms: i64) -> rusqlite::Result<Option<Gra
     .optional()
 }
 
+/// The absolute per-link values one session currently holds, compared by
+/// `graph_replace_session_links` against an exactly recomputed aggregate set.
+#[derive(Debug, Clone, Copy)]
+struct LinkState {
+    hit_count: i64,
+    confidence: f64,
+    first_seen_at: i64,
+    last_seen_at: i64,
+}
+
+impl LinkState {
+    fn from_aggregate(link: &GraphSessionLinkAggregate) -> Self {
+        Self {
+            hit_count: i64::from(link.hit_count),
+            confidence: link.confidence,
+            first_seen_at: link.first_seen_at,
+            last_seen_at: link.last_seen_at,
+        }
+    }
+
+    /// Bitwise comparison of the confidence keeps "changed or not" deterministic: a
+    /// SQLite REAL round-trips an `f64` bit for bit, so an identical rebuild compares equal.
+    fn matches(self, other: Self) -> bool {
+        self.hit_count == other.hit_count
+            && self.confidence.to_bits() == other.confidence.to_bits()
+            && self.first_seen_at == other.first_seen_at
+            && self.last_seen_at == other.last_seen_at
+    }
+}
+
+/// One persisted link: the entity id (needed to add aliases when only aliases changed on an
+/// otherwise identical rebuild) plus the absolute values compared against the aggregates.
+#[derive(Debug, Clone, Copy)]
+struct ExistingLink {
+    entity_id: i64,
+    state: LinkState,
+}
+
+/// Reads one session's persisted link state keyed by the entity dedup identity
+/// `(kind, normalized_key)` (`03 §7h.3`).
+fn read_session_link_state(
+    tx: &Transaction<'_>,
+    session_id: i64,
+) -> rusqlite::Result<BTreeMap<(String, String), ExistingLink>> {
+    let mut stmt = tx.prepare(
+        "SELECT e.id, e.kind, e.normalized_key, se.hit_count, se.confidence,
+                se.first_seen_at, se.last_seen_at
+         FROM session_entities se
+         JOIN entities e ON e.id = se.entity_id
+         WHERE se.session_id = ?1",
+    )?;
+    let rows = stmt.query_map(params![session_id], |row| {
+        Ok((
+            (row.get::<_, String>(1)?, row.get::<_, String>(2)?),
+            ExistingLink {
+                entity_id: row.get(0)?,
+                state: LinkState {
+                    hit_count: row.get(3)?,
+                    confidence: row.get(4)?,
+                    first_seen_at: row.get(5)?,
+                    last_seen_at: row.get(6)?,
+                },
+            },
+        ))
+    })?;
+    let mut state = BTreeMap::new();
+    for row in rows {
+        let (key, link) = row?;
+        state.insert(key, link);
+    }
+    Ok(state)
+}
+
+/// Inserts additive heuristic aliases for one entity, leaving existing rows untouched
+/// (`ON CONFLICT(entity_id, alias) DO NOTHING`, `03 §7h.2`). Shared by the entity upsert and
+/// by the unchanged exact-rebuild path, where a new alias alone must be recorded without
+/// counting as a link change.
+fn insert_heuristic_aliases(
+    tx: &Transaction<'_>,
+    entity_id: i64,
+    aliases: &[String],
+    confidence: f64,
+) -> rusqlite::Result<()> {
+    for alias in aliases {
+        tx.execute(
+            "INSERT INTO entity_aliases (entity_id, alias, source, confidence)
+             VALUES (?1, ?2, 'heuristic', ?3)
+             ON CONFLICT(entity_id, alias) DO NOTHING",
+            params![entity_id, alias, confidence],
+        )?;
+    }
+    Ok(())
+}
+
+/// One heuristic entity upsert for [`upsert_heuristic_entity`]: the display identity plus
+/// the confidence and seen window observed (one point for a single frame, the aggregate
+/// window for an exact rebuild).
+struct EntityUpsert<'a> {
+    kind: EntityKind,
+    canonical_name: &'a str,
+    normalized_key: &'a str,
+    confidence: f64,
+    first_seen_at: i64,
+    last_seen_at: i64,
+    aliases: &'a [String],
+}
+
+/// Upserts one heuristic entity and its aliases, returning the entity id.
+///
+/// Shared by the incremental (`graph_apply_hits`) and exact-replacement
+/// (`graph_replace_session_links`) writers so both dedup on `UNIQUE(kind, normalized_key)`
+/// identically: the first creating hit keeps `canonical_name`/`normalized_key`/`source`,
+/// while the seen window widens and the confidence takes the maximum (`03 §7h.2`).
+fn upsert_heuristic_entity(
+    tx: &Transaction<'_>,
+    upsert: &EntityUpsert<'_>,
+) -> rusqlite::Result<i64> {
+    let entity_id: i64 = tx.query_row(
+        "INSERT INTO entities
+           (kind, canonical_name, normalized_key, source, confidence,
+            first_seen_at, last_seen_at)
+         VALUES (?1, ?2, ?3, 'heuristic', ?4, ?5, ?6)
+         ON CONFLICT(kind, normalized_key) DO UPDATE SET
+           first_seen_at = min(entities.first_seen_at, excluded.first_seen_at),
+           last_seen_at  = max(entities.last_seen_at, excluded.last_seen_at),
+           confidence    = max(entities.confidence, excluded.confidence),
+           updated_at    = unixepoch()*1000
+         RETURNING id",
+        params![
+            upsert.kind.as_str(),
+            upsert.canonical_name,
+            upsert.normalized_key,
+            upsert.confidence,
+            upsert.first_seen_at,
+            upsert.last_seen_at
+        ],
+        |row| row.get(0),
+    )?;
+    insert_heuristic_aliases(tx, entity_id, upsert.aliases, upsert.confidence)?;
+    Ok(entity_id)
+}
+
 impl SqliteStore {
     /// Everything heuristic extraction may read for one frame (`03 §7h.2`), including the
     /// filtered content text and the session the frame's evidence belongs to.
     ///
-    /// Session resolution is **ownership first** (`03 §7e`): `frames.session_id` is the
-    /// authoritative owner, and different tracks may overlap in time, so a frame owned by
-    /// a higher-id session must link its evidence there even when a lower-id session's
-    /// interval also contains `captured_at`. The interval rule `[started_at, ended_at)`
-    /// (open-ended, lowest id on overlap, `03 §7h.3`) is only the fallback for an unowned
-    /// frame (`frames.session_id` NULL). A dangling owner id (the FK's `ON DELETE SET
-    /// NULL` normally prevents it) is treated as unassigned so extraction never fails on
-    /// a stale reference.
+    /// Session resolution is **ownership-only** (`03 §7e`, the final ruling on the `§7h.3`
+    /// conflict recorded in `06` #41): `frames.session_id` is the authoritative owner, and
+    /// different tracks may overlap in time, so the owner is the only session a frame may
+    /// link its evidence to. A frame with no owner (`frames.session_id` NULL) reports
+    /// `session: None`; the interval rule is deliberately not used here (it survives only
+    /// as the [`Self::graph_session_at`] primitive). A dangling owner id (the FK's
+    /// `ON DELETE SET NULL` normally prevents it) also reports `None` instead of failing
+    /// extraction.
     pub async fn graph_frame_input(&self, frame_id: i64) -> Result<Option<GraphFrameInput>> {
         self.with_conn(move |conn| {
             let frame = conn
@@ -194,12 +348,10 @@ impl SqliteStore {
                 return Ok(None);
             };
             let session = match owner_session_id {
-                Some(owner_session_id) => match read_session_by_id(conn, owner_session_id)? {
-                    Some(owner) => Some(owner),
-                    // Defensive: a dangling id is "unassigned", never a hard failure.
-                    None => read_session_at(conn, captured_at)?,
-                },
-                None => read_session_at(conn, captured_at)?,
+                Some(owner_session_id) => read_session_by_id(conn, owner_session_id)?,
+                // Ownership-only: an unowned frame has no session, even when an interval
+                // contains it (`03 §7e` final ruling, `06` #41).
+                None => None,
             };
             Ok(Some(GraphFrameInput {
                 frame_id: id,
@@ -216,8 +368,8 @@ impl SqliteStore {
 
     /// The session whose `[started_at, ended_at)` contains `at_ms`; an open session is
     /// open-ended and the lowest session id wins when intervals overlap (`03 §7h.3`).
-    /// This is the interval fallback primitive: `graph_frame_input` prefers the frame's
-    /// authoritative owner (`03 §7e`) and only calls this for an unowned frame.
+    /// This is the retained interval primitive: extraction and linking do **not** use it
+    /// (session resolution is ownership-only, `03 §7e`; `06` #41 / #157 review fix).
     pub async fn graph_session_at(&self, at_ms: i64) -> Result<Option<GraphSessionInput>> {
         self.with_conn(move |conn| Ok(read_session_at(conn, at_ms)?))
             .await
@@ -252,7 +404,7 @@ impl SqliteStore {
     /// entities dedup on `UNIQUE(kind, normalized_key)`, links on the
     /// `(session_id, entity_id)` primary key, `hit_count` accumulates one per processed
     /// frame, and link confidence is the maximum of the contributing hits. A frame with
-    /// no containing session still contributes its entities, with no link row.
+    /// no owning session still contributes its entities, with no link row.
     ///
     /// `frame_id` is the job's evidence handle, not persisted: the schema has no
     /// per-frame ledger, and `hit_count` is the only frame-weight the link row carries.
@@ -273,34 +425,18 @@ impl SqliteStore {
             // seen for it, so a duplicated hit shape cannot count the same frame twice.
             let mut linked: BTreeMap<i64, f64> = BTreeMap::new();
             for hit in &hits {
-                let entity_id: i64 = tx.query_row(
-                    "INSERT INTO entities
-                       (kind, canonical_name, normalized_key, source, confidence,
-                        first_seen_at, last_seen_at)
-                     VALUES (?1, ?2, ?3, 'heuristic', ?4, ?5, ?5)
-                     ON CONFLICT(kind, normalized_key) DO UPDATE SET
-                       first_seen_at = min(entities.first_seen_at, excluded.first_seen_at),
-                       last_seen_at  = max(entities.last_seen_at, excluded.last_seen_at),
-                       confidence    = max(entities.confidence, excluded.confidence),
-                       updated_at    = unixepoch()*1000
-                     RETURNING id",
-                    params![
-                        hit.kind.as_str(),
-                        hit.canonical_name,
-                        hit.normalized_key,
-                        hit.confidence,
-                        captured_at
-                    ],
-                    |row| row.get(0),
+                let entity_id = upsert_heuristic_entity(
+                    &tx,
+                    &EntityUpsert {
+                        kind: hit.kind,
+                        canonical_name: &hit.canonical_name,
+                        normalized_key: &hit.normalized_key,
+                        confidence: hit.confidence,
+                        first_seen_at: captured_at,
+                        last_seen_at: captured_at,
+                        aliases: &hit.aliases,
+                    },
                 )?;
-                for alias in &hit.aliases {
-                    tx.execute(
-                        "INSERT INTO entity_aliases (entity_id, alias, source, confidence)
-                         VALUES (?1, ?2, 'heuristic', ?3)
-                         ON CONFLICT(entity_id, alias) DO NOTHING",
-                        params![entity_id, alias, hit.confidence],
-                    )?;
-                }
                 linked
                     .entry(entity_id)
                     .and_modify(|confidence| *confidence = (*confidence).max(hit.confidence))
@@ -326,6 +462,125 @@ impl SqliteStore {
             }
             tx.commit()?;
             Ok(())
+        })
+        .await
+    }
+
+    /// Replaces one session's entity links with an exactly recomputed aggregate set in one
+    /// transaction (`03 §7h.3`, P5 review fix). The kernel rebuilds a session's links after
+    /// an ownership change (frames assigned or moved, session deleted and re-created), so a
+    /// link that cascaded away or missed the first extraction is restored and a stale link
+    /// from a moved frame is removed. Only this session's `session_entities` rows are
+    /// replaced; threads and overrides are not touched.
+    ///
+    /// Change decision: the session's current rows are compared with the aggregates by the
+    /// dedup identity `(kind, normalized_key)` on `hit_count`, `confidence` (bitwise,
+    /// deterministic), `first_seen_at` and `last_seen_at`. When the set is identical, only
+    /// any aggregate aliases that are not yet present for their entity are inserted
+    /// (`ON CONFLICT(entity_id, alias) DO NOTHING`) and `Ok(false)` is returned: an
+    /// unchanged rebuild cannot trigger a needless re-cluster, but new aliases are still
+    /// recorded. Aliases are additive and are not part of the change decision.
+    ///
+    /// Otherwise (or when an empty aggregate list clears a non-empty session) the rows are
+    /// deleted and re-inserted with the aggregates' absolute values, and the referenced
+    /// entities are upserted exactly like the incremental path (`graph_apply_hits`): the
+    /// dedup identity, `canonical_name` and `source` are never rewritten, only the seen
+    /// window is widened and the confidence raised. A session row that no longer exists is
+    /// a no-op `Ok(false)` (the kernel may race a session deletion), never an error.
+    ///
+    /// Returns `true` only when the persisted link set actually changed, so alias-only
+    /// writes keep the `Ok(false)` "no re-cluster needed" answer.
+    pub async fn graph_replace_session_links(
+        &self,
+        session_id: i64,
+        links: &[GraphSessionLinkAggregate],
+    ) -> Result<bool> {
+        let links = links.to_vec();
+        self.with_conn(move |conn| {
+            let tx = conn.unchecked_transaction()?;
+
+            // A session deleted between the kernel's read and this write must not be
+            // resurrected, and a foreign-key error would only surface a race the caller
+            // already tolerates: treat it as "nothing to do".
+            let session_exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
+                params![session_id],
+                |row| row.get(0),
+            )?;
+            if !session_exists {
+                return Ok(false);
+            }
+
+            let existing = read_session_link_state(&tx, session_id)?;
+            let mut incoming: BTreeMap<(String, String), &GraphSessionLinkAggregate> =
+                BTreeMap::new();
+            for link in &links {
+                let key = (link.kind.as_str().to_string(), link.normalized_key.clone());
+                if incoming.insert(key, link).is_some() {
+                    // No session id (or entity key) in the error text: opaque ids are
+                    // CodeQL-cleartext-logging class sensitive data and this reaches a warn log.
+                    anyhow::bail!("link rebuild repeats an entity identity");
+                }
+            }
+            let unchanged = existing.len() == incoming.len()
+                && incoming.iter().all(|(key, link)| {
+                    existing.get(key).is_some_and(|current| {
+                        current.state.matches(LinkState::from_aggregate(link))
+                    })
+                });
+            if unchanged {
+                // The link values are already exact, but the rebuild may carry aliases the
+                // previous pass did not know about. Alias rows are additive display data and
+                // do not change the link set, so they are written while the caller still
+                // gets the `Ok(false)` no-change answer.
+                for (key, link) in &incoming {
+                    if let Some(current) = existing.get(key) {
+                        insert_heuristic_aliases(
+                            &tx,
+                            current.entity_id,
+                            &link.aliases,
+                            link.confidence,
+                        )?;
+                    }
+                }
+                tx.commit()?;
+                return Ok(false);
+            }
+
+            tx.execute(
+                "DELETE FROM session_entities WHERE session_id = ?1",
+                params![session_id],
+            )?;
+            for link in &links {
+                let entity_id = upsert_heuristic_entity(
+                    &tx,
+                    &EntityUpsert {
+                        kind: link.kind,
+                        canonical_name: &link.canonical_name,
+                        normalized_key: &link.normalized_key,
+                        confidence: link.confidence,
+                        first_seen_at: link.first_seen_at,
+                        last_seen_at: link.last_seen_at,
+                        aliases: &link.aliases,
+                    },
+                )?;
+                tx.execute(
+                    "INSERT INTO session_entities
+                       (session_id, entity_id, hit_count, confidence,
+                        first_seen_at, last_seen_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        session_id,
+                        entity_id,
+                        i64::from(link.hit_count),
+                        link.confidence,
+                        link.first_seen_at,
+                        link.last_seen_at
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(true)
         })
         .await
     }
@@ -939,10 +1194,11 @@ mod tests {
 
     use crate::SqliteStore;
     use traits::{
-        AliasSource, EntityKind, GraphHit, GraphSessionInterval, GraphTableCounts, JobKind,
-        NewFrame, NewJob, NewSession, NormalizationOutcome, NormalizationProposal, OcrResult,
-        SessionHost, SessionKind, ThreadDraft, ThreadMemberDraft, ThreadOverrideDraft,
-        ThreadOverrideKind, ThreadOverridePayload, ThreadOverrideUpdate, ThreadPlan,
+        AliasSource, EntityKind, GraphHit, GraphSessionInterval, GraphSessionLinkAggregate,
+        GraphTableCounts, JobKind, NewFrame, NewJob, NewSession, NormalizationOutcome,
+        NormalizationProposal, OcrResult, SessionHost, SessionKind, Store, ThreadDraft,
+        ThreadMemberDraft, ThreadOverrideDraft, ThreadOverrideKind, ThreadOverridePayload,
+        ThreadOverrideUpdate, ThreadPlan,
     };
 
     /// A representative foreground context for a frame; the graph reads only the stored
@@ -1103,6 +1359,50 @@ mod tests {
         })
     }
 
+    fn aggregate(
+        kind: EntityKind,
+        name: &str,
+        key: &str,
+        confidence: f64,
+        hit_count: u32,
+        first_seen_at: i64,
+        last_seen_at: i64,
+    ) -> GraphSessionLinkAggregate {
+        GraphSessionLinkAggregate {
+            kind,
+            canonical_name: name.to_string(),
+            normalized_key: key.to_string(),
+            confidence,
+            hit_count,
+            first_seen_at,
+            last_seen_at,
+            aliases: Vec::new(),
+        }
+    }
+
+    fn session_link_count(store: &SqliteStore, session_id: i64) -> i64 {
+        with_raw(store, |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM session_entities WHERE session_id = ?1",
+                rusqlite::params![session_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+    }
+
+    fn session_entity_link_count(store: &SqliteStore, session_id: i64, entity_id: i64) -> i64 {
+        with_raw(store, |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM session_entities
+                 WHERE session_id = ?1 AND entity_id = ?2",
+                rusqlite::params![session_id, entity_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+    }
+
     #[tokio::test]
     async fn entity_dedup_keeps_first_identity_and_widens_the_seen_window() {
         let store = SqliteStore::open_in_memory().unwrap();
@@ -1226,7 +1526,464 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn frame_input_and_session_resolution_follow_the_half_open_intervals() {
+    async fn replace_session_links_updates_a_changed_set_exactly() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let target = store
+            .insert_session(session(1_000, Some(5_000)))
+            .await
+            .unwrap();
+        let other = store
+            .insert_session(session(6_000, Some(9_000)))
+            .await
+            .unwrap();
+        let first_frame = seed_frame(&store, 1_500, "acme/api").await;
+        let second_frame = seed_frame(&store, 2_000, "example.com").await;
+        let other_frame = seed_frame(&store, 6_500, "other.md").await;
+        store
+            .graph_apply_hits(
+                Some(target),
+                first_frame,
+                1_500,
+                &[hit(EntityKind::Repo, "acme/api", "acme/api", 0.8)],
+            )
+            .await
+            .unwrap();
+        store
+            .graph_apply_hits(
+                Some(target),
+                second_frame,
+                2_000,
+                &[hit(EntityKind::Domain, "example.com", "example.com", 0.7)],
+            )
+            .await
+            .unwrap();
+        store
+            .graph_apply_hits(
+                Some(other),
+                other_frame,
+                6_500,
+                &[hit(EntityKind::File, "other.md", "other.md", 0.55)],
+            )
+            .await
+            .unwrap();
+        assert_eq!(session_link_count(&store, target), 2);
+
+        let replacement = vec![
+            aggregate(
+                EntityKind::Repo,
+                "acme/api",
+                "acme/api",
+                0.92,
+                2,
+                1_200,
+                2_100,
+            ),
+            aggregate(
+                EntityKind::File,
+                "notes.md",
+                "notes.md",
+                0.65,
+                3,
+                1_300,
+                2_200,
+            ),
+        ];
+        assert!(store
+            .graph_replace_session_links(target, &replacement)
+            .await
+            .unwrap());
+
+        // Exactly the incoming set, with the absolute aggregate values.
+        assert_eq!(session_link_count(&store, target), 2);
+        let (repo_id, ..) = entity_row(&store, EntityKind::Repo, "acme/api");
+        assert_eq!(link_row(&store, target, repo_id), (2, 0.92, 1_200, 2_100));
+        let (domain_id, ..) = entity_row(&store, EntityKind::Domain, "example.com");
+        assert_eq!(
+            session_entity_link_count(&store, target, domain_id),
+            0,
+            "the stale link is removed"
+        );
+        let (notes_id, canonical, ..) = entity_row(&store, EntityKind::File, "notes.md");
+        assert_eq!(canonical, "notes.md");
+        assert_eq!(link_row(&store, target, notes_id), (3, 0.65, 1_300, 2_200));
+
+        // The rebuild is scoped to one session: the other session keeps its row.
+        assert_eq!(session_link_count(&store, other), 1);
+        let (other_id, ..) = entity_row(&store, EntityKind::File, "other.md");
+        assert_eq!(link_row(&store, other, other_id), (1, 0.55, 6_500, 6_500));
+    }
+
+    #[tokio::test]
+    async fn replace_session_links_is_a_no_op_for_an_identical_set() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let session_id = store
+            .insert_session(session(1_000, Some(5_000)))
+            .await
+            .unwrap();
+        let links = vec![
+            aggregate(
+                EntityKind::Repo,
+                "acme/api",
+                "acme/api",
+                0.81,
+                2,
+                1_100,
+                2_400,
+            ),
+            aggregate(
+                EntityKind::Domain,
+                "example.com",
+                "example.com",
+                0.6,
+                1,
+                1_900,
+                1_900,
+            ),
+        ];
+        assert!(store
+            .graph_replace_session_links(session_id, &links)
+            .await
+            .unwrap());
+        let counts_before = store.graph_table_counts().await.unwrap();
+        let (repo_id, ..) = entity_row(&store, EntityKind::Repo, "acme/api");
+        let repo_link_before = link_row(&store, session_id, repo_id);
+        let entity_before = entity_row(&store, EntityKind::Repo, "acme/api");
+
+        assert!(
+            !store
+                .graph_replace_session_links(session_id, &links)
+                .await
+                .unwrap(),
+            "an identical rebuild reports no change"
+        );
+        // The kernel reaches this through `dyn Store`; the forwarding must reach the
+        // implementation instead of falling back to the trait's "unsupported" default.
+        assert!(
+            !Store::graph_replace_session_links(&store, session_id, &links)
+                .await
+                .unwrap(),
+            "the trait-object path reports the same unchanged outcome"
+        );
+        assert_eq!(store.graph_table_counts().await.unwrap(), counts_before);
+        assert_eq!(link_row(&store, session_id, repo_id), repo_link_before);
+        assert_eq!(
+            entity_row(&store, EntityKind::Repo, "acme/api"),
+            entity_before
+        );
+    }
+
+    #[tokio::test]
+    async fn replace_session_links_writes_missing_aliases_without_reporting_a_change() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let session_id = store
+            .insert_session(session(1_000, Some(5_000)))
+            .await
+            .unwrap();
+        // Seed the exact link state without aliases, as an earlier scan would have.
+        let links = vec![aggregate(
+            EntityKind::Repo,
+            "acme/api",
+            "acme/api",
+            0.84,
+            2,
+            1_200,
+            2_600,
+        )];
+        assert!(store
+            .graph_replace_session_links(session_id, &links)
+            .await
+            .unwrap());
+        assert_eq!(row_count(&store, "entity_aliases"), 0);
+        let (entity_id, ..) = entity_row(&store, EntityKind::Repo, "acme/api");
+        let link_before = link_row(&store, session_id, entity_id);
+
+        // Identical hit_count/confidence/seen window plus one new alias: the alias is
+        // recorded, but the link set did not change, so the answer stays `false`.
+        let mut aliased = links[0].clone();
+        aliased.aliases = vec!["ACME API".to_string()];
+        assert!(
+            !store
+                .graph_replace_session_links(session_id, std::slice::from_ref(&aliased))
+                .await
+                .unwrap(),
+            "an alias-only rebuild is not a link change"
+        );
+        assert_eq!(link_row(&store, session_id, entity_id), link_before);
+        assert_eq!(session_link_count(&store, session_id), 1);
+        assert_eq!(row_count(&store, "entity_aliases"), 1);
+        let aliases: Vec<(String, String, f64)> = with_raw(&store, |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT alias, source, confidence FROM entity_aliases
+                     WHERE entity_id = ?1 ORDER BY alias",
+                )
+                .unwrap();
+            let rows = stmt
+                .query_map(rusqlite::params![entity_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+                .unwrap();
+            rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        });
+        assert_eq!(
+            aliases,
+            vec![("ACME API".to_string(), "heuristic".to_string(), 0.84)]
+        );
+
+        // A second identical rebuild is a clean no-op: still `false`, no duplicate alias.
+        assert!(!store
+            .graph_replace_session_links(session_id, std::slice::from_ref(&aliased))
+            .await
+            .unwrap());
+        assert_eq!(row_count(&store, "entity_aliases"), 1);
+        assert_eq!(link_row(&store, session_id, entity_id), link_before);
+    }
+
+    #[tokio::test]
+    async fn replace_session_links_does_not_inflate_hit_count_on_rebuild() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let session_id = store
+            .insert_session(session(1_000, Some(5_000)))
+            .await
+            .unwrap();
+        let first_frame = seed_frame(&store, 1_500, "acme/api").await;
+        let second_frame = seed_frame(&store, 2_000, "acme/api").await;
+        store
+            .graph_apply_hits(
+                Some(session_id),
+                first_frame,
+                1_500,
+                &[hit(EntityKind::Repo, "acme/api", "acme/api", 0.8)],
+            )
+            .await
+            .unwrap();
+        store
+            .graph_apply_hits(
+                Some(session_id),
+                second_frame,
+                2_000,
+                &[hit(EntityKind::Repo, "acme/api", "acme/api", 0.85)],
+            )
+            .await
+            .unwrap();
+        let (entity_id, ..) = entity_row(&store, EntityKind::Repo, "acme/api");
+        assert_eq!(
+            link_row(&store, session_id, entity_id),
+            (2, 0.85, 1_500, 2_000)
+        );
+
+        let rebuilt = vec![aggregate(
+            EntityKind::Repo,
+            "acme/api",
+            "acme/api",
+            0.85,
+            2,
+            1_500,
+            2_000,
+        )];
+        for _ in 0..3 {
+            assert!(
+                !store
+                    .graph_replace_session_links(session_id, &rebuilt)
+                    .await
+                    .unwrap(),
+                "an exact rebuild writes nothing"
+            );
+            assert_eq!(
+                link_row(&store, session_id, entity_id).0,
+                2,
+                "hit_count stays the frame count across rebuilds"
+            );
+        }
+        assert_eq!(session_link_count(&store, session_id), 1);
+    }
+
+    #[tokio::test]
+    async fn replace_session_links_clears_links_with_an_empty_set() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let session_id = store
+            .insert_session(session(1_000, Some(5_000)))
+            .await
+            .unwrap();
+        let frame_id = seed_frame(&store, 1_500, "acme/api").await;
+        store
+            .graph_apply_hits(
+                Some(session_id),
+                frame_id,
+                1_500,
+                &[hit(EntityKind::Repo, "acme/api", "acme/api", 0.8)],
+            )
+            .await
+            .unwrap();
+        let entities_before = store.graph_table_counts().await.unwrap().entities;
+        assert_eq!(session_link_count(&store, session_id), 1);
+
+        assert!(
+            store
+                .graph_replace_session_links(session_id, &[])
+                .await
+                .unwrap(),
+            "clearing an existing link is a change"
+        );
+        assert_eq!(session_link_count(&store, session_id), 0);
+        assert_eq!(
+            store.graph_table_counts().await.unwrap().entities,
+            entities_before,
+            "entity rows are never deleted by a link rebuild"
+        );
+        assert!(
+            !store
+                .graph_replace_session_links(session_id, &[])
+                .await
+                .unwrap(),
+            "an already empty session stays a no-op"
+        );
+    }
+
+    #[tokio::test]
+    async fn replace_session_links_missing_session_is_a_no_op() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let missing = 4_242;
+        let links = vec![aggregate(
+            EntityKind::Repo,
+            "acme/api",
+            "acme/api",
+            0.9,
+            1,
+            1_000,
+            1_000,
+        )];
+        assert!(!store
+            .graph_replace_session_links(missing, &links)
+            .await
+            .unwrap());
+        let counts = store.graph_table_counts().await.unwrap();
+        assert_eq!(counts.entities, 0, "a missing session creates no entity");
+        assert_eq!(counts.session_entities, 0);
+
+        // Deletion race: the session vanishes between the kernel's read and this write.
+        let session_id = store
+            .insert_session(session(1_000, Some(2_000)))
+            .await
+            .unwrap();
+        let frame_id = seed_frame(&store, 1_500, "kept.md").await;
+        store
+            .graph_apply_hits(
+                Some(session_id),
+                frame_id,
+                1_500,
+                &[hit(EntityKind::File, "kept.md", "kept.md", 0.7)],
+            )
+            .await
+            .unwrap();
+        assert!(store.delete_unfrozen_session(session_id).await.unwrap());
+        let rebuilt = vec![aggregate(
+            EntityKind::File,
+            "new.md",
+            "new.md",
+            0.6,
+            1,
+            1_500,
+            1_500,
+        )];
+        assert!(!store
+            .graph_replace_session_links(session_id, &rebuilt)
+            .await
+            .unwrap());
+        let counts = store.graph_table_counts().await.unwrap();
+        assert_eq!(
+            counts.entities, 1,
+            "the deleted session cannot add an entity"
+        );
+        assert_eq!(counts.session_entities, 0);
+    }
+
+    #[tokio::test]
+    async fn replace_session_links_widens_entities_without_rewriting_identity() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let session_id = store
+            .insert_session(session(1_000, Some(5_000)))
+            .await
+            .unwrap();
+        let frame_id = seed_frame(&store, 1_000, "acme/api").await;
+        store
+            .graph_apply_hits(
+                Some(session_id),
+                frame_id,
+                1_000,
+                &[hit(EntityKind::Repo, "acme/api", "acme/api", 0.61)],
+            )
+            .await
+            .unwrap();
+        let (entity_id, canonical, key, source, confidence, _, _) =
+            entity_row(&store, EntityKind::Repo, "acme/api");
+        assert_eq!(canonical, "acme/api");
+        assert_eq!(source, "heuristic");
+        assert!((confidence - 0.61).abs() < 1e-12);
+
+        let mut rebuilt = aggregate(
+            EntityKind::Repo,
+            "ACME/Api",
+            "acme/api",
+            0.97,
+            2,
+            500,
+            3_000,
+        );
+        rebuilt.aliases = vec!["API".to_string()];
+        assert!(store
+            .graph_replace_session_links(session_id, std::slice::from_ref(&rebuilt))
+            .await
+            .unwrap());
+
+        let (
+            after_id,
+            after_canonical,
+            after_key,
+            after_source,
+            after_confidence,
+            after_first,
+            after_last,
+        ) = entity_row(&store, EntityKind::Repo, "acme/api");
+        assert_eq!(after_id, entity_id);
+        assert_eq!(
+            after_canonical, canonical,
+            "the first creating hit owns the display form"
+        );
+        assert_eq!(after_key, key);
+        assert_eq!(after_source, source);
+        assert!(
+            (after_confidence - 0.97).abs() < 1e-12,
+            "confidence widens to the maximum"
+        );
+        assert_eq!(after_first, 500, "the seen window widens earlier");
+        assert_eq!(after_last, 3_000, "the seen window widens later");
+        assert_eq!(
+            link_row(&store, session_id, after_id),
+            (2, 0.97, 500, 3_000)
+        );
+        let aliases: Vec<(String, String, f64)> = with_raw(&store, |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT alias, source, confidence FROM entity_aliases
+                     WHERE entity_id = ?1 ORDER BY alias",
+                )
+                .unwrap();
+            let rows = stmt
+                .query_map(rusqlite::params![after_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+                .unwrap();
+            rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        });
+        assert_eq!(
+            aliases,
+            vec![("API".to_string(), "heuristic".to_string(), 0.97)]
+        );
+    }
+
+    #[tokio::test]
+    async fn graph_session_at_keeps_the_interval_contract_but_extraction_is_ownership_only() {
         let store = SqliteStore::open_in_memory().unwrap();
         let first = store
             .insert_session(session(1_000, Some(2_000)))
@@ -1296,32 +2053,48 @@ mod tests {
             "an open session is open-ended"
         );
 
-        let in_session = seed_frame(&store, 2_500, "content text here").await;
-        let input = store.graph_frame_input(in_session).await.unwrap().unwrap();
-        assert_eq!(input.frame_id, in_session);
+        // Extraction and linking do not use the interval primitive: an unowned frame that
+        // both intervals contain reports no session.
+        let unowned = seed_frame(&store, 2_500, "content text here").await;
+        let input = store.graph_frame_input(unowned).await.unwrap().unwrap();
+        assert_eq!(input.frame_id, unowned);
         assert_eq!(input.captured_at, 2_500);
         assert_eq!(input.app_hint.as_deref(), Some("Code"));
         assert_eq!(input.window_title.as_deref(), Some("main.rs - acme"));
         assert!(input.browser_url.is_none());
         assert_eq!(input.content_text.as_deref(), Some("content text here"));
-        let input_session = input.session.expect("frame falls inside a session");
-        assert_eq!(input_session.session_id, second);
-        assert_eq!(input_session.tool, None);
-        assert_eq!(input_session.host, Some(SessionHost::Ide));
-        assert_eq!(input_session.started_at, 1_500);
-        assert_eq!(input_session.ended_at, Some(3_000));
+        assert!(
+            input.session.is_none(),
+            "an unowned frame links to no session"
+        );
+
+        // Ownership is the only resolution: the same frame owned by `second` reports it.
+        assert!(
+            store
+                .assign_frames_session(&[unowned], Some(second))
+                .await
+                .unwrap()
+                == 1
+        );
+        let owned = store.graph_frame_input(unowned).await.unwrap().unwrap();
+        let owned_session = owned.session.expect("an owned frame reports its owner");
+        assert_eq!(owned_session.session_id, second);
+        assert_eq!(owned_session.tool, None);
+        assert_eq!(owned_session.host, Some(SessionHost::Ide));
+        assert_eq!(owned_session.started_at, 1_500);
+        assert_eq!(owned_session.ended_at, Some(3_000));
 
         let bare = store.insert_frame(frame(3_500)).await.unwrap();
         let bare_input = store.graph_frame_input(bare).await.unwrap().unwrap();
         assert!(bare_input.content_text.is_none(), "no frame_text row");
-        assert!(bare_input.session.is_none(), "frame falls between sessions");
+        assert!(bare_input.session.is_none(), "an unowned frame in a gap");
         assert!(store
             .graph_frame_input(i64::MAX - 1)
             .await
             .unwrap()
             .is_none());
 
-        // No containing session still contributes entities, but no link row.
+        // No owning session still contributes entities, but no link row.
         store
             .graph_apply_hits(
                 None,
@@ -1338,7 +2111,7 @@ mod tests {
         store
             .graph_apply_hits(
                 Some(second),
-                in_session,
+                unowned,
                 2_500,
                 &[hit(EntityKind::File, "notes.md", "notes.md", 0.8)],
             )
@@ -1371,7 +2144,8 @@ mod tests {
                 .unwrap()
                 == 1
         );
-        // The interval rule alone would answer `lower`; ownership must win.
+        // The retained interval primitive would answer `lower`; ownership is the only
+        // resolution extraction uses (`03 §7e` final ruling).
         assert_eq!(
             store
                 .graph_session_at(2_500)
@@ -1387,6 +2161,19 @@ mod tests {
         assert_eq!(owner.session_id, higher);
         assert_eq!(owner.started_at, 2_000);
         assert_eq!(owner.ended_at, Some(3_000));
+
+        // An otherwise identical unowned frame links to nobody, even though the interval
+        // primitive would still answer `lower` for it.
+        let unowned_frame = seed_frame(&store, 2_500, "acme/api").await;
+        let unowned_input = store
+            .graph_frame_input(unowned_frame)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            unowned_input.session.is_none(),
+            "an unowned frame links to nobody"
+        );
 
         // The evidence links to the owner, so clustering never sees it under the lower id.
         store
@@ -1404,7 +2191,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unowned_frame_inside_overlapping_sessions_falls_back_to_the_lowest_id() {
+    async fn unowned_frame_inside_overlapping_sessions_has_no_session() {
         let store = SqliteStore::open_in_memory().unwrap();
         let lower = store
             .insert_session(session(1_000, Some(9_000)))
@@ -1414,17 +2201,22 @@ mod tests {
             .insert_session(session(2_000, Some(3_000)))
             .await
             .unwrap();
-        // `insert_frame` leaves `frames.session_id` NULL: no owner, so the interval
-        // fallback applies and the lowest id wins on the overlap.
+        // `insert_frame` leaves `frames.session_id` NULL: linkage is ownership-only, so the
+        // frame reports no session even though both intervals contain it.
         let frame_id = seed_frame(&store, 2_500, "notes.md").await;
 
         let input = store.graph_frame_input(frame_id).await.unwrap().unwrap();
-        let fallback = input
-            .session
-            .expect("the interval fallback finds a session");
-        assert_eq!(fallback.session_id, lower);
-        assert_eq!(fallback.started_at, 1_000);
-        assert_eq!(fallback.ended_at, Some(9_000));
+        assert!(input.session.is_none(), "no owner means no session");
+        // The retained interval primitive still answers `lower` for its own contract.
+        assert_eq!(
+            store
+                .graph_session_at(2_500)
+                .await
+                .unwrap()
+                .unwrap()
+                .session_id,
+            lower
+        );
     }
 
     #[tokio::test]
@@ -1440,12 +2232,12 @@ mod tests {
         let input = store.graph_frame_input(frame_id).await.unwrap().unwrap();
         assert!(
             input.session.is_none(),
-            "no owner and no containing interval means no session"
+            "linkage is ownership-only, so an unowned frame has no session"
         );
     }
 
     #[tokio::test]
-    async fn dangling_owner_id_falls_back_to_the_interval_session() {
+    async fn dangling_owner_id_has_no_session() {
         let store = SqliteStore::open_in_memory().unwrap();
         let session_id = store
             .insert_session(session(1_000, Some(2_000)))
@@ -1472,10 +2264,10 @@ mod tests {
         });
 
         let input = store.graph_frame_input(frame_id).await.unwrap().unwrap();
-        let resolved = input
-            .session
-            .expect("the dangling owner degrades to the fallback");
-        assert_eq!(resolved.session_id, session_id);
+        assert!(
+            input.session.is_none(),
+            "a dangling owner id reports no session (ownership-only)"
+        );
     }
 
     #[tokio::test]
@@ -1770,6 +2562,61 @@ mod tests {
         assert_eq!(counts.thread_sessions, 3);
         // Applying a plan never enqueues: only the override inserts above did.
         assert_eq!(job_count(&store, "graph_cluster", "pending"), 1);
+    }
+
+    /// Documents the delete side of the thread plan: a rename row is not membership management,
+    /// so a plan that no longer produces its thread's `cluster_key` deletes the row and the
+    /// `thread_overrides.thread_id` cascade removes the user's title. `delete_thread_ids` is only
+    /// "safe" for threads the planner does not retain (merge/split referenced ids are always
+    /// retained); the rename title loss is recorded as a residual in `07`.
+    #[tokio::test]
+    async fn deleting_a_thread_cascades_its_rename_override() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let session_id = store
+            .insert_session(session(1_000, Some(2_000)))
+            .await
+            .unwrap();
+        store
+            .graph_apply_thread_plan(&ThreadPlan {
+                threads: vec![draft(
+                    "seed:1",
+                    "Renamed candidate",
+                    1_000,
+                    2_000,
+                    vec![member(session_id, 0.9)],
+                )],
+                ..ThreadPlan::default()
+            })
+            .await
+            .unwrap();
+        let thread_id = store.graph_stored_threads().await.unwrap()[0].id;
+        store
+            .graph_insert_thread_override(
+                &ThreadOverrideDraft {
+                    kind: ThreadOverrideKind::Rename,
+                    thread_id: Some(thread_id),
+                    target_thread_id: None,
+                    payload: ThreadOverridePayload::Rename {
+                        title: "Pinned".to_string(),
+                    },
+                },
+                3_000,
+            )
+            .await
+            .unwrap();
+        assert_eq!(row_count(&store, "thread_overrides"), 1);
+
+        // A later clustering run no longer produces the key: the planner names the thread for
+        // deletion, the store deletes it, and the rename row cascades away with it.
+        store
+            .graph_apply_thread_plan(&ThreadPlan {
+                delete_thread_ids: vec![thread_id],
+                ..ThreadPlan::default()
+            })
+            .await
+            .unwrap();
+        assert!(store.graph_stored_threads().await.unwrap().is_empty());
+        assert_eq!(row_count(&store, "thread_overrides"), 0);
     }
 
     #[tokio::test]
