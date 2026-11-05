@@ -124,11 +124,12 @@ earlier and more cheaply than an OS round-trip.
   overlay"), not as the authority — keep the OS-registration path as the real gate so third-party
   collisions still surface.
 - Mirror the check in both the Rust `sanitize_settings` and the UI hotkey module if it's meant to
-  block save, and add a round-trip test. Since P7 the UI side exists: `chordsConflict`
-  (`ui/src/routes/settings/hotkeys.ts`, formerly the local rule in the deleted
-  `ui/src/routes/Settings.tsx`) warns on the two hotkey rows when the chosen chord equals the other
-  row's chord. The backend half — `crates/kernel/src/settings.rs` `sanitize_settings` accepting the
-  same chord silently — is still open.
+  block save, and add a round-trip test. The UI half is not new: `chordsConflict` was built in
+  0.3.2 PR5 inside the single-file Settings screen, and P7 re-homed it to
+  `ui/src/routes/settings/hotkeys.ts` (case-insensitive, modifier-order-insensitive) where it warns on
+  the two hotkey rows while the chords match and clears when they differ. The backend half —
+  `crates/kernel/src/settings.rs` `sanitize_settings` accepting the same chord silently — is still
+  open.
 
 ### Also considered, rejected (not a TODO)
 - **Done/Dismiss in `IntentionsStrip` share one resolve op** (claude review): this is the documented
