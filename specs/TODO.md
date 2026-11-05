@@ -6,11 +6,100 @@
 
 ---
 
+## TODO-6 — Settings defaults for the reset-to-default marker via IPC (deferred from P7, 0.4.5)
+
+**Status:** OPEN. Deferred from P7 (`ui/src/routes/settings/`) because no defaults source exists
+over IPC.
+
+### The suggestion
+`get_settings` returns values; nothing returns the as-built defaults. P7's per-row reset marker and
+"Reset to default" need a baseline, so the UI carries `SETTINGS_DEFAULTS` — 26 entries mirrored from
+`crates/traits/src/ipc.rs` (the `Default for Settings` impl) with the divergence of `storage.max_width`
+(`0`) and `storage.retention_days` (`30`) resolved in code's favour where the spec table disagreed.
+A `get_settings_defaults` command (or a `defaults` field on the settings payload) would remove the
+mirror entirely and make the marker authoritative.
+
+### Why it's deferred (the trade-offs)
+- **A new IPC command is a P3-owned surface**, and P7's write set is three UI paths; adding a command
+  would have widened both the traits and the Tauri command list.
+- **The mirror is currently exact and cited:** `SETTINGS_DEFAULTS` is the only copy, authored at one
+  site, and references `crates/traits/src/ipc.rs:632` so a reader can check it. Divergence risk is
+  real but bounded: a change to the Rust defaults silently makes the marker wrong, with no test to
+  catch it.
+- **Nothing blocks on it:** reset writes a value and the autosave path already proves the write, so
+  the marker is a UI convenience, not a data path.
+
+### If ever implemented
+- Return defaults from the same place that owns `Default for Settings` (no second table), keep
+  `SETTINGS_DEFAULTS` as the fallback while the query is in flight, and add a test that compares the
+  IPC payload's default for every one of the 26 UI keys against the registry's `default` field.
+
+---
+
+## TODO-5 — History deletion command and its confirm row in Settings (deferred from P7, 0.4.5)
+
+**Status:** OPEN. Deferred from P7: Data ships **export** only. `03 §8`/`UI_REFERENCE §4` name a
+destructive-action confirm for Settings, and P7 implements it for export and for the legacy token
+regeneration, but deletion of captured history has no command to call.
+
+### The suggestion
+A `delete_history`-style command behind a typed scope (all history / before a timestamp / one
+session), a `ConfirmAction` row in Data naming exactly what is removed, and a truthful post-delete
+state (counts refreshed from the store, not optimistic).
+
+### Why it's deferred (the trade-offs)
+- **No IPC surface exists.** Adding one touches the traits, the Tauri command list and the store —
+  outside P7's three owned UI paths, and a destructive data path deserves its own phase with its own
+  acceptance run rather than a rider on a UI phase.
+- **A disabled control or a stub is forbidden** (`P7.md`, `04` — no placeholders), so the honest
+  outcome was to ship export plus the storage rows and record the gap here.
+- **Safety:** an irreversible delete needs the confirm copy, the scope and the recovery story
+  (exports, retention) designed together; shipping half of that is worse than shipping none.
+
+### If ever implemented
+- Put the command behind the same locked path as the other store mutations, delete inside one
+  transaction, refresh the footprint/row counts from the store afterwards, and prove with a test that
+  a partial failure leaves the database unchanged.
+
+---
+
+## TODO-4 — `throttleStatus` is not invalidated by a settings save (deferred from P7, 0.4.5)
+
+**Status:** OPEN, found during P7's native acceptance. `useSetSettings.onSettled`
+(`ui/src/lib/ipc/mutations.ts`) invalidates `settings`, `hotkeyStatus` and `apiStatus` only, so any
+surface built on `useThrottleStatus()` keeps showing pre-save state until the next `throttle_changed`
+event.
+
+### The suggestion
+Add `throttleStatus` to that invalidation list (and audit the rest of the map the same way: a key
+whose writes affect another query's payload needs that query invalidated, otherwise the UI shows a
+stale projection of a value the user just changed).
+
+### Why it's deferred (the trade-offs)
+- **`ui/src/lib/ipc` is not P7's write set.** P7 worked around it inside its own surface: the Advanced
+  throttle readout now takes its on/off line from the **saved** setting (`<ThrottleReadout
+  enabled={throttle.value === true} />`) and shows an honest intermediate line ("Turning on — waiting
+  for the first pressure sample.") while the probe lags, instead of printing "Throttle is off" after
+  the switch was turned on.
+- **The workaround is correct but local:** any future readout built on `useThrottleStatus` inherits the
+  same staleness, so the fix belongs in the shared invalidation map, not in each consumer.
+
+### If ever implemented
+- Invalidate `throttleStatus` from `onSettled` and drop the `enabled` prop from `ThrottleReadout`;
+  add a test that asserts the invalidation set covers every query keyed on a settable setting.
+
+---
+
 ## TODO-3 — Settings-level hotkey-conflict check for the mark/overlay chords (deferred from PR #75, 0.3.0 PR6)
 
 **Status:** OPEN. Deferred **by decision**, not by time. Reviewer suggestion from PR #75
 (claude hand review). Low value given the existing OS-level guard; recorded so the deferral is
 deliberate.
+
+**P7 evidence (2026-11-05):** on a clean profile the seeded default chord `Ctrl+Alt+M` failed OS
+registration on a real machine (`HotKey already registered`), and Settings showed the failure on the
+row plus a toast with the stored value unchanged — TODO-3's premise, confirmed live. The UI-side
+cross-chord warning now exists; the settings-layer half is unchanged.
 
 ### The suggestion
 `sanitize_settings` (`crates/kernel/src/settings.rs`) accepts `overlay_hotkey` and `marks_hotkey`
@@ -34,8 +123,12 @@ earlier and more cheaply than an OS round-trip.
 - Treat a settings-layer check as a *fast-path UX hint* (e.g. inline field warning "same as Flow
   overlay"), not as the authority — keep the OS-registration path as the real gate so third-party
   collisions still surface.
-- Mirror the check in both the Rust `sanitize_settings` and the UI `sanitizeSettings`
-  (`ui/src/routes/Settings.tsx`) if it's meant to block save, and add a round-trip test.
+- Mirror the check in both the Rust `sanitize_settings` and the UI hotkey module if it's meant to
+  block save, and add a round-trip test. Since P7 the UI side exists: `chordsConflict`
+  (`ui/src/routes/settings/hotkeys.ts`, formerly the local rule in the deleted
+  `ui/src/routes/Settings.tsx`) warns on the two hotkey rows when the chosen chord equals the other
+  row's chord. The backend half — `crates/kernel/src/settings.rs` `sanitize_settings` accepting the
+  same chord silently — is still open.
 
 ### Also considered, rejected (not a TODO)
 - **Done/Dismiss in `IntentionsStrip` share one resolve op** (claude review): this is the documented
@@ -44,8 +137,8 @@ earlier and more cheaply than an OS round-trip.
 
 ### Files
 - `crates/kernel/src/settings.rs` (`sanitize_settings`) · `src-tauri/src/overlay.rs` (the live
-  registration gate that already handles this) · `ui/src/routes/Settings.tsx` (`sanitizeSettings`,
-  if the check should also live client-side).
+  registration gate that already handles this) · `ui/src/routes/settings/hotkeys.ts`
+  (`chordsConflict`, if the check should also live client-side).
 
 ### References
 - PR #75 review (claude hand review, finding #3) · `07_KNOWN_GAPS.md` (0.3.0 PR6 decisions) ·

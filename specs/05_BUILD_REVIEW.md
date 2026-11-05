@@ -1,6 +1,6 @@
 # 05 — Build Review
 
-## 2026-11-05: P7 app shell + Settings v2 — build, verification and native acceptance (branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, not merged, from `main` 6d906a7; no commit, no push, no PR — 0.4.5 D18)
+## 2026-11-05: P7 app shell + Settings v2 — build, verification and native acceptance (branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, **not merged**, from `main` `6d906a7`; committed and pushed on the maintainer's authorization under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P7.md`. Contradictions: `06` #60–#70. Decisions, silences and deferrals:
 `07` (2026-11-05 P7 section).
@@ -71,7 +71,8 @@ route-splitting holds and the entry chunk is 11.91 kB gzip against the 250 kB bu
 
 ```
 $ test ! -f ui/src/routes/Settings.tsx   →  Settings.tsx: ABSENT
-$ wc -l ui/src/routes/settings/*.tsx     →  max 294 (Integrations.tsx), total 2,882
+$ wc -l ui/src/routes/settings/*.tsx     →  max 294 (Integrations.tsx), total 2,898 (22 files; .tsx only —
+                                              the 28-file directory also holds 6 .ts modules)
 $ grep -rnoE '"[a-z_]+\.[a-z_0-9]+"' ui/src/routes/settings | sort -u
   → exact set: the 26 UI keys, no other dotted literal, no `memory.*` literal
 $ grep -rn 'tokens.compat' ui/src
@@ -262,7 +263,10 @@ Other evidence: `data-export-confirm.png` (confirm naming what is written),
 `integrations-revoke-confirm.png` (read-token revoke confirmation),
 `integrations-read-token-{created,revoked}.png`, `advanced-throttle-on.png`, `intelligence-empty.png`,
 `integrations-api-off.png`, `privacy-after-restore.png`.
-Evidence volume: 15 MB, 64 files (same convention as `docs/screenshots/p2/**`).
+Evidence volume: 15 MB, 65 files — 32 theme PNGs, 17 top-level PNGs (palette ×2, toast ×2, shell frame ×2,
+readiness banner ×2, export confirm, revoke confirm, API off/listening, read-token created/revoked,
+intelligence empty, advanced throttle, privacy restore) and 16 forced-state WebPs (same convention as
+`docs/screenshots/p2/**`).
 
 ### External-agent read credential (closes the carried-forward `05` gate)
 
@@ -331,6 +335,68 @@ this phase's file), so turning the throttle on still read "Throttle is off" unti
 ("Turning on — waiting for the first pressure sample.") instead of printing stale state; the measured
 numbers still come from the probe. Re-verified live after HMR (`CPU 20% · GPU 2% · Level: Normal`) and
 the full UI gate was re-run afterwards (lint 0, build ok, 96/96 tests, bindings unchanged).
+
+### Post-PR review round (2026-11-05) — what changed in the records and what did not
+
+An aggregated multi-model review arrived after PR #161 opened. Every finding was checked against the
+code before acting; four were live and produced the correction commit `0021df6`:
+
+1. **The state matrix read as if every cell were native.** Corrected with an explicit provenance
+   paragraph plus per-cell wording: `loading`/`error` were forced through the `?__devState=` seam in a
+   headless Chromium against the Vite dev server (the Tauri WebView2 window cannot be navigated to a
+   query string, and those frames show "Kernel offline"); only `empty`, `partial` and `populated` are
+   native observations.
+2. **Six cells described the code rather than an observation** — General/Privacy/Intelligence/Data/
+   Advanced `partial`, Capture and Data `empty`, and the Integrations bind error (the port was free,
+   so `last_error` and the enabled-not-listening copy never rendered). They now read `**not forced**`
+   with the reason. Two `partial` cells *were* observed and stay claimed: Capture (mark-hotkey
+   registration failure) and Models (setup download chip with progressbar).
+3. **The duplicate-label count disagreed between files** ("two" in `05`, "three" in `07`, four items
+   listed). Both now say four.
+4. **Mixed screenshot formats were unstated** — 16 `.webp` forced-state frames (headless capture)
+   against 32 native `.png` theme frames. Now stated where the folder is described, so it is not read
+   as a deviation from the P2 convention.
+
+Rejected after checking the code (recorded here so the reasoning is not re-litigated):
+
+- **"`/ask` and `/work` routes exist at base, so a four-entry rail hides merged screens."** They do
+  not exist: `ui/src/app/router.tsx` declares `/`, `recall`, `timeline`, `timeline/session/:id`,
+  `timeline/:id`, `insights`, `settings`, `settings/:category`, `*`. P5 shipped the work-graph engine
+  and P6 the Ask v2 backend/HTTP/MCP surface, not a screen. `ui/src/app/nav.ts` carries the two
+  entries as commented metadata for P9 to insert; the rail links to real routes only (`06` #71).
+- **"`ThrottleReadout` may have another mount without `enabled`."** One call site
+  (`ui/src/routes/settings/Advanced.tsx:86`), prop supplied; no test mounts it.
+- **"The 16 forced-state screenshots never landed; `tab.screenshot` has no `path` option."** Correct
+  about the option, wrong about the outcome: the captures were written from the returned temp path of
+  each screenshot, which is why `docs/screenshots/p7/states/` holds 16 `.webp` files.
+- **"Stop driving the maintainer's Chrome session."** Already abandoned before the matrix was
+  captured; the managed tab used `relay: false`.
+
+Three record additions came out of the same pass, all outside `05`: `specs/TODO.md` gained TODO-4
+(`throttleStatus` invalidation), TODO-5 (history deletion command) and TODO-6 (defaults over IPC), and
+TODO-3 lost its pointer at the deleted `Settings.tsx`; `07` records that `docs/screenshots/p7/` is
+committed evidence outside any owned write set (P2 precedent, `06` #34); `06` gained #71 for the rail
+list versus the spec's six-entry wording.
+
+**Second pass — a read-only audit of this record against the repository** (all claims re-measured, not
+re-argued) found four things and fixed them:
+
+- **Two numbers in `05` were wrong.** The evidence folder holds **65** files, not 64 (17 top-level
+  PNGs, not 16 — the revoke-confirm capture arrived after the first count). And the `wc -l` total for
+  `routes/settings/*.tsx` is **2,898**, not 2,882: the earlier figure was measured before the
+  `ThrottleReadout` fix added its lines. Both corrected here and in `07`.
+- **`specs/UI_REFERENCE.md` still described the pre-P7 world** in three places: the shell tree, the
+  §3 IA paragraph and the §8 fixed-shell sentence all named a six-entry rail (Deck · Ask · Work ·
+  Recall · Insights · Settings) as the shipped state. Each now says the rail ships four until P9 adds
+  the Ask/Work entries with their routes, citing `06` #71. No design decision was changed — the
+  six-entry target stands; only the as-built description was corrected.
+- **`§5`'s `Expander` sentence named a deleted consumer.** It said `Expander` stays in the barrel "for
+  `routes/Settings.tsx`, which still imports it". It now records that P7 deleted that consumer and the
+  only remaining importers are the dev-only gallery, leaving its future to P10.
+- **Two code comments had gone false:** the primitives barrel named `routes/Settings.tsx` as a
+  consumer (now `routes/Kitchen*.tsx`), and `routes/settings/hotkeys.ts` cited
+  `git show HEAD:ui/src/routes/Settings.tsx`, an anchor that stops resolving the moment the deletion is
+  committed — it now cites `6d906a7:…`. Comment-only changes; the UI gate was re-run after them.
 
 
 

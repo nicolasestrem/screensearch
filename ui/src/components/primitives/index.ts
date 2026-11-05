@@ -1,7 +1,7 @@
 // Barrel for the UI primitives (UI_REFERENCE §5, v2 rebuild).
 // Import from here: import { Button, Panel, Chip } from "../primitives";
-// v1 export names and props stay compatible (domain/**, shell/**, overlay/**,
-// routes/Settings.tsx consume them; P10 deletes the legacy tokens shim).
+// v1 export names and props stay compatible (domain/**, shell/**, overlay/** and
+// the dev gallery routes/Kitchen*.tsx consume them; P10 deletes the legacy tokens shim).
 export {
   Button,
   type ButtonProps,

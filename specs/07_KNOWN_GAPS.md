@@ -1,6 +1,6 @@
 # 07 — Known Gaps
 
-## 2026-11-05: P7 app shell + Settings v2 — grants, maintainer decisions and deferrals (owner: maintainer for the decisions; agent for code; branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, not merged, not pushed, not merged)
+## 2026-11-05: P7 app shell + Settings v2 — grants, maintainer decisions and deferrals (owner: maintainer for the decisions; agent for code; branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, **not merged**; pushed on the maintainer's authorization)
 
 Phase: `docs/kickoffs/P7.md`, branched from `main` `6d906a7` (P2–P6 merged; no `v0.4.3` tag exists,
 which is not a stop — Gate A was still open when P7 started, so the branch base is `main` HEAD).
@@ -90,7 +90,15 @@ first reading might place elsewhere are owned: `ui/src/app/router.tsx` (route me
   take a label prop; these components do not.
 - **`models.vision_tier` was rendered but not switched** during acceptance (vision model mid-download).
   Its write path is the pre-existing `set_model_tier`, proven by the answer lane.
-- **Screenshot evidence is committed under `docs/screenshots/p7/`** (64 files), the same treatment P2's evidence got (`06` #34): the folder is not in any phase's owned write set, and the maintainer's batch answers authorised the live run, not the binary evidence. Recorded here rather than added silently. Two capture channels are mixed deliberately — 32 native `.png` theme frames plus the shell surfaces, and 16 `.webp` forced-state frames from a headless Chromium against the dev server.
+- **Screenshot evidence is committed under `docs/screenshots/p7/`** (65 files: 32 theme PNGs, 17 top-level PNGs, 16 forced-state WebPs), the same treatment P2's evidence got (`06` #34): the folder is not in any phase's owned write set, and the maintainer's batch answers authorised the live run, not the binary evidence. Recorded here rather than added silently. Two capture channels are mixed deliberately — 32 native `.png` theme frames plus the shell surfaces, and 16 `.webp` forced-state frames from a headless Chromium against the dev server.
+- **Spec amendments made while recording P7 (2026-11-05, disclosed rather than silent).**
+  `specs/UI_REFERENCE.md` was amended in four sentences — the §3 shell tree, the §3 IA paragraph, the
+  §8 fixed-shell sentence (all now say the rail ships **four** entries and P9 adds Ask/Work with their
+  routes, citing `06` #71) and the §5 `Expander` note (its production consumer was deleted; only the
+  dev gallery imports it now). The target design is unchanged; only the as-built description was
+  wrong. Two code comments were corrected in the same pass: the primitives barrel's consumer list and
+  `routes/settings/hotkeys.ts`'s dead `git show HEAD:` citation (`HEAD` stops resolving once the
+  deletion is committed; it now cites `6d906a7`).
 - **Machine state:** the acceptance used a profile that did not exist before the run; it was deleted
   afterwards and `app.run_at_startup` was returned to off (no `HKCU\…\Run` entry). The maintainer's
   own profile was never touched.

@@ -1,7 +1,8 @@
 // Hotkey helpers for the Capture category: the cross-chord conflict check
 // (gap `07` #100) and the live registration status of the two global chords.
 // Both helpers lived inside the single Settings screen this phase replaced
-// (`git show HEAD:ui/src/routes/Settings.tsx`, lines 106-118 and 417-434), so
+// (`git show 6d906a7:ui/src/routes/Settings.tsx`, lines 106-118 and 417-434 — `HEAD` cannot
+// be used since this phase deleted that file), so
 // they are re-homed here rather than duplicated per row.
 import { useEffect, useRef } from "react";
 

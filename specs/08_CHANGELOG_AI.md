@@ -1,6 +1,6 @@
 # 08 — AI Changelog
 
-## 2026-11-05: P7 app shell + Settings v2 — v2 shell rebuild and the 26-key Settings surface (branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, not merged, from `main` `6d906a7`; **not committed, not pushed, not merged** — 0.4.5 D18)
+## 2026-11-05: P7 app shell + Settings v2 — v2 shell rebuild and the 26-key Settings surface (branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, **not merged**, from `main` `6d906a7`; pushed on the maintainer's authorization under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P7.md`. Build record, gate output, acceptance tables and screenshots: `05`
 (2026-11-05 P7 section). Decisions, silences and deviations: `07`. Contradiction rows `#60`–`#70`:
