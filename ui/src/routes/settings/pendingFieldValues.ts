@@ -61,13 +61,19 @@ export function clearPendingField(field: string, issued: number): void {
   notify();
 }
 
-/** Record a failed save, owned by commit `issued`. */
+/**
+ * Record a failed save, but only if commit `issued` still owns the field: an older
+ * write failing after a newer edit was issued must not publish its value, or the row
+ * shows (and the next edit composes from) the value the newer save is replacing.
+ */
 export function setPendingFailure(
   field: string,
   value: unknown,
   message: string,
   issued: number,
 ): void {
+  const pending = entries.get(field);
+  if (pending !== undefined && pending.issued !== issued) return;
   failures.set(field, { value, message, issued });
   notify();
 }

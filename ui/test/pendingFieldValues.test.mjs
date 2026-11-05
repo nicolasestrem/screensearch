@@ -102,3 +102,20 @@ test("a newer edit supersedes an older failure even though its token differs", (
   supersedePendingFailure(FIELD);
   assert.equal(pendingFailure(FIELD), undefined);
 });
+
+test("an older write failing cannot publish over a newer edit", () => {
+  const first = nextPendingToken();
+  const second = nextPendingToken();
+  setPendingField(FIELD, ["A"], first);
+  setPendingField(FIELD, ["A", "B"], second);
+  // The older write fails while the newer one still owns the field: publishing its
+  // value would make the row show [A] and the next edit submit [A, C], dropping B.
+  setPendingFailure(FIELD, ["A"], "refused", first);
+  assert.equal(pendingFailure(FIELD), undefined);
+  assert.deepEqual(pendingFieldValue(FIELD), ["A", "B"]);
+  // The owner failing does publish, with the value to retry.
+  clearPendingField(FIELD, second);
+  setPendingFailure(FIELD, ["A", "B"], "refused", second);
+  assert.deepEqual(pendingFailure(FIELD)?.value, ["A", "B"]);
+  supersedePendingFailure(FIELD);
+});

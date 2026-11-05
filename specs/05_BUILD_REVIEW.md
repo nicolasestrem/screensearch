@@ -488,6 +488,12 @@ Patch-level errors (`useSettingsPatch`) stay local on purpose: a failed toggle o
 nothing, so leaving the category shows an unchanged row rather than a silently lost edit, and the
 control that failed is the row that reports it.
 
+**Round eight (`06` #87)** arrived after the merge, on the squashed commit: the *publication* of a
+failure was the one ownership step left unguarded, so an older write failing while a newer edit owned
+the field published its value and the next edit composed from it. A failure is now published only
+while its commit still owns the field; dropping the check fails "an older write failing cannot publish
+over a newer edit". Fixed on a follow-up branch off `main` with the suite at 135/135.
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate
