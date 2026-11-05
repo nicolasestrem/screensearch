@@ -443,6 +443,13 @@ both now gate on `settings.data === undefined` first. Guards proved by neutering
 fails `pendingFieldValues.test.mjs` ("a queued value is visible to a fresh mount of the same field"),
 and the ownership check fails `pendingState.test.mjs`. Full suite 127/127.
 
+One adversarial re-read of that fix found the same class still open in the *new* store: the shared
+entry was cleared unconditionally on settlement, so an older save settling after a newer commit's
+`setPendingField` erased the newer pending value, and the stale-display window came back through the
+store instead of the component. The entry now carries the commit number that set it and only that
+commit retires it (`clearPendingField(field, issued)`); dropping the check fails two tests, including
+"an older save settling does not retire a newer queued value". Suite: 128/128.
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate
