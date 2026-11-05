@@ -241,6 +241,9 @@ export function useSettingsPatch(): SettingsPatchApi {
   const setSettings = useSetSettings();
   const [error, setError] = useState<string | null>(null);
   const last = useRef<{ patch: Partial<Settings>; label: string } | null>(null);
+  // The patch path's error surface is shared by every patched key, so the same rule as
+  // the row state applies: only the newest patch may report or clear it (rows 78, 82).
+  const newestPatch = useRef(0);
 
   function commitPatch(
     patch: Partial<Settings>,
@@ -249,8 +252,13 @@ export function useSettingsPatch(): SettingsPatchApi {
   ): Promise<boolean> {
     const current =
       qc.getQueryData<Settings>(queryKeys.settings) ?? settings.data;
+    const mine = nextPendingToken();
+    newestPatch.current = mine;
+    const newest = (): boolean => newestPatch.current === mine;
     if (!current) {
-      setError(saveFailure(label, new Error("settings have not loaded yet")));
+      if (newest()) {
+        setError(saveFailure(label, new Error("settings have not loaded yet")));
+      }
       return Promise.resolve(false);
     }
     last.current = { patch, label };
@@ -259,7 +267,9 @@ export function useSettingsPatch(): SettingsPatchApi {
     return settingsWriteQueue.enqueue(async () => {
       const base = await freshSettingsSnapshot(qc, queryKeys.settings);
       if (!base) {
-        setError(saveFailure(label, new Error("settings could not be re-read")));
+        if (newest()) {
+          setError(saveFailure(label, new Error("settings could not be re-read")));
+        }
         return false;
       }
       const previous: Partial<Settings> = {};
@@ -268,7 +278,7 @@ export function useSettingsPatch(): SettingsPatchApi {
       }
       try {
         await setSettings.mutateAsync({ ...base, ...patch });
-        setError(null);
+        if (newest()) setError(null);
         if (options?.silent !== true) {
           pushActionToast("success", `${label} updated`, {
             label: "Undo",
@@ -277,7 +287,7 @@ export function useSettingsPatch(): SettingsPatchApi {
         }
         return true;
       } catch (cause) {
-        setError(saveFailure(label, cause));
+        if (newest()) setError(saveFailure(label, cause));
         return false;
       }
     });

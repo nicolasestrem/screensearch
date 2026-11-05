@@ -459,6 +459,10 @@ proved by neutering — a mount-local counter fails "a remount never re-uses a l
 and an unconditional draft clear fails "a newer draft survives an earlier save's success". Suite:
 130/130.
 
+Auditing for the same class rather than waiting for it to be reported: the patch path's shared error
+surface also cleared unconditionally, so a later patch's success could erase a failed earlier patch's
+message. It now carries the same token rule — only the newest patch may report or clear it.
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate
