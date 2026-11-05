@@ -666,7 +666,9 @@ mod tests {
             .sessions
             .iter()
             .find(|member| member.session_id == session_id)
-            .unwrap_or_else(|| panic!("session {session_id} is not in {}", thread.cluster_key))
+            // Do not interpolate a session id into the panic message: CodeQL classifies
+            // session ids as sensitive and flags cleartext logging of them, even in tests.
+            .unwrap_or_else(|| panic!("the expected member is not in the planned thread"))
             .confidence
     }
 
