@@ -12,6 +12,10 @@ import { useSetModelTier, useSetSettings } from "../../lib/ipc/mutations";
 import { queryKeys } from "../../lib/ipc/queryKeys";
 import { useSettings } from "../../lib/ipc/queries";
 import {
+  freshSettingsSnapshot,
+  settingsWriteQueue,
+} from "./settingsWrites";
+import {
   SETTINGS_DEFAULTS,
   settingDef,
   type SettingDef,
@@ -119,45 +123,60 @@ export function useSettingField<F extends SettingsField>(
       });
       return;
     }
-    // Read the previous value from the cache BEFORE the optimistic write, so the
-    // undo payload is what the user actually had.
-    const previous = current[field] as Settings[F];
     setPendingValue(next);
-    const onSuccess = () => {
-      setPendingValue(null);
-      setFailure(null);
-      if (options?.silent !== true) {
-        pushActionToast("success", `${def.label} updated`, {
-          label: "Undo",
-          onAction: () => commit(previous, { silent: true }),
+    // Queued: `set_settings` writes the whole struct, so an earlier write's refetch
+    // must never be able to erase this value from the base of a later one (see
+    // `settingsWrites.ts`). The undo payload is read from the fresh base, so Undo
+    // restores what the backend actually had.
+    void settingsWriteQueue.enqueue(async () => {
+      const base = await freshSettingsSnapshot(qc, queryKeys.settings);
+      if (!base) {
+        setPendingValue(null);
+        setFailure({
+          value: next,
+          message: saveFailure(def.label, new Error("settings could not be re-read")),
         });
+        return;
       }
-    };
-    const onError = (error: unknown) => {
-      setPendingValue(null);
-      setFailure({ value: next, message: saveFailure(def.label, error) });
-    };
-    if (lane !== null) {
-      // `set_model_tier` has no optimistic phase of its own; write the cache the
-      // way `set_settings` does so the picker does not flash the old tier while
-      // the settings refetch lands.
-      qc.setQueryData<Settings>(queryKeys.settings, { ...current, [field]: next });
-      setTier.mutate(
-        { lane, tier: next as ModelTier },
-        {
-          onSuccess,
-          onError: (error: unknown) => {
-            qc.setQueryData<Settings>(queryKeys.settings, {
-              ...current,
-              [field]: previous,
-            });
-            onError(error);
-          },
-        },
-      );
-    } else {
-      setSettings.mutate({ ...current, [field]: next }, { onSuccess, onError });
-    }
+      const previous = base[field] as Settings[F];
+      const onSuccess = () => {
+        setPendingValue(null);
+        setFailure(null);
+        if (options?.silent !== true) {
+          pushActionToast("success", `${def.label} updated`, {
+            label: "Undo",
+            onAction: () => commit(previous, { silent: true }),
+          });
+        }
+      };
+      const onError = (error: unknown) => {
+        setPendingValue(null);
+        setFailure({ value: next, message: saveFailure(def.label, error) });
+      };
+      if (lane !== null) {
+        // `set_model_tier` has no optimistic phase of its own; write the cache the
+        // way `set_settings` does so the picker does not flash the old tier while
+        // the settings refetch lands.
+        qc.setQueryData<Settings>(queryKeys.settings, { ...base, [field]: next });
+        try {
+          await setTier.mutateAsync({ lane, tier: next as ModelTier });
+          onSuccess();
+        } catch (error) {
+          qc.setQueryData<Settings>(queryKeys.settings, {
+            ...base,
+            [field]: previous,
+          });
+          onError(error);
+        }
+        return;
+      }
+      try {
+        await setSettings.mutateAsync({ ...base, [field]: next });
+        onSuccess();
+      } catch (error) {
+        onError(error);
+      }
+    });
   }
 
   const value = failure ? failure.value : (pendingValue ?? savedValue);
@@ -201,26 +220,32 @@ export function useSettingsPatch(): SettingsPatchApi {
       setError(saveFailure(label, new Error("settings have not loaded yet")));
       return;
     }
-    const previous: Partial<Settings> = {};
-    for (const patchKey of Object.keys(patch) as SettingsField[]) {
-      Object.assign(previous, { [patchKey]: current[patchKey] });
-    }
     last.current = { patch, label };
-    setSettings.mutate(
-      { ...current, ...patch },
-      {
-        onSuccess: () => {
-          setError(null);
-          if (options?.silent !== true) {
-            pushActionToast("success", `${label} updated`, {
-              label: "Undo",
-              onAction: () => commitPatch(previous, label, { silent: true }),
-            });
-          }
-        },
-        onError: (cause: unknown) => setError(saveFailure(label, cause)),
-      },
-    );
+    // Same rule as the single-field path: queued, and built from a snapshot that
+    // already contains every settled write, so a patch cannot revert a neighbour.
+    void settingsWriteQueue.enqueue(async () => {
+      const base = await freshSettingsSnapshot(qc, queryKeys.settings);
+      if (!base) {
+        setError(saveFailure(label, new Error("settings could not be re-read")));
+        return;
+      }
+      const previous: Partial<Settings> = {};
+      for (const patchKey of Object.keys(patch) as SettingsField[]) {
+        Object.assign(previous, { [patchKey]: base[patchKey] });
+      }
+      try {
+        await setSettings.mutateAsync({ ...base, ...patch });
+        setError(null);
+        if (options?.silent !== true) {
+          pushActionToast("success", `${label} updated`, {
+            label: "Undo",
+            onAction: () => commitPatch(previous, label, { silent: true }),
+          });
+        }
+      } catch (cause) {
+        setError(saveFailure(label, cause));
+      }
+    });
   }
 
   return {
