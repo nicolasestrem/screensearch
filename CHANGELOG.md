@@ -32,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field name and the help text, with the match highlighted; ↑/↓/Enter select, Escape clears the
   query and leaves you in the current category. Tab order walks the categories and then that
   category's controls with no trap.
+- **Saving is now strictly serialised, and two destructive edges are closed.** Overlapping edits
+  could previously lose one another (each save wrote the whole settings object, so an earlier save's
+  refresh could overwrite a later one); saves now queue and each is built from a freshly read
+  snapshot. A failed refresh no longer replaces a category with an error panel — the rows stay.
+  Store-image width rejects values between 1 and 319 px instead of accepting a number the backend
+  silently raises to 320, monitor toggles no longer turn an excluded display into capture-all when an
+  unplugged display is in the saved selection, and retention days save when you press Enter or leave
+  the field rather than on every keystroke — typing `365` over `30` used to store a three-day window
+  the retention sweep would act on.
 - **Rendering fixes carried by the rebuild:** the v1 `Settings.tsx` is deleted (its local
   chord-conflict rule lives once, in the settings module), and the throttle readout no longer
   reports "off" after you switch it on — it shows the saved state immediately and the measured

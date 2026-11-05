@@ -336,6 +336,85 @@ this phase's file), so turning the throttle on still read "Throttle is off" unti
 numbers still come from the probe. Re-verified live after HMR (`CPU 20% · GPU 2% · Level: Normal`) and
 the full UI gate was re-run afterwards (lint 0, build ok, 96/96 tests, bindings unchanged).
 
+### Automated review-fix pass (2026-11-05, after `@claude please review`) — five findings, five fixes
+
+The Codex connector reviewed the branch twice (`487a5ef`, then `505d6ad`) and left five inline
+findings: one P1, four P2. **All five were valid**; none was rejected. Rows `06` #72–#76 carry the
+decision record. Each fix has a regression test, and each test was proved to fail with the mechanism
+removed (neuter → run only that test → restore; `grep -c NEUTERED` = 0 after every restore).
+
+**#72 (P1) overlapping autosaves lost a saved value.** `set_settings` writes the whole struct and
+the mutation is optimistic, so an earlier save's refetch could erase a later save's optimistic value
+and the next commit wrote that reverted value back. Fix: `settingsWrites.ts` — one serialised write
+lane, each payload built from a snapshot refetched *after* the previous write settled. The model-tier
+lane joins the same queue.
+
+```
+NEUTERED (enqueue runs the job immediately):
+✖ two enqueued writes never overlap        AssertionError: writes overlapped: A:start B:start B:end A:end
+                                           actual: 2, expected: 1
+✖ each waiting write sees the result of the one before it   + actual - expected
+                                        ℹ tests 3 · pass 1 · fail 2
+RESTORED:                               ℹ tests 3 · pass 3 · fail 0
+```
+
+**#73 (P2) a failed background refetch threw away usable rows.** `categoryFrameState` tested
+`isError` before data, and TanStack sets `isError` + `isRefetchError` while keeping the payload, so
+`partial` was unreachable and rows unmounted with their drafts.
+
+```
+NEUTERED (isError checked first again):
+✖ a failed background refetch keeps the rows: partial, never error   actual: 'error', expected: 'partial'
+✖ a primary read that errors while data is cached is partial
+                                        ℹ tests 7 · pass 5 · fail 2
+RESTORED:                               ℹ tests 7 · pass 7 · fail 0
+```
+
+**#74 (P2) 1–319 px was accepted and silently clamped to 320 by the kernel.** Now one rule
+(`numberEntryError` in `registry.ts`) allows the `0` sentinel or ≥ 320. Native proof: typing `319` and
+pressing Enter showed `Stored image width must be 0 (native width) or at least 320 px.` while the
+store kept `1920`; `1920` saved normally (`docs/screenshots/p7/data-width-rejected.png`).
+
+```
+NEUTERED (sentinel floor ignored):
+✖ stored image width: 1-319 is rejected, not silently clamped   AssertionError: 1 should be rejected
+                                        ℹ tests 6 · pass 5 · fail 1
+RESTORED:                               ℹ tests 6 · pass 6 · fail 0
+```
+
+**#75 (P2) monitor selection collapsed on entry count, not membership** — so a click that excluded a
+display could switch capture ON for another. Now `coversExactly` (set equality) decides before `[]`
+is written; disconnected indices survive until removed.
+
+```
+NEUTERED (length-only collapse):
+✖ a disconnected saved display is never silently turned into 'all'   + actual - expected
+✖ unknown displays stay in the selection until removed explicitly
+                                        ℹ tests 6 · pass 4 · fail 2
+RESTORED:                               ℹ tests 6 · pass 6 · fail 0
+```
+
+**#76 (P2) retention persisted on every keystroke** — typing `365` over `30` briefly saved a
+three-day window, which the hourly sweep would act on irreversibly. The row is now a
+`NumberFieldRow` (draft + Enter/blur), and `RetentionControl` is no longer rendered by Settings.
+Native proof, reading the store while typing:
+
+```
+typing 30 (from saved 365) → DB settings.storage.retention_days = 365   (unchanged)
+after Escape (draft abandoned) → 365
+after Enter → 30 (first measurement, from a fresh profile: no row before Enter, 365 after)
+```
+
+**Native coverage of the five:** #74 and #76 were re-driven in the real app (above). #72, #73 and #75
+are proved by the unit tests only — reproducing them needs an interleaved refetch failure and a
+physically disconnected display, neither of which can be produced on this host without hand-editing
+the store in an encoding the app parses, so they are recorded as test-verified rather than observed.
+
+**Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
+diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
+ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate
+stands from the phase run.
+
 ### Post-PR review round (2026-11-05) — what changed in the records and what did not
 
 An aggregated multi-model review arrived after PR #161 opened. Every finding was checked against the

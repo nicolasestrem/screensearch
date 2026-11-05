@@ -78,6 +78,15 @@ Phase: `docs/kickoffs/P7.md`. Build record, gate output, acceptance tables and s
   working, focuses Cancel, and states that already authorized requests may continue — verified
   natively (dialog, Escape-cancel, confirmed revoke). Previously a single click destroyed the
   credential.
+- **Review-fix pass (PR #161, five automated findings, all valid — `06` #72–#76):** settings
+  writes are serialised and each payload is built from a snapshot refetched after the previous write
+  settled, so two overlapping autosaves can no longer lose one of them; a failed background refetch
+  now renders `partial` instead of unmounting a category with its drafts; `storage.max_width`
+  rejects 1–319 px inline (the kernel clamps that band to 320) while keeping `0` as native width;
+  monitor selection collapses to the all-monitors sentinel only when it covers exactly the connected
+  displays, never on a matching entry count; and `storage.retention_days` keeps a draft and commits on
+  Enter/blur, so typing `365` over `30` can no longer save a three-day window for the retention sweep
+  to act on. Five regression tests, each proved to fail with its mechanism removed.
 - **Recorded, not fixed (outside the write set):** `marks.hotkey`'s seeded chord failed to register
   on this host (loud, value unchanged), `models.vision_tier` was rendered but not switched during
   acceptance, and the embedded domain components still render v1 compat classes until P10's refont.
