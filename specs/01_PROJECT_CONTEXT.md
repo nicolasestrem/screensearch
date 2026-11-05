@@ -151,8 +151,9 @@ for self-contained contracts and source-inspected inventory.
   ([#160](https://github.com/nicolasestrem/screensearch/pull/160)) — planning, the four ordered
   retrieval stages, both-kind citations, multi-turn conversations and the `session_embed` job lane;
   nothing on `main` yet, and its acceptance numbers await the maintainer's live-DB run. **P7**
-  (shell + Settings v2) is implemented on `feat/0.4.5-p7-shell-settings` and awaits the
-  maintainer's content validation before any commit or push (0.4.5 D18); its gate output, 26-row
+  (shell + Settings v2) is implemented on `feat/0.4.5-p7-shell-settings`
+  ([#161](https://github.com/nicolasestrem/screensearch/pull/161), open, **not merged**) and awaits the
+  maintainer's review before merge (0.4.5 D18; committed and pushed on their authorization); its gate output, 26-row
   acceptance table, search/keyboard/state passes and screenshot set are in `05`. Gate A (`v0.4.3`) and
   Gate B (`v0.4.4`) tags remain the maintainer's calls; the executing phases ran under the
   maintainer's overrides (fixture evidence instead of the real-DB maintainer run, D18 waived per

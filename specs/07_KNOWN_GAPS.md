@@ -1,6 +1,6 @@
 # 07 — Known Gaps
 
-## 2026-11-05: P7 app shell + Settings v2 — grants, maintainer decisions and deferrals (owner: maintainer for the decisions; agent for code; branch `feat/0.4.5-p7-shell-settings`, not pushed, not merged)
+## 2026-11-05: P7 app shell + Settings v2 — grants, maintainer decisions and deferrals (owner: maintainer for the decisions; agent for code; branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, not merged, not pushed, not merged)
 
 Phase: `docs/kickoffs/P7.md`, branched from `main` `6d906a7` (P2–P6 merged; no `v0.4.3` tag exists,
 which is not a stop — Gate A was still open when P7 started, so the branch base is `main` HEAD).

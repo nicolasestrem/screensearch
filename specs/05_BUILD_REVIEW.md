@@ -1,6 +1,6 @@
 # 05 — Build Review
 
-## 2026-11-05: P7 app shell + Settings v2 — build, verification and native acceptance (branch `feat/0.4.5-p7-shell-settings`, from `main` 6d906a7; no commit, no push, no PR — 0.4.5 D18)
+## 2026-11-05: P7 app shell + Settings v2 — build, verification and native acceptance (branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, not merged, from `main` 6d906a7; no commit, no push, no PR — 0.4.5 D18)
 
 Phase: `docs/kickoffs/P7.md`. Contradictions: `06` #60–#70. Decisions, silences and deferrals:
 `07` (2026-11-05 P7 section).
