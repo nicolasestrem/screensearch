@@ -16,8 +16,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tokio::sync::mpsc::{self, Sender};
 use traits::{
-    estimate_prompt_tokens, AnswerDelta, AnswerOpts, AnswerProvider, ModelTier, RetrievedChunk,
-    SidecarParams, PROMPT_BYTES_PER_TOKEN,
+    effective_reply_budget, estimate_prompt_tokens, AnswerDelta, AnswerOpts, AnswerProvider,
+    ModelTier, RetrievedChunk, SidecarParams, PROMPT_BYTES_PER_TOKEN,
 };
 
 use crate::client::{ChatMessage, StreamPiece};
@@ -365,15 +365,6 @@ async fn emit_segment(
 /// Chat-template + role-tag overhead reserved on top of the system prompt and question,
 /// so the assembled prompt leaves headroom for llama.cpp's own template tokens.
 const TEMPLATE_OVERHEAD_TOKENS: usize = 96;
-
-/// The reply token budget actually used. Caps a large requested `max_tokens` to half the
-/// context window so it can never reserve the *entire* window and force `build_messages` to
-/// drop all grounding snippets (the symptom: every Ask answers "(no relevant snippets
-/// found)"). For the normal 4K/8K windows the UI's 2048 is well under half and passes
-/// through unchanged; only a small `ctx_size` (Settings allows down to 512) shrinks it.
-fn effective_reply_budget(requested: u32, ctx_size: u32) -> u32 {
-    requested.min((ctx_size / 2).max(1))
-}
 
 /// Truncates `text` to roughly `budget_tokens` worth of UTF-8 bytes, snapped down to a
 /// char boundary (so multibyte characters are never split). Mirrors

@@ -23,6 +23,7 @@ use chrono::{Days, Local, LocalResult, NaiveDate, TimeZone};
 use image::RgbaImage;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Notify;
+use tokio::sync::Semaphore;
 
 use kernel::{CaptureFactory, Kernel};
 use store::SqliteStore;
@@ -688,6 +689,75 @@ impl AnswerProvider for HoldAnswer {
     }
 }
 
+/// A provider that never observes its channel closing — the preparation phase (a model
+/// download or a supervisor acquire). Aborting the task is the only thing that can stop it, so
+/// the guard's drop is the proof the abort reached it.
+struct StuckAnswer {
+    stopped: Arc<Semaphore>,
+}
+
+struct StopGuard(Arc<Semaphore>);
+
+impl Drop for StopGuard {
+    fn drop(&mut self) {
+        // A permit survives the drop, so the test cannot miss the signal the way a
+        // `notify_waiters` call would if it landed before the waiter registered.
+        self.0.add_permits(1);
+    }
+}
+
+#[async_trait]
+impl AnswerProvider for StuckAnswer {
+    async fn answer(
+        &self,
+        _query: &str,
+        _context: &[RetrievedChunk],
+        _opts: AnswerOpts,
+        _tx: Sender<AnswerDelta>,
+    ) -> traits::Result<()> {
+        let _guard = StopGuard(self.stopped.clone());
+        std::future::pending::<()>().await;
+        Ok(())
+    }
+}
+
+/// A provider that cites a frame it was never given, next to the ones it was: the stream and
+/// the terminal `Citations` list must name the same evidence.
+struct OverCitingAnswer {
+    phantom_frame: i64,
+}
+
+#[async_trait]
+impl AnswerProvider for OverCitingAnswer {
+    async fn answer(
+        &self,
+        _query: &str,
+        context: &[RetrievedChunk],
+        _opts: AnswerOpts,
+        tx: Sender<AnswerDelta>,
+    ) -> traits::Result<()> {
+        for chunk in context {
+            let _ = tx
+                .send(AnswerDelta::Citation {
+                    frame_id: chunk.frame_id,
+                })
+                .await;
+        }
+        let _ = tx
+            .send(AnswerDelta::Citation {
+                frame_id: self.phantom_frame,
+            })
+            .await;
+        let _ = tx
+            .send(AnswerDelta::Token {
+                text: "grounded".to_string(),
+            })
+            .await;
+        let _ = tx.send(AnswerDelta::done()).await;
+        Ok(())
+    }
+}
+
 struct NoopOcr;
 
 #[async_trait]
@@ -1272,6 +1342,95 @@ async fn ask_cancelled_turn_persists_no_answer() {
         .find(|turn| turn.id == turn_id)
         .expect("the cancelled turn row still exists");
     assert_eq!(turn.answer, None, "a cancelled turn persists no answer");
+}
+
+#[tokio::test]
+async fn ask_aborts_a_provider_that_never_observes_closure() {
+    let date = date_days_ago(1);
+    let mut fixture = AskStore::new();
+    fixture.add_session(5, local_ms(date, 0), local_ms(date, 23), "Ingest work");
+    fixture
+        .seed_frame(
+            local_ms(date, 10),
+            Some(5),
+            &format!("zebra deployment on {date}"),
+        )
+        .await;
+    let store = Arc::new(fixture);
+    let dyn_store: Arc<dyn Store> = store.clone();
+
+    let stopped = Arc::new(Semaphore::new(0));
+    let (kernel, _temp) = kernel_with_answer(
+        dyn_store,
+        Arc::new(StuckAnswer {
+            stopped: stopped.clone(),
+        }),
+    )
+    .await;
+
+    let stream = kernel
+        .ask_turn(request(&format!("zebra deployment on {date}"), None))
+        .await
+        .expect("the turn starts");
+
+    // The consumer leaves while the provider is still in its non-observing phase.
+    drop(stream);
+
+    let _stopped = tokio::time::timeout(Duration::from_secs(5), stopped.acquire())
+        .await
+        .expect("a cancelled turn aborts the provider task even when it ignores the closed channel")
+        .expect("the stop signal's semaphore is open");
+}
+
+#[tokio::test]
+async fn ask_citations_name_exactly_the_frames_it_streamed() {
+    let date = date_days_ago(1);
+    let mut fixture = AskStore::new();
+    fixture.add_session(5, local_ms(date, 0), local_ms(date, 23), "Ingest work");
+    let frame_id = fixture
+        .seed_frame(
+            local_ms(date, 10),
+            Some(5),
+            &format!("zebra deployment on {date}"),
+        )
+        .await;
+    // Far above any id the fixture hands out, so it can never be in the assembled context.
+    let phantom_frame = frame_id + 10_000;
+    let store = Arc::new(fixture);
+    let dyn_store: Arc<dyn Store> = store.clone();
+
+    let (kernel, _temp) =
+        kernel_with_answer(dyn_store, Arc::new(OverCitingAnswer { phantom_frame })).await;
+
+    let mut stream = kernel
+        .ask_turn(request(&format!("zebra deployment on {date}"), None))
+        .await
+        .expect("the turn starts");
+
+    let mut streamed: Vec<i64> = Vec::new();
+    let mut terminal: Option<Vec<i64>> = None;
+    while let Some(delta) = stream.deltas.recv().await {
+        match delta {
+            AnswerDelta::Citation { frame_id } => streamed.push(frame_id),
+            AnswerDelta::Citations { frames, .. } => terminal = Some(frames),
+            AnswerDelta::Done { .. } => break,
+            _ => {}
+        }
+    }
+
+    let terminal = terminal.expect("the terminal citations event arrives");
+    assert!(
+        !streamed.contains(&phantom_frame),
+        "a citation the terminal event will not carry must not be streamed"
+    );
+    assert!(
+        !terminal.contains(&phantom_frame),
+        "the terminal event only names frames that were assembled"
+    );
+    assert_eq!(
+        streamed, terminal,
+        "the streamed citations and the terminal pair name the same evidence"
+    );
 }
 
 /// `session_embed` (`03 §7i.2`, D11): one bounded batch embeds the sessions that carry

@@ -251,10 +251,12 @@ impl Kernel {
             .await
             .map_err(AskTurnError::Failed)?;
         // The reply budget is reserved out of the window; the provider's own packer keeps
-        // its per-chunk hard bound on top of this (`crates/inference/src/answer.rs`).
-        let budget = provider
-            .answer_context_budget()
-            .map(|ctx| (ctx as usize).saturating_sub(request.opts.max_tokens as usize));
+        // its per-chunk hard bound on top of this (`crates/inference/src/answer.rs`). The
+        // reservation must be the one the provider actually uses: `max_tokens` above half the
+        // window is capped there, so subtracting the raw request here would pre-drop evidence
+        // the packer had room for (a 2048-token window with the default 2048 `max_tokens`
+        // would assemble exactly one chunk).
+        let budget = assembly_budget(provider.answer_context_budget(), request.opts.max_tokens);
         let (chunks, tokens_assembled) =
             assemble_chunks(hits, &mut ocr, &frame_session, &labels, budget);
         // Citation provenance: the frame → session pairs actually handed to the provider,
@@ -299,8 +301,9 @@ impl Kernel {
         });
 
         // Ask v2's session vectors may still be behind; one bounded job, under the idle
-        // producer's guard, never on the capture path and never fatal to the turn. It runs
-        // after the stream is live so it cannot delay the first delta.
+        // producer's guard, never on the capture path and never fatal to the turn. The delta
+        // task is already running, so this cannot delay the first delta — it delays only the
+        // returned stream handle by one bounded DB round-trip (the enqueue's own guard read).
         crate::session_vectors::enqueue_on_demand(self.store.as_ref()).await;
 
         Ok(AskTurnStream {
@@ -353,7 +356,7 @@ async fn forward_turn(turn: ForwardTurn) {
     } = turn;
 
     let (ptx, mut prx) = tokio::sync::mpsc::channel::<AnswerDelta>(64);
-    let provider_task =
+    let mut provider_task =
         tokio::spawn(async move { provider.answer(&question, &context, opts, ptx).await });
 
     let mut cited: Vec<i64> = Vec::new();
@@ -386,7 +389,14 @@ async fn forward_turn(turn: ForwardTurn) {
             }
             AnswerDelta::Citation { frame_id } => {
                 // Provenance first, then the client keeps the per-frame citation event it
-                // has always received (`03 §7i.3`: extended, never replaced).
+                // has always received (`03 §7i.3`: extended, never replaced). A frame the
+                // terminal `Citations` list will not carry is not forwarded either, so the
+                // stream and the terminal event can never name different evidence (the
+                // provider's packer only cites packed frames, so this is a guard, not a filter
+                // that drops real evidence today).
+                if !assembled.iter().any(|(id, _)| *id == frame_id) {
+                    continue;
+                }
                 if !cited.contains(&frame_id) {
                     cited.push(frame_id);
                 }
@@ -410,11 +420,21 @@ async fn forward_turn(turn: ForwardTurn) {
     }
 
     if cancelled {
-        // Closing the receiver is the cancellation signal the provider already honors
-        // (`AnswerSidecar` aborts the sidecar generation on a closed consumer channel,
-        // `03 §7c`). The forwarder does not await it: a provider that ignores closure must
-        // not be able to hang the turn. No citations, no done, no persistence.
+        // The cooperative signal first: dropping the provider's receiver lets it stop the way
+        // it already knows how (`AnswerSidecar` aborts the sidecar generation on a closed
+        // consumer channel, `03 §7c`), which is the only path that also stops the child
+        // process cleanly.
         drop(prx);
+        // A provider still in preparation — downloading a model, waiting in the supervisor's
+        // acquire — never looks at the channel, so waiting on cooperation alone would leave it
+        // running after the user gave up. Give the cooperative path a bounded moment, then
+        // abort rather than detaching the task. No citations, no done, no persistence.
+        if tokio::time::timeout(PROVIDER_CANCEL_GRACE, &mut provider_task)
+            .await
+            .is_err()
+        {
+            provider_task.abort();
+        }
         tracing::info!(
             thread_id,
             turn_id,
@@ -492,6 +512,22 @@ async fn forward_turn(turn: ForwardTurn) {
         })
         .await;
 }
+
+/// The context budget left for assembled chunks once the reply reservation is subtracted from
+/// the provider's window. The reservation is [`traits::effective_reply_budget`] — the same cap
+/// the provider's own packer applies — so assembly can never pre-drop evidence the packer had
+/// room for. `None` (window unknown) leaves assembly unbounded, exactly as before.
+fn assembly_budget(ctx_size: Option<u32>, max_tokens: u32) -> Option<usize> {
+    ctx_size.map(|ctx| {
+        (ctx as usize).saturating_sub(traits::effective_reply_budget(max_tokens, ctx) as usize)
+    })
+}
+
+/// How long a cancelled turn waits for its provider to stop on its own before the task is
+/// aborted. Long enough for a provider already streaming to observe the closed channel and run
+/// its own cleanup; far too short for a model download or a supervisor acquire to finish, which
+/// is the case the abort exists for.
+const PROVIDER_CANCEL_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Stage 4 (`03 §7i.2`): turns frame hits into prompt chunks, best evidence first, with the
 /// frame's session context attached. `budget` bounds the summed [`RetrievedChunk::prompt_cost`];
@@ -671,6 +707,43 @@ mod tests {
         // The top chunk is kept even alone over budget (the packer truncates it).
         let (chunks, _) = assemble_chunks(hits, &mut ocr, &frame_session, &labels, Some(1));
         assert_eq!(chunks.len(), 1, "grounding survives an impossible budget");
+    }
+
+    #[test]
+    fn assembly_budget_uses_the_providers_capped_reply_reservation() {
+        // A small window with the default 2048 `max_tokens`: the provider caps its reply to
+        // half the window, so assembly must keep a real context budget. Subtracting the raw
+        // request would leave 0 and assemble exactly one chunk — the regression this pins.
+        assert_eq!(assembly_budget(Some(2048), 2048), Some(1024));
+        assert_ne!(
+            assembly_budget(Some(2048), 2048),
+            Some(0),
+            "the provider would have packed more than one snippet here"
+        );
+        // The normal 8K window passes the request through unchanged.
+        assert_eq!(assembly_budget(Some(8192), 2048), Some(8192 - 2048));
+        // An unknown window leaves assembly unbounded, as before.
+        assert_eq!(assembly_budget(None, 2048), None);
+
+        // End to end on the budget the pipeline would actually compute: two chunks whose
+        // combined cost fits the capped budget both survive.
+        let hits = vec![
+            hit(1, 0.9, "x".repeat(200).as_str()),
+            hit(2, 0.8, "y".repeat(200).as_str()),
+        ];
+        let mut ocr = HashMap::new();
+        let (chunks, _) = assemble_chunks(
+            hits,
+            &mut ocr,
+            &HashMap::new(),
+            &HashMap::new(),
+            assembly_budget(Some(2048), 2048),
+        );
+        assert_eq!(
+            chunks.iter().map(|c| c.frame_id).collect::<Vec<_>>(),
+            vec![1, 2],
+            "the pre-assembly budget must admit what the provider can pack"
+        );
     }
 
     /// The assembled context as the forwarder sees it: frame → session pairs.

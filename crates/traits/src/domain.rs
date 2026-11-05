@@ -520,6 +520,16 @@ pub fn estimate_prompt_tokens(text: &str) -> usize {
     text.len() / PROMPT_BYTES_PER_TOKEN + 1
 }
 
+/// The reply token reservation actually used for a request: `requested` capped to half the
+/// context window, so a large `max_tokens` can never reserve the *entire* window and force the
+/// packer to drop all grounding snippets (the symptom: every Ask answers "(no relevant
+/// snippets found)"). Shared by the inference packer and Ask v2 assembly: the kernel must
+/// subtract the same reservation the provider will use, or it pre-drops evidence the provider
+/// would have packed (`03 §7i.2` stage 4).
+pub fn effective_reply_budget(requested: u32, ctx_size: u32) -> u32 {
+    requested.min((ctx_size / 2).max(1))
+}
+
 impl RetrievedChunk {
     /// The snippet header as placed in the prompt: `[frame <id>]`, or
     /// `[frame <id> | session <sid>: <label>]` when the chunk carries session context.
