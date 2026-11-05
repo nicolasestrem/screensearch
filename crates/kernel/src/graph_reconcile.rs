@@ -10,11 +10,13 @@
 //! to a different session.
 //!
 //! This module repairs those links exactly: [`rebuild_session`] re-extracts every frame the
-//! session currently owns and [`Store::graph_replace_session_links`] replaces that session's
-//! link rows with the exact aggregate, so a rebuild can restore, move or remove links and can
-//! never inflate `hit_count` (the aggregate is absolute, not incremental). The graph
-//! scheduler drives that work in bounded batches through [`reconcile_tick`], never on the
-//! capture path, and only once extraction is drained so new links are not fought over.
+//! session currently owns (bounded to the drained extraction snapshot, so a frame captured
+//! after that snapshot is left to its normal extraction instead of being counted twice) and
+//! [`Store::graph_replace_session_links`] replaces that session's link rows with the exact
+//! aggregate, so a rebuild can restore, move or remove links and can never inflate `hit_count`
+//! (the aggregate is absolute, not incremental). The graph scheduler drives that work in bounded
+//! batches through [`reconcile_tick`], never on the capture path, and only once extraction is
+//! drained so new links are not fought over.
 //!
 //! Linking is **ownership-only** (`03 §7e`, the final P5 review ruling): a frame's evidence
 //! belongs to the session named by `frames.session_id`, and the `[started_at, ended_at)`
@@ -65,9 +67,10 @@ pub(crate) fn new_dirty_sessions() -> DirtySessions {
 }
 
 /// Marks `ids` as needing a link rebuild. Non-positive ids are ignored (they cannot be real
-/// sessions). At [`SESSION_DIRTY_CAP`] the set is cleared, [`RESWEEP_SENTINEL`] is inserted and
-/// the overflow is logged at debug: the next reconcile tick re-snapshots the startup sweep, so
-/// the lost marks are covered for unfrozen sessions.
+/// sessions); [`RESWEEP_SENTINEL`] is inserted after that filter, inside the overflow branch,
+/// so it is the one non-positive value that is kept. At [`SESSION_DIRTY_CAP`] the set is
+/// cleared, the sentinel is inserted and the overflow is logged at debug: the next reconcile
+/// tick re-snapshots the startup sweep, so the lost marks are covered for unfrozen sessions.
 pub(crate) fn mark_dirty(dirty: &DirtySessions, ids: impl IntoIterator<Item = i64>) {
     let mut set = dirty.lock().expect("dirty sessions lock");
     for id in ids {
@@ -95,13 +98,26 @@ pub(crate) fn mark_dirty(dirty: &DirtySessions, ids: impl IntoIterator<Item = i6
 /// Linking is ownership-only (`03 §7e`): this re-extracts the session's OWNED frames exactly
 /// (`Store::session_frames_meta`) and applies no interval fallback, so an unowned frame can
 /// never leak its evidence into an interval-matching session.
-pub(crate) async fn rebuild_session(store: &dyn Store, session_id: i64) -> anyhow::Result<bool> {
+///
+/// `extract_coverage` bounds the rebuilt frame set to the drained status snapshot the scheduler
+/// made before calling this: frames above its `max_frame_id` were captured after the snapshot and
+/// have no extraction job yet, so counting them here and again when their normal extraction runs
+/// would double-count `hit_count`. `None` means no bound (tests and callers that already hold a
+/// synchronised view use it).
+pub(crate) async fn rebuild_session(
+    store: &dyn Store,
+    session_id: i64,
+    extract_coverage: Option<i64>,
+) -> anyhow::Result<bool> {
     let Some(session) = store.get_session(session_id).await? else {
         // Deleted after it was marked dirty: its links cascaded with the row and its frames
         // are being claimed by whichever session absorbs them. Nothing to rebuild.
         return Ok(false);
     };
-    let frames = store.session_frames_meta(session_id).await?;
+    let mut frames = store.session_frames_meta(session_id).await?;
+    if let Some(coverage) = extract_coverage {
+        frames.retain(|frame| frame.id <= coverage);
+    }
     let frame_ids: Vec<i64> = frames.iter().map(|frame| frame.id).collect();
     let contents = store.content_texts_for_frames(&frame_ids).await?;
     let content_by_frame: HashMap<i64, String> = contents
@@ -204,7 +220,10 @@ pub(crate) struct StartupSweep {
 
 /// Runs one bounded reconciliation step. The graph scheduler calls this only while graph
 /// extraction is drained, so it never rebuilds links that a pending `graph_extract` job will
-/// write anyway.
+/// write anyway. `extract_coverage` is the drained status snapshot's `max_frame_id` (the Codex
+/// P2 on PR #159): the rebuild counts only frames at or below it, because a frame captured and
+/// assigned after the snapshot has no extraction job yet and will increment its link normally
+/// when that job runs. Frames above the bound are left to extraction, never counted twice.
 ///
 /// Each stage gets up to [`RECONCILE_BATCH`] sessions per drained tick: the dirty batch runs
 /// first, then the startup sweep advances even if the dirty set remains non-empty, so a busy
@@ -217,15 +236,16 @@ pub(crate) async fn reconcile_tick(
     dirty: &DirtySessions,
     cluster_progress: &ClusterProgress,
     sweep: &mut StartupSweep,
+    extract_coverage: Option<i64>,
 ) {
     let (batch, resweep) = take_dirty_batch(dirty);
     if resweep {
         sweep.initialized = false;
     }
     if !batch.is_empty() {
-        drain_dirty_sessions(store, dirty, cluster_progress, batch).await;
+        drain_dirty_sessions(store, dirty, cluster_progress, batch, extract_coverage).await;
     }
-    drain_startup_sweep(store, cluster_progress, sweep).await;
+    drain_startup_sweep(store, cluster_progress, sweep, extract_coverage).await;
 }
 
 /// Takes the next bounded batch out of the dirty set, reporting whether the overflow sentinel
@@ -251,16 +271,19 @@ fn take_dirty_batch(dirty: &DirtySessions) -> (Vec<i64>, bool) {
     (batch, resweep)
 }
 
-/// Rebuilds a taken dirty batch. Failed rebuilds are re-added so they retry on a later tick.
+/// Rebuilds a taken dirty batch. Failed rebuilds are re-added so they retry on a later tick; the
+/// per-failure detail is logged at debug and each batch warns once, so a permanently failing
+/// session cannot flood the log at warn level on every tick.
 async fn drain_dirty_sessions(
     store: &dyn Store,
     dirty: &DirtySessions,
     cluster_progress: &ClusterProgress,
     batch: Vec<i64>,
+    extract_coverage: Option<i64>,
 ) {
     let mut failed = Vec::new();
     for session_id in batch {
-        match rebuild_session(store, session_id).await {
+        match rebuild_session(store, session_id, extract_coverage).await {
             Ok(changed) => {
                 if changed {
                     cluster_progress.invalidate();
@@ -269,7 +292,7 @@ async fn drain_dirty_sessions(
             Err(error) => {
                 // Do not log the session id: opaque ids are CodeQL-cleartext-logging class
                 // sensitive data, and the scheduler only needs to know the batch retries.
-                tracing::warn!(
+                tracing::debug!(
                     error = %error,
                     "graph reconcile: session rebuild failed; retrying later"
                 );
@@ -277,16 +300,24 @@ async fn drain_dirty_sessions(
             }
         }
     }
+    if !failed.is_empty() {
+        tracing::warn!(
+            failed = failed.len(),
+            "graph reconcile: some session rebuilds failed; retrying next tick"
+        );
+    }
     mark_dirty(dirty, failed);
 }
 
 /// Rebuilds up to [`RECONCILE_BATCH`] sessions of the startup sweep, snapshotting the
 /// unfrozen sessions (newest `updated_at` first) on the first pass. A failed rebuild is
-/// moved to the back of the queue and retried on a later tick.
+/// moved to the back of the queue and retried on a later tick (per-failure debug, one warn per
+/// batch, same log-flood guard as the dirty drain).
 async fn drain_startup_sweep(
     store: &dyn Store,
     cluster_progress: &ClusterProgress,
     sweep: &mut StartupSweep,
+    extract_coverage: Option<i64>,
 ) {
     if !sweep.initialized {
         match store.unfrozen_sessions().await {
@@ -315,11 +346,12 @@ async fn drain_startup_sweep(
         }
     }
     let mut rebuilt = 0usize;
+    let mut failed = 0usize;
     for _ in 0..RECONCILE_BATCH {
         let Some(session_id) = sweep.pending.pop_front() else {
             break;
         };
-        match rebuild_session(store, session_id).await {
+        match rebuild_session(store, session_id, extract_coverage).await {
             Ok(changed) => {
                 rebuilt += 1;
                 if changed {
@@ -328,13 +360,20 @@ async fn drain_startup_sweep(
             }
             Err(error) => {
                 // No session id in the log (CodeQL cleartext-logging class); the queue keeps it.
-                tracing::warn!(
+                tracing::debug!(
                     error = %error,
                     "graph reconcile: startup sweep rebuild failed; retrying later"
                 );
+                failed += 1;
                 sweep.pending.push_back(session_id);
             }
         }
+    }
+    if failed > 0 {
+        tracing::warn!(
+            failed,
+            "graph reconcile: some startup sweep rebuilds failed; retrying next tick"
+        );
     }
     if rebuilt > 0 && sweep.pending.is_empty() {
         tracing::debug!("graph reconcile: startup sweep complete");
@@ -445,7 +484,7 @@ mod tests {
         mark_dirty(&dirty, [session_id]);
         let progress = ClusterProgress::new();
         let mut sweep = StartupSweep::default();
-        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep).await;
+        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep, None).await;
 
         let links = links_for(store.as_ref(), session_id).await;
         let domain = links
@@ -465,7 +504,7 @@ mod tests {
         // Rebuilding the same session again is an exact no-op: the aggregate (including
         // hit_count) matches the persisted link state, so the store reports no change.
         assert!(
-            !rebuild_session(store.as_ref(), session_id)
+            !rebuild_session(store.as_ref(), session_id, None)
                 .await
                 .expect("second rebuild"),
             "an unchanged rebuild reports no change and cannot inflate hit_count"
@@ -514,7 +553,7 @@ mod tests {
         mark_dirty(&dirty, [old_session, new_session]);
         let progress = ClusterProgress::new();
         let mut sweep = StartupSweep::default();
-        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep).await;
+        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep, None).await;
 
         let restored = links_for(store.as_ref(), new_session).await;
         assert_eq!(
@@ -527,7 +566,7 @@ mod tests {
             .any(|link| link.canonical_name == "github.com"));
         // The aggregate is absolute: two contributing frames and identical rebuilt state.
         assert!(
-            !rebuild_session(store.as_ref(), new_session)
+            !rebuild_session(store.as_ref(), new_session, None)
                 .await
                 .expect("second rebuild"),
             "the restored link is exact and cannot be inflated by replay"
@@ -574,7 +613,7 @@ mod tests {
         mark_dirty(&dirty, [session_a, session_b]);
         let progress = ClusterProgress::new();
         let mut sweep = StartupSweep::default();
-        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep).await;
+        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep, None).await;
 
         let a_links = links_for(store.as_ref(), session_a).await;
         assert!(
@@ -615,7 +654,7 @@ mod tests {
             1
         );
         assert!(
-            rebuild_session(store.as_ref(), session_id)
+            rebuild_session(store.as_ref(), session_id, None)
                 .await
                 .expect("rebuild empty session"),
             "removing the last link is a change"
@@ -629,7 +668,7 @@ mod tests {
     #[tokio::test]
     async fn rebuilding_a_deleted_session_is_a_noop() {
         let store = test_store().await;
-        assert!(!rebuild_session(store.as_ref(), 424_242)
+        assert!(!rebuild_session(store.as_ref(), 424_242, None)
             .await
             .expect("rebuild missing session"));
     }
@@ -648,7 +687,7 @@ mod tests {
             .await
             .expect("assign frame");
         assert!(
-            rebuild_session(store.as_ref(), session_id)
+            rebuild_session(store.as_ref(), session_id, None)
                 .await
                 .expect("first rebuild"),
             "the first rebuild restores the missed links"
@@ -659,7 +698,7 @@ mod tests {
         let dirty = new_dirty_sessions();
         mark_dirty(&dirty, [session_id]);
         let mut sweep = StartupSweep::default();
-        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep).await;
+        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep, None).await;
         assert_eq!(
             progress.last_clustered_done_extract(),
             7,
@@ -695,19 +734,85 @@ mod tests {
         let progress = ClusterProgress::new();
         let dirty = new_dirty_sessions();
         let mut sweep = StartupSweep::default();
-        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep).await;
+        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep, None).await;
         assert_eq!(
             links_for(store.as_ref(), session_id).await.len(),
             expected_links,
             "the startup sweep heals a link the old build missed"
         );
         // A second drained tick finds the sweep exhausted and changes nothing.
-        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep).await;
+        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep, None).await;
         assert!(
-            !rebuild_session(store.as_ref(), session_id)
+            !rebuild_session(store.as_ref(), session_id, None)
                 .await
                 .expect("rebuild after sweep"),
             "the swept session is exact"
+        );
+    }
+
+    /// PR #159 Codex P2 regression: a rebuild bounded to the drained snapshot must not count a
+    /// frame that was captured and assigned after the snapshot but not extracted yet. Otherwise
+    /// the later `graph_extract` increments a link whose absolute aggregate already counted the
+    /// frame, and no dirty mark is left to repair the inflated `hit_count`.
+    #[tokio::test]
+    async fn a_rebuild_does_not_count_a_frame_above_the_extraction_snapshot() {
+        let store = test_store().await;
+        let session_id = insert_session(store.as_ref(), 0, Some(10_000)).await;
+        let first_frame =
+            insert_frame(store.as_ref(), 100, "https://github.com/acme/widgets").await;
+        store
+            .assign_frames_session(&[first_frame], Some(session_id))
+            .await
+            .expect("assign first frame");
+        crate::graph_extract::extract_frame(store.as_ref(), first_frame)
+            .await
+            .expect("extract first frame");
+        let coverage = store
+            .graph_backfill_status()
+            .await
+            .expect("backfill status")
+            .max_frame_id;
+        assert_eq!(
+            coverage,
+            Some(first_frame),
+            "the drained snapshot covers only the extracted frame"
+        );
+
+        // Captured and assigned after the snapshot, before its extraction job exists.
+        let second_frame =
+            insert_frame(store.as_ref(), 200, "https://github.com/acme/widgets").await;
+        store
+            .assign_frames_session(&[second_frame], Some(session_id))
+            .await
+            .expect("assign second frame");
+
+        // Bounded rebuild: the stored aggregate for frame one is already exact, and frame two
+        // must not be counted here.
+        assert!(
+            !rebuild_session(store.as_ref(), session_id, coverage)
+                .await
+                .expect("bounded rebuild"),
+            "the snapshot-bounded rebuild must not count the unextracted frame"
+        );
+
+        // Its normal extraction now adds exactly one hit for frame two.
+        crate::graph_extract::extract_frame(store.as_ref(), second_frame)
+            .await
+            .expect("extract second frame");
+        let coverage_after = store
+            .graph_backfill_status()
+            .await
+            .expect("backfill status")
+            .max_frame_id;
+        assert_eq!(coverage_after, Some(second_frame));
+
+        // Both frames are extracted now, so an unbounded-coverage rebuild must be a no-op: an
+        // inflated `hit_count` would make this report a change.
+        assert!(
+            !rebuild_session(store.as_ref(), session_id, coverage_after)
+                .await
+                .expect("rebuild after extraction"),
+            "extraction must not double-count a frame the bounded rebuild skipped"
         );
     }
 
@@ -766,7 +871,7 @@ mod tests {
         let dirty = new_dirty_sessions();
         let mut sweep = StartupSweep::default();
         // First tick snapshots and rebuilds the session; the sweep is then spent.
-        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep).await;
+        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep, None).await;
         assert_eq!(
             links_for(store.as_ref(), session_id).await.len(),
             expected_links
@@ -781,7 +886,7 @@ mod tests {
         assert!(links_for(store.as_ref(), session_id).await.is_empty());
         mark_dirty(&dirty, 1..=SESSION_DIRTY_CAP as i64);
         mark_dirty(&dirty, [SESSION_DIRTY_CAP as i64 + 1]);
-        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep).await;
+        reconcile_tick(store.as_ref(), &dirty, &progress, &mut sweep, None).await;
         assert_eq!(
             links_for(store.as_ref(), session_id).await.len(),
             expected_links,
@@ -817,7 +922,7 @@ mod tests {
             .await
             .expect("assign b");
 
-        assert!(rebuild_session(store.as_ref(), session_a)
+        assert!(rebuild_session(store.as_ref(), session_a, None)
             .await
             .expect("rebuild a"));
         let counts = store.graph_table_counts().await.expect("counts");

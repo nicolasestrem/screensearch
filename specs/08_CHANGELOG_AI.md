@@ -34,9 +34,18 @@
   (`entities=243 entity_aliases=11 session_entities=1385 threads=1 thread_sessions=217`, identical
   second pass) and **90.3% (159/176)** entity recovery, 0 invention; `cargo test -p harness` green
   (172 tests); full kickoff verification list green (raw output in `05`).
-- **Tests:** graph crate 65, store graph 22, kernel graph 47 (plus full-crate regressions), harness
-  172, evalfixture 20; new regression tests reproduce each review finding and the restored exchange
-  refresh.
+- **Post-open bot review follow-up:** Codex and Claude reviewed commit `dba5040` and reported one
+  P2 each, the same defect: a rebuild could count an assigned frame above the drained extraction
+  snapshot, and its later `graph_extract` would increment the absolute aggregate again. Rebuilds
+  are now bounded to the snapshot's `max_frame_id` (frames above it are left to normal extraction),
+  with regression test `a_rebuild_does_not_count_a_frame_above_the_extraction_snapshot`; the minor
+  sentinel-documentation and log-flood observations were addressed as well. No other findings, no
+  reply comment, PR still open.
+- **Tests:** graph crate 65, store graph 23, kernel graph 50 (plus full-crate regressions), harness
+  172, evalfixture 20; new regression tests reproduce each review finding, the restored exchange
+  refresh, the cluster-progress generation race, the overflow sweep request and the post-open
+  extraction-coverage P2. Together with the audit-driven gating and doc fixes, the workspace
+  reports 1423 passed, 0 failed, 16 ignored across 81 targets.
 - **PR:** [#159](https://github.com/nicolasestrem/screensearch/pull/159), left **open** for maintainer review; the agent does not merge.
 
 ## 2026-11-05: 0.4.5 P5 work graph engine implemented and measured on the fixture

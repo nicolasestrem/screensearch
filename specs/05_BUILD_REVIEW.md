@@ -85,6 +85,19 @@
   behaviour and were corrected; a store test now documents the rename-cascade residual. The audit
   also caught two session-id logging sites in new code, which were removed. Remaining P2 residuals
   (bounded rebuild size, alias confidence, replay/timing) are recorded in `07`.
+- **Post-open bot review follow-up (Codex and Claude on commit `dba5040`).** Both found the same P2:
+  a rebuild could read the session's frames after the drained snapshot and include a frame whose
+  `graph_extract` job had not run yet; that later extraction then incremented the absolute aggregate
+  again, inflating `hit_count` with no dirty mark left to repair it. Fixed by bounding every rebuild
+  to the drained status snapshot's `max_frame_id` (`reconcile_tick` takes the coverage,
+  `rebuild_session` filters owned frames to it; frames above it are left to their normal
+  extraction), with the regression test
+  `a_rebuild_does_not_count_a_frame_above_the_extraction_snapshot`. The review's minor observations
+  are addressed too: the resweep sentinel is documented as inserted after the `id <= 0` filter, and
+  per-session rebuild failures now log at debug with one warn per batch so a permanently failing
+  session cannot flood the log at warn level every tick. No other bot findings; no reply comment was
+  posted (the maintainer asked to address findings without answering the bots) and the PR remains
+  open and unmerged.
 - **Evidence (fixture, unchanged by the fix).** The committed P4 fixture was rebuilt and the graph
   was populated twice on this branch: both passes printed
   `graph backfill complete entities=243 entity_aliases=11 session_entities=1385 threads=1
@@ -103,11 +116,11 @@ Run in `C:\Users\nicol\Documents\GitHub\screensearch` on branch `fix/p5-157-revi
 on `main` `722f29e`), with the kickoff command list in order. Every command exited 0. The machine
 used the same warm shared cargo target directory; the log groups the UI steps as shell lines and
 omits single-test "running" lines with their per-test lines. `cargo test --workspace` now reports
-1422 passed (up from 1386 on the merged tree) because the review-fix tests are additive.
+1423 passed (up from 1386 on the merged tree) because the review-fix tests are additive.
 
 ``text
 === cd ui && npm ci
-added 347 packages, and audited 348 packages in 8s
+added 347 packages, and audited 348 packages in 6s
 ...
 npm warn install-scripts
 npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
@@ -122,12 +135,12 @@ exit=0
 npm notice run screensearch-ui@0.4.2 build
 ...
 dist/assets/CitationTile-DFhMdEJO.js                157.84 kB │ gzip: 47.99 kB
-✓ built in 2.01s
+✓ built in 2.07s
 exit=0
 
 === cd .. && node scripts/stage-mcp.mjs
 [stage-mcp] building screensearch-mcp (release)...
-    Finished `release` profile [optimized] target(s) in 1.14s
+    Finished `release` profile [optimized] target(s) in 0.38s
 [stage-mcp] up to date: C:\Users\nicol\Documents\GitHub\screensearch\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
 exit=0
 
@@ -135,13 +148,7 @@ exit=0
 exit=0
 
 === cargo clippy --workspace --all-targets -- -D warnings
-    Checking kernel v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\kernel)
-    Checking sessions v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\sessions)
-    Checking capture v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\capture)
-    Checking evalfixture v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\evalfixture)
-    Checking screensearch v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\src-tauri)
-    Checking api v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\api)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.66s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.60s
 exit=0
 
 === cargo build --workspace
@@ -149,14 +156,14 @@ exit=0
    Compiling inference v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\inference)
    Compiling harness v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\harness)
    Compiling mcp v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\mcp)
-   Compiling evalfixture v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\evalfixture)
    Compiling screensearch v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\src-tauri)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 27.66s
+   Compiling evalfixture v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\evalfixture)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.77s
 exit=0
 
 === cargo test --workspace
 ... (81 test targets; per-target lines trimmed)
-computed from the 81 `test result` lines: 1422 passed, 0 failed, 16 ignored
+computed from the 81 `test result` lines: 1423 passed, 0 failed, 16 ignored
 exit=0
 
 === git diff --exit-code -- ui/src/bindings
@@ -191,8 +198,8 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 65 filtered out; fin
 exit=0
 
 === cargo test -p kernel graph
-running 49 tests
-test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 133 filtered out; finished in 0.15s
+running 50 tests
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 133 filtered out; finished in 0.17s
 running 0 tests
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s
 running 0 tests
@@ -218,15 +225,15 @@ running 146 tests
 test result: ok. 146 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 running 3 tests
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.31s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.32s
 running 6 tests
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
 running 4 tests
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.72s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.02s
 running 6 tests
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
 running 3 tests
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
 running 3 tests
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 running 0 tests
@@ -239,16 +246,16 @@ test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 running 0 tests
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 running 4 tests
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.06s
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 36.18s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
 running 0 tests
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 exit=0
 ``
 
 Review-fix verification totals: every command above exited 0; 81 workspace test targets with
-**1422 passed, 0 failed, 16 ignored**; `cargo test -p graph` 65, `-p store graph` 23, `-p kernel
-graph` 49, `-p harness` 172 across its 9 targets, `-p evalfixture` 20 across its 5 targets; the
+**1423 passed, 0 failed, 16 ignored**; `cargo test -p graph` 65, `-p store graph` 23, `-p kernel
+graph` 50, `-p harness` 172 across its 9 targets, `-p evalfixture` 20 across its 5 targets; the
 bindings diff is clean and `cargo tree -p graph` still lists only `graph`, `anyhow` and `traits`.
 ### Review-fix acceptance evidence (raw)
 

@@ -227,8 +227,16 @@ pub(crate) async fn tick(
     if drained {
         // Repair missing or stale session-ownership links before asking for a re-cluster.
         // A changed rebuild invalidates `cluster_progress`, so the check below re-enqueues.
-        graph_reconcile::reconcile_tick(store, dirty, cluster_progress, &mut state.startup_sweep)
-            .await;
+        // The drained snapshot bounds the rebuild: frames captured after this status read have
+        // no extraction job yet and must be left to their normal extraction (PR #159 Codex P2).
+        graph_reconcile::reconcile_tick(
+            store,
+            dirty,
+            cluster_progress,
+            &mut state.startup_sweep,
+            status.max_frame_id,
+        )
+        .await;
         if status.pending_cluster == 0 && cluster_progress.needs_cluster(status.done_extract) {
             // The cluster job logs the completion line after applying the plan; recording
             // its success in `cluster_progress` is what stops this branch from re-enqueueing

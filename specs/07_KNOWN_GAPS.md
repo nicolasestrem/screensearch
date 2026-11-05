@@ -35,11 +35,12 @@ Residual limits and decisions of the fix that stay open:
   recovers every unfrozen session (not the frozen residual above); it is not a periodic sweep.
   A permanently failing dirty session no longer starves the sweep: the dirty batch and the sweep
   each advance up to 16 sessions per drained tick.
-- **A per-session rebuild is unbounded.** `rebuild_session` reads every frame the session owns and
-  re-extracts it in one call; the batch bound counts sessions, not frames. A single very long
-  session (a multi-hour AI/focus tail) therefore makes one drained tick heavy in memory and wall
-  time. It still cannot run on the capture path and fails/retries safely; a per-session frame bound
-  or chunking is a later optimization (owner: P8/P9 if a real profile shows it).
+- **A per-session rebuild is unbounded in size.** `rebuild_session` reads every owned frame up to the
+  drained extraction-coverage snapshot and re-extracts it in one call; the batch bound counts
+  sessions, not frames, and the coverage bound exists for correctness, not for size. A single very
+  long session (a multi-hour AI/focus tail) therefore makes one drained tick heavy in memory and
+  wall time. It still cannot run on the capture path and fails/retries safely; a per-session frame
+  bound or chunking is a later optimization (owner: P8/P9 if a real profile shows it).
 - **Rebuilt aliases use the aggregate confidence.** The kernel rebuild unions each entity's aliases
   and the store writes them with the aggregate max confidence, so an alias first seen in a 0.60
   rule can be persisted at 0.95 after a rebuild. The incremental path keeps per-hit confidence.
@@ -67,10 +68,13 @@ Residual limits and decisions of the fix that stay open:
   graph (`ClusterProgress` now carries a generation; a pass records only if no invalidation
   happened since it snapshotted the generation). They also found the producer-only history gate
   could be bypassed by stale pending jobs, so the worker pool now holds a graph claim gate closed
-  until the sessions marker is complete. The remaining P2 items are the residual limits listed
-  above and the test gaps noted with them (a rename-after-merge replan test, a take-out-then-re-add
-  test and an end-to-end sessions-pass-to-cluster test are not present; the cascade is documented by
-  a store test instead).
+  until the sessions marker is complete. A post-open Codex and Claude review of PR #159 found one
+  more P2 of the same class, also fixed: a rebuild could count a frame assigned after the drained
+  snapshot and its later extraction would double-count it, so rebuilds are now bounded to the
+  snapshot's `max_frame_id` (with a regression test). The remaining P2 items are the residual limits
+  listed above and the test gaps noted with them (a rename-after-merge replan test, a
+  take-out-then-re-add test and an end-to-end sessions-pass-to-cluster test are not present; the
+  cascade is documented by a store test instead).
 - **Emptied merge and split source rows remain in `threads`.** They are retained because
   `thread_overrides.thread_id` is `ON DELETE CASCADE` and because replay order is the durability
   mechanism. They carry `session_count = 0`; P9 must filter them from the Work screen (a store/API
