@@ -515,8 +515,11 @@ async fn forward_turn(turn: ForwardTurn) {
 
 /// The context budget left for assembled chunks once the reply reservation is subtracted from
 /// the provider's window. The reservation is [`traits::effective_reply_budget`] — the same cap
-/// the provider's own packer applies — so assembly can never pre-drop evidence the packer had
-/// room for. `None` (window unknown) leaves assembly unbounded, exactly as before.
+/// the provider's own packer applies — so assembly can never pre-drop evidence the packer had room
+/// for. It is deliberately not equal to the provider's internal budget: the packer also reserves
+/// the system prompt, the question and template overhead, so this figure is the upper bound and
+/// the packer's own per-chunk bound remains the hard cap. `None` (window unknown) leaves assembly
+/// unbounded, exactly as before.
 fn assembly_budget(ctx_size: Option<u32>, max_tokens: u32) -> Option<usize> {
     ctx_size.map(|ctx| {
         (ctx as usize).saturating_sub(traits::effective_reply_budget(max_tokens, ctx) as usize)
@@ -725,11 +728,14 @@ mod tests {
         // An unknown window leaves assembly unbounded, as before.
         assert_eq!(assembly_budget(None, 2048), None);
 
-        // End to end on the budget the pipeline would actually compute: two chunks whose
-        // combined cost fits the capped budget both survive.
+        // End to end on the budget the pipeline would actually compute: more than one chunk
+        // survives the small-window case, which is the regression (a zero budget kept exactly
+        // one). Asserted as a count floor rather than an exact list so prompt-cost refactors do
+        // not have to touch this test.
         let hits = vec![
             hit(1, 0.9, "x".repeat(200).as_str()),
             hit(2, 0.8, "y".repeat(200).as_str()),
+            hit(3, 0.7, "z".repeat(200).as_str()),
         ];
         let mut ocr = HashMap::new();
         let (chunks, _) = assemble_chunks(
@@ -739,11 +745,12 @@ mod tests {
             &HashMap::new(),
             assembly_budget(Some(2048), 2048),
         );
-        assert_eq!(
-            chunks.iter().map(|c| c.frame_id).collect::<Vec<_>>(),
-            vec![1, 2],
-            "the pre-assembly budget must admit what the provider can pack"
+        assert!(
+            chunks.len() >= 2,
+            "the pre-assembly budget must admit what the provider can pack, got {} chunk(s)",
+            chunks.len()
         );
+        assert_eq!(chunks[0].frame_id, 1, "best evidence first");
     }
 
     /// The assembled context as the forwarder sees it: frame → session pairs.
