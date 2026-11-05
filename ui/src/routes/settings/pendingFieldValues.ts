@@ -7,29 +7,41 @@
 // display) silently removes what the queued save is about to store.
 //
 // So the pending value lives beside the queue instead of inside a component: the row
-// writes it when the commit is issued and clears it when the commit settles, and any
-// mount of that field reads it through `useSyncExternalStore` in `useSettingField`.
+// writes it when the commit is issued and the *owning* commit retires it on settlement.
+// Retirement is tokenised for the same reason the row state is (row 78): an older save
+// settles while a newer edit is queued, and an unconditional clear would erase that
+// newer value — leaving the stale display the whole mechanism exists to prevent.
 
-const values = new Map<string, unknown>();
+interface PendingEntry {
+  value: unknown;
+  /** The commit number that put this value here. */
+  issued: number;
+}
+
+const entries = new Map<string, PendingEntry>();
 const listeners = new Set<() => void>();
 
 function notify(): void {
   for (const listener of listeners) listener();
 }
 
-/** Show `value` for this field until the commit that set it settles, or clear it. */
-export function setPendingField(field: string, value: unknown | null): void {
-  if (value === null) {
-    if (!values.delete(field)) return;
-  } else {
-    values.set(field, value);
-  }
+/** Show `value` for this field, owned by commit `issued`. */
+export function setPendingField(field: string, value: unknown, issued: number): void {
+  entries.set(field, { value, issued });
+  notify();
+}
+
+/** Retire the pending value, but only if `issued` is still the commit that set it. */
+export function clearPendingField(field: string, issued: number): void {
+  const entry = entries.get(field);
+  if (entry === undefined || entry.issued !== issued) return;
+  entries.delete(field);
   notify();
 }
 
 /** The pending value for a field, or `undefined` when nothing is queued. */
 export function pendingFieldValue(field: string): unknown {
-  return values.get(field);
+  return entries.get(field)?.value;
 }
 
 export function subscribePendingField(listener: () => void): () => void {

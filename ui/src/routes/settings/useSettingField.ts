@@ -12,6 +12,7 @@ import { useSetModelTier, useSetSettings } from "../../lib/ipc/mutations";
 import { queryKeys } from "../../lib/ipc/queryKeys";
 import { useSettings } from "../../lib/ipc/queries";
 import {
+  clearPendingField,
   pendingFieldValue,
   setPendingField,
   subscribePendingField,
@@ -149,7 +150,7 @@ export function useSettingField<F extends SettingsField>(
     }
     const mine = (issued.current += 1);
     setRow(begun(next, mine));
-    setPendingField(field, next);
+    setPendingField(field, next, mine);
     // Queued: `set_settings` writes the whole struct, so an earlier write's refetch
     // must never be able to erase this value from the base of a later one (see
     // `settingsWrites.ts`). The undo payload is read from the fresh base, so Undo
@@ -170,8 +171,9 @@ export function useSettingField<F extends SettingsField>(
       const previous = base[field] as Settings[F];
       const onSuccess = () => {
         // Settled: the cache now carries the value, so the shared pending copy retires
-        // for every mount, not just this one.
-        setPendingField(field, null);
+        // for every mount, not just this one — but only if this commit still owns it,
+        // or an older save would erase a newer queued edit's value.
+        clearPendingField(field, mine);
         setRow((state) => settled(state, mine));
         if (options?.silent !== true) {
           pushActionToast("success", `${def.label} updated`, {
@@ -181,7 +183,7 @@ export function useSettingField<F extends SettingsField>(
         }
       };
       const onError = (error: unknown) => {
-        setPendingField(field, null);
+        clearPendingField(field, mine);
         setRow((state) => failed(state, mine, next, saveFailure(def.label, error)));
       };
       if (lane !== null) {
