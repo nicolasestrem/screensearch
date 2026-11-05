@@ -26,9 +26,18 @@ export function categoryFrameState(
   read: SettingsRead,
   statusFailed = false,
 ): CategoryFrameState {
-  if (read.isError) return "error";
-  if (read.isPending || read.data === undefined) return "loading";
-  if (statusFailed || read.isRefetchError) return "partial";
+  // Order matters. TanStack keeps the last successful payload when a background
+  // refetch fails, and that failure sets `isError` as well as `isRefetchError`. A
+  // checked flag first would therefore replace a usable category with an error
+  // panel, unmounting rows and discarding live drafts. So: only a read that never
+  // produced data is an `error`; a failure on top of data is `partial`.
+  if (read.data === undefined) {
+    if (read.isError) return "error";
+    return "loading";
+  }
+  if (read.isError || read.isRefetchError || statusFailed) {
+    return "partial";
+  }
   return "populated";
 }
 
