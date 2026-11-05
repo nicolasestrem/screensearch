@@ -12,6 +12,12 @@ import { useSetModelTier, useSetSettings } from "../../lib/ipc/mutations";
 import { queryKeys } from "../../lib/ipc/queryKeys";
 import { useSettings } from "../../lib/ipc/queries";
 import {
+  begun,
+  failed,
+  initialRowState,
+  settled,
+} from "./pendingState";
+import {
   freshSettingsSnapshot,
   settingsWriteQueue,
 } from "./settingsWrites";
@@ -47,11 +53,16 @@ export interface SettingFieldApi<F extends SettingsField> {
 }
 
 export interface SettingsPatchApi {
+  /**
+   * Resolves `true` when the patch was stored. Callers that keep a draft (the vision
+   * schedule) use this to hold the typed value on screen after a failure instead of
+   * silently reverting it while the error claims it was kept.
+   */
   commitPatch(
     patch: Partial<Settings>,
     label: string,
     options?: CommitOptions,
-  ): void;
+  ): Promise<boolean>;
   saving: boolean;
   error: string | null;
   retry(): void;
@@ -98,11 +109,12 @@ export function useSettingField<F extends SettingsField>(
   const qc = useQueryClient();
   const setSettings = useSetSettings();
   const setTier = useSetModelTier();
-  const [pendingValue, setPendingValue] = useState<Settings[F] | null>(null);
-  const [failure, setFailure] = useState<{
-    value: Settings[F];
-    message: string;
-  } | null>(null);
+  // One state object so a settlement can be attributed to the commit that owns it:
+  // an older save must not clear a newer edit's pending value (`pendingState.ts`).
+  const [row, setRow] = useState(() => initialRowState<Settings[F]>());
+  const issued = useRef(0);
+  const pendingValue = row.pending;
+  const failure = row.failure;
 
   const savedValue = settings.data?.[field] as Settings[F] | undefined;
   const defaultValue = SETTINGS_DEFAULTS[field] as Settings[F];
@@ -117,13 +129,14 @@ export function useSettingField<F extends SettingsField>(
     const current =
       qc.getQueryData<Settings>(queryKeys.settings) ?? settings.data;
     if (!current) {
-      setFailure({
-        value: next,
-        message: saveFailure(def.label, new Error("settings have not loaded yet")),
-      });
+      const mine = (issued.current += 1);
+      setRow((state) =>
+        failed(state, mine, next, saveFailure(def.label, new Error("settings have not loaded yet"))),
+      );
       return;
     }
-    setPendingValue(next);
+    const mine = (issued.current += 1);
+    setRow(begun(next, mine));
     // Queued: `set_settings` writes the whole struct, so an earlier write's refetch
     // must never be able to erase this value from the base of a later one (see
     // `settingsWrites.ts`). The undo payload is read from the fresh base, so Undo
@@ -131,17 +144,19 @@ export function useSettingField<F extends SettingsField>(
     void settingsWriteQueue.enqueue(async () => {
       const base = await freshSettingsSnapshot(qc, queryKeys.settings);
       if (!base) {
-        setPendingValue(null);
-        setFailure({
-          value: next,
-          message: saveFailure(def.label, new Error("settings could not be re-read")),
-        });
+        setRow((state) =>
+          failed(
+            state,
+            mine,
+            next,
+            saveFailure(def.label, new Error("settings could not be re-read")),
+          ),
+        );
         return;
       }
       const previous = base[field] as Settings[F];
       const onSuccess = () => {
-        setPendingValue(null);
-        setFailure(null);
+        setRow((state) => settled(state, mine));
         if (options?.silent !== true) {
           pushActionToast("success", `${def.label} updated`, {
             label: "Undo",
@@ -150,8 +165,7 @@ export function useSettingField<F extends SettingsField>(
         }
       };
       const onError = (error: unknown) => {
-        setPendingValue(null);
-        setFailure({ value: next, message: saveFailure(def.label, error) });
+        setRow((state) => failed(state, mine, next, saveFailure(def.label, error)));
       };
       if (lane !== null) {
         // `set_model_tier` has no optimistic phase of its own; write the cache the
@@ -213,21 +227,21 @@ export function useSettingsPatch(): SettingsPatchApi {
     patch: Partial<Settings>,
     label: string,
     options?: CommitOptions,
-  ): void {
+  ): Promise<boolean> {
     const current =
       qc.getQueryData<Settings>(queryKeys.settings) ?? settings.data;
     if (!current) {
       setError(saveFailure(label, new Error("settings have not loaded yet")));
-      return;
+      return Promise.resolve(false);
     }
     last.current = { patch, label };
     // Same rule as the single-field path: queued, and built from a snapshot that
     // already contains every settled write, so a patch cannot revert a neighbour.
-    void settingsWriteQueue.enqueue(async () => {
+    return settingsWriteQueue.enqueue(async () => {
       const base = await freshSettingsSnapshot(qc, queryKeys.settings);
       if (!base) {
         setError(saveFailure(label, new Error("settings could not be re-read")));
-        return;
+        return false;
       }
       const previous: Partial<Settings> = {};
       for (const patchKey of Object.keys(patch) as SettingsField[]) {
@@ -239,11 +253,13 @@ export function useSettingsPatch(): SettingsPatchApi {
         if (options?.silent !== true) {
           pushActionToast("success", `${label} updated`, {
             label: "Undo",
-            onAction: () => commitPatch(previous, label, { silent: true }),
+            onAction: () => void commitPatch(previous, label, { silent: true }),
           });
         }
+        return true;
       } catch (cause) {
         setError(saveFailure(label, cause));
+        return false;
       }
     });
   }
