@@ -20,10 +20,29 @@ export function AdvancedCategory() {
   const advanced = useAdvancedConfig();
   const throttle = useSettingField<"throttle_enabled">("throttle.enabled");
 
-  if (settings.isPending || advanced.isPending) {
+  // Data first here too: a failed background refetch keeps the last payload, so it is
+  // a partial state (the rows stay) rather than a category-wide error panel.
+  if (settings.data === undefined) {
+    if (settings.isError) {
+      return (
+        <CategoryState
+          category="advanced"
+          state="error"
+          error={{
+            title: "Couldn’t load the throttle setting",
+            message:
+              "The saved value couldn’t be read, so the switch can’t show what it currently is. Nothing was changed.",
+            onRetry: () => {
+              settings.refetch();
+              advanced.refetch();
+            },
+          }}
+        />
+      );
+    }
     return <CategoryState category="advanced" state="loading" rows={2} />;
   }
-  if (settings.isError || throttle.value === undefined) {
+  if (throttle.value === undefined) {
     return (
       <CategoryState
         category="advanced"
@@ -39,6 +58,23 @@ export function AdvancedCategory() {
         }}
       />
     );
+  }
+  if (advanced.data === undefined && advanced.isError) {
+    return (
+      <CategoryState
+        category="advanced"
+        state="error"
+        error={{
+          title: "Couldn’t load the tuning values",
+          message:
+            "The advanced values couldn’t be read, so no row can show what it currently is. Nothing was changed.",
+          onRetry: () => advanced.refetch(),
+        }}
+      />
+    );
+  }
+  if (advanced.isPending) {
+    return <CategoryState category="advanced" state="loading" rows={2} />;
   }
 
   const view = advanced.data;

@@ -1,7 +1,7 @@
 // Per-field autosave (settings v2, 0.4.5 D9): one row commits one value through
 // the same write path the old screen used, keeps a failed value in place, and
 // pushes an undo toast that re-commits the previous value through that path.
-import { useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import type { ModelLane } from "../../bindings/ModelLane";
@@ -11,6 +11,11 @@ import { pushActionToast } from "../../components/shell/actionToast";
 import { useSetModelTier, useSetSettings } from "../../lib/ipc/mutations";
 import { queryKeys } from "../../lib/ipc/queryKeys";
 import { useSettings } from "../../lib/ipc/queries";
+import {
+  pendingFieldValue,
+  setPendingField,
+  subscribePendingField,
+} from "./pendingFieldValues";
 import {
   begun,
   failed,
@@ -113,7 +118,14 @@ export function useSettingField<F extends SettingsField>(
   // an older save must not clear a newer edit's pending value (`pendingState.ts`).
   const [row, setRow] = useState(() => initialRowState<Settings[F]>());
   const issued = useRef(0);
-  const pendingValue = row.pending;
+  // The pending value lives beside the write queue, not in this component: the layout
+  // unmounts a category, and a queued save must still show through when it comes back.
+  const sharedPending = useSyncExternalStore(
+    subscribePendingField,
+    () => pendingFieldValue(field),
+    () => undefined,
+  );
+  const pendingValue = (sharedPending as Settings[F] | undefined) ?? row.pending;
   const failure = row.failure;
 
   const savedValue = settings.data?.[field] as Settings[F] | undefined;
@@ -137,6 +149,7 @@ export function useSettingField<F extends SettingsField>(
     }
     const mine = (issued.current += 1);
     setRow(begun(next, mine));
+    setPendingField(field, next);
     // Queued: `set_settings` writes the whole struct, so an earlier write's refetch
     // must never be able to erase this value from the base of a later one (see
     // `settingsWrites.ts`). The undo payload is read from the fresh base, so Undo
@@ -156,6 +169,9 @@ export function useSettingField<F extends SettingsField>(
       }
       const previous = base[field] as Settings[F];
       const onSuccess = () => {
+        // Settled: the cache now carries the value, so the shared pending copy retires
+        // for every mount, not just this one.
+        setPendingField(field, null);
         setRow((state) => settled(state, mine));
         if (options?.silent !== true) {
           pushActionToast("success", `${def.label} updated`, {
@@ -165,6 +181,7 @@ export function useSettingField<F extends SettingsField>(
         }
       };
       const onError = (error: unknown) => {
+        setPendingField(field, null);
         setRow((state) => failed(state, mine, next, saveFailure(def.label, error)));
       };
       if (lane !== null) {

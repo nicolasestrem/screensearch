@@ -83,11 +83,27 @@ export function IntegrationsCategory() {
     if (next !== addressValue) address.commit(next);
   };
 
-  if (settings.isPending) {
+  // Data first (same rule as `categoryFrameState`): TanStack keeps the last payload
+  // when a background refetch fails, so `isError` alone must not unmount every API
+  // control — including the read credential's own failure and recovery state.
+  if (settings.data === undefined) {
+    if (settings.isError) {
+      return (
+        <CategoryState
+          category="integrations"
+          state="error"
+          error={{
+            title: "Couldn’t load the API settings",
+            message:
+              "The saved values couldn’t be read, so no row can show what it currently is. Nothing was changed.",
+            onRetry: reload,
+          }}
+        />
+      );
+    }
     return <CategoryState category="integrations" state="loading" rows={4} />;
   }
   if (
-    settings.isError ||
     enabled.value === undefined ||
     portValue === undefined ||
     addressValue === undefined
