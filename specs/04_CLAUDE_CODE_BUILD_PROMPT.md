@@ -96,9 +96,11 @@ identity from `UI_REFERENCE` §1/§2 and the shipped primitives from
 `ui/src/components/primitives/` with `ui/src/styles/tokens.css`, do not re-derive either. Every
 theme is one of `pine-light` (default), `pine-dark`, `ink-light`, `ink-dark` via `data-theme`, and
 the `ui.appearance` setting selects between them (`03 §8`). The P3 baseline + settings v2 work is
-built on `feat/0.4.5-p3-baseline-schema` (PR open, not merged); read its hand-off
-`docs/kickoffs/P3-READY.md` before touching schema, settings or the rebuild tool, and treat the
-committed tree (not the kickoff) as the code of record once it merges.
+merged to `main` as `0dfa2f5` (PR #153); the committed tree is the code of record for schema,
+settings and the rebuild tool, and `docs/kickoffs/P3-READY.md` is its hand-off. P4 (the
+fixture-backed automatic evaluation and the frozen P5/P6 thresholds) is merged as `aceca58` (PR
+#155), and P5 (the work graph engine) is merged as `722f29e` (PR #157); read its acceptance
+evidence and recorded decisions in `05`/`06` #37-#42/`07` before starting P6 or P7 work.
 
 Three hard arc constraints, all decided: **baseline schema instead of a migration chain** — `03 §4`
 holds the full DDL at v14, a schema change edits it and bumps the version, there are no populated-DB

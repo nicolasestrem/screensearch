@@ -175,7 +175,7 @@ Decisions taken while the specs were silent (all implemented and tested; recorde
   `graph_insert_thread_override`, which enqueues `graph_cluster` atomically for P9's UI.
 
 Post-audit findings that stay open (two independent read-only audits; the fixed items are recorded
-in `05` and `06` #37-#42):
+in `05` and `06` #37-#41):
 
 - **P1: session reconciliation can delete graph links (owner: P6/P8, cross-phase).** The sessions
   scheduler routinely deletes and recreates unfrozen tail sessions (`crates/store/src/sessions.rs`,
@@ -208,6 +208,25 @@ in `05` and `06` #37-#42):
   `src-tauri`'s shutdown stops the sessions/vision/workers handles; the graph producer's handle
   stops through its `Drop` at process exit (no task leak). The method is kept for a future
   graceful-stop wiring and its doc says so.
+
+Post-merge findings (P5 merged to `main` as `722f29e`, PR #157):
+
+- **Fixed: CodeQL "cleartext logging of sensitive information" (two high alerts).** The first
+  code-scanning run on the PR flagged test helper `panic!` messages in
+  `crates/graph/src/clustering.rs` and `crates/graph/src/overrides.rs` that interpolated a session
+  id. Fixed in `4e16f83` by keeping session ids out of panic/log text; no production code changed.
+  Etiquette for later phases (P6 ask turns, P8 insights, P9 UI): opaque ids such as
+  `session_id`/`thread_id` do not belong in log, panic or toast text; log counts, kinds or frame
+  ids instead, as `05` records for the job modules.
+- **Closed: the branch is merged and the merged tree re-verified.** The full kickoff verification
+  list ran green again on `main` at `722f29e` (81 targets, 1386 passed, 0 failed, 16 ignored) and
+  main CI, MCP native and Push-on-main runs on the merge commit are green (`05`, post-merge
+  record). The closed PR is not re-opened; this documentation addendum is its own docs-only PR,
+  [\#158](https://github.com/nicolasestrem/screensearch/pull/158), left open for review.
+- **Open, unchanged:** every gap listed above (session-reconciliation link loss, dead-letter
+  visibility, cursor retention dependency, P6 `claim_kinds` handoff, `stop_graph_scheduler`
+  shutdown wiring) stays open with its owner; nothing in the post-merge documentation pass changes
+  runtime behaviour.
 
 ## 2026-11-04: P4 thresholds measured on a committed synthetic fixture (owner: maintainer for the two deviations)
 
@@ -268,7 +287,8 @@ this run and are recorded here because they contradict the kickoff:
 ## 2026-11-04: P3 synced, audited and verified (owner: maintainer for the two real-DB items)
 
 The 0.4.5 P3 baseline schema v14 + settings v2 work is complete on
-`feat/0.4.5-p3-baseline-schema` (base `origin/main` `3976551`, PR open, not merged) and its evidence
+`feat/0.4.5-p3-baseline-schema` (base `origin/main` `3976551`, PR #153, since merged as
+`0dfa2f5`) and its evidence
 is in `05` under 2026-11-04. Closed in this pass: the P2 pick's `ui.appearance` is now the 26th UI
 key in the typed registry, the kernel load/save pair, the rebuild carry policy and the regenerated
 bindings; the baseline's drift from `03 §4` is pinned by `crates/store/tests/p3_schema_parity.rs`
@@ -415,7 +435,7 @@ open, or newly scoped out:
     branch `feat/0.4.5-p3-baseline-schema` predated the key; P3 landed the typed `UiAppearance` enum
     (six kebab tokens), the `Settings` field with `serde(default)`, the exact `ui.appearance` key in
     the kernel load/save pair, the rebuild carry policy count at 26 and the regenerated bindings, with
-    the full-set round-trip now covering it. PR open, not merged.
+    the full-set round-trip now covering it. PR #153, since merged as `0dfa2f5`.
   - **P7 renders the select in Settings > General** and resolves `*-system` through
     `prefers-color-scheme`, applying `data-theme` on the root element. The four `data-theme` values
     are exactly `pine-light` / `pine-dark` / `ink-light` / `ink-dark`; `*-system` is a stored intent,

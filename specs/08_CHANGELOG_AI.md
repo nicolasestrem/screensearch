@@ -74,16 +74,26 @@
   recomputable, so deleting the graph loses no evidence. No UI/API/MCP surface is added (P8 owns
   the read routes, P9 the screens).
 - **Decisions:** the extraction confidence table, dedup identity, linking, clustering, override and
-  normalization decisions are recorded in `05`; the three contract contradictions are `06` #37-#39;
-  the fixture-evidence deviation, split-payload reading, dead-letter behaviour, `hit_count` caveat,
-  directory-path coverage gap and other silent-spec decisions are in `07` (2026-11-05 section).
+  normalization decisions are recorded in `05`; the contract contradictions are `06` #37-#41 (all
+  resolved in P5) plus the open doc gap #42; the fixture-evidence deviation, split-payload reading,
+  dead-letter behaviour, `hit_count` caveat, directory-path coverage gap and other silent-spec
+  decisions are in `07` (2026-11-05 section).
 - **Evidence (fixture, labelled as such):** entity recovery 90.3% (159/176) against the frozen
   80.0% threshold, invention 0 of 243; backfill completion line
   `graph backfill complete entities=243 entity_aliases=11 session_entities=1385 threads=1
   thread_sessions=217` with an identical second pass over the same database; determinism and
   override-precedence suites; full verification raw output in `05`.
-- **PR:** [\#157](https://github.com/nicolasestrem/screensearch/pull/157), opened and squash-merged
-  by the agent under the maintainer's 2026-11-04 D18 waiver.
+- **PR and merge:** [\#157](https://github.com/nicolasestrem/screensearch/pull/157), base `main`,
+  head `4e16f83`, opened and squash-merged by the agent under the maintainer's 2026-11-04 D18
+  waiver; merged on 2026-11-05 as `722f29e`.
+- **Post-merge record:** CI on the final branch tip is green (`build & test (windows)` 18m56s,
+  `package & verify` on the three targets, CodeQL on actions/JS-TS/Rust, CodeQL code-scanning
+  check); the first code-scanning run flagged two high-severity `Cleartext logging of sensitive
+  information` alerts in graph test panic messages and `4e16f83` fixed them without touching
+  production code; `main` CI, MCP native and Push-on-main runs on the merge commit are green; and
+  the full verification list re-ran green on the merged tree (81 targets, 1386 passed, 0 failed).
+  A docs-only follow-up branch records this in `05`; PR:
+  [\#158](https://github.com/nicolasestrem/screensearch/pull/158), left open for review.
 
 ## 2026-11-04: 0.4.5 P4 baseline frozen on a committed fixture and merged
 
@@ -142,7 +152,8 @@
   strictness, rebuild fidelity failures, settings doc truth, P3-authored em dash removal, restored
   coverage, guarded maintainer procedure), plus the records commits. Branch pushed and
   [PR #153](https://github.com/nicolasestrem/screensearch/pull/153) opened against `main` on the
-  maintainer's explicit 2026-11-04 instruction (0.4.5 D18 validation given for this PR); not merged.
+  maintainer's explicit 2026-11-04 instruction (0.4.5 D18 validation given for this PR); since
+  merged as `0dfa2f5`.
 - **Review fix (`src-tauri/src/memory.rs`):** PR #153 review found that a queued or blocked report
   resumed after a restart with an edited `advanced.toml` took the new report depth and sidecar
   parameters, because P3 moved those keys out of the typed `Settings` that the durable
@@ -171,7 +182,7 @@
   pairs x 4 themes; a 7-rule token fence over the primitives).
 - **Commits:** `cf56222`, `8136179`, `5c9c679`, `8e1935b` (docs/specs), `75c77ba` (implementation),
   `d113a0f` (review round), then the documentation commit. Branch `feat/0.4.5-p2-design-system`, PR
-  opened, not merged.
+  #151, since merged as `7e73e30`.
 - **Verified:** lint, 90 UI tests, build, clippy, cargo build and the workspace tests all green;
   the six P2 greps at 0 (0 unresolved tokens), bindings untouched; detect 1 finding per variant,
   attributable to v1 progress bars outside this phase's ownership; AA 0 failures in all four
