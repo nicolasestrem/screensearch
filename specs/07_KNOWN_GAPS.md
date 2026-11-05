@@ -45,6 +45,16 @@ this run and are recorded here because they contradict the kickoff:
   max_frames)` here, because every fixture session is closed (`now_ms` only affects still-open
   sessions). On a live database the same seed with a different `now_ms` can change only pairs that
   depend on an open session.
+- **Two paths sat outside the kickoff's owned list, and this is the authorization for both.** The
+  kickoff owns `crates/harness/**` plus the build-loop records; it does not name a new
+  `crates/evalfixture` crate, and it does not name the workspace `Cargo.toml` whose `members` list
+  has to admit that crate. Both edits were made under the 2026-11-04 override ("when the specs are
+  silent or contradictory, decide, record the decision in `07`, and continue"), on the reasoning
+  recorded above: the fixture writer cannot live in `crates/harness` (the harness must not link
+  `store`), and a workspace member cannot be compiled without its `members` entry and its lockfile
+  packages. No other kickoff-owned boundary moved: `src-tauri`, every shipped crate, the DDL, the
+  routes and the settings table are untouched, and `crates/rebuild` changed by exactly one entry in
+  the test-local `NOT_KV_KEYS` list so its drift guard classifies the new file-name constant.
 
 ## 2026-11-04: P3 synced, audited and verified (owner: maintainer for the two real-DB items)
 
