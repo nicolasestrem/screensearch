@@ -373,7 +373,7 @@ impl Store for AskStore {
     async fn ask_candidate_threads(
         &self,
         _window: Option<TimeRange>,
-        _entity_sessions: &[i64],
+        _entity_ids: &[i64],
     ) -> traits::Result<Vec<AskThreadCandidate>> {
         // The empty-graph case the fallback is specified for: no threads, ever.
         Ok(Vec::new())
@@ -383,7 +383,7 @@ impl Store for AskStore {
         &self,
         threads: &[AskThreadCandidate],
         window: Option<TimeRange>,
-        entity_sessions: &[i64],
+        entity_ids: &[i64],
     ) -> traits::Result<Vec<i64>> {
         let mut ids: Vec<i64> = if threads.is_empty() {
             // Documented fallback: with no thread candidates the window's sessions are the
@@ -402,8 +402,8 @@ impl Store for AskStore {
             ids.dedup();
             ids
         };
-        if !entity_sessions.is_empty() {
-            let linked: HashSet<i64> = entity_sessions
+        if !entity_ids.is_empty() {
+            let linked: HashSet<i64> = entity_ids
                 .iter()
                 .flat_map(|entity| {
                     self.entity_sessions
