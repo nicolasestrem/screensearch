@@ -24,16 +24,20 @@ the kickoff's list was incomplete in two ways the mapping exposed:
 **Grant — mechanical compile fixups.** The owned changes to `RetrievedChunk` (adds
 `session: Option<ChunkSession>`) and `AnswerDelta::Done` (adds optional diagnostics, so its two
 constructor/match forms changed) break struct literals and constructor/match sites outside P6's
-paths. Granted for exactly these files, with line-level insertions only (`session: None,` and
-`AnswerDelta::done()` / a `Done { .. }` match pattern), no logic borrowed:
-`crates/kernel/src/reports.rs` (5 literals), `crates/kernel/src/sessions_intel.rs` (1),
-`crates/kernel/src/graph_normalize.rs` (1 literal + 1 constructor),
-`crates/kernel/src/report_service.rs` (1 constructor), `crates/api/tests/http_api.rs`
-(1 literal + 2 constructors), `crates/mcp/tests/stdio_mcp.rs` (1 literal + 1 constructor),
-`crates/evalfixture/src/serve.rs` (1 literal; the file was later granted again for the retrieval-seam
-rewiring), `crates/inference/tests/smoke.rs` (1 literal + the `Done`/`Citations` match arms).
-`crates/api/src/lib.rs` and `crates/inference/src/answer.rs` were already in the grant/owned path
-for the same edits.
+paths. The maintainer granted line-level insertions only (`session: None,`, `AnswerDelta::done()`,
+a `Done { .. }` pattern) in: `crates/kernel/src/reports.rs` (5 literals),
+`crates/kernel/src/sessions_intel.rs` (1), `crates/kernel/src/graph_normalize.rs`
+(1 literal + 1 constructor), `crates/api/tests/http_api.rs` (1 literal + 2 constructors),
+`crates/mcp/tests/stdio_mcp.rs` (1 literal + 1 constructor), `crates/evalfixture/src/serve.rs`
+(1 literal; the file was granted again later for the retrieval-seam rewiring).
+`crates/api/src/lib.rs` and `crates/inference/src/answer.rs` were already in the grant/owned path.
+
+Two further files were edited in the same mechanical pass **before** that answer and were not
+among the files the maintainer's answer named: `crates/kernel/src/report_service.rs`
+(1 constructor) and `crates/inference/tests/smoke.rs` (1 literal + the `Done`/`Citations` match
+arms). They are the identical, behaviour-free insertion class, and they are recorded here for
+**ratification**, not as pre-authorisation — the maintainer did not name them. No logic was
+borrowed in either.
 
 **Branch base.** There is no `v0.4.3` tag, so Gate A is not closed as a tag; `main` (`b84c164`)
 carries P1–P5 merged. The maintainer directed `feat/0.4.5-p6-ask-v2` from `main` HEAD, the same
@@ -64,6 +68,25 @@ FTS index and adding one is a P3 schema change (0.4.5 D2). Resolved without a sc
 per-query temporary FTS5 index over the candidate sessions, dropped before returning.
 
 **Open, deferred deliberately.**
+- **The eval fixture serves the legacy Ask surface, not Ask v2.** `FixtureServeHost::ask_context`
+  now delegates to `kernel::ask::ask_context` (the workspace's only legacy retrieval
+  implementation), but the host keeps the default `ApiHost::ask_turn => Ok(None)`, so a fixture
+  `/v1/ask` takes the legacy route. Serving v2 turns would make the server write to the database
+  it is measuring (`create_ask_thread`, `append_ask_turn`, `finish_ask_turn`, an enqueued
+  `session_embed`) and attaching providers starts the worker pool and the schedulers over it —
+  `evalfixture/src/serve.rs`'s contract is that serving adds no writes of its own. Any future
+  fixture-based acceptance run that needs the v2 surface must revisit that contract first
+  (owner: P8/P9 scoping, or the maintainer if a fixture run replaces the live-DB one).
+- **An entity-linked session that belongs to no thread is not a stage-2 candidate when threads
+  exist.** `ask_candidate_sessions` narrows the stage-1 thread members and the window's sessions
+  to the entity's linked sessions; a session with no `thread_sessions` row never reaches stage 1
+  through the entity branch, so it cannot contribute. This follows the kickoff, which routes
+  entity evidence *through* stage 1 ("threads … that contain an entity-resolved session") rather
+  than making the entity's sessions the candidate set outright; the alternative reading of
+  `03 §7i.1` ("a match constrains retrieval to sessions linked to that entity") would union them
+  in. Chosen as written because it keeps stage 2 a strict narrowing of stage 1 (`§7i.2`), which
+  the other reading cannot. Recorded here because the spec supports both sentences; no behaviour
+  is guessed at runtime (owner: maintainer, at the acceptance run if recall attributes there).
 - `/v1/search` recall is unchanged by this phase, so the frozen 41.0% retrieval row cannot move
   until a later phase owns that route's retrieval (owner: P8/P9 scoping, at Gate B).
 - Bootstrapping `session_vectors` for the maintainer's live database needs the `session_embed`

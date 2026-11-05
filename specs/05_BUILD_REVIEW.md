@@ -217,7 +217,10 @@ _none — every cited id exists and lies inside its pair's window_
 
 Read honestly: the harness generated pairs from the real database and the API served them, so the
 fixture → API → store retrieval chain runs end to end with the vector arm attached (retrieval
-recall@10 80% overall on this small pair set). `/v1/ask` answers the documented `503 / answer model
+recall@10 80% overall). **This is a five-turn wiring smoke, not a measurement**: the fixture and
+pair set differ from the 300-pair baseline, so none of these numbers are acceptance evidence and
+they are not comparable to it.
+`/v1/ask` answers the documented `503 / answer model
 not loaded` path in clean JSON because no answer sidecar is attached in this workspace — no panic,
 no hang, no partial stream — and the harness classifies it as `api_unavailable` as designed. The
 answer-bearing side (the `citations` event, the enriched `done`, turn persistence, the v2 staging)

@@ -786,7 +786,6 @@ pub enum AnswerDelta {
         #[serde(skip_serializing_if = "Option::is_none")]
         stage_counts: Option<StageCounts>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[ts(type = "number | null")]
         tokens_assembled: Option<u32>,
     },
     /// Ask v2 terminal citations (`03 §7i.3`, 0.4.5 D12): both kinds of evidence, emitted

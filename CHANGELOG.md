@@ -33,8 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A session whose title and summary are both empty is never embedded, and a deleted session's
   vector is removed with it.
 - **A library with no work graph still answers.** With empty graph tables and no session
-  summaries, Ask v2 degrades to the existing frame-level search over the planned window — with the
-  window as the only new filter — so it is never worse than the previous Ask.
+  summaries, Ask v2 degrades to the existing frame-level search restricted to the planned window —
+  the same query, depth and ranking, with the window as the only added filter — so it is never
+  worse than the previous Ask.
 
 ### Fixed: work-graph links now follow session ownership changes
 
