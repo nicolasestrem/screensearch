@@ -26,6 +26,8 @@ use traits::{
     VisionTarget,
 };
 
+pub mod ask;
+mod ask_plan;
 mod capture_loop;
 mod capture_observations;
 mod events;
@@ -39,6 +41,7 @@ pub mod memory_schedule;
 pub mod report_service;
 pub mod reports;
 pub mod resume;
+mod session_vectors;
 pub mod sessions_intel;
 mod sessions_scheduler;
 pub mod settings;
@@ -726,6 +729,10 @@ pub struct Kernel {
     /// durable graph jobs on idle/on-demand and never touches the capture path. `None`
     /// until [`Kernel::attach_segmenter`] starts it.
     graph_scheduler: Mutex<Option<graph_scheduler::SchedulerHandle>>,
+    /// The Ask v2 session-vector producer (`03 §7i.2`, 0.4.5 D11). Like the graph
+    /// scheduler it only enqueues durable jobs on a timer, never on the capture path; it
+    /// starts with the embedder because session vectors need no other provider.
+    session_embed_scheduler: Mutex<Option<session_vectors::SchedulerHandle>>,
     /// Sessions whose graph links may be missing or stale after a session-ownership change.
     /// The sessions scheduler writes it, the graph scheduler drains it in bounded batches
     /// (`crate::graph_reconcile`); process-local memory, never a setting or table.
@@ -852,6 +859,7 @@ impl Kernel {
             session_segmenter: RwLock::new(None),
             sessions_scheduler: Mutex::new(None),
             graph_scheduler: Mutex::new(None),
+            session_embed_scheduler: Mutex::new(None),
             dirty_sessions: graph_reconcile::new_dirty_sessions(),
             graph_enabled: Arc::new(AtomicBool::new(false)),
             graph_ready: Arc::new(AtomicBool::new(false)),
@@ -1218,6 +1226,7 @@ impl Kernel {
         self.store.set_embedder(embedder.clone());
         *self.embedder.write().expect("embedder slot lock") = Some(embedder);
         self.set_embed_readiness(ComponentStatus::Ready, None);
+        self.start_session_embed_scheduler().await;
         self.reconfigure_enrichment().await;
     }
 
@@ -1232,12 +1241,14 @@ impl Kernel {
         let advanced = self.advanced_config();
         let embedder_ready = self.embedder.read().expect("embedder slot lock").is_some();
         let vision_ready = self.vision.read().expect("vision slot lock").is_some();
-        let has_embed_lane = embedder_ready && advanced.enrich.embed_text;
+        // An attached embedder backs both `embed_text` (when its setting is on) and Ask v2's
+        // `session_embed`, which has no settings toggle (0.4.5 D6/D11) — so it is a worker
+        // lane on its own. Each kind stays slot- and throttle-gated inside `claim_kinds`.
         // The work-graph lane is model-free (`03 §7h.7`): once its producer exists, the
         // pool runs even with no embedder or inference provider attached, so extraction,
         // linking, clustering and backfill drain independently of the model lanes.
         let graph_enabled = self.graph_enabled.load(Ordering::Relaxed);
-        if !has_embed_lane && !vision_ready && !graph_enabled {
+        if !embedder_ready && !vision_ready && !graph_enabled {
             tracing::debug!("start_workers: no provider-backed worker lanes available");
             return;
         }
@@ -1406,6 +1417,28 @@ impl Kernel {
             handle.stop().await;
             self.graph_enabled.store(false, Ordering::Relaxed);
             tracing::info!("graph scheduler stopped");
+        }
+    }
+
+    /// Starts the Ask v2 session-vector producer (idempotent, `03 §7i.2`). It needs only the
+    /// embedder, and it enqueues one bounded `session_embed` job per idle tick while the
+    /// backlog is non-empty, so starting it beside the embedder is enough.
+    async fn start_session_embed_scheduler(&self) {
+        let mut guard = self.session_embed_scheduler.lock().await;
+        if guard.is_none() {
+            *guard = Some(session_vectors::spawn(
+                self.store.clone(),
+                self.throttle_level.clone(),
+            ));
+            tracing::info!("session embed scheduler started");
+        }
+    }
+
+    /// Stops the Ask v2 session-vector producer (idempotent). Called on shutdown.
+    pub async fn stop_session_embed_scheduler(&self) {
+        if let Some(handle) = self.session_embed_scheduler.lock().await.take() {
+            handle.stop().await;
+            tracing::info!("session embed scheduler stopped");
         }
     }
 

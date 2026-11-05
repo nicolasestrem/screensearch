@@ -40,8 +40,8 @@ use hyper_util::service::TowerToHyperService;
 use tokio::sync::{watch, Semaphore};
 use tokio::task::{JoinHandle, JoinSet};
 use traits::{
-    AnswerProvider, ExportFrameRow, FrameDetail, ResumeContext, RetrievedChunk, SearchQuery,
-    Settings, Store,
+    AnswerProvider, AskTurnError, AskTurnRequest, AskTurnStream, ExportFrameRow, FrameDetail,
+    ResumeContext, RetrievedChunk, SearchQuery, Settings, Store,
 };
 
 /// The default port for the local API (`api.port`, configurable; `03 §8`, D11).
@@ -172,6 +172,18 @@ pub trait ApiHost: Send + Sync + 'static {
         top_k: u32,
         session_id: Option<i64>,
     ) -> anyhow::Result<Vec<RetrievedChunk>>;
+
+    /// Start an Ask v2 turn (`03 §7i`) — the conversation-aware pipeline behind
+    /// `/v1/ask` when the request carries a `thread_id`. `Ok(None)` means this host has
+    /// no Ask v2 pipeline, and the route then uses [`ApiHost::ask_context`] verbatim.
+    /// The default keeps every pre-0.4.5 host (and test fake) compiling and behaving
+    /// exactly as before.
+    async fn ask_turn(
+        &self,
+        _request: AskTurnRequest,
+    ) -> Result<Option<AskTurnStream>, AskTurnError> {
+        Ok(None)
+    }
 
     /// The active answer provider, or `None` when no answer model is loaded (`/v1/ask`
     /// then returns 503).
@@ -772,6 +784,28 @@ mod connection_tests {
         ));
     }
 
+    /// A host that never declares `ask_turn` gets the trait's default — `Ok(None)`, the
+    /// "no Ask v2 pipeline" answer — so every pre-0.4.5 host keeps the legacy
+    /// `/v1/ask` path unchanged.
+    #[tokio::test]
+    async fn legacy_hosts_default_ask_turn_declines_the_v2_pipeline() {
+        let host = Host {
+            store: Arc::new(store::SqliteStore::open_in_memory().unwrap()),
+            answer: None,
+        };
+        let request = traits::AskTurnRequest {
+            query: "invoice".to_string(),
+            thread_id: None,
+            session_id: None,
+            top_k: 4,
+            opts: traits::AnswerOpts {
+                thinking: false,
+                max_tokens: 256,
+            },
+        };
+        assert!(matches!(host.ask_turn(request).await, Ok(None)));
+    }
+
     /// Streams `deltas` token events `tick` apart, then `Done`; exits early when the
     /// receiver goes away — exactly what a shutdown-cancelled stream looks like.
     struct SlowAnswer {
@@ -797,7 +831,7 @@ mod connection_tests {
                     return Ok(());
                 }
             }
-            let _ = tx.send(AnswerDelta::Done).await;
+            let _ = tx.send(AnswerDelta::done()).await;
             Ok(())
         }
     }

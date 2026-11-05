@@ -256,7 +256,8 @@ mod tests {
             "text.catalog_filter_version",
         ];
         // Constants that look like dotted keys but name something other than a
-        // `settings` row (tray menu ids, hotkey registration ids, a file name).
+        // `settings` row (tray menu ids, hotkey registration ids, a file name, a per-query
+        // SQLite temp table name).
         const NOT_KV_KEYS: &[&str] = &[
             "tray.model",
             "tray.open",
@@ -266,6 +267,10 @@ mod tests {
             "tray.vision",
             "advanced.toml",
             "screensearch.db",
+            // `crates/store/src/ask.rs`: the temporary FTS5 index built per session-retrieval
+            // query and dropped before returning. It is not persisted schema, so the rebuild
+            // has nothing to carry.
+            "temp.ask_session_fts",
         ];
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let decl = |line: &str| -> Option<String> {

@@ -73,6 +73,10 @@ impl ApiFailure {
 pub struct AskOutcome {
     pub answer: String,
     pub citations: Vec<i64>,
+    /// Ask v2 (`03 §7i.3`): the distinct session ids carrying the frames the answer was
+    /// grounded in, from the terminal `citations` event. Empty for a stream that predates
+    /// the event (and for a turn whose frames belong to no session).
+    pub cited_sessions: Vec<i64>,
     /// Whether a terminal `done` delta was seen (vs the stream ending early).
     pub done: bool,
     /// Whether any `token` delta arrived.
@@ -300,6 +304,7 @@ impl ApiClient {
         Ok(AskOutcome {
             answer: agg.answer,
             citations: agg.citations,
+            cited_sessions: agg.cited_sessions,
             done,
             tokens_seen: agg.tokens_seen,
         })

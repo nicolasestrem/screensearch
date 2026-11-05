@@ -53,7 +53,7 @@ impl AnswerProvider for ScriptedAnswer {
                 })
                 .await;
         }
-        let _ = tx.send(AnswerDelta::Done).await;
+        let _ = tx.send(AnswerDelta::done()).await;
         Ok(())
     }
 }
@@ -143,6 +143,7 @@ impl ApiHost for TestHost {
                 text: h.snippet,
                 score: h.score,
                 captured_at: h.captured_at,
+                session: None,
             })
             .collect())
     }
@@ -1370,7 +1371,7 @@ impl AnswerProvider for SlowAnswer {
                 return Ok(());
             }
         }
-        let _ = tx.send(AnswerDelta::Done).await;
+        let _ = tx.send(AnswerDelta::done()).await;
         Ok(())
     }
 }

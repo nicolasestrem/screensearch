@@ -12,7 +12,13 @@
 //! The host implements exactly what a fixture has and fails the rest explicitly:
 //!
 //! - `GET /v1/search`, `GET /v1/frames/{id}` (+`?image=1`) and `POST /v1/ask` run the same
-//!   store paths the composition root uses (cited per method below).
+//!   store paths the composition root uses (cited per method below). `POST /v1/ask` calls
+//!   `kernel::ask::ask_context` itself — the one legacy retrieval `Kernel::ask_context` and
+//!   the app's `ApiHost` run — so the fixture cannot measure a variant of it.
+//! - Ask v2 turns are not served here: the host keeps `ApiHost::ask_turn`'s `Ok(None)`
+//!   default, so the route falls back to the legacy surface above. Serving a turn would
+//!   persist `ask_threads`/`ask_turns` rows (and enqueue `session_embed` jobs) into the
+//!   fixture database, and this binary serves reads only; nothing is fabricated to avoid it.
 //! - Marks, where-was-i and export have no fixture backing: those methods fail with
 //!   explicit errors. `frame_page`, `capture_coverage`, `report_page` and `report_detail`
 //!   keep the trait's `UnsupportedStore` defaults (the routes map that to 503). Nothing
@@ -60,8 +66,7 @@ use async_trait::async_trait;
 use inference::{AnswerSidecar, ModelSupervisor, SupervisorConfig};
 use store::SqliteStore;
 use traits::{
-    AnswerProvider, ExportFrameRow, FrameDetail, ResumeContext, RetrievedChunk, SearchQuery,
-    Settings, Store,
+    AnswerProvider, ExportFrameRow, FrameDetail, ResumeContext, RetrievedChunk, Settings, Store,
 };
 
 use api::{ApiHost, ApiServer, FrameImage, SharedToken};
@@ -328,9 +333,9 @@ async fn build_answer_sidecar(
     Ok((supervisor, answer))
 }
 
-/// The fixture's [`ApiHost`]: a real store, real settings and the real ask pipeline; no
-/// capture loop, no kernel, no marks. Modeled on the composition root's `TauriApiHost`
-/// (`src-tauri/src/local_api.rs`) and the mcp example host
+/// The fixture's [`ApiHost`]: a real store, real settings and the kernel's real legacy Ask
+/// retrieval; no capture loop, no kernel instance, no marks. Modeled on the composition
+/// root's `TauriApiHost` (`src-tauri/src/local_api.rs`) and the mcp example host
 /// (`crates/mcp/examples/api_fixture.rs`).
 struct FixtureServeHost {
     store: Arc<SqliteStore>,
@@ -408,42 +413,14 @@ impl ApiHost for FixtureServeHost {
         top_k: u32,
         session_id: Option<i64>,
     ) -> Result<Vec<RetrievedChunk>> {
-        // Reproduces the composition root's `ask_context`/`hydrate_ask_context`
-        // (`src-tauri/src/lib.rs`): a content-text search at the request's depth
-        // (chrome stays opt-in), session-scoped when asked, then one bulk OCR hydrate
-        // with the hit snippet as the per-frame fallback. Keeping this identical is what
-        // makes the fixture's /v1/ask measure the app's grounding instead of a variant.
-        let search = SearchQuery {
-            text: query.to_string(),
-            limit: top_k,
-            time_range: None,
-            // Ask grounds on content text (`03 §3b`); raw/chrome stays opt-in.
-            include_chrome: false,
-        };
-        let hits = match session_id {
-            Some(id) => self.store.hybrid_search_in_session(&search, id).await,
-            None => self.store.hybrid_search(&search).await,
-        }
-        .context("retrieving ask context")?;
-        let frame_ids: Vec<i64> = hits.iter().map(|hit| hit.frame_id).collect();
-        // A failed bulk hydrate is a hard error (no silent snippet-only grounding), the
-        // same rule the composition root applies before streaming an answer.
-        let mut ocr =
-            self.store.ocr_texts(&frame_ids).await.with_context(|| {
-                format!("hydrating ask OCR context for {} frames", frame_ids.len())
-            })?;
-        Ok(hits
-            .into_iter()
-            .map(|hit| {
-                let text = ocr.remove(&hit.frame_id).unwrap_or(hit.snippet);
-                RetrievedChunk {
-                    frame_id: hit.frame_id,
-                    text,
-                    score: hit.score,
-                    captured_at: hit.captured_at,
-                }
-            })
-            .collect())
+        // The kernel's own legacy retrieval (`kernel::ask::ask_context`, the one
+        // `Kernel::ask_context` and `TauriApiHost::ask_context` run): content-text hybrid
+        // search at the request's depth (chrome stays opt-in), session-scoped when asked,
+        // then one bulk OCR hydrate with the hit snippet as the per-frame fallback. Calling
+        // the shipped function — rather than reproducing it — is what makes the fixture's
+        // `/v1/ask` measure the app's grounding instead of a variant of it.
+        let store: Arc<dyn Store> = self.store.clone();
+        kernel::ask::ask_context(&store, query, top_k, session_id).await
     }
 
     async fn answer_provider(&self) -> Option<Arc<dyn AnswerProvider>> {
@@ -593,4 +570,136 @@ fn reject_value(flag: &str, inline: Option<String>) -> Result<()> {
         bail!("{flag} takes no value\n\n{USAGE}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use traits::{NewFrame, NewSession, OcrResult, SessionHost, SessionKind};
+
+    /// The comparable shape of a chunk (`RetrievedChunk` has no `PartialEq`): identity,
+    /// hydrated text, the score's exact bits, capture time and session context.
+    fn chunks(chunks: &[RetrievedChunk]) -> Vec<(i64, String, u32, i64, bool)> {
+        chunks
+            .iter()
+            .map(|chunk| {
+                (
+                    chunk.frame_id,
+                    chunk.text.clone(),
+                    chunk.score.to_bits(),
+                    chunk.captured_at,
+                    chunk.session.is_some(),
+                )
+            })
+            .collect()
+    }
+
+    /// The fixture host's `/v1/ask` grounding is the kernel's own legacy retrieval, not a
+    /// copy of it: for one fixture — stored OCR text, two sessions — the host returns
+    /// exactly the chunks `kernel::ask::ask_context` returns (same frames, same order, same
+    /// hydrated text, same session scope), so the eval harness measures the shipped pipeline.
+    #[tokio::test]
+    async fn ask_context_delegates_to_the_kernel_retrieval() {
+        async fn seed(store: &SqliteStore, at: i64, hash: &str, text: &str) -> i64 {
+            let id = store
+                .insert_frame(NewFrame {
+                    captured_at: at,
+                    monitor_index: 0,
+                    width: 1920,
+                    height: 1080,
+                    image_path: format!("frames/{hash}.webp"),
+                    content_hash: hash.to_string(),
+                    app_hint: Some("Editor".to_string()),
+                    window_title: Some("planning".to_string()),
+                    browser_url: None,
+                    capture_trigger: None,
+                })
+                .await
+                .unwrap();
+            store
+                .insert_ocr(
+                    id,
+                    OcrResult {
+                        text: text.to_string(),
+                        mean_confidence: 0.9,
+                        engine: "test".to_string(),
+                        spans: Vec::new(),
+                    },
+                )
+                .await
+                .unwrap();
+            id
+        }
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let outside_text = "quarterly planning notes outside any session, long enough that a \
+                            snippet would be a fragment of this stored row";
+        let inside_text = "quarterly planning notes inside the session, likewise longer than a \
+                           snippet fragment of the stored row";
+        let outside = seed(store.as_ref(), 1_700_000_000_000, "outside", outside_text).await;
+        let inside = seed(store.as_ref(), 1_700_000_060_000, "inside", inside_text).await;
+        let session_id = store
+            .insert_session(NewSession {
+                started_at: 1_700_000_060_000,
+                ended_at: Some(1_700_000_120_000),
+                kind: SessionKind::Focus,
+                tool: None,
+                host: Some(SessionHost::Ide),
+                context_key: "focus:editor".to_string(),
+                confidence: 0.8,
+                frozen: false,
+            })
+            .await
+            .unwrap();
+        store
+            .assign_frames_session(&[inside], Some(session_id))
+            .await
+            .unwrap();
+
+        let host = FixtureServeHost {
+            store: store.clone(),
+            data_dir: PathBuf::from("fixture"),
+            answer: None,
+            started_at_ms: 0,
+        };
+        let kernel_store: Arc<dyn Store> = store.clone();
+
+        for scope in [None, Some(session_id)] {
+            let host_chunks = host
+                .ask_context("quarterly", 10, scope)
+                .await
+                .expect("fixture ask context");
+            let kernel_chunks = kernel::ask::ask_context(&kernel_store, "quarterly", 10, scope)
+                .await
+                .expect("kernel ask context");
+
+            assert!(
+                !kernel_chunks.is_empty(),
+                "the fixture query matches the stored frames"
+            );
+            assert_eq!(
+                chunks(&host_chunks),
+                chunks(&kernel_chunks),
+                "the host forwards the kernel's chunks verbatim"
+            );
+            let mut retrieved: Vec<i64> = host_chunks.iter().map(|c| c.frame_id).collect();
+            retrieved.sort_unstable();
+            let mut expected = if scope.is_some() {
+                vec![inside]
+            } else {
+                vec![outside, inside]
+            };
+            expected.sort_unstable();
+            assert_eq!(retrieved, expected, "the session scope narrows retrieval");
+            for chunk in &host_chunks {
+                let stored = if chunk.frame_id == inside {
+                    inside_text
+                } else {
+                    outside_text
+                };
+                assert_eq!(chunk.text, stored, "the stored OCR row, not the snippet");
+                assert!(chunk.session.is_none());
+            }
+        }
+    }
 }

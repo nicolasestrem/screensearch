@@ -92,6 +92,7 @@ async fn real_answer_streams_tokens() {
         text: "The deploy finished at 14:32 and all CI checks passed.".to_string(),
         score: 1.0,
         captured_at: 0,
+        session: None,
     }];
     let (tx, mut rx) = mpsc::channel::<AnswerDelta>(256);
     let task = tokio::spawn(async move {
@@ -116,8 +117,11 @@ async fn real_answer_streams_tokens() {
         match delta {
             AnswerDelta::Token { text } => tokens.push_str(&text),
             AnswerDelta::Citation { frame_id } => citations.push(frame_id),
-            AnswerDelta::Done => done = true,
+            AnswerDelta::Done { .. } => done = true,
             AnswerDelta::Error { message } => panic!("answer errored: {message}"),
+            // Ask v2's aggregated citation event belongs to the kernel pipeline; the
+            // provider itself still emits per-frame `Citation` deltas.
+            AnswerDelta::Citations { .. } => {}
             AnswerDelta::Thinking { .. } => {}
         }
     }

@@ -18,15 +18,15 @@ use async_trait::async_trait;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 use traits::{
-    AdvancedConfig, AdvancedConfigView, AnswerEvent, AnswerOpts, AppSuppression, AskRequest,
-    CaptureControl, CaptureSource, CapturedFrame, ComponentReadiness, ComponentStatus, FrameMeta,
-    InsightsSummary, JobStats, Mark, ModelLane, MonitorInfo, OcrProvider, OcrResult, Readiness,
-    ReportConfig, ReportKind, ReportMode, ReportProgress, ReportRange, ReportRequest,
-    ReportResponse, RetrievedChunk, SearchHit, SearchQuery, Session, SessionArtifactKind,
-    SessionDetail, SessionFilter, SessionQuery, SessionRecapRequest, SetModelTier, Settings,
-    SetupOperation, SetupPhase, SetupStatus, SetupStep, StorageStats, Store, TextSpan,
-    ThrottleStatus, TimeRange, TimelineBucket, ToastLevel, UiFrameDetail, UiResumeContext,
-    VisionTarget,
+    AdvancedConfig, AdvancedConfigView, AnswerDelta, AnswerEvent, AnswerOpts, AppSuppression,
+    AskRequest, AskTurnRequest, CaptureControl, CaptureSource, CapturedFrame, ComponentReadiness,
+    ComponentStatus, FrameMeta, InsightsSummary, JobStats, Mark, ModelLane, MonitorInfo,
+    OcrProvider, OcrResult, Readiness, ReportConfig, ReportKind, ReportMode, ReportProgress,
+    ReportRange, ReportRequest, ReportResponse, SearchHit, SearchQuery, Session,
+    SessionArtifactKind, SessionDetail, SessionFilter, SessionQuery, SessionRecapRequest,
+    SetModelTier, Settings, SetupOperation, SetupPhase, SetupStatus, SetupStep, StorageStats,
+    Store, TextSpan, ThrottleStatus, TimeRange, TimelineBucket, ToastLevel, UiFrameDetail,
+    UiResumeContext, VisionTarget,
 };
 
 use embeddings::FastEmbedProvider;
@@ -586,64 +586,32 @@ async fn set_mark_note(
     Ok(())
 }
 
-/// Builds grounded Ask context before any answer stream starts. Full context hydration
-/// is required for Ask quality: a failed `ocr_texts` bulk read means the command returns
-/// a clear error instead of silently degrading every retrieved frame to snippets. Frames
-/// with no stored text still fall back to their individual search snippet.
-async fn ask_context<S: Store + ?Sized>(
-    store: &S,
-    query: &str,
-    top_k: u32,
-    session_id: Option<i64>,
-) -> Result<Vec<RetrievedChunk>, String> {
-    let query = SearchQuery {
-        text: query.to_string(),
-        limit: top_k,
-        time_range: None,
-        // Ask grounds on content text (`03 §3b`); raw/chrome stays opt-in.
-        include_chrome: false,
-    };
-    // `session_id` (0.4.0 PR6, D12) restricts retrieval to the session's own frames so the
-    // answer cites only in-session frames; without it, the frame-level path is unchanged (D10).
-    let hits = match session_id {
-        Some(id) => store.hybrid_search_in_session(&query, id).await,
-        None => store.hybrid_search(&query).await,
+/// Relays an Ask turn's delta stream to the UI as request-scoped `answer_delta` events
+/// (`03 §7i.3`), tagging every delta — including the Ask v2 `citations` event and the
+/// enriched terminal `done` — with the client's request id.
+///
+/// Draining the stream to its end is what lets the kernel persist the answer, so a failed
+/// emit (a closed/destroyed window) is deliberately swallowed and the relay keeps
+/// consuming: a gone UI must never truncate a turn or panic the forwarder.
+async fn relay_answer_deltas<E>(
+    mut deltas: tokio::sync::mpsc::Receiver<AnswerDelta>,
+    request_id: &str,
+    mut emit: impl FnMut(AnswerEvent) -> Result<(), E>,
+) {
+    while let Some(delta) = deltas.recv().await {
+        let _ = emit(AnswerEvent {
+            request_id: request_id.to_string(),
+            delta,
+        });
     }
-    .map_err(|e| e.to_string())?;
-    // Hydrate context text in a single bulk query (avoid an N+1 over the hits).
-    // If the bulk read fails, return before spawning the answer stream so grounded
-    // Ask does not silently answer from low-quality snippets only.
-    let frame_ids: Vec<i64> = hits.iter().map(|h| h.frame_id).collect();
-    let ocr = store.ocr_texts(&frame_ids).await.map_err(|e| e.to_string());
-    hydrate_ask_context(hits, frame_ids.len(), ocr)
-}
-
-fn hydrate_ask_context(
-    hits: Vec<SearchHit>,
-    frame_count: usize,
-    ocr: Result<std::collections::HashMap<i64, String>, String>,
-) -> Result<Vec<RetrievedChunk>, String> {
-    let mut ocr = ocr
-        .map_err(|e| format!("failed to hydrate Ask OCR context for {frame_count} frames: {e}"))?;
-    Ok(hits
-        .into_iter()
-        .map(|hit| {
-            // `ocr` is consumed here, so take ownership of each string instead of cloning.
-            let text = ocr.remove(&hit.frame_id).unwrap_or(hit.snippet);
-            RetrievedChunk {
-                frame_id: hit.frame_id,
-                text,
-                score: hit.score,
-                captured_at: hit.captured_at,
-            }
-        })
-        .collect())
 }
 
 /// Ask a grounded question about the screen history (`ask`, `03 §7/§13.5`). Returns
-/// immediately; the answer streams back as `answer_delta` events. Retrieves the top-K
-/// chunks via hybrid search, supplies their full OCR text as reviewed context, and runs
-/// the answer provider on a background task that forwards each delta to the UI.
+/// immediately; the answer streams back as `answer_delta` events. The turn is started on
+/// the kernel's single Ask pipeline ([`Kernel::ask_turn`], `03 §7i`): planning, the four
+/// retrieval stages and prompt assembly all happen there, so the in-app Ask cannot drift
+/// from the HTTP `/v1/ask` surface. A background task drains the turn's delta stream,
+/// tagging each delta with this request's id for the UI.
 #[tauri::command]
 async fn ask(
     request: AskRequest,
@@ -663,47 +631,42 @@ async fn ask(
         .kernel
         .clone()
         .ok_or_else(|| "kernel unavailable".to_string())?;
-    let answer = kernel
-        .answer_provider()
-        .await
-        .ok_or_else(|| "inference sidecar not ready yet".to_string())?;
 
-    // Retrieve model context: top-K hybrid hits, each with its full OCR text
-    // (falling back to the search snippet if the text isn't available). Depth is the
-    // configured `retrieval.default_top_k` (`03 §8`, replacing the former hardcoded
-    // ASK_TOP_K), overridable per request via `AskRequest.top_k`.
+    // Retrieval depth is the configured `retrieval.default_top_k` (`03 §8`, replacing the
+    // former hardcoded ASK_TOP_K), overridable per request via `AskRequest.top_k`.
     let settings = kernel::settings::load_settings(store.as_ref()).await;
     let top_k = request.top_k.unwrap_or(settings.retrieval_default_top_k);
-    // The in-app Ask is always frame-level (session scoping is a PR6 API/MCP surface, D10).
-    let context = ask_context(store.as_ref(), &request.query, top_k, None).await?;
+    let stream = kernel
+        .ask_turn(AskTurnRequest {
+            query: request.query,
+            // The in-app Ask is single-turn this phase: `AskRequest` carries no thread id
+            // and the UI creates no conversations, so every command run starts a new one
+            // (`03 §7i.4`; the kernel creates the thread). Multi-turn lives on `/v1/ask`.
+            thread_id: None,
+            // Session scoping is the API/MCP PR6 surface (`03 §7c`, D10); the in-app Ask
+            // stays frame-level.
+            session_id: None,
+            top_k,
+            opts: AnswerOpts {
+                thinking: request.thinking,
+                max_tokens: request.max_tokens,
+            },
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
-    // Stream: the provider sends typed deltas on `tx`; a forwarder tags each with
-    // `request_id` before emitting it as an `answer_delta` event. The provider task
-    // is kept in `ask_tasks` so the UI can cancel superseded streams.
-    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-    let emitter = app.clone();
-    let event_request_id = request_id.clone();
-    tokio::spawn(async move {
-        while let Some(delta) = rx.recv().await {
-            let _ = emitter.emit(
-                "answer_delta",
-                AnswerEvent {
-                    request_id: event_request_id.clone(),
-                    delta,
-                },
-            );
-        }
-    });
-    let opts = AnswerOpts {
-        thinking: request.thinking,
-        max_tokens: request.max_tokens,
-    };
-    let query = request.query;
+    // The turn's stream is drained by a forwarder kept in `ask_tasks`, so the UI's
+    // `cancel_ask` (or a superseding request) aborts it; dropping the receiver is the
+    // kernel's cancellation signal, leaving the turn's answer NULL.
     let mut tasks = state.ask_tasks.lock().await;
     let tasks_clone = state.ask_tasks.clone();
     let task_request_id = request_id.clone();
+    let event_request_id = request_id.clone();
     let handle = tokio::spawn(async move {
-        let _ = answer.answer(&query, &context, opts, tx).await;
+        relay_answer_deltas(stream.deltas, &event_request_id, |event| {
+            app.emit("answer_delta", event)
+        })
+        .await;
         tasks_clone.lock().await.remove(&task_request_id);
     });
     if let Some(old) = tasks.insert(request_id, handle) {
@@ -3554,24 +3517,258 @@ Available devices:
         );
     }
 
-    #[test]
-    fn hydrate_ask_context_returns_clear_error_when_ocr_texts_fails() {
-        let hits = vec![SearchHit {
-            frame_id: 42,
-            captured_at: 1_234,
-            snippet: "snippet fallback".to_string(),
-            score: 0.75,
-            image_path: "frames/42.webp".to_string(),
-            image_purged: false,
-            app_hint: Some("Editor".to_string()),
-        }];
+    /// An OCR provider for tests that must never OCR: Ask retrieval reads stored text.
+    struct UnusedOcr;
 
-        let err = hydrate_ask_context(hits, 1, Err("simulated ocr_texts failure".to_string()))
-            .unwrap_err();
+    #[async_trait]
+    impl OcrProvider for UnusedOcr {
+        async fn recognize(&self, _frame: &CapturedFrame) -> anyhow::Result<OcrResult> {
+            unreachable!("Ask retrieval never runs OCR")
+        }
+    }
+
+    /// One retrieval implementation (`03 §7c`/`§7i`): the composition root keeps no Ask
+    /// retrieval of its own — `TauriApiHost::ask_context` forwards to the kernel — so the
+    /// kernel's legacy `ask_context` must still hand back each hit's full OCR row (never the
+    /// FTS snippet) with no session context, and must still honour the single-session scope.
+    #[tokio::test]
+    async fn kernel_ask_context_hydrates_full_ocr_text_and_keeps_the_session_scope() {
+        async fn seed(store: &SqliteStore, at: i64, hash: &str, text: &str) -> i64 {
+            let id = store
+                .insert_frame(traits::NewFrame {
+                    captured_at: at,
+                    monitor_index: 0,
+                    width: 1920,
+                    height: 1080,
+                    image_path: format!("frames/{hash}.webp"),
+                    content_hash: hash.to_string(),
+                    app_hint: Some("Editor".to_string()),
+                    window_title: Some("planning".to_string()),
+                    browser_url: None,
+                    capture_trigger: None,
+                })
+                .await
+                .unwrap();
+            store
+                .insert_ocr(
+                    id,
+                    traits::OcrResult {
+                        text: text.to_string(),
+                        mean_confidence: 0.9,
+                        engine: "test".to_string(),
+                        spans: Vec::new(),
+                    },
+                )
+                .await
+                .unwrap();
+            id
+        }
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let outside_text = "quarterly planning notes outside any session";
+        let inside_text = "quarterly planning notes inside the session";
+        let outside = seed(store.as_ref(), 1_700_000_000_000, "outside", outside_text).await;
+        let inside = seed(
+            store.as_ref(),
+            1_700_000_060_000,
+            "inside-session",
+            inside_text,
+        )
+        .await;
+        let in_session_started_at = 1_700_000_060_000;
+        let session_id = store
+            .insert_session(traits::NewSession {
+                started_at: in_session_started_at,
+                ended_at: Some(in_session_started_at + 60_000),
+                kind: traits::SessionKind::Focus,
+                tool: None,
+                host: Some(traits::SessionHost::Ide),
+                context_key: "focus:editor".to_string(),
+                confidence: 0.8,
+                frozen: false,
+            })
+            .await
+            .unwrap();
+        store
+            .assign_frames_session(&[inside], Some(session_id))
+            .await
+            .unwrap();
+
+        let temp = tempfile::tempdir().unwrap();
+        let factory: CaptureFactory =
+            Arc::new(|_, _| panic!("capture is not part of Ask retrieval"));
+        let kernel = Kernel::new(
+            store.clone(),
+            Arc::new(UnusedOcr) as Arc<dyn OcrProvider>,
+            factory,
+            temp.path().join("frames"),
+            Readiness::default(),
+        );
+
+        let chunks = kernel.ask_context("quarterly", 10, None).await.unwrap();
+        let mut retrieved: Vec<i64> = chunks.iter().map(|chunk| chunk.frame_id).collect();
+        retrieved.sort_unstable();
+        let mut expected = vec![outside, inside];
+        expected.sort_unstable();
+        assert_eq!(retrieved, expected, "every matching frame is retrieved");
+        for chunk in &chunks {
+            let expected_text = if chunk.frame_id == inside {
+                inside_text
+            } else {
+                outside_text
+            };
+            assert_eq!(
+                chunk.text, expected_text,
+                "the stored OCR row, not the search snippet"
+            );
+            assert!(
+                chunk.session.is_none(),
+                "legacy Ask carries no session context"
+            );
+            assert!(chunk.score > 0.0);
+        }
+        assert_eq!(
+            chunks
+                .iter()
+                .find(|chunk| chunk.frame_id == inside)
+                .map(|chunk| chunk.captured_at),
+            Some(in_session_started_at),
+            "capture time comes from the frame row"
+        );
+
+        let scoped = kernel
+            .ask_context("quarterly", 10, Some(session_id))
+            .await
+            .unwrap();
+        assert_eq!(scoped.len(), 1, "the session scope narrows retrieval");
+        assert_eq!(scoped[0].frame_id, inside);
+        assert_eq!(scoped[0].text, inside_text);
+        assert!(scoped[0].session.is_none());
+    }
+
+    /// The `ask` command's relay is the only path from an Ask v2 turn to the UI, so it must
+    /// forward every delta verbatim — the per-frame `citation` event, the new `citations`
+    /// event and the diagnostics-bearing terminal `done` — tagged with the request id.
+    #[tokio::test]
+    async fn relay_answer_deltas_forwards_citations_and_enriched_done() {
+        let stage_counts = traits::StageCounts {
+            threads: 2,
+            sessions: 1,
+            frames: 3,
+        };
+        let tokens_assembled = 1_234_u32;
+        let citations = AnswerDelta::Citations {
+            sessions: vec![7],
+            frames: vec![11, 12, 13],
+            thread_id: 3,
+            turn_id: 9,
+            stage_counts,
+            tokens_assembled,
+        };
+        let done = AnswerDelta::Done {
+            stage_counts: Some(stage_counts),
+            tokens_assembled: Some(tokens_assembled),
+        };
+        let sent = vec![
+            AnswerDelta::Thinking {
+                text: "checking".to_string(),
+            },
+            AnswerDelta::Token {
+                text: "answer".to_string(),
+            },
+            AnswerDelta::Citation { frame_id: 11 },
+            citations.clone(),
+            done.clone(),
+        ];
+
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        for delta in &sent {
+            tx.send(delta.clone()).await.unwrap();
+        }
+        drop(tx);
+
+        let received = Arc::new(StdMutex::new(Vec::new()));
+        let sink = received.clone();
+        relay_answer_deltas(rx, "ask-42", move |event| {
+            sink.lock().unwrap().push(event);
+            Ok::<(), std::convert::Infallible>(())
+        })
+        .await;
+
+        let received = received.lock().unwrap().clone();
+        assert_eq!(
+            received
+                .iter()
+                .map(|event| event.delta.clone())
+                .collect::<Vec<_>>(),
+            sent,
+            "every delta reaches the UI unchanged, in order"
+        );
+        assert!(received.iter().all(|event| event.request_id == "ask-42"));
+
+        let done_json = serde_json::to_value(&received.last().unwrap().delta).unwrap();
+        assert_eq!(done_json["type"], "done");
+        assert_eq!(done_json["stage_counts"]["threads"], stage_counts.threads);
+        assert_eq!(done_json["stage_counts"]["sessions"], stage_counts.sessions);
+        assert_eq!(done_json["stage_counts"]["frames"], stage_counts.frames);
+        assert_eq!(done_json["tokens_assembled"], tokens_assembled);
+
+        let citations_json = serde_json::to_value(&citations).unwrap();
+        assert_eq!(citations_json["type"], "citations");
+        assert_eq!(citations_json["thread_id"], 3);
+        assert_eq!(citations_json["turn_id"], 9);
+        assert_eq!(citations_json["frames"], serde_json::json!([11, 12, 13]));
+        assert_eq!(citations_json["sessions"], serde_json::json!([7]));
+        assert_eq!(citations_json["tokens_assembled"], tokens_assembled);
+    }
+
+    /// A window that is gone (every emit fails) must not truncate a turn: the relay keeps
+    /// draining, so the kernel still reaches its terminal events and persists the answer.
+    #[tokio::test]
+    async fn relay_answer_deltas_keeps_draining_when_every_emit_fails() {
+        let citations = 3_i64;
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        for frame_id in 1..=citations {
+            tx.send(AnswerDelta::Citation { frame_id }).await.unwrap();
+        }
+        tx.send(AnswerDelta::done()).await.unwrap();
+        drop(tx);
+
+        let attempts = Arc::new(AtomicU64::new(0));
+        let counter = attempts.clone();
+        relay_answer_deltas(rx, "ask-dead-window", move |_event| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Err::<(), &'static str>("window closed")
+        })
+        .await;
 
         assert_eq!(
-            err,
-            "failed to hydrate Ask OCR context for 1 frames: simulated ocr_texts failure"
+            attempts.load(Ordering::SeqCst),
+            (citations + 1) as u64,
+            "a dead sink still drains every delta"
+        );
+    }
+
+    /// `cancel_ask` aborts the relay task; that must close the turn's stream — the kernel's
+    /// cancellation signal, which leaves the turn's answer NULL — not panic anything.
+    #[tokio::test]
+    async fn aborting_the_answer_relay_closes_the_turn_stream() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<AnswerDelta>(4);
+        let relay = tokio::spawn(relay_answer_deltas(rx, "ask-7", |_event| {
+            Ok::<(), std::convert::Infallible>(())
+        }));
+        relay.abort();
+        assert!(
+            relay.await.is_err(),
+            "an aborted relay reports cancellation"
+        );
+        assert!(
+            tx.is_closed(),
+            "dropping the relay closes the stream it drained"
+        );
+        assert!(
+            tx.send(AnswerDelta::done()).await.is_err(),
+            "a closed stream rejects further deltas instead of panicking"
         );
     }
 

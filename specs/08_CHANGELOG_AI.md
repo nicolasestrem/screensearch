@@ -1,5 +1,50 @@
 # 08 — AI Changelog
 
+## 2026-11-05: P6 Ask v2 — retrieval planning, staged retrieval, multi-turn conversations
+
+- **Change:** Ask became a planned, session-aware, multi-turn pipeline (`03 §7i`), built as four
+  disjoint slices behind one additive contract. `crates/traits`: `RetrievedChunk` gained
+  `session: Option<ChunkSession>` (with `prompt_header()`/`prompt_cost()` and shared prompt-cost
+  helpers so the packer and the assembler count identically); `AnswerDelta` gained one terminal
+  `Citations` event and `Done` gained optional `stage_counts`/`tokens_assembled` (both omitted
+  when absent, so every pre-0.4.5 producer still emits exactly `{"type":"done"}`);
+  `JobKind::SessionEmbed` appended last; and 18 default-bodied `Store` methods for Ask v2.
+  `crates/store`: new `ask.rs` — entity resolution against `entities`/`entity_aliases`, a stage-1
+  thread query over the closed `[first_seen_at,last_seen_at]` interval plus entity-linked
+  sessions, a stage-2 hybrid session retrieval (per-query temporary FTS5 index over candidate
+  titles/summaries fused by the existing RRF rule with `session_vectors` cosine KNN), a new
+  session-set-restricted frame search (the existing `hybrid_search*` methods untouched), thread and
+  turn persistence with `ordinal` allocation in one transaction, session-vector candidates/upsert,
+  and the `session_vectors` row deleted inside the session-delete transaction. `crates/kernel`:
+  `ask_plan.rs` (pure, injectable time-intent planner: calendar windows in local time, ISO weeks,
+  `this morning`/`this afternoon`, weekdays, explicit dates, follow-up shifts; no anchor ⇒ no
+  window), `ask.rs` (`Kernel::ask_turn` — plan → persist → stages 1→2→3→4 → forwarder that emits
+  `Citation* , Citations, Done`, derives citations from the frames the provider actually read,
+  persists the answer and logs the per-turn counts; plus `Kernel::ask_context` and a free
+  `kernel::ask::ask_context` carrying the legacy frame-level path, now the workspace's only
+  implementation of it), `session_vectors.rs` (`run_session_embed` bounded batches + a 30 s
+  producer under the existing throttle that enqueues on idle and on demand). `crates/inference`:
+  the packer renders `prompt_header()` and costs with `prompt_cost()`. `crates/api`: `AskBody.thread_id`,
+  one default-bodied `ApiHost::ask_turn` (`Ok(None)` = no pipeline), and the route streaming a v2
+  stream through the existing `unfold`/`json_data` shape while mapping `ThreadNotFound`/`NoAnswerModel`/
+  `Failed` before any byte. `crates/mcp`: the aggregator parses the `citations` event into
+  `cited_sessions` and the ask tool names them. `ui`: one `case "citations"` in the `useAsk`
+  reducer (the switch is exhaustive). Regenerated `AnswerDelta.ts`, `JobKind.ts`, new `StageCounts.ts`.
+- **Why:** the previous Ask was a single frame-level search that answered per request, with no way
+  to scope a question to a period, no citation of the sessions an answer drew on, and no
+  conversation state — the gaps `02 §5`/`03 §7i` close for Gate B.
+- **Governance:** the maintainer's grant covered the kickoff's three wiring sites plus (widened at
+  the mapping stage) `crates/api/src/lib.rs`, `src-tauri/src/local_api.rs`, `crates/traits/src/contracts.rs`,
+  `crates/mcp`, one `useAsk` case, six files for mechanical compile fixups, and later
+  `crates/evalfixture/src/serve.rs`. Every decision and stop-condition resolution is in `07`;
+  contradictions are `06` #46–#53. Nothing was committed to `main`, pushed, merged or reviewed.
+- **Evidence:** full kickoff verification list green (raw output in `05`); new suites: store
+  `ask` (13 integration + 3 unit), kernel `ask` (10 integration + 17 planner/assembly unit),
+  api `ask_v2` (8), app crate relay/legacy-delegation tests (4), MCP citations tests, inference
+  prompt-parity tests. The acceptance measurement (evidence recall@10, known-fact rate, citation
+  validity, p95) is the maintainer's run against the live database — this workspace has no live
+  DB, so no acceptance number is claimed here.
+
 ## 2026-11-05: P5 review fixes for the merged #157 code (open PR, not merged by the agent)
 
 - **Change:** fixed the one P1 and three P2 automated-review findings that were still unresolved

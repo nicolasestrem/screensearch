@@ -23,13 +23,16 @@ use std::sync::{Arc, Mutex, Once, RwLock};
 use async_trait::async_trait;
 use rusqlite::Connection;
 use traits::{
-    AppSuppression, ChunkSource, Embedding, EmbeddingProvider, FrameContextRow,
-    FrameEnrichmentInput, FrameMeta, InsightsSummary, Job, JobKind, JobStats, Mark, NewFrame,
-    NewJob, NewSession, NewSessionArtifact, OcrResult, Result, SearchHit, SearchQuery,
-    SegmenterFrame, Session, SessionArtifact, SessionArtifactKind, SessionContent, SessionFilter,
-    SessionFrameSample, SessionReference, TextFilterContext, TimelineBucket, VisionAnalysis,
+    AppSuppression, AskEntityMatch, AskSessionHit, AskThreadCandidate, AskTurnRecord, ChunkSource,
+    Embedding, EmbeddingProvider, FrameContextRow, FrameEnrichmentInput, FrameMeta,
+    InsightsSummary, Job, JobKind, JobStats, Mark, NewAskTurn, NewFrame, NewJob, NewSession,
+    NewSessionArtifact, OcrResult, Result, SearchHit, SearchQuery, SegmenterFrame, Session,
+    SessionArtifact, SessionArtifactKind, SessionContent, SessionEmbedInput, SessionFilter,
+    SessionFrameSample, SessionReference, TextFilterContext, TimeRange, TimelineBucket,
+    VisionAnalysis,
 };
 
+mod ask;
 mod embeddings;
 mod frames;
 mod graph;
@@ -695,5 +698,89 @@ impl Store for SqliteStore {
         proposals: &[traits::NormalizationProposal],
     ) -> Result<traits::NormalizationOutcome> {
         SqliteStore::graph_apply_normalization(self, proposals).await
+    }
+
+    async fn ask_resolve_entities(&self, question: &str) -> Result<Vec<AskEntityMatch>> {
+        SqliteStore::ask_resolve_entities(self, question).await
+    }
+    async fn ask_candidate_threads(
+        &self,
+        window: Option<TimeRange>,
+        entity_sessions: &[i64],
+    ) -> Result<Vec<AskThreadCandidate>> {
+        SqliteStore::ask_candidate_threads(self, window, entity_sessions).await
+    }
+    async fn ask_candidate_sessions(
+        &self,
+        threads: &[AskThreadCandidate],
+        window: Option<TimeRange>,
+        entity_sessions: &[i64],
+    ) -> Result<Vec<i64>> {
+        SqliteStore::ask_candidate_sessions(self, threads, window, entity_sessions).await
+    }
+    async fn ask_search_sessions(
+        &self,
+        question: &str,
+        candidates: &[i64],
+        limit: u32,
+    ) -> Result<Vec<AskSessionHit>> {
+        SqliteStore::ask_search_sessions(self, question, candidates, limit).await
+    }
+    async fn ask_search_frames(
+        &self,
+        query: &SearchQuery,
+        sessions: &[i64],
+    ) -> Result<Vec<SearchHit>> {
+        SqliteStore::ask_search_frames(self, query, sessions).await
+    }
+    async fn ask_frame_sessions(
+        &self,
+        frame_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, i64>> {
+        SqliteStore::ask_frame_sessions(self, frame_ids).await
+    }
+    async fn ask_session_labels(
+        &self,
+        session_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, String>> {
+        SqliteStore::ask_session_labels(self, session_ids).await
+    }
+    async fn ask_thread_exists(&self, thread_id: i64) -> Result<bool> {
+        SqliteStore::ask_thread_exists(self, thread_id).await
+    }
+    async fn create_ask_thread(&self) -> Result<i64> {
+        SqliteStore::create_ask_thread(self).await
+    }
+    async fn delete_ask_thread(&self, thread_id: i64) -> Result<bool> {
+        SqliteStore::delete_ask_thread(self, thread_id).await
+    }
+    async fn last_ask_turn(&self, thread_id: i64) -> Result<Option<AskTurnRecord>> {
+        SqliteStore::last_ask_turn(self, thread_id).await
+    }
+    async fn append_ask_turn(&self, turn: NewAskTurn) -> Result<AskTurnRecord> {
+        SqliteStore::append_ask_turn(self, turn).await
+    }
+    async fn finish_ask_turn(&self, turn_id: i64, answer: &str) -> Result<bool> {
+        SqliteStore::finish_ask_turn(self, turn_id, answer).await
+    }
+    async fn list_ask_turns(&self, thread_id: i64) -> Result<Vec<AskTurnRecord>> {
+        SqliteStore::list_ask_turns(self, thread_id).await
+    }
+    async fn session_embed_candidates(&self, limit: u32) -> Result<Vec<SessionEmbedInput>> {
+        SqliteStore::session_embed_candidates(self, limit).await
+    }
+    async fn session_embed_pending(&self) -> Result<u64> {
+        SqliteStore::session_embed_pending(self).await
+    }
+    async fn upsert_session_vector(
+        &self,
+        session_id: i64,
+        text: &str,
+        emb: &Embedding,
+    ) -> Result<bool> {
+        SqliteStore::upsert_session_vector(self, session_id, text, emb).await
+    }
+    async fn pending_jobs_of_kind(&self, kind: JobKind) -> Result<u64> {
+        SqliteStore::pending_jobs_of_kind(self, kind).await
     }
 }

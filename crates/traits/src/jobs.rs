@@ -24,6 +24,10 @@ pub enum JobKind {
     GraphCluster,
     /// The resumable historical pass: enqueues bounded `graph_extract` batches (`03 §7h.6`).
     GraphBackfill,
+    /// Ask v2 session-vector maintenance for `session_vectors` (`03 §7i.2`, 0.4.5 D11):
+    /// embeds a session's concatenated title/summary in bounded batches, most recently
+    /// updated first. Runs on demand and on idle, never on the capture hot path.
+    SessionEmbed,
 }
 
 /// State of a job in the queue. Serializes to the DB `state` column

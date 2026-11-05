@@ -1,10 +1,12 @@
 //! Composition-root wiring for the opt-in local HTTP API (0.3.0 PR7; `03 §7c`, D11/D12).
 //!
 //! This is the only place the concrete store/kernel meet the `api` crate. [`TauriApiHost`]
-//! implements [`api::ApiHost`] over the same helpers the Tauri commands use (`ask_context`,
-//! `safe_frame_path`, `kernel::resume::where_was_i`), so the HTTP surface and the UI answer
-//! identically. The server lives in an [`ApiRuntime`] slot; enabling/disabling toggles it
-//! at runtime, mirroring the capture handle's idempotent start/stop.
+//! implements [`api::ApiHost`] over the kernel's own seams (`Kernel::ask_context`,
+//! `Kernel::ask_turn`, `kernel::resume::where_was_i`) plus the composition root's helpers
+//! (`now_ms`, `safe_frame_path`), so the HTTP surface and the UI answer through one
+//! retrieval implementation and identically. The server lives in an [`ApiRuntime`] slot;
+//! enabling/disabling toggles it at runtime, mirroring the capture handle's idempotent
+//! start/stop.
 //!
 //! `api.enabled` / `api.port` / `api.bind_address` are `UI` keys (fields of the typed
 //! `Settings` since settings v2, `03 §8`), but their *apply* path lives here: the config is
@@ -20,19 +22,19 @@ use std::sync::{Arc, Mutex as StdMutex, RwLock};
 use async_trait::async_trait;
 use tauri::{AppHandle, Emitter, Manager, State};
 use traits::{
-    AnswerProvider, ApiReadTokenSecret, ApiReadTokenStatus, ApiStatus, CaptureCoverage,
-    CaptureInterruption, CaptureInterruptionReason, CaptureObservations, EvidenceWindow,
-    ExportFrameRow, ExportRequest, ExportResult, FrameDetail, FramePageRequest, HistoryReadError,
-    ReportDeliveryState, ReportDetail, ReportPageRequest, ReportRunPhase, ResumeContext,
-    RetentionScope, RetrievedChunk, SavedReportRetention, Settings, Store, StoredFramePage,
-    StoredReportPage, Toast, ToastLevel,
+    AnswerProvider, ApiReadTokenSecret, ApiReadTokenStatus, ApiStatus, AskTurnError,
+    AskTurnRequest, AskTurnStream, CaptureCoverage, CaptureInterruption, CaptureInterruptionReason,
+    CaptureObservations, EvidenceWindow, ExportFrameRow, ExportRequest, ExportResult, FrameDetail,
+    FramePageRequest, HistoryReadError, ReportDeliveryState, ReportDetail, ReportPageRequest,
+    ReportRunPhase, ResumeContext, RetentionScope, RetrievedChunk, SavedReportRetention, Settings,
+    Store, StoredFramePage, StoredReportPage, Toast, ToastLevel,
 };
 
 use api::{ApiHost, ApiServer, FrameImage, SharedToken, DEFAULT_BIND_ADDRESS, DEFAULT_PORT};
 use kernel::Kernel;
 use store::SqliteStore;
 
-use crate::{ask_context, now_ms, safe_frame_path, AppState};
+use crate::{now_ms, safe_frame_path, AppState};
 
 const API_ENABLED_KEY: &str = "api.enabled";
 const API_PORT_KEY: &str = "api.port";
@@ -180,15 +182,29 @@ impl ApiHost for TauriApiHost {
         }))
     }
 
+    /// Grounding context for `/v1/ask`, forwarded to the kernel's single legacy retrieval
+    /// (`03 §7c`) — hybrid frame search plus one bulk OCR hydrate, byte-identical to the
+    /// path this host used to run itself. `session_id = Some(id)` scopes retrieval to that
+    /// session's own frames; `None` is the unchanged frame-level path (D10).
     async fn ask_context(
         &self,
         query: &str,
         top_k: u32,
         session_id: Option<i64>,
     ) -> anyhow::Result<Vec<RetrievedChunk>> {
-        ask_context(self.store.as_ref(), query, top_k, session_id)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))
+        self.kernel.ask_context(query, top_k, session_id).await
+    }
+
+    /// Starts an Ask v2 turn on the kernel pipeline (`03 §7i`). A named conversation that
+    /// does not exist or an unattached answer model is the kernel's own
+    /// [`AskTurnError::ThreadNotFound`] / [`AskTurnError::NoAnswerModel`] — forwarded, never
+    /// papered over with a fabricated stream, so the route can map 404/503 before any bytes
+    /// are streamed.
+    async fn ask_turn(
+        &self,
+        request: AskTurnRequest,
+    ) -> Result<Option<AskTurnStream>, AskTurnError> {
+        self.kernel.ask_turn(request).await.map(Some)
     }
 
     async fn answer_provider(&self) -> Option<Arc<dyn AnswerProvider>> {

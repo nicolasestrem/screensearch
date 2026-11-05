@@ -15,7 +15,10 @@ use std::sync::RwLock;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tokio::sync::mpsc::{self, Sender};
-use traits::{AnswerDelta, AnswerOpts, AnswerProvider, ModelTier, RetrievedChunk, SidecarParams};
+use traits::{
+    estimate_prompt_tokens, AnswerDelta, AnswerOpts, AnswerProvider, ModelTier, RetrievedChunk,
+    SidecarParams, PROMPT_BYTES_PER_TOKEN,
+};
 
 use crate::client::{ChatMessage, StreamPiece};
 use crate::models::{self, ModelLane, ModelSpec};
@@ -166,7 +169,7 @@ impl AnswerSidecar {
                         })
                         .await;
                 }
-                let _ = tx.send(AnswerDelta::Done).await;
+                let _ = tx.send(AnswerDelta::done()).await;
                 Ok(())
             }
         }
@@ -362,18 +365,6 @@ async fn emit_segment(
 /// Chat-template + role-tag overhead reserved on top of the system prompt and question,
 /// so the assembled prompt leaves headroom for llama.cpp's own template tokens.
 const TEMPLATE_OVERHEAD_TOKENS: usize = 96;
-/// Per-snippet framing cost (`[frame <id>] ` + newline), in estimated tokens.
-const ID_FRAMING_TOKENS: usize = 6;
-
-/// Conservative UTF-8 **bytes**-per-token lower bound used to estimate prompt length
-/// without a real tokenizer. A *chars*-based ratio under-counts dense scripts (a CJK
-/// character is ~3 bytes yet ~1 token for well-merging tokenizers, and up to ~1.5 tokens
-/// for Mistral-family ones like the default Ministral answer model) and would re-trigger
-/// the `exceed_context_size_error` this budgeting prevents. At 2 bytes/token the estimate
-/// stays an *upper* bound on tokens for both scripts — English (~4 bytes/token) is
-/// over-reserved (safe, with ample context still admitted) and worst-case CJK is covered.
-/// (Gemini/Claude/Codex review, PR #26.)
-const BYTES_PER_TOKEN: usize = 2;
 
 /// The reply token budget actually used. Caps a large requested `max_tokens` to half the
 /// context window so it can never reserve the *entire* window and force `build_messages` to
@@ -384,17 +375,12 @@ fn effective_reply_budget(requested: u32, ctx_size: u32) -> u32 {
     requested.min((ctx_size / 2).max(1))
 }
 
-/// Rough token estimate. Deliberately over-counts (see [`BYTES_PER_TOKEN`]) so the
-/// assembled prompt stays under the model's context window.
-fn estimate_tokens(text: &str) -> usize {
-    text.len() / BYTES_PER_TOKEN + 1
-}
-
 /// Truncates `text` to roughly `budget_tokens` worth of UTF-8 bytes, snapped down to a
-/// char boundary (so multibyte characters are never split). Mirrors [`estimate_tokens`].
+/// char boundary (so multibyte characters are never split). Mirrors
+/// [`estimate_prompt_tokens`] and its [`PROMPT_BYTES_PER_TOKEN`] bound.
 fn truncate_to_tokens(text: &str, budget_tokens: usize) -> String {
     let mut max_bytes = budget_tokens
-        .saturating_mul(BYTES_PER_TOKEN)
+        .saturating_mul(PROMPT_BYTES_PER_TOKEN)
         .min(text.len());
     while max_bytes > 0 && !text.is_char_boundary(max_bytes) {
         max_bytes -= 1;
@@ -403,13 +389,14 @@ fn truncate_to_tokens(text: &str, budget_tokens: usize) -> String {
 }
 
 /// Packs context chunks best-first into `intro`, spending at most `budget_tokens`. Each
-/// chunk costs its estimated tokens plus [`ID_FRAMING_TOKENS`]; chunks are appended as
-/// `[frame <id>] <text>` until the budget is spent, the rest dropped. If the most relevant
-/// chunk alone exceeds the budget it is truncated (grounding on a head beats dropping
-/// everything). When nothing fit, a `(no relevant snippets found)` line is appended.
-/// Returns the assembled user text and the frame ids actually included — the shared core
-/// of [`build_messages`] (Ask) and [`build_summary_messages`] (reports), so citations
-/// always cover context the model really saw and the budgeting is bounded once.
+/// chunk costs its own [`RetrievedChunk::prompt_cost`] — trimmed text plus framing plus the
+/// session part of its header when it has one — and is appended as
+/// `<prompt_header> <text>` until the budget is spent, the rest dropped. If the most
+/// relevant chunk alone exceeds the budget it is truncated (grounding on a head beats
+/// dropping everything). When nothing fit, a `(no relevant snippets found)` line is
+/// appended. Returns the assembled user text and the frame ids actually included — the
+/// shared core of [`build_messages`] (Ask) and [`build_summary_messages`] (reports), so
+/// citations always cover context the model really saw and the budgeting is bounded once.
 fn pack_context(
     intro: &str,
     context: &[&RetrievedChunk],
@@ -426,14 +413,16 @@ fn pack_context(
         if text.is_empty() {
             continue;
         }
-        let cost = estimate_tokens(text) + ID_FRAMING_TOKENS;
+        let cost = chunk.prompt_cost();
         let snippet = if cost <= budget {
             budget -= cost;
             text.to_string()
         } else if included.is_empty() {
             // The most relevant chunk alone exceeds the budget: ground on a truncated head
-            // rather than dropping all context, then stop.
-            let s = truncate_to_tokens(text, budget.saturating_sub(ID_FRAMING_TOKENS));
+            // rather than dropping all context, then stop. Everything the header costs
+            // (framing plus any session context) is reserved before the text budget.
+            let header_cost = cost - estimate_prompt_tokens(text);
+            let s = truncate_to_tokens(text, budget.saturating_sub(header_cost));
             budget = 0;
             s
         } else {
@@ -442,7 +431,7 @@ fn pack_context(
         if snippet.is_empty() {
             break;
         }
-        user.push_str(&format!("[frame {}] {}\n", chunk.frame_id, snippet));
+        user.push_str(&format!("{} {}\n", chunk.prompt_header(), snippet));
         if !included.contains(&chunk.frame_id) {
             included.push(chunk.frame_id);
         }
@@ -467,8 +456,8 @@ fn build_messages(
     max_tokens: u32,
 ) -> (Vec<ChatMessage>, Vec<i64>) {
     let reserve = max_tokens as usize
-        + estimate_tokens(SYSTEM_PROMPT)
-        + estimate_tokens(query)
+        + estimate_prompt_tokens(SYSTEM_PROMPT)
+        + estimate_prompt_tokens(query)
         + TEMPLATE_OVERHEAD_TOKENS;
     let budget = (ctx_size as usize).saturating_sub(reserve);
     let refs: Vec<&RetrievedChunk> = context.iter().collect();
@@ -497,8 +486,8 @@ fn build_summary_messages(
     max_tokens: u32,
 ) -> (Vec<ChatMessage>, Vec<i64>) {
     let reserve = max_tokens as usize
-        + estimate_tokens(system_prompt)
-        + estimate_tokens(instruction)
+        + estimate_prompt_tokens(system_prompt)
+        + estimate_prompt_tokens(instruction)
         + TEMPLATE_OVERHEAD_TOKENS;
     let budget = (ctx_size as usize).saturating_sub(reserve);
     let refs: Vec<&RetrievedChunk> = context.iter().collect();
@@ -683,6 +672,25 @@ mod tests {
             text: text.to_string(),
             score: 1.0,
             captured_at: 0,
+            session: None,
+        }
+    }
+
+    fn session_chunk(frame_id: i64, text: &str, session_id: i64, label: &str) -> RetrievedChunk {
+        RetrievedChunk {
+            session: Some(traits::ChunkSession {
+                id: session_id,
+                label: label.to_string(),
+            }),
+            ..chunk(frame_id, text)
+        }
+    }
+
+    /// The user message's text, for exact (byte-level) prompt comparisons.
+    fn user_text(message: &ChatMessage) -> &str {
+        match &message.content {
+            crate::client::MessageContent::Text(text) => text,
+            _ => panic!("the prompt is a plain text message"),
         }
     }
 
@@ -697,6 +705,82 @@ mod tests {
         assert!(user.contains("[frame 9]"));
         assert!(user.contains("what did I see?"));
         assert_eq!(cited, vec![7, 9], "both frames fit the budget → both cited");
+    }
+
+    /// Reports and graph normalization retrieve chunks with `session: None`; their prompt
+    /// bytes must stay exactly what they were before Ask v2 grew session context.
+    #[test]
+    fn chunks_without_a_session_render_the_legacy_frame_tag_byte_for_byte() {
+        let ctx = vec![chunk(7, "login page"), chunk(9, "  dashboard  ")];
+        let (msgs, cited) = build_messages("what did I see?", &ctx, 8192, 512);
+
+        let expected = format!(
+            "Context snippets from my screen history:\n\
+             [frame {first_id}] {first_text}\n\
+             [frame {second_id}] {second_text}\n\
+             \nQuestion: what did I see?",
+            first_id = ctx[0].frame_id,
+            first_text = ctx[0].text.trim(),
+            second_id = ctx[1].frame_id,
+            second_text = ctx[1].text.trim(),
+        );
+        assert_eq!(user_text(&msgs[1]), expected);
+        assert!(
+            !user_text(&msgs[1]).contains("session"),
+            "a chunk outside any session adds no session context"
+        );
+        assert_eq!(cited, vec![7, 9]);
+    }
+
+    /// The report/normalization prompt path shares [`pack_context`]; a chunk with no
+    /// session must produce the same bytes it produced before session context existed.
+    #[test]
+    fn report_prompts_are_byte_identical_without_session_context() {
+        let ctx = vec![
+            chunk(11, "edited the report draft"),
+            chunk(13, "ran the build"),
+        ];
+        let (msgs, cited) =
+            build_summary_messages("SUMMARIZE PROMPT", "Summarize Tuesday.", &ctx, 8192, 512);
+
+        let expected = format!(
+            "Content from my screen history:\n\
+             [frame {first_id}] {first_text}\n\
+             [frame {second_id}] {second_text}\n\
+             \nSummarize Tuesday.",
+            first_id = ctx[0].frame_id,
+            first_text = ctx[0].text.trim(),
+            second_id = ctx[1].frame_id,
+            second_text = ctx[1].text.trim(),
+        );
+        assert_eq!(user_text(&msgs[1]), expected);
+        assert_eq!(cited, vec![11, 13]);
+    }
+
+    /// Ask v2 assembly attaches the frame's session: the header names it and its tokens are
+    /// part of the chunk's cost, so the kernel's `tokens_assembled` and the packer agree.
+    #[test]
+    fn session_context_is_rendered_in_the_header_and_costed() {
+        let plain = chunk(7, "login page");
+        let with_session = session_chunk(7, "login page", 3, "Fix the build");
+        let (msgs, cited) = build_messages("q", std::slice::from_ref(&with_session), 8192, 512);
+        assert_eq!(cited, vec![7]);
+        let expected_header = "[frame 7 | session 3: Fix the build] login page".to_string();
+        assert!(
+            user_text(&msgs[1]).contains(&expected_header),
+            "prompt was {}",
+            user_text(&msgs[1])
+        );
+        assert_eq!(
+            with_session.prompt_cost() - plain.prompt_cost(),
+            traits::estimate_prompt_tokens(" | session 3: Fix the build"),
+            "the session part costs exactly what prompt_cost adds"
+        );
+        // The framing constant is the shared one: text + framing for the session-less chunk.
+        assert_eq!(
+            plain.prompt_cost(),
+            traits::estimate_prompt_tokens(plain.text.trim()) + traits::CHUNK_FRAMING_TOKENS
+        );
     }
 
     #[test]
@@ -747,15 +831,15 @@ mod tests {
     }
 
     #[test]
-    fn estimate_tokens_does_not_undercount_cjk() {
+    fn estimate_prompt_tokens_does_not_undercount_cjk() {
         // 40 CJK chars = 120 UTF-8 bytes, tokenizing ~1 token/char. A chars/3 ratio would
         // estimate ~14 and overflow the context; the byte ratio must stay >= the char count.
         let cjk = "你好世界".repeat(10);
         assert_eq!(cjk.chars().count(), 40);
         assert!(
-            estimate_tokens(&cjk) >= cjk.chars().count(),
+            estimate_prompt_tokens(&cjk) >= cjk.chars().count(),
             "CJK estimate {} must not undercount {} chars",
-            estimate_tokens(&cjk),
+            estimate_prompt_tokens(&cjk),
             cjk.chars().count()
         );
     }
@@ -815,7 +899,7 @@ mod tests {
         let cjk = "世".repeat(100);
         let out = truncate_to_tokens(&cjk, 10);
         assert!(cjk.starts_with(&out));
-        assert!(!out.is_empty() && out.len() <= 10 * BYTES_PER_TOKEN);
+        assert!(!out.is_empty() && out.len() <= 10 * PROMPT_BYTES_PER_TOKEN);
         assert!(
             out.chars().all(|c| c == '世'),
             "no split / replacement chars"

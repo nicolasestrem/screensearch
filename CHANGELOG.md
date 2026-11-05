@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: Ask v2 — session-aware, multi-turn question answering
+
+- **Ask now plans before it retrieves, and answers over conversations instead of single frames.**
+  A question is first planned: relative time phrasing ("yesterday", "last week", "this morning")
+  becomes an explicit half-open window, and an entity mention resolves against the work graph so
+  retrieval is scoped to the sessions linked to it. Retrieval then runs in a fixed order — threads,
+  then sessions (full-text on session titles/summaries combined with session-vector similarity),
+  then frames inside the winning sessions — with each stage only narrowing the previous one. Every
+  answer cites both the frames it actually read and the sessions those frames belong to.
+- **Follow-up questions are conversations.** A question starts a conversation and turn 1; asking
+  again with the conversation returns the next ordinal and reuses the previous turn's time window
+  and entity scope, so "and the day before?" moves the window and keeps the scope. Deleting a
+  conversation removes its turns and touches no captured evidence.
+- **The answer stream gains exactly one event and one request field.** A single `citations` event
+  is emitted immediately before `done`, carrying the cited session ids, the cited frame ids, the
+  conversation and turn ids, the per-stage candidate counts and the assembled token total. `done`
+  carries the same counts, and both are omitted when absent, so a client that knows nothing about
+  Ask v2 renders today's answer unchanged. `POST /v1/ask` accepts an optional `thread_id`.
+- **Sessions with a title or summary are embedded in the background.** A new `session_embed` job
+  kind keeps the session-vector index warm, in bounded batches ordered most-recently-updated
+  first, on idle and on demand under the existing pressure throttle — never on the capture path.
+  A session whose title and summary are both empty is never embedded, and a deleted session's
+  vector is removed with it.
+- **A library with no work graph still answers.** With empty graph tables and no session
+  summaries, Ask v2 degrades to the existing frame-level search over the planned window — with the
+  window as the only new filter — so it is never worse than the previous Ask.
+
 ### Fixed: work-graph links now follow session ownership changes
 
 - **The work graph repairs its session links instead of treating the first extraction as final.**

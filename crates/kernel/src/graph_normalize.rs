@@ -210,6 +210,9 @@ fn build_context(sessions: &[SessionSummaryInput]) -> Vec<RetrievedChunk> {
                 ),
                 score: 1.0,
                 captured_at: session.started_at,
+                // Normalization grounds on summaries, not on session context: its prompt
+                // bytes stay exactly what they were before Ask v2 (`03 §7i.2`).
+                session: None,
             }
         })
         .collect()
@@ -320,7 +323,7 @@ pub(crate) mod test_support {
             {
                 return Ok(());
             }
-            let _ = tx.send(AnswerDelta::Done).await;
+            let _ = tx.send(AnswerDelta::done()).await;
             Ok(())
         }
     }

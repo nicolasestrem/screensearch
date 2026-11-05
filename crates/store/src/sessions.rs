@@ -197,9 +197,19 @@ impl SqliteStore {
         .await
     }
 
+    /// Deletes an unfrozen session and, in the same transaction, its `session_vectors` row
+    /// (`03 §7i.2`): a `vec0` table carries no foreign key and a DDL trigger for it would be a
+    /// schema change (P3 owns the DDL), so the vector cleanup belongs to this delete path. A
+    /// frozen session (or an unknown id) deletes nothing and leaves any vector untouched.
     pub async fn delete_unfrozen_session(&self, id: i64) -> Result<bool> {
         self.with_conn(move |conn| {
-            Ok(conn.execute("DELETE FROM sessions WHERE id=?1 AND frozen=0", [id])? > 0)
+            let tx = conn.unchecked_transaction()?;
+            let deleted = tx.execute("DELETE FROM sessions WHERE id=?1 AND frozen=0", [id])? > 0;
+            if deleted {
+                tx.execute("DELETE FROM session_vectors WHERE session_id=?1", [id])?;
+            }
+            tx.commit()?;
+            Ok(deleted)
         })
         .await
     }

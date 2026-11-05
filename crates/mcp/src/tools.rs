@@ -9,7 +9,7 @@
 use base64::Engine as _;
 use serde_json::{json, Value};
 
-use crate::client::{ApiClient, ApiFailure};
+use crate::client::{ApiClient, ApiFailure, AskOutcome};
 use crate::rpc;
 
 /// A tool-level failure — rendered as an `isError` result, not a protocol error.
@@ -357,7 +357,32 @@ fn build_ask_body(
     Ok(body)
 }
 
-/// Streams the ask, aggregates the SSE, and renders the answer + cited frames.
+/// Renders the aggregated stream as the tool's text block: the answer prose, then the two
+/// kinds of evidence the answer was grounded in (`03 §7i.3`). Each citation line is omitted
+/// when its set is empty, so a stream from an API that predates the Ask v2 `citations` event
+/// renders exactly the text it rendered before.
+fn render_answer(outcome: &AskOutcome) -> String {
+    let mut text = if outcome.answer.is_empty() {
+        "(the model returned no answer text)".to_string()
+    } else {
+        outcome.answer.clone()
+    };
+    if !outcome.cited_sessions.is_empty() {
+        let ids: Vec<String> = outcome
+            .cited_sessions
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        text.push_str(&format!("\n\nCited sessions: {}", ids.join(", ")));
+    }
+    if !outcome.citations.is_empty() {
+        let ids: Vec<String> = outcome.citations.iter().map(|f| f.to_string()).collect();
+        text.push_str(&format!("\n\nCited frames: {}", ids.join(", ")));
+    }
+    text
+}
+
+/// Streams the ask, aggregates the SSE, and renders the answer + cited sessions + frames.
 async fn run_ask(
     client: &ApiClient,
     body: serde_json::Map<String, Value>,
@@ -378,16 +403,7 @@ async fn run_ask(
             "[screensearch-mcp] warning: answer stream ended before completion; returning partial answer"
         );
     }
-    let mut text = if outcome.answer.is_empty() {
-        "(the model returned no answer text)".to_string()
-    } else {
-        outcome.answer
-    };
-    if !outcome.citations.is_empty() {
-        let cites: Vec<String> = outcome.citations.iter().map(|c| c.to_string()).collect();
-        text.push_str(&format!("\n\nCited frames: {}", cites.join(", ")));
-    }
-    Ok(vec![text_block(text)])
+    Ok(vec![text_block(render_answer(&outcome))])
 }
 
 async fn get_moment(client: &ApiClient, args: &Value) -> Result<Vec<Value>, ToolError> {
@@ -1418,5 +1434,69 @@ mod tests {
                 "no {forbidden} tool may be registered: {names:?}"
             );
         }
+    }
+
+    /// Folds real SSE lines through the aggregator exactly as [`run_ask`] does, so the
+    /// assertion covers wire bytes → tool text rather than a hand-built outcome. Every line
+    /// but the last must keep the stream open; the last one may terminate it.
+    fn aggregate(lines: &[&str]) -> AskOutcome {
+        let (last, head) = lines
+            .split_last()
+            .expect("the fixture has at least one line");
+        let mut agg = crate::sse::AskAggregator::new();
+        for line in head {
+            assert_eq!(
+                agg.feed(line),
+                crate::sse::Flow::Continue,
+                "a fixture line before the end must not terminate the stream: {line}"
+            );
+        }
+        let done = agg.feed(last) == crate::sse::Flow::Done;
+        AskOutcome {
+            answer: agg.answer,
+            citations: agg.citations,
+            cited_sessions: agg.cited_sessions,
+            done,
+            tokens_seen: agg.tokens_seen,
+        }
+    }
+
+    #[test]
+    fn answer_text_names_cited_sessions_before_frames() {
+        let outcome = aggregate(&[
+            r#"data: {"type":"token","text":"The invoice total was 42 EUR"}"#,
+            r#"data: {"type":"citation","frame_id":41}"#,
+            r#"data: {"type":"citation","frame_id":7}"#,
+            r#"data: {"type":"citations","sessions":[7,9],"frames":[7,41],"thread_id":3,"turn_id":2,"stage_counts":{"threads":2,"sessions":2,"frames":2},"tokens_assembled":812}"#,
+            r#"data: {"type":"done","stage_counts":{"threads":2,"sessions":2,"frames":2},"tokens_assembled":812}"#,
+        ]);
+        assert_eq!(
+            render_answer(&outcome),
+            "The invoice total was 42 EUR\n\nCited sessions: 7, 9\n\nCited frames: 7, 41"
+        );
+    }
+
+    #[test]
+    fn answer_text_omits_an_absent_citation_kind() {
+        // A pre-0.4.5 stream (per-frame citations only) renders exactly what it rendered
+        // before: no empty "Cited sessions:" line.
+        let legacy = aggregate(&[
+            r#"data: {"type":"token","text":"answer"}"#,
+            r#"data: {"type":"citation","frame_id":12}"#,
+            r#"data: {"type":"done"}"#,
+        ]);
+        assert_eq!(render_answer(&legacy), "answer\n\nCited frames: 12");
+
+        // An Ask v2 turn whose frames sit outside any session: sessions stay empty, so only
+        // the frames line appears.
+        let sessionless = aggregate(&[
+            r#"data: {"type":"token","text":"answer"}"#,
+            r#"data: {"type":"citations","sessions":[],"frames":[12],"thread_id":4,"turn_id":1,"stage_counts":{"threads":0,"sessions":0,"frames":1},"tokens_assembled":64}"#,
+        ]);
+        assert_eq!(render_answer(&sessionless), "answer\n\nCited frames: 12");
+
+        // No citations at all still reports the empty answer honestly.
+        let empty = aggregate(&[r#"data: {"type":"done"}"#]);
+        assert_eq!(render_answer(&empty), "(the model returned no answer text)");
     }
 }

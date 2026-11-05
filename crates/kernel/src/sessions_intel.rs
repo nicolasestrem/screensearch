@@ -56,6 +56,7 @@ pub async fn generate_session_title_summary(
             text: content.content_text,
             score: 1.0,
             captured_at: content.captured_at,
+            session: None,
         })
         .collect();
     let mut attempt = 0;

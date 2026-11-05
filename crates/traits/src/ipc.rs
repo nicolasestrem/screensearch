@@ -777,9 +777,63 @@ pub enum AnswerDelta {
         frame_id: i64,
     },
     /// The answer is complete.
-    Done,
+    ///
+    /// Ask v2 (`03 §7i.2`) additionally carries the per-stage candidate counts and the
+    /// assembled token total, which the P4 harness reads from `runs.jsonl`'s verbatim
+    /// terminal payload. Both are omitted when absent, so every pre-0.4.5 producer emits
+    /// exactly the bytes it emitted before.
+    Done {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stage_counts: Option<StageCounts>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(type = "number | null")]
+        tokens_assembled: Option<u32>,
+    },
+    /// Ask v2 terminal citations (`03 §7i.3`, 0.4.5 D12): both kinds of evidence, emitted
+    /// once immediately before [`Self::Done`]. Clients that do not know it ignore it.
+    Citations {
+        /// Distinct non-NULL `frames.session_id` of the frames in the assembled prompt.
+        #[ts(type = "number[]")]
+        sessions: Vec<i64>,
+        /// The frame ids in the assembled prompt, in citation (inclusion) order.
+        #[ts(type = "number[]")]
+        frames: Vec<i64>,
+        #[ts(type = "number")]
+        thread_id: i64,
+        #[ts(type = "number")]
+        turn_id: i64,
+        stage_counts: StageCounts,
+        #[ts(type = "number")]
+        tokens_assembled: u32,
+    },
     /// The answer failed.
     Error { message: String },
+}
+
+impl AnswerDelta {
+    /// A bare terminal `done`. [`Self::Done`] carries no Ask v2 diagnostics here, so the
+    /// serialized event is exactly `{"type":"done"}` for every non-Ask stream (reports,
+    /// graph normalization) and for providers that know no stage counts.
+    pub fn done() -> Self {
+        Self::Done {
+            stage_counts: None,
+            tokens_assembled: None,
+        }
+    }
+}
+
+/// Per-stage candidate counts for one Ask v2 turn (`03 §7i.2`). Each later stage only
+/// narrows the previous one's candidate set, so these are the counts recorded per turn.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct StageCounts {
+    /// Stage 1 — threads whose interval overlaps the planned window (or hold an
+    /// entity-resolved session).
+    pub threads: u32,
+    /// Stage 2 — sessions that won the hybrid session retrieval.
+    pub sessions: u32,
+    /// Stage 3 — frames the session-restricted hybrid frame search returned.
+    pub frames: u32,
 }
 
 /// Emitted once per stored capture (`capture_tick` event).

@@ -1,5 +1,201 @@
 # 05 — Build Review
 
+## 2026-11-05: P6 Ask v2 (branch `feat/0.4.5-p6-ask-v2`)
+
+Branch base: `main` @ `b84c164` (P1–P5 merged). There is no `v0.4.3` tag, so Gate A is not closed
+as a tag; the maintainer directed the branch from `main` HEAD under the same override basis P4 and
+P5 ran under (`01 §8`). Nothing was committed to `main`, pushed, merged or sent for review. Work
+stops here for the maintainer's validation (0.4.5 D18) and their acceptance run.
+
+- **Grants (all recorded in `07`).** The kickoff's owned list was incomplete in ways the mapping
+  exposed before any code was written; every addition was put to the maintainer in one batch and
+  granted: `crates/api/src/lib.rs` (one default-bodied `ApiHost::ask_turn`),
+  `src-tauri/src/local_api.rs`, `crates/traits/src/contracts.rs`, `crates/mcp` (the citations
+  aggregation `03 §7i.3` requires, which the kickoff had fenced off), one `case "citations"` line
+  in `ui/src/lib/ipc/useAsk.ts` (its reducer switch is exhaustive, so a new `AnswerDelta` variant
+  fails `npm run build`), files for mechanical compile fixups (`kernel/src/{reports,sessions_intel,
+  graph_normalize,report_service}.rs`, `api/tests/http_api.rs`, `mcp/tests/stdio_mcp.rs`,
+  `evalfixture/src/serve.rs`, `inference/tests/smoke.rs` — the full list and per-file counts are in
+  `07`), `crates/rebuild/src/settings.rs` (its dotted-key scan classifies the new temp-table name),
+  and `crates/evalfixture/src/serve.rs` for the retrieval-seam rewiring. Contradictions and silences are
+  `06` #46–#53; decisions are `07`.
+- **Shape.** One implementation of each seam: `kernel::ask::ask_context` is the only legacy Ask
+  retrieval in the workspace (`Kernel::ask_context` and the fixture host delegate to it), and
+  `Kernel::ask_turn` is the only v2 pipeline (both `TauriApiHost` and `ApiHost` reach it). No
+  schema change, no new settings key, no new table, no new read route, no second pipeline.
+- **Acceptance is the maintainer's run.** This workspace has no live database. The acceptance
+  numbers the kickoff requires (evidence recall@10 ≥ 40.3%, known-fact rate ≥ 71.3%, citation
+  validity 100%, p95 ≤ 3485 ms) come from the maintainer's P4 automatic-set run against the real
+  database, seeded with the P4 seed; `06` #46 records which comparator binds P6 and why the frozen
+  `/v1/search` row cannot move this phase. **No acceptance number is claimed here.**
+
+### Verification (raw, in the kickoff's order)
+
+Run in `C:\Users\nicol\Documents\GitHub\screensearch` on the branch above.
+
+```
+$ cd ui && npm ci
+added 347 packages in 5s
+npm warn install-scripts 1 package had install scripts blocked because they are not covered by allowScripts:
+npm warn install-scripts   esbuild@0.25.12 (postinstall: node install.js)
+```
+
+```
+$ npm run lint
+npm notice run screensearch-ui@0.4.2 lint
+npm notice run eslint .
+LINT_EXIT=0
+```
+
+```
+$ npm run build
+dist/assets/useAsk-DP5T1xKE.js                        1.67 kB │ gzip:  0.84 kB
+dist/assets/CitationTile-DFhMdEJO.js                157.84 kB │ gzip: 47.99 kB
+✓ built in 1.94s
+BUILD_EXIT=0
+```
+
+```
+$ node scripts/stage-mcp.mjs
+[stage-mcp] building screensearch-mcp (release)...
+   Compiling mcp v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\mcp)
+    Finished `release` profile [optimized] target(s) in 8.69s
+[stage-mcp] staged C:\Users\nicol\Documents\GitHub\screensearch\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
+STAGE_EXIT=0
+```
+
+```
+$ cargo fmt --all -- --check
+FMT_EXIT=0
+```
+
+```
+$ cargo clippy --workspace --all-targets -- -D warnings
+    Checking store v0.4.2 (...)
+    Checking kernel v0.4.2 (...)
+    Checking harness v0.4.2 (...)
+    Checking evalfixture v0.4.2 (...)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.12s
+CLIPPY_EXIT=0
+```
+
+(The only warnings in the log are the pre-existing `ts-rs failed to parse serde attribute`
+notices emitted for `skip_serializing_if` in `crates/traits`; clippy exits 0.)
+
+```
+$ cargo build --workspace
+   Compiling evalfixture v0.4.2 (...)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 47.45s
+BUILD_EXIT=0
+```
+
+```
+$ cargo test --workspace
+test result: ok. 24 passed; 0 failed; 0 ignored
+test result: ok. 8 passed; 0 failed          (api tests\ask_v2.rs)
+test result: ok. 52 passed; 0 failed; 1 ignored
+test result: ok. 25 passed; 0 failed; 1 ignored
+test result: ok. 16 passed; 0 failed
+test result: ok. 65 passed; 0 failed
+test result: ok. 146 passed; 0 failed        (harness lib)
+test result: ok. 120 passed; 0 failed; 2 ignored   (inference lib)
+test result: ok. 200 passed; 0 failed        (kernel lib)
+test result: ok. 10 passed; 0 failed         (kernel tests\ask.rs)
+test result: ok. 52 passed; 0 failed         (mcp lib)
+test result: ok. 13 passed; 0 failed         (mcp tests\memory_tools.rs)
+test result: ok. 9 passed; 0 failed          (mcp tests\remote_transport.rs)
+test result: ok. 22 passed; 0 failed         (mcp tests\stdio_mcp.rs)
+test result: ok. 6 passed; 0 failed          (rebuild lib)
+test result: ok. 168 passed; 0 failed        (app crate lib)
+test result: ok. 106 passed; 0 failed        (store lib)
+test result: ok. 13 passed; 0 failed         (store tests\ask.rs)
+test result: ok. 132 passed; 0 failed        (traits lib — regenerates the ts-rs bindings)
+… every remaining binary: 0 failed
+TEST_EXIT=0
+```
+
+`git diff --exit-code -- ui/src/bindings` prints nothing: the regenerated `AnswerDelta.ts`,
+`JobKind.ts` and the new `StageCounts.ts` are committed in the same change.
+
+```
+$ cargo test -p inference
+test result: ok. 120 passed; 0 failed; 2 ignored
+test result: ok. 1 passed; 0 failed
+test result: ok. 3 passed; 0 failed
+test result: ok. 8 passed; 0 failed
+test result: ok. 0 passed; 0 failed; 2 ignored
+EXIT=0
+```
+
+```
+$ cargo test -p store ask
+test result: ok. 3 passed; 0 failed; 0 ignored; 103 filtered out
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 filtered out
+```
+
+```
+$ cargo test -p kernel ask
+test result: ok. 17 passed; 0 failed; 0 ignored; 183 filtered out
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 filtered out
+```
+
+```
+$ cargo test -p api ask
+test result: ok. 1 passed; 0 failed; 0 ignored; 23 filtered out
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 filtered out
+test result: ok. 5 passed; 0 failed; 0 ignored; 48 filtered out
+```
+
+```
+$ cargo test -p harness
+test result: ok. 146 passed; 0 failed
+test result: ok. 1 passed; 0 failed
+test result: ok. 3 passed; 0 failed
+test result: ok. 6 passed; 0 failed
+test result: ok. 4 passed; 0 failed
+test result: ok. 6 passed; 0 failed
+test result: ok. 3 passed; 0 failed
+test result: ok. 3 passed; 0 failed
+EXIT=0
+```
+
+```
+$ git diff --stat main -- docs/API.md
+ docs/API.md | 60 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 59 insertions(+), 1 deletion(-)
+```
+
+### What the new tests actually pin
+
+- **Wire compatibility.** `crates/api/tests/ask_v2.rs` asserts a host that returns the default
+  `Ok(None)` produces the *legacy* event sequence byte for byte, and the five pre-existing
+  `http_api` ask tests pass unchanged; `crates/mcp` asserts an unknown event type is still ignored
+  and that the `friendly` tool text of a legacy stream is unchanged.
+- **Citations.** `Citations` precedes `Done` exactly once, with equal `stage_counts` /
+  `tokens_assembled` on both; cited sessions are the distinct non-NULL `frames.session_id` of the
+  cited frames, ascending; a provider `Error` emits no `Citations`; a cancelled turn persists no
+  answer.
+- **Fallbacks.** With empty graph tables and no session summaries the answer comes from the
+  existing frame search over the planned window (`kernel` `ask_empty_graph_answers_from_the_window
+  _frame_search`), and an unknown entity id narrows nothing.
+- **Multi-turn.** A follow-up reuses the previous turn's window and entity ids and allocates the
+  next ordinal; `UNIQUE(thread_id, ordinal)` holds; deleting a conversation cascades to its turns.
+- **Session vectors.** A session with both title and summary NULL is never a candidate and never
+  embedded; the upsert is skipped when the text changed after embedding and idempotent on replay;
+  the vec0 row is deleted with its session and kept for a frozen (no-op) delete.
+- **Prompt parity.** Report and normalization chunks (`session: None`) render byte-identical
+  prompts and cost exactly what they cost before (`inference` parity tests).
+
+### Notes for the maintainer's run
+
+- Let the `session_embed` backfill drain on idle before measuring; sessions with NULL title and
+  summary never get a vector by contract, so an unsummarised library takes the frame-level
+  fallback.
+- The P4 harness sends no `thread_id`, so each harness turn creates one `ask_threads` row by
+  design (`§7i.4`); that is expected database growth, not a leak.
+- `stage_counts` and `tokens_assembled` also ride the `done` event, so `runs.jsonl` carries them
+  verbatim for the turns that regressed (`07`, `06` #49).
+
 ## 2026-11-05: P5 review-fix pass on the merged #157 code (branch `fix/p5-157-review-findings`)
 
 - **Trigger and governance incident.** The merged P5 PR ([#157](https://github.com/nicolasestrem/screensearch/pull/157),
