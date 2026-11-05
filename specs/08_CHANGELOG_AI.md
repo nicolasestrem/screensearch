@@ -42,8 +42,21 @@
   `main` and nothing was merged. The maintainer validated the content in-session and instructed the
   branch push, the PR ([#160](https://github.com/nicolasestrem/screensearch/pull/160)) and the
   review request; **the merge decision remains the maintainer's alone.**
+- **Post-open review (2026-11-05).** Codex posted three P2 findings on `ad9214f`; all three were
+  valid and are fixed with regression tests proven to fail without them (`05`). (1) A regenerated or
+  cleared session title/summary left its `session_vectors` row in place, and the backfill only
+  selects sessions with *no* row, so the session kept being ranked by stale text — both writers now
+  invalidate inside their own transaction when the text changed. (2) Assembly subtracted the raw
+  `max_tokens`, so a small window reserved its whole context and dropped all but one snippet; the
+  provider's half-window cap is now one shared function (`traits::effective_reply_budget`) used by
+  both the packer and the kernel. (3) A cancelled turn detached its provider instead of aborting it,
+  so a provider still preparing (model download, supervisor acquire) kept running — the forwarder
+  now signals cooperatively, waits a bounded grace, then aborts. Also: the forwarder no longer
+  streams a citation the terminal event will not carry, and one comment that overstated what an
+  enqueue could delay was corrected.
 - **Evidence:** full kickoff verification list green (raw output in `05`); new suites: store
-  `ask` (13 integration + 3 unit), kernel `ask` (10 integration + 17 planner/assembly unit),
+  `ask` (14 integration + 3 unit, after the review fixes), kernel `ask` (12 integration + 18
+  planner/assembly/citation unit),
   api `ask_v2` (8), app crate relay/legacy-delegation tests (4), MCP citations tests, inference
   prompt-parity tests. An end-to-end fixture smoke (generate → serve → unchanged P4 harness) proved
   the wiring runs, recorded in `05` as a three-stage wiring check and **not** as a measurement. The

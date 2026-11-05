@@ -187,6 +187,62 @@ $ git diff --stat main -- docs/API.md
 - **Prompt parity.** Report and normalization chunks (`session: None`) render byte-identical
   prompts and cost exactly what they cost before (`inference` parity tests).
 
+### Post-open review findings (resolved)
+
+Codex reviewed commit `ad9214f` and posted three P2 findings; Claude posted observations and no
+blocking defect. Each finding was verified against the code before any change, and every fix has a
+regression test proven to fail without it (fail-without/pass-with shown below).
+
+| Finding | Verdict | Fix |
+|---|---|---|
+| **Session vectors went stale** — `session_embed_candidates` only selects sessions with *no* vector row, and neither `set_session_title_summary` nor `clear_session_title_summary` invalidated one, so a regenerated or cleared summary kept being ranked by its old text forever | **valid** | Both writers now compare the text before/after inside their existing transaction and delete the `session_vectors` row when it changed (`session_text_at` + `invalidate_session_vector_if_text_changed`, using the backfill's own SQL expression so they cannot disagree). `vec0` carries no timestamp, no foreign key and no trigger (0.4.5 D2), so the writer is the only place this can happen |
+| **Assembly pre-dropped evidence** — the context budget subtracted the *raw* `max_tokens`, so a 2048-token window with the default 2048 request left 0 and assembled exactly one chunk, while the provider caps its own reservation at half the window | **valid** | The cap moved to `traits::effective_reply_budget` (one implementation, used by the inference packer and by the kernel's new `assembly_budget`), so assembly keeps the budget the provider actually has |
+| **A cancelled turn detached its provider** — closing the channel is only observed inside the streaming phase, so a provider downloading a model or waiting in `supervisor.acquire` kept running after the user cancelled | **valid** | The forwarder drops the receiver first (the cooperative path that stops the child process cleanly), then waits `PROVIDER_CANCEL_GRACE` (250 ms) and aborts the task if it is still alive |
+
+From Claude's review, two observations were also acted on, one confirmed non-issue, and the rest
+answered without a change:
+
+- **Per-frame `Citation` vs terminal `Citations` could disagree** (latent, provider-dependent): the
+  forwarder now forwards only frames the terminal event will carry, so the two can never name
+  different evidence.
+- **Comment/code mismatch on the on-demand enqueue**: the comment claimed it could not delay
+  anything; it does delay the returned stream handle (not the first delta). Corrected.
+- **Temp FTS5 table dropped on the error path**: confirmed correct — the `DROP` runs after the inner
+  closure regardless of outcome, before the error propagates.
+- Answered, no change: a turn persisted before its stages run is the specified `§7i.4` behaviour
+  (a follow-up reuses the *previous* turn, answered or not); an answer with no model citation
+  yields empty citations by design (provenance, never prose) and the citation-validity gate then
+  measures an empty set; `/v1/search`-side orphan vectors are unreachable because stage 2
+  post-filters vectors to its candidate set.
+
+**Fail-without/pass-with proof (raw):**
+
+```
+# 1 — store invalidation neutered to a no-op
+test ask_title_summary_changes_invalidate_the_stale_session_vector ... FAILED
+panicked at crates\store\tests\ask.rs:1125:5:
+assertion `left == right` failed: a changed text drops the vector in the same transaction as the write
+test result: FAILED. 13 passed; 1 failed
+
+# 2 — budget reverted to the raw max_tokens
+test ask::tests::assembly_budget_uses_the_providers_capped_reply_reservation ... FAILED
+panicked at crates\kernel\src\ask.rs:705:9: assertion `left == right` failed
+test result: FAILED. 17 passed; 1 failed
+
+# 3 — abort removed (receiver dropped, task detached)
+test ask_aborts_a_provider_that_never_observes_closure ... FAILED
+panicked at crates\kernel\tests\ask.rs:1381:10:
+test result: FAILED. 0 passed; 1 failed; finished in 5.02s
+```
+
+Restored, the same binaries report `store ask` 3 unit + 14 integration, `kernel lib ask` 18, and
+`kernel tests\ask` 12 — all passing, with the whole workspace green (84 result lines, 0 failures).
+
+The abort fix was first written as an unconditional `abort()`, which broke the pre-existing
+cooperative-cancellation test (`ask_cancelled_turn_persists_no_answer`): aborting preempts the
+provider's own cleanup, which is the path that stops the sidecar child process. That is why the
+shipped form drops the receiver, grants a bounded grace, and only then aborts.
+
 ### End-to-end smoke (beyond the test suites)
 
 The verification list is tests plus a compile gate, so the changed HTTP path was also run for real:

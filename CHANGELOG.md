@@ -30,8 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sessions with a title or summary are embedded in the background.** A new `session_embed` job
   kind keeps the session-vector index warm, in bounded batches ordered most-recently-updated
   first, on idle and on demand under the existing pressure throttle — never on the capture path.
-  A session whose title and summary are both empty is never embedded, and a deleted session's
-  vector is removed with it.
+  A session whose title and summary are both empty is never embedded, a deleted session's vector is
+  removed with it, and a rewritten or cleared summary invalidates its vector so the session is
+  never ranked by text that no longer describes it.
 - **A library with no work graph still answers.** With empty graph tables and no session
   summaries, Ask v2 degrades to the existing frame-level search restricted to the planned window —
   the same query, depth and ranking, with the window as the only added filter — so it is never
