@@ -186,6 +186,46 @@ $ git diff --stat main -- docs/API.md
 - **Prompt parity.** Report and normalization chunks (`session: None`) render byte-identical
   prompts and cost exactly what they cost before (`inference` parity tests).
 
+### End-to-end smoke (beyond the test suites)
+
+The verification list is tests plus a compile gate, so the changed HTTP path was also run for real:
+a v14 fixture was generated, served, and measured by the unchanged P4 harness.
+
+```
+$ ssv2c-evalfixture gen --out harness-data/smoke --seed 6696384177732976644 --weeks 2 --frames-per-week 200
+embedding 400 frames with embeddinggemma-300m-q
+embedded 400/400
+seed=0x5cee55ee41520004
+weeks=2
+frames=400
+sessions=75
+embeddings=400
+digest=908344237fcee828e368bc000296475e68da8f9771e839d4006eac401cc822e9
+
+$ ssv2c-evalfixture serve --db harness-data/smoke/screensearch.db --port 43211 --embed --no-answer
+serving harness-data/smoke/screensearch.db at http://127.0.0.1:43211 (embeddings: attached (vector arm on), answer sidecar: off (--no-answer, /v1/ask answers 503))
+
+$ harness eval --db harness-data/smoke/screensearch.db --api http://127.0.0.1:43211 --seed 6696384177732976644 --pairs 20 --out harness-data/smoke-run
+| overall | 5 | 0.0% | 80.0% | n/a (no citations) | 0.0% | n/a | n/a |
+| last-seen (`last_seen`) | 4 | 0.0% | 100.0% | n/a (no citations) | 0.0% | n/a | n/a |
+- successful: 0 / 5
+- failures: api_unavailable 5, timeout 0, empty_answer 0, http_error 0
+| `last_seen-001` | last-seen | `api_unavailable` | HTTP 503: {"error":"unavailable","message":"answer model not loaded"} |
+## Invalid citations
+_none — every cited id exists and lies inside its pair's window_
+```
+
+Read honestly: the harness generated pairs from the real database and the API served them, so the
+fixture → API → store retrieval chain runs end to end with the vector arm attached (retrieval
+recall@10 80% overall on this small pair set). `/v1/ask` answers the documented `503 / answer model
+not loaded` path in clean JSON because no answer sidecar is attached in this workspace — no panic,
+no hang, no partial stream — and the harness classifies it as `api_unavailable` as designed. The
+answer-bearing side (the `citations` event, the enriched `done`, turn persistence, the v2 staging)
+cannot be exercised without a model; it is covered by the `kernel` real-store pipeline test, the
+`api` loopback-server v2 tests and the app-crate relay test listed above, not by this smoke. The
+fixture's `ask_context` now delegates to `kernel::ask::ask_context`, so the same run reaches the
+code this phase moved. Smoke artifacts were deleted afterwards (`harness-data/` is git-ignored).
+
 ### Notes for the maintainer's run
 
 - Let the `session_embed` backfill drain on idle before measuring; sessions with NULL title and
