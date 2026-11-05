@@ -592,15 +592,20 @@ impl SqliteStore {
     ) -> Result<bool> {
         let (title, summary, model) = (title.to_string(), summary.to_string(), model.to_string());
         self.with_conn(move |conn| {
-            let before = session_text_at(conn, id)?;
-            let updated = conn.execute(
+            // One transaction, like `delete_unfrozen_session` above: the update and the vector
+            // invalidation must not be able to land separately, or a crash between them leaves a
+            // vector built from text the session no longer has.
+            let tx = conn.unchecked_transaction()?;
+            let before = session_text_at(&tx, id)?;
+            let updated = tx.execute(
                 "UPDATE sessions SET title=?2, summary=?3, summary_model=?4,
                  updated_at=unixepoch()*1000 WHERE id=?1",
                 params![id, title, summary, model],
             )? > 0;
             if updated {
-                invalidate_session_vector_if_text_changed(conn, id, before)?;
+                invalidate_session_vector_if_text_changed(&tx, id, before)?;
             }
+            tx.commit()?;
             Ok(updated)
         })
         .await
@@ -608,15 +613,17 @@ impl SqliteStore {
 
     pub async fn clear_session_title_summary(&self, id: i64) -> Result<bool> {
         self.with_conn(move |conn| {
-            let before = session_text_at(conn, id)?;
-            let updated = conn.execute(
+            let tx = conn.unchecked_transaction()?;
+            let before = session_text_at(&tx, id)?;
+            let updated = tx.execute(
                 "UPDATE sessions SET title=NULL, summary=NULL, summary_model=NULL,
                  updated_at=unixepoch()*1000 WHERE id=?1",
                 [id],
             )? > 0;
             if updated {
-                invalidate_session_vector_if_text_changed(conn, id, before)?;
+                invalidate_session_vector_if_text_changed(&tx, id, before)?;
             }
+            tx.commit()?;
             Ok(updated)
         })
         .await
