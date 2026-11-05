@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed: App shell and Settings v2
+
+- **The app shell is rebuilt on the v2 design system, and Settings is a searchable, autosaving
+  surface instead of one long form.** The navigation rail renders one ordered list (Deck · Recall ·
+  Insights · Settings) with no placeholder screens; the status rail reports readiness on v2 surface
+  tokens; the command palette (⌘K / Ctrl K) navigates and jumps to any settings category; and the
+  four themes of the chosen identity (`pine-light` default, `pine-dark`, `ink-light`, `ink-dark`,
+  each with a follow-the-system variant) apply from one place.
+- **Settings now has eight categories — General, Capture, Privacy, Intelligence, Models, Data,
+  Integrations, Advanced — over 26 settings with one row pattern.** Every row saves on its own and
+  offers Undo from a toast; there is no global Save button. Number fields clamp to their bounds,
+  hotkeys normalise and warn on cross-row conflicts, monitor and exclusion lists chip-edit, and
+  each row shows its own saving/saved/failed state. Destructive actions (exporting history,
+  regenerating the legacy API token, revoking an agent's read token) ask first and name the
+  consequence — the read-token dialog states that every agent using it stops being able to read your
+  history, that the token cannot be restored, and that already authorized requests may continue.
+  A category never goes blank:
+  loading shows skeletons, a failure shows an error with Retry in that pane only, and partial data
+  shows the rows it has.
+- **Search finds a setting by what it does or by its key**, matching the label, the dotted key, the
+  field name and the help text, with the match highlighted; ↑/↓/Enter select, Escape clears the
+  query and leaves you in the current category. Tab order walks the categories and then that
+  category's controls with no trap.
+- **Saving is now strictly serialised, and two destructive edges are closed.** Overlapping edits
+  could previously lose one another (each save wrote the whole settings object, so an earlier save's
+  refresh could overwrite a later one); saves now queue and each is built from a freshly read
+  snapshot. A failed refresh no longer replaces a category with an error panel — the rows stay.
+  Store-image width rejects values between 1 and 319 px instead of accepting a number the backend
+  silently raises to 320, monitor toggles no longer turn an excluded display into capture-all when an
+  unplugged display is in the saved selection, and retention days save when you press Enter or leave
+  the field rather than on every keystroke — typing `365` over `30` used to store a three-day window
+  the retention sweep would act on.
+- **Rendering fixes carried by the rebuild:** the v1 `Settings.tsx` is deleted (its local
+  chord-conflict rule lives once, in the settings module), and the throttle readout no longer
+  reports "off" after you switch it on — it shows the saved state immediately and the measured
+  numbers as soon as the first sample arrives.
+
+
 ### Added: Ask v2 — session-aware, multi-turn question answering
 
 - **Ask now plans before it retrieves, and answers over conversations instead of single frames.**

@@ -1,8 +1,8 @@
 // QuickActions — the NavRail-footer quick menu (0.3.2 PR3, #57; UI_REFERENCE §3). Two
 // lifecycle toggles that mirror the tray's quick actions and round-trip through the same
-// commands: Load/Unload the answer model, and Start/Stop vision tagging. Quiet by design
-// (functional tones, never the accent — telemetry-footer discipline, like the version
-// link). Hidden entirely outside the packaged app (browser dev), like UpdateIndicator.
+// commands: load/unload the answer model, and start/stop vision tagging. Quiet by design
+// (raised surface, functional text, never the accent — telemetry-footer discipline, like
+// the version link). Hidden entirely outside the packaged app (browser dev).
 //
 // State is read, not tracked: the answer-model label follows the live `sidecar_status`
 // (loaded = the answer model is the resident sidecar model); the vision label follows the
@@ -20,12 +20,15 @@ import {
 } from "../../lib/ipc/mutations";
 import { toast } from "../../state/toastStore";
 
-// Matches the footer Command button (NavRail) — a quiet lifecycle control, not an accent.
+// One quiet footer control shape, shared with the Command and update buttons in NavRail.
 const QUICK_ACTION = cn(
-  "flex items-center justify-between w-full gap-2 px-3 min-h-hit-min rounded-chip",
-  "text-caption text-ink-muted border border-line hover:text-ink hover:border-ink-faint",
-  "transition-colors duration-fast ease-ui",
-  "disabled:opacity-50 disabled:pointer-events-none",
+  "flex min-h-control w-full min-w-0 items-center justify-between gap-2 rounded-md px-3",
+  "border border-line-subtle bg-surface-raised text-t-sm font-text text-fg-secondary",
+  "transition-colors duration-fast ease-standard motion-reduce:transition-none",
+  "hover:border-line-strong hover:bg-surface-hover hover:text-fg-primary",
+  "active:bg-surface-selected",
+  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
+  "disabled:pointer-events-none disabled:text-fg-disabled",
 );
 
 export function QuickActions() {
@@ -96,7 +99,9 @@ export function QuickActions() {
         disabled={modelBusy}
         className={QUICK_ACTION}
       >
-        <span>{answerLoaded ? "Unload answer model" : "Load answer model"}</span>
+        <span className="min-w-0 truncate">
+          {answerLoaded ? "Unload answer model" : "Load answer model"}
+        </span>
       </button>
       <button
         type="button"
@@ -104,7 +109,7 @@ export function QuickActions() {
         disabled={visionBusy}
         className={QUICK_ACTION}
       >
-        <span>
+        <span className="min-w-0 truncate">
           {visionActive ? "Stop vision tagging" : "Start vision tagging"}
         </span>
       </button>

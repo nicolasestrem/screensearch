@@ -1,102 +1,100 @@
-// NavRail (left) — the five primary destinations (UI_REFERENCE §3). Active route
-// gets the accent (text + wash + a left scan-bar); the Ctrl+K hint opens the
-// command palette; the footer carries a quiet version link → the GitHub repo (0.3.1 D4).
-// Each link is a NavLink so the browser/router own focus + history.
-// Keyboard (UI_REFERENCE §7): a roving tabindex makes the rail a single Tab stop —
-// Arrow Up/Down (wrapping) and Home/End move focus between links; Enter follows one.
-import { NavLink, useLocation } from "react-router-dom";
+// NavRail (left) — the fixed primary rail (UI_REFERENCE §3/§8, 0.4.5 D7). It
+// renders `NAV_ENTRIES` in order and nothing else: `/timeline` is Recall's second
+// surface, and Ask/Work arrive from P9 by extending that list, not this file.
+//
+// The active entry carries `aria-current="page"`, the selected surface and a 2px
+// leading accent bar, so the state is never colour-only. Keyboard (§7): a roving
+// tabindex makes the rail a single Tab stop; Arrow Up/Down (wrapping) plus
+// Home/End move focus between links, Enter follows one.
+//
+// The footer is quiet, by design: the Command affordance for ⌘K, the lifecycle
+// quick actions, the updater presence, and the version link to the repo (0.3.1 D4).
+import { Link, useLocation } from "react-router-dom";
 import {
   useEffect,
   useRef,
   useState,
-  type ComponentType,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+
 import { cn } from "../../lib/cn";
+import { NAV_ENTRIES, activeNavIndex } from "../../app/nav";
 import { useUiStore } from "../../state/uiStore";
 import { useAppVersion } from "../../lib/useAppVersion";
 import { openExternal } from "../../lib/openExternal";
+import { Kbd } from "../primitives";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { QuickActions } from "./QuickActions";
-import {
-  IconDeck,
-  IconRecall,
-  IconTimeline,
-  IconInsights,
-  IconSettings,
-} from "../icons";
 
 /** The project's public repo — opened by the NavRail version link (0.3.1 D4, #57). */
 const REPO_URL = "https://github.com/nicolasestrem/screensearch-v2c";
 
-interface NavItem {
-  to: string;
-  label: string;
-  icon: ComponentType<{ size?: number }>;
-  end?: boolean;
-}
+const ENTRY = cn(
+  "flex min-h-row min-w-0 items-center gap-3 rounded-md border-l-2 px-3",
+  "text-t-ui font-text transition-colors duration-fast ease-standard motion-reduce:transition-none",
+  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
+);
 
-const ITEMS: NavItem[] = [
-  { to: "/", label: "Deck", icon: IconDeck, end: true },
-  { to: "/recall", label: "Recall", icon: IconRecall },
-  { to: "/timeline", label: "Timeline", icon: IconTimeline },
-  { to: "/insights", label: "Insights", icon: IconInsights },
-  { to: "/settings", label: "Settings", icon: IconSettings },
-];
+const ENTRY_ACTIVE = "border-accent bg-accent-wash text-accent";
+const ENTRY_IDLE =
+  "border-transparent text-fg-secondary hover:bg-surface-hover hover:text-fg-primary active:bg-surface-selected";
 
-/** Index of the nav item matching the current path (Deck matches only the exact "/"). */
-function activeIndexFor(pathname: string): number {
-  const i = ITEMS.findIndex((it) =>
-    it.end
-      ? pathname === it.to
-      : pathname === it.to || pathname.startsWith(`${it.to}/`),
-  );
-  return i < 0 ? 0 : i;
-}
+/** Footer controls share one quiet shape: raised surface, subtle border, no accent. */
+const FOOTER_CONTROL = cn(
+  "flex min-h-control w-full min-w-0 items-center justify-between gap-2 rounded-md px-3",
+  "border border-line-subtle bg-surface-raised text-t-sm font-text text-fg-secondary",
+  "transition-colors duration-fast ease-standard motion-reduce:transition-none",
+  "hover:border-line-strong hover:bg-surface-hover hover:text-fg-primary",
+  "active:bg-surface-selected",
+  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
+);
 
 export function NavRail() {
   const openPalette = useUiStore((s) => s.openPalette);
   const version = useAppVersion();
   const { pathname } = useLocation();
   const linkRefs = useRef<Array<HTMLAnchorElement | null>>([]);
+  const activeIndex = activeNavIndex(pathname);
   // Roving tabindex: exactly one link sits in the Tab order at a time (seeded to the
-  // current route); arrow keys move focus without leaving the rail.
-  const [focusIndex, setFocusIndex] = useState(() => activeIndexFor(pathname));
+  // current route, or the first entry when the route owns none). Arrow keys move focus
+  // without leaving the rail.
+  const [focusIndex, setFocusIndex] = useState(() =>
+    activeIndex < 0 ? 0 : activeIndex,
+  );
 
   // Keep the tab stop on the current route when navigation happens *outside* the rail
-  // (Command Palette, an in-app link, browser back/forward) — otherwise the next Tab into
-  // the rail lands on a stale link. Arrow-key moves don't change the path, so they aren't
-  // clobbered. Re-derives focus position only; never moves focus (no .focus() here).
+  // (palette, an in-app link, back/forward) — otherwise the next Tab into the rail lands
+  // on a stale link. Arrow-key moves don't change the path, so they aren't clobbered.
   useEffect(() => {
-    setFocusIndex(activeIndexFor(pathname));
-  }, [pathname]);
+    if (activeIndex >= 0) setFocusIndex(activeIndex);
+  }, [activeIndex]);
 
   const focusItem = (index: number) => {
-    const next = (index + ITEMS.length) % ITEMS.length; // wrap at both ends
+    const next = (index + NAV_ENTRIES.length) % NAV_ENTRIES.length; // wrap at both ends
     setFocusIndex(next);
     linkRefs.current[next]?.focus();
   };
 
   const onKeyDown = (
-    e: ReactKeyboardEvent<HTMLAnchorElement>,
+    event: ReactKeyboardEvent<HTMLAnchorElement>,
     index: number,
   ) => {
-    switch (e.key) {
+    switch (event.key) {
       case "ArrowDown":
-        e.preventDefault();
+        event.preventDefault();
         focusItem(index + 1);
         break;
       case "ArrowUp":
-        e.preventDefault();
+        event.preventDefault();
         focusItem(index - 1);
         break;
       case "Home":
-        e.preventDefault();
+        event.preventDefault();
         focusItem(0);
         break;
       case "End":
-        e.preventDefault();
-        focusItem(ITEMS.length - 1);
+        event.preventDefault();
+        focusItem(NAV_ENTRIES.length - 1);
         break;
       default:
         break;
@@ -107,78 +105,66 @@ export function NavRail() {
     <nav
       aria-label="Primary"
       // `relative z-rail isolate` gives the rail its own stacking context / compositing
-      // boundary so it owns an isolated surface that repaints atomically when a banner
-      // mount/unmount shifts the row vertically — the app-side mitigation for the WebView2
-      // ghost-rail stale-surface artifact (07 #106; finally consumes the `--z-rail` token).
-      className="relative z-rail isolate flex flex-col justify-between w-44 shrink-0 bg-surface border-r border-line py-4"
+      // boundary: an isolated surface repaints atomically when a banner mount/unmount
+      // shifts the row — the app-side mitigation for the WebView2 ghost-rail stale-surface
+      // artifact (07 #106; finally consumes the `--z-rail` token).
+      className={cn(
+        "relative z-rail isolate flex w-56 shrink-0 flex-col justify-between gap-gap",
+        "border-r border-line-subtle bg-surface-chrome px-2 py-3",
+      )}
     >
-      <ul className="flex flex-col gap-1 px-2">
-        {ITEMS.map(({ to, label, icon: Icon, end }, index) => (
-          <li key={to}>
-            <NavLink
-              to={to}
-              end={end}
-              ref={(el) => {
-                linkRefs.current[index] = el;
-              }}
-              tabIndex={index === focusIndex ? 0 : -1}
-              onFocus={() => setFocusIndex(index)}
-              onKeyDown={(e) => onKeyDown(e, index)}
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-3 px-3 min-h-hit-min rounded-chip border-l-2",
-                  "text-body font-body transition-colors duration-fast ease-ui",
-                  isActive
-                    ? "bg-accent-wash text-accent border-accent"
-                    : "border-transparent text-ink-muted hover:text-ink hover:bg-overlay",
-                )
-              }
-            >
-              <Icon size={18} />
-              {label}
-            </NavLink>
-          </li>
-        ))}
+      <ul className="flex min-w-0 flex-col gap-1">
+        {NAV_ENTRIES.map(({ to, label, icon: Icon, match }, index) => {
+          const current = match(pathname);
+          return (
+            <li key={to} className="min-w-0">
+              <Link
+                to={to}
+                ref={(element) => {
+                  linkRefs.current[index] = element;
+                }}
+                aria-current={current ? "page" : undefined}
+                tabIndex={index === focusIndex ? 0 : -1}
+                onFocus={() => setFocusIndex(index)}
+                onKeyDown={(event) => onKeyDown(event, index)}
+                className={cn(ENTRY, current ? ENTRY_ACTIVE : ENTRY_IDLE)}
+              >
+                <Icon size={18} />
+                <span className="min-w-0 truncate">{label}</span>
+              </Link>
+            </li>
+          );
+        })}
       </ul>
 
-      <div className="flex flex-col gap-2 px-2">
-        <button
-          type="button"
-          onClick={openPalette}
-          className={cn(
-            "flex items-center justify-between w-full gap-2 px-3 min-h-hit-min rounded-chip",
-            "text-caption text-ink-muted border border-line hover:text-ink hover:border-ink-faint",
-            "transition-colors duration-fast ease-ui",
-          )}
-        >
+      <div className="flex min-w-0 flex-col gap-2">
+        <button type="button" onClick={openPalette} className={FOOTER_CONTROL}>
           <span>Command</span>
-          <kbd className="font-mono text-data text-ink-faint">Ctrl+K</kbd>
+          <Kbd>Ctrl K</Kbd>
         </button>
-        {/* Quick actions (0.3.2 PR3, #57): Load/Unload answer model + Start/Stop vision
-            tagging — the in-app half of the tray's quick menu, through the same commands.
-            Quiet (functional tones, no accent); hidden with no Tauri runtime (browser dev). */}
+        {/* Lifecycle quick actions (0.3.2 PR3, #57): load/unload the answer model and
+            start/stop vision tagging, through the same commands as the tray. */}
         <QuickActions />
-        {/* Auto-update (0.3.2 PR2, #69): a quiet presence indicator (only while an update
-            exists — never a count) + the manual "Check for updates" quick-menu affordance.
-            Renders nothing outside the packaged app or when no update exists (`03 §11b`). */}
+        {/* Updater presence (0.3.2 PR2, #69): a quiet dot while an update exists — never a
+            count — plus the manual check. Zero presence otherwise. */}
         <UpdateIndicator />
-        {/* Version footer link (0.3.1 D4, #57-partial): the running app version, opening
-            the repo in the OS browser via the opener plugin (Tauri v2 does not open plain
-            `target="_blank"` anchors). Hidden with no Tauri runtime (browser dev → null).
-            Quiet by design — it is telemetry, not a primary action; the focus ring is
-            global (§7). Kept an `<a>` for link semantics (role, right-click); the click is
-            intercepted so it never navigates the WebView. */}
+        {/* Version footer link (0.3.1 D4, #57): the running app version, opening the repo in
+            the OS browser (Tauri v2 does not open plain `target="_blank"` anchors). Hidden
+            with no Tauri runtime (browser dev → null). Quiet by design — telemetry, not a
+            primary action — but still a real link with the global focus ring. */}
         {version && (
           <a
             href={REPO_URL}
-            onClick={(e) => {
-              e.preventDefault();
+            onClick={(event) => {
+              event.preventDefault();
               openExternal(REPO_URL);
             }}
             className={cn(
-              "flex items-center justify-center px-3 min-h-hit-min rounded-chip",
-              "font-mono text-data text-ink-faint hover:text-ink",
-              "transition-colors duration-fast ease-ui",
+              "flex min-h-control items-center justify-center rounded-md px-3",
+              "font-mono text-t-data text-fg-tertiary",
+              "transition-colors duration-fast ease-standard motion-reduce:transition-none",
+              "hover:bg-surface-hover hover:text-fg-primary",
+              "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
             )}
           >
             v{version}

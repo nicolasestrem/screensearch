@@ -1,5 +1,562 @@
 # 05 — Build Review
 
+## 2026-11-05: P7 app shell + Settings v2 — build, verification and native acceptance (branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, **not merged**, from `main` `6d906a7`; committed and pushed on the maintainer's authorization under 0.4.5 D18)
+
+Phase: `docs/kickoffs/P7.md`. Contradictions: `06` #60–#70. Decisions, silences and deferrals:
+`07` (2026-11-05 P7 section).
+
+### What shipped
+
+- **Shell (P7-owned):** `ui/src/app/{nav.ts,theme.ts,router.tsx}` (route metadata list, theme
+  applier, `/settings` + `/settings/:category` repoint) and `ui/src/components/shell/`
+  (`NavRail`, `StatusRail`, `CommandPalette` + `useShellCommands`, `QuickActions`,
+  `ReadinessBanner`, `UpdateIndicator`, `AppShell`, new `ToastHost`, new `actionToast`), rebuilt on
+  v2 primitives/tokens. `NavRail` renders from one ordered list (`NAV_ENTRIES`: Deck · Recall ·
+  Insights · Settings) with no `/ask`, `/work` or `/timeline` entry and no placeholder screen;
+  `/timeline*` stays a real route (Recall's `match` covers it) and the palette still offers
+  "Go to Timeline".
+- **Settings v2 (P7-owned):** `ui/src/routes/settings/` — `index.tsx`, `SettingsLayout.tsx`,
+  `SettingsSearch.tsx`, `registry.ts` (26 defs, `SETTINGS_DEFAULTS`, `searchSettings`),
+  `SettingRow.tsx` (+`labelInControl`), `useSettingField.ts`, `ConfirmAction.tsx`,
+  `CategoryState.tsx`, `frameState.ts`, and the eight categories plus their helpers. **26 UI rows**,
+  not 25 (`06` #60). `ui/src/routes/Settings.tsx` **deleted**.
+- Per-field autosave with an undo toast that writes back through `set_settings`; no global Save.
+  Destructive `ConfirmAction` on export and on legacy-token regeneration.
+- Shell file sizes: max 217 lines. `routes/settings/` max 294 (`Integrations.tsx`); every file
+  under the ~300 cap.
+
+### Verification, kickoff order, raw
+
+```
+$ cd ui && npm ci
+added 347 packages in 4s
+npm warn install-scripts 1 package had install scripts blocked … esbuild@0.25.12 …
+
+$ npm run lint
+npm notice run screensearch-ui@0.4.2 lint
+npm notice run eslint .
+LINT_EXIT=0
+
+$ npm run build
+dist/assets/main-BcEiRuMp.js                     39.25 kB │ gzip: 11.91 kB
+dist/assets/index-DqNsiDCK.js                   102.39 kB │ gzip: 28.60 kB
+✓ built in 2.15s
+
+$ cd .. && node scripts/stage-mcp.mjs
+[stage-mcp] staging C:\…\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
+
+$ cargo fmt --all -- --check
+FMT_EXIT=0
+
+$ cargo clippy --workspace --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.99s
+
+$ cargo build --workspace
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 30.59s
+
+$ cargo test --workspace        # EXIT=0, no FAILED, no panics
+     201 passed; 0 failed   (store)
+      65 passed; 0 failed   (×2)
+      52 passed; 0 failed; 1 ignored
+      33/26/25/24/22/21/9/8/6/4/3/1 passed; 0 failed   (remaining crates + doc-tests)
+
+$ git diff --exit-code -- ui/src/bindings
+BINDINGS_DIFF_EXIT=0
+```
+
+`index-DqNsiDCK.js` is the **settings route chunk** (`index.html` loads `main-BcEiRuMp.js`), so
+route-splitting holds and the entry chunk is 11.91 kB gzip against the 250 kB budget.
+
+### P7-specific checks, raw
+
+```
+$ test ! -f ui/src/routes/Settings.tsx   →  Settings.tsx: ABSENT
+$ wc -l ui/src/routes/settings/*.tsx     →  max 294 (Integrations.tsx), total 2,898 (22 files; .tsx only —
+                                              the 28-file directory also holds 6 .ts modules)
+$ grep -rnoE '"[a-z_]+\.[a-z_0-9]+"' ui/src/routes/settings | sort -u
+  → exact set: the 26 UI keys, no other dotted literal, no `memory.*` literal
+$ grep -rn 'tokens.compat' ui/src
+ui/src/styles/globals.css:15:@import "./tokens.compat.css";
+ui/src/styles/tokens.css:22: * z layers and durations. v1 token names live in tokens.compat.css.
+$ cd ui && npm test
+ℹ tests 96 · pass 96 · fail 0
+```
+
+The second `tokens.compat` hit is a **pre-existing comment in P2's `tokens.css`** (untouched by
+P7); no component references the shim.
+
+Token scan over the three owned surfaces (`routes/settings`, `components/shell`, `app`):
+no raw hex, no `px` font size, no arbitrary `[…]` design value; zero legacy compat keys
+(`bg-surface`, `bg-base`, `text-ink*`, `text-caption|subtitle|title|body|display`,
+`rounded-panel|chip`, `font-display|body`, `tracking-eyebrow`, bare `border-line`). The two
+bracketed utilities left in `AppShell` are `[scrollbar-gutter:stable]` and `[contain:paint]`
+(non-design CSS from the 0.3.2 shell; they set no colour, size, radius or font).
+
+### Acceptance table — the 26 `UI` keys, driven natively on a **fresh profile**
+
+Every row below was reached and driven in the running app (`npm run dev`, Tauri + WebView2) and the
+value read back from the `settings` KV table — the same source `get_settings` returns. One caveat so
+the table is not over-read: the store holds a row for **every** setting (a save writes the struct),
+so a key being present says nothing about whether it was edited; the read-back column therefore shows
+the specific value change observed, not presence.
+
+| # | Key | Category | Control (as rendered) | Write path | Read back |
+|---|---|---|---|---|---|
+| 1 | `answer.thinking` | Intelligence | Toggle "Show reasoning while answering" | `set_settings` | `true` → `false` |
+| 2 | `api.bind_address` | Integrations | Field "Bind address" | `set_settings` | `127.0.0.1` → `"::1"`; status read `[::1]:43211` |
+| 3 | `api.enabled` | Integrations | Toggle "HTTP API" | `set_settings` | `false` → `true`; "Listening on 127.0.0.1:43210" |
+| 4 | `api.port` | Integrations | number "Port" | `set_settings` | `43210` → `43211` |
+| 5 | `api.token` | Integrations | legacy bearer row (Reveal/Copy/Regenerate) | `regenerate_api_token` / `ApiStatus.token` | token auto-issued on first enable; Reveal/Copy became enabled, value masked until Reveal |
+| 6 | `app.close_to_tray` | General | Toggle "Close to tray" | `set_settings` | `true` → `false` |
+| 7 | `app.run_at_startup` | General | Toggle "Launch at startup" | `set_settings` | `false` → `true` (OS registration succeeded, no rollback) → `false` (key removed) |
+| 8 | `capture.interval_ms` | Capture | number "Interval between captures" | `set_settings` | `3000` → `4000` |
+| 9 | `capture.monitors` | Capture | monitor chips | `set_settings` | `[]` → `[0]` |
+| 10 | `enrich.vision_timer_enabled` | Intelligence | Toggle "Tag on a timer" | `set_settings` | `false` → `true` → `false` |
+| 11 | `enrich.vision_timer_interval_ms` | Intelligence | "Timer interval (minutes)" (schedule control) | `set_settings` (patch, one undo) | `3600000` → `36300000` (605 min) — the 605 was an edit that did not clear the field first; the round-trip is what this row proves, not the number |
+| 12 | `marks.hotkey` | Capture | `HotkeyField` | `set_settings` | unchanged `"Ctrl+Alt+M"`; registration **failed loudly** (see limits) |
+| 13 | `models.answer_tier` | Models | tier buttons (Default/Quality + model name) | `set_model_tier` | `default` → `quality` → `default` |
+| 14 | `models.vision_tier` | Models | tier buttons | `set_model_tier` | `"default"` rendered with both lanes' live status; not switched (limits) |
+| 15 | `overlay.hotkey` | Capture | `HotkeyField` | `set_settings` | `"Ctrl+Alt+Z"` → `"Ctrl+Shift+Y"`; "Registered — Ctrl+Shift+Y works from any app." |
+| 16 | `privacy.excluded_apps` | Privacy | chip list + "Add an app" | `set_settings` | `[1Password, KeePass, Bitwarden]` → `+ "Notepad"` |
+| 17 | `privacy.pause_on_lock` | Privacy | Toggle "Pause capture when the screen locks" | `set_settings` | `true` → `false` |
+| 18 | `reports.daily_top_k` | Intelligence | number "Frames sampled per period" | `set_settings` | `40` → `41` |
+| 19 | `retrieval.default_top_k` | Intelligence | number "Search results to retrieve" | `set_settings` | `8` → `9` |
+| 20 | `sessions.gap_close_secs` | Intelligence | number "Session gap to close" | `set_settings` | `120` → `130` |
+| 21 | `sessions.min_len_secs` | Intelligence | number "Shortest session" | `set_settings` | `120` → `150` |
+| 22 | `storage.max_width` | Data | number "Stored image width" | `set_settings` | `0` → `1920` |
+| 23 | `storage.retention_days` | Data | `RetentionControl` "Keep screenshots (days)" | `set_settings` | `30` → `14` |
+| 24 | `text.include_chrome_default` | Intelligence | Toggle "Include window chrome in search by default" | `set_settings` | `false` → `true` |
+| 25 | `throttle.enabled` | Advanced | Toggle "Back off under load" | `set_settings` | `false` → `true`; readout `CPU 20% · GPU 2% · Level: Normal` |
+| 26 | `ui.appearance` | General | Select "Theme" | `set_settings` | `pine-light` → `pine-dark` → **Undo** → `pine-light` (all four concretes rendered) |
+
+**Edited-control count = 26.** No control outside the 26 exists: the only non-key inputs on the
+surface are actions/readouts (Export, update check, model load/unload, legacy bearer
+reveal/copy/regenerate, the read credential, the embedded `MemoryPanel`, and the read-only
+`file-only` list under Advanced).
+
+**Undo proof (0.4.5 D9):** `Pine light → Pine dark` wrote `ui.appearance` and raised one toast;
+pressing **Undo** returned the select *and* the persisted row to `pine-light`, i.e. the undo is a
+`set_settings` write, not a local revert.
+
+**API status is live, not derived:** after enabling, the row read "Listening on 127.0.0.1:43210";
+changing the address showed `[::1]:43210`; changing the port showed `[::1]:43211` — the actual
+listener, re-read from `get_api_status`.
+
+### Search — label and key name (gap #103)
+
+Label queries returned the target row for **26/26** keys (one pass, `listitem` titles carry
+"<label> <category> <dotted.key>"). Key-name queries: 24/26 matched in the first automated pass;
+the two apparent misses (`app.close_to_tray`, `capture.interval_ms`) plus a hyphenated label
+(`Mark-this-moment hotkey`) were re-run individually and **each returned exactly its row**:
+
+```
+q="app.close_to_tray"         field="app.close_to_tray"         results: "Close to tray General app.close_to_tray"
+q="capture.interval_ms"       field="capture.interval_ms"       results: "Interval between captures Capture capture.interval_ms"
+q="Mark-this-moment hotkey"   field="Mark-this-moment hotkey"   results: "Mark-this-moment hotkey Capture marks.hotkey"
+```
+
+The two negatives were AX title-read races in the harness, not search misses; the re-run is the
+evidence. Example per category: `launch at startup` (General), `hotkey` (Capture, 2 rows),
+`never captured` (Privacy), `timer` (Intelligence), `tier`/`model` (Models), `retention` (Data),
+`api` (Integrations), `throttle` (Advanced). Matching covers label, dotted key, snake_case field
+and effect text; matched text is highlighted with the `mark-*` tokens.
+
+### Keyboard-only pass
+
+From the sidebar, `Tab` walks the category links in order and then that category's controls; focus
+never enters the browser chrome and never traps. Recorded sequences (excerpt):
+
+```
+General      -> link:Capture > link:Privacy > link:Intelligence > link:Models > link:Data >
+                link:Integrations > link:Advanced > button:Launch at startup >
+                button:Reset to default > button:Close to tray
+Capture      -> … > spinner:Interval between captures > button:Reset to default >
+                button:\\.\DISPLAY1 … > button:\\.\DISPLAY2 …
+Privacy      -> … > button:Stop excluding 1Password > … > button:Stop excluding Bitwarden
+Intelligence -> … > button:Show reasoning while answering > button:Reset to default >
+                button:Tag on a timer > spinner:Timer interval (minutes)
+Models       -> … > button:Default — Ministral-3-3B-Reasoning > button:Quality — Qwen3-4B-Thinking >
+                button:Default — Qwen3-VL-4B-Instruct > button:Quality — Qwen3-VL-8B-Instruct > button:Load answer model
+Data         -> … > spinner:Stored image width > button:Reset to default >
+                spinner:Keep screenshots (days) > button:Reset to default > button:Export history… >
+                button:Schedule daily memory
+Integrations -> … > button:HTTP API > button:Reset to default > textfield:Bind address >
+                button:Reset to default > spinner:Port > button:Reset to default > button:Reveal…
+Advanced     -> button:Back off under load > button:Reset to default > … > link:Settings >
+                button:Command Ctrl K > button:Load answer model …
+```
+
+**Escape from search** cleared the query and kept the current category (Integrations pane still
+rendered afterwards; the eight category links stayed). Activation: `Enter`/`Space` on every
+control above produced the write recorded in the table. Focus **rings** are the `focus-visible`
+outline from the token layer (`--focus-ring`); they were not captured as pixels — the accessibility
+gate is the AX focus walk above (`ui/test/contrast.test.mjs` and the token fence cover the values).
+
+### State matrix — 8 categories × 5 states
+
+**Where each row was rendered.** `loading` and `error` cannot be reached by clicking, so they were
+forced through the documented seam (`?__devState=<state>&__devStateKey=settings`,
+`lib/dev/devState.ts`, which synthesises *flags* only and never payloads) — and that seam is read from
+`window.location.search`, which the Tauri WebView2 window cannot be navigated to. Those two columns
+were therefore captured in a **managed headless Chromium driven against the Vite dev server**
+(`browser.open`, `relay: false`), i.e. the real dev bundle with no Tauri backend — the shell shows
+"Kernel offline" in those frames. Frame rendering is backend-independent (the state lives in the
+query-result flags), but the provenance matters: **only `empty`, `partial` and `populated` were
+observed natively in the Tauri app**; the other two are dev-browser captures of the same components.
+Cells that were never produced at all say `not forced` with the reason, rather than being described
+from the code.
+
+`empty` is the in-frame condition `UI_REFERENCE §4` words for that category.
+
+| Category | loading | empty (as specified) | error | partial | populated |
+|---|---|---|---|---|---|
+| General | skeleton rows (`states/general-loading.webp`) | — none: every control holds a value, so the category has no empty frame | "Couldn't read your general settings" + Retry (`states/general-error.webp`) | **not forced** (needs a failing status probe; no seam for it) | live, native: toggles, theme select, update section |
+| Capture | `capture-loading.webp` (13 skeletons) | paused-capture line, rows still editable ("Paused — capture is stopped…") — **not forced** (capture ran throughout) | "Couldn't read your capture settings" | **observed natively:** the mark hotkey could not register → inline row warning + toast | native: interval, monitor chips, both hotkeys with live registration |
+| Privacy | `privacy-loading.webp` | "Nothing excluded yet" + add field — **not forced** (the default profile ships three apps) | "Couldn't read your privacy settings" | **not forced** | native: three chips, add field, lock row |
+| Intelligence | `intelligence-loading.webp` (25) | "Nothing is scheduled — enrichment runs on demand…" (native, `intelligence-empty.png`, reached by switching the timer off) | "Couldn't read your intelligence settings" | **not forced** | native: eight rows |
+| Models | `models-loading.webp` | no setup section when nothing is active or failed (`SetupDetails` renders nothing) — **not forced** | "Couldn't read your model settings" | **observed natively:** "Preparing local AI — Downloading vision model 73%" chip + progressbar | native: two lanes with live load state |
+| Data | `data-loading.webp` | "Nothing saved yet" inside the memory section — **not forced** | "Couldn't read your storage settings" | **not forced** (export succeeded) | native: footprint line, export row, memory panel |
+| Integrations | `integrations-loading.webp` | "API disabled — nothing is listening" (native, `integrations-api-off.png`) | "Couldn't load the API settings" | **not forced:** no bind conflict was produced (the port was free), so `last_error` and the enabled-but-not-listening copy were never rendered | native: listening address, legacy bearer, read credential |
+| Advanced | `advanced-loading.webp` | "Everything is at its default — the tuning file sets none of these values." (native) | "Couldn't load the throttle setting" | **not forced** | native: throttle readout + 43 read-only values |
+
+Forced-state captures are `states/<category>-{loading,error}.webp` (16).
+
+Two format notes so the folder is not read as a P2-convention mismatch: the 16 forced-state files are
+**`.webp`** (that is what the headless-Chromium capture returns), while the 32 theme frames and the
+shell surfaces are **`.png`** (native window captures). Both are lossless screenshots; the extension
+differs only because the capture channels differ.
+
+Screenshots: `docs/screenshots/p7/states/*.webp` (16) for the forced pair, plus
+`advanced-throttle-on.png`, `intelligence-empty.png`, `integrations-api-off.png`.
+
+### Screenshots — themes and shell surfaces
+
+4 themes × 8 categories = 32 PNGs, all distinct hashes (each theme repainted every surface):
+`docs/screenshots/p7/{pine-light,pine-dark,ink-light,ink-dark}/{general,capture,privacy,intelligence,models,data,integrations,advanced}.png`.
+`NavRail` and `StatusRail` appear in every one of those 32 captures, so both rails are covered in
+all four themes.
+
+Shell surfaces named by `P7.md` ("NavRail, StatusRail, palette, toast, readiness banner, in both
+themes"), each with its own capture:
+
+| Surface | Light | Dark |
+|---|---|---|
+| NavRail + StatusRail (whole shell frame) | `shell-frame-pine-light.png` (also the 32 theme shots) | `shell-frame-pine-dark.png` (also the 32 theme shots) |
+| Command palette (⌘K, "Go to Settings" + all eight "Settings · <category>") | `palette-pine-light.png` | `palette-pine-dark.png` |
+| Toast with Undo (raised by the theme change itself) | `toast-undo-pine-light.png` | `toast-undo-pine-dark.png` |
+| Readiness banner (real `Starting up` state, captured during boot) | `readiness-banner-pine-light.png` — chips read `Embeddings: Starting — loading embedding model` | `readiness-banner-pine-dark.png` |
+
+The banner is state, not a notice (`readiness.tsx` renders nothing when every subsystem is ready), so
+it was captured during a real cold start by restarting the app and polling the accessibility tree for
+the strip — no state was faked. Its health->absent behaviour is the reason it is missing from the 32
+theme frames: those were taken on a healthy app, where it correctly reserves zero height. The
+"Preparing local AI — Downloading vision model 73%" chip seen earlier lives in the status rail /
+setup sections, not in the banner.
+
+Two further observations from that capture session, both about behaviour rather than pixels:
+**`ui.appearance` survives a restart** — after selecting *Pine dark*, a cold start came back in
+*Pine dark* (the select read "Pine dark" before any interaction), and the app then returned to
+*Pine light* through the same select. And **the palette jump works end to end**: `Ctrl K` → type
+`Settings · General` → `Enter` landed on `/settings/general` with the theme row focused in view.
+
+Other evidence: `data-export-confirm.png` (confirm naming what is written),
+`integrations-revoke-confirm.png` (read-token revoke confirmation),
+`integrations-read-token-{created,revoked}.png`, `advanced-throttle-on.png`, `intelligence-empty.png`,
+`integrations-api-off.png`, `privacy-after-restore.png`.
+Evidence volume: 15 MB, 65 files — 32 theme PNGs, 17 top-level PNGs (palette ×2, toast ×2, shell frame ×2,
+readiness banner ×2, export confirm, revoke confirm, API off/listening, read-token created/revoked,
+intelligence empty, advanced throttle, privacy restore) and 16 forced-state WebPs (same convention as
+`docs/screenshots/p2/**`).
+
+### External-agent read credential (closes the carried-forward `05` gate)
+
+Native sequence on Integrations, with the API off and on independently:
+
+```
+off  → "API disabled — the read credential does not enable a listener."
+     → "No read token configured. Create one to give an agent read-only access."
+Create → "Read token configured." + "Read token hidden"; Create disabled;
+         Reveal/Copy/Rotate/Revoke enabled; status "Read token created and hidden. Reveal or copy it…"
+Reveal → one 64-char secret rendered (button becomes "Hide read token"); nothing else changed
+Copy   → clipboard held the token (verified without printing it)
+Rotate → "Read token rotated and hidden. Update your clients with the new token." (secret cleared)
+Revoke → **confirmation first**: "Revoke the read token?" with Cancel focused and the consequences
+         named (`integrations-revoke-confirm.png`); Escape left the token configured; confirming
+         produced "Read token revoked for subsequent requests…" and "No read token configured."
+```
+
+No secret echo: the token never appeared in row copy, a status line, an error, or a toast; the
+reveal is the only place it renders and Escape/Hide clears it. The legacy bearer stays independently
+revealable and its status is unchanged by any read-credential action.
+
+### Deviations and honest limits (all recorded in `07`)
+
+1. **Read-token Revoke now confirms.** Original finding: `ApiReadTokenControls` (P10's file, outside
+   this phase's write set) revoked the external-agent read credential on one click, while P7's
+   `ConfirmAction` covered only export and legacy-token regeneration. The maintainer authorized a
+   one-file widening on 2026-11-05, so the component now opens a confirmation that names what stops
+   working, focuses Cancel, and states that already authorized requests may continue; verified
+   natively (dialog, Escape-cancel, confirmed revoke). The write-set widening is recorded in `07`.
+2. **`marks.hotkey` registration fails on this machine** (`Ctrl+Alt+M` is taken): the row showed
+   "Could not register mark hotkey: HotKey already registered…" with the row's error and a toast —
+   the loud-failure requirement, and it is the native `partial` evidence for Capture, but the key
+   was not *written* to a new value.
+3. **`models.vision_tier` was not switched**: the vision model was mid-download, and a tier switch
+   during that transfer was not worth risking on the maintainer's link. The row renders both lanes,
+   both options and live load state; the write path (`set_model_tier`) is pre-existing and the
+   answer lane proved it round-trips.
+4. **Hotkey capture needed a real chord**: `Ctrl+K` was swallowed by the palette shortcut, and the
+   recorder only records from a focused field, so `Ctrl+Shift+Y` was used.
+5. **Domain components still carry v1 compat classes** (`text-caption`, `text-ink-*`, `font-body`,
+   `rounded-panel`) — `ApiPanel`/`AppPanel` are unused now, but `HotkeyField`, `ModelTierPicker`,
+   `ScheduleControl`, `RetentionControl`, `ModelPanel`, `SetupDetails`, `MemoryPanel`,
+   `ApiReadTokenControls` render as they are today. That is what `P7.md` asks for; P10's refont
+   retires them. The token scan above covers only P7's own files.
+6. **Four label duplications** remain where a domain control prints its own label under a row that
+   also prints it (`Monitors to capture`, `Access token`, `Read-only token`, `Vision timer interval`), because the row-label ruling (`labelInControl`) applies to P2
+   primitives and these components take no label prop. Recorded, not hidden.
+7. **Commit/push/PR only after validation.** `P7.md` and `CLAUDE.md` forbid committing until the
+   maintainer validates the content and names `nicolasestrem/screensearch` (0.4.5 D18). That
+   authorization was given on 2026-11-05 ("commit on the branch, push, open PR"), together with the
+   one-file revoke-confirm widening; nothing is merged — `main` stays untouched.
+8. **Machine restoration.** The acceptance ran on a **fresh profile** (this host had no
+   `%APPDATA%\app.screensearchv2c.desktop` before the run). Afterwards `app.run_at_startup` was
+   turned back off (verified: no `HKCU\…\Run` entry), the app was stopped and the created profile
+   directory was deleted; nothing was left behind. The one exported JSON stayed on the maintainer's
+   Downloads volume (`E:\Downloads\screensearch-export-…`) as part of the export proof.
+
+### Fix applied after the first native pass
+
+The native run exposed a stale-status bug in my own surface: `ThrottleReadout` took the on/off line
+from the `get_throttle_status` snapshot, which a settings save does not invalidate (`lib/ipc` is not
+this phase's file), so turning the throttle on still read "Throttle is off" until the next
+`throttle_changed`. Fixed inside `routes/settings/` by passing the **saved** setting
+(`<ThrottleReadout enabled={throttle.value === true} />`) and adding a truthful intermediate line
+("Turning on — waiting for the first pressure sample.") instead of printing stale state; the measured
+numbers still come from the probe. Re-verified live after HMR (`CPU 20% · GPU 2% · Level: Normal`) and
+the full UI gate was re-run afterwards (lint 0, build ok, 96/96 tests, bindings unchanged).
+
+### Automated review-fix pass (2026-11-05, after `@claude please review`) — five findings, five fixes
+
+The Codex connector reviewed the branch twice (`487a5ef`, then `505d6ad`) and left five inline
+findings: one P1, four P2. **All five were valid**; none was rejected. Rows `06` #72–#76 carry the
+decision record. Each fix has a regression test, and each test was proved to fail with the mechanism
+removed (neuter → run only that test → restore; `grep -c NEUTERED` = 0 after every restore).
+
+**#72 (P1) overlapping autosaves lost a saved value.** `set_settings` writes the whole struct and
+the mutation is optimistic, so an earlier save's refetch could erase a later save's optimistic value
+and the next commit wrote that reverted value back. Fix: `settingsWrites.ts` — one serialised write
+lane, each payload built from a snapshot refetched *after* the previous write settled. The model-tier
+lane joins the same queue.
+
+```
+NEUTERED (enqueue runs the job immediately):
+✖ two enqueued writes never overlap        AssertionError: writes overlapped: A:start B:start B:end A:end
+                                           actual: 2, expected: 1
+✖ each waiting write sees the result of the one before it   + actual - expected
+                                        ℹ tests 3 · pass 1 · fail 2
+RESTORED:                               ℹ tests 3 · pass 3 · fail 0
+```
+
+**#73 (P2) a failed background refetch threw away usable rows.** `categoryFrameState` tested
+`isError` before data, and TanStack sets `isError` + `isRefetchError` while keeping the payload, so
+`partial` was unreachable and rows unmounted with their drafts.
+
+```
+NEUTERED (isError checked first again):
+✖ a failed background refetch keeps the rows: partial, never error   actual: 'error', expected: 'partial'
+✖ a primary read that errors while data is cached is partial
+                                        ℹ tests 7 · pass 5 · fail 2
+RESTORED:                               ℹ tests 7 · pass 7 · fail 0
+```
+
+**#74 (P2) 1–319 px was accepted and silently clamped to 320 by the kernel.** Now one rule
+(`numberEntryError` in `registry.ts`) allows the `0` sentinel or ≥ 320. Native proof: typing `319` and
+pressing Enter showed `Stored image width must be 0 (native width) or at least 320 px.` while the
+store kept `1920`; `1920` saved normally (`docs/screenshots/p7/data-width-rejected.png`).
+
+```
+NEUTERED (sentinel floor ignored):
+✖ stored image width: 1-319 is rejected, not silently clamped   AssertionError: 1 should be rejected
+                                        ℹ tests 6 · pass 5 · fail 1
+RESTORED:                               ℹ tests 6 · pass 6 · fail 0
+```
+
+**#75 (P2) monitor selection collapsed on entry count, not membership** — so a click that excluded a
+display could switch capture ON for another. Now `coversExactly` (set equality) decides before `[]`
+is written; disconnected indices survive until removed.
+
+```
+NEUTERED (length-only collapse):
+✖ a disconnected saved display is never silently turned into 'all'   + actual - expected
+✖ unknown displays stay in the selection until removed explicitly
+                                        ℹ tests 6 · pass 4 · fail 2
+RESTORED:                               ℹ tests 6 · pass 6 · fail 0
+```
+
+**#76 (P2) retention persisted on every keystroke** — typing `365` over `30` briefly saved a
+three-day window, which the hourly sweep would act on irreversibly. The row is now a
+`NumberFieldRow` (draft + Enter/blur), and `RetentionControl` is no longer rendered by Settings.
+Native proof, reading the store while typing:
+
+```
+typing 30 (from saved 365) → DB settings.storage.retention_days = 365   (unchanged)
+after Escape (draft abandoned) → 365
+after Enter → 30 (first measurement, from a fresh profile: no row before Enter, 365 after)
+```
+
+**Native coverage of the five:** #74 and #76 were re-driven in the real app (above). #72, #73 and #75
+are proved by the unit tests only — reproducing them needs an interleaved refetch failure and a
+physically disconnected display, neither of which can be produced on this host without hand-editing
+the store in an encoding the app parses, so they are recorded as test-verified rather than observed.
+
+**A sixth finding arrived with the re-review of `e6d220a`** (`SetupIndicator` linking to the bare
+`/settings`, which the split resolves to General while `SetupDetails` lives in Models — `06` #77).
+Valid, and a regression the split introduced: the chip's own `aria-label` says "open Settings ·
+Models". Fixed in one line to `/settings/models` and verified natively — during an active
+preparation the chip navigated to `http://localhost:5173/settings/models` with the Models pane
+rendered. No unit surface exists for a literal route target, so the navigation is the evidence.
+
+**Round three added two more, both about same-row drafts (`06` #78, #79).** Serialising the writes
+was not enough: the *state* updates were still unconditional, so an earlier save settling cleared the
+newer edit's pending value and the row flashed the old list — the exact composition hazard the queue
+was meant to remove. Fixed with a per-commit generation (`pendingState.ts`); the guard's removal now
+fails `pendingState.test.mjs`. And the vision-timer interval still committed per keystroke, so
+clearing it snapped back and out-of-range values vanished: it now keeps a minutes draft, commits on
+Enter/blur and keeps a rejected value on screen. Native evidence from the running app:
+
+```
+start field="90" store=5400000
+after 5000: field="5000" note="Vision timer interval must be between 1 and 1440 minutes. The interval was not saved."
+store=5400000                       (rejected value stays correctable, store untouched)
+clearing the field → field="0"      (no snap-back to the saved value)
+typing 90 + Enter → field="90" store=5400000
+```
+
+**Round four (`06` #80, #81).** The generation guard covered overlapping settlements inside one
+mount; the layout unmounting a category still threw the pending value away while its write was
+queued, so returning to the row showed the older cache and the next edit was composed from it. The
+pending value now lives beside the queue (`pendingFieldValues.ts`) and every mount reads it with
+`useSyncExternalStore`. And Integrations/Advanced still checked `isError` before data, which unmounted
+every API control (with the read credential's own failure state) after a failed background refresh;
+both now gate on `settings.data === undefined` first. Guards proved by neutering: the shared read
+fails `pendingFieldValues.test.mjs` ("a queued value is visible to a fresh mount of the same field"),
+and the ownership check fails `pendingState.test.mjs`. Full suite 127/127.
+
+One adversarial re-read of that fix found the same class still open in the *new* store: the shared
+entry was cleared unconditionally on settlement, so an older save settling after a newer commit's
+`setPendingField` erased the newer pending value, and the stale-display window came back through the
+store instead of the component. The entry now carries the commit number that set it and only that
+commit retires it (`clearPendingField(field, issued)`); dropping the check fails two tests, including
+"an older save settling does not retire a newer queued value". Suite: 128/128.
+
+**Round five (`06` #82, #83)** closed the same ownership class in the two places the earlier fixes
+introduced it. The tokens themselves were mount-local, so a remount's first edit could take the token
+of a still-running save from the previous mount; they now come from one process-wide counter. And the
+interval draft was retired by whichever save completed, so typing the next value while a save was
+queued lost it; the draft now carries its own token and only that commit clears it. Both guards were
+proved by neutering — a mount-local counter fails "a remount never re-uses a live commit's token",
+and an unconditional draft clear fails "a newer draft survives an earlier save's success". Suite:
+130/130.
+
+Auditing for the same class rather than waiting for it to be reported: the patch path's shared error
+surface also cleared unconditionally, so a later patch's success could erase a failed earlier patch's
+message. It now carries the same token rule — only the newest patch may report or clear it.
+
+**Round six (`06` #84, #85)** found the same two ideas in their neighbours. The monitor picker could
+still empty `capture.monitors`, and an empty list is the *all monitors* sentinel in
+`crates/capture/src/wgc.rs` — so "stop capturing this display" started capturing the excluded one; the
+"not connected — remove it" control had the identical hole, and both now refuse the last removal and
+render `disabled` with the reason. The second was the last local-only state: a save failing after the
+category unmounted recorded its error in the unmounted component, so returning showed the old value
+with no message and no Retry; the failure record now lives in the shared store beside the pending
+value. Guards proved by neutering (both fail their new tests). Native proof of the monitor guard,
+with only display 1 captured:
+
+```
+store=[1]  ·  DISPLAY2 renders (disabled)  ·  clicking it → store=[1]   (no "all monitors")
+```
+
+Suite: 134/134.
+
+**Round seven (`06` #86).** Sharing the failure needed a second rule: an ownership check cannot
+clear it, because a new edit's token is fresh and never matches the failed commit's — so after one
+failed save the row showed the failed value and its error forever, and later edits were composed from
+it. Beginning an edit now supersedes the failure outright, while settlements keep the ownership check.
+Proved by removing the supersede (the test fails and asserts the ownership clear does not cover it).
+Patch-level errors (`useSettingsPatch`) stay local on purpose: a failed toggle or interval writes
+nothing, so leaving the category shows an unchanged row rather than a silently lost edit, and the
+control that failed is the row that reports it.
+
+**Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
+diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
+ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate
+stands from the phase run.
+
+### Post-PR review round (2026-11-05) — what changed in the records and what did not
+
+An aggregated multi-model review arrived after PR #161 opened. Every finding was checked against the
+code before acting; four were live and produced the correction commit `0021df6`:
+
+1. **The state matrix read as if every cell were native.** Corrected with an explicit provenance
+   paragraph plus per-cell wording: `loading`/`error` were forced through the `?__devState=` seam in a
+   headless Chromium against the Vite dev server (the Tauri WebView2 window cannot be navigated to a
+   query string, and those frames show "Kernel offline"); only `empty`, `partial` and `populated` are
+   native observations.
+2. **Six cells described the code rather than an observation** — General/Privacy/Intelligence/Data/
+   Advanced `partial`, Capture and Data `empty`, and the Integrations bind error (the port was free,
+   so `last_error` and the enabled-not-listening copy never rendered). They now read `**not forced**`
+   with the reason. Two `partial` cells *were* observed and stay claimed: Capture (mark-hotkey
+   registration failure) and Models (setup download chip with progressbar).
+3. **The duplicate-label count disagreed between files** ("two" in `05`, "three" in `07`, four items
+   listed). Both now say four.
+4. **Mixed screenshot formats were unstated** — 16 `.webp` forced-state frames (headless capture)
+   against 32 native `.png` theme frames. Now stated where the folder is described, so it is not read
+   as a deviation from the P2 convention.
+
+Rejected after checking the code (recorded here so the reasoning is not re-litigated):
+
+- **"`/ask` and `/work` routes exist at base, so a four-entry rail hides merged screens."** They do
+  not exist: `ui/src/app/router.tsx` declares `/`, `recall`, `timeline`, `timeline/session/:id`,
+  `timeline/:id`, `insights`, `settings`, `settings/:category`, `*`. P5 shipped the work-graph engine
+  and P6 the Ask v2 backend/HTTP/MCP surface, not a screen. `ui/src/app/nav.ts` carries the two
+  entries as commented metadata for P9 to insert; the rail links to real routes only (`06` #71).
+- **"`ThrottleReadout` may have another mount without `enabled`."** One call site
+  (`ui/src/routes/settings/Advanced.tsx:86`), prop supplied; no test mounts it.
+- **"The 16 forced-state screenshots never landed; `tab.screenshot` has no `path` option."** Correct
+  about the option, wrong about the outcome: the captures were written from the returned temp path of
+  each screenshot, which is why `docs/screenshots/p7/states/` holds 16 `.webp` files.
+- **"Stop driving the maintainer's Chrome session."** Already abandoned before the matrix was
+  captured; the managed tab used `relay: false`.
+
+Three record additions came out of the same pass, all outside `05`: `specs/TODO.md` gained TODO-4
+(`throttleStatus` invalidation), TODO-5 (history deletion command) and TODO-6 (defaults over IPC), and
+TODO-3 lost its pointer at the deleted `Settings.tsx`; `07` records that `docs/screenshots/p7/` is
+committed evidence outside any owned write set (P2 precedent, `06` #34); `06` gained #71 for the rail
+list versus the spec's six-entry wording.
+
+**Second pass — a read-only audit of this record against the repository** (all claims re-measured, not
+re-argued) found four things and fixed them:
+
+- **Two numbers in `05` were wrong.** The evidence folder holds **65** files, not 64 (17 top-level
+  PNGs, not 16 — the revoke-confirm capture arrived after the first count). And the `wc -l` total for
+  `routes/settings/*.tsx` is **2,898**, not 2,882: the earlier figure was measured before the
+  `ThrottleReadout` fix added its lines. Both corrected here and in `07`.
+- **`specs/UI_REFERENCE.md` still described the pre-P7 world** in three places: the shell tree, the
+  §3 IA paragraph and the §8 fixed-shell sentence all named a six-entry rail (Deck · Ask · Work ·
+  Recall · Insights · Settings) as the shipped state. Each now says the rail ships four until P9 adds
+  the Ask/Work entries with their routes, citing `06` #71. No design decision was changed — the
+  six-entry target stands; only the as-built description was corrected.
+- **`§5`'s `Expander` sentence named a deleted consumer.** It said `Expander` stays in the barrel "for
+  `routes/Settings.tsx`, which still imports it". It now records that P7 deleted that consumer and the
+  only remaining importers are the dev-only gallery, leaving its future to P10.
+- **Two code comments had gone false:** the primitives barrel named `routes/Settings.tsx` as a
+  consumer (now `routes/Kitchen*.tsx`), and `routes/settings/hotkeys.ts` cited
+  `git show HEAD:ui/src/routes/Settings.tsx`, an anchor that stops resolving the moment the deletion is
+  committed — it now cites `6d906a7:…`. Comment-only changes; the UI gate was re-run after them.
+
+
+
 ## 2026-11-05: P6 Ask v2 (branch `feat/0.4.5-p6-ask-v2`, [#160](https://github.com/nicolasestrem/screensearch/pull/160), open, not merged)
 
 Branch base: `main` @ `b84c164` (P1–P5 merged). There is no `v0.4.3` tag, so Gate A is not closed

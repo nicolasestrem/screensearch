@@ -1,7 +1,11 @@
-// AppShell — the persistent frame around every route (UI_REFERENCE §3): the
-// StatusRail (top), ReadinessBanner (conditional), NavRail (left), the routed
-// <Outlet>, the CommandPalette overlay, and the toast viewport. Mounts the single
-// live-event subscription once, and the global ⌘K palette shortcut.
+// AppShell — the persistent v2 frame around every route (UI_REFERENCE §3/§8): the
+// StatusRail across the top, the ReadinessBanner when a subsystem needs attention, the
+// NavRail down the left, and ONE scrolling pane holding the routed `<Outlet>`. Both
+// rails are fixed; no route introduces a second vertical scroller.
+//
+// It also mounts, once: the live-event subscription, the global ⌘K palette shortcut, the
+// `open_moment` deep link, the command palette, the toast host, and the theme applier that
+// maps `ui.appearance` onto `<html data-theme>`.
 import { useEffect, useRef } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 
@@ -9,15 +13,17 @@ import { StatusRail } from "./StatusRail";
 import { NavRail } from "./NavRail";
 import { ReadinessBanner } from "./ReadinessBanner";
 import { CommandPalette } from "./CommandPalette";
+import { ToastHost } from "./ToastHost";
 import { DevStateBadge } from "./DevStateBadge";
 import { ScrollContainerProvider } from "./ScrollContainerContext";
-import { ToastViewport } from "../primitives";
+import { useAppliedTheme } from "../../app/theme";
 import { useLiveEvents } from "../../lib/ipc/useLiveEvents";
 import { listenTo } from "../../lib/ipc/events";
 import { useUiStore } from "../../state/uiStore";
 
 export function AppShell() {
   useLiveEvents();
+  useAppliedTheme();
   const navigate = useNavigate();
   const togglePalette = useUiStore((s) => s.togglePalette);
   // The single scroll context for every route (UI_REFERENCE §8). `relative` makes
@@ -28,6 +34,10 @@ export function AppShell() {
   // gives the compositor an explicit paint boundary between the scrolling content and
   // the fixed NavRail — the app-side mitigation for the WebView2 ghost-rail artifact
   // (07 #106); safe because the fixed overlays are siblings of <main>, not descendants.
+  //
+  // Those two declarations are the only bracketed utilities here: they carry no design
+  // value (no colour, size, radius or font), and both are load-bearing for the
+  // one-scroll and no-CLS acceptance rules — there is no token for either property.
   const mainRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -61,14 +71,14 @@ export function AppShell() {
   }, [navigate]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full flex-col bg-surface-app text-fg-primary">
       <StatusRail />
       <ReadinessBanner />
-      <div className="flex flex-1 min-h-0">
+      <div className="flex min-h-0 flex-1">
         <NavRail />
         <main
           ref={mainRef}
-          className="relative flex-1 min-w-0 overflow-y-auto [scrollbar-gutter:stable] [contain:paint]"
+          className="relative min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] [contain:paint]"
         >
           <ScrollContainerProvider value={mainRef}>
             <Outlet />
@@ -76,7 +86,7 @@ export function AppShell() {
         </main>
       </div>
       <CommandPalette />
-      <ToastViewport />
+      <ToastHost />
       {import.meta.env.DEV && <DevStateBadge />}
     </div>
   );

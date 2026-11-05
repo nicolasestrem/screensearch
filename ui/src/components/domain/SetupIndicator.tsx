@@ -29,7 +29,10 @@ export function SetupIndicator() {
     <>
       {summary != null && !setup.isPending && (
         <NavLink
-          to="/settings"
+          // P7 split Settings into categories: `SetupDetails` now lives only in
+          // Models, so the bare `/settings` (which falls back to General) would
+          // land the user one screen away from the operation this chip advertises.
+          to="/settings/models"
           aria-label={
             failed
               ? "Setup failed — open Settings · Models"

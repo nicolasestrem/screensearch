@@ -53,7 +53,8 @@ Tailwind's theme maps onto the same custom properties, so a Tailwind utility and
 ```
 AppShell
  ├─ StatusRail (top): capture state · DB size · queue depth · sidecar/model · readiness · throttle   [telemetry]
- ├─ NavRail (left): Deck · Ask · Work · Recall · Insights · Settings (0.4.5 D7) · footer: version → repo link (0.3.1) · update indicator (0.3.2, presence-only) + a quiet "Check for updates" control (0.3.2 PR2, the quick-menu manual check — gap #99)
+ ├─ NavRail (left): Deck · Recall · Insights · Settings (0.4.5 D7; **shipped as four entries in P7** — Ask and Work
+ │   have no route yet, so they are inserted by P9 with their routes, `06` #71) · footer: version → repo link (0.3.1) · update indicator (0.3.2, presence-only) + a quiet "Check for updates" control (0.3.2 PR2, the quick-menu manual check — gap #99)
  ├─ CommandPalette (⌘K): jump-to + actions (search, ask, tag, settings)
  └─ Routes:
      /            Deck       — at-a-glance: capture status, today's activity, jump back in (0.3.0: where-was-i "Jump back" card + Intentions strip)
@@ -74,7 +75,7 @@ AppShell
  ┄ Tray (0.3.2)       — an OS surface, not a window/route: passive capture-state icon + menu (03 §7d)
 ```
 
-**IA change (0.4.5 D7).** The NavRail carries six entries — **Deck · Ask · Work · Recall (search + timeline) · Insights · Settings** — and **Session and Moment stay detail routes**: reached from a search result, the timeline, a thread or the Deck's Jump-back card, never as rail items. The 0.3.2-era "no new route" fence (D13-of-0.4.0, which kept sessions inside existing routes) is **lifted** for this arc: `/ask`, `/work`, `/work/:id` and the rewritten `/insights` are new routes, and `routes/settings/` replaces the single Settings view. Recall keeps its shipped surfaces — Search and Reports — with the timeline browser as its second surface under the same rail entry (`/timeline`); whether those paths merge into one is P7's call, and the existing deep links (`/timeline/:id`, `/timeline/session/:id`) keep working either way.
+**IA change (0.4.5 D7).** The NavRail carries six entries — **Deck · Ask · Work · Recall (search + timeline) · Insights · Settings** (as shipped after P7 it carries **four**: Deck · Recall · Insights · Settings; `/ask` and `/work` do not exist yet, so P9 adds the two entries together with their routes — `06` #71. `ui/src/app/nav.ts` holds the exact two entry objects to insert, commented, so nothing else moves) — and **Session and Moment stay detail routes**: reached from a search result, the timeline, a thread or the Deck's Jump-back card, never as rail items. The 0.3.2-era "no new route" fence (D13-of-0.4.0, which kept sessions inside existing routes) is **lifted** for this arc: `/ask`, `/work`, `/work/:id` and the rewritten `/insights` are new routes, and `routes/settings/` replaces the single Settings view. Recall keeps its shipped surfaces — Search and Reports — with the timeline browser as its second surface under the same rail entry (`/timeline`); whether those paths merge into one is P7's call, and the existing deep links (`/timeline/:id`, `/timeline/session/:id`) keep working either way.
 
 Rules: one primary action per screen; every route is reachable from NavRail or a link; no orphan
 screens; deep-linkable (real routes, `/timeline/:id` shareable within the app).
@@ -318,7 +319,7 @@ Loading uses skeletons that match final layout (no spinner-only screens). Empty 
 
 **Gallery.** `/kitchen` (`ui/src/routes/Kitchen.tsx` over `KitchenPrimitives.tsx`) is the dev-only design-system specimen: it renders the real primitives against the real tokens outside the AppShell, with density and theme switches in the header and `?theme=` read on mount for screenshot runs. It is registered in `app/router.tsx` behind `import.meta.env.DEV` with a dynamic import, so Vite folds the guard to `false` and the route, its chunk and the gallery are **excluded from the production bundle**.
 
-**`Expander` stays in the barrel as a v2 adapter** for `routes/Settings.tsx`, which still imports it for its collapsed Settings groups, until P7 replaces that screen.
+**`Expander` stays in the barrel.** Its only production consumer was the single-file `routes/Settings.tsx`, which P7 deleted; since then the only importers are the dev-only gallery (`routes/Kitchen.tsx`, `KitchenPrimitives.tsx`). P10 decides whether it survives as a v2 primitive or leaves the barrel.
 
 ## 6. Data & state (reliability by construction)
 - **Typed IPC only.** Every command/event payload is a Rust struct exported via **`ts-rs`** and
@@ -380,7 +381,7 @@ latency < 100 ms; no layout shift on data arrival (skeletons reserve space).
 ### Shell layout contract — v2 restatement (0.4.5; binds P2 and everything after it)
 The 0.3.2 contract above stays in force **verbatim**; v2 restates the shell it is verified against, so P2's layout tokens and P7's shell are built to one sentence rather than to the roadmap.
 
-- **Fixed shell, one scrolling pane:** `StatusRail` across the top (telemetry only, one row, chip widths stable) and `NavRail` down the left (six entries per `§3` — Deck · Ask · Work · Recall · Insights · Settings — plus the version footer and the update presence). Both rails are fixed; only the content pane scrolls, and a route never introduces a second vertical scroller.
+- **Fixed shell, one scrolling pane:** `StatusRail` across the top (telemetry only, one row, chip widths stable) and `NavRail` down the left (six entries per `§3` — Deck · Ask · Work · Recall · Insights · Settings — plus the version footer and the update presence; the shipped rail renders four until P9 lands the Ask/Work routes, `06` #71). Both rails are fixed; only the content pane scrolls, and a route never introduces a second vertical scroller.
 - **12-column content grid:** wide screens lay the content pane out on a **12-column grid** with container widths taken from `§2`'s scales; below the wide breakpoint the grid collapses to one column instead of scrolling sideways. Every grid item carries `min-w-0` — the pre-block exemption above depends on it, and so does the no-horizontal-scrollbar rule.
 - **One density token:** row height, control height and grid gap come from a single **density token** (`comfortable` / `compact`, `§2`); no screen hardcodes a row height. `comfortable` is the default; `compact` is a choice in Settings, not a per-screen tweak.
 - **Same verification, wider matrix:** the screenshot matrix keeps its size/DPI set and extends to every v2 route and state — Deck, Ask v2 conversation, Work list, Thread page, Recall (search + reports) and the timeline, Moment, Session, Insights v2, and each of the eight Settings categories — in every theme the `§1` pick ships. The one-scroll, no-horizontal-scrollbar and no-CLS rules are unchanged, including the timeline layer's four reserved band lanes (or the equivalent fixed reservation of its v2 successor, `docs/0.4.5.md` P10).
