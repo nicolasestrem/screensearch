@@ -18,7 +18,18 @@ interface PendingEntry {
   issued: number;
 }
 
+interface FailureEntry {
+  /** The value whose save failed, so Retry submits what the user meant. */
+  value: unknown;
+  message: string;
+  issued: number;
+}
+
 const entries = new Map<string, PendingEntry>();
+// A failure belongs here for the same reason a pending value does: it can arrive after
+// the category unmounted, and losing it shows the old saved value with no error and no
+// Retry — the submitted edit disappears without explanation.
+const failures = new Map<string, FailureEntry>();
 const listeners = new Set<() => void>();
 
 // Tokens come from one process-wide counter, not a per-mount one: a remount would
@@ -48,6 +59,30 @@ export function clearPendingField(field: string, issued: number): void {
   if (entry === undefined || entry.issued !== issued) return;
   entries.delete(field);
   notify();
+}
+
+/** Record a failed save, owned by commit `issued`. */
+export function setPendingFailure(
+  field: string,
+  value: unknown,
+  message: string,
+  issued: number,
+): void {
+  failures.set(field, { value, message, issued });
+  notify();
+}
+
+/** Retire a recorded failure, but only if `issued` is still the commit that set it. */
+export function clearPendingFailure(field: string, issued: number): void {
+  const entry = failures.get(field);
+  if (entry === undefined || entry.issued !== issued) return;
+  failures.delete(field);
+  notify();
+}
+
+/** The last failure for a field, or `undefined` when the last save succeeded. */
+export function pendingFailure(field: string): FailureEntry | undefined {
+  return failures.get(field);
 }
 
 /** The pending value for a field, or `undefined` when nothing is queued. */

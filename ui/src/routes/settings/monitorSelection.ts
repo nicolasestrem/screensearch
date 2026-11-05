@@ -13,6 +13,11 @@
  * The next selection after toggling one display. An empty selection means "all", so
  * clicking a display then excludes just that one; the selection collapses back to
  * "all" only when it covers exactly the connected displays and nothing else.
+ *
+ * Removing the last captured display is refused: `[]` is the "all" sentinel
+ * (`crates/capture/src/wgc.rs`), so an empty list here would not stop capture, it would
+ * start capturing the displays the user had just excluded. Callers surface the refusal
+ * by disabling that control (`canToggleOff`).
  */
 export function toggleMonitor(
   selected: readonly number[],
@@ -25,7 +30,35 @@ export function toggleMonitor(
       : selected.includes(index)
         ? selected.filter((candidate) => candidate !== index)
         : [...selected, index].sort((a, b) => a - b);
+  if (next.length === 0 && selected.length > 0) return [...selected];
   return coversExactly(next, available) ? [] : next;
+}
+
+/**
+ * Remove one display from the selection — the same rule for a display that is no longer
+ * connected, which is removed by its own control: emptying the list is refused, and a
+ * selection that ends up covering exactly the connected displays collapses to "all".
+ */
+export function removeMonitor(
+  selected: readonly number[],
+  index: number,
+  available: readonly number[],
+): number[] {
+  if (!selected.includes(index)) return [...selected];
+  const next = selected.filter((candidate) => candidate !== index);
+  if (next.length === 0) return [...selected];
+  return coversExactly(next, available) ? [] : next;
+}
+
+/** False for the last captured display: deselecting it would mean "capture all". */
+export function canToggleOff(
+  selected: readonly number[],
+  index: number,
+  available: readonly number[],
+): boolean {
+  if (selected.length === 0) return available.length > 1;
+  if (!selected.includes(index)) return true;
+  return selected.filter((candidate) => candidate !== index).length > 0;
 }
 
 /**

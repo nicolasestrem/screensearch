@@ -6,7 +6,7 @@
 import type { MonitorInfo } from "../../bindings/MonitorInfo";
 import { Skeleton } from "../../components/primitives";
 import { cn } from "../../lib/cn";
-import { toggleMonitor } from "./monitorSelection";
+import { canToggleOff, removeMonitor, toggleMonitor } from "./monitorSelection";
 
 export interface MonitorPickerProps {
   /** The connected displays, or undefined while they are still being read. */
@@ -71,11 +71,21 @@ export function MonitorPicker({
         ) : null}
         {available.map((monitor) => {
           const pressed = selected.length === 0 || selected.includes(monitor.index);
+          // The last captured display cannot be turned off: `[]` means "every display",
+          // so that click would start capturing what the user just excluded.
+          const canRemove = canToggleOff(selected, monitor.index, availableIndices);
           return (
             <button
               key={monitor.index}
               type="button"
               aria-pressed={pressed}
+              disabled={!canRemove}
+              aria-disabled={!canRemove}
+              title={
+                canRemove
+                  ? undefined
+                  : "The last captured display stays selected — an empty selection means every display."
+              }
               onClick={() =>
                 onChange(toggleMonitor(selected, monitor.index, availableIndices))
               }
@@ -95,19 +105,31 @@ export function MonitorPicker({
             </button>
           );
         })}
-        {missing.map((index) => (
+        {missing.map((index) => {
+          // The same refusal as a connected row: removing the last selection would mean
+          // "every display", so it is disabled rather than silently enabling capture.
+          const canRemove = canToggleOff(selected, index, availableIndices);
+          return (
           <button
             key={index}
             type="button"
             aria-label={`Display ${index + 1} is not connected — remove it from the selection`}
+            disabled={!canRemove}
+            aria-disabled={!canRemove}
+            title={
+              canRemove
+                ? undefined
+                : "The last captured display stays selected — an empty selection means every display."
+            }
             onClick={() =>
-              onChange(selected.filter((candidate) => candidate !== index))
+              onChange(removeMonitor(selected, index, availableIndices))
             }
             className={cn(OPTION, MISSING)}
           >
             Display {index + 1} (not connected)
           </button>
-        ))}
+          );
+        })}
       </div>
       <p className="min-w-0 text-t-xs text-fg-tertiary">{summary}</p>
       {error ? (

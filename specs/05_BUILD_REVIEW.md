@@ -463,6 +463,22 @@ Auditing for the same class rather than waiting for it to be reported: the patch
 surface also cleared unconditionally, so a later patch's success could erase a failed earlier patch's
 message. It now carries the same token rule — only the newest patch may report or clear it.
 
+**Round six (`06` #84, #85)** found the same two ideas in their neighbours. The monitor picker could
+still empty `capture.monitors`, and an empty list is the *all monitors* sentinel in
+`crates/capture/src/wgc.rs` — so "stop capturing this display" started capturing the excluded one; the
+"not connected — remove it" control had the identical hole, and both now refuse the last removal and
+render `disabled` with the reason. The second was the last local-only state: a save failing after the
+category unmounted recorded its error in the unmounted component, so returning showed the old value
+with no message and no Retry; the failure record now lives in the shared store beside the pending
+value. Guards proved by neutering (both fail their new tests). Native proof of the monitor guard,
+with only display 1 captured:
+
+```
+store=[1]  ·  DISPLAY2 renders (disabled)  ·  clicking it → store=[1]   (no "all monitors")
+```
+
+Suite: 134/134.
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate

@@ -12,9 +12,12 @@ import { useSetModelTier, useSetSettings } from "../../lib/ipc/mutations";
 import { queryKeys } from "../../lib/ipc/queryKeys";
 import { useSettings } from "../../lib/ipc/queries";
 import {
+  clearPendingFailure,
   clearPendingField,
   nextPendingToken,
+  pendingFailure,
   pendingFieldValue,
+  setPendingFailure,
   setPendingField,
   subscribePendingField,
 } from "./pendingFieldValues";
@@ -127,7 +130,17 @@ export function useSettingField<F extends SettingsField>(
     () => undefined,
   );
   const pendingValue = (sharedPending as Settings[F] | undefined) ?? row.pending;
-  const failure = row.failure;
+  // A failure that arrived while this category was unmounted is still here: the shared
+  // record keeps both the value to retry and the reason, so returning shows the error.
+  const sharedFailure = useSyncExternalStore(
+    subscribePendingField,
+    () => pendingFailure(field),
+    () => undefined,
+  );
+  const failure =
+    sharedFailure === undefined
+      ? row.failure
+      : (sharedFailure as { value: Settings[F]; message: string });
 
   const savedValue = settings.data?.[field] as Settings[F] | undefined;
   const defaultValue = SETTINGS_DEFAULTS[field] as Settings[F];
@@ -151,6 +164,8 @@ export function useSettingField<F extends SettingsField>(
     const mine = nextPendingToken();
     setRow(begun(next, mine));
     setPendingField(field, next, mine);
+    // A new edit supersedes a recorded failure for this field.
+    clearPendingFailure(field, mine);
     // Queued: `set_settings` writes the whole struct, so an earlier write's refetch
     // must never be able to erase this value from the base of a later one (see
     // `settingsWrites.ts`). The undo payload is read from the fresh base, so Undo
@@ -174,6 +189,7 @@ export function useSettingField<F extends SettingsField>(
         // for every mount, not just this one — but only if this commit still owns it,
         // or an older save would erase a newer queued edit's value.
         clearPendingField(field, mine);
+        clearPendingFailure(field, mine);
         setRow((state) => settled(state, mine));
         if (options?.silent !== true) {
           pushActionToast("success", `${def.label} updated`, {
@@ -183,8 +199,10 @@ export function useSettingField<F extends SettingsField>(
         }
       };
       const onError = (error: unknown) => {
+        const message = saveFailure(def.label, error);
         clearPendingField(field, mine);
-        setRow((state) => failed(state, mine, next, saveFailure(def.label, error)));
+        setPendingFailure(field, next, message, mine);
+        setRow((state) => failed(state, mine, next, message));
       };
       if (lane !== null) {
         // `set_model_tier` has no optimistic phase of its own; write the cache the

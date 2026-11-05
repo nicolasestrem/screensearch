@@ -4,9 +4,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  clearPendingFailure,
   clearPendingField,
   nextPendingToken,
+  pendingFailure,
   pendingFieldValue,
+  setPendingFailure,
   setPendingField,
   subscribePendingField,
 } from "../src/routes/settings/pendingFieldValues.ts";
@@ -69,4 +72,31 @@ test("a remount never re-uses a live commit's token", () => {
   clearPendingField(FIELD, first);
   assert.deepEqual(pendingFieldValue(FIELD), ["A", "B"]);
   clearPendingField(FIELD, second);
+});
+
+test("a failure that arrives after unmount is still there with its value", () => {
+  const token = nextPendingToken();
+  setPendingField(FIELD, ["A"], token);
+  // The write fails after the category unmounted: the pending value is retired, but the
+  // failure (with what to retry) must survive so returning shows the error.
+  clearPendingField(FIELD, token);
+  setPendingFailure(FIELD, ["A"], "Settings could not be saved", token);
+  assert.deepEqual(pendingFailure(FIELD), {
+    value: ["A"],
+    message: "Settings could not be saved",
+    issued: token,
+  });
+  clearPendingFailure(FIELD, token);
+  assert.equal(pendingFailure(FIELD), undefined);
+});
+
+test("a newer edit clears an older failure, and an older save cannot clear a newer one", () => {
+  const first = nextPendingToken();
+  const second = nextPendingToken();
+  setPendingFailure(FIELD, ["A"], "refused", first);
+  // The user edits again: the recorded failure is superseded.
+  clearPendingFailure(FIELD, second);
+  assert.notEqual(pendingFailure(FIELD), undefined, "a non-owning commit clears nothing");
+  clearPendingFailure(FIELD, first);
+  assert.equal(pendingFailure(FIELD), undefined);
 });
