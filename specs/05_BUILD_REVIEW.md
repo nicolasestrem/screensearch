@@ -417,6 +417,22 @@ Models". Fixed in one line to `/settings/models` and verified natively — durin
 preparation the chip navigated to `http://localhost:5173/settings/models` with the Models pane
 rendered. No unit surface exists for a literal route target, so the navigation is the evidence.
 
+**Round three added two more, both about same-row drafts (`06` #78, #79).** Serialising the writes
+was not enough: the *state* updates were still unconditional, so an earlier save settling cleared the
+newer edit's pending value and the row flashed the old list — the exact composition hazard the queue
+was meant to remove. Fixed with a per-commit generation (`pendingState.ts`); the guard's removal now
+fails `pendingState.test.mjs`. And the vision-timer interval still committed per keystroke, so
+clearing it snapped back and out-of-range values vanished: it now keeps a minutes draft, commits on
+Enter/blur and keeps a rejected value on screen. Native evidence from the running app:
+
+```
+start field="90" store=5400000
+after 5000: field="5000" note="Vision timer interval must be between 1 and 1440 minutes. The interval was not saved."
+store=5400000                       (rejected value stays correctable, store untouched)
+clearing the field → field="0"      (no snap-back to the saved value)
+typing 90 + Enter → field="90" store=5400000
+```
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate
