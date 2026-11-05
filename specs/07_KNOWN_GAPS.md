@@ -116,6 +116,25 @@ in `05` and `06` #37-#42):
   stops through its `Drop` at process exit (no task leak). The method is kept for a future
   graceful-stop wiring and its doc says so.
 
+Post-merge findings (P5 merged to `main` as `722f29e`, PR #157):
+
+- **Fixed: CodeQL "cleartext logging of sensitive information" (two high alerts).** The first
+  code-scanning run on the PR flagged test helper `panic!` messages in
+  `crates/graph/src/clustering.rs` and `crates/graph/src/overrides.rs` that interpolated a session
+  id. Fixed in `4e16f83` by keeping session ids out of panic/log text; no production code changed.
+  Etiquette for later phases (P6 ask turns, P8 insights, P9 UI): opaque ids such as
+  `session_id`/`thread_id` do not belong in log, panic or toast text; log counts, kinds or frame
+  ids instead, as `05` records for the job modules.
+- **Closed: the branch is merged and the merged tree re-verified.** The full kickoff verification
+  list ran green again on `main` at `722f29e` (81 targets, 1386 passed, 0 failed, 16 ignored) and
+  main CI, MCP native and Push-on-main runs on the merge commit are green (`05`, post-merge
+  record). The closed PR is not re-opened; this documentation addendum is its own docs-only PR:
+  DOCS_PR_PLACEHOLDER
+- **Open, unchanged:** every gap listed above (session-reconciliation link loss, dead-letter
+  visibility, cursor retention dependency, P6 `claim_kinds` handoff, `stop_graph_scheduler`
+  shutdown wiring) stays open with its owner; nothing in the post-merge documentation pass changes
+  runtime behaviour.
+
 ## 2026-11-04: P4 thresholds measured on a committed synthetic fixture (owner: maintainer for the two deviations)
 
 P4 is executed on `feat/0.4.5-p4-auto-eval`, rebased onto `origin/main` so only its three commits

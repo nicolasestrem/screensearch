@@ -135,31 +135,23 @@ for self-contained contracts and source-inspected inventory.
   UI and separate-machine network gates remain open. Only the Windows NSIS installer, its
   updater `.sig` and `latest.json` are release assets; standalone MCP wrapper archives are not
   published. Post-release increments on
-  `main`/branches: llama.cpp bootstrap recovery (#145, merged) and setup visibility (`02 §5j`,
-  `03 §7g`, branch `feat/setup-progress-visibility`). The full app is a
-  15-crate Rust workspace plus a React/TS UI; active work is tracked in `05`–`08`, shipped
-  history in `CHANGELOG-ARCHIVE.md` and `specs/archive/`. Code-signing is the lone packaging
-  follow-up (`03 §11b`).
+  `main`: llama.cpp bootstrap recovery (#145, merged) and setup visibility (`02 §5j`, `03 §7g`,
+  #146, merged). Active work is tracked in `05`-`08`, shipped history is in
+  `CHANGELOG-ARCHIVE.md` and `specs/archive/`; code-signing is the lone packaging follow-up
+  (`03 §11b`).
 
-- **Next arc (2026-11-03):** the **0.4.5 arc (P9 — work intelligence + design system v2)**, stated
-  strategically in `02 §5k` and sequenced in `docs/0.4.5.md`. It runs **P1 first (the specs
-  contract — this change; specs-only, no code)**, then three waves: Wave A (P2/P3/P4) → tag
-  v0.4.3, Wave B (P5/P6/P7) → tag v0.4.4, Wave C (P8/P9/P10) → tag v0.4.5. P1 has not merged
-  anything: the working schema stays **13** until **P3** cuts the baseline **v14** (`03 §4`,
-  0.4.5 D2). Until Wave A starts, `01`–`04`/`UI_REFERENCE` are the contract for it and the roadmap
-  is context.
-
-- **Wave A in flight (2026-11-04, updated):** **P2 is merged** to `main` as `7e73e30` (design system
-  v2, Logbook, four themes, `pine-light` default). **P3 is implemented, synced onto main and opened
-  for review** on `feat/0.4.5-p3-baseline-schema` (base `origin/main` `3976551`,
-  [PR #153](https://github.com/nicolasestrem/screensearch/pull/153) open, not
-  merged): code now carries the baseline schema **v14** instead of the migration chain (`03 §4`,
-  0.4.5 D2), the dev-only `ssv2c-rebuild` carrier, settings v2 (26 UI keys including
-  `ui.appearance`, 44 `file-only`, 9 `deleted`) with `advanced.toml` and `get_advanced_config`, and a
-  baseline DDL parity test. The shipped database is still **13** until this branch merges; the
-  maintainer's real-DB rebuild, per-table counts, 20-frame Moment spot check and v14 boot remain
-  open, as does the Settings > Integrations in-app check. P7 renders `ui.appearance` and removes the
-  demoted Settings rows. P4 is unchanged and needs a rebase onto the P3 tip before its turn.
+- **0.4.5 arc status (2026-11-05):** the arc is merged through Wave A and the first Wave B phase.
+  On `main`: **P1** specs contract (`e27f42c`, PR #150), **P2** design system v2 (`7e73e30`, PR
+  #151), **P3** baseline schema **v14** plus settings v2 (`0dfa2f5`, PR #153; the working tree now
+  carries the v14 baseline instead of the migration chain, `03 §4`, 0.4.5 D2), **P4** automatic
+  evaluation with the frozen P5/P6 thresholds (`aceca58`, PR #155), and **P5** work graph engine
+  (`722f29e`, PR #157; pure `crates/graph`, graph persistence, four kernel job kinds and the idle
+  scheduler; acceptance, decisions and evidence in `05`, `06` #37-#42 and `07`). **P6** (Ask v2)
+  and **P7** (shell + Settings v2) have not started in this workspace. Gate A (`v0.4.3`) and
+  Gate B (`v0.4.4`) tags remain the maintainer's calls; the executing phases ran under the
+  maintainer's 2026-11-04 overrides (fixture evidence instead of the real-DB maintainer run, D18
+  waived for the P4/P5 branches). The full app is a Rust workspace of **18 module crates** plus
+  `src-tauri` (the Tauri composition root) and a React/TS UI.
 
 ---
 

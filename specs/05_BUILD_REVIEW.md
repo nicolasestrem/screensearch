@@ -18,7 +18,9 @@
   "Maintainer run". No real database, profile, model file, token or secret was opened, copied or
   modified; the app was never run.
 - **PR.** [\#157](https://github.com/nicolasestrem/screensearch/pull/157), opened and squash-merged
-  by the agent under the maintainer's 2026-11-04 D18 waiver.
+  by the agent under the maintainer's 2026-11-04 D18 waiver; merged to `main` as `722f29e` on
+  2026-11-05. The post-merge record at the end of this section lists the branch tip, the CI
+  outcome, the CodeQL fix and a fresh verification run on the merged tree.
 - **Baseline of record.** P5 is measured with the committed P4 fixture: seed
   `0x5cee55ee41520004` (decimal `6696384177732976644`), regenerated with the committed
   `ssv2c-evalfixture gen` (1260 frames, 218 sessions, zero embeddings so no model download; the
@@ -371,9 +373,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 Run in this order in `C:\Users\nicol\Documents\GitHub\ss-p5` (UI first: `src-tauri` embeds
 `ui/dist`). Commands and exit codes verbatim; the raw output of each commands follows.
 
-Rows below are the raw per-command output with exit codes, collected on the committed tree
-(`e4740b6`) in `C:\Users\nicol\Documents\GitHub\ss-p5`. Per-test lines are trimmed to result
-lines only. The machine has a warm shared cargo target directory (`CARGO_TARGET_DIR`) and the
+Rows below are the raw per-command output with exit codes, collected on the feature commit
+(`e4740b6`) in `C:\Users\nicol\Documents\GitHub\ss-p5`. After the CodeQL fix (`4e16f83`, test-only
+panic-message text) the whole list was run again on the merged tree; that run is pasted under
+"Merged-tree verification (raw)" below. Per-test lines are trimmed to result lines only. The
+machine has a warm shared cargo target directory (`CARGO_TARGET_DIR`) and the
 stage-mcp step runs against the worktree-local target so `tauri-build` resolves the staged
 `externalBin`; neither changes a command's semantics or result. Node was 26.12.1, the documented
 CI Node is 22; `ui/package-lock.json` is unchanged, and the UI gates ran on the same scripts CI
@@ -523,6 +527,205 @@ lists only `graph`, `anyhow` and `traits` (no store/kernel/sessions/rusqlite/sql
 graph` 35 passed, `cargo test -p harness` 172 passed across its 9 targets, `cargo test -p
 evalfixture` 20 passed across its 5 targets.
 
+### Post-merge record (2026-11-05)
+
+The P5 branch was four commits on `feat/0.4.5-p5-work-graph`, all on top of `origin/main`
+`beb9ab3`:
+
+| Commit | Content |
+|---|---|
+| `e4740b6` | the feature commit: pure crate, traits contracts, store SQL, kernel jobs and scheduler, sessions helper, dev-only evidence runner, and the build-loop records (37 files, +10417/-26) |
+| `f17f186` | the raw verification block and the acceptance evidence pasted into this file (+210/-2) |
+| `82b2574` | PR #157 recorded in `05`/`08` |
+| `4e16f83` | the CodeQL cleartext-logging fix (test-only panic messages in `crates/graph/src/clustering.rs` and `overrides.rs`; 2 files, +6/-2) |
+
+- **PR and merge.** [\#157](https://github.com/nicolasestrem/screensearch/pull/157), base `main`,
+  head `4e16f83`, opened 2026-11-05, squash-merged by the agent under the maintainer's 2026-11-04
+  D18 waiver at 2026-11-05 11:20:10 UTC as `722f29e`.
+- **CI on the final branch tip `4e16f83`, all required checks green:** `build & test (windows)`
+  success (18m56s, run 42015325055); `package & verify` for `x86_64-pc-windows-msvc` (2m18s),
+  `x86_64-unknown-linux-gnu` (48s) and `aarch64-apple-darwin` (1m17s) success (run 42015325000);
+  CodeQL `Analyze` for actions (43s), javascript-typescript (43s) and rust (9m24s) success, and
+  the CodeQL code-scanning check success (check run 127204618813); `claude` skipped (PR review is
+  on-demand only, `CLAUDE.md`).
+- **The first CodeQL result was a failure, and it was a real finding class.** The first
+  code-scanning run on `82b2574` reported two high-severity `Cleartext logging of sensitive
+  information` alerts at `crates/graph/src/clustering.rs:479` and
+  `crates/graph/src/overrides.rs:669`: test helper `panic!` messages interpolated a session id.
+  `4e16f83` removed the interpolation from the two test-only panic messages; no production code
+  changed, the alerts cleared, and the full CI re-ran green on the new tip. `07` records this as a
+  codebase etiquette note: opaque session ids do not belong in log or panic text.
+- **Post-merge `main` runs on `722f29e`, all green:** CI (run 42018142351), MCP native packages
+  (run 42018142144) and Push on main (run 42018140728).
+- **This addendum** is the docs-only follow-up branch `docs/0.4.5-p5-work-record`, left as an open
+  PR for review; it changes no code. DOCS_PR_PLACEHOLDER
+
+### Merged-tree verification (raw)
+
+The block above was collected on `e4740b6`, before the CodeQL fix. To certify the exact merged
+tree, the full kickoff list was run again on `main` at `722f29e`, with the commands exactly as
+written (no target-directory or environment override). Every command exited 0; the log is trimmed
+to result lines for paste, and the same totals as the pre-merge run confirm the test-only CodeQL
+fix changed nothing observable.
+
+````text
+=== cd ui && npm ci
+added 347 packages, and audited 348 packages in 9s
+...
+npm warn install-scripts
+npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+exit=0
+
+=== cd ui && npm run lint
+npm notice run screensearch-ui@0.4.2 lint
+npm notice run eslint .
+exit=0
+
+=== cd ui && npm run build
+npm notice run screensearch-ui@0.4.2 build
+...
+dist/assets/CitationTile-DFhMdEJO.js                157.84 kB │ gzip: 47.99 kB
+✓ built in 2.16s
+exit=0
+
+=== cd .. && node scripts/stage-mcp.mjs
+[stage-mcp] building screensearch-mcp (release)...
+    Finished `release` profile [optimized] target(s) in 1.38s
+[stage-mcp] staged C:\Users\nicol\Documents\GitHub\screensearch\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
+exit=0
+
+=== cargo fmt --all -- --check
+exit=0
+
+=== cargo clippy --workspace --all-targets -- -D warnings
+    Checking traits v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\traits)
+...
+    Checking evalfixture v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\evalfixture)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 20.90s
+exit=0
+
+=== cargo build --workspace
+   Compiling traits v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\traits)
+...
+   Compiling evalfixture v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\evalfixture)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 41.50s
+exit=0
+
+=== cargo test --workspace
+... (81 test targets; per-target lines trimmed)
+1386 passed, 0 failed, 16 ignored across 81 targets
+exit=0
+
+=== git diff --exit-code -- ui/src/bindings
+exit=0
+
+=== cargo test -p graph
+running 58 tests
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+
+=== cargo test -p store graph
+running 15 tests
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 80 filtered out; finished in 0.05s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 65 filtered out; finished in 0.00s
+exit=0
+
+=== cargo test -p kernel graph
+running 35 tests
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 126 filtered out; finished in 0.13s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+exit=0
+
+=== cargo tree -p graph --depth 1
+graph v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\graph)
+├── anyhow v1.0.102
+└── traits v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\traits)
+exit=0
+
+=== cargo test -p harness
+running 146 tests
+test result: ok. 146 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.30s
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.84s
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+
+=== cargo test -p evalfixture
+running 15 tests
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 32.70s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+````
+
+Merged-tree totals: `cargo test --workspace` 81 targets, **1386 passed, 0 failed, 16 ignored**;
+`cargo test -p graph` 58; `-p store graph` 15; `-p kernel graph` 35; `-p harness` 172 across its 9
+targets; `-p evalfixture` 20 across its 5 targets; the bindings diff is clean; `cargo tree -p graph
+--depth 1` shows only `graph`, `anyhow` and `traits`.
+
+### Execution model (Agent Teams)
+
+The phase ran under the maintainer's earlier instruction to use Agents/Teams/Swarms, on one shared
+worktree with a shared task board, disjoint write scopes and no two writers in one file:
+
+| Lane | Owner | Write scope | Outcome |
+|---|---|---|---|
+| Contracts and foundation | Lead | `crates/traits/**`, `crates/sessions/src/lib.rs`, `crates/graph/Cargo.toml` and `src/{lib,extraction,linking,normalize}.rs`, workspace `Cargo.toml`, `crates/traits/Cargo.toml`, `crates/kernel/Cargo.toml`, build-loop records | foundation commit; 58-test pure crate green |
+| `task-1` graph rules | teammate `graph-core` | `crates/graph/src/clustering.rs`, `overrides.rs` | deterministic clustering and override planning; 24 tests; `task-7` later fixed the cluster-key collision |
+| `task-2` persistence | teammate `store-graph` | `crates/store/src/graph.rs`, `store/src/lib.rs` forwarding, `store/src/jobs.rs` tokens | fourteen graph Store methods; 11 tests at the time and 15 after `task-8` made linking ownership-first |
+| `task-3` kernel jobs | teammate `kernel-graph` | `crates/kernel/src/graph_*.rs`, `worker_pool.rs`, `lib.rs` | four job bodies, scheduler and registry edit; 35 kernel graph tests; `task-9` later fixed completion-line ordering |
+| `task-4` evidence | teammate `evidence` | `crates/evalfixture/src/graph.rs` + wiring | dev-only `ssv2c-evalfixture graph`; fixture counts, idempotence and entity-recovery report |
+| `task-5` audit A | teammate `audit-graph` | read-only | found the P0 `cluster_key` component-identity defect, the extractor/reference gap and the payload-JSON deviation |
+| `task-6` audit B | teammate `audit-store-kernel` | read-only | found the completion-line ordering bug, the ownership/linking contradiction and the registry handoff trap |
+
+The Lead kept commits, the raw verification, the build-loop records and the PR; the audits were
+read-only by construction, and every P0/P1 they found was fixed and retested before this record
+(see "Independent audit round" and `06` #40/#41).
 
 ## 2026-11-04: 0.4.5 P4 baseline, P5/P6 thresholds frozen on the committed fixture, verified and merged
 

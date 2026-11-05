@@ -26,16 +26,25 @@
   recomputable, so deleting the graph loses no evidence. No UI/API/MCP surface is added (P8 owns
   the read routes, P9 the screens).
 - **Decisions:** the extraction confidence table, dedup identity, linking, clustering, override and
-  normalization decisions are recorded in `05`; the three contract contradictions are `06` #37-#39;
-  the fixture-evidence deviation, split-payload reading, dead-letter behaviour, `hit_count` caveat,
-  directory-path coverage gap and other silent-spec decisions are in `07` (2026-11-05 section).
+  normalization decisions are recorded in `05`; the contract contradictions are `06` #37-#41 (all
+  resolved in P5) plus the open doc gap #42; the fixture-evidence deviation, split-payload reading,
+  dead-letter behaviour, `hit_count` caveat, directory-path coverage gap and other silent-spec
+  decisions are in `07` (2026-11-05 section).
 - **Evidence (fixture, labelled as such):** entity recovery 90.3% (159/176) against the frozen
   80.0% threshold, invention 0 of 243; backfill completion line
   `graph backfill complete entities=243 entity_aliases=11 session_entities=1385 threads=1
   thread_sessions=217` with an identical second pass over the same database; determinism and
   override-precedence suites; full verification raw output in `05`.
-- **PR:** [\#157](https://github.com/nicolasestrem/screensearch/pull/157), opened and squash-merged
-  by the agent under the maintainer's 2026-11-04 D18 waiver.
+- **PR and merge:** [\#157](https://github.com/nicolasestrem/screensearch/pull/157), base `main`,
+  head `4e16f83`, opened and squash-merged by the agent under the maintainer's 2026-11-04 D18
+  waiver; merged on 2026-11-05 as `722f29e`.
+- **Post-merge record:** CI on the final branch tip is green (`build & test (windows)` 18m56s,
+  `package & verify` on the three targets, CodeQL on actions/JS-TS/Rust, CodeQL code-scanning
+  check); the first code-scanning run flagged two high-severity `Cleartext logging of sensitive
+  information` alerts in graph test panic messages and `4e16f83` fixed them without touching
+  production code; `main` CI, MCP native and Push-on-main runs on the merge commit are green; and
+  the full verification list re-ran green on the merged tree (81 targets, 1386 passed, 0 failed).
+  A docs-only follow-up branch records this in `05`; PR: DOCS_PR_PLACEHOLDER.
 
 ## 2026-11-04: 0.4.5 P4 baseline frozen on a committed fixture and merged
 
