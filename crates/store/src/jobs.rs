@@ -11,11 +11,16 @@ use traits::{Job, JobKind, JobState, JobStats, NewJob, Result};
 
 use crate::SqliteStore;
 
-/// DB `kind` token (`03 §4`).
+/// DB `kind` token (`03 §4`). The four `graph_*` values are the 0.4.5 P5 work-graph job
+/// kinds (`03 §7h.7`, 0.4.5 D11); every pre-existing kind keeps its persisted string.
 fn kind_token(kind: JobKind) -> &'static str {
     match kind {
         JobKind::EmbedText => "embed_text",
         JobKind::VisionTag => "vision_tag",
+        JobKind::GraphExtract => "graph_extract",
+        JobKind::GraphNormalize => "graph_normalize",
+        JobKind::GraphCluster => "graph_cluster",
+        JobKind::GraphBackfill => "graph_backfill",
     }
 }
 
@@ -23,6 +28,10 @@ fn kind_from_token(s: &str) -> rusqlite::Result<JobKind> {
     match s {
         "embed_text" => Ok(JobKind::EmbedText),
         "vision_tag" => Ok(JobKind::VisionTag),
+        "graph_extract" => Ok(JobKind::GraphExtract),
+        "graph_normalize" => Ok(JobKind::GraphNormalize),
+        "graph_cluster" => Ok(JobKind::GraphCluster),
+        "graph_backfill" => Ok(JobKind::GraphBackfill),
         other => Err(rusqlite::Error::FromSqlConversionFailure(
             0,
             rusqlite::types::Type::Text,

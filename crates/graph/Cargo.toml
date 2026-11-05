@@ -1,0 +1,18 @@
+[package]
+name = "graph"
+description = "0.4.5 work-graph engine: pure heuristic extraction, dedup identity, thread clustering and override precedence. Depends on `traits` only (03 §7h, P5)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# The crate is pure (`docs/kickoffs/P5.md`): no rusqlite, no store, no kernel, no sessions,
+# no filesystem, no clock, no network. The kernel owns I/O, the store owns SQL, this crate
+# owns the rules. `anyhow` is the shared fallible result type.
+[dependencies]
+traits.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]

@@ -22,6 +22,7 @@ members = [
     "crates/mcp",
     "crates/harness",
     "crates/sessions",
+    "crates/graph",
     "crates/rebuild",
     "crates/evalfixture",
 ]
@@ -161,6 +162,7 @@ textfilter = { path = "crates/textfilter" }
 sysmon = { path = "crates/sysmon" }
 api = { path = "crates/api" }
 sessions = { path = "crates/sessions" }
+graph = { path = "crates/graph" }
 
 [profile.release]
 strip = true

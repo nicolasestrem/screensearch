@@ -2,7 +2,11 @@
 
 /**
  * Kind of deferred work. Serializes to the DB `kind` column
- * (`'embed_text' | 'vision_tag'`, `03 §4`). The `embed_image` kind was removed in
- * 0.3.0 PR4 with the image-embedding lane; the V9 migration deletes any leftover rows.
+ * (`'embed_text' | 'vision_tag' | 'graph_*'`, `03 §4`). The `embed_image` kind was removed
+ * in 0.3.0 PR4 with the image-embedding lane; the V9 migration deletes any leftover rows.
+ *
+ * The four `graph_*` values are the 0.4.5 P5 work-graph job kinds (`03 §7h.7`, 0.4.5
+ * D11). They are additive: `embed_text` and `vision_tag` keep their persisted strings, and
+ * no existing variant is reordered or renamed (`jobs.kind` stores these strings).
  */
-export type JobKind = "embed_text" | "vision_tag";
+export type JobKind = "embed_text" | "vision_tag" | "graph_extract" | "graph_normalize" | "graph_cluster" | "graph_backfill";

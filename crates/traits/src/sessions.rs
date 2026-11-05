@@ -43,6 +43,19 @@ impl SessionKind {
     }
 }
 
+/// The recognition taxonomy's verdict for one frame context (tool id, session kind, host).
+///
+/// Read-only input for the 0.4.5 work graph (`03 §7h.2`): the pure `graph` crate may not
+/// depend on `sessions`, so the kernel asks the `sessions` crate's read helper for this
+/// plain value and passes it into extraction. It is the same recognition the segmenter
+/// already persists on a session row, never a second or changed recognition rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolRecognition {
+    pub tool_id: String,
+    pub kind: SessionKind,
+    pub host: Option<SessionHost>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "../../../ui/src/bindings/")]

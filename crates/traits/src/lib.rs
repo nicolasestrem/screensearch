@@ -16,6 +16,7 @@
 pub mod advanced;
 pub mod contracts;
 pub mod domain;
+pub mod graph;
 pub mod history;
 pub mod ipc;
 pub mod jobs;
@@ -31,6 +32,7 @@ pub use contracts::{
     SessionSegmenter, Store, VisionProvider,
 };
 pub use domain::*;
+pub use graph::*;
 pub use history::*;
 pub use ipc::*;
 pub use jobs::*;

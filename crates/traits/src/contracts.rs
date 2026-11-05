@@ -688,6 +688,124 @@ pub trait Store: Send + Sync {
     /// arm of [`Self::hybrid_search`]. Set once the model has finished loading off
     /// the launch thread (`03 §5`). Default is a no-op for stores that never embed.
     fn set_embedder(&self, _embedder: Arc<dyn EmbeddingProvider>) {}
+
+    // 0.4.5 work graph (`03 §7h`, P5). Every method carries a default body so no existing
+    // implementation or test fake breaks; `SqliteStore` overrides them in
+    // `crates/store/src/graph.rs`. The defaults are the honest "this store does not
+    // implement the work graph" behaviour, never fabricated data.
+
+    /// Everything heuristic extraction may read for one frame (`03 §7h.2`), including the
+    /// filtered content text and the session the frame belongs to. Ownership follows
+    /// `03 §7e`: `frames.session_id` is authoritative when set (tracks may overlap in time);
+    /// the interval rule is only the fallback for unassigned frames.
+    async fn graph_frame_input(&self, _frame_id: i64) -> Result<Option<crate::GraphFrameInput>> {
+        Ok(None)
+    }
+
+    /// The session whose `[started_at, ended_at)` contains `at_ms`; an open session is
+    /// open-ended (`03 §7h.3`). Default returns no session for stores without sessions.
+    async fn graph_session_at(&self, _at_ms: i64) -> Result<Option<crate::GraphSessionInput>> {
+        Ok(None)
+    }
+
+    /// Frame ids greater than `after_id` (exclusive; `None` starts from the beginning),
+    /// oldest first, bounded. The backfill enqueues these as real `graph_extract` jobs; the
+    /// cursor itself is the queue's `MAX(jobs.frame_id)` (`03 §7h.6`). Default returns empty.
+    async fn graph_frame_ids_after(&self, _after_id: Option<i64>, _limit: u32) -> Result<Vec<i64>> {
+        Ok(Vec::new())
+    }
+
+    /// Upserts one frame's hits and its session links in one transaction (`03 §7h.2/.3`):
+    /// entities dedup on `UNIQUE(kind, normalized_key)`, links on the
+    /// `(session_id, entity_id)` primary key, `hit_count` accumulates one per processed
+    /// frame, and link confidence is the maximum of the contributing hits. A frame with no
+    /// containing session still contributes its entities, with no link row.
+    ///
+    /// `hit_count` is exact for a normal single extraction pass. The schema has no per-frame
+    /// contribution ledger (0.4.5 D2 keeps it frozen), so a job that commits and then loses
+    /// its completion acknowledgement can increment a link twice when the queue replays it;
+    /// rows never duplicate. Recorded in `07` and not worked around silently.
+    async fn graph_apply_hits(
+        &self,
+        _session_id: Option<i64>,
+        _frame_id: i64,
+        _captured_at: i64,
+        _hits: &[crate::GraphHit],
+    ) -> Result<()> {
+        anyhow::bail!("work-graph storage is unsupported")
+    }
+
+    /// The complete input to one clustering run (`03 §7h.4`): sessions and every
+    /// session-entity link with the entity display data the title rule needs.
+    async fn graph_cluster_input(&self, _now_ms: i64) -> Result<crate::GraphClusterInput> {
+        anyhow::bail!("work-graph storage is unsupported")
+    }
+
+    /// Persisted threads with their current members, read before planning (`03 §7h.4`).
+    async fn graph_stored_threads(&self) -> Result<Vec<crate::StoredThread>> {
+        Ok(Vec::new())
+    }
+
+    /// `thread_overrides` rows in `(created_at, id)` order (`03 §7h.5`).
+    async fn graph_thread_overrides(&self) -> Result<Vec<crate::ThreadOverrideRow>> {
+        Ok(Vec::new())
+    }
+
+    /// Inserts one typed override and enqueues `graph_cluster` in the same transaction, so
+    /// an override always wins on the next clustering pass (`03 §7h.5`). Nothing in P5's
+    /// production code calls this; P9's UI and the P5 tests do.
+    async fn graph_insert_thread_override(
+        &self,
+        _draft: &crate::ThreadOverrideDraft,
+        _now_ms: i64,
+    ) -> Result<i64> {
+        anyhow::bail!("work-graph storage is unsupported")
+    }
+
+    /// Persists one planned thread model in a single transaction (`03 §7h.4/.5`): upserts
+    /// threads by `cluster_key`, syncs the `thread_sessions` rows, applies merge-override
+    /// rewrites, and deletes the threads that no longer exist.
+    async fn graph_apply_thread_plan(&self, _plan: &crate::ThreadPlan) -> Result<()> {
+        anyhow::bail!("work-graph storage is unsupported")
+    }
+
+    /// The five table counts logged when the backfill completes (`03 §7h.6`). Default fails
+    /// explicitly rather than returning zeros: a zero count would read as a completed empty
+    /// graph, which is not what "this store has no work graph" means.
+    async fn graph_table_counts(&self) -> Result<crate::GraphTableCounts> {
+        anyhow::bail!("work-graph storage is unsupported")
+    }
+
+    /// The queue-derived backfill checkpoint and in-flight counts (`03 §7h.6`). Default
+    /// fails explicitly for the same reason as [`Self::graph_table_counts`].
+    async fn graph_backfill_status(&self) -> Result<crate::GraphBackfillStatus> {
+        anyhow::bail!("work-graph storage is unsupported")
+    }
+
+    /// Sessions with a cached title or summary, most recent first, bounded (`03 §7h.2`
+    /// normalization input). Default returns empty for stores without sessions.
+    async fn graph_sessions_with_summaries(
+        &self,
+        _limit: u32,
+    ) -> Result<Vec<crate::SessionSummaryInput>> {
+        Ok(Vec::new())
+    }
+
+    /// The existing entity catalog plus aliases the normalization pass proposes against
+    /// (`03 §7h.2`). Default returns empty.
+    async fn graph_entity_catalog(&self, _limit: u32) -> Result<Vec<crate::EntityCatalogRow>> {
+        Ok(Vec::new())
+    }
+
+    /// Applies validated normalization proposals in one transaction (`03 §7h.2`): new
+    /// aliases are written with `source='llm'`, new rows are `entities.source='llm'`, and a
+    /// heuristic entity's `normalized_key` is never rewritten or deleted.
+    async fn graph_apply_normalization(
+        &self,
+        _proposals: &[crate::NormalizationProposal],
+    ) -> Result<crate::NormalizationOutcome> {
+        anyhow::bail!("work-graph storage is unsupported")
+    }
 }
 
 /// Lets the kernel's idle vision backfill tell the inference sidecar to keep the model

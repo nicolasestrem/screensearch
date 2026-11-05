@@ -12,6 +12,7 @@ repository.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 image.workspace = true
 ts-rs.workspace = true

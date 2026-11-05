@@ -1,5 +1,41 @@
 # 08 — AI Changelog
 
+## 2026-11-05: 0.4.5 P5 work graph engine implemented and measured on the fixture
+
+- **Change:** added the 0.4.5 work-graph engine (`03 §7h`, `docs/kickoffs/P5.md`). New pure crate
+  `crates/graph` (depends on `traits` + `anyhow` only): the 13-row heuristic extraction table with
+  per-rule confidence, the shared `normalized_key` dedup identity, the interval linking helper,
+  deterministic thread clustering (>=0.7 strong-link components, 7-to-30-day decaying window,
+  sorted-seed `cluster_key`, dominant-seed title, member confidence), override precedence
+  (rename/merge/split, managed-thread durability) and validation for the optional LLM normalization
+  proposals. `crates/traits` gained the graph domain types, fourteen additive `Store` methods with
+  default bodies, the typed `thread_overrides` payload, and the four additive `JobKind` variants.
+  `crates/store/src/graph.rs` implements the SQL over the six `03 §4` tables (upserts, linking,
+  thread-plan persistence, counts, backfill status, typed override insert with an atomic
+  `graph_cluster` enqueue, additive normalization). `crates/kernel/src/graph_extract.rs`,
+  `graph_backfill.rs`, `graph_cluster.rs`, `graph_normalize.rs` and `graph_scheduler.rs` are the
+  four job bodies plus the idle/on-demand producer, wired into the existing worker pool with one
+  additive registry edit that leaves `embed_text`/`vision_tag` untouched. `crates/sessions` gained
+  one read-only `recognize_tool` helper (input data for extraction; no segmentation change) and the
+  kernel's dev-only `sessions` dependency was promoted. Dev-only `crates/evalfixture` gained a
+  `graph` subcommand that drives the production pipeline over a fixture DB for acceptance
+  evidence. `ui/src/bindings/JobKind.ts` regenerated (additive union only).
+- **Why:** the 0.4.5 roadmap makes the P4 entity metric measurable at all: P5 must derive and
+  persist entities, session links and threads from frames/sessions with deterministic, model-free
+  rules, then prove recovery on the frozen fixture. All tables are derived-but-persisted and
+  recomputable, so deleting the graph loses no evidence. No UI/API/MCP surface is added (P8 owns
+  the read routes, P9 the screens).
+- **Decisions:** the extraction confidence table, dedup identity, linking, clustering, override and
+  normalization decisions are recorded in `05`; the three contract contradictions are `06` #37-#39;
+  the fixture-evidence deviation, split-payload reading, dead-letter behaviour, `hit_count` caveat,
+  directory-path coverage gap and other silent-spec decisions are in `07` (2026-11-05 section).
+- **Evidence (fixture, labelled as such):** entity recovery 90.3% (159/176) against the frozen
+  80.0% threshold, invention 0 of 243; backfill completion line
+  `graph backfill complete entities=243 entity_aliases=11 session_entities=1385 threads=1
+  thread_sessions=217` with an identical second pass over the same database; determinism and
+  override-precedence suites; full verification raw output in `05`.
+- **PR:** P5_PR_PLACEHOLDER
+
 ## 2026-11-04: 0.4.5 P4 baseline frozen on a committed fixture and merged
 
 - **Change:** the P4 eval branch was rebased `--onto origin/main 48a9705`, so its three commits
