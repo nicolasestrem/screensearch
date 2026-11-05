@@ -1,5 +1,356 @@
 # 05 — Build Review
 
+## 2026-11-05: P6 Ask v2 (branch `feat/0.4.5-p6-ask-v2`, [#160](https://github.com/nicolasestrem/screensearch/pull/160), open, not merged)
+
+Branch base: `main` @ `b84c164` (P1–P5 merged). There is no `v0.4.3` tag, so Gate A is not closed
+as a tag; the maintainer directed the branch from `main` HEAD under the same override basis P4 and
+P5 ran under (`01 §8`). The maintainer validated the content in-session and instructed the push,
+the PR and the review request (0.4.5 D18), naming `nicolasestrem/screensearch` as the target.
+**Merging remains maintainer-only.**
+
+- **Grants (all recorded in `07`).** The kickoff's owned list was incomplete in ways the mapping
+  exposed before any code was written; every addition was put to the maintainer in one batch and
+  granted: `crates/api/src/lib.rs` (one default-bodied `ApiHost::ask_turn`),
+  `src-tauri/src/local_api.rs`, `crates/traits/src/contracts.rs`, `crates/mcp` (the citations
+  aggregation `03 §7i.3` requires, which the kickoff had fenced off), one `case "citations"` line
+  in `ui/src/lib/ipc/useAsk.ts` (its reducer switch is exhaustive, so a new `AnswerDelta` variant
+  fails `npm run build`), files for mechanical compile fixups (`kernel/src/{reports,sessions_intel,
+  graph_normalize,report_service}.rs`, `api/tests/http_api.rs`, `mcp/tests/stdio_mcp.rs`,
+  `evalfixture/src/serve.rs`, `inference/tests/smoke.rs` — the full list and per-file counts are in
+  `07`), `crates/rebuild/src/settings.rs` (its dotted-key scan classifies the new temp-table name),
+  and `crates/evalfixture/src/serve.rs` for the retrieval-seam rewiring. Contradictions and silences are
+  `06` #46–#53; decisions are `07`.
+- **Shape.** One implementation of each seam: `kernel::ask::ask_context` is the only legacy Ask
+  retrieval in the workspace (`Kernel::ask_context` and the fixture host delegate to it), and
+  `Kernel::ask_turn` is the only v2 pipeline (both `TauriApiHost` and `ApiHost` reach it). No
+  schema change, no new settings key, no new table, no new read route, no second pipeline.
+- **Acceptance is the maintainer's run.** This workspace has no live database. The acceptance
+  numbers the kickoff requires (evidence recall@10 ≥ 40.3%, known-fact rate ≥ 71.3%, citation
+  validity 100%, p95 ≤ 3485 ms) come from the maintainer's P4 automatic-set run against the real
+  database, seeded with the P4 seed; `06` #46 records which comparator binds P6 and why the frozen
+  `/v1/search` row cannot move this phase. **No acceptance number is claimed here.**
+
+### Verification (raw, in the kickoff's order)
+
+Run in `C:\Users\nicol\Documents\GitHub\screensearch` on the branch above.
+
+```
+$ cd ui && npm ci
+added 347 packages in 5s
+npm warn install-scripts 1 package had install scripts blocked because they are not covered by allowScripts:
+npm warn install-scripts   esbuild@0.25.12 (postinstall: node install.js)
+```
+
+```
+$ npm run lint
+npm notice run screensearch-ui@0.4.2 lint
+npm notice run eslint .
+LINT_EXIT=0
+```
+
+```
+$ npm run build
+dist/assets/useAsk-DP5T1xKE.js                        1.67 kB │ gzip:  0.84 kB
+dist/assets/CitationTile-DFhMdEJO.js                157.84 kB │ gzip: 47.99 kB
+✓ built in 1.94s
+BUILD_EXIT=0
+```
+
+```
+$ node scripts/stage-mcp.mjs
+[stage-mcp] building screensearch-mcp (release)...
+   Compiling mcp v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\mcp)
+    Finished `release` profile [optimized] target(s) in 8.69s
+[stage-mcp] staged C:\Users\nicol\Documents\GitHub\screensearch\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
+STAGE_EXIT=0
+```
+
+```
+$ cargo fmt --all -- --check
+FMT_EXIT=0
+```
+
+```
+$ cargo clippy --workspace --all-targets -- -D warnings
+    Checking store v0.4.2 (...)
+    Checking kernel v0.4.2 (...)
+    Checking harness v0.4.2 (...)
+    Checking evalfixture v0.4.2 (...)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.12s
+CLIPPY_EXIT=0
+```
+
+(The only warnings in the log are the pre-existing `ts-rs failed to parse serde attribute`
+notices emitted for `skip_serializing_if` in `crates/traits`; clippy exits 0.)
+
+```
+$ cargo build --workspace
+   Compiling evalfixture v0.4.2 (...)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 47.45s
+BUILD_EXIT=0
+```
+
+```
+$ cargo test --workspace
+test result: ok. 24 passed; 0 failed; 0 ignored
+test result: ok. 8 passed; 0 failed          (api tests\ask_v2.rs)
+test result: ok. 52 passed; 0 failed; 1 ignored
+test result: ok. 25 passed; 0 failed; 1 ignored
+test result: ok. 16 passed; 0 failed
+test result: ok. 65 passed; 0 failed
+test result: ok. 146 passed; 0 failed        (harness lib)
+test result: ok. 120 passed; 0 failed; 2 ignored   (inference lib)
+test result: ok. 200 passed; 0 failed        (kernel lib)
+test result: ok. 10 passed; 0 failed         (kernel tests\ask.rs)
+test result: ok. 52 passed; 0 failed         (mcp lib)
+test result: ok. 13 passed; 0 failed         (mcp tests\memory_tools.rs)
+test result: ok. 9 passed; 0 failed          (mcp tests\remote_transport.rs)
+test result: ok. 22 passed; 0 failed         (mcp tests\stdio_mcp.rs)
+test result: ok. 6 passed; 0 failed          (rebuild lib)
+test result: ok. 168 passed; 0 failed        (app crate lib)
+test result: ok. 106 passed; 0 failed        (store lib)
+test result: ok. 13 passed; 0 failed         (store tests\ask.rs)
+test result: ok. 132 passed; 0 failed        (traits lib — regenerates the ts-rs bindings)
+… every remaining binary: 0 failed
+TEST_EXIT=0
+```
+
+`git diff --exit-code -- ui/src/bindings` prints nothing: the regenerated `AnswerDelta.ts`,
+`JobKind.ts` and the new `StageCounts.ts` are committed in the same change.
+
+```
+$ cargo test -p inference
+test result: ok. 120 passed; 0 failed; 2 ignored
+test result: ok. 1 passed; 0 failed
+test result: ok. 3 passed; 0 failed
+test result: ok. 8 passed; 0 failed
+test result: ok. 0 passed; 0 failed; 2 ignored
+EXIT=0
+```
+
+```
+$ cargo test -p store ask
+test result: ok. 3 passed; 0 failed; 0 ignored; 103 filtered out
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 filtered out
+```
+
+```
+$ cargo test -p kernel ask
+test result: ok. 17 passed; 0 failed; 0 ignored; 183 filtered out
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 filtered out
+```
+
+```
+$ cargo test -p api ask
+test result: ok. 1 passed; 0 failed; 0 ignored; 23 filtered out
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 filtered out
+test result: ok. 5 passed; 0 failed; 0 ignored; 48 filtered out
+```
+
+```
+$ cargo test -p harness
+test result: ok. 146 passed; 0 failed
+test result: ok. 1 passed; 0 failed
+test result: ok. 3 passed; 0 failed
+test result: ok. 6 passed; 0 failed
+test result: ok. 4 passed; 0 failed
+test result: ok. 6 passed; 0 failed
+test result: ok. 3 passed; 0 failed
+test result: ok. 3 passed; 0 failed
+EXIT=0
+```
+
+```
+$ git diff --stat main -- docs/API.md
+ docs/API.md | 60 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 59 insertions(+), 1 deletion(-)
+```
+
+### What the new tests actually pin
+
+- **Wire compatibility.** `crates/api/tests/ask_v2.rs` asserts a host that returns the default
+  `Ok(None)` produces the *legacy* event sequence byte for byte, and the five pre-existing
+  `http_api` ask tests pass unchanged; `crates/mcp` asserts an unknown event type is still ignored
+  and that the `friendly` tool text of a legacy stream is unchanged.
+- **Citations.** `Citations` precedes `Done` exactly once, with equal `stage_counts` /
+  `tokens_assembled` on both; cited sessions are the distinct non-NULL `frames.session_id` of the
+  cited frames, ascending; a provider `Error` emits no `Citations`; a cancelled turn persists no
+  answer.
+- **Fallbacks.** With empty graph tables and no session summaries the answer comes from the
+  existing frame search over the planned window (`kernel` `ask_empty_graph_answers_from_the_window
+  _frame_search`), and an unknown entity id narrows nothing.
+- **Multi-turn.** A follow-up reuses the previous turn's window and entity ids and allocates the
+  next ordinal; `UNIQUE(thread_id, ordinal)` holds; deleting a conversation cascades to its turns.
+- **Session vectors.** A session with both title and summary NULL is never a candidate and never
+  embedded; the upsert is skipped when the text changed after embedding and idempotent on replay;
+  the vec0 row is deleted with its session and kept for a frozen (no-op) delete.
+- **Prompt parity.** Report and normalization chunks (`session: None`) render byte-identical
+  prompts and cost exactly what they cost before (`inference` parity tests).
+
+### Post-open review findings (resolved)
+
+Codex reviewed commit `ad9214f` and posted three P2 findings; Claude posted observations and no
+blocking defect. Each finding was verified against the code before any change, and every fix has a
+regression test proven to fail without it (fail-without/pass-with shown below).
+
+| Finding | Verdict | Fix |
+|---|---|---|
+| **Session vectors went stale** — `session_embed_candidates` only selects sessions with *no* vector row, and neither `set_session_title_summary` nor `clear_session_title_summary` invalidated one, so a regenerated or cleared summary kept being ranked by its old text forever | **valid** | Both writers now compare the text before/after inside their existing transaction and delete the `session_vectors` row when it changed (`session_text_at` + `invalidate_session_vector_if_text_changed`, using the backfill's own SQL expression so they cannot disagree). `vec0` carries no timestamp, no foreign key and no trigger (0.4.5 D2), so the writer is the only place this can happen |
+| **Assembly pre-dropped evidence** — the context budget subtracted the *raw* `max_tokens`, so a 2048-token window with the default 2048 request left 0 and assembled exactly one chunk, while the provider caps its own reservation at half the window | **valid** | The cap moved to `traits::effective_reply_budget` (one implementation, used by the inference packer and by the kernel's new `assembly_budget`), so assembly keeps the budget the provider actually has |
+| **A cancelled turn detached its provider** — closing the channel is only observed inside the streaming phase, so a provider downloading a model or waiting in `supervisor.acquire` kept running after the user cancelled | **valid** | The forwarder drops the receiver first (the cooperative path that stops the child process cleanly), then waits `PROVIDER_CANCEL_GRACE` (250 ms) and aborts the task if it is still alive |
+
+From Claude's review, two observations were also acted on, one confirmed non-issue, and the rest
+answered without a change:
+
+- **Per-frame `Citation` vs terminal `Citations` could disagree** (latent, provider-dependent): the
+  forwarder now forwards only frames the terminal event will carry, so the two can never name
+  different evidence.
+- **Comment/code mismatch on the on-demand enqueue**: the comment claimed it could not delay
+  anything; it does delay the returned stream handle (not the first delta). Corrected.
+- **Temp FTS5 table dropped on the error path**: confirmed correct — the `DROP` runs after the inner
+  closure regardless of outcome, before the error propagates.
+- Answered, no change: a turn persisted before its stages run is the specified `§7i.4` behaviour
+  (a follow-up reuses the *previous* turn, answered or not); an answer with no model citation
+  yields empty citations by design (provenance, never prose) and the citation-validity gate then
+  measures an empty set; `/v1/search`-side orphan vectors are unreachable because stage 2
+  post-filters vectors to its candidate set.
+
+**Fail-without/pass-with proof (raw):**
+
+```
+# 1 — store invalidation neutered to a no-op
+test ask_title_summary_changes_invalidate_the_stale_session_vector ... FAILED
+panicked at crates\store\tests\ask.rs:1125:5:
+assertion `left == right` failed: a changed text drops the vector in the same transaction as the write
+test result: FAILED. 13 passed; 1 failed
+
+# 2 — budget reverted to the raw max_tokens
+test ask::tests::assembly_budget_uses_the_providers_capped_reply_reservation ... FAILED
+panicked at crates\kernel\src\ask.rs:705:9: assertion `left == right` failed
+test result: FAILED. 17 passed; 1 failed
+
+# 3 — abort removed (receiver dropped, task detached)
+test ask_aborts_a_provider_that_never_observes_closure ... FAILED
+panicked at crates\kernel\tests\ask.rs:1381:10:
+test result: FAILED. 0 passed; 1 failed; finished in 5.02s
+```
+
+Restored, the same binaries report `store ask` 3 unit + 14 integration, `kernel lib ask` 18, and
+`kernel tests\ask` 12 — all passing, with the whole workspace green (84 result lines, 0 failures).
+
+The abort fix was first written as an unconditional `abort()`, which broke the pre-existing
+cooperative-cancellation test (`ask_cancelled_turn_persists_no_answer`): aborting preempts the
+provider's own cleanup, which is the path that stops the sidecar child process. That is why the
+shipped form drops the receiver, grants a bounded grace, and only then aborts.
+
+### Second review round (resolved)
+
+A second Codex pass reviewed `2452eb3` and raised two more P2 findings. Both were confirmed valid
+and fixed with tests proven to fail without the fix.
+
+| Finding | Verdict | Fix |
+|---|---|---|
+| **Entity mentions matched as substrings.** `ask_resolve_entities` filtered with `instr(lower(question), lower(name))`, so a short workspace name like `api` resolved out of "capital expenditure"; the false scope then restricted retrieval and was persisted on the turn for follow-ups. | **valid** | The DB `instr` stays as a cheap prefilter; precision is decided in Rust by `bounded_mention`, which requires both flanks of the occurrence to be non-alphanumeric. Applies identically to canonical names and aliases. Unit test covers `capital`, `rapid`, trailing punctuation, a whole-question mention, and the alias form |
+| **The frame fallback discarded a resolved entity constraint.** When an entity resolved but stage 2 produced no winners (no summaries or vectors yet), stage 3 called the frame search with an empty restriction, i.e. the whole window — retrieving and citing unrelated sessions. | **valid** | Stage 3 now distinguishes the two meanings of "no winner": with an entity in scope **and** candidate sessions surviving the window, the frame search stays inside those candidates; with no entity (or an entity whose sessions are all outside the window, i.e. no usable match) the mandated window-wide plain-text fallback applies (`§7i.1`). Recorded in `07` |
+
+**Fail-without/pass-with proof (raw):**
+
+```
+# boundary filter neutered
+test ask_entity_resolution_requires_whole_mentions_not_substrings ... FAILED
+panicked at crates\store\tests\ask.rs:220:5
+test result: FAILED. 0 passed; 1 failed
+
+# entity constraint neutered (back to the empty restriction)
+test ask_entity_scope_survives_a_session_ranking_gap ... FAILED
+panicked at crates\kernel\tests\ask.rs:1452:5
+test result: FAILED. 0 passed; 1 failed
+```
+
+Restored: `store ask` 3 unit + 15 integration, `kernel tests\ask` 14, all green.
+
+Worth noting how the second fix was refined: the first attempt returned *no frames at all* when an
+entity had no candidate session in the window. That is stricter than the spec licenses and broke
+`ask_follow_up_reuses_the_previous_window_and_entities`; `§7i.1` answers a mention with no usable
+match by plain-text matching, so an empty candidate set falls back to the window instead of
+dead-ending. The shipped rule, and the reasoning, are in the code comment and in `07`.
+
+### Third review round (resolved)
+
+A third Codex pass on `410e36f` caught a defect **in the previous fix**: the SQL prefilter used
+`instr(lower(question), lower(name))`, and SQLite's `lower()` folds ASCII only, so a non-ASCII
+mention (`Équipe` vs `équipe`) was discarded before the Rust boundary check could see it — the turn
+then silently lost its entity constraint, or inherited the previous turn's.
+
+| Finding | Verdict | Fix |
+|---|---|---|
+| **ASCII-only prefilter dropped valid Unicode mentions** before the Unicode-aware check ran | **valid** — the Rust pass was correct but never received the row | The prefilter is gone: both the question and every `entities.canonical_name`/`entity_aliases.alias` row are lowered by Rust (`to_lowercase`, Unicode-aware) and matched with the same `bounded_mention` rule. The scan is bounded by the graph's size (entities + aliases), not by the frame table, and runs once per turn off the capture path |
+
+```
+# old ASCII-only prefilter restored
+test ask_entity_resolution_is_unicode_case_insensitive ... FAILED
+assertion `left == right` failed: `équipe planning` should resolve the accented canonical name
+test result: FAILED. 0 passed; 1 failed
+# fixed
+test result: ok. 3 passed (entity suite); store ask: 3 unit + 16 integration
+```
+
+The test covers a lowercased accented question, an uppercased one, a mid-sentence one, the accented
+alias form, and the boundary rule on non-ASCII (`prééquipe` must not resolve `équipe`).
+
+### End-to-end smoke (beyond the test suites)
+
+The verification list is tests plus a compile gate, so the changed HTTP path was also run for real:
+a v14 fixture was generated, served, and measured by the unchanged P4 harness.
+
+```
+$ ssv2c-evalfixture gen --out harness-data/smoke --seed 6696384177732976644 --weeks 2 --frames-per-week 200
+embedding 400 frames with embeddinggemma-300m-q
+embedded 400/400
+seed=0x5cee55ee41520004
+weeks=2
+frames=400
+sessions=75
+embeddings=400
+digest=908344237fcee828e368bc000296475e68da8f9771e839d4006eac401cc822e9
+
+$ ssv2c-evalfixture serve --db harness-data/smoke/screensearch.db --port 43211 --embed --no-answer
+serving harness-data/smoke/screensearch.db at http://127.0.0.1:43211 (embeddings: attached (vector arm on), answer sidecar: off (--no-answer, /v1/ask answers 503))
+
+$ harness eval --db harness-data/smoke/screensearch.db --api http://127.0.0.1:43211 --seed 6696384177732976644 --pairs 20 --out harness-data/smoke-run
+| overall | 5 | 0.0% | 80.0% | n/a (no citations) | 0.0% | n/a | n/a |
+| last-seen (`last_seen`) | 4 | 0.0% | 100.0% | n/a (no citations) | 0.0% | n/a | n/a |
+- successful: 0 / 5
+- failures: api_unavailable 5, timeout 0, empty_answer 0, http_error 0
+| `last_seen-001` | last-seen | `api_unavailable` | HTTP 503: {"error":"unavailable","message":"answer model not loaded"} |
+## Invalid citations
+_none — every cited id exists and lies inside its pair's window_
+```
+
+Read honestly: the harness generated pairs from the real database and the API served them, so the
+fixture → API → store retrieval chain runs end to end with the vector arm attached (retrieval
+recall@10 80% overall). **This is a five-turn wiring smoke, not a measurement**: the fixture and
+pair set differ from the 300-pair baseline, so none of these numbers are acceptance evidence and
+they are not comparable to it.
+`/v1/ask` answers the documented `503 / answer model
+not loaded` path in clean JSON because no answer sidecar is attached in this workspace — no panic,
+no hang, no partial stream — and the harness classifies it as `api_unavailable` as designed. The
+answer-bearing side (the `citations` event, the enriched `done`, turn persistence, the v2 staging)
+cannot be exercised without a model; it is covered by the `kernel` real-store pipeline test, the
+`api` loopback-server v2 tests and the app-crate relay test listed above, not by this smoke. The
+fixture's `ask_context` now delegates to `kernel::ask::ask_context`, so the same run reaches the
+code this phase moved. Smoke artifacts were deleted afterwards (`harness-data/` is git-ignored).
+
+### Notes for the maintainer's run
+
+- Let the `session_embed` backfill drain on idle before measuring; sessions with NULL title and
+  summary never get a vector by contract, so an unsummarised library takes the frame-level
+  fallback.
+- The P4 harness sends no `thread_id`, so each harness turn creates one `ask_threads` row by
+  design (`§7i.4`); that is expected database growth, not a leak.
+- `stage_counts` and `tokens_assembled` also ride the `done` event, so `runs.jsonl` carries them
+  verbatim for the turns that regressed (`07`, `06` #49).
+
 ## 2026-11-05: P5 review-fix pass on the merged #157 code (branch `fix/p5-157-review-findings`)
 
 - **Trigger and governance incident.** The merged P5 PR ([#157](https://github.com/nicolasestrem/screensearch/pull/157),

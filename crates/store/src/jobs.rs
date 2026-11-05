@@ -12,7 +12,8 @@ use traits::{Job, JobKind, JobState, JobStats, NewJob, Result};
 use crate::SqliteStore;
 
 /// DB `kind` token (`03 §4`). The four `graph_*` values are the 0.4.5 P5 work-graph job
-/// kinds (`03 §7h.7`, 0.4.5 D11); every pre-existing kind keeps its persisted string.
+/// kinds (`03 §7h.7`, 0.4.5 D11) and `session_embed` is the P6 Ask v2 session-vector kind
+/// (`03 §7i.2`, 0.4.5 D11); every pre-existing kind keeps its persisted string.
 fn kind_token(kind: JobKind) -> &'static str {
     match kind {
         JobKind::EmbedText => "embed_text",
@@ -21,6 +22,7 @@ fn kind_token(kind: JobKind) -> &'static str {
         JobKind::GraphNormalize => "graph_normalize",
         JobKind::GraphCluster => "graph_cluster",
         JobKind::GraphBackfill => "graph_backfill",
+        JobKind::SessionEmbed => "session_embed",
     }
 }
 
@@ -32,6 +34,7 @@ fn kind_from_token(s: &str) -> rusqlite::Result<JobKind> {
         "graph_normalize" => Ok(JobKind::GraphNormalize),
         "graph_cluster" => Ok(JobKind::GraphCluster),
         "graph_backfill" => Ok(JobKind::GraphBackfill),
+        "session_embed" => Ok(JobKind::SessionEmbed),
         other => Err(rusqlite::Error::FromSqlConversionFailure(
             0,
             rusqlite::types::Type::Text,
@@ -265,6 +268,22 @@ impl SqliteStore {
                 "SELECT COUNT(*) FROM jobs
                  WHERE kind = 'vision_tag' AND state IN ('pending', 'running')",
                 [],
+                |r| r.get(0),
+            )?;
+            Ok(count as u64)
+        })
+        .await
+    }
+
+    /// Count of jobs of one kind in `pending` or `running` — lets an idle producer tell
+    /// whether a run of that kind is already queued or in flight before it enqueues another
+    /// (`03 §5`; the `session_embed` producer uses it, `03 §7i.2`).
+    pub async fn pending_jobs_of_kind(&self, kind: JobKind) -> Result<u64> {
+        self.with_conn(move |conn| {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM jobs
+                 WHERE kind = ?1 AND state IN ('pending', 'running')",
+                [kind_token(kind)],
                 |r| r.get(0),
             )?;
             Ok(count as u64)

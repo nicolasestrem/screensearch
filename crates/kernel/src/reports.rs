@@ -329,6 +329,7 @@ async fn generate_report_scoped(
                             text: t.clone(),
                             score: 0.0,
                             captured_at: f.captured_at,
+                            session: None,
                         })
                 })
                 .collect();
@@ -620,6 +621,7 @@ pub async fn generate_weekly_synthesis(
                         text: text.clone(),
                         score: 0.0,
                         captured_at: run.window_start,
+                        session: None,
                     })
             })
             .collect();
@@ -1342,6 +1344,7 @@ async fn hydrate_hits(store: &dyn Store, hits: Vec<SearchHit>) -> Result<Vec<Ret
                     text,
                     score: h.score,
                     captured_at: h.captured_at,
+                    session: None,
                 })
             }
         })
@@ -1562,6 +1565,7 @@ fn nodes_as_chunks(nodes: &[String]) -> Vec<RetrievedChunk> {
             text: t.clone(),
             score: 0.0,
             captured_at: i as i64,
+            session: None,
         })
         .collect()
 }
@@ -1718,6 +1722,7 @@ mod tests {
                 text: "lorem ipsum ".repeat(40),
                 score: 0.0,
                 captured_at: i,
+                session: None,
             })
             .collect();
         let batches = split_chunks_into_batches(chunks, 512, REPORT_CTX_TOKENS);

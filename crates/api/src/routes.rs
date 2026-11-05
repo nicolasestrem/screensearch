@@ -256,8 +256,11 @@ pub async fn resolve_mark(
 }
 
 /// `POST /v1/ask` — a grounded answer as an SSE stream of `AnswerDelta` events (`03 §7c`).
-/// Reuses the ask pipeline; the sidecar cancellation fix means a disconnected client
-/// stops generation (the dropped SSE receiver closes the delta channel).
+/// Ask v2 hosts answer through [`ApiHost::ask_turn`](crate::ApiHost::ask_turn) (the
+/// conversation-aware pipeline, `03 §7i`) and stream its deltas in this same encoding; a
+/// host without that pipeline (`Ok(None)`) keeps today's `ask_context` path byte for
+/// byte. The sidecar cancellation fix means a disconnected client stops generation (the
+/// dropped SSE receiver closes the delta channel).
 #[derive(Deserialize)]
 pub struct AskBody {
     query: String,
@@ -267,6 +270,9 @@ pub struct AskBody {
     /// 0.4.0 PR6 (D12): scope retrieval to one session's frames so the answer cites only
     /// in-session frames. Absent → unchanged frame-level behavior (D10).
     session_id: Option<i64>,
+    /// Ask v2 (0.4.5 P6, `03 §7i.4`): continue an existing conversation. Absent → a new
+    /// conversation is started by hosts with the Ask v2 pipeline.
+    thread_id: Option<i64>,
 }
 
 pub async fn ask(
@@ -295,6 +301,39 @@ pub async fn ask(
         .ok_or_else(|| ApiError::Unavailable("answer model not loaded".to_string()))?;
     let settings = state.host.settings().await;
     let top_k = body.top_k.unwrap_or(settings.retrieval_default_top_k);
+    let opts = AnswerOpts {
+        thinking: body.thinking.unwrap_or(settings.answer_thinking),
+        max_tokens: body.max_tokens.unwrap_or(2048),
+    };
+
+    // Ask v2 (0.4.5 P6, `03 §7i`): hosts with the turn pipeline answer through it, and its
+    // deltas use the same SSE encoding as the legacy path below (so `citations` is just
+    // another `AnswerDelta` line). `Ok(None)` means this host has no pipeline: fall through
+    // to the unchanged `ask_context` path. Every failure is mapped *before* the first byte
+    // of the stream, so a bad `thread_id`/model/failure stays an ordinary JSON error.
+    // The turn owns its query; the legacy fallback below still needs the original.
+    let request = traits::AskTurnRequest {
+        query: body.query.clone(),
+        thread_id: body.thread_id,
+        session_id: body.session_id,
+        top_k,
+        opts,
+    };
+    match state.host.ask_turn(request).await {
+        Ok(Some(turn)) => {
+            return Ok(Sse::new(delta_stream(turn.deltas))
+                .keep_alive(KeepAlive::new().interval(Duration::from_secs(15))));
+        }
+        Ok(None) => {}
+        Err(traits::AskTurnError::ThreadNotFound(id)) => {
+            return Err(ApiError::NotFound(format!("conversation {id} not found")));
+        }
+        Err(traits::AskTurnError::NoAnswerModel) => {
+            return Err(ApiError::Unavailable("answer model not loaded".to_string()));
+        }
+        Err(traits::AskTurnError::Failed(error)) => return Err(ApiError::Internal(error)),
+    }
+
     // Ground before streaming; a hydration failure is a hard error (no silent
     // low-quality answer), mirroring the `ask` command.
     let context = state
@@ -302,10 +341,6 @@ pub async fn ask(
         .ask_context(&body.query, top_k, body.session_id)
         .await
         .map_err(ApiError::Internal)?;
-    let opts = AnswerOpts {
-        thinking: body.thinking.unwrap_or(settings.answer_thinking),
-        max_tokens: body.max_tokens.unwrap_or(2048),
-    };
 
     let (tx, rx) = tokio::sync::mpsc::channel::<AnswerDelta>(64);
     let query = body.query;
@@ -315,18 +350,23 @@ pub async fn ask(
         let _ = provider.answer(&query, &context, opts, tx).await;
     });
 
-    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+    Ok(Sse::new(delta_stream(rx)).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+}
+
+/// Serialize a delta channel as SSE `data:` payloads — the one encoding every `/v1/ask`
+/// path uses. Serialization of a small enum cannot fail; fall back to an empty event if
+/// it ever does.
+fn delta_stream(
+    rx: tokio::sync::mpsc::Receiver<AnswerDelta>,
+) -> impl Stream<Item = Result<Event, std::convert::Infallible>> {
+    futures_util::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|delta| {
-            // Serialize the tagged AnswerDelta as the SSE `data:` payload. Serialization
-            // of a small enum cannot fail; fall back to an empty event if it ever does.
             let event = Event::default()
                 .json_data(&delta)
                 .unwrap_or_else(|_| Event::default().data("{}"));
             (Ok(event), rx)
         })
-    });
-
-    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+    })
 }
 
 #[cfg(test)]

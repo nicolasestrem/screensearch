@@ -337,7 +337,7 @@ mod tests {
                 })
                 .await?;
             }
-            tx.send(traits::AnswerDelta::Done).await?;
+            tx.send(traits::AnswerDelta::done()).await?;
             Ok(())
         }
     }

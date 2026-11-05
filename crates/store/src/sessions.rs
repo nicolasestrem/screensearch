@@ -13,6 +13,41 @@ use crate::SqliteStore;
 
 const MAX_SESSION_FRAME_SAMPLE: u32 = 24;
 
+/// The text Ask v2 embeds for a session (`03 §7i.2`): its non-`NULL` `title` and `summary`,
+/// newline-joined when both exist, `NULL` when neither does. Uses the same SQL expression as
+/// the backfill's candidate predicate, so invalidation can never disagree with what the job
+/// would produce.
+fn session_text_at(conn: &rusqlite::Connection, id: i64) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        &format!(
+            "SELECT ({}) FROM sessions WHERE id = ?1",
+            crate::ask::SESSION_TEXT_SQL
+        ),
+        [id],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .optional()
+    .map(Option::flatten)
+}
+
+/// Drops a session's stored vector when the text it was built from changed, so the
+/// `session_embed` backfill rebuilds it.
+///
+/// A `vec0` table carries neither a timestamp nor a foreign key and the baseline is one DDL
+/// (0.4.5 D2), so no trigger can do this and the writers are the only place it can happen.
+/// Without it a regenerated or cleared title/summary would be ranked by stale text forever:
+/// the backfill's predicate only selects sessions with **no** vector row (`03 §7i.2`).
+fn invalidate_session_vector_if_text_changed(
+    conn: &rusqlite::Connection,
+    id: i64,
+    before: Option<String>,
+) -> rusqlite::Result<()> {
+    if session_text_at(conn, id)? != before {
+        conn.execute("DELETE FROM session_vectors WHERE session_id = ?1", [id])?;
+    }
+    Ok(())
+}
+
 // SQLite's one-argument trim() only removes ASCII space. This is the complete set used by
 // Rust's `char::is_whitespace`/`str::trim` for the pinned toolchain, passed as trim()'s explicit
 // character set so moving the predicate into SQLite does not narrow the existing contract.
@@ -197,9 +232,19 @@ impl SqliteStore {
         .await
     }
 
+    /// Deletes an unfrozen session and, in the same transaction, its `session_vectors` row
+    /// (`03 §7i.2`): a `vec0` table carries no foreign key and a DDL trigger for it would be a
+    /// schema change (P3 owns the DDL), so the vector cleanup belongs to this delete path. A
+    /// frozen session (or an unknown id) deletes nothing and leaves any vector untouched.
     pub async fn delete_unfrozen_session(&self, id: i64) -> Result<bool> {
         self.with_conn(move |conn| {
-            Ok(conn.execute("DELETE FROM sessions WHERE id=?1 AND frozen=0", [id])? > 0)
+            let tx = conn.unchecked_transaction()?;
+            let deleted = tx.execute("DELETE FROM sessions WHERE id=?1 AND frozen=0", [id])? > 0;
+            if deleted {
+                tx.execute("DELETE FROM session_vectors WHERE session_id=?1", [id])?;
+            }
+            tx.commit()?;
+            Ok(deleted)
         })
         .await
     }
@@ -547,22 +592,39 @@ impl SqliteStore {
     ) -> Result<bool> {
         let (title, summary, model) = (title.to_string(), summary.to_string(), model.to_string());
         self.with_conn(move |conn| {
-            Ok(conn.execute(
+            // One transaction, like `delete_unfrozen_session` above: the update and the vector
+            // invalidation must not be able to land separately, or a crash between them leaves a
+            // vector built from text the session no longer has.
+            let tx = conn.unchecked_transaction()?;
+            let before = session_text_at(&tx, id)?;
+            let updated = tx.execute(
                 "UPDATE sessions SET title=?2, summary=?3, summary_model=?4,
                  updated_at=unixepoch()*1000 WHERE id=?1",
                 params![id, title, summary, model],
-            )? > 0)
+            )? > 0;
+            if updated {
+                invalidate_session_vector_if_text_changed(&tx, id, before)?;
+            }
+            tx.commit()?;
+            Ok(updated)
         })
         .await
     }
 
     pub async fn clear_session_title_summary(&self, id: i64) -> Result<bool> {
         self.with_conn(move |conn| {
-            Ok(conn.execute(
+            let tx = conn.unchecked_transaction()?;
+            let before = session_text_at(&tx, id)?;
+            let updated = tx.execute(
                 "UPDATE sessions SET title=NULL, summary=NULL, summary_model=NULL,
                  updated_at=unixepoch()*1000 WHERE id=?1",
                 [id],
-            )? > 0)
+            )? > 0;
+            if updated {
+                invalidate_session_vector_if_text_changed(&tx, id, before)?;
+            }
+            tx.commit()?;
+            Ok(updated)
         })
         .await
     }

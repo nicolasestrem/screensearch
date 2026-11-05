@@ -52,6 +52,11 @@ function reducer(state: AskState, action: AskAction): AskState {
           return state.citations.includes(d.frame_id)
             ? state
             : { ...state, citations: [...state.citations, d.frame_id] };
+        case "citations":
+          // Ask v2 terminal citations (thread/session evidence). The UI keeps rendering
+          // the same source-frame tiles it already collects from the per-`citation`
+          // events, so this delta folds into no visible state.
+          return state;
         case "done":
           // A `done` after an `error` must not resurrect the stream.
           return state.phase === "error" ? state : { ...state, phase: "done" };

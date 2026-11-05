@@ -4,6 +4,7 @@
 //! and module crates depend on these traits, never on each other's concrete impls
 //! (`03 §2`). All methods are fallible async; `Result<T>` is [`crate::Result`].
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -11,8 +12,9 @@ use image::RgbaImage;
 use tokio::sync::mpsc::Sender;
 
 use crate::domain::{
-    AnswerOpts, CapturedFrame, ChunkSource, Embedding, FrameContextRow, FrameEnrichmentInput,
-    NewFrame, OcrResult, RetrievedChunk, TextFilterContext, VisionAnalysis,
+    AnswerOpts, AskEntityMatch, AskSessionHit, AskThreadCandidate, CapturedFrame, ChunkSource,
+    Embedding, FrameContextRow, FrameEnrichmentInput, NewAskTurn, NewFrame, OcrResult,
+    RetrievedChunk, SessionEmbedInput, TextFilterContext, VisionAnalysis,
 };
 use crate::ipc::{
     AnswerDelta, AppSuppression, FrameMeta, InsightsSummary, Mark, PressureSample, SearchHit,
@@ -116,7 +118,9 @@ pub trait AnswerProvider: Send + Sync {
                         }
                     }
                     AnswerDelta::Error { message } => err = Some(message),
-                    AnswerDelta::Thinking { .. } | AnswerDelta::Done => {}
+                    AnswerDelta::Thinking { .. }
+                    | AnswerDelta::Done { .. }
+                    | AnswerDelta::Citations { .. } => {}
                 }
             }
             (text, cited, err)
@@ -826,6 +830,159 @@ pub trait Store: Send + Sync {
         _proposals: &[crate::NormalizationProposal],
     ) -> Result<crate::NormalizationOutcome> {
         anyhow::bail!("work-graph storage is unsupported")
+    }
+
+    // ---- Ask v2 (`03 §7i`) ---------------------------------------------------------------
+    //
+    // Every method below is additive and default-bodied: an existing implementation or test
+    // fake keeps compiling and behaving exactly as before, and a store without these
+    // capabilities degrades to Ask v2's documented non-blocking fallback (`03 §7i.1`) rather
+    // than failing. No existing method's signature or semantics change (`03 §7c`, D12).
+
+    /// Entity mentions in `question` resolved against `entities.canonical_name` and
+    /// `entity_aliases.alias` (`03 §7i.1`, `§7h.2`). A mention with no matching graph row is
+    /// simply absent — the pipeline falls back to plain text matching, so a database whose
+    /// graph tables are empty still answers. Default returns nothing (no graph).
+    async fn ask_resolve_entities(&self, _question: &str) -> Result<Vec<AskEntityMatch>> {
+        Ok(Vec::new())
+    }
+
+    /// Stage 1 (`03 §7i.2`): threads whose `[first_seen_at, last_seen_at]` overlaps
+    /// `window`, plus threads containing a session linked to any of `entity_ids` (resolved
+    /// **entity** ids, not session ids — the store joins them through `session_entities`).
+    /// `window: None` means the whole history, so every thread is a candidate. Default
+    /// returns nothing.
+    async fn ask_candidate_threads(
+        &self,
+        _window: Option<crate::TimeRange>,
+        _entity_ids: &[i64],
+    ) -> Result<Vec<AskThreadCandidate>> {
+        Ok(Vec::new())
+    }
+
+    /// The session candidate set fed to stage 2: the member sessions of `threads` that
+    /// overlap `window`, narrowed to the sessions linked to `entity_ids` when an entity
+    /// resolved. With no thread candidates the window's sessions are the set (the documented
+    /// fallback). Ascending session ids. Default returns nothing.
+    async fn ask_candidate_sessions(
+        &self,
+        _threads: &[AskThreadCandidate],
+        _window: Option<crate::TimeRange>,
+        _entity_ids: &[i64],
+    ) -> Result<Vec<i64>> {
+        Ok(Vec::new())
+    }
+
+    /// Stage 2 (`03 §7i.2`): hybrid retrieval over `candidates` — FTS on session
+    /// `title`/`summary` combined with `session_vectors` cosine similarity — returning at
+    /// most `limit` hits, best first. Default returns nothing.
+    async fn ask_search_sessions(
+        &self,
+        _question: &str,
+        _candidates: &[i64],
+        _limit: u32,
+    ) -> Result<Vec<AskSessionHit>> {
+        Ok(Vec::new())
+    }
+
+    /// Stage 3 (`03 §7i.2`): the existing hybrid frame search restricted to frames whose
+    /// `frames.session_id` is in `sessions`. An empty `sessions` slice means no restriction
+    /// (the fallback path searches the window directly). This is a *new* method: the
+    /// existing [`Self::hybrid_search`] keeps its exact semantics. Default returns nothing.
+    async fn ask_search_frames(
+        &self,
+        _query: &SearchQuery,
+        _sessions: &[i64],
+    ) -> Result<Vec<SearchHit>> {
+        Ok(Vec::new())
+    }
+
+    /// `frames.session_id` for each of `frame_ids` that belongs to a session. Frames outside
+    /// any session are absent from the map. Default returns nothing.
+    async fn ask_frame_sessions(&self, _frame_ids: &[i64]) -> Result<HashMap<i64, i64>> {
+        Ok(HashMap::new())
+    }
+
+    /// A short display label per session (`title`, else tool/kind, else the start date) for
+    /// the prompt's session context (`03 §7i.2` stage 4). Default returns nothing.
+    async fn ask_session_labels(&self, _session_ids: &[i64]) -> Result<HashMap<i64, String>> {
+        Ok(HashMap::new())
+    }
+
+    /// Whether an `ask_threads` row exists. Default fails explicitly: a store without
+    /// conversations must not silently create a turn for a thread it cannot verify.
+    async fn ask_thread_exists(&self, _thread_id: i64) -> Result<bool> {
+        anyhow::bail!("ask conversations are unsupported")
+    }
+
+    /// Creates an `ask_threads` row with a NULL title (naming threads is P9's job, `§7i.4`)
+    /// and returns its id. Default fails explicitly.
+    async fn create_ask_thread(&self) -> Result<i64> {
+        anyhow::bail!("ask conversations are unsupported")
+    }
+
+    /// Deletes a conversation; `ON DELETE CASCADE` removes its turns and touches no frame,
+    /// session, graph row or insight (`§7i.4`). Default returns `false`.
+    async fn delete_ask_thread(&self, _thread_id: i64) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// The highest-ordinal turn of a thread, for follow-up window/entity reuse (`§7i.4`).
+    /// Default returns `None`.
+    async fn last_ask_turn(&self, _thread_id: i64) -> Result<Option<crate::AskTurnRecord>> {
+        Ok(None)
+    }
+
+    /// Appends a turn at the next `ordinal` (`UNIQUE(thread_id, ordinal)`) with a NULL
+    /// answer, returning the persisted row. Default fails explicitly.
+    async fn append_ask_turn(&self, _turn: NewAskTurn) -> Result<crate::AskTurnRecord> {
+        anyhow::bail!("ask conversations are unsupported")
+    }
+
+    /// Stores the final answer of a streamed turn (`§7i.4`: NULL while streaming and on
+    /// failure). Default returns `false`.
+    async fn finish_ask_turn(&self, _turn_id: i64, _answer: &str) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Every turn of a thread in `ordinal` order. Default returns nothing.
+    async fn list_ask_turns(&self, _thread_id: i64) -> Result<Vec<crate::AskTurnRecord>> {
+        Ok(Vec::new())
+    }
+
+    /// Sessions whose concatenated non-NULL `title`/`summary` still needs a
+    /// `session_vectors` row, most recently updated first, bounded by `limit`. A session
+    /// with both NULL is never returned (it is never embedded as an empty string). Default
+    /// returns nothing.
+    async fn session_embed_candidates(&self, _limit: u32) -> Result<Vec<SessionEmbedInput>> {
+        Ok(Vec::new())
+    }
+
+    /// How many sessions still need a `session_vectors` row — the backfill's drain
+    /// condition. Default returns `0`.
+    async fn session_embed_pending(&self) -> Result<u64> {
+        Ok(0)
+    }
+
+    /// Replaces the `session_vectors` row for `session_id` with `emb` (vec0 has no
+    /// `ON CONFLICT`, so this deletes then inserts in one transaction) and returns whether
+    /// a row was written. `text` is the exact concatenation that was embedded: the write is
+    /// skipped when the session's current title/summary no longer produce it, and when the
+    /// session no longer exists or has both NULL — so a concurrent summary edit can never
+    /// leave a stale vector. Replay is idempotent. Default returns `false`.
+    async fn upsert_session_vector(
+        &self,
+        _session_id: i64,
+        _text: &str,
+        _emb: &Embedding,
+    ) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Pending jobs of one kind — lets the `session_embed` producer avoid stacking a second
+    /// run on an idle tick. Default returns `0`.
+    async fn pending_jobs_of_kind(&self, _kind: JobKind) -> Result<u64> {
+        Ok(0)
     }
 }
 

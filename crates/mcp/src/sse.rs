@@ -67,12 +67,30 @@ pub enum Flow {
     Failed(String),
 }
 
-/// Folds `AnswerDelta` SSE events into an answer string + cited frame ids.
+/// Folds `AnswerDelta` SSE events into an answer string + cited frame ids + cited session ids.
 #[derive(Default)]
 pub struct AskAggregator {
     pub answer: String,
+    /// Source frame ids, in first-seen order, deduplicated.
     pub citations: Vec<i64>,
+    /// Ask v2 (`03 §7i.3`): the distinct session ids carrying the frames in the assembled
+    /// prompt, from the terminal `citations` event. Empty for a stream that never emits it.
+    pub cited_sessions: Vec<i64>,
     pub tokens_seen: bool,
+}
+
+/// Collects the integers of one JSON array, dropping non-integers and duplicates while
+/// preserving the producer's order (the API already sorts sessions ascending).
+fn dedup_ids(values: Option<&serde_json::Value>) -> Vec<i64> {
+    let mut ids: Vec<i64> = Vec::new();
+    for id in values.and_then(|v| v.as_array()).into_iter().flatten() {
+        if let Some(id) = id.as_i64() {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    ids
 }
 
 impl AskAggregator {
@@ -83,7 +101,14 @@ impl AskAggregator {
     /// Feeds one raw SSE line. Comment (`:`) and blank lines are ignored; `data:` lines are
     /// parsed as a tagged `AnswerDelta`. `thinking` deltas are discarded (a second model's
     /// chain-of-thought is prompt noise to the calling model); `data: {}` and unknown types
-    /// are ignored (forward-compatible).
+    /// are ignored (forward-compatible, so a newer API can add events without breaking a
+    /// client that predates them).
+    ///
+    /// The Ask v2 terminal `citations` event (`03 §7i.3`) is aggregated, not ignored: its
+    /// `frames` array *replaces* the frame citations gathered from the per-`citation`
+    /// events of the same turn (the two describe the same set, and the terminal one is
+    /// authoritative), and its `sessions` array becomes [`Self::cited_sessions`]. A stream
+    /// that emits no `citations` event keeps the per-`citation` behaviour unchanged.
     pub fn feed(&mut self, line: &str) -> Flow {
         let line = line.trim_end();
         if line.is_empty() || line.starts_with(':') {
@@ -110,6 +135,15 @@ impl AskAggregator {
                     if !self.citations.contains(&id) {
                         self.citations.push(id);
                     }
+                }
+                Flow::Continue
+            }
+            Some("citations") => {
+                if let Some(frames) = value.get("frames") {
+                    self.citations = dedup_ids(Some(frames));
+                }
+                if let Some(sessions) = value.get("sessions") {
+                    self.cited_sessions = dedup_ids(Some(sessions));
                 }
                 Flow::Continue
             }
@@ -187,6 +221,75 @@ mod tests {
         agg.feed(r#"data: {"type":"citation","frame_id":7}"#);
         agg.feed(r#"data: {"type":"citation","frame_id":41}"#);
         assert_eq!(agg.citations, vec![41, 7]);
+        // No `citations` event arrived: the session list stays empty, never fabricated.
+        assert!(agg.cited_sessions.is_empty());
+    }
+
+    #[test]
+    fn citations_event_records_sessions_and_replaces_frames() {
+        // The pre-0.4.5 per-frame events still arrive first; the terminal `citations` event
+        // describes the same turn and is authoritative for both sets.
+        let mut agg = AskAggregator::new();
+        agg.feed(r#"data: {"type":"token","text":"The invoice "}"#);
+        agg.feed(r#"data: {"type":"citation","frame_id":41}"#);
+        agg.feed(r#"data: {"type":"citation","frame_id":7}"#);
+        let event = serde_json::json!({
+            "type": "citations",
+            "sessions": [7, 9],
+            "frames": [7, 41],
+            "thread_id": 3,
+            "turn_id": 1,
+            "stage_counts": {"threads": 2, "sessions": 2, "frames": 2},
+            "tokens_assembled": 812,
+        });
+        assert_eq!(
+            agg.feed(&format!("data: {event}")),
+            Flow::Continue,
+            "citations is not terminal — `done` is"
+        );
+        assert_eq!(agg.cited_sessions, vec![7, 9]);
+        assert_eq!(
+            agg.citations,
+            vec![7, 41],
+            "the event's frames replace the per-citation list, in its own order"
+        );
+        assert_eq!(agg.answer, "The invoice ");
+        assert_eq!(agg.feed(r#"data: {"type":"done"}"#), Flow::Done);
+    }
+
+    #[test]
+    fn citations_event_tolerates_missing_arrays_and_duplicates() {
+        let mut agg = AskAggregator::new();
+        agg.feed(r#"data: {"type":"citation","frame_id":5}"#);
+        // A malformed/partial event leaves what earlier events established untouched.
+        agg.feed(r#"data: {"type":"citations","thread_id":1,"turn_id":1}"#);
+        assert_eq!(agg.citations, vec![5]);
+        assert!(agg.cited_sessions.is_empty());
+        // Duplicates collapse; non-integer entries are dropped.
+        agg.feed(r#"data: {"type":"citations","sessions":[4,4,"x",6],"frames":[5,5]}"#);
+        assert_eq!(agg.cited_sessions, vec![4, 6]);
+        assert_eq!(agg.citations, vec![5]);
+    }
+
+    #[test]
+    fn unknown_event_types_are_ignored() {
+        // A newer API may add events a client predating them does not know (the contract in
+        // `03 §7i.3`: the stream is extended, never replaced). Such an event must neither
+        // terminate the stream nor perturb the aggregated answer or citations.
+        let mut agg = AskAggregator::new();
+        agg.feed(r#"data: {"type":"token","text":"answer"}"#);
+        agg.feed(r#"data: {"type":"citation","frame_id":12}"#);
+        for unknown in [
+            r#"data: {"type":"insight","id":4,"text":"later phases"}"#,
+            r#"data: {"type":"session_citation","session_id":9}"#,
+            r#"data: {"type":"progress","step":2}"#,
+        ] {
+            assert_eq!(agg.feed(unknown), Flow::Continue, "{unknown}");
+        }
+        assert_eq!(agg.answer, "answer");
+        assert_eq!(agg.citations, vec![12]);
+        assert!(agg.cited_sessions.is_empty());
+        assert_eq!(agg.feed(r#"data: {"type":"done"}"#), Flow::Done);
     }
 
     #[test]

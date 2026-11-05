@@ -247,15 +247,18 @@ impl Drop for EmbedTextGuard {
 ///
 /// The four work-graph kinds are additive (`03 §7h.7`): claimed only once the graph
 /// scheduler has started and paused by the same `level >= 1` throttle that pauses vision.
-/// `embed_text` and `vision_tag` keep their exact previous conditions.
-fn claim_kinds(shared: &Shared, level: u8, allow_embed_text: bool) -> ([JobKind; 6], usize) {
+/// `session_embed` is equally additive (`03 §7i.2`, 0.4.5 D11): producer-driven (enqueued by
+/// the Ask v2 pipeline on demand and by its idle scheduler), claimed only while the embedder
+/// is attached and paused by the same throttle. `embed_text` and `vision_tag` keep their
+/// exact previous conditions.
+fn claim_kinds(shared: &Shared, level: u8, allow_embed_text: bool) -> ([JobKind; 7], usize) {
     let embedder_ready = shared
         .embedder
         .read()
         .expect("embedder slot lock")
         .is_some();
     let vision_ready = shared.vision.read().expect("vision slot lock").is_some();
-    let mut kinds = [JobKind::EmbedText; 6];
+    let mut kinds = [JobKind::EmbedText; 7];
     let mut len = 0;
     if embedder_ready && shared.enable_embed_text && allow_embed_text {
         kinds[len] = JobKind::EmbedText;
@@ -283,6 +286,13 @@ fn claim_kinds(shared: &Shared, level: u8, allow_embed_text: bool) -> ([JobKind;
             kinds[len] = kind;
             len += 1;
         }
+    }
+    // Ask v2 session vectors (`03 §7i.2`, 0.4.5 D11): producer-driven like the graph, so a
+    // claim needs a queued job; the embedder is the only provider it requires. Paused by the
+    // same throttle that pauses vision, and never enqueued on the capture hot path.
+    if embedder_ready && level == 0 {
+        kinds[len] = JobKind::SessionEmbed;
+        len += 1;
     }
     (kinds, len)
 }
@@ -398,6 +408,13 @@ async fn process_job_with_providers(
         JobKind::GraphBackfill => crate::graph_backfill::run(store).await,
         JobKind::GraphCluster => crate::graph_cluster::run(store, now_ms(), cluster_progress).await,
         JobKind::GraphNormalize => crate::graph_normalize::run(store, answer).await,
+        // Ask v2 session vectors (`03 §7i.2`, 0.4.5 D11): embedder-only, bounded batch. A
+        // job claimed while the slot is empty is defensive (the claim kinds gate on it) and
+        // retries rather than failing the batch permanently.
+        JobKind::SessionEmbed => match embedder {
+            Some(embedder) => crate::session_vectors::run_session_embed(store, embedder).await,
+            None => Outcome::Retry("embedding provider not attached".to_string()),
+        },
     };
     match outcome {
         Outcome::Complete { changed_data } => {
@@ -716,10 +733,13 @@ mod tests {
                 JobKind::GraphNormalize,
                 JobKind::GraphCluster,
                 JobKind::GraphBackfill,
+                // Ask v2's session vectors need only the embedder (0.4.5 D11).
+                JobKind::SessionEmbed,
             ]
         );
 
-        // Level 1 drops vision but keeps embed_text, exactly as before the graph lane.
+        // Level 1 drops vision and session vectors but keeps embed_text, exactly as before
+        // the graph lane.
         let (kinds, len) = claim_kinds(&shared, 1, true);
         assert_eq!(&kinds[..len], &[JobKind::EmbedText]);
         // Level 2 with the floor reached also drops embed_text.

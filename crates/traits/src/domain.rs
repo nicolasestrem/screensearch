@@ -493,6 +493,163 @@ pub struct RetrievedChunk {
     pub score: f32,
     /// Capture time of the source frame, unix epoch milliseconds.
     pub captured_at: i64,
+    /// The session the source frame belongs to, set by Ask v2 assembly (`03 §7i.2` stage 4).
+    /// `None` for a frame outside any session and for every non-Ask caller (reports,
+    /// normalization), whose prompt and token cost stay exactly what they were.
+    pub session: Option<ChunkSession>,
+}
+
+/// Session context on an Ask v2 chunk: the frame's `frames.session_id` and a short human
+/// label the prompt may show. Citations stay provenance of what was placed in the prompt
+/// (`crates/inference/src/answer.rs`); the label is prompt text, never a citation source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChunkSession {
+    pub id: i64,
+    pub label: String,
+}
+
+/// Conservative UTF-8 bytes-per-token bound used to estimate prompt length without a
+/// tokenizer (an upper bound on tokens for English and CJK alike; PR #26). Shared by the
+/// inference packer and Ask v2 assembly so both count a chunk identically.
+pub const PROMPT_BYTES_PER_TOKEN: usize = 2;
+/// Per-snippet framing cost (`[frame <id>] ` + newline), in estimated tokens.
+pub const CHUNK_FRAMING_TOKENS: usize = 6;
+
+/// Rough token estimate; deliberately over-counts (see [`PROMPT_BYTES_PER_TOKEN`]).
+pub fn estimate_prompt_tokens(text: &str) -> usize {
+    text.len() / PROMPT_BYTES_PER_TOKEN + 1
+}
+
+/// The reply token reservation actually used for a request: `requested` capped to half the
+/// context window, so a large `max_tokens` can never reserve the *entire* window and force the
+/// packer to drop all grounding snippets (the symptom: every Ask answers "(no relevant
+/// snippets found)"). Shared by the inference packer and Ask v2 assembly: the kernel must
+/// subtract the same reservation the provider will use, or it pre-drops evidence the provider
+/// would have packed (`03 §7i.2` stage 4).
+pub fn effective_reply_budget(requested: u32, ctx_size: u32) -> u32 {
+    requested.min((ctx_size / 2).max(1))
+}
+
+impl RetrievedChunk {
+    /// The snippet header as placed in the prompt: `[frame <id>]`, or
+    /// `[frame <id> | session <sid>: <label>]` when the chunk carries session context.
+    pub fn prompt_header(&self) -> String {
+        match &self.session {
+            None => format!("[frame {}]", self.frame_id),
+            Some(s) => format!("[frame {} | session {}: {}]", self.frame_id, s.id, s.label),
+        }
+    }
+
+    /// Estimated prompt tokens this chunk costs when packed whole: its trimmed text plus
+    /// [`CHUNK_FRAMING_TOKENS`], plus the session part of the header when present. For a
+    /// chunk without a session this is exactly the pre-0.4.5 packing cost.
+    pub fn prompt_cost(&self) -> usize {
+        let session_part = match &self.session {
+            None => 0,
+            Some(s) => estimate_prompt_tokens(&format!(" | session {}: {}", s.id, s.label)),
+        };
+        estimate_prompt_tokens(self.text.trim()) + CHUNK_FRAMING_TOKENS + session_part
+    }
+}
+
+/// One Ask v2 request (`03 §7i`), as the HTTP route and the in-app command hand it to the
+/// kernel pipeline. `thread_id: None` starts a new conversation (`§7i.4`).
+#[derive(Debug, Clone)]
+pub struct AskTurnRequest {
+    pub query: String,
+    pub thread_id: Option<i64>,
+    /// The existing `/v1/ask` single-session scope (`03 §7c`); skips stages 1 and 2.
+    pub session_id: Option<i64>,
+    pub top_k: u32,
+    pub opts: AnswerOpts,
+}
+
+/// A started Ask v2 turn: its persisted ids and the delta stream. The stream carries every
+/// existing [`crate::AnswerDelta`] unchanged plus one `citations` event before `done`.
+/// Dropping `deltas` cancels the turn (its answer stays NULL).
+#[derive(Debug)]
+pub struct AskTurnStream {
+    pub thread_id: i64,
+    pub turn_id: i64,
+    pub deltas: tokio::sync::mpsc::Receiver<crate::AnswerDelta>,
+}
+
+/// Why an Ask v2 turn could not start.
+#[derive(Debug)]
+pub enum AskTurnError {
+    /// The request named an `ask_threads` id that does not exist.
+    ThreadNotFound(i64),
+    /// No answer model is attached.
+    NoAnswerModel,
+    /// Planning, retrieval or persistence failed.
+    Failed(anyhow::Error),
+}
+
+impl std::fmt::Display for AskTurnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ThreadNotFound(id) => write!(f, "conversation {id} not found"),
+            Self::NoAnswerModel => write!(f, "no answer model is loaded"),
+            Self::Failed(e) => write!(f, "ask failed: {e:#}"),
+        }
+    }
+}
+
+impl std::error::Error for AskTurnError {}
+
+/// An entity the planner resolved from the question (`03 §7i.1`): `matched` is the
+/// canonical name or alias text found in the question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskEntityMatch {
+    pub entity_id: i64,
+    pub matched: String,
+}
+
+/// A stage-1 thread candidate (`03 §7i.2`) with its member sessions (ascending).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskThreadCandidate {
+    pub thread_id: i64,
+    pub session_ids: Vec<i64>,
+}
+
+/// A stage-2 session hit: hybrid (FTS on title/summary + `session_vectors` cosine) RRF score.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AskSessionHit {
+    pub session_id: i64,
+    pub score: f64,
+}
+
+/// A turn to append (`ask_turns`, `03 §4`/`§7i.4`). The store assigns the next ordinal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewAskTurn {
+    pub thread_id: i64,
+    pub question: String,
+    /// Half-open `[start, end)` in unix ms; `None` = whole history (both columns NULL).
+    pub window: Option<crate::TimeRange>,
+    /// Entity ids resolved for this turn (stored as a JSON array).
+    pub resolved_entities: Vec<i64>,
+}
+
+/// One persisted `ask_turns` row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskTurnRecord {
+    pub id: i64,
+    pub thread_id: i64,
+    pub ordinal: i64,
+    pub question: String,
+    /// NULL while streaming and on failure (`§7i.4`).
+    pub answer: Option<String>,
+    pub window: Option<crate::TimeRange>,
+    pub resolved_entities: Vec<i64>,
+    pub created_at: i64,
+}
+
+/// A session whose `session_vectors` row is missing: `text` is the concatenation of its
+/// non-NULL `title` and `summary` (joined by `\n` when both exist), never empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionEmbedInput {
+    pub session_id: i64,
+    pub text: String,
 }
 
 /// Options controlling a single `answer` call.

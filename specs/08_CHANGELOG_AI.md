@@ -1,5 +1,77 @@
 # 08 — AI Changelog
 
+## 2026-11-05: P6 Ask v2 — retrieval planning, staged retrieval, multi-turn conversations ([#160](https://github.com/nicolasestrem/screensearch/pull/160), open, not merged)
+
+- **Change:** Ask became a planned, session-aware, multi-turn pipeline (`03 §7i`), built as four
+  disjoint slices behind one additive contract. `crates/traits`: `RetrievedChunk` gained
+  `session: Option<ChunkSession>` (with `prompt_header()`/`prompt_cost()` and shared prompt-cost
+  helpers so the packer and the assembler count identically); `AnswerDelta` gained one terminal
+  `Citations` event and `Done` gained optional `stage_counts`/`tokens_assembled` (both omitted
+  when absent, so every pre-0.4.5 producer still emits exactly `{"type":"done"}`);
+  `JobKind::SessionEmbed` appended last; and 18 default-bodied `Store` methods for Ask v2.
+  `crates/store`: new `ask.rs` — entity resolution against `entities`/`entity_aliases`, a stage-1
+  thread query over the closed `[first_seen_at,last_seen_at]` interval plus entity-linked
+  sessions, a stage-2 hybrid session retrieval (per-query temporary FTS5 index over candidate
+  titles/summaries fused by the existing RRF rule with `session_vectors` cosine KNN), a new
+  session-set-restricted frame search (the existing `hybrid_search*` methods untouched), thread and
+  turn persistence with `ordinal` allocation in one transaction, session-vector candidates/upsert,
+  and the `session_vectors` row deleted inside the session-delete transaction. `crates/kernel`:
+  `ask_plan.rs` (pure, injectable time-intent planner: calendar windows in local time, ISO weeks,
+  `this morning`/`this afternoon`, weekdays, explicit dates, follow-up shifts; no anchor ⇒ no
+  window), `ask.rs` (`Kernel::ask_turn` — plan → persist → stages 1→2→3→4 → forwarder that emits
+  `Citation* , Citations, Done`, derives citations from the frames the provider actually read,
+  persists the answer and logs the per-turn counts; plus `Kernel::ask_context` and a free
+  `kernel::ask::ask_context` carrying the legacy frame-level path, now the workspace's only
+  implementation of it), `session_vectors.rs` (`run_session_embed` bounded batches + a 30 s
+  producer under the existing throttle that enqueues on idle and on demand). `crates/inference`:
+  the packer renders `prompt_header()` and costs with `prompt_cost()`. `crates/api`: `AskBody.thread_id`,
+  one default-bodied `ApiHost::ask_turn` (`Ok(None)` = no pipeline), and the route streaming a v2
+  stream through the existing `unfold`/`json_data` shape while mapping `ThreadNotFound`/`NoAnswerModel`/
+  `Failed` before any byte. `crates/mcp`: the aggregator parses the `citations` event into
+  `cited_sessions` and the ask tool names them. `ui`: one `case "citations"` in the `useAsk`
+  reducer (the switch is exhaustive). Regenerated `AnswerDelta.ts`, `JobKind.ts`, new `StageCounts.ts`.
+- **Why:** the previous Ask was a single frame-level search that answered per request, with no way
+  to scope a question to a period, no citation of the sessions an answer drew on, and no
+  conversation state — the gaps `02 §5`/`03 §7i` close for Gate B.
+- **Governance:** the maintainer's grant covered the kickoff's three wiring sites plus (widened at
+  the mapping stage) `crates/api/src/lib.rs`, `src-tauri/src/local_api.rs`, `crates/traits/src/contracts.rs`,
+  `crates/mcp`, one `useAsk` case, the mechanical compile-fixup files (the exact split between what
+  the maintainer named and two files edited earlier under the same class is in `07`),
+  `crates/rebuild/src/settings.rs`, and `crates/evalfixture/src/serve.rs`. Every decision and
+  stop-condition resolution is in `07`; contradictions are `06` #46–#53. Nothing was committed to
+  `main` and nothing was merged. The maintainer validated the content in-session and instructed the
+  branch push, the PR ([#160](https://github.com/nicolasestrem/screensearch/pull/160)) and the
+  review request; **the merge decision remains the maintainer's alone.**
+- **Post-open review (2026-11-05).** Codex posted three P2 findings on `ad9214f`; all three were
+  valid and are fixed with regression tests proven to fail without them (`05`). (1) A regenerated or
+  cleared session title/summary left its `session_vectors` row in place, and the backfill only
+  selects sessions with *no* row, so the session kept being ranked by stale text — both writers now
+  invalidate inside their own transaction when the text changed. (2) Assembly subtracted the raw
+  `max_tokens`, so a small window reserved its whole context and dropped all but one snippet; the
+  provider's half-window cap is now one shared function (`traits::effective_reply_budget`) used by
+  both the packer and the kernel. (3) A cancelled turn detached its provider instead of aborting it,
+  so a provider still preparing (model download, supervisor acquire) kept running — the forwarder
+  now signals cooperatively, waits a bounded grace, then aborts. Also: the forwarder no longer
+  streams a citation the terminal event will not carry, and one comment that overstated what an
+  enqueue could delay was corrected.
+- **Second review round (2026-11-05).** A second Codex pass on `2452eb3` raised two more P2s, both
+  valid and both fixed with tests proven to fail without them (`05`). (1) Entity mentions were matched
+  as substrings, so a short name like `api` resolved out of "capital" and mis-scoped the turn (and
+  its follow-ups); a boundary check now decides precision over Unicode-aware lowering on both sides (the SQL prefilter went away once its `lower()` proved ASCII-only).
+  (2) When an entity resolved but stage 2 had no winners, the frame stage fell back to the whole
+  window and discarded the constraint; the constraint is now kept whenever the entity's sessions are
+  in scope, while `§7i.1`'s plain-text fallback still covers a mention with no usable match. The
+  decision record for both rules is in `07`.
+- **Evidence:** full kickoff verification list green (raw output in `05`); new suites: store
+  `ask` (15 integration + 3 unit, after the review fixes), kernel `ask` (14 integration + 18
+  planner/assembly/citation unit),
+  api `ask_v2` (8), app crate relay/legacy-delegation tests (4), MCP citations tests, inference
+  prompt-parity tests. An end-to-end fixture smoke (generate → serve → unchanged P4 harness) proved
+  the wiring runs, recorded in `05` as a three-stage wiring check and **not** as a measurement. The
+  acceptance measurement (evidence recall@10, known-fact rate, citation validity, p95) is the
+  maintainer's run against the live database — this workspace has no live DB, so no acceptance
+  number is claimed here.
+
 ## 2026-11-05: P5 review fixes for the merged #157 code (open PR, not merged by the agent)
 
 - **Change:** fixed the one P1 and three P2 automated-review findings that were still unresolved

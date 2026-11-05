@@ -408,7 +408,7 @@ cannot claim, queue or retry a run, write an index, send a message or repair mis
 ### `POST /v1/ask`
 
 Body: `{ "query": "...", "top_k"?: number, "thinking"?: bool, "max_tokens"?: number,
-"session_id"?: number }`.
+"session_id"?: number, "thread_id"?: number }`.
 Returns a **Server-Sent Events** stream (`Content-Type: text/event-stream`); each `data:`
 line is a JSON `AnswerDelta`:
 
@@ -435,6 +435,64 @@ curl -N -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"query":"what did I read about rustls?"}' \
   http://127.0.0.1:43210/v1/ask
 ```
+
+#### Ask v2 additions (0.4.5)
+
+Four additive parts. Every one of them is optional for a client: a client that ignores the
+new event and the new request field renders the answer exactly as it does today.
+
+**`thread_id` — the conversation a question belongs to.** Omitted: the question starts a new
+conversation and the turn is its first. Present: the turn is appended to that conversation at
+the next ordinal, and a follow-up inherits the previous turn's resolved time window and
+resolved entity ids unless the new question's own plan overrides them. An unknown
+`thread_id` is a JSON **404** *before* the stream starts, like an unknown `session_id`.
+
+**`citations` — one new terminal event**, emitted once, immediately *before* the terminal
+`done` and after the last `citation`. It reports both kinds of evidence the answer was
+grounded in — the sessions and the frames actually placed in the model's prompt — plus the
+identifiers of the turn that produced them:
+
+```json
+{"type":"citations","sessions":[7,9],"frames":[7,41],"thread_id":3,"turn_id":2,"stage_counts":{"threads":2,"sessions":2,"frames":2},"tokens_assembled":812}
+```
+
+- `sessions` — distinct session ids carrying the cited frames, ascending. Every cited frame
+  belongs to a cited session by construction.
+- `frames` — the cited frame ids, in inclusion (citation) order.
+- `thread_id` / `turn_id` — the persisted conversation and turn this answer belongs to.
+- `stage_counts` / `tokens_assembled` — the per-turn diagnostics below.
+
+The event is additive: `thinking`, `token`, `citation` and `done` keep their names, order and
+meanings, so a client that does not know `citations` must ignore it and keep rendering the
+per-`citation` frames it already received. A stream that emits no `citations` event (every
+stream from a pre-0.4.5 build, and a frame-level answer with no conversation) is unchanged.
+
+**`stage_counts` and `tokens_assembled` — per-turn diagnostics.** Both ride the `citations`
+event *and* the terminal `done` event:
+
+```json
+{"type":"done","stage_counts":{"threads":2,"sessions":2,"frames":2},"tokens_assembled":812}
+```
+
+`stage_counts` gives the candidate count of each retrieval stage in order — `threads`, then
+`sessions`, then `frames`, each stage only narrowing the previous one — and
+`tokens_assembled` is the packed prompt cost in tokens. Both are **omitted when absent**, so
+the terminal event of a stream that knows no diagnostics is still exactly
+`{"type":"done"}`; a client must never require either field.
+
+**The turn record.** Each turn is persisted before generation starts and answers are stored
+when generation completes:
+
+| Field | Meaning |
+|---|---|
+| question | The exact `query` text of the turn. |
+| answer | The final answer text; **`null` while the turn is streaming and when it fails**. |
+| window | The resolved half-open `[window_start, window_end)` in unix milliseconds, or `null` when the question carried no resolvable time intent (null means the whole history, never a fabricated bound). |
+| resolved_entities | The entity ids the question resolved to, as a JSON array; empty when nothing resolved. |
+
+Deleting a conversation removes its turns and touches no frame, session, graph row or saved
+report. Reading conversations back over HTTP is a separate read surface scheduled for the
+next phase; this section documents only what `POST /v1/ask` writes and emits.
 
 ### `GET /v1/frames/{id}`
 

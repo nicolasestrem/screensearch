@@ -146,13 +146,32 @@ for self-contained contracts and source-inspected inventory.
   carries the v14 baseline instead of the migration chain, `03 §4`, 0.4.5 D2), **P4** automatic
   evaluation with the frozen P5/P6 thresholds (`aceca58`, PR #155), and **P5** work graph engine
   (`722f29e`, PR #157; pure `crates/graph`, graph persistence, four kernel job kinds and the idle
-  scheduler; acceptance, decisions and evidence in `05`, `06` #37-#42 and `07`). **P6** (Ask v2)
-  and **P7** (shell + Settings v2) have not started in this workspace. Gate A (`v0.4.3`) and
+  scheduler; acceptance, decisions and evidence in `05`, `06` #37-#42 and `07`). **P6** (Ask v2) is
+  implemented and open for review as `feat/0.4.5-p6-ask-v2`
+  ([#160](https://github.com/nicolasestrem/screensearch/pull/160)) — planning, the four ordered
+  retrieval stages, both-kind citations, multi-turn conversations and the `session_embed` job lane;
+  nothing on `main` yet, and its acceptance numbers await the maintainer's live-DB run. **P7**
+  (shell + Settings v2) has not started in this workspace. Gate A (`v0.4.3`) and
   Gate B (`v0.4.4`) tags remain the maintainer's calls; the executing phases ran under the
-  maintainer's 2026-11-04 overrides (fixture evidence instead of the real-DB maintainer run, D18
-  waived for the P4/P5 branches). The full app is a Rust workspace of **18 module crates** plus
-  `src-tauri` (the Tauri composition root) and a React/TS UI.
+  maintainer's overrides (fixture evidence instead of the real-DB maintainer run, D18 waived per
+  branch on the maintainer's explicit instruction). The full app is a Rust workspace of **18 module
+  crates** plus `src-tauri` (the Tauri composition root) and a React/TS UI.
 
+- **P6 Ask v2 (2026-11-05):** implemented on `feat/0.4.5-p6-ask-v2`
+  ([#160](https://github.com/nicolasestrem/screensearch/pull/160), open, **not merged**). Ask is now
+  planned before it retrieves (time intent → half-open window in system-local calendar terms; entity
+  mentions resolved through the work graph with a plain-text fallback), retrieves in the normative
+  stage order (threads → sessions → frames → assembly, each stage narrowing the previous), cites both
+  the frames it read and the sessions those frames belong to, and persists conversations
+  (`ask_threads`/`ask_turns`) so a follow-up reuses the previous window and entity scope. One new
+  terminal `citations` event precedes `done`; `done` additionally carries the per-stage counts and
+  the assembled token total; `POST /v1/ask` accepts `thread_id`. A new `session_embed` job lane keeps
+  `session_vectors` warm on idle and on demand, never on the capture path. The legacy frame-level Ask
+  keeps its exact semantics and is now written once (`kernel::ask::ask_context`), and a database with
+  an empty work graph degrades to that frame-level path with the planned window as the only added
+  filter. **No schema, settings-key, table or route change.** Acceptance (evidence recall@10,
+  known-fact rate, citation validity, p95) is the maintainer's live-DB run and is not yet recorded;
+  the build record is `05`, the decisions `07`, the contradiction rows `06` #46–#53.
 - **P5 review-fix pass (2026-11-05):** the merged P5 work graph (`722f29e`, PR #157) still had one
   P1 and three P2 automated-review findings unresolved at merge time. The fixes are on
   `fix/p5-157-review-findings` ([#159](https://github.com/nicolasestrem/screensearch/pull/159),

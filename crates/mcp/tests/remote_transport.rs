@@ -532,7 +532,7 @@ fn serve_fixture(stream: &mut TcpStream, head: &str) {
             stream,
             "200 OK",
             "text/event-stream",
-            b"data: {\"type\":\"token\",\"text\":\"grounded answer\"}\n\ndata: {\"type\":\"citation\",\"frame_id\":1}\n\ndata: {\"type\":\"done\"}\n\n",
+            b"data: {\"type\":\"token\",\"text\":\"grounded answer\"}\n\ndata: {\"type\":\"citation\",\"frame_id\":1}\n\ndata: {\"type\":\"citations\",\"sessions\":[2,5],\"frames\":[1,4],\"thread_id\":3,\"turn_id\":1,\"stage_counts\":{\"threads\":1,\"sessions\":2,\"frames\":2},\"tokens_assembled\":96}\n\ndata: {\"type\":\"done\",\"stage_counts\":{\"threads\":1,\"sessions\":2,\"frames\":2},\"tokens_assembled\":96}\n\n",
         ),
         _ => respond(
             stream,
@@ -847,6 +847,37 @@ async fn proxy_environment_is_not_used_for_json_image_and_sse_paths() {
     );
     assert_eq!(proxy.bytes(), 0, "bytes reached the proxy");
     assert_eq!(mcp.close_and_wait(), 0);
+}
+
+/// The Ask v2 terminal `citations` event (`03 §7i.3`) survives the real SSE transport: the
+/// session list and the turn's frame list both reach the caller, and the event's frames are
+/// what the turn reports — not the pre-event per-frame deltas that preceded it.
+#[tokio::test]
+async fn ask_stream_aggregates_citations_event_sessions_and_frames() {
+    let fixture = TargetFixture::start();
+    let client = ApiClient::new(fixture.base(), Some("citations-test-token".into())).unwrap();
+
+    let outcome = client
+        .ask(json!({ "query": "citations fixture" }))
+        .await
+        .expect("the fixture stream ends with a clean done");
+
+    assert!(outcome.done, "the terminal done was seen");
+    assert!(outcome.tokens_seen);
+    assert_eq!(outcome.answer, "grounded answer");
+    // The fixture's `citations` event carries sessions [2, 5] and frames [1, 4]; the earlier
+    // per-frame deltas cited frame 1 only, so the frame list proves the event is authoritative.
+    assert_eq!(outcome.cited_sessions, vec![2, 5]);
+    assert_eq!(outcome.citations, vec![1, 4]);
+
+    let requests = fixture.wait_for_requests(1, Duration::from_secs(10));
+    assert_eq!(requests.len(), 1, "requests: {requests:?}");
+    assert!(
+        requests[0].0.starts_with("POST /v1/ask"),
+        "{}",
+        requests[0].0
+    );
+    assert!(requests[0].1.contains("\"query\":\"citations fixture\""));
 }
 
 /// Kills its child on drop so a panicking test never leaks the TLS fixture server.

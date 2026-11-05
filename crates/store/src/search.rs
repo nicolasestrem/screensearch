@@ -51,13 +51,13 @@ const MAX_TIME_RANGE_KNN: u32 = SQLITE_VEC_MAX_K;
 /// safe, higher target (usage review 2026-08-01 §7.4).
 const COUNT_SCAN_CAP: usize = MAX_TIME_RANGE_KNN as usize;
 
-fn normalized_limit(limit: u32) -> usize {
+pub(crate) fn normalized_limit(limit: u32) -> usize {
     (limit as usize).clamp(1, MAX_SEARCH_LIMIT)
 }
 
 /// Per-arm candidate pool. We over-fetch beyond `limit` so fusion (and the vector
 /// arm's time-range post-filter) have material to work with.
-fn candidate_pool(limit: usize) -> u32 {
+pub(crate) fn candidate_pool(limit: usize) -> u32 {
     limit.saturating_mul(5).clamp(50, MAX_CANDIDATE_POOL) as u32
 }
 
@@ -65,7 +65,7 @@ fn candidate_pool(limit: usize) -> u32 {
 /// for the top-`k` KNN in distance order; this widens `k` geometrically until it has gathered
 /// `target` distinct in-range frames, the KNN exhausts the table (`raw < k`), or `k` reaches
 /// [`MAX_TIME_RANGE_KNN`], then returns the deduped in-range ids truncated to `pool`.
-fn escalate_in_range_knn(
+pub(crate) fn escalate_in_range_knn(
     pool: u32,
     target: usize,
     mut fetch: impl FnMut(u32) -> rusqlite::Result<(usize, Vec<i64>)>,
@@ -156,7 +156,7 @@ fn count_embedded_frames_in_range(
 /// Builds a safe FTS5 MATCH expression from free user text: each whitespace term
 /// is quoted (so FTS operators in the input can't inject), terms AND together.
 /// Returns `None` for blank input.
-fn fts_match_query(text: &str) -> Option<String> {
+pub(crate) fn fts_match_query(text: &str) -> Option<String> {
     let terms: Vec<String> = text
         .split_whitespace()
         .filter(|t| !t.is_empty())
@@ -179,7 +179,7 @@ fn truncate_snippet(text: &str) -> String {
 
 /// Reciprocal Rank Fusion over per-arm ranked id lists. Returns ids with fused
 /// scores, highest first; ties break toward the newer (larger) id.
-fn rrf_fuse(arms: &[Vec<i64>], limit: usize) -> Vec<(i64, f64)> {
+pub(crate) fn rrf_fuse(arms: &[Vec<i64>], limit: usize) -> Vec<(i64, f64)> {
     let mut scores: HashMap<i64, f64> = HashMap::new();
     for arm in arms {
         for (rank, &id) in arm.iter().enumerate() {
@@ -465,7 +465,7 @@ impl SqliteStore {
     /// FTS snippet and falling back to a truncated OCR-text snippet. Frame context
     /// and fallback snippets are fetched in two bulk `IN` queries (not per-row), so
     /// hydration is at most two round-trips regardless of result count.
-    async fn hydrate(
+    pub(crate) async fn hydrate(
         &self,
         fused: Vec<(i64, f64)>,
         snippets: HashMap<i64, String>,
