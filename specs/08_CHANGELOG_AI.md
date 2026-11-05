@@ -103,7 +103,8 @@
   strictness, rebuild fidelity failures, settings doc truth, P3-authored em dash removal, restored
   coverage, guarded maintainer procedure), plus the records commits. Branch pushed and
   [PR #153](https://github.com/nicolasestrem/screensearch/pull/153) opened against `main` on the
-  maintainer's explicit 2026-11-04 instruction (0.4.5 D18 validation given for this PR); not merged.
+  maintainer's explicit 2026-11-04 instruction (0.4.5 D18 validation given for this PR); since
+  merged as `0dfa2f5`.
 - **Review fix (`src-tauri/src/memory.rs`):** PR #153 review found that a queued or blocked report
   resumed after a restart with an edited `advanced.toml` took the new report depth and sidecar
   parameters, because P3 moved those keys out of the typed `Settings` that the durable
@@ -132,7 +133,7 @@
   pairs x 4 themes; a 7-rule token fence over the primitives).
 - **Commits:** `cf56222`, `8136179`, `5c9c679`, `8e1935b` (docs/specs), `75c77ba` (implementation),
   `d113a0f` (review round), then the documentation commit. Branch `feat/0.4.5-p2-design-system`, PR
-  opened, not merged.
+  #151, since merged as `7e73e30`.
 - **Verified:** lint, 90 UI tests, build, clippy, cargo build and the workspace tests all green;
   the six P2 greps at 0 (0 unresolved tokens), bindings untouched; detect 1 finding per variant,
   attributable to v1 progress bars outside this phase's ownership; AA 0 failures in all four

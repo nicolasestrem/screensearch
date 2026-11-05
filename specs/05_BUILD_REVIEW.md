@@ -428,7 +428,7 @@ exit=0
 
 === cargo test --workspace
 ... (81 test targets; per-target lines trimmed)
-1386 passed, 0 failed, 16 ignored across 81 targets
+computed from the 81 `test result` lines: 1386 passed, 0 failed, 16 ignored
 exit=0
 
 === git diff --exit-code -- ui/src/bindings
@@ -563,10 +563,11 @@ The P5 branch was four commits on `feat/0.4.5-p5-work-graph`, all on top of `ori
 ### Merged-tree verification (raw)
 
 The block above was collected on `e4740b6`, before the CodeQL fix. To certify the exact merged
-tree, the full kickoff list was run again on `main` at `722f29e`, with the commands exactly as
-written (no target-directory or environment override). Every command exited 0; the log is trimmed
-to result lines for paste, and the same totals as the pre-merge run confirm the test-only CodeQL
-fix changed nothing observable.
+tree, the kickoff list was run again on `main` at `722f29e` in the documented order (no
+target-directory or environment override), plus `cargo test -p evalfixture` for completeness. The
+log groups the two UI steps as shell lines and omits single-test "running" lines together with the
+per-test lines; every command exited 0, and the same totals as the pre-merge run confirm the
+test-only CodeQL fix changed nothing observable.
 
 ````text
 === cd ui && npm ci
@@ -613,7 +614,7 @@ exit=0
 
 === cargo test --workspace
 ... (81 test targets; per-target lines trimmed)
-1386 passed, 0 failed, 16 ignored across 81 targets
+computed from the 81 `test result` lines: 1386 passed, 0 failed, 16 ignored
 exit=0
 
 === git diff --exit-code -- ui/src/bindings
@@ -724,8 +725,10 @@ worktree with a shared task board, disjoint write scopes and no two writers in o
 | `task-6` audit B | teammate `audit-store-kernel` | read-only | found the completion-line ordering bug, the ownership/linking contradiction and the registry handoff trap |
 
 The Lead kept commits, the raw verification, the build-loop records and the PR; the audits were
-read-only by construction, and every P0/P1 they found was fixed and retested before this record
-(see "Independent audit round" and `06` #40/#41).
+read-only by construction, and every P0/P1 they found in P5's own code was fixed and retested
+before this record. The one cross-phase P1 (session reconciliation can delete graph links) is
+recorded in `07` with owner P6/P8, not silently deferred. See "Independent audit round" and `06`
+#40/#41.
 
 ## 2026-11-04: 0.4.5 P4 baseline, P5/P6 thresholds frozen on the committed fixture, verified and merged
 

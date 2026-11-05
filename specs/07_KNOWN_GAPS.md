@@ -82,7 +82,7 @@ Decisions taken while the specs were silent (all implemented and tested; recorde
   `graph_insert_thread_override`, which enqueues `graph_cluster` atomically for P9's UI.
 
 Post-audit findings that stay open (two independent read-only audits; the fixed items are recorded
-in `05` and `06` #37-#42):
+in `05` and `06` #37-#41):
 
 - **P1: session reconciliation can delete graph links (owner: P6/P8, cross-phase).** The sessions
   scheduler routinely deletes and recreates unfrozen tail sessions (`crates/store/src/sessions.rs`,
@@ -194,7 +194,8 @@ this run and are recorded here because they contradict the kickoff:
 ## 2026-11-04: P3 synced, audited and verified (owner: maintainer for the two real-DB items)
 
 The 0.4.5 P3 baseline schema v14 + settings v2 work is complete on
-`feat/0.4.5-p3-baseline-schema` (base `origin/main` `3976551`, PR open, not merged) and its evidence
+`feat/0.4.5-p3-baseline-schema` (base `origin/main` `3976551`, PR #153, since merged as
+`0dfa2f5`) and its evidence
 is in `05` under 2026-11-04. Closed in this pass: the P2 pick's `ui.appearance` is now the 26th UI
 key in the typed registry, the kernel load/save pair, the rebuild carry policy and the regenerated
 bindings; the baseline's drift from `03 §4` is pinned by `crates/store/tests/p3_schema_parity.rs`
@@ -341,7 +342,7 @@ open, or newly scoped out:
     branch `feat/0.4.5-p3-baseline-schema` predated the key; P3 landed the typed `UiAppearance` enum
     (six kebab tokens), the `Settings` field with `serde(default)`, the exact `ui.appearance` key in
     the kernel load/save pair, the rebuild carry policy count at 26 and the regenerated bindings, with
-    the full-set round-trip now covering it. PR open, not merged.
+    the full-set round-trip now covering it. PR #153, since merged as `0dfa2f5`.
   - **P7 renders the select in Settings > General** and resolves `*-system` through
     `prefers-color-scheme`, applying `data-theme` on the root element. The four `data-theme` values
     are exactly `pine-light` / `pine-dark` / `ink-light` / `ink-dark`; `*-system` is a stored intent,
