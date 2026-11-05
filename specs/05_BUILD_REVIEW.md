@@ -433,6 +433,16 @@ clearing the field → field="0"      (no snap-back to the saved value)
 typing 90 + Enter → field="90" store=5400000
 ```
 
+**Round four (`06` #80, #81).** The generation guard covered overlapping settlements inside one
+mount; the layout unmounting a category still threw the pending value away while its write was
+queued, so returning to the row showed the older cache and the next edit was composed from it. The
+pending value now lives beside the queue (`pendingFieldValues.ts`) and every mount reads it with
+`useSyncExternalStore`. And Integrations/Advanced still checked `isError` before data, which unmounted
+every API control (with the read credential's own failure state) after a failed background refresh;
+both now gate on `settings.data === undefined` first. Guards proved by neutering: the shared read
+fails `pendingFieldValues.test.mjs` ("a queued value is visible to a fresh mount of the same field"),
+and the ownership check fails `pendingState.test.mjs`. Full suite 127/127.
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate
