@@ -243,6 +243,38 @@ cooperative-cancellation test (`ask_cancelled_turn_persists_no_answer`): abortin
 provider's own cleanup, which is the path that stops the sidecar child process. That is why the
 shipped form drops the receiver, grants a bounded grace, and only then aborts.
 
+### Second review round (resolved)
+
+A second Codex pass reviewed `2452eb3` and raised two more P2 findings. Both were confirmed valid
+and fixed with tests proven to fail without the fix.
+
+| Finding | Verdict | Fix |
+|---|---|---|
+| **Entity mentions matched as substrings.** `ask_resolve_entities` filtered with `instr(lower(question), lower(name))`, so a short workspace name like `api` resolved out of "capital expenditure"; the false scope then restricted retrieval and was persisted on the turn for follow-ups. | **valid** | The DB `instr` stays as a cheap prefilter; precision is decided in Rust by `bounded_mention`, which requires both flanks of the occurrence to be non-alphanumeric. Applies identically to canonical names and aliases. Unit test covers `capital`, `rapid`, trailing punctuation, a whole-question mention, and the alias form |
+| **The frame fallback discarded a resolved entity constraint.** When an entity resolved but stage 2 produced no winners (no summaries or vectors yet), stage 3 called the frame search with an empty restriction, i.e. the whole window — retrieving and citing unrelated sessions. | **valid** | Stage 3 now distinguishes the two meanings of "no winner": with an entity in scope **and** candidate sessions surviving the window, the frame search stays inside those candidates; with no entity (or an entity whose sessions are all outside the window, i.e. no usable match) the mandated window-wide plain-text fallback applies (`§7i.1`). Recorded in `07` |
+
+**Fail-without/pass-with proof (raw):**
+
+```
+# boundary filter neutered
+test ask_entity_resolution_requires_whole_mentions_not_substrings ... FAILED
+panicked at crates\store\tests\ask.rs:220:5
+test result: FAILED. 0 passed; 1 failed
+
+# entity constraint neutered (back to the empty restriction)
+test ask_entity_scope_survives_a_session_ranking_gap ... FAILED
+panicked at crates\kernel\tests\ask.rs:1452:5
+test result: FAILED. 0 passed; 1 failed
+```
+
+Restored: `store ask` 3 unit + 15 integration, `kernel tests\ask` 14, all green.
+
+Worth noting how the second fix was refined: the first attempt returned *no frames at all* when an
+entity had no candidate session in the window. That is stricter than the spec licenses and broke
+`ask_follow_up_reuses_the_previous_window_and_entities`; `§7i.1` answers a mention with no usable
+match by plain-text matching, so an empty candidate set falls back to the window instead of
+dead-ending. The shipped rule, and the reasoning, are in the code comment and in `07`.
+
 ### End-to-end smoke (beyond the test suites)
 
 The verification list is tests plus a compile gate, so the changed HTTP path was also run for real:

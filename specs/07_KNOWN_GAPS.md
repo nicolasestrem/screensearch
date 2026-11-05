@@ -89,6 +89,20 @@ per-query temporary FTS5 index over the candidate sessions, dropped before retur
   in. Chosen as written because it keeps stage 2 a strict narrowing of stage 1 (`§7i.2`), which
   the other reading cannot. Recorded here because the spec supports both sentences; no behaviour
   is guessed at runtime (owner: maintainer, at the acceptance run if recall attributes there).
+- **Entity matching and its fallbacks (second review round).** Two rules the specs imply but never
+  spell out. (1) **A mention is bounded, not a substring.** `§7i.1` says mention resolution matches
+  `entities.canonical_name`/`entity_aliases.alias` but never says how; a substring match lets a
+  short name (`api`) resolve out of an unrelated word ("capital"), which mis-scopes retrieval *and is
+  persisted on the turn for follow-ups*. Chosen: a match must be flanked by non-alphanumeric
+  characters on both sides, applied identically to canonical names and aliases (`bounded_mention`).
+  `_` counts as a boundary, so `api` does not resolve out of `api_v2`. (2) **"No usable match"
+  falls back to plain text, and only then.** When an entity resolves but no session linked to it
+  survives the window, `§7i.1`'s "with no match the mention falls back to plain text" applies, so
+  the frame stage searches the window rather than returning a dead answer; when the entity *does*
+  have candidate sessions, the constraint is kept even if stage 2 could not rank them (no summaries
+  or vectors yet). A stricter reading — never widen once an entity resolved — broke the multi-turn
+  test and is not what the section licenses. Both rules are prototyped in `crates/store/src/ask.rs`
+  and `crates/kernel/src/ask.rs` comments and pinned by tests (`06` #57, #58).
 - `/v1/search` recall is unchanged by this phase, so the frozen 41.0% retrieval row cannot move
   until a later phase owns that route's retrieval (owner: P8/P9 scoping, at Gate B).
 - Bootstrapping `session_vectors` for the maintainer's live database needs the `session_embed`

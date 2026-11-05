@@ -54,8 +54,16 @@
   now signals cooperatively, waits a bounded grace, then aborts. Also: the forwarder no longer
   streams a citation the terminal event will not carry, and one comment that overstated what an
   enqueue could delay was corrected.
+- **Second review round (2026-11-05).** A second Codex pass on `2452eb3` raised two more P2s, both
+  valid and both fixed with tests proven to fail without them (`05`). (1) Entity mentions were matched
+  as substrings, so a short name like `api` resolved out of "capital" and mis-scoped the turn (and
+  its follow-ups); a boundary check now decides precision, with the `instr` scan kept as a prefilter.
+  (2) When an entity resolved but stage 2 had no winners, the frame stage fell back to the whole
+  window and discarded the constraint; the constraint is now kept whenever the entity's sessions are
+  in scope, while `§7i.1`'s plain-text fallback still covers a mention with no usable match. The
+  decision record for both rules is in `07`.
 - **Evidence:** full kickoff verification list green (raw output in `05`); new suites: store
-  `ask` (14 integration + 3 unit, after the review fixes), kernel `ask` (12 integration + 18
+  `ask` (15 integration + 3 unit, after the review fixes), kernel `ask` (14 integration + 18
   planner/assembly/citation unit),
   api `ask_v2` (8), app crate relay/legacy-delegation tests (4), MCP citations tests, inference
   prompt-parity tests. An end-to-end fixture smoke (generate → serve → unchanged P4 harness) proved
