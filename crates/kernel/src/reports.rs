@@ -68,6 +68,16 @@ const MAX_REPORT_CITATIONS: usize = 200;
 /// so the read is capped exactly like `GET /v1/insights`' own default.
 const INSIGHTS_CONTEXT_LIMIT: u32 = 1000;
 
+/// Token ceiling for the rendered insights block (a `est_tokens` estimate, the same
+/// conservative unit the fit gate uses).
+///
+/// The read is capped at [`INSIGHTS_CONTEXT_LIMIT`] rows, but a row is not one token: a
+/// `thread_activity` line carries its thread plus a reference per session, so a thousand rows can
+/// dwarf the whole context window. The instruction is not a fixed cost any more, so it must be
+/// bounded: past this budget the block stops listing rows and says how many it left out, which
+/// keeps the highest-ranked insights and keeps the report's grounding intact.
+const INSIGHTS_CONTEXT_TOKEN_BUDGET: usize = 1_200;
+
 /// Fallback answer context window used only when the provider doesn't report its own
 /// (e.g. a test fake) — matches the answer lane's `sidecar.ctx_size` default. The live
 /// budget comes from [`AnswerProvider::answer_context_budget`] so a user-lowered
@@ -481,7 +491,14 @@ async fn generate_report_scoped(
     }
 
     // --- REDUCE: bounded hierarchical fan-in, time order preserved ---
-    while nodes.len() > 1 && !fits_single_pass(&nodes, cfg.reply_budget, ctx_tokens) {
+    while nodes.len() > 1
+        && !fits_single_pass(
+            &nodes,
+            cfg.reply_budget,
+            ctx_tokens,
+            est_tokens(&final_prompt),
+        )
+    {
         if passes >= MAX_REPORT_PASSES {
             truncated = true;
             break;
@@ -822,7 +839,14 @@ pub async fn generate_weekly_synthesis(
     }
 
     // --- REDUCE: bounded hierarchical fan-in, day order preserved (mirrors the daily path) ---
-    while nodes.len() > 1 && !fits_single_pass(&nodes, cfg.reply_budget, ctx_tokens) {
+    while nodes.len() > 1
+        && !fits_single_pass(
+            &nodes,
+            cfg.reply_budget,
+            ctx_tokens,
+            est_tokens(&final_prompt),
+        )
+    {
         if passes >= MAX_REPORT_PASSES {
             truncated = true;
             break;
@@ -1487,9 +1511,20 @@ fn grid_size(start: i64, end: i64, max_periods: u32) -> u32 {
 /// Whether the section summaries fit a single (final) pass within `ctx_tokens` (the
 /// provider's effective context window). Conservative heuristic; the inference budgeter
 /// is the hard bound.
-fn fits_single_pass(nodes: &[String], reply_budget: u32, ctx_tokens: usize) -> bool {
-    let reserve =
-        reply_budget as usize + est_tokens(FINAL_SYSTEM_PROMPT) + REPORT_TEMPLATE_OVERHEAD;
+///
+/// `instruction_tokens` is the fitted prompt's own cost, which is not a constant: the P8
+/// insights block makes it data-dependent (`03 §8b`/`§8e`). Leaving it out here understated
+/// every real pass, so a window could be collapsed while its payload already overflowed.
+fn fits_single_pass(
+    nodes: &[String],
+    reply_budget: u32,
+    ctx_tokens: usize,
+    instruction_tokens: usize,
+) -> bool {
+    let reserve = reply_budget as usize
+        + est_tokens(FINAL_SYSTEM_PROMPT)
+        + REPORT_TEMPLATE_OVERHEAD
+        + instruction_tokens;
     let budget = ctx_tokens.saturating_sub(reserve);
     let used: usize = nodes
         .iter()
@@ -1812,24 +1847,46 @@ fn insight_line(insight: &Insight) -> Option<String> {
 /// **and** empty as soon as one payload cannot be rendered honestly — a partly-guessed block
 /// would be a fabrication, so the whole block is dropped rather than invented (a report
 /// without a block is exactly the report this seam predates).
+///
+/// A stale row is skipped, never rendered: its evidence no longer resolves, so nothing beside
+/// it in the report could be checked, and `07` C10 says such a row is flagged rather than
+/// served as truth. The flag is computed at read time, so this also covers a row whose target
+/// vanished after generation.
 fn insights_context(insights: &[Insight]) -> String {
-    if insights.is_empty() {
-        return String::new();
-    }
     let mut lines: Vec<String> = Vec::with_capacity(insights.len());
-    for insight in insights {
+    for insight in insights.iter().filter(|insight| !insight.stale) {
         match insight_line(insight) {
             Some(line) => lines.push(line),
             None => return String::new(),
         }
     }
+    if lines.is_empty() {
+        return String::new();
+    }
     let mut block = String::from(
         "Insights recorded for this window (typed and evidenced; context only — cite only \
          their frame and session ids, never an insight id):",
     );
-    for line in lines {
+    let mut shown = 0usize;
+    for line in &lines {
+        // The first row is always shown: a block that renders nothing would silently drop the
+        // whole seam, and one row is bounded by its own evidence list.
+        if shown > 0 && est_tokens(&block) + est_tokens(line) > INSIGHTS_CONTEXT_TOKEN_BUDGET {
+            break;
+        }
         block.push('\n');
-        block.push_str(&line);
+        block.push_str(line);
+        shown += 1;
+    }
+    if shown < lines.len() {
+        // Say what was left out, in the units actually known: rows read, not rows in the table
+        // (the read itself is capped), so the count cannot overstate the window.
+        block.push('\n');
+        block.push_str(&format!(
+            "- (+{} of the {} insights read for this window are omitted to fit the report budget)",
+            lines.len() - shown,
+            lines.len()
+        ));
     }
     block
 }
@@ -1970,14 +2027,26 @@ mod tests {
     #[test]
     fn fits_single_pass_detects_overflow() {
         let small = vec!["short summary".to_string(); 3];
-        assert!(fits_single_pass(&small, 512, REPORT_CTX_TOKENS));
+        assert!(fits_single_pass(&small, 512, REPORT_CTX_TOKENS, 0));
         let huge = vec!["x".repeat(8_000); 7]; // ~28k tokens >> 8192
-        assert!(!fits_single_pass(&huge, 512, REPORT_CTX_TOKENS));
+        assert!(!fits_single_pass(&huge, 512, REPORT_CTX_TOKENS, 0));
         // A smaller provider context tightens the gate: summaries that fit 8192 no longer
         // fit a lowered window (mirrors a user-lowered `sidecar.ctx_size`).
         let medium = vec!["lorem ipsum dolor ".repeat(60); 4];
-        assert!(fits_single_pass(&medium, 512, REPORT_CTX_TOKENS));
-        assert!(!fits_single_pass(&medium, 512, 1_024));
+        assert!(fits_single_pass(&medium, 512, REPORT_CTX_TOKENS, 0));
+        assert!(!fits_single_pass(&medium, 512, 1_024, 0));
+        // The instruction is charged against the same window: summaries that fit with the
+        // base framing no longer fit once a large prompt is added to them, which is what a
+        // data-dependent insights block does (`03 §8b`/`§8e`).
+        let instruction_cost = REPORT_CTX_TOKENS;
+        assert!(
+            fits_single_pass(&medium, 512, REPORT_CTX_TOKENS, 0),
+            "the summaries alone fit the window"
+        );
+        assert!(
+            !fits_single_pass(&medium, 512, REPORT_CTX_TOKENS, instruction_cost),
+            "an instruction as large as the window leaves nothing for the summaries"
+        );
     }
 
     #[test]
@@ -4134,6 +4203,39 @@ mod tests {
         }
     }
 
+    /// [`recurrence_insight_at`] pointing at sessions that exist.
+    ///
+    /// The read computes staleness from surviving evidence (`03 §7j.2`), so a fixture that
+    /// invents reference ids cannot render at all. The payload's entity is display-only here
+    /// (the renderer prints `entity_name`, never the id), and the evidence names the two
+    /// sessions the payload is actually about.
+    fn recurrence_insight_citing(
+        window_start: i64,
+        window_end: i64,
+        entity_name: &str,
+        sessions: (i64, i64),
+    ) -> NewInsight {
+        let mut insight = recurrence_insight_at(window_start, window_end, entity_name);
+        let InsightPayload::Recurrence(payload) = &mut insight.payload else {
+            unreachable!("the fixture is a recurrence payload");
+        };
+        payload.first_session_id = sessions.0;
+        payload.second_session_id = sessions.1;
+        insight.evidence = vec![
+            InsightEvidence {
+                ordinal: 0,
+                kind: EvidenceKind::Session,
+                ref_id: sessions.0,
+            },
+            InsightEvidence {
+                ordinal: 1,
+                kind: EvidenceKind::Session,
+                ref_id: sessions.1,
+            },
+        ];
+        insight
+    }
+
     /// The persisted read shape of [`recurrence_insight_at`] (store-assigned id and
     /// `generated_at`, never-stale) so the renderer can be tested without a database. Every
     /// assertion derives its expectation from this value's own fields.
@@ -4186,7 +4288,7 @@ mod tests {
         let InsightPayload::Recurrence(payload) = &insight.payload else {
             panic!("fixture is a recurrence payload");
         };
-        for figure in [
+        let figures = [
             format!(
                 "entity#{} ({}) {}",
                 payload.entity_id,
@@ -4205,9 +4307,14 @@ mod tests {
             ),
             format!("gap_ms {}", payload.gap_ms),
             format!("occurrence_count {}", payload.occurrence_count),
-        ] {
-            assert!(block.contains(&figure), "missing {figure:?} in: {block}");
-        }
+        ];
+        // Report how many figures are missing, never which: the message would otherwise print
+        // session and entity ids (`07:447` — counts and kinds only, not identities).
+        let missing = figures
+            .iter()
+            .filter(|figure| !block.contains(*figure))
+            .count();
+        assert_eq!(missing, 0, "figures missing from the rendered block");
 
         // One header line and exactly one line per insight — nothing else is added.
         let rendered = std::slice::from_ref(&insight);
@@ -4339,6 +4446,69 @@ mod tests {
         assert!(block.contains(&format!("mark#{mark_id}")), "{block}");
     }
 
+    /// A window with many insights must not hand the report an unbounded instruction: the
+    /// read is capped at a thousand rows, but rows are not tokens, and `build_summary_messages`
+    /// charges the instruction against the same window it packs grounding into. Past the budget
+    /// the block stops listing and says how much it left out, newest first.
+    #[test]
+    fn insights_context_is_bounded_by_its_token_budget() {
+        let many: Vec<Insight> = (0..INSIGHTS_CONTEXT_LIMIT)
+            .map(|index| Insight {
+                id: i64::from(index),
+                ..recurrence_insight()
+            })
+            .collect();
+
+        let block = insights_context(&many);
+        assert!(!block.is_empty(), "a populated window renders a block");
+        assert!(
+            est_tokens(&block) <= INSIGHTS_CONTEXT_TOKEN_BUDGET + 200,
+            "the block must stay near its budget, got {} tokens",
+            est_tokens(&block)
+        );
+        assert!(
+            block.contains("omitted to fit the report budget"),
+            "truncation is stated, never silent: {block}\n"
+        );
+        assert!(
+            block.lines().count() < many.len(),
+            "the whole list must not have been rendered"
+        );
+
+        // An unpopulated list still yields nothing at all, so the budget can never invent a
+        // block where the seam used to append nothing.
+        assert_eq!(insights_context(&[]), "");
+    }
+
+    /// A stale row is flagged, never served as truth (`07` C10): the prompt block omits it, and
+    /// a window whose only rows are stale gets no block at all — the same byte-identical prompt
+    /// a window with no insights gets.
+    #[test]
+    fn insights_context_skips_stale_rows() {
+        let live = recurrence_insight();
+        let stale = Insight {
+            stale: true,
+            ..recurrence_insight()
+        };
+
+        let mixed = insights_context(&[stale.clone(), live.clone()]);
+        assert!(
+            !mixed.is_empty(),
+            "a live row still renders beside a stale one"
+        );
+        assert_eq!(
+            mixed,
+            insights_context(std::slice::from_ref(&live)),
+            "the stale row contributes nothing — the block is exactly the live one"
+        );
+
+        assert_eq!(
+            insights_context(std::slice::from_ref(&stale)),
+            "",
+            "a window whose only insight is stale renders no block"
+        );
+    }
+
     #[tokio::test]
     async fn insights_context_is_empty_for_no_insights() {
         // An empty slice renders nothing at all — not even the header — and an empty block
@@ -4458,8 +4628,41 @@ mod tests {
         seed_day(&store, 0, 5).await;
         // Two persisted insights: one overlaps the reported window, one lies wholly outside
         // it, so the read's window predicate is measurable from the prompt alone.
-        let inside = recurrence_insight_at(0, DAY_MS, "inside-the-window");
-        let outside = recurrence_insight_at(2 * DAY_MS, 3 * DAY_MS, "outside-the-window");
+        // The cited sessions are real: a row whose evidence has gone reads as stale and would
+        // never reach the prompt, which is a different test's subject.
+        let first = store
+            .insert_session(NewSession {
+                started_at: 100,
+                ended_at: Some(200),
+                kind: SessionKind::Ai,
+                tool: Some("codex".to_string()),
+                host: Some(SessionHost::Desktop),
+                context_key: "ai:codex".to_string(),
+                confidence: 0.9,
+                frozen: false,
+            })
+            .await
+            .unwrap();
+        let second = store
+            .insert_session(NewSession {
+                started_at: 70_000_000,
+                ended_at: Some(70_000_100),
+                kind: SessionKind::Ai,
+                tool: Some("codex".to_string()),
+                host: Some(SessionHost::Desktop),
+                context_key: "ai:codex".to_string(),
+                confidence: 0.9,
+                frozen: false,
+            })
+            .await
+            .unwrap();
+        let inside = recurrence_insight_citing(0, DAY_MS, "inside-the-window", (first, second));
+        let outside = recurrence_insight_citing(
+            2 * DAY_MS,
+            3 * DAY_MS,
+            "outside-the-window",
+            (first, second),
+        );
         store.insert_insight(inside).await.unwrap();
         store.insert_insight(outside).await.unwrap();
 
@@ -4516,22 +4719,25 @@ mod tests {
         let InsightPayload::Recurrence(payload) = &read_back[0].payload else {
             panic!("fixture is a recurrence payload");
         };
-        for needle in [
+        let needles = [
             payload.entity_name.clone(),
             format!("gap_ms {}", payload.gap_ms),
             format!("session {}", payload.first_session_id),
             format!("session {}", payload.second_session_id),
-        ] {
-            assert!(
-                seen[0].contains(&needle),
-                "the prompt must carry {needle:?}: {}",
-                seen[0]
-            );
-        }
+        ];
+        // Count, never echo: the assertions below are about a prompt that carries session ids
+        // (`07:447` — counts and kinds only).
+        let absent = needles
+            .iter()
+            .filter(|needle| !seen[0].contains(*needle))
+            .count();
+        assert_eq!(
+            absent, 0,
+            "payload figures absent from the assembled prompt"
+        );
         assert!(
             !seen[0].contains("outside-the-window"),
-            "an insight outside the reported window must not be rendered: {}",
-            seen[0]
+            "an insight outside the reported window must not be rendered"
         );
     }
 
