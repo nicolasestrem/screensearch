@@ -93,6 +93,12 @@ export function useLiveEvents() {
           workTimer = setTimeout(() => {
             qc.invalidateQueries({ queryKey: queryKeys.workPrefix });
             qc.invalidateQueries({ queryKey: queryKeys.insightListPrefix });
+            // Entity extraction and normalisation fill the catalogue the Ask scope picker and
+            // Work's entity labels read (`entitiesPrefix` covers every `entityList(query)` key).
+            // A mounted catalogue has no polling and the client disables
+            // refetch-on-window-focus, so without this a session that opened Ask before the
+            // graph caught up keeps offering no entities until the query remounts.
+            qc.invalidateQueries({ queryKey: queryKeys.entitiesPrefix });
           }, ENRICH_DEBOUNCE_MS);
         }
       }),

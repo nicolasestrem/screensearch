@@ -216,6 +216,12 @@ export function useAskConversation(): UseAskConversation {
       });
       try {
         const started = await cmd.askTurn({ ...request, request_id: requestId });
+        // `ask_turn` assembles context before it resolves, so by now a newer question (or a
+        // cancel/reset) may own the state. Its ids belong to the request that was superseded,
+        // and writing them here would hand the live state someone else's conversation while
+        // this request's own tokens are dropped by the delta scope below — the same guard the
+        // deltas use, applied to the command's outcome.
+        if (activeRequest.current !== requestId) return;
         dispatch({
           type: "started",
           threadId: started.thread_id,
@@ -223,7 +229,9 @@ export function useAskConversation(): UseAskConversation {
         });
       } catch (error) {
         // The command itself failed (unknown conversation, no model, planner error) before
-        // the turn existed; the question stays with the caller for a retry.
+        // the turn existed; the question stays with the caller for a retry. A superseded
+        // request's failure says nothing about the one now streaming.
+        if (activeRequest.current !== requestId) return;
         dispatch({ type: "fail", error: asStartError(error) });
       }
     },
