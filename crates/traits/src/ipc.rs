@@ -853,16 +853,22 @@ pub struct JobProgress {
     pub stats: JobStats,
 }
 
-/// Data-changing enrichment job completion (`job_completed` event). Carries enough
-/// identity for the UI to refresh frame/search/insights data surgically.
+/// Enrichment job completion (`job_completed` event). Carries enough identity for the UI to
+/// refresh frame/search/insights data surgically.
+///
+/// `frame_id` is `None` for a pass that runs over the whole graph — `graph_cluster`,
+/// `graph_normalize`, `graph_backfill`, `session_embed`, `insight_generate` — which has no frame
+/// to bind its effect to. Those passes report `changed_data: false` (the flag describes *frame*
+/// data), so the pool announces them on completion instead: a regrouped Work list or rewritten
+/// insight rows are otherwise invisible until the query remounts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 pub struct JobCompleted {
     #[ts(type = "number")]
     pub job_id: i64,
     pub kind: JobKind,
-    #[ts(type = "number")]
-    pub frame_id: i64,
+    #[ts(type = "number | null")]
+    pub frame_id: Option<i64>,
     pub stats: JobStats,
 }
 

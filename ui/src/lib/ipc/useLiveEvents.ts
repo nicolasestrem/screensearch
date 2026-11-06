@@ -74,7 +74,11 @@ export function useLiveEvents() {
     track(
       listenTo("job_completed", (completed) => {
         qc.setQueryData(queryKeys.jobStats, completed.stats);
-        qc.invalidateQueries({ queryKey: queryKeys.frame(completed.frame_id) });
+        // A frame-less pass (`graph_cluster`, `insight_generate`, …) has no frame to refetch; its
+        // effect is the graph-wide invalidation below.
+        if (completed.frame_id !== null) {
+          qc.invalidateQueries({ queryKey: queryKeys.frame(completed.frame_id) });
+        }
         if (completed.kind === "embed_text") {
           qc.invalidateQueries({ queryKey: queryKeys.searchPrefix });
         }
@@ -93,10 +97,11 @@ export function useLiveEvents() {
           workTimer = setTimeout(() => {
             qc.invalidateQueries({ queryKey: queryKeys.workPrefix });
             qc.invalidateQueries({ queryKey: queryKeys.insightListPrefix });
-            // `graph_extract` is the member of this list that actually emits (`completion_info`
-            // requires changed data *and* a frame, and cluster/normalize/backfill report
-            // `changed_data: false`). It is also the one that creates entities, and the
-            // catalogue it fills backs the Ask scope picker and Work's entity labels
+            // Every member of this list now emits: the frame-bound ones when they changed data,
+            // and the frame-less passes (`graph_cluster`, `insight_generate`) on completion, so a
+            // merge override's regroup and an insight rewrite land here rather than waiting for a
+            // remount. `graph_extract` is the one that creates entities, and the catalogue it
+            // fills backs the Ask scope picker and Work's entity labels
             // (`entitiesPrefix` covers every `entityList(query)` key). A mounted catalogue has
             // no polling and the client disables refetch-on-window-focus, so without this a
             // session that opened Ask before the graph caught up keeps offering no entities

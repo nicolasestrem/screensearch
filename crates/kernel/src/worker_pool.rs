@@ -92,7 +92,7 @@ pub enum Outcome {
 struct CompletedJobInfo {
     job_id: i64,
     kind: JobKind,
-    frame_id: i64,
+    frame_id: Option<i64>,
 }
 
 /// Everything a worker needs, shared (via `Arc`) across the pool.
@@ -450,14 +450,24 @@ async fn process_job_with_providers(
     }
 }
 
+/// Which completions the pool announces.
+///
+/// A frame-bound job reports only when it changed data: an `embed_text` whose frame turned out to
+/// have no text changed nothing, and announcing it would refetch that frame for no reason.
+///
+/// A frame-less pass has no frame to bind its effect to, so its completion is the only signal the
+/// graph moved — and it reports `changed_data: false` by design (the flag describes *frame* data),
+/// which used to silence it completely: a regroup triggered by a merge override, or an
+/// `insight_generate` run, never reached the UI's invalidation block, so Work kept the old
+/// grouping and Insights stayed empty until remount (`03 §7h`, §7j).
 fn completion_info(
     job_id: i64,
     kind: JobKind,
     frame_id: Option<i64>,
     changed_data: bool,
 ) -> Option<CompletedJobInfo> {
-    if changed_data {
-        frame_id.map(|frame_id| CompletedJobInfo {
+    if changed_data || frame_id.is_none() {
+        Some(CompletedJobInfo {
             job_id,
             kind,
             frame_id,
@@ -848,16 +858,77 @@ mod tests {
     }
 
     #[test]
-    fn completion_info_only_for_changed_frame_jobs() {
+    fn completion_info_reports_changed_frame_jobs_and_every_frameless_pass() {
         assert_eq!(
             completion_info(1, JobKind::EmbedText, Some(7), true),
             Some(CompletedJobInfo {
                 job_id: 1,
                 kind: JobKind::EmbedText,
-                frame_id: 7,
+                frame_id: Some(7),
             })
         );
+        // A frame-bound no-op stays silent: nothing to refetch.
         assert_eq!(completion_info(1, JobKind::EmbedText, Some(7), false), None);
-        assert_eq!(completion_info(1, JobKind::EmbedText, None, true), None);
+        // A frame-less pass is announced even though it reports no frame-data change: its
+        // completion is the only signal a regroup or an insight rewrite reached the store.
+        assert_eq!(
+            completion_info(2, JobKind::GraphCluster, None, false),
+            Some(CompletedJobInfo {
+                job_id: 2,
+                kind: JobKind::GraphCluster,
+                frame_id: None,
+            })
+        );
+        assert_eq!(
+            completion_info(3, JobKind::InsightGenerate, None, false),
+            Some(CompletedJobInfo {
+                job_id: 3,
+                kind: JobKind::InsightGenerate,
+                frame_id: None,
+            })
+        );
+        // Changed data with no frame (a defensive case: a frame-less job that did report a change)
+        // is announced too — the rule is "changed or frame-less".
+        assert_eq!(
+            completion_info(4, JobKind::GraphNormalize, None, true),
+            Some(CompletedJobInfo {
+                job_id: 4,
+                kind: JobKind::GraphNormalize,
+                frame_id: None,
+            })
+        );
+    }
+
+    /// The rule above is only useful if the frame-less completion actually reaches the channel the
+    /// desktop forwards as `job_completed`: a merge override's regroup or an `insight_generate` run
+    /// is the difference between Work/Insights refreshing and staying stale until remount.
+    #[tokio::test]
+    async fn frameless_completions_reach_the_event_channel() {
+        let (events, mut receiver) = broadcast::channel(8);
+        let shared = Shared {
+            events,
+            ..test_shared(test_store())
+        };
+        emit_progress(
+            &shared,
+            completion_info(9, JobKind::GraphCluster, None, false),
+        )
+        .await;
+        let first = receiver.recv().await.expect("job_progress");
+        assert!(
+            matches!(first, KernelEvent::JobProgress(_)),
+            "stats go out first, so the tray label flips back"
+        );
+        match receiver.recv().await.expect("job_completed") {
+            KernelEvent::JobCompleted(completed) => {
+                assert_eq!(completed.kind, JobKind::GraphCluster);
+                assert_eq!(
+                    completed.frame_id, None,
+                    "a frame-less pass carries no frame to refetch"
+                );
+                assert_eq!(completed.job_id, 9);
+            }
+            other => panic!("expected a job_completed event, got {other:?}"),
+        }
     }
 }
