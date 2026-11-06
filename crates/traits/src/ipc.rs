@@ -853,16 +853,22 @@ pub struct JobProgress {
     pub stats: JobStats,
 }
 
-/// Data-changing enrichment job completion (`job_completed` event). Carries enough
-/// identity for the UI to refresh frame/search/insights data surgically.
+/// Enrichment job completion (`job_completed` event). Carries enough identity for the UI to
+/// refresh frame/search/insights data surgically.
+///
+/// `frame_id` is `None` for a pass that runs over the whole graph — `graph_cluster`,
+/// `graph_normalize`, `graph_backfill`, `session_embed`, `insight_generate` — which has no frame
+/// to bind its effect to. Those passes report `changed_data: false` (the flag describes *frame*
+/// data), so the pool announces them on completion instead: a regrouped Work list or rewritten
+/// insight rows are otherwise invisible until the query remounts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 pub struct JobCompleted {
     #[ts(type = "number")]
     pub job_id: i64,
     pub kind: JobKind,
-    #[ts(type = "number")]
-    pub frame_id: i64,
+    #[ts(type = "number | null")]
+    pub frame_id: Option<i64>,
     pub stats: JobStats,
 }
 
@@ -1619,7 +1625,7 @@ pub struct NewInsight {
 
 /// One thread row for the thread list (`03 §7c` P8 block, `§7h.4`): the same figures the
 /// clusterer maintains, never recomputed differently.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 pub struct ThreadSummary {
     #[ts(type = "number")]
@@ -1630,6 +1636,17 @@ pub struct ThreadSummary {
     #[ts(type = "number")]
     pub last_seen_at: i64,
     pub session_count: u32,
+    /// Time actually spent on this thread, in unix ms (P9 grant 4; the `active_ms` formula of
+    /// [`ThreadActivityPayload`], with no window): the sum over all of the thread's
+    /// `thread_sessions` member sessions of `max(0, COALESCE(ended_at, now_ms) - started_at)`.
+    /// A session still running counts up to the read's `now_ms`; a clock skew can never produce a
+    /// negative contribution. Reported by every thread read that fills it, never recomputed
+    /// differently by a caller.
+    #[ts(type = "number")]
+    pub active_ms: i64,
+    /// Maximum `thread_sessions.confidence` over the thread's member sessions; below `0.7` the
+    /// UI renders the thread as low-confidence (`§7h.4`'s clustering threshold).
+    pub confidence: f64,
 }
 
 /// A session belonging to a thread, as carried by [`ThreadDetail`]. `kind` is the

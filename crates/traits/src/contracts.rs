@@ -16,14 +16,17 @@ use crate::domain::{
     Embedding, FrameContextRow, FrameEnrichmentInput, NewAskTurn, NewFrame, OcrResult,
     RetrievedChunk, SessionEmbedInput, TextFilterContext, VisionAnalysis,
 };
+use crate::graph_ipc::{
+    AskCitations, AskThreadSummary, ConnectedThread, GraphProgress, InsightWindowStatus,
+};
 use crate::insights::{
     EntitySessionInput, OpenMarkInput, SessionNeighbourInput, ThreadActivityInput,
     ThreadSessionInput,
 };
 use crate::ipc::{
-    AnswerDelta, AppSuppression, EntityFilter, EntitySummary, FrameMeta, Insight, InsightFilter,
-    InsightKind, InsightsSummary, Mark, NewInsight, PressureSample, SearchHit, SearchQuery,
-    SessionReference, ThreadDetail, ThreadFilter, ThreadSummary, TimelineBucket,
+    AnswerDelta, AppSuppression, EntityFilter, EntitySummary, EvidenceKind, FrameMeta, Insight,
+    InsightFilter, InsightKind, InsightsSummary, Mark, NewInsight, PressureSample, SearchHit,
+    SearchQuery, SessionReference, ThreadDetail, ThreadFilter, ThreadSummary, TimelineBucket,
 };
 use crate::jobs::{Job, JobKind, JobStats, NewJob};
 use crate::sessions::{
@@ -944,15 +947,40 @@ pub trait Store: Send + Sync {
         anyhow::bail!("ask conversations are unsupported")
     }
 
-    /// Stores the final answer of a streamed turn (`§7i.4`: NULL while streaming and on
-    /// failure). Default returns `false`.
-    async fn finish_ask_turn(&self, _turn_id: i64, _answer: &str) -> Result<bool> {
+    /// Stores the final answer and the turn's citations (`§7i.3`/`§7i.4`: both NULL while
+    /// streaming and on failure) and returns whether a row changed. P9 widened this from
+    /// answer-only so a reloaded conversation re-renders every citation without replaying a
+    /// stream; there is no answer-only path left. Default returns `false`.
+    async fn finish_ask_turn(
+        &self,
+        _turn_id: i64,
+        _answer: &str,
+        _citations: &AskCitations,
+    ) -> Result<bool> {
         Ok(false)
     }
 
     /// Every turn of a thread in `ordinal` order. Default returns nothing.
     async fn list_ask_turns(&self, _thread_id: i64) -> Result<Vec<crate::AskTurnRecord>> {
         Ok(Vec::new())
+    }
+
+    // ---- P9 ask conversations ----
+
+    /// Every `ask_threads` row, newest first, bounded by `limit`: the Ask screen's
+    /// conversation list (`03 §7i.4`). Ordered by the thread's latest turn `DESC NULLS LAST`,
+    /// then by `created_at` descending — so a conversation that has been used always outranks
+    /// one that never has, however recently that one was opened. `turn_count` and
+    /// `last_turn_at` are per-thread aggregates of `ask_turns`. Default returns nothing.
+    async fn list_ask_threads(&self, _limit: u32) -> Result<Vec<AskThreadSummary>> {
+        Ok(Vec::new())
+    }
+
+    /// Sets one `ask_threads.title` (`03 §7i.4`: the first turn names the conversation) and
+    /// returns whether a row changed. Default fails explicitly: a store without conversations
+    /// must not report a title it did not write.
+    async fn set_ask_thread_title(&self, _thread_id: i64, _title: &str) -> Result<bool> {
+        anyhow::bail!("ask conversations are unsupported")
     }
 
     /// Sessions whose concatenated non-NULL `title`/`summary` still needs a
@@ -1056,6 +1084,73 @@ pub trait Store: Send + Sync {
     /// `canonical_name` or any alias, ordered `last_seen_at DESC, id DESC` (`03 §7c` P8 block).
     /// Default returns nothing.
     async fn entities_filtered(&self, _filter: EntityFilter) -> Result<Vec<EntitySummary>> {
+        Ok(Vec::new())
+    }
+
+    // ---- P9 graph reads (graph_ipc.rs) ----
+
+    /// Coverage of the work graph (`03 §7h.6`): `sessions_total` is `COUNT(sessions)`,
+    /// `sessions_clustered` is `COUNT(DISTINCT thread_sessions.session_id)`, and `running` plus
+    /// the three `pending_*` counts come from the jobs table exactly like `graph_backfill_status`
+    /// (the queue is the checkpoint — no separate progress state). Read by the Work and Thread
+    /// screens to say "N of M sessions clustered" while the backfill runs. Default reports an
+    /// empty, not-running graph.
+    async fn graph_progress(&self) -> Result<GraphProgress> {
+        Ok(GraphProgress::default())
+    }
+
+    /// Threads holding a member session that touched `entity_id` (`session_entities`, `03 §7h.1`),
+    /// ordered exactly like [`Self::threads_in_range`] (`last_seen_at DESC, id DESC`) and bounded
+    /// by `limit`: the Work list's `?entity=` filter. A thread appears once however many of its
+    /// sessions touched the entity. Default returns nothing.
+    async fn threads_for_entity(&self, _entity_id: i64, _limit: u32) -> Result<Vec<ThreadSummary>> {
+        Ok(Vec::new())
+    }
+
+    /// Threads sharing at least one entity with `thread_id`, ordered by shared-entity count
+    /// descending then `last_seen_at` descending, bounded by `limit` (`03 §7h.4`). Each row
+    /// carries the shared entity ids — the evidence the Thread page renders; an empty result means
+    /// nothing else shares a subject with this thread. Default returns nothing.
+    async fn connected_threads(
+        &self,
+        _thread_id: i64,
+        _limit: u32,
+    ) -> Result<Vec<ConnectedThread>> {
+        Ok(Vec::new())
+    }
+
+    /// The survivor of the latest `merge` override whose source is `thread_id`, from
+    /// `thread_overrides` (`03 §7h.5`), or `None` when the thread was never merged away. A
+    /// retained-but-emptied source thread reads its survivor here so the Thread page explains the
+    /// merge instead of showing an empty thread. Default returns `None`.
+    async fn thread_merge_target(&self, _thread_id: i64) -> Result<Option<i64>> {
+        Ok(None)
+    }
+
+    /// Insights of `kind` (every kind when `None`) with at least one `insight_evidence` row
+    /// matching any of `refs`, ordered like [`Self::list_insights`] and carrying the same
+    /// read-time `stale` rule (`03 §7j.2`/`§7j.5`). This is how a thread page finds its own
+    /// `open_loop` insights without scanning every kind. Default returns nothing.
+    async fn insights_for_evidence(
+        &self,
+        _kind: Option<InsightKind>,
+        _refs: &[(EvidenceKind, i64)],
+    ) -> Result<Vec<Insight>> {
+        Ok(Vec::new())
+    }
+
+    /// Whether an insight window is still filling (`03 §7j.5`): `pending_jobs` counts the
+    /// `insight_generate` jobs queued or running, `last_generated_at` is the newest
+    /// `MAX(insights.generated_at)`. A non-zero count renders the list as partial. Default
+    /// reports nothing pending and nothing generated.
+    async fn insight_window_status(&self) -> Result<InsightWindowStatus> {
+        Ok(InsightWindowStatus::default())
+    }
+
+    /// The entities named by `ids`, for the `?entity=<id>` filter's chip and for evidence labels
+    /// (`03 §7c` P8 block). Ids that no longer exist are absent from the result — the caller must
+    /// tolerate a shorter list rather than assume one row per id. Default returns nothing.
+    async fn entities_by_ids(&self, _ids: &[i64]) -> Result<Vec<EntitySummary>> {
         Ok(Vec::new())
     }
 

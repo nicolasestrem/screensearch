@@ -1,7 +1,7 @@
-//! `ssv2c-rebuild` CLI - dev-only v13 → v14 rebuild (`03 §4`, 0.4.5 D3).
+//! `ssv2c-rebuild` CLI - dev-only v13 → v15 rebuild (`03 §4`, 0.4.5 D3, D2).
 //!
 //! ```text
-//! ssv2c-rebuild --source <v13.db> --dest <new-v14.db> [--sample-frames N]
+//! ssv2c-rebuild --source <v13.db> --dest <new-v15.db> [--sample-frames N]
 //! ssv2c-rebuild --counts <db>
 //! ```
 //!
@@ -102,14 +102,14 @@ fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<Str
 fn print_usage() {
     println!(
         "\
-{BINARY_NAME} - dev-only ScreenSearch v13 -> v14 database rebuild (03 §4, 0.4.5 D3)
+{BINARY_NAME} - dev-only ScreenSearch v13 -> current-baseline database rebuild (03 §4, 0.4.5 D3)
 
 USAGE:
-  {BINARY_NAME} --source <v13.db> --dest <new-v14.db> [--sample-frames N]
+  {BINARY_NAME} --source <v13.db> --dest <new-v15.db> [--sample-frames N]
   {BINARY_NAME} --counts <db>
 
 The source is opened read-only: it is never written, checkpointed, vacuumed or
-renamed. The destination must not exist; it is created from the v14 baseline.
+renamed. The destination must not exist; it is created from the baseline.
 Rows are copied generically (shared columns only), FTS5 and vec0 are rebuilt
 from the copied rows, `jobs` and `chrome_text_catalog` are not carried, and
 retired settings keys are dropped. `*.v13.bak` remains a maintainer step.
@@ -121,7 +121,7 @@ retired settings keys are dropped. `*.v13.bak` remains a maintainer step.
 }
 
 fn print_report(report: &RebuildReport, options: &RebuildOptions) {
-    println!("{BINARY_NAME} - dev-only v13 -> v14 rebuild (03 §4, 0.4.5 D3)");
+    println!("{BINARY_NAME} - dev-only v13 -> current-baseline rebuild (03 §4, 0.4.5 D3)");
     println!();
     println!(
         "source: {} (schema_version {}, opened read-only)",

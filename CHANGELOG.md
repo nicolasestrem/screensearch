@@ -9,6 +9,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: Work, Thread and Ask screens, and Insights rewritten as claims you can check
+
+- **Your history now has a place to look for what is in flight.** `/work` lists the threads the
+  clusterer found — last touched, session count, time spent — sortable by either, filterable by
+  entity, and honest about a graph that is still catching up ("217 of 218 sessions clustered").
+  `/work/:id` opens one: its session timeline, the entities those sessions touch, the open loops it
+  still holds (each with its evidence), the threads it connects to through shared subjects, and Ask
+  scoped to it. A thread clustered only on weak links says so — one muted line, "Low confidence — few
+  shared entities" — rather than a badge, count or score.
+- **Insights are a list of claims, grouped by kind, each with the evidence that supports it.** The
+  window control (today / 7 days / 30 days / custom) reads real rows; a card whose evidence is gone
+  says so instead of asserting a fact; a window still being computed says how many passes are left;
+  and an empty window says it is empty rather than rendering nothing.
+- **Ask is a conversation.** Turns are saved, the list is titled by the question that started it, a
+  failed or stopped turn keeps its question with Retry, and a follow-up keeps the previous turn's
+  window and entities — with a chip that says "Inherited from the previous turn" so the reuse is
+  visible rather than implied. Answers carry both kinds of citation the answer read (sessions and
+  moments) as links.
+- **Four screens' worth of new IPC**: 13 graph/Ask read-and-write commands (`list_threads`,
+  `get_thread_page`, `list_entities`, `list_insights`, the three override writes, `ask_turn` and the
+  conversation reads), wire types in `crates/traits/src/graph_ipc.rs` and `ask_ipc.rs`, and the
+  regenerated `ui/src/bindings` in the same commit. Every override — rename, merge, split — is
+  written to `thread_overrides` with a receipt and applied by the clusterer, so a user's edit keeps
+  beating the automatic grouping.
+- **Schema v15** adds `ask_turns.citations` and `ask_turns.scope_thread_id`: a reloaded turn renders
+  its citations from the row rather than from a replayed stream, and a turn's thread scope is
+  readable after a restart. Rows written before v15 keep `NULL` citations and render without
+  citation chips rather than with invented ones.
+- `specs/UI_REFERENCE.md §5` gains a "Composed components" table (`ConnectionsPanel`, `EntityChips`,
+  `InsightCard`, `ScopeChips`, `EvidenceLink`), so the composed pieces P10 places in Session and
+  Moment are inventoried beside the primitives without changing the primitive count.
+
+### Fixed: two things the acceptance walk found in the new screens
+
+- **Renaming a thread appended to its name instead of replacing it.** The inline field opened
+  pre-filled with the caret at the end, so typing produced `Payroll importPayroll ops`. The field now
+  selects its value on first focus; typing replaces the name.
+- **The merge dialog claimed the emptied thread is "removed".** It is not: it is retained on record
+  (deleting it would delete your own override with it) and only stops appearing in Work. The dialog
+  now says exactly that.
+
+### Fixed: two more things the PR review found
+
+- **Your question is kept when it cannot be sent.** Asking with no answer model loaded used to clear
+  the composer and then offer only a link to Settings — the words were gone when you came back. The
+  question is now put back in the box (and kept when its conversation has been deleted), ready to send
+  once the model is loaded.
+- **Retrying an unanswered question no longer cancels an answer you are waiting for.** The Retry action
+  on an older turn stayed clickable while another answer was streaming and would have restarted it in
+  its place; it is disabled until the stream finishes.
+- **An answer that finished while you were on another screen no longer stays looking unanswered.**
+  Leaving Ask mid-answer and coming back before it finished meant neither screen refreshed the turn
+  when the answer landed, so the conversation kept showing the question with no answer until it was
+  reopened. The completion now refreshes the record wherever you are.
+- **A scope chip no longer names a period you did not search.** "This week" asked on a Wednesday, or a
+  custom range ending in the future, could be labelled "Last 7 days"; the chip now only says that for a
+  window that really does end today, and otherwise shows the dates it covers.
+- **Retrying a question re-asks it over the scope it originally used.** A question that failed stayed
+  in the conversation offering a retry, but the retry inherited the *latest* question's date range,
+  entities and thread — so a question originally asked about one day could come back answered from
+  unrelated history. The retry now reads the failed turn's own recorded scope.
+- **A failure no longer follows you into another conversation.** After a question failed, switching to
+  a different conversation still showed that error and its Retry button, which would have resubmitted
+  the question into the conversation you left. Both now stay with the conversation they belong to.
+- **A thread page now shows an open marker that was left on one of its own captures.** An unresolved
+  marker opened the loop on the moment it flagged, but the loop was only ever attached to that moment,
+  so a thread whose history contained the marker could still say "No open loops in this thread". The
+  loop is now attached to the session it interrupted and to the thread that session belongs to.
+- **Work and Insights now refresh when the graph is reorganised without new captured frames.** A merge
+  override's regrouping pass, a normalization pass and an insight generation run all finished without
+  telling the interface, so Work could keep the old grouping and title and Insights could stay empty
+  until you navigated away and back. Those passes now report completion, and the frame-scoped
+  refreshes stay as narrow as before.
+- **Pressing Enter again while a thread's answer was still arriving started a second conversation.**
+  The first question was cancelled and its partial answer disappeared, while the cancelled turn stayed
+  behind unanswered. The thread panel now ignores a submission while its turn is streaming, the same
+  way the Ask screen already did.
+- **The Work list could come back short.** Threads emptied by a merge are kept on record but hidden
+  from the list, and that hiding happened after the page had already been cut to size — so a hidden
+  row could take a slot and older live threads dropped off a page with no way to page past them. The
+  list now filters before it cuts.
+
+### Fixed: two more things the PR review found in Ask
+
+- **A question started while the previous one was still being prepared could adopt the wrong
+  conversation.** The app cancelled the earlier request, but that request's own reply — its
+  conversation and turn ids — was still written into the state of the question you had just asked,
+  so the screen could jump to the earlier conversation and hide the answer you were waiting for. A
+  superseded reply is now ignored, the same way its streaming text already was.
+- **Newly discovered entities did not appear in an Ask scope picker that was already open.** The
+  entity catalogue loaded once and nothing refreshed it when extraction finished, so a session that
+  opened Ask before the work graph caught up kept offering no entities until the screen was left and
+  re-entered. Finishing a graph job now refreshes it, so the picker offers what has just been found.
+
+### Fixed: four things the PR review found in Ask
+
+- **A question scoped to a thread could answer from other threads.** When the scoped thread's
+  sessions had nothing to rank — no summaries or vectors yet — the frame search fell back to the
+  whole window and cited whatever else matched, while the turn still recorded the scope. A scope that
+  named a thread the app could not find was worse: it searched the window too. The scope is now a
+  hard constraint: the frame search stays inside it, and a scope with no sessions to search returns
+  no evidence rather than unrelated evidence.
+- **Deleting the conversation you were reading brought it back.** A finished turn keeps its
+  conversation id in memory, so removing the last conversation put that id straight back into the
+  address; the next question then failed because the conversation no longer existed. Deleting now
+  clears the live conversation first, so the deletion sticks and the next question starts a new one.
+- **Scope and window overrides followed you between conversations.** Clearing the thread scope in one
+  conversation, then opening another, sent "clear the scope" for the second — and an entity or window
+  override crossed the same way, including through "New conversation". Overrides now belong to the
+  conversation they were set in and are dropped when you switch.
+- **A custom range could lose an hour at each end on a daylight-saving day.** The range's exclusive
+  end was the start plus exactly 24 hours, so in a zone with DST an end date of 1 November stopped at
+  23:00 that day, and 8 March ran an hour into the next. The end is now the next local midnight, and
+  the shared helper is tested against both switch days.
+
 ### Added: Insights engine and agent read surface (backend)
 
 - **Insights are now real, evidenced statements about your history — and agents can read them.**

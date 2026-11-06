@@ -27,7 +27,16 @@ import type { ApiStatus } from "../../bindings/ApiStatus";
 import type { UpdateStatus } from "../../bindings/UpdateStatus";
 import type { SessionQuery } from "../../bindings/SessionQuery";
 import type { SetupStatus } from "../../bindings/SetupStatus";
+import type { ThreadListQuery } from "../../bindings/ThreadListQuery";
+import type { EntityListQuery } from "../../bindings/EntityListQuery";
+import type { InsightListQuery } from "../../bindings/InsightListQuery";
+import type { AskThreadSummary } from "../../bindings/AskThreadSummary";
+import type { AskTurn } from "../../bindings/AskTurn";
 import { newerSetupStatus } from "../setup";
+
+/** How many Ask conversations the list reads. Conversations are sparse rows like threads, so
+ *  one page covers a long history; the command clamps to `1..=1000` regardless. */
+const ASK_THREAD_LIST_LIMIT = 100;
 
 /** Subsystem readiness; kept live by `readiness_changed` (see useLiveEvents). */
 export function useReadiness() {
@@ -299,6 +308,86 @@ export function useInsights(
     queryKey,
     queryFn: () => cmd.getInsights(range, bucketCount),
     enabled: enabled && bucketCount > 0 && range.end > range.start,
+  });
+  return useMaybeOverride(q, queryKey);
+}
+
+/** The Work screen's thread page (`03 §7h.4`): threads overlapping the window — plus, when
+ *  `entity_id` is set, only the threads that entity was seen in — and the backfill progress that
+ *  frames the list ("N of M sessions clustered"). */
+export function useThreadList(query: ThreadListQuery) {
+  const queryKey = queryKeys.threadList(query);
+  const q = useQuery({
+    queryKey,
+    queryFn: () => cmd.listThreads(query),
+  });
+  return useMaybeOverride(q, queryKey);
+}
+
+/** One thread's full page (`03 §7h.4`/`§7h.5`/`§7j`): member sessions and entities, the merge
+ *  survivor a folded thread points at, connected threads, open loops, backfill progress. */
+export function useThreadPage(threadId: number) {
+  const queryKey = queryKeys.threadPage(threadId);
+  const q = useQuery({
+    queryKey,
+    queryFn: () => cmd.getThreadPage(threadId),
+  });
+  return useMaybeOverride(q, queryKey);
+}
+
+/** Entities filtered by kind and/or name substring (`03 §7c` P8 block). `enabled` lets a picker
+ *  hold the read idle until it opens. */
+export function useEntityList(query: EntityListQuery, enabled = true) {
+  const queryKey = queryKeys.entityList(query);
+  const q = useQuery({
+    queryKey,
+    queryFn: () => cmd.listEntities(query),
+    enabled,
+  });
+  return useMaybeOverride(q, queryKey);
+}
+
+/** The entities named by `ids`, for scope chips and evidence labels. A deleted entity is simply
+ *  absent from the result, so a shorter list is expected; an empty id list is not fetched. */
+export function useEntities(ids: number[]) {
+  const queryKey = queryKeys.entitiesByIds(ids);
+  const q = useQuery({
+    queryKey,
+    queryFn: () => cmd.getEntities(ids),
+    enabled: ids.length > 0,
+  });
+  return useMaybeOverride(q, queryKey);
+}
+
+/** Insight rows overlapping a window, grouped by kind in the view (`03 §7j`); the page's status
+ *  carries `pending_jobs`, so a still-filling window renders as partial rather than complete. */
+export function useInsightList(query: InsightListQuery) {
+  const queryKey = queryKeys.insightList(query);
+  const q = useQuery({
+    queryKey,
+    queryFn: () => cmd.listInsights(query),
+  });
+  return useMaybeOverride(q, queryKey);
+}
+
+/** The Ask conversation list, newest first (`03 §7i.4`). Kept in step by `useAskConversation`'s
+ *  terminal invalidation and by the title/delete mutations. */
+export function useAskThreads() {
+  const q = useQuery<AskThreadSummary[]>({
+    queryKey: queryKeys.askThreads,
+    queryFn: () => cmd.listAskThreads(ASK_THREAD_LIST_LIMIT),
+  });
+  return useMaybeOverride(q, queryKeys.askThreads);
+}
+
+/** One conversation's persisted turns in `ordinal` order (`03 §7i.4`) — the record a reloaded
+ *  thread renders from, streaming turn or not. Idle until a thread is selected. */
+export function useAskTurns(threadId: number | null) {
+  const queryKey = queryKeys.askTurns(threadId ?? -1);
+  const q = useQuery<AskTurn[]>({
+    queryKey,
+    queryFn: () => cmd.listAskTurns(threadId as number),
+    enabled: threadId != null,
   });
   return useMaybeOverride(q, queryKey);
 }

@@ -34,8 +34,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use traits::{
-    AnswerDelta, AnswerOpts, AnswerProvider, AskTurnError, AskTurnRequest, AskTurnStream,
-    ChunkSession, NewAskTurn, RetrievedChunk, SearchHit, SearchQuery, StageCounts, Store,
+    AnswerDelta, AnswerOpts, AnswerProvider, AskCitations, AskThreadCandidate, AskThreadScope,
+    AskTurnError, AskTurnRequest, AskTurnStream, AskWindowOverride, ChunkSession, NewAskTurn,
+    RetrievedChunk, SearchHit, SearchQuery, StageCounts, Store,
 };
 
 use crate::ask_plan;
@@ -145,27 +146,59 @@ impl Kernel {
                 .map_err(AskTurnError::Failed)?,
         };
 
-        // 2. Planning: a calendar window in the system local timezone and the resolved
-        //    entity scope. Both fall back to the previous turn's values; an unresolved
-        //    anchor never produces bounds and a mention with no graph row stays plain text.
-        let inherited_window = previous.as_ref().and_then(|turn| turn.window);
-        let window = ask_plan::plan_turn_window(&question, now, &chrono::Local, inherited_window);
-        let resolved = self
-            .store
-            .ask_resolve_entities(&question)
-            .await
-            .map_err(AskTurnError::Failed)?;
-        let entity_scope: Vec<i64> = if resolved.is_empty() {
-            previous
-                .as_ref()
-                .map(|turn| turn.resolved_entities.clone())
-                .unwrap_or_default()
-        } else {
-            resolved.iter().map(|m| m.entity_id).collect()
+        // 2. Planning: an explicit override wins over the planner, which parses a calendar
+        //    window in the system local timezone and resolves the entity scope from the
+        //    question. Both fall back to the previous turn's values; an unresolved anchor never
+        //    produces bounds and a mention with no graph row stays plain text.
+        //
+        //    `AskWindowScope`'s three cases, one for one (`§7i.4`):
+        //    - `Range` is exactly that window and nothing else — the scope chip said so;
+        //    - `All` clears it to the whole history (both `ask_turns` window columns NULL);
+        //    - no override lets the planner inherit the previous window and parse the question.
+        let window = match request.window_override {
+            Some(AskWindowOverride::All) => None,
+            Some(AskWindowOverride::Range(range)) => Some(range),
+            None => ask_plan::plan_turn_window(
+                &question,
+                now,
+                &chrono::Local,
+                previous.as_ref().and_then(|turn| turn.window),
+            ),
         };
-        let entity_scope = sorted_unique(entity_scope);
+        // Same three cases for the entity scope:
+        // - `Some(ids)` is exactly those ids, and the planner does not resolve or inherit —
+        //   `Some(vec![])` therefore really clears the scope instead of letting a mention in
+        //   the question quietly re-add one;
+        // - `None` keeps today's rule: resolve mentions from the question, else inherit.
+        let entity_scope = match &request.entity_override {
+            Some(ids) => sorted_unique(ids.clone()),
+            None => {
+                let resolved = self
+                    .store
+                    .ask_resolve_entities(&question)
+                    .await
+                    .map_err(AskTurnError::Failed)?;
+                let scope: Vec<i64> = if resolved.is_empty() {
+                    previous
+                        .as_ref()
+                        .map(|turn| turn.resolved_entities.clone())
+                        .unwrap_or_default()
+                } else {
+                    resolved.iter().map(|m| m.entity_id).collect()
+                };
+                sorted_unique(scope)
+            }
+        };
+        // Which work-graph thread stage 1 is scoped to (`§7i.2`, `§7i.4`): a follow-up inherits
+        // the previous turn's scope unless the request clears or replaces it.
+        let scope_thread_id = match request.thread_scope {
+            AskThreadScope::Inherit => previous.as_ref().and_then(|turn| turn.scope_thread_id),
+            AskThreadScope::None => None,
+            AskThreadScope::Thread(id) => Some(id),
+        };
 
-        // 3. Persist the turn with a NULL answer, then run the stages in order.
+        // 3. Persist the turn with a NULL answer, then run the stages in order. The scope thread
+        //    is persisted with the turn so a later follow-up can inherit it.
         let turn = self
             .store
             .append_ask_turn(NewAskTurn {
@@ -173,6 +206,7 @@ impl Kernel {
                 question: question.clone(),
                 window,
                 resolved_entities: entity_scope.clone(),
+                scope_thread_id,
             })
             .await
             .map_err(AskTurnError::Failed)?;
@@ -187,19 +221,55 @@ impl Kernel {
         let (threads, candidates, winning_sessions) = match request.session_id {
             Some(id) => (Vec::new(), vec![id], vec![id]),
             None => {
-                // Stage 1 — threads (empty graph ⇒ empty, the documented fallback).
-                let threads = self
-                    .store
-                    .ask_candidate_threads(window, &entity_scope)
-                    .await
-                    .map_err(AskTurnError::Failed)?;
+                // Stage 1 — threads. With a scope thread, stage 1 is exactly that thread: its
+                // member sessions are the candidate set regardless of the window or the entity
+                // scope, which stage 2 then narrows. `thread_detail` reads only that thread, so a
+                // scoped turn never scans the whole graph.
+                let threads = match scope_thread_id {
+                    Some(id) => match self
+                        .store
+                        .thread_detail(id)
+                        .await
+                        .map_err(AskTurnError::Failed)?
+                    {
+                        Some(detail) => vec![AskThreadCandidate {
+                            thread_id: id,
+                            session_ids: detail
+                                .sessions
+                                .into_iter()
+                                .map(|session| session.session_id)
+                                .collect(),
+                        }],
+                        None => Vec::new(),
+                    },
+                    // Stage 1 — threads (empty graph ⇒ empty, the documented fallback).
+                    None => self
+                        .store
+                        .ask_candidate_threads(window, &entity_scope)
+                        .await
+                        .map_err(AskTurnError::Failed)?,
+                };
                 // Stage 2 — sessions over the candidate set (no thread candidates ⇒ the
                 // window's sessions), keeping at most `SESSION_K` winners.
-                let candidates = self
-                    .store
-                    .ask_candidate_sessions(&threads, window, &entity_scope)
-                    .await
-                    .map_err(AskTurnError::Failed)?;
+                //
+                // An explicit scope is authoritative, so it must never take that window
+                // fallback: `ask_candidate_sessions` widens to the window when the member list
+                // is empty, which for a scope naming a thread that no longer exists (or one the
+                // merge left with no sessions) would answer from every conversation on disk
+                // while still persisting the requested scope. Empty membership is an empty
+                // candidate set — no evidence, rather than unrelated evidence.
+                let scoped_members = threads
+                    .iter()
+                    .map(|thread| thread.session_ids.len())
+                    .sum::<usize>();
+                let candidates = if scope_thread_id.is_some() && scoped_members == 0 {
+                    Vec::new()
+                } else {
+                    self.store
+                        .ask_candidate_sessions(&threads, window, &entity_scope)
+                        .await
+                        .map_err(AskTurnError::Failed)?
+                };
                 let session_hits = self
                     .store
                     .ask_search_sessions(&question, &candidates, SESSION_K)
@@ -218,31 +288,40 @@ impl Kernel {
             time_range: window,
             include_chrome: false,
         };
-        // Stage 3 — frames inside the winning sessions. Reaching "no winner" has two meanings
-        // and they must not be conflated:
-        //  * no entity resolved and nothing ranked (no summaries, no vectors yet) ⇒ the
-        //    mandated non-blocking fallback: the existing frame search over the window alone
-        //    (`§7i.1`, "never worse than the previous Ask"), i.e. no session restriction.
-        //  * an entity resolved **and its linked sessions are in scope** ⇒ the mention is a
-        //    constraint (`§7i.1`), so the search stays inside those candidate sessions even
-        //    when stage 2 could not rank them (no summaries or vectors yet); without this the
-        //    frame stage would silently discard the constraint and cite unrelated sessions.
+        // Stage 3 — frames inside the winning sessions. Reaching "no winner" has three
+        // meanings and they must not be conflated:
+        //  * no entity resolved, no explicit scope, and nothing ranked (no summaries, no vectors
+        //    yet) ⇒ the mandated non-blocking fallback: the existing frame search over the
+        //    window alone (`§7i.1`, "never worse than the previous Ask"), i.e. no session
+        //    restriction.
+        //  * an entity resolved **and its linked sessions are in scope**, or an explicit thread
+        //    scope ⇒ the constraint holds (`§7i.1`, `§7i.2`), so the search stays inside those
+        //    candidate sessions even when stage 2 could not rank them. Without this the frame
+        //    stage would silently discard the scope and cite unrelated sessions while the turn
+        //    still reads as scoped.
         //  * an entity resolved but no candidate session survives the window ⇒ the mention has
         //    no usable match, which `§7i.1` answers with plain-text matching, so the window
         //    fallback applies rather than a dead answer.
         let entity_constrained = !entity_scope.is_empty() && !candidates.is_empty();
+        let narrowed_by_scope = scope_thread_id.is_some() || entity_constrained;
         let frame_scope: Vec<i64> = if !winning_sessions.is_empty() {
             winning_sessions.clone()
-        } else if entity_constrained {
+        } else if narrowed_by_scope && !candidates.is_empty() {
             candidates.clone()
         } else {
             Vec::new()
         };
-        let hits = self
-            .store
-            .ask_search_frames(&search, &frame_scope)
-            .await
-            .map_err(AskTurnError::Failed)?;
+        // A scope that admits no session has no evidence to search: the window fallback would
+        // answer from conversations outside the scope the turn is about to persist.
+        let scope_is_empty = scope_thread_id.is_some() && candidates.is_empty();
+        let hits = if scope_is_empty {
+            Vec::new()
+        } else {
+            self.store
+                .ask_search_frames(&search, &frame_scope)
+                .await
+                .map_err(AskTurnError::Failed)?
+        };
         let stage_counts = StageCounts {
             threads: u32::try_from(threads.len()).unwrap_or(u32::MAX),
             sessions: u32::try_from(winning_sessions.len()).unwrap_or(u32::MAX),
@@ -494,6 +573,12 @@ async fn forward_turn(turn: ForwardTurn) {
     // placed in the prompt, and this intersects that with the assembled context so a cited
     // frame can never fall outside the turn.
     let (sessions, frames) = derive_citations(&cited, &assembled);
+    // The persisted pair is exactly what the delta carries (`§7i.3`), so a reloaded turn
+    // re-renders the same evidence the stream named.
+    let persisted = AskCitations {
+        sessions: sessions.clone(),
+        frames: frames.clone(),
+    };
     let citations = AnswerDelta::Citations {
         sessions,
         frames,
@@ -512,7 +597,7 @@ async fn forward_turn(turn: ForwardTurn) {
         );
         return;
     }
-    match store.finish_ask_turn(turn_id, &answer).await {
+    match store.finish_ask_turn(turn_id, &answer, &persisted).await {
         Ok(true) => {}
         Ok(false) => tracing::warn!(
             thread_id,

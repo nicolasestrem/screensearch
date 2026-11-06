@@ -554,6 +554,10 @@ impl RetrievedChunk {
 
 /// One Ask v2 request (`03 §7i`), as the HTTP route and the in-app command hand it to the
 /// kernel pipeline. `thread_id: None` starts a new conversation (`§7i.4`).
+///
+/// The three scope overrides are additive (`§7i.4`'s editable scope chips): each one, when set,
+/// replaces what the planner would otherwise inherit from the previous turn or parse out of the
+/// question. `None`/`Inherit` keeps today's behaviour exactly.
 #[derive(Debug, Clone)]
 pub struct AskTurnRequest {
     pub query: String,
@@ -561,6 +565,14 @@ pub struct AskTurnRequest {
     /// The existing `/v1/ask` single-session scope (`03 §7c`); skips stages 1 and 2.
     pub session_id: Option<i64>,
     pub top_k: u32,
+    /// Explicit window, or `None` to inherit the previous turn's window / parse the question.
+    pub window_override: Option<crate::AskWindowOverride>,
+    /// Explicit entity scope. `None` = inherit the previous turn's entities and let the planner
+    /// resolve them from the question; `Some(vec![])` = clear the entity scope; `Some(ids)` =
+    /// those entities, and the planner skips resolution.
+    pub entity_override: Option<Vec<i64>>,
+    /// Work-graph thread scope for stage 1 (`§7i.2`).
+    pub thread_scope: crate::AskThreadScope,
     pub opts: AnswerOpts,
 }
 
@@ -628,6 +640,9 @@ pub struct NewAskTurn {
     pub window: Option<crate::TimeRange>,
     /// Entity ids resolved for this turn (stored as a JSON array).
     pub resolved_entities: Vec<i64>,
+    /// The work-graph thread the turn was scoped to (`ask_turns.scope_thread_id`, `§7i.4`);
+    /// `None` = the turn ran unscoped.
+    pub scope_thread_id: Option<i64>,
 }
 
 /// One persisted `ask_turns` row.
@@ -641,6 +656,13 @@ pub struct AskTurnRecord {
     pub answer: Option<String>,
     pub window: Option<crate::TimeRange>,
     pub resolved_entities: Vec<i64>,
+    /// The work-graph thread the turn was scoped to (`ask_turns.scope_thread_id`, `§7i.4`);
+    /// `None` = the turn ran unscoped.
+    pub scope_thread_id: Option<i64>,
+    /// The persisted `§7i.3` citation pair (`ask_turns.citations`), NULL until the turn finishes.
+    /// [`crate::AskCitations`] is the wire form, so a reloaded conversation re-renders citations
+    /// without replaying the stream.
+    pub citations: Option<crate::AskCitations>,
     pub created_at: i64,
 }
 

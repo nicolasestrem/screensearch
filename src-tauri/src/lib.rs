@@ -19,10 +19,10 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 use traits::{
     AdvancedConfig, AdvancedConfigView, AnswerDelta, AnswerEvent, AnswerOpts, AppSuppression,
-    AskRequest, AskTurnRequest, CaptureControl, CaptureSource, CapturedFrame, ComponentReadiness,
-    ComponentStatus, FrameMeta, InsightsSummary, JobStats, Mark, ModelLane, MonitorInfo,
-    OcrProvider, OcrResult, Readiness, ReportConfig, ReportKind, ReportMode, ReportProgress,
-    ReportRange, ReportRequest, ReportResponse, SearchHit, SearchQuery, Session,
+    AskRequest, AskThreadScope, AskTurnRequest, CaptureControl, CaptureSource, CapturedFrame,
+    ComponentReadiness, ComponentStatus, FrameMeta, InsightsSummary, JobStats, Mark, ModelLane,
+    MonitorInfo, OcrProvider, OcrResult, Readiness, ReportConfig, ReportKind, ReportMode,
+    ReportProgress, ReportRange, ReportRequest, ReportResponse, SearchHit, SearchQuery, Session,
     SessionArtifactKind, SessionDetail, SessionFilter, SessionQuery, SessionRecapRequest,
     SetModelTier, Settings, SetupOperation, SetupPhase, SetupStatus, SetupStep, StorageStats,
     Store, TextSpan, ThrottleStatus, TimeRange, TimelineBucket, ToastLevel, UiFrameDetail,
@@ -37,6 +37,7 @@ use kernel::{CaptureFactory, IdleSource, Kernel, KernelEvent};
 use store::SqliteStore;
 use tokio::task::JoinHandle;
 
+mod graph;
 mod local_api;
 mod memory;
 mod memory_files;
@@ -647,6 +648,11 @@ async fn ask(
             // stays frame-level.
             session_id: None,
             top_k,
+            // The scope chips (`03 §7i.4`) belong to conversations: the single-turn command
+            // inherits the planner's defaults exactly as it always has.
+            window_override: None,
+            entity_override: None,
+            thread_scope: AskThreadScope::Inherit,
             opts: AnswerOpts {
                 thinking: request.thinking,
                 max_tokens: request.max_tokens,
@@ -1774,7 +1780,22 @@ pub fn run() {
             promotion::confirm_promotion,
             update::get_update_status,
             update::check_for_updates,
-            update::restart_to_apply_update
+            update::restart_to_apply_update,
+            // P9 intelligence (`03 §7h`, §7i.4, §7j): the work-graph reads, the three override
+            // writes and the Ask conversations — one group, all from `graph.rs`.
+            graph::list_threads,
+            graph::get_thread_page,
+            graph::list_entities,
+            graph::get_entities,
+            graph::list_insights,
+            graph::rename_thread,
+            graph::merge_threads,
+            graph::split_thread,
+            graph::list_ask_threads,
+            graph::list_ask_turns,
+            graph::delete_ask_thread,
+            graph::set_ask_thread_title,
+            graph::ask_turn
         ])
         .on_window_event(|window, event| {
             match event {

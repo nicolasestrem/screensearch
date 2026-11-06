@@ -3,7 +3,13 @@ import type { JobKind } from "./JobKind";
 import type { JobStats } from "./JobStats";
 
 /**
- * Data-changing enrichment job completion (`job_completed` event). Carries enough
- * identity for the UI to refresh frame/search/insights data surgically.
+ * Enrichment job completion (`job_completed` event). Carries enough identity for the UI to
+ * refresh frame/search/insights data surgically.
+ *
+ * `frame_id` is `None` for a pass that runs over the whole graph — `graph_cluster`,
+ * `graph_normalize`, `graph_backfill`, `session_embed`, `insight_generate` — which has no frame
+ * to bind its effect to. Those passes report `changed_data: false` (the flag describes *frame*
+ * data), so the pool announces them on completion instead: a regrouped Work list or rewritten
+ * insight rows are otherwise invisible until the query remounts.
  */
-export type JobCompleted = { job_id: number, kind: JobKind, frame_id: number, stats: JobStats, };
+export type JobCompleted = { job_id: number, kind: JobKind, frame_id: number | null, stats: JobStats, };

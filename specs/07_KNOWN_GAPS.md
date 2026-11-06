@@ -130,6 +130,186 @@ in P8's own guarantees; the rulings below are what the fixes settle, so P9 can r
   credential calling `/v1/marks*` or `/v1/ask`. Not a missing test; a wording mismatch in the
   kickoff checklist, recorded rather than papered over.
 
+## 2026-11-06: P9 intelligence UI — grants, decisions and deferrals (owner: maintainer for the rulings; agent for code)
+
+Phase: `docs/kickoffs/P9.md`, branch `feat/0.4.5-p9-intelligence-ui` from `main` `eb556d1`, where the
+P8 engine, API and MCP surfaces are already in the tree (`crates/store/src/insights.rs`,
+`crates/api/src/lib.rs:593-596`), so P9 renders them instead of building them. Every ruling below was
+given by the maintainer on 2026-11-06 before the slices that depend on it were written; the
+contradiction rows are `specs/06_PATCH_PLAN.md` #106–#112. Answers, verbatim in effect:
+
+**Maintainer rulings (2026-11-06).**
+
+- **P9 D1 — the IPC glue belonged to no phase.** *Question:* `docs/0.4.5.md` §4 assigns the
+  `src-tauri` command glue to no phase, and at this branch's base `src-tauri/src/lib.rs` registers no
+  command for the threads list, thread detail, entity list, insight list, the three override writes
+  or the Ask conversation reads — only `ask` (`:616`) and `get_insights` (`:1169`) — so the screens
+  the kickoff orders could not be built against real data. *Ruling:* full
+  glue grant — a new `crates/traits/src/graph_ipc.rs` (registered by one `pub mod graph_ipc;` plus
+  `pub use graph_ipc::*;` in `crates/traits/src/lib.rs`), a new `src-tauri/src/graph.rs`, one
+  contiguous registration hunk in `src-tauri/src/lib.rs` and the regenerated `ui/src/bindings`; plus
+  the additive store/trait reads `list_ask_threads` and `set_ask_thread_title`, a backfill-progress
+  wire type, and a new `ask_turn` command that carries `thread_id`. *Consequence:* the legacy `ask`
+  command is untouched and keeps streaming through the existing `relay_answer_deltas` /
+  `answer_delta` pair keyed by `request_id`, so the palette's Ask path behaves exactly as before;
+  `ask_turn` registers in the same `state.ask_tasks` map, so `cancel_ask` cancels either; the new
+  `Store` methods are default-bodied and additive, and `limit` is clamped to `1..=1000` as
+  `crates/api` does. Contradiction `06` #107.
+- **P9 D2 — editable scope chips had no input on the planner request.** *Question:* `03 §7i.4` says a
+  follow-up reuses the previous turn's window and resolved entities, and `UI_REFERENCE §4` makes the
+  chips editable, but `AskTurnRequest` carries only the question, so an edited chip could not reach
+  the planner. *Ruling:* additive override fields on `AskTurnRequest` — an explicit window
+  (`AskWindowOverride::{All, Range}`), an explicit entity list, and a thread scope
+  (`AskThreadScope::{Inherit, None, Thread(id)}`) — with planner behaviour otherwise unchanged.
+  *Consequence:* the chips show the scope actually applied, because the turn echoes back
+  `window`, `resolved_entities` and `scope_thread_id`; `entities: []` clears the entity scope where
+  `null` inherits it, so "the chips make the reuse visible" is data rather than narration.
+- **P9 D3 — "connected threads" was undefined.** *Question:* `docs/0.4.5.md`'s P9 block (`:342-352`)
+  and `UI_REFERENCE §3`/`§4` both put connected threads on the thread page; no spec says what makes
+  two threads connected. *Ruling:* a connection is **≥1 shared entity**; ordering is shared-entity
+  count descending, then `last_seen_at` descending; **the evidence of a connection is the shared
+  entities themselves.** *Consequence:* the wire type is
+  `ConnectedThread { thread, shared_entity_ids }` and `ConnectionsPanel` lists the shared entity
+  names beside each link, so the row and its evidence are the same two facts and the panel fetches
+  nothing it was not handed.
+- **P9 D4 — "time spent" was undefined, and `/work` has no window.** *Question:* `/work` sorts by
+  "time spent" (`UI_REFERENCE §3:90`, `§4:230`), while P8's `ThreadSummary.active_ms`
+  (`crates/traits/src/ipc.rs:1402-1405`) is documented as the member sessions' **overlap with the
+  window**, which the work list does not have. *Ruling:* time spent = P8's `active_ms` formula over
+  **all** member sessions with no window —
+  `Σ (COALESCE(ended_at, now_ms) − started_at)` per `thread_sessions` row — exposed as the additive
+  `active_ms: i64` already on `ThreadSummary`. *Consequence:* one formula, two readings: `/work`
+  queries with both bounds open and shows the whole duration, while `GET /v1/threads` and the
+  thread page pass their window and show the overlap. The field therefore **widens the P8/API
+  payload additively** — both routes gain it, `docs/API.md` and the MCP tool docs say so, and no
+  existing field or ordering changes.
+- **P9 D5 — five of the six evidence kinds had no destination.** *Question:* `UI_REFERENCE §10.1`
+  forbids dead ends and `§4:231` says every rendered claim links to its evidence, but §3's route set
+  has no entity route, no per-mark route and no per-report route. *Ruling:* the destination table —
+  `frame → /timeline/:id`, `session → /timeline/session/:id`, `thread → /work/:id`,
+  `entity → /work?entity=<id>` (a query parameter on the Work list, the list filtered by entity,
+  **not** a new route), `mark → /timeline/:frame_id` of the mark's own frame when known, otherwise a
+  **labelled non-link**, and `report → /settings/data`. *Consequence:* `EvidenceLink` exposes
+  `evidenceHref(kind, refId, frameId?)` returning a path or `null`, so no caller invents a seventh
+  destination. `report → /settings/data` is the only surface that shows saved runs
+  (`UI_REFERENCE.md:238`), and it is a list rather than a single run because no route resolves one
+  run by id. A mark can only be linked when the payload carries the frame
+  (`OpenLoopPayload.frame_id`, `crates/traits/src/ipc.rs:1458`), which is why the open-loop card is
+  the one caller that passes it; without it the chip renders inert with `aria-disabled` and the copy
+  "mark (no page yet)". Rows `06` #109 and #110.
+- **P9 D6 — the two rail entries had no glyphs.** *Question:* `ui/src/app/nav.ts`'s prepared
+  insertion snippet names `IconAsk` and `IconWork` for the two D7 entries, and the icon set is P2's
+  path (`UI_REFERENCE §5:257` counts 55 glyphs). *Ruling:* grant to add `IconAsk` and `IconWork` to
+  `ui/src/components/icons.tsx`, **nothing else in that file**. *Consequence:* the rail inserts the
+  two entries the comment already holds; `ui/src/components/primitives/**` is untouched, so P2's
+  glyph count and barrel stay accurate.
+- **P9 D7 — the `get_insights` cutover is conditional, and the condition did not fire.**
+  *Question:* the kickoff makes the removal conditional — "when the rewritten route no longer calls
+  `get_insights`, that command and the `insights_summary` store aggregate it calls become dead
+  weight and are removed as part of this phase, not left behind" — and adds "Keep the aggregate if
+  anything else still calls it" (`docs/kickoffs/P9.md:164-169`). `ui/src/routes/Deck.tsx` (`:72`,
+  `:104-106`, `:189-192`) still reads `total_frames`/`tagged_frames` from it for its enrichment
+  line, and that route is P10's path, outside this phase's owned paths. *Ruling (supersedes the
+  first reading of grant 7):* **keep `get_insights`, `Store::insights_summary`, the `InsightsSummary`
+  IPC type (with `AppCount`/`ActivityCount`) and `getInsights`/`useInsights` untouched.** Deleting
+  them would force a `Deck.tsx` edit P9 does not own — widening scope for a deletion the kickoff
+  explicitly makes conditional. Owner of the removal: P10 (rewrite Deck's line off a different
+  read) or a later `fix/` branch. *Consequence:* **no dead code is left — the call is live.** The
+  removal, when it happens, carries the trait default
+  (`crates/traits/src/contracts.rs:462-470`), the `SqliteStore` impl
+  (`crates/store/src/lib.rs:467-475`) and its two store tests
+  (`crates/store/tests/store.rs:1568`, `:1854`), which stay with the command; `TimelineBucket` is
+  untouched either way, because `get_timeline` uses it. Recorded as `06` #112.
+- **P9 D8 — D18 lifted for this branch.** *Question:* 0.4.5 D18 (`docs/0.4.5.md:441`) forbids
+  commits or pushes by an agent without the maintainer validating the content and naming the target
+  repo. *Ruling:* lifted for `feat/0.4.5-p9-intelligence-ui` — commit on the feature branch, push to
+  `nicolasestrem/screensearch`, open the PR, **never merge**. *Consequence:* the regenerated
+  `ui/src/bindings` ship in the same commit as the code that produces them, so
+  `git diff --exit-code -- ui/src/bindings` is clean on the branch; the merge remains the
+  maintainer's, and the PR is the review artifact rather than a merge step.
+- **P9 D9 — citations had no column to persist into (D2 baseline edit).** *Question:* `03 §7i.3`
+  (`:1600-1610`) puts the citation payload `{"sessions":[…],"frames":[…]}` "on the answer turn" and
+  `UI_REFERENCE §4` makes a turn without one a defect, but the `ask_turns` DDL (`03 §4:507-518`,
+  `crates/store/src/schema.rs:360-371`) has neither a citation column nor a scope column, so a
+  persisted turn could carry neither. *Ruling (0.4.5 D2 baseline edit):* `ask_turns` gains
+  `citations TEXT` (that JSON, NULL until the turn finishes) and `scope_thread_id INTEGER`
+  (nullable, no FK — the work-graph thread the turn was scoped to); `LATEST_SCHEMA_VERSION`
+  14 → 15 in `crates/store/src/schema.rs`, with the DDL and the version mirrored into `03 §4`.
+  *Consequence:* `crates/rebuild` reads `store::LATEST_SCHEMA_VERSION`, so only its docs/tests that
+  literally say "v14" are touched; `Store::finish_ask_turn` takes the citations as an argument (a
+  clean cutover of its one caller, not a second method); and rows written before v15 keep `NULL`
+  citations, because there is nothing to backfill — they render without citation rows rather than
+  with invented ones. Contradiction `06` #108.
+- **P9 D10 — the citation stop, and why the schema edit beat hiding the answer.** *Question:* the
+  kickoff orders that a turn with no citation is never rendered as an answer, but with no column to
+  read, every turn reloaded from disk would have had to render without one — the instruction as
+  written would have hidden every persisted answer after a restart. *Ruling:* the maintainer chose
+  the baseline schema edit (D9) over rendering uncited answers. *Consequence:* one rendering path —
+  cited or nothing. `AskTurn.citations` is both what the streaming delta folds into and what a
+  reload reads, so the UI has no uncited-answer mode to fall back to; `answer` set with `citations`
+  NULL means the turn did not finish through `finish_ask_turn`, which is a defect, not a display
+  state.
+
+- **P9 D13 — no thread-level confidence existed, and the Work list must flag one anyway.**
+  *Question:* `docs/kickoffs/P9.md:124` requires the Work list to flag low-confidence threads, and
+  `§4` repeats the caveat, but nothing in the schema holds a thread-level confidence: `threads` has
+  title/keys/times/`session_count`, and the only confidence anywhere is per link
+  (`thread_sessions.confidence`, `session_entities.confidence`). This is the same class as "time
+  spent" (`07` P9 D4): a product decision the specs do not answer, which the kickoff makes a stop
+  condition. *Ruling (derived, then implemented):* a thread's confidence is the **maximum**
+  `thread_sessions.confidence` over its members — the thread is only as trustworthy as its strongest
+  membership evidence — exposed as the additive `ThreadSummary.confidence`, and "low" is
+  **< 0.7**, the threshold `03 §7h.4` already uses for a clustered edge that is certain enough to
+  present without a caveat. *Consequence:* `THREAD_SUMMARY_SELECT` computes it in the same aggregate
+  join as `active_ms` (one statement, no second formula); the Work row and the Thread header render
+  it as one muted line ("Low confidence — few shared entities"), and a session row uses the same
+  rule against its own link. It is never a badge, count or score (`§4`, `0.4.5 D13` in the comments
+  that cite it). Threshold and aggregation are recorded here because a different choice (mean, or
+  minimum) would change which threads carry the caveat. Contradiction `06` #117.
+
+**Deferrals with owners.**
+- **`job_completed` coverage — resolved in `06` #126, kept here as the rule.** Until the third
+  review round the event described only a *frame*: `completion_info` required `changed_data` **and** a
+  `frame_id`, while `graph_cluster` is frame-less and reports `changed_data: false`
+  (`graph_cluster.rs:128`), as do `graph_normalize` and `graph_backfill`. Of the five kinds in
+  `useLiveEvents`' `GRAPH_JOB_KINDS` only `graph_extract` reached the handler, so an override's
+  regroup or an `insight_generate` run left Work and Insights stale until remount. The pool now
+  announces a completion when the job changed data **or** ran without a frame
+  (`JobCompleted.frame_id: Option<i64>`), which is the traits/tauri-types change this deferral
+  predicted but no longer needs an owner: a frame-bound no-op stays silent, so the event traffic for
+  enrichment is unchanged. Rule worth keeping: `changed_data` describes frame data, not graph data, so
+  it can never be the sole admission test for a whole-graph pass.
+- **`report → /settings/data` has no producer yet — owner: maintainer (schema decision).** P8 emits
+  no `report` evidence (`06` #96: `insight_evidence.ref_id` is `INTEGER` while `report_runs.run_id`
+  is a `TEXT` UUID), so D5's last destination is implemented and documented ahead of its generator.
+  A later generator needs no UI change.
+- **P9 D11 — the acceptance walk's own findings (recorded after the build, not ruled in advance).**
+  Four defects surfaced only by walking the running app, so none was covered by a pre-build ruling.
+  Two are fixed in this phase (`06` #113 rename appends instead of replacing, #114 merge copy claims a
+  deletion P5 does not perform), one is deferred with a named owner (#115 the split dialog's confirm
+  sits after 217 member rows in tab order — a list-pattern decision P10 makes once, not an acceptance
+  fix), and one is cross-phase (#116 a turn whose provider never generates stays open with no
+  terminal delta; the fix is an `error` delta or first-token deadline in the ask stream, which the
+  existing UI error path already handles). Owner for #116: P6 / ask stream.
+- **P9 D12 — the acceptance environment is a fixture DB, and it was made usable in two dev-side
+  steps.** `cargo run -p evalfixture -- gen` plus `-- graph` produce 1 260 frames, 218 sessions,
+  243 entities and 1 thread; the DB is copied into the app's own dev data dir
+  (`%APPDATA%\app.screensearchv2c.desktop`) and the app is launched with the CDP flag so the states
+  can be driven. Two properties of a *real* install had to be supplied by hand, and both are recorded
+  so no reader mistakes them for app behaviour: (a) `settings.sessions.backfill_done_until` was
+  advanced to its `target_ms`, because the fixture has no historical session window to walk and the
+  graph lane stays gated (`crates/kernel/src/graph_scheduler.rs:205-211`) until that marker is
+  complete — with it incomplete, every override queued successfully and applied never; (b) one
+  pending `insight_generate` row was inserted for the length of one screenshot to hold the Insights
+  partial state, then deleted, because the pass itself finishes in milliseconds. No application code,
+  schema or seed path was changed for either.
+- **Components orphaned by the `/insights` rewrite — owner: P10.** The rewrite replaces the chart
+  panels `CapturesTrend` and `InsightsBars`, whose only consumer today is
+  `ui/src/routes/Insights.tsx:19-20,159,165,183`; whether the new route reuses them is not decided
+  here. They stay in place, as does every other `ui/src/components/domain/*` file (grant 7's
+  standing instruction), and P10's refont either reuses or deletes them with the legacy tokens it
+  removes anyway.
+
 ## 2026-11-05: P7 app shell + Settings v2 — grants, maintainer decisions and deferrals (owner: maintainer for the decisions; agent for code; branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, **not merged**; pushed on the maintainer's authorization)
 
 Phase: `docs/kickoffs/P7.md`, branched from `main` `6d906a7` (P2–P6 merged; no `v0.4.3` tag exists,

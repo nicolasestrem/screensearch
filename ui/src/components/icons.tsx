@@ -60,6 +60,24 @@ export const IconTimeline = (p: IconProps) => (
   </Svg>
 );
 
+/** Ask — a speech bubble with a question mark (Ask v2 conversation, 0.4.5 P9). */
+export const IconAsk = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H9l-5 4V6a1 1 0 0 1 1-1Z" />
+    <path d="M12 8.5v.01M12 11a1.2 1.2 0 1 1 1.4 1.2c-.5.2-.9.6-.9 1.3" />
+  </Svg>
+);
+
+/** Work — linked nodes (the thread list, 0.4.5 P9). */
+export const IconWork = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="6" cy="6" r="2.4" />
+    <circle cx="6" cy="18" r="2.4" />
+    <circle cx="18" cy="12" r="2.4" />
+    <path d="M8 7.2 15.8 11M8 16.8 15.8 13" />
+  </Svg>
+);
+
 /** Insights — a bar chart. */
 export const IconInsights = (p: IconProps) => (
   <Svg {...p}>

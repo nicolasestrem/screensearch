@@ -32,7 +32,7 @@
 //! chunk sizes inside that transaction, matching the rest of the store), so an
 //! interrupted backfill always leaves a consistent graph (`03 §7h.6`).
 //!
-//! `graph_frame_input` reads the frame's filtered `frame_text.content_text`. The v14
+//! `graph_frame_input` reads the frame's filtered `frame_text.content_text`. The v15
 //! baseline has no legacy `ocr_text` table (dropped in v3, `07` #51), so a frame
 //! without a `frame_text` row reports `None` content text rather than falling back to
 //! a table that does not exist.
@@ -40,22 +40,74 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use rusqlite::{
-    params, params_from_iter, types::Value, Connection, OptionalExtension, Transaction,
+    named_params, params, params_from_iter, types::Value, Connection, OptionalExtension,
+    Transaction,
 };
 
 use traits::{
-    AliasSource, EntityCatalogRow, EntityKind, GraphBackfillStatus, GraphClusterInput,
-    GraphClusterLink, GraphFrameInput, GraphHit, GraphSessionInput, GraphSessionInterval,
-    GraphSessionLinkAggregate, GraphTableCounts, NormalizationOutcome, NormalizationProposal,
-    Result, SessionHost, SessionSummaryInput, StoredThread, ThreadDraft, ThreadMemberDraft,
-    ThreadOverrideDraft, ThreadOverrideKind, ThreadOverridePayload, ThreadOverrideRow, ThreadPlan,
+    AliasSource, ConnectedThread, EntityCatalogRow, EntityKind, GraphBackfillStatus,
+    GraphClusterInput, GraphClusterLink, GraphFrameInput, GraphHit, GraphProgress,
+    GraphSessionInput, GraphSessionInterval, GraphSessionLinkAggregate, GraphTableCounts,
+    NormalizationOutcome, NormalizationProposal, Result, SessionHost, SessionSummaryInput,
+    StoredThread, ThreadDraft, ThreadMemberDraft, ThreadOverrideDraft, ThreadOverrideKind,
+    ThreadOverridePayload, ThreadOverrideRow, ThreadPlan, ThreadSummary,
 };
 
+use crate::insights::{decode_thread_summary, THREAD_SUMMARY_SELECT};
 use crate::SqliteStore;
 
 /// Row bound for one multi-row statement. Bounded chunks keep every statement small;
 /// the whole plan still commits atomically in one transaction.
 const WRITE_CHUNK: usize = 400;
+
+/// The queue's queued-or-running counts per graph job kind (`03 §7h.6`), read once with one
+/// grouped statement.
+///
+/// This is the *only* graph-progress state there is: no counter is kept anywhere else, so
+/// [`SqliteStore::graph_backfill_status`] and [`SqliteStore::graph_progress`] both read it and
+/// cannot disagree about the backlog.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct GraphPendingJobs {
+    extract: u64,
+    backfill: u64,
+    cluster: u64,
+    normalize: u64,
+}
+
+impl GraphPendingJobs {
+    /// `true` while any of the four graph kinds still has work — the "graph is running" flag
+    /// ([`GraphProgress::running`]).
+    fn any(&self) -> bool {
+        self.extract + self.backfill + self.cluster + self.normalize > 0
+    }
+}
+
+/// Reads [`GraphPendingJobs`] from the jobs table.
+fn graph_pending_jobs(conn: &Connection) -> rusqlite::Result<GraphPendingJobs> {
+    let mut pending = GraphPendingJobs::default();
+    let mut stmt = conn.prepare(
+        "SELECT kind, COUNT(*) FROM jobs
+         WHERE state IN ('pending', 'running')
+           AND kind IN ('graph_extract', 'graph_backfill', 'graph_cluster',
+                        'graph_normalize')
+         GROUP BY kind",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    for row in rows {
+        let (kind, count) = row?;
+        let count = u64::try_from(count).unwrap_or(0);
+        match kind.as_str() {
+            "graph_extract" => pending.extract = count,
+            "graph_backfill" => pending.backfill = count,
+            "graph_cluster" => pending.cluster = count,
+            "graph_normalize" => pending.normalize = count,
+            _ => {}
+        }
+    }
+    Ok(pending)
+}
 
 /// Parses an `entities.kind` token from the schema's closed CHECK set.
 fn entity_kind_from_db(token: &str) -> rusqlite::Result<EntityKind> {
@@ -966,42 +1018,192 @@ impl SqliteStore {
                 [],
                 |row| row.get(0),
             )?;
-            let mut pending_extract = 0u64;
-            let mut pending_backfill = 0u64;
-            let mut pending_cluster = 0u64;
-            let mut pending_normalize = 0u64;
-            {
-                let mut stmt = conn.prepare(
-                    "SELECT kind, COUNT(*) FROM jobs
-                     WHERE state IN ('pending', 'running')
-                       AND kind IN ('graph_extract', 'graph_backfill', 'graph_cluster',
-                                    'graph_normalize')
-                     GROUP BY kind",
-                )?;
-                let rows = stmt.query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-                })?;
-                for row in rows {
-                    let (kind, count) = row?;
-                    let count = count as u64;
-                    match kind.as_str() {
-                        "graph_extract" => pending_extract = count,
-                        "graph_backfill" => pending_backfill = count,
-                        "graph_cluster" => pending_cluster = count,
-                        "graph_normalize" => pending_normalize = count,
-                        _ => {}
-                    }
-                }
-            }
+            let pending = graph_pending_jobs(conn)?;
             Ok(GraphBackfillStatus {
                 cursor,
                 max_frame_id,
-                pending_extract,
-                pending_backfill,
-                pending_cluster,
-                pending_normalize,
+                pending_extract: pending.extract,
+                pending_backfill: pending.backfill,
+                pending_cluster: pending.cluster,
+                pending_normalize: pending.normalize,
                 done_extract: done_extract as u64,
             })
+        })
+        .await
+    }
+
+    /// Coverage of the work graph (`03 §7h.6`): `COUNT(sessions)` clustered into threads, and
+    /// whether the queue still holds graph work.
+    ///
+    /// `sessions_clustered` counts distinct `thread_sessions.session_id`, so it can never
+    /// exceed `sessions_total` and new sessions keep arriving while older ones are clustered —
+    /// which is exactly the "N of M sessions clustered" line the Work screen renders. The
+    /// backlog and `running` come from [`graph_pending_jobs`], the same grouped read
+    /// [`Self::graph_backfill_status`] uses, because the queue is the only checkpoint there is.
+    pub async fn graph_progress(&self) -> Result<GraphProgress> {
+        self.with_conn(|conn| {
+            let sessions_total: i64 =
+                conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?;
+            let sessions_clustered: i64 = conn.query_row(
+                "SELECT COUNT(DISTINCT session_id) FROM thread_sessions",
+                [],
+                |row| row.get(0),
+            )?;
+            let pending = graph_pending_jobs(conn)?;
+            Ok(GraphProgress {
+                sessions_total: u64::try_from(sessions_total).unwrap_or(0),
+                sessions_clustered: u64::try_from(sessions_clustered).unwrap_or(0),
+                running: pending.any(),
+                pending_extract: pending.extract,
+                pending_backfill: pending.backfill,
+                pending_cluster: pending.cluster,
+            })
+        })
+        .await
+    }
+
+    /// Threads holding a member session that touched `entity_id` (`session_entities`, `03
+    /// §7h.1`), ordered `last_seen_at DESC, id DESC` exactly like
+    /// [`SqliteStore::threads_in_range`] and bounded by `limit` — the Work list's `?entity=`
+    /// filter.
+    ///
+    /// The membership test is an `EXISTS`, so a thread appears once however many of its
+    /// sessions touched the entity. `active_ms`/`confidence` come from the shared
+    /// [`THREAD_SUMMARY_SELECT`] aggregate, never a second formula.
+    pub async fn threads_for_entity(
+        &self,
+        entity_id: i64,
+        limit: u32,
+    ) -> Result<Vec<ThreadSummary>> {
+        self.with_conn(move |conn| {
+            let sql = format!(
+                "{THREAD_SUMMARY_SELECT}
+                 WHERE EXISTS (
+                    SELECT 1 FROM thread_sessions ts
+                    JOIN session_entities se ON se.session_id = ts.session_id
+                    WHERE ts.thread_id = t.id AND se.entity_id = :entity_id
+                 )
+                 ORDER BY t.last_seen_at DESC, t.id DESC
+                 LIMIT :limit"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(
+                named_params! {
+                    ":entity_id": entity_id,
+                    ":limit": i64::from(limit),
+                },
+                decode_thread_summary,
+            )?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+    }
+
+    /// Threads sharing at least one entity with `thread_id` (`03 §7h.4`), ordered by
+    /// shared-entity count descending then `last_seen_at` descending, bounded by `limit`.
+    ///
+    /// Two threads share an entity when a session of each carries the same `session_entities`
+    /// row; `shared_entity_ids` **is** the evidence, so the Thread page names those subjects
+    /// instead of asserting a relationship. Two reads, never one per row: the ranked threads
+    /// (with their shared counts) and then every shared entity id for exactly those threads in
+    /// `(thread_id, entity_id)` order, which also makes the id list deterministic.
+    pub async fn connected_threads(
+        &self,
+        thread_id: i64,
+        limit: u32,
+    ) -> Result<Vec<ConnectedThread>> {
+        self.with_conn(move |conn| {
+            // `shared` lists, per other thread, how many distinct entities it shares. The join
+            // walks this thread's session entities out to any session holding the same entity,
+            // then back to that session's thread.
+            let shared = "SELECT other.thread_id AS thread_id,
+                                 COUNT(DISTINCT mine_se.entity_id) AS shared_count
+                          FROM thread_sessions mine
+                          JOIN session_entities mine_se ON mine_se.session_id = mine.session_id
+                          JOIN session_entities other_se
+                            ON other_se.entity_id = mine_se.entity_id
+                          JOIN thread_sessions other ON other.session_id = other_se.session_id
+                          WHERE mine.thread_id = :thread_id
+                            AND other.thread_id <> :thread_id
+                          GROUP BY other.thread_id";
+            let sql = format!(
+                "{THREAD_SUMMARY_SELECT}
+                 JOIN ({shared}) shared ON shared.thread_id = t.id
+                 ORDER BY shared.shared_count DESC, t.last_seen_at DESC, t.id DESC
+                 LIMIT :limit"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let ranked = stmt
+                .query_map(
+                    named_params! {
+                        ":thread_id": thread_id,
+                        ":limit": i64::from(limit),
+                    },
+                    decode_thread_summary,
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            if ranked.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            let ids: Vec<i64> = ranked.iter().map(|thread| thread.id).collect();
+            let mut shared_ids: HashMap<i64, Vec<i64>> = HashMap::new();
+            for chunk in ids.chunks(WRITE_CHUNK) {
+                let list = std::iter::repeat_n("?", chunk.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT other.thread_id, mine_se.entity_id
+                     FROM thread_sessions mine
+                     JOIN session_entities mine_se ON mine_se.session_id = mine.session_id
+                     JOIN session_entities other_se ON other_se.entity_id = mine_se.entity_id
+                     JOIN thread_sessions other ON other.session_id = other_se.session_id
+                     WHERE mine.thread_id = ?
+                       AND other.thread_id IN ({list})
+                     GROUP BY other.thread_id, mine_se.entity_id
+                     ORDER BY other.thread_id, mine_se.entity_id"
+                ))?;
+                let mut values: Vec<i64> = Vec::with_capacity(chunk.len() + 1);
+                values.push(thread_id);
+                values.extend(chunk.iter().copied());
+                let rows = stmt.query_map(params_from_iter(values), |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+                })?;
+                for row in rows {
+                    let (other, entity_id) = row?;
+                    shared_ids.entry(other).or_default().push(entity_id);
+                }
+            }
+
+            Ok(ranked
+                .into_iter()
+                .map(|thread| ConnectedThread {
+                    shared_entity_ids: shared_ids.remove(&thread.id).unwrap_or_default(),
+                    thread,
+                })
+                .collect())
+        })
+        .await
+    }
+
+    /// The survivor of the latest `merge` override whose source is `thread_id`, from
+    /// `thread_overrides` (`03 §7h.5`), or `None` when the thread was never merged away.
+    ///
+    /// The latest row wins on `(created_at, id)`, matching [`Self::graph_thread_overrides`]'s
+    /// order, so a thread merged more than once reports the survivor the following pass used.
+    pub async fn thread_merge_target(&self, thread_id: i64) -> Result<Option<i64>> {
+        self.with_conn(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT target_thread_id FROM thread_overrides
+                     WHERE kind = 'merge' AND thread_id = ?1
+                     ORDER BY created_at DESC, id DESC
+                     LIMIT 1",
+                    [thread_id],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
+                .optional()?
+                .flatten())
         })
         .await
     }

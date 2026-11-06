@@ -19,10 +19,11 @@ use rusqlite::Connection;
 use store::{SqliteStore, EMBEDDING_DIM};
 use traits::{
     Embedding, EntityFilter, EntityKind, EntitySessionInput, EntitySummary, EvidenceKind, GraphHit,
-    InsightEvidence, InsightFilter, InsightGenerator, InsightKind, InsightPayload, NewFrame,
-    NewInsight, NewSession, OpenLoopPayload, OpenLoopSource, OpenMarkInput, RecurrencePayload,
-    SessionHost, SessionKind, ThreadActivityInput, ThreadActivityPayload, ThreadDraft,
-    ThreadFilter, ThreadMemberDraft, ThreadPlan, ThreadSessionInput, ThreadSummary,
+    InsightEvidence, InsightFilter, InsightGenerator, InsightKind, InsightPayload, JobKind,
+    NewFrame, NewInsight, NewJob, NewSession, OpenLoopPayload, OpenLoopSource, OpenMarkInput,
+    RecurrencePayload, SessionHost, SessionKind, ThreadActivityInput, ThreadActivityPayload,
+    ThreadDraft, ThreadFilter, ThreadMemberDraft, ThreadOverrideDraft, ThreadOverrideKind,
+    ThreadOverridePayload, ThreadPlan, ThreadSessionInput, ThreadSummary,
 };
 
 /// The confidence every seeded thread member carries.
@@ -1405,6 +1406,15 @@ async fn insights_open_marks_input_rows() {
     let first_frame = frame(&fixture.store, 500).await;
     let second_frame = frame(&fixture.store, 1_500).await;
     let third_frame = frame(&fixture.store, 4_000).await;
+    // The first frame belongs to a session (the shape a real capture has after assignment), so the
+    // read must report that session: the open-loop derivation attaches the loop to its session and
+    // thread from this field, and without it the Thread page could not see the loop at all.
+    let owner = session(&fixture.store, 100, Some(9_000)).await;
+    fixture
+        .store
+        .assign_frames_session(&[first_frame], Some(owner))
+        .await
+        .expect("assign the frame to a session");
 
     let open_with_note = fixture
         .store
@@ -1449,12 +1459,16 @@ async fn insights_open_marks_input_rows() {
                 frame_id: first_frame,
                 created_at: 1_000,
                 note: Some("send the revised invoice".to_string()),
+                session_id: Some(owner),
             },
             OpenMarkInput {
                 mark_id: open_without_note,
                 frame_id: second_frame,
                 created_at: 1_500,
                 note: None,
+                // No session: a frame captured outside a session, or one whose session was pruned.
+                // The `LEFT JOIN` keeps the loop rather than dropping it.
+                session_id: None,
             },
         ],
         "the resolved mark and the mark created after window_end are absent"
@@ -1869,4 +1883,968 @@ async fn insights_read_computes_staleness_from_surviving_evidence() {
         1,
         "the sweep marks exactly the row the reader already called stale"
     );
+}
+
+// ---- P9 thread figures, graph reads and insight reads ----------------------------------
+
+/// P9 grant 4: every thread read fills `active_ms` (the sum over member sessions of
+/// `max(0, COALESCE(ended_at, now_ms) − started_at)`) and `confidence`
+/// (`MAX(thread_sessions.confidence)`), and a thread with no member rows reads `0`/`0.0`.
+///
+/// The open session's contribution is the database clock at read time, so the expectation is
+/// the closed session's exact span plus a bound taken from two reads of that same clock; the
+/// clock-skewed session proves `max(0, …)` instead of a negative duration.
+#[tokio::test]
+async fn insights_thread_reads_fill_active_ms_and_confidence() {
+    let fixture = Fixture::new("thread-active-ms");
+    let store = &fixture.store;
+    let raw = fixture.raw();
+    let clock = |conn: &Connection| -> i64 {
+        conn.query_row("SELECT unixepoch()*1000", [], |row| row.get(0))
+            .expect("read the database clock")
+    };
+    let now_before = clock(&raw);
+
+    // A closed session contributes exactly `ended_at - started_at`.
+    let closed = session(store, 10_000, Some(14_000)).await;
+    // An open session contributes up to the database clock.
+    let open_started_at = now_before - 3_000;
+    let open = session(store, open_started_at, None).await;
+    // A session whose clock runs ahead contributes nothing at all.
+    let skewed = session(store, now_before + 60_000, None).await;
+
+    let with_members = "thread-with-members";
+    let without_members = "thread-without-members";
+    store
+        .graph_apply_thread_plan(&ThreadPlan {
+            threads: vec![
+                ThreadDraft {
+                    cluster_key: with_members.to_string(),
+                    title: "Deploys".to_string(),
+                    first_seen_at: 10_000,
+                    last_seen_at: 14_000,
+                    sessions: vec![
+                        ThreadMemberDraft {
+                            session_id: closed,
+                            confidence: 0.4,
+                        },
+                        ThreadMemberDraft {
+                            session_id: open,
+                            confidence: 0.9,
+                        },
+                        ThreadMemberDraft {
+                            session_id: skewed,
+                            confidence: 0.7,
+                        },
+                    ],
+                },
+                // An emptied merge source: a real row with no members.
+                ThreadDraft {
+                    cluster_key: without_members.to_string(),
+                    title: "Emptied".to_string(),
+                    first_seen_at: 10_000,
+                    last_seen_at: 20_000,
+                    sessions: Vec::new(),
+                },
+            ],
+            delete_thread_ids: Vec::new(),
+            override_updates: Vec::new(),
+        })
+        .await
+        .expect("apply the thread plan");
+    let with_members = stored_thread_id(store, with_members).await;
+    let without_members = stored_thread_id(store, without_members).await;
+
+    let listed = store
+        .threads_in_range(ThreadFilter {
+            from_ms: None,
+            to_ms: None,
+            limit: 100,
+        })
+        .await
+        .expect("read the thread list");
+    let now_after = clock(&raw);
+
+    let closed_span = 14_000 - 10_000;
+    let lower = closed_span + (now_before - open_started_at);
+    let upper = closed_span + (now_after - open_started_at);
+    let busy = listed
+        .iter()
+        .find(|thread| thread.id == with_members)
+        .expect("the thread with members is listed");
+    assert!(
+        (lower..=upper).contains(&busy.active_ms),
+        "active_ms {} must lie in [{lower}, {upper}]: the closed span plus the open session \
+         counted to the database clock, and nothing for the clock-skewed one",
+        busy.active_ms
+    );
+    assert_eq!(
+        busy.confidence, 0.9,
+        "confidence is the maximum member confidence, not the last one written"
+    );
+    assert_eq!(busy.session_count, 3, "the persisted count is unchanged");
+
+    let empty = listed
+        .iter()
+        .find(|thread| thread.id == without_members)
+        .expect("the emptied thread is listed");
+    assert_eq!(
+        empty.active_ms, 0,
+        "a thread with no members spends no time"
+    );
+    assert_eq!(empty.confidence, 0.0, "and has no confidence to report");
+
+    // The detail read uses the same aggregate: it cannot report different figures.
+    let detail = store
+        .thread_detail(with_members)
+        .await
+        .expect("read the thread detail")
+        .expect("the thread exists");
+    assert_eq!(detail.thread.confidence, busy.confidence);
+    assert!(
+        (lower..=upper).contains(&detail.thread.active_ms),
+        "the detail's active_ms {} must lie in [{lower}, {upper}]",
+        detail.thread.active_ms
+    );
+    let empty_detail = store
+        .thread_detail(without_members)
+        .await
+        .expect("read the emptied thread detail")
+        .expect("the thread exists");
+    assert_eq!(empty_detail.thread.active_ms, 0);
+    assert_eq!(empty_detail.thread.confidence, 0.0);
+}
+
+/// Enqueues one graph job that is ready now.
+async fn enqueue_graph_job(store: &SqliteStore, kind: JobKind) -> i64 {
+    store
+        .enqueue_job(NewJob {
+            kind,
+            frame_id: None,
+            priority: 0,
+            max_attempts: 3,
+            not_before: 0,
+        })
+        .await
+        .expect("enqueue a graph job")
+}
+
+/// `graph_progress` counts every session, the distinct clustered ones, and reads the backlog
+/// from the same grouped jobs query as `graph_backfill_status` — including `graph_normalize`,
+/// which `running` covers but no counter reports.
+#[tokio::test]
+async fn graph_progress_counts_sessions_and_the_queue_backlog() {
+    let fixture = Fixture::new("graph-progress");
+    let store = &fixture.store;
+
+    let empty = store.graph_progress().await.expect("read progress");
+    assert_eq!((empty.sessions_total, empty.sessions_clustered), (0, 0));
+    assert!(!empty.running, "an idle queue is not running");
+    assert_eq!(
+        (
+            empty.pending_extract,
+            empty.pending_backfill,
+            empty.pending_cluster
+        ),
+        (0, 0, 0)
+    );
+
+    let first = session(store, 1_000, Some(2_000)).await;
+    let second = session(store, 3_000, Some(4_000)).await;
+    let unclustered = session(store, 5_000, Some(6_000)).await;
+    let sessions = [first, second, unclustered];
+    seed_threads(
+        store,
+        &[
+            ThreadSeed {
+                cluster_key: "progress-one",
+                title: "One",
+                first_seen_at: 1_000,
+                last_seen_at: 2_000,
+                members: vec![first],
+            },
+            ThreadSeed {
+                cluster_key: "progress-two",
+                title: "Two",
+                first_seen_at: 3_000,
+                last_seen_at: 4_000,
+                members: vec![second],
+            },
+        ],
+    )
+    .await;
+
+    let progress = store.graph_progress().await.expect("read progress");
+    assert_eq!(
+        progress.sessions_total,
+        sessions.len() as u64,
+        "every session row counts, clustered or not"
+    );
+    assert_eq!(
+        progress.sessions_clustered, 2,
+        "one session per thread is clustered; the third is not"
+    );
+    assert!(!progress.running);
+
+    // A pending normalize job is graph work even though it has no counter of its own.
+    let normalize = enqueue_graph_job(store, JobKind::GraphNormalize).await;
+    let progress = store.graph_progress().await.expect("read progress");
+    assert!(
+        progress.running,
+        "a pending graph_normalize job means running"
+    );
+    assert_eq!(
+        (
+            progress.pending_extract,
+            progress.pending_backfill,
+            progress.pending_cluster
+        ),
+        (0, 0, 0),
+        "normalize is not one of the three reported counters"
+    );
+
+    // Extract, backfill and cluster each land in their own counter.
+    let extract = enqueue_graph_job(store, JobKind::GraphExtract).await;
+    enqueue_graph_job(store, JobKind::GraphBackfill).await;
+    enqueue_graph_job(store, JobKind::GraphCluster).await;
+    let progress = store.graph_progress().await.expect("read progress");
+    assert_eq!(
+        (
+            progress.pending_extract,
+            progress.pending_backfill,
+            progress.pending_cluster
+        ),
+        (1, 1, 1)
+    );
+
+    // A claimed (running) job is still backlog: `pending_*` and `running` cover both states.
+    let running = store
+        .claim_jobs(&[JobKind::GraphCluster], 1, 0)
+        .await
+        .expect("claim the cluster job");
+    assert_eq!(running.len(), 1);
+    let running_id = running[0].id;
+    let progress = store.graph_progress().await.expect("read progress");
+    assert_eq!(
+        progress.pending_cluster, 1,
+        "a running job still counts as backlog"
+    );
+    assert!(progress.running);
+
+    // Draining the queue clears the flag: `running` is the backlog, not retained state.
+    let graph_kinds = [
+        JobKind::GraphExtract,
+        JobKind::GraphBackfill,
+        JobKind::GraphCluster,
+        JobKind::GraphNormalize,
+    ];
+    loop {
+        let claimed = store
+            .claim_jobs(&graph_kinds, 1, 0)
+            .await
+            .expect("claim a graph job");
+        let Some(job) = claimed.into_iter().next() else {
+            break;
+        };
+        store.complete_job(job.id).await.expect("complete the job");
+    }
+    // The claimed job is not claimable again, so it is completed by id.
+    store
+        .complete_job(running_id)
+        .await
+        .expect("complete the running job");
+    let progress = store.graph_progress().await.expect("read progress");
+    assert!(!progress.running, "a drained queue is idle again");
+    assert_eq!(
+        (
+            progress.pending_extract,
+            progress.pending_backfill,
+            progress.pending_cluster
+        ),
+        (0, 0, 0)
+    );
+    // The variables exist so the enqueues above cannot be optimised away by a reader.
+    let _ = (normalize, extract);
+}
+
+/// `threads_for_entity` lists each thread once, ordered `last_seen_at DESC`, bounded by
+/// `limit` — the Work list's `?entity=` filter.
+#[tokio::test]
+async fn graph_threads_for_entity_lists_threads_touching_it() {
+    let fixture = Fixture::new("threads-for-entity");
+    let store = &fixture.store;
+    // Three sessions in three threads; two of them touch the shared entity.
+    let early = session(store, 1_000, Some(2_000)).await;
+    let late = session(store, 3_000, Some(4_000)).await;
+    let unrelated = session(store, 5_000, Some(6_000)).await;
+    hit(
+        store,
+        early,
+        1_000,
+        EntityKind::Repo,
+        "screensearch",
+        0.9,
+        &["ss"],
+    )
+    .await;
+    hit(
+        store,
+        late,
+        3_000,
+        EntityKind::Repo,
+        "screensearch",
+        0.8,
+        &[],
+    )
+    .await;
+    hit(store, unrelated, 5_000, EntityKind::App, "codex", 0.7, &[]).await;
+    let entity_id = |name: &str| {
+        let name = name.to_string();
+        async move {
+            store
+                .entities_filtered(EntityFilter {
+                    kind: None,
+                    query: Some(name),
+                    limit: 10,
+                })
+                .await
+                .expect("find the seeded entity")
+                .first()
+                .expect("the entity exists")
+                .id
+        }
+    };
+    let repo = entity_id("screensearch").await;
+    let app = entity_id("codex").await;
+
+    seed_threads(
+        store,
+        &[
+            ThreadSeed {
+                cluster_key: "entity-early",
+                title: "Early",
+                first_seen_at: 1_000,
+                last_seen_at: 2_000,
+                members: vec![early],
+            },
+            ThreadSeed {
+                cluster_key: "entity-late",
+                title: "Late",
+                first_seen_at: 3_000,
+                last_seen_at: 4_000,
+                members: vec![late],
+            },
+            ThreadSeed {
+                cluster_key: "entity-unrelated",
+                title: "Unrelated",
+                first_seen_at: 5_000,
+                last_seen_at: 6_000,
+                members: vec![unrelated],
+            },
+        ],
+    )
+    .await;
+    let early_thread = stored_thread_id(store, "entity-early").await;
+    let late_thread = stored_thread_id(store, "entity-late").await;
+    let unrelated_thread = stored_thread_id(store, "entity-unrelated").await;
+
+    let threads = store
+        .threads_for_entity(repo, 10)
+        .await
+        .expect("read the threads of the entity");
+    assert_eq!(
+        threads.iter().map(|thread| thread.id).collect::<Vec<_>>(),
+        vec![late_thread, early_thread],
+        "newest `last_seen_at` first, and each thread once"
+    );
+    assert!(
+        threads
+            .iter()
+            .all(|thread| thread.session_count == 1 && thread.confidence == MEMBER_CONFIDENCE),
+        "the rows carry the same figures as the thread list"
+    );
+
+    let narrowed = store
+        .threads_for_entity(repo, 1)
+        .await
+        .expect("read one thread");
+    assert_eq!(
+        narrowed.iter().map(|thread| thread.id).collect::<Vec<_>>(),
+        vec![late_thread],
+        "the limit cuts the tail of the order"
+    );
+
+    let app_threads = store
+        .threads_for_entity(app, 10)
+        .await
+        .expect("read the app's threads");
+    assert_eq!(
+        app_threads
+            .iter()
+            .map(|thread| thread.id)
+            .collect::<Vec<_>>(),
+        vec![unrelated_thread]
+    );
+}
+
+/// `connected_threads` orders by shared-entity count descending, then `last_seen_at`
+/// descending, and carries the shared entity ids as the evidence of the connection.
+#[tokio::test]
+async fn graph_connected_threads_order_by_shared_count_then_recency() {
+    let fixture = Fixture::new("connected-threads");
+    let store = &fixture.store;
+    let anchor = session(store, 1_000, Some(2_000)).await;
+    let few_newer = session(store, 3_000, Some(4_000)).await;
+    let few_older = session(store, 5_000, Some(6_000)).await;
+    let many_oldest = session(store, 7_000, Some(8_000)).await;
+    let nothing_shared = session(store, 9_000, Some(10_000)).await;
+
+    // The anchor touches four subjects.
+    for (index, name) in ["deploy", "invoice", "roadmap", "notes"].iter().enumerate() {
+        hit(store, anchor, 1_000, EntityKind::Repo, name, 0.9, &[]).await;
+        // `index` only keeps the four calls in a readable order.
+        assert!(index < 4);
+    }
+    // Two threads share two subjects each (differing only by recency) …
+    for name in ["deploy", "invoice"] {
+        hit(store, few_newer, 3_000, EntityKind::Repo, name, 0.9, &[]).await;
+        hit(store, few_older, 5_000, EntityKind::Repo, name, 0.9, &[]).await;
+    }
+    // … and one shares three, though it is the oldest thread of them all.
+    for name in ["deploy", "invoice", "notes"] {
+        hit(store, many_oldest, 7_000, EntityKind::Repo, name, 0.9, &[]).await;
+    }
+    // This one shares nothing with the anchor.
+    hit(
+        store,
+        nothing_shared,
+        9_000,
+        EntityKind::App,
+        "codex",
+        0.9,
+        &[],
+    )
+    .await;
+
+    let mut names: HashMap<String, i64> = HashMap::new();
+    for entity in store
+        .entities_filtered(EntityFilter {
+            kind: None,
+            query: None,
+            limit: 100,
+        })
+        .await
+        .expect("list the seeded entities")
+    {
+        names.insert(entity.canonical_name, entity.id);
+    }
+    let id_of = |name: &str| *names.get(name).expect("the entity was seeded");
+
+    seed_threads(
+        store,
+        &[
+            ThreadSeed {
+                cluster_key: "anchor",
+                title: "Anchor",
+                first_seen_at: 1_000,
+                last_seen_at: 2_000,
+                members: vec![anchor],
+            },
+            ThreadSeed {
+                cluster_key: "few-newer",
+                title: "Few newer",
+                first_seen_at: 3_000,
+                last_seen_at: 30_000,
+                members: vec![few_newer],
+            },
+            ThreadSeed {
+                cluster_key: "few-older",
+                title: "Few older",
+                first_seen_at: 5_000,
+                last_seen_at: 20_000,
+                members: vec![few_older],
+            },
+            ThreadSeed {
+                cluster_key: "many-oldest",
+                title: "Many oldest",
+                first_seen_at: 7_000,
+                last_seen_at: 10_000,
+                members: vec![many_oldest],
+            },
+            ThreadSeed {
+                cluster_key: "nothing-shared",
+                title: "Nothing shared",
+                first_seen_at: 9_000,
+                last_seen_at: 40_000,
+                members: vec![nothing_shared],
+            },
+        ],
+    )
+    .await;
+    let anchor_thread = stored_thread_id(store, "anchor").await;
+    let few_newer_thread = stored_thread_id(store, "few-newer").await;
+    let few_older_thread = stored_thread_id(store, "few-older").await;
+    let many_oldest_thread = stored_thread_id(store, "many-oldest").await;
+
+    let connected = store
+        .connected_threads(anchor_thread, 10)
+        .await
+        .expect("read the connections");
+    assert_eq!(
+        connected
+            .iter()
+            .map(|row| row.thread.id)
+            .collect::<Vec<_>>(),
+        vec![many_oldest_thread, few_newer_thread, few_older_thread],
+        "three shared subjects win over recency; the tie then breaks on `last_seen_at`"
+    );
+    assert_eq!(
+        connected[0].shared_entity_ids,
+        vec![id_of("notes"), id_of("deploy"), id_of("invoice")]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>(),
+        "the shared ids are the evidence, ascending"
+    );
+    assert_eq!(
+        connected[1].shared_entity_ids, connected[2].shared_entity_ids,
+        "the two two-subject threads name the same subjects"
+    );
+    assert_eq!(connected[1].shared_entity_ids.len(), 2);
+
+    let narrowed = store
+        .connected_threads(anchor_thread, 1)
+        .await
+        .expect("read one connection");
+    assert_eq!(
+        narrowed.iter().map(|row| row.thread.id).collect::<Vec<_>>(),
+        vec![many_oldest_thread],
+        "the limit applies to the ranked order"
+    );
+
+    // A thread nothing shares with has no connections, and an unknown id has none either.
+    assert!(store
+        .connected_threads(few_older_thread, 10)
+        .await
+        .expect("read the isolated thread's connections")
+        .iter()
+        .all(|row| row.thread.id != few_older_thread));
+    assert!(store
+        .connected_threads(999_999, 10)
+        .await
+        .expect("read an unknown thread")
+        .is_empty());
+}
+
+/// `thread_merge_target` is the latest `merge` override naming the thread as its source, and
+/// `None` for a thread that was never merged away — a rename in between changes nothing.
+#[tokio::test]
+async fn graph_thread_merge_target_reads_the_latest_merge_override() {
+    let fixture = Fixture::new("merge-target");
+    let store = &fixture.store;
+    let source_session = session(&fixture.store, 1_000, Some(2_000)).await;
+    let survivor_session = session(&fixture.store, 3_000, Some(4_000)).await;
+    let later_session = session(&fixture.store, 5_000, Some(6_000)).await;
+    seed_threads(
+        store,
+        &[
+            ThreadSeed {
+                cluster_key: "merge-source",
+                title: "Source",
+                first_seen_at: 1_000,
+                last_seen_at: 2_000,
+                members: vec![source_session],
+            },
+            ThreadSeed {
+                cluster_key: "merge-survivor",
+                title: "Survivor",
+                first_seen_at: 3_000,
+                last_seen_at: 4_000,
+                members: vec![survivor_session],
+            },
+            ThreadSeed {
+                cluster_key: "merge-later",
+                title: "Later",
+                first_seen_at: 5_000,
+                last_seen_at: 6_000,
+                members: vec![later_session],
+            },
+        ],
+    )
+    .await;
+    let source = stored_thread_id(store, "merge-source").await;
+    let survivor = stored_thread_id(store, "merge-survivor").await;
+    let later = stored_thread_id(store, "merge-later").await;
+
+    assert_eq!(
+        store
+            .thread_merge_target(source)
+            .await
+            .expect("read target"),
+        None,
+        "a thread that was never merged away has no survivor"
+    );
+
+    store
+        .graph_insert_thread_override(
+            &ThreadOverrideDraft {
+                kind: ThreadOverrideKind::Merge,
+                thread_id: Some(source),
+                target_thread_id: Some(survivor),
+                payload: ThreadOverridePayload::Merge {
+                    session_ids: vec![source_session],
+                },
+            },
+            1_000,
+        )
+        .await
+        .expect("insert the merge override");
+    // An unrelated rename on the same thread must not become the answer.
+    store
+        .graph_insert_thread_override(
+            &ThreadOverrideDraft {
+                kind: ThreadOverrideKind::Rename,
+                thread_id: Some(source),
+                target_thread_id: None,
+                payload: ThreadOverridePayload::Rename {
+                    title: "Renamed".to_string(),
+                },
+            },
+            2_000,
+        )
+        .await
+        .expect("insert the rename override");
+
+    assert_eq!(
+        store
+            .thread_merge_target(source)
+            .await
+            .expect("read target"),
+        Some(survivor)
+    );
+    assert_eq!(
+        store
+            .thread_merge_target(survivor)
+            .await
+            .expect("read the survivor's target"),
+        None,
+        "the survivor was not merged away"
+    );
+
+    // A later merge of the same source to another thread is now the latest row.
+    store
+        .graph_insert_thread_override(
+            &ThreadOverrideDraft {
+                kind: ThreadOverrideKind::Merge,
+                thread_id: Some(source),
+                target_thread_id: Some(later),
+                payload: ThreadOverridePayload::Merge {
+                    session_ids: vec![source_session],
+                },
+            },
+            3_000,
+        )
+        .await
+        .expect("insert the later merge override");
+    assert_eq!(
+        store
+            .thread_merge_target(source)
+            .await
+            .expect("read target"),
+        Some(later),
+        "the latest merge row wins on `(created_at, id)`"
+    );
+}
+
+/// `insights_for_evidence` matches any of the named `(kind, ref_id)` pairs, orders like
+/// `list_insights`, honours the kind filter, and returns exactly what `list_insights` would —
+/// including the read-time `stale` flag once the cited row is gone.
+#[tokio::test]
+async fn insights_for_evidence_matches_refs_and_shares_the_stale_rule() {
+    let fixture = Fixture::new("insights-for-evidence");
+    let store = &fixture.store;
+    let cited_session = session(store, 1_000, Some(2_000)).await;
+    let kept_session = session(store, 3_000, Some(4_000)).await;
+    hit(
+        store,
+        cited_session,
+        1_000,
+        EntityKind::Repo,
+        "screensearch",
+        0.9,
+        &[],
+    )
+    .await;
+    let entity_id = store
+        .entities_filtered(EntityFilter {
+            kind: None,
+            query: Some("screensearch".to_string()),
+            limit: 10,
+        })
+        .await
+        .expect("find the entity")
+        .first()
+        .expect("the entity exists")
+        .id;
+    seed_threads(
+        store,
+        &[ThreadSeed {
+            cluster_key: "evidence-thread",
+            title: "Evidence",
+            first_seen_at: 1_000,
+            last_seen_at: 4_000,
+            members: vec![cited_session, kept_session],
+        }],
+    )
+    .await;
+    let thread_id = stored_thread_id(store, "evidence-thread").await;
+
+    // Three kinds, all in one window, each evidenced by a different ref.
+    let open_loop = store
+        .insert_insight(new_insight(
+            (1_000, 5_000),
+            open_loop_payload(1),
+            evidence(&[(EvidenceKind::Session, cited_session)]),
+        ))
+        .await
+        .expect("insert the open loop");
+    let recurrence = store
+        .insert_insight(new_insight(
+            (1_000, 5_000),
+            recurrence_payload(entity_id),
+            evidence(&[(EvidenceKind::Entity, entity_id)]),
+        ))
+        .await
+        .expect("insert the recurrence");
+    let activity = store
+        .insert_insight(new_insight(
+            (1_000, 5_000),
+            thread_activity_payload(thread_id, "Evidence"),
+            evidence(&[(EvidenceKind::Thread, thread_id)]),
+        ))
+        .await
+        .expect("insert the thread activity");
+
+    // One ref matches one insight; the order is the list order (window DESC, kind ASC).
+    let by_session = store
+        .insights_for_evidence(None, &[(EvidenceKind::Session, cited_session)])
+        .await
+        .expect("read by session evidence");
+    assert_eq!(
+        by_session
+            .iter()
+            .map(|insight| insight.id)
+            .collect::<Vec<_>>(),
+        vec![open_loop]
+    );
+
+    // Several refs union their matches, in the same order `list_insights` uses.
+    let two_refs = store
+        .insights_for_evidence(
+            None,
+            &[
+                (EvidenceKind::Session, cited_session),
+                (EvidenceKind::Thread, thread_id),
+            ],
+        )
+        .await
+        .expect("read by two refs");
+    assert_eq!(
+        two_refs
+            .iter()
+            .map(|insight| insight.id)
+            .collect::<Vec<_>>(),
+        vec![open_loop, activity],
+        "`open_loop` sorts before `thread_activity` on kind"
+    );
+
+    // The kind filter narrows the same set.
+    let only_activity = store
+        .insights_for_evidence(
+            Some(InsightKind::ThreadActivity),
+            &[
+                (EvidenceKind::Session, cited_session),
+                (EvidenceKind::Thread, thread_id),
+            ],
+        )
+        .await
+        .expect("read with a kind filter");
+    assert_eq!(
+        only_activity
+            .iter()
+            .map(|insight| insight.id)
+            .collect::<Vec<_>>(),
+        vec![activity]
+    );
+
+    // Nothing to match, and a ref nothing cites, are both empty — never the whole table.
+    assert!(store
+        .insights_for_evidence(None, &[])
+        .await
+        .expect("read with no refs")
+        .is_empty());
+    assert!(store
+        .insights_for_evidence(None, &[(EvidenceKind::Session, 999_999)])
+        .await
+        .expect("read with an unmatched ref")
+        .is_empty());
+
+    // Deleting a cited row makes the read-time `stale` rule fire, exactly as `list_insights`
+    // reports it (both go through the same select).
+    assert!(store
+        .delete_unfrozen_session(cited_session)
+        .await
+        .expect("delete the cited session"));
+    let stale = store
+        .insights_for_evidence(None, &[(EvidenceKind::Session, cited_session)])
+        .await
+        .expect("read the stale insight");
+    assert_eq!(stale.len(), 1, "the evidence row survives its target");
+    assert_eq!(stale[0].id, open_loop);
+    assert!(stale[0].stale, "a dangling citation reads stale");
+    let listed = store
+        .list_insights(all_insights())
+        .await
+        .expect("list every insight");
+    let same = listed
+        .iter()
+        .find(|insight| insight.id == open_loop)
+        .expect("the insight is listed");
+    assert_eq!(
+        (&stale[0].stale, &stale[0].evidence),
+        (&same.stale, &same.evidence),
+        "the two reads agree on the freshness rule and the evidence"
+    );
+    let _ = recurrence;
+}
+
+/// `insight_window_status` counts the queued insight passes and reports the newest
+/// `generated_at`, `None` before anything was generated.
+#[tokio::test]
+async fn insight_window_status_counts_pending_generation() {
+    let fixture = Fixture::new("insight-status");
+    let store = &fixture.store;
+
+    let idle = store
+        .insight_window_status()
+        .await
+        .expect("read the idle status");
+    assert_eq!(idle.pending_jobs, 0);
+    assert_eq!(idle.last_generated_at, None);
+
+    let insight_id = store
+        .insert_insight(new_insight(
+            (1_000, 2_000),
+            recurrence_payload(1),
+            evidence(&[(EvidenceKind::Session, 1)]),
+        ))
+        .await
+        .expect("insert an insight");
+    let generated_at = store
+        .list_insights(all_insights())
+        .await
+        .expect("list the insight")
+        .into_iter()
+        .find(|insight| insight.id == insight_id)
+        .expect("the insight is listed")
+        .generated_at;
+    let status = store
+        .insight_window_status()
+        .await
+        .expect("read the status");
+    assert_eq!(
+        status.last_generated_at,
+        Some(generated_at),
+        "the newest generated row is reported"
+    );
+    assert_eq!(status.pending_jobs, 0);
+
+    for _ in 0..2 {
+        enqueue_graph_job(store, JobKind::InsightGenerate).await;
+    }
+    // A different job kind is not part of the insight window's status.
+    enqueue_graph_job(store, JobKind::GraphCluster).await;
+    let status = store
+        .insight_window_status()
+        .await
+        .expect("read the status");
+    assert_eq!(
+        status.pending_jobs, 2,
+        "only `insight_generate` jobs are counted"
+    );
+}
+
+/// `entities_by_ids` returns the ids that exist, in `last_seen_at DESC` order with aliases
+/// decoded, and silently skips ids that are gone.
+#[tokio::test]
+async fn entities_by_ids_returns_existing_rows_and_skips_missing() {
+    let fixture = Fixture::new("entities-by-ids");
+    let store = &fixture.store;
+    let anchor = session(store, 1_000, Some(2_000)).await;
+    for (captured_at, name, alias) in [
+        (1_000, "deploy", "ship"),
+        (2_000, "invoice", "bill"),
+        (3_000, "roadmap", "plan"),
+    ] {
+        hit(
+            store,
+            anchor,
+            captured_at,
+            EntityKind::Repo,
+            name,
+            0.9,
+            &[alias],
+        )
+        .await;
+    }
+
+    let listed = store
+        .entities_filtered(EntityFilter {
+            kind: None,
+            query: None,
+            limit: 100,
+        })
+        .await
+        .expect("list the seeded entities");
+    let by_name: HashMap<&str, &EntitySummary> = listed
+        .iter()
+        .map(|entity| (entity.canonical_name.as_str(), entity))
+        .collect();
+
+    let fetched = store
+        .entities_by_ids(&[
+            by_name["deploy"].id,
+            by_name["roadmap"].id,
+            by_name["invoice"].id,
+        ])
+        .await
+        .expect("read the entities");
+    assert_eq!(
+        fetched
+            .iter()
+            .map(|entity| entity.canonical_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["roadmap", "invoice", "deploy"],
+        "newest `last_seen_at` first, whatever order the ids arrived in"
+    );
+    for entity in &fetched {
+        let expected = by_name[entity.canonical_name.as_str()];
+        assert_eq!(entity.aliases, expected.aliases, "aliases are decoded");
+        assert_eq!(entity.session_count, expected.session_count);
+        assert_eq!(entity.first_seen_at, expected.first_seen_at);
+    }
+
+    let partial = store
+        .entities_by_ids(&[by_name["deploy"].id, 999_999])
+        .await
+        .expect("read a partly missing list");
+    assert_eq!(partial.len(), 1, "a missing id is absent, not fabricated");
+    assert_eq!(partial[0].canonical_name, "deploy");
+
+    assert!(store
+        .entities_by_ids(&[])
+        .await
+        .expect("read no ids")
+        .is_empty());
 }

@@ -5,7 +5,9 @@
 //   • job_completed     → surgical frame/search/insights invalidation
 //   • sidecar_status    → patch the sidecarStatus cache + refresh readiness
 //   • capture_tick      → high-frequency; debounce-invalidate timeline + insights
-// `answer_delta` is intentionally NOT handled here — useAsk owns it.
+//   • answer_delta      → ONLY the terminal delta, to refresh the persisted turn
+// The live text of `answer_delta` stays out of here — useAsk owns it, request-scoped. What this
+// manager does with it is reconcile the record: see the handler below.
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -15,6 +17,7 @@ import { queryKeys } from "./queryKeys";
 import { toast as toastStore } from "../../state/toastStore";
 import type { Readiness } from "../../bindings/Readiness";
 import type { SetupStatus } from "../../bindings/SetupStatus";
+import type { JobKind } from "../../bindings/JobKind";
 import { newerSetupStatus } from "../setup";
 import { memoryKeys } from "./memory";
 
@@ -22,6 +25,20 @@ import { memoryKeys } from "./memory";
 const TICK_DEBOUNCE_MS = 800;
 /** Debounce window for coalescing job_progress bursts (e.g. an enrichment backlog drain). */
 const ENRICH_DEBOUNCE_MS = 1000;
+
+/**
+ * Job kinds whose completion can change the work graph or the P8 insight rows (`03 §7h`, §7j):
+ * extraction adds entity links, normalization renames them, clustering re-folds threads (and
+ * applies UI overrides), backfill enqueues those batches, and `insight_generate` rewrites the
+ * insight window. Their completions arrive in bursts, so they share one debounced invalidation.
+ */
+const GRAPH_JOB_KINDS: readonly JobKind[] = [
+  "graph_extract",
+  "graph_normalize",
+  "graph_cluster",
+  "graph_backfill",
+  "insight_generate",
+];
 
 export function useLiveEvents() {
   const qc = useQueryClient();
@@ -55,19 +72,63 @@ export function useLiveEvents() {
     );
 
     let enrichTimer: ReturnType<typeof setTimeout> | undefined;
+    let workTimer: ReturnType<typeof setTimeout> | undefined;
     track(
       listenTo("job_completed", (completed) => {
         qc.setQueryData(queryKeys.jobStats, completed.stats);
-        qc.invalidateQueries({ queryKey: queryKeys.frame(completed.frame_id) });
+        // A frame-less pass (`graph_cluster`, `insight_generate`, …) has no frame to refetch; its
+        // effect is the graph-wide invalidation below.
+        if (completed.frame_id !== null) {
+          qc.invalidateQueries({ queryKey: queryKeys.frame(completed.frame_id) });
+        }
         if (completed.kind === "embed_text") {
           qc.invalidateQueries({ queryKey: queryKeys.searchPrefix });
         }
         if (completed.kind === "vision_tag") {
-          if (enrichTimer) clearTimeout(enrichTimer);
+          clearTimeout(enrichTimer);
           enrichTimer = setTimeout(() => {
             qc.invalidateQueries({ queryKey: queryKeys.insightsPrefix });
           }, ENRICH_DEBOUNCE_MS);
         }
+        // The work graph and the P8 insight rows change only when a graph/insight job finishes
+        // (`03 §7h`, §7j), and those finish in bursts: one debounced invalidation covers the
+        // whole family — every window/limit variant of the Work list, every thread page and the
+        // insight list — instead of one refetch per job.
+        if (GRAPH_JOB_KINDS.includes(completed.kind)) {
+          clearTimeout(workTimer);
+          workTimer = setTimeout(() => {
+            qc.invalidateQueries({ queryKey: queryKeys.workPrefix });
+            qc.invalidateQueries({ queryKey: queryKeys.insightListPrefix });
+            // Every member of this list now emits: the frame-bound ones when they changed data,
+            // and the frame-less passes (`graph_cluster`, `insight_generate`) on completion, so a
+            // merge override's regroup and an insight rewrite land here rather than waiting for a
+            // remount. `graph_extract` is the one that creates entities, and the catalogue it
+            // fills backs the Ask scope picker and Work's entity labels
+            // (`entitiesPrefix` covers every `entityList(query)` key). A mounted catalogue has
+            // no polling and the client disables refetch-on-window-focus, so without this a
+            // session that opened Ask before the graph caught up keeps offering no entities
+            // until the query remounts.
+            qc.invalidateQueries({ queryKey: queryKeys.entitiesPrefix });
+          }, ENRICH_DEBOUNCE_MS);
+        }
+      }),
+    );
+
+    // The stream's live text belongs to `useAskConversation`, but its *completion* does not: if the
+    // person leaves Ask while an answer streams and comes back before it finishes, the remounted
+    // hook has a fresh `activeRequest` ref (`null`) and ignores the remaining deltas — including
+    // `done` — so its terminal invalidation never runs and the turn keeps rendering as unanswered
+    // even after the backend saved the answer. No polling backs that query and focus refetch is
+    // off, so nothing would correct it until the conversation remounted (`03 §7i.4`).
+    //
+    // Reconciling here rather than cancelling on unmount is deliberate: the answer is nearly done
+    // and the person left the screen, not the question. One refetch per completed turn, only on
+    // the terminal delta — never per token.
+    track(
+      listenTo("answer_delta", (event) => {
+        if (event.delta.type !== "done") return;
+        qc.invalidateQueries({ queryKey: queryKeys.askTurnsPrefix });
+        qc.invalidateQueries({ queryKey: queryKeys.askThreads });
       }),
     );
 
@@ -215,6 +276,7 @@ export function useLiveEvents() {
       active = false;
       if (tickTimer) clearTimeout(tickTimer);
       if (enrichTimer) clearTimeout(enrichTimer);
+      clearTimeout(workTimer);
       unlisteners.forEach((u) => u());
     };
   }, [qc]);

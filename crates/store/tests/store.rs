@@ -93,7 +93,7 @@ fn frame_at(captured_at: i64) -> NewFrame {
     }
 }
 
-/// Opening a fresh store creates the v14 baseline and lands at the latest schema
+/// Opening a fresh store creates the latest baseline and lands at the latest schema
 /// version (`03 §4`, 0.4.5 D2).
 #[tokio::test]
 async fn open_in_memory_creates_the_baseline_schema() {

@@ -4,6 +4,9 @@
 import type { SearchQuery } from "../../bindings/SearchQuery";
 import type { TimeRange } from "../../bindings/TimeRange";
 import type { SessionQuery } from "../../bindings/SessionQuery";
+import type { ThreadListQuery } from "../../bindings/ThreadListQuery";
+import type { EntityListQuery } from "../../bindings/EntityListQuery";
+import type { InsightListQuery } from "../../bindings/InsightListQuery";
 
 export const queryKeys = {
   readiness: ["readiness"] as const,
@@ -55,6 +58,25 @@ export const queryKeys = {
   insightsPrefix: ["insights"] as const,
   insights: (range: TimeRange, bucketCount: number) =>
     ["insights", range, bucketCount] as const,
+  // P9 intelligence (`03 §7h`, §7i.4, §7j). `workPrefix` covers the whole work graph —
+  // the Work list and every thread page — so a completed `graph_cluster` job refreshes
+  // both with one invalidation. `insightListPrefix` is the P8 insight rows (distinct from
+  // the legacy `insights` counts above, which a later slice removes with its route).
+  workPrefix: ["work"] as const,
+  threadList: (query: ThreadListQuery) => ["work", "list", query] as const,
+  threadPage: (threadId: number) => ["work", "thread", threadId] as const,
+  entitiesPrefix: ["entities"] as const,
+  entityList: (query: EntityListQuery) => ["entities", "list", query] as const,
+  entitiesByIds: (ids: number[]) => ["entities", "byIds", ids] as const,
+  insightListPrefix: ["insightList"] as const,
+  insightList: (query: InsightListQuery) => ["insightList", query] as const,
+  // Ask conversations: `askPrefix` invalidates the list and every turn family at once
+  // (a sent turn changes both, and a deleted thread removes its turns).
+  askPrefix: ["ask"] as const,
+  askThreads: ["ask", "threads"] as const,
+  /** Every conversation's turn list — an `askTurns(id)` key starts with this prefix. */
+  askTurnsPrefix: ["ask", "turns"] as const,
+  askTurns: (threadId: number) => ["ask", "turns", threadId] as const,
   // 0.3.0 flow recall (PR6): the where-was-i card/strip and the Intentions strip. A
   // `marks_changed` event invalidates `marks`; the overlay re-fetches `whereWasI` on
   // each summon (it depends on the live foreground context, not a data-change event).

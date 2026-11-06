@@ -8,15 +8,20 @@
 //! - [`contracts`] — the async module traits (`03 §3`).
 //! - [`domain`] — internal value types (frames, OCR, embeddings, …).
 //! - [`ipc`] — the typed UI ↔ core contract (`ts-rs`-exported, `03 §7`).
+//! - [`graph_ipc`] — the P9 work-graph + Ask-conversation wire contract (`03 §7c` P8 block,
+//!   `§7h.4`–`§7j`), exported the same way.
+//! - [`ask_ipc`] — the Ask v2 scope overrides the kernel takes (`03 §7i.4`; not wire types).
 //! - [`jobs`] — durable job-queue types (`03 §5`).
 //! - [`privacy`] — the pure excluded-apps matcher shared by `capture` + `kernel`.
 
 #![forbid(unsafe_code)]
 
 pub mod advanced;
+pub mod ask_ipc;
 pub mod contracts;
 pub mod domain;
 pub mod graph;
+pub mod graph_ipc;
 pub mod history;
 pub mod insights;
 pub mod ipc;
@@ -28,12 +33,14 @@ pub mod reports;
 pub mod sessions;
 
 pub use advanced::*;
+pub use ask_ipc::*;
 pub use contracts::{
     AnswerProvider, BackfillControl, CaptureSource, EmbeddingProvider, OcrProvider, PressureProbe,
     SessionSegmenter, Store, VisionProvider,
 };
 pub use domain::*;
 pub use graph::*;
+pub use graph_ipc::*;
 pub use history::*;
 pub use insights::*;
 pub use ipc::*;

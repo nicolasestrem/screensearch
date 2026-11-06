@@ -15,6 +15,9 @@ import type { ApiStatus } from "../../bindings/ApiStatus";
 import type { ExportRequest } from "../../bindings/ExportRequest";
 import type { ExportResult } from "../../bindings/ExportResult";
 import type { UpdateStatus } from "../../bindings/UpdateStatus";
+import type { RenameThreadRequest } from "../../bindings/RenameThreadRequest";
+import type { MergeThreadsRequest } from "../../bindings/MergeThreadsRequest";
+import type { SplitThreadRequest } from "../../bindings/SplitThreadRequest";
 
 /** Start/stop capture; readiness refetches so the StatusRail flips immediately. */
 export function useCaptureControl() {
@@ -189,5 +192,69 @@ export function useCheckForUpdates() {
 export function useRestartToApplyUpdate() {
   return useMutation<void, unknown, void>({
     mutationFn: () => cmd.restartToApplyUpdate(),
+  });
+}
+
+// P9 overrides (`03 §7h.5`). No optimistic patch: the write only persists a `thread_overrides`
+// row and enqueues the `graph_cluster` job, so the threads keep their current shape until that job
+// applies the override. Invalidating the work graph after the write is honest — the refetch shows
+// the pre-fold rows if the job has not run yet, and `job_completed` invalidates again when it has.
+
+/** Rename one thread; membership is untouched, so nothing moves. */
+export function useRenameThread() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (request: RenameThreadRequest) => cmd.renameThread(request),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.workPrefix });
+    },
+  });
+}
+
+/** Fold one thread's sessions into the survivor the user picked. */
+export function useMergeThreads() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (request: MergeThreadsRequest) => cmd.mergeThreads(request),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.workPrefix });
+    },
+  });
+}
+
+/** Move the selected sessions into a new thread. */
+export function useSplitThread() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (request: SplitThreadRequest) => cmd.splitThread(request),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.workPrefix });
+    },
+  });
+}
+
+// Ask conversations (`03 §7i.4`). Deleting or renaming a thread changes both the list and that
+// thread's turns, so both mutations invalidate the whole `askPrefix` family.
+
+/** Delete one conversation and its turns; no frame, session, thread or insight is touched. */
+export function useDeleteAskThread() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (threadId: number) => cmd.deleteAskThread(threadId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.askPrefix });
+    },
+  });
+}
+
+/** Rename one conversation (the first question names it; this corrects the name). */
+export function useSetAskThreadTitle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { threadId: number; title: string }) =>
+      cmd.setAskThreadTitle(args.threadId, args.title),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.askPrefix });
+    },
   });
 }

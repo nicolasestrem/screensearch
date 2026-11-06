@@ -1,5 +1,218 @@
 # 08 — AI Changelog
 
+## 2026-11-06: P9 intelligence UI — Work, Thread, Insights v2 and Ask v2 (branch `feat/0.4.5-p9-intelligence-ui`, from `main` `eb556d1`; **PR [#165](https://github.com/nicolasestrem/screensearch/pull/165) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
+
+Phase: `docs/kickoffs/P9.md`. Build record, gate output and the acceptance matrix: `05` (2026-11-06 P9
+section). Decisions, grants and deferrals: `07` (P9 D1–D12). Contradiction rows `#106`–`#116`: `06`.
+
+**Change.** The 0.4.5 wave's intelligence surfaces become real screens over the P5 work graph, the P6
+Ask pipeline and the P8 insights engine: `/work` (threads, sortable, entity-filterable, honest about a
+graph still catching up), `/work/:id` (timeline, entities, open loops with evidence, connected
+threads, scoped Ask), `/insights` rewritten from charts to a grouped list of evidenced claims with a
+window control, and `/ask` promoted from a single-turn panel to a saved conversation with typed
+scope chips. The rail gains the two prepared entries (Ask, Work) between Deck and Recall.
+
+**Why.** P5, P6 and P8 built the engines and never a surface; the arc's own rail comment named P9 as
+the phase that inserts them, and `UI_REFERENCE §3`/`§4` define all four screens and their states while
+no code implemented them.
+
+**Consistency.** The new wire types live in two new files (`graph_ipc.rs`, `ask_ipc.rs`) rather than in
+P8's `ipc.rs` — its one additive field is `ThreadSummary.active_ms` on the type the work list renders.
+Overrides are one code path: three store writes behind one `thread_overrides` table, applied by the
+clusterer, so no screen patches a list optimistically into a state the server disagrees with. Every
+evidence destination is decided once in `evidenceLink.tsx` (`frame`, `session`, `thread`, `entity`,
+`mark`, `report`), so no caller invents a seventh route. Schema v15 (D2 baseline edit) stores the
+citation pair and the thread scope on the turn, which is what makes "a reloaded answer renders its
+citations" true instead of aspirational.
+
+**Verification.** The kickoff's ordered gate, run on the final tree: `npm ci` (347 packages),
+`eslint` 0, `tsc --noEmit` 0, `vite build` 0, `stage-mcp` up to date, `cargo fmt --check` 0,
+`cargo clippy --workspace --all-targets -D warnings` 0, `cargo build --workspace` 0,
+`cargo test --workspace` 0 failures, `git diff --exit-code -- ui/src/bindings` 0, UI unit suite 142
+passing. Acceptance was walked in the running Tauri app over a `evalfixture` graph (1 260 frames, 218
+sessions, 243 entities): four screens × five states with screenshots, four themes × four screens, the
+eleven named keyboard paths, an override round trip (rename → applied, split → new thread, merge →
+folded, emptied source retained and filtered), a follow-up turn reusing the previous window with the
+inherited chip proving it, 97/97 rendered evidence links resolving, and the ten questions P4's
+automatic generator produces asked through the UI with their known facts checked.
+
+**Review pass (PR #165).** The automated review of the open PR found four defects, all reproduced
+before they were fixed (`06` #118–#121, raw orders in `05`).
+
+The one that matters is a scope leak: Ask held a thread scope as a *hint* rather than a constraint.
+Stage 1 selected the scoped thread, but stage 3 only honoured a narrowed candidate set when an
+**entity** had resolved, so a scoped question that resolved no entity and whose sessions had nothing
+to rank (no summaries or vectors yet) searched the whole window and cited other threads' frames while
+persisting the scope it had not used. A scope naming a thread the read could not find was worse:
+`ask_candidate_sessions` widens to the window when the member list is empty, so an unresolvable scope
+answered from every conversation on disk. Both paths now treat explicit membership as authoritative,
+and empty membership yields no evidence rather than unrelated evidence. The regression test asserts
+the unscoped control too, so the fix narrows scope without disabling the `§7i.1` window fallback for
+questions that have none — the first draft of that test asserted on citations' sessions, which are
+derived from the cited frames rather than from stage-2 winners, and failed for that reason.
+
+Two were React state that outlived what it described. A finished turn keeps its conversation id in
+memory, so deleting the only conversation removed `?thread=` and the adoption effect immediately put
+the deleted id back: the next question was then discarded with "That conversation no longer exists"
+(walked in the app, guard removed and restored, six one-second samples each way). And the composer's
+thread-scope/entity/window overrides were page state keyed to nothing, so clearing the scope in one
+conversation pushed `clear_thread_scope` onto the next one it opened — fixed by dropping the overrides
+when the conversation identity changes. That reset is a render-phase adjustment keyed on
+`?thread=`/`?scopeThread=`, not an effect: an effect runs after paint, leaving one committed frame
+whose submit would still carry the previous conversation's scope.
+
+The fourth is a daylight-saving bug: the custom range's exclusive end was `start + 24h`, so in a zone
+with DST an end date of 2026-11-01 stopped at 23:00 that day and 2026-03-08 ran an hour into the next
+— and that bound ships as an explicit retrieval override, so the wrong window is what retrieval and
+inherited turns used. `localDateMidnight(value, offsetDays)` joins `lib/time.ts` as the calendar-day
+helper (the trap was already documented in `ReportBuilder`; the third copy is what drifted), with the
+test pinning `America/New_York` before the first `Date` is constructed so the 23 h and 25 h days are
+real on any machine.
+
+**Review pass 8 (PR #165).** Both findings are the same failure mode from two directions: a question
+the person wrote being destroyed by machinery they did not ask for. One clears the composer for a
+request that never started, the other cancels a live answer because a *different* conversation's retry
+button was reachable.
+
+The pattern worth keeping: every path that calls `ask` must agree on when it may. `submitQuestion` had
+the `streaming` guard since #124 — the saved-turn retry, the other caller, did not, and its button
+stayed enabled to invite it. When two entry points share one destructive primitive, the guard belongs
+next to the primitive or in both callers, never in one.
+
+**Review pass 7 (PR #165).** The subtlest round. Both findings are consequences of a fix or a rule
+that only holds in the place it was written: the Ask stream's completion handling lives in a route-local
+hook, so it stops existing exactly when the person navigates away and back; and the scope label's
+"ends now" test was written for windows ending at `now` while the planner produces windows ending at the
+next midnight, so the predicate was never exercised by the case it was supposed to reject.
+
+The first fix is architectural rather than local: completion reconciliation belongs to the manager that
+outlives routes (`useLiveEvents`), while the live text stays where it is. The tempting alternative —
+cancel on unmount — is wrong for the reason the finding implies: the person left the screen, not the
+question.
+
+The second is an example of a doc comment that was more honest than the code beneath it; the comment
+already said "only ever said about a window that really is seven days ending today". Its proof is the
+cleanest of the pass: the neutered predicate fails exactly the two legs the finding describes and leaves
+the correct ones green, so the test discriminates rather than merely failing.
+
+**Comment honesty pass (PR #165).** Two comments claimed more than the code does. `completion_info`'s
+new doc read as if a frame-less completion meant "the graph moved", when `graph_cluster` also runs on
+its schedule with nothing to regroup — the event means "this pass finished", and the debounced
+invalidation in `useLiveEvents` is what makes a no-op pass cost one refetch that finds the cache
+already right. And `list_threads`' entity arm carried no `session_count > 0` filter without saying why,
+which invites the next reader to "fix" the asymmetry: `threads_for_entity` matches only through
+`EXISTS (thread_sessions ⨝ session_entities)`, so a thread with no member sessions cannot appear there
+at all. Both are now stated where the code is, and in `06` #125/#126.
+
+**Review pass 6 (PR #165).** Two Ask findings, both instances of one question the earlier rounds kept
+asking: what does a piece of state belong to? "Inherit" means *the previous turn*, which is not the
+turn being retried; and the hook's error belongs to *the request that produced it*, which is not
+whatever the URL selects now. Neither needed new machinery — one reads the turn's own row, the other
+gates a prop on the same identity the live answer already used.
+
+Both are recorded as code-verified. Staging a failed turn means a stream that dies after the row is
+written, and a fake failure would test the fake; the honest thing is to say so in the row rather than
+dress a hand-built error up as a walk.
+
+**Review pass 5 (PR #165).** Two P2s, both real, both judged by reading the join rather than by
+argument.
+
+The open-loop one is the better find: the Thread page matches a loop by `thread` and member-`session`
+evidence, the derivation attached only `(mark, frame)`, and nobody noticed because the loop *was* on
+the Insights list — the two surfaces disagree about what a loop is attached to. The fix carries the
+frame's session into the mark input and maps it to a thread through the membership list the derivation
+already had. The payload stays untouched: `OpenLoopPayload.thread_id` means "the abandoned thread" and
+`InsightCard` prints it as a subject, so filling it for marks would have renamed the loop instead of
+finding it.
+
+The scope-seed one is a lifetime bug with a familiar shape on this branch: a value that should expire
+after one use (a deep-link seed) outranking the state that replaces it. Adoption both failed to
+consume the seed and reset the composer as if the user had switched conversations, so the cleared chip
+came back on the next question. Both halves are fixed; only the seed-consumption half was asked for,
+and the reset half is the same line of reasoning (`03 §7i`: adoption is not a switch).
+
+**Review pass 4 (PR #165).** The reviewer found the gap this branch had already written down as
+deferred (`07`: "`job_completed` cannot describe a clustering pass — owner: P8/P6"), and was right that
+a deferred record is not a fix: a P2 that leaves Work showing the pre-override grouping and Insights
+empty is a defect with a note attached, not a scope decision.
+
+The wrong turn was mine twice over. First in the second round, when the `entitiesPrefix` finding was
+narrowed to "which kinds emit" and the answer ("only `graph_extract`") was recorded as a limitation
+instead of a bug. Second in treating the fix as a traits/IPC change when the payload type was the
+smallest possible edit: `frame_id: Option<i64>` and one condition. The corrected rule has a reason
+worth keeping — `changed_data` describes *frame* data, so it cannot be the admission test for a pass
+that has no frame; the event for such a pass is "I finished", and the UI already knows what to
+invalidate.
+
+Proven at the emitter, not by assertion: `frameless_completions_reach_the_event_channel` drives
+`emit_progress` through a real broadcast receiver and asserts the `job_completed` that follows the
+stats event carries `kind: GraphCluster` and `frame_id: None`. Frame-bound no-ops remain silent, so
+the widening is exactly the frame-less kinds — no new enrichment traffic. The `07` entry now records
+the rule and its resolution instead of deferring it to an owner who was never going to be the one to
+notice.
+
+**Review pass 3 (PR #165).** Two more from the third round (`06` #124–#125), both small and both
+verified rather than argued.
+
+The thread panel's composer checked only for empty text, so Enter during a streaming answer cancelled
+it and started a second conversation — the Ask route had the guard, the thread panel did not, which is
+the same class as the composer-override leak in pass 1 (two screens, one rule, one of them missed).
+Verified live with the guard: submitting twice from the textarea's Enter path while a turn streamed
+produced exactly one conversation (`ask_threads` 13 → 14), the second submission ignored. The pre-fix
+path was not rebuilt just to watch it fail; the row says so.
+
+The Work list applied the emptied-source filter after the store's `LIMIT`, so a retained merge source
+consumed a page slot and older live threads fell off a page with no pagination. The entity-scoped arm
+of the same command already over-read before narrowing; the unfiltered arm now does the same, and both
+arms truncate themselves. Measured by invoking the command from the page around a rebuild:
+`list_threads(limit: 2)` returned `["4:216"]` before and `["4:216","3:2"]` after, with the
+entity-scoped read still truncating. Stating the page numbers rather than "the page is full now" is
+what makes it checkable against any graph the maintainer has.
+
+**Review pass 2 (PR #165).** The re-review after the first fix round raised two more, both in the
+"what the screen says vs what it does" class (`06` #122–#123).
+
+`useAskConversation` gated its *deltas* on the request id but not the command's own outcome, so a
+superseded `ask_turn` — one still assembling context when a newer question started — wrote its
+thread/turn ids into the newer request's state; the adoption effect could then select the old
+conversation while the deltas of the live request were dropped by the scope they do respect. Both
+outcomes now use the same guard. This is the one finding in either round recorded as code-verified
+only: the interleaving needs a planner delay the app does not expose, and inventing a timer to race it
+would have been a test of the timer.
+
+The second was a missing invalidation: `job_completed` refreshed Work and insights but not the entity
+catalogue, and `useEntityList` neither polls nor refetches on focus (`providers.tsx:12`), so a picker
+mounted before the graph caught up stayed empty until it remounted. **The first version of this proof
+was wrong and is corrected here:** it attributed the refresh to a hand-inserted `graph_cluster` job,
+but `completion_info` emits only for jobs reporting `changed_data` *and* carrying a `frame_id`, and
+`graph_cluster` is frame-less and reports `changed_data: false` — so it never emits, and the kinds in
+`GRAPH_JOB_KINDS` that actually reach the handler are `graph_extract` (the entity creator) alone.
+The proof was rerun with a page-side listener recording the events themselves: a frame-bound
+`embed_text` completion refreshed nothing (control, same page, same mounted picker seconds earlier); a
+forced `graph_extract` completion picked the probe up within 5 s with the invalidation and never
+within 35 s with it removed, the event recorded in both runs. Relabelling the trigger also sharpened
+the fix's comment, which now says which member of the list can fire and why.
+
+**Review pass.** Reading this record back surfaced three documentation gaps, all fixed here without
+touching behaviour: the low-confidence ruling existed only in the code comments that cite it
+(`0.4.5 D13`), so it is now written down in `07` P9 D13 with the contradiction row `06` #117 —
+`MAX(thread_sessions.confidence)` over members, low at `< 0.7`, the threshold `03 §7h.4` already uses;
+`crates/rebuild/src/lib.rs` still described the destination as `schema_version = 14` in three places
+after the v15 baseline bump, so those now name `store::LATEST_SCHEMA_VERSION` (the crate already read
+the constant in code and its tests); and the acceptance record now states the spot-check metric, which
+legs wrote `gate.log`, and the three states this machine could not exercise.
+
+**Honest limits.** Two properties of a real install were supplied by hand in the acceptance DB and
+are recorded in `07` (P9 D12): the sessions-history marker advanced so the graph lane could run, and
+one pending `insight_generate` row held for a single screenshot. Retrieval quality is *not* a P9
+verdict: the ten-question spot check answered all ten with citations, but session recall was 11/26
+and frame recall 14/70 against P4's expected sets, with the two `sequence` questions missing entirely —
+that is the P4/P6 pipeline's measurement to make, and `05` records it with the per-question numbers
+rather than a summary verdict. Four defects surfaced only in the walk (`06` #113–#116): two fixed here
+(rename appended instead of replacing; the merge dialog claimed a deletion that does not happen), one
+deferred to P10 (the split dialog's confirm sits after 217 rows in tab order), one left with P6 (a
+turn whose provider never generates stays open with no terminal delta).
+
 ## 2026-11-06: P8 insights + connections engine and agent surface (backend) (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P8.md`. Build record, gate output and live proof: `05` (2026-11-06 P8

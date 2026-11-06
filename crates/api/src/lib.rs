@@ -805,6 +805,9 @@ mod connection_tests {
             thread_id: None,
             session_id: None,
             top_k: 4,
+            window_override: None,
+            entity_override: None,
+            thread_scope: traits::AskThreadScope::Inherit,
             opts: traits::AnswerOpts {
                 thinking: false,
                 max_tokens: 256,

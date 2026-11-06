@@ -26,6 +26,21 @@ export const router = createBrowserRouter([
         errorElement: <RouteError />,
       },
       {
+        path: "ask",
+        lazy: () => import("../routes/Ask"),
+        errorElement: <RouteError />,
+      },
+      {
+        path: "work",
+        lazy: () => import("../routes/Work"),
+        errorElement: <RouteError />,
+      },
+      {
+        path: "work/:id",
+        lazy: () => import("../routes/Thread"),
+        errorElement: <RouteError />,
+      },
+      {
         path: "recall",
         lazy: () => import("../routes/Recall"),
         errorElement: <RouteError />,

@@ -1,5 +1,694 @@
 # 05 — Build Review
 
+## 2026-11-06: P9 intelligence UI — build, ordered gate and the acceptance walk (branch `feat/0.4.5-p9-intelligence-ui`, from `main` `eb556d1`; **PR [#165](https://github.com/nicolasestrem/screensearch/pull/165) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
+
+Phase: `docs/kickoffs/P9.md`. Contradictions and rulings: `06` #106–#116. Decisions, grants and
+deferrals: `07` (2026-11-06 P9 section, D1–D12). Interface contract the slices coded against:
+`local://p9-contract.md` (session-local notes, not part of the tree).
+
+Base condition: P5 (#157), P6 (#160), P7 (#161), #163 and **P8 (#164, merged as `eb556d1`)** are on
+`main`; no `v0.4.3`/`v0.4.4` tag exists, so the wave rule is what let P9 start. Schema moved
+**v14 → v15** (the D2 baseline edit in `07` D9: `ask_turns.citations`, `ask_turns.scope_thread_id`).
+
+### What landed
+
+|Slice|Files|What it does|
+|---|---|---|
+|wire|`crates/traits/src/graph_ipc.rs` (new), `ask_ipc.rs` (new), `ipc.rs` (+`ThreadSummary.active_ms`, `.confidence`; `AskTurnRequest` overrides; `+scope_thread_id`, `+citations`), `lib.rs`|13 graph/Ask read-and-write wire types, 7 ask-conversation types, `OverrideKind`; one additive default-bodied `Store::finish_ask_turn` signature change (clean cutover of its one caller)|
+|store|`crates/store/src/graph.rs`, `insights.rs`, `schema.rs`, `lib.rs`|`THREAD_SUMMARY_SELECT` shared const; `graph_progress`, `threads_for_entity`, `connected_threads`, `thread_merge_target`, `insights_for_evidence`, `insight_window_status`, `entities_by_ids`, `list_ask_threads`, `set_ask_thread_title`; schema v15|
+|kernel|`crates/kernel/src/ask.rs`, `tests`|override fields take effect; persisted citations equal the emitted `Citations` delta|
+|glue|`src-tauri/src/graph.rs` (new), `lib.rs` (one registration hunk), regenerated `ui/src/bindings`|13 commands incl. `ask_turn`; `get_insights` intentionally left in place (`07` D7)|
+|ui data|`ui/src/lib/ipc/{commands,queryKeys,queries,mutations,useAskConversation,useLiveEvents}.ts`|queries for the four screens, five mutations behind one override path, the conversation hook, job-completion invalidation for graph/insight kinds|
+|ui screens|`ui/src/routes/Work.tsx` (544), `Thread.tsx` (687), `Insights.tsx` (469, rewritten), `Ask.tsx` (1294); `ui/src/components/intelligence/{ConnectionsPanel,EntityChips,InsightCard,ScopeChips,evidenceLink,format,threadOverrides,index}`; `app/router.tsx`, `app/nav.ts`, `components/icons.tsx`|the four screens, five composed components, the two rail entries and their glyphs|
+|tests|`ui/test/intelligence.test.mjs`|evidence destinations, override payloads, formatting rules (part of the 142)|
+|docs|`specs/UI_REFERENCE.md §5` (Composed components), `06`, `07`, `08`, `CHANGELOG.md`|the inventory row, the rulings and the change records|
+
+### Verification (raw, in kickoff order)
+
+Each block below is that leg's captured output on the final tree, with its exit status where the
+command prints nothing on success. `harness-data/p9-acceptance/gate.log` is **not** the full record —
+it holds only the `npm ci` leg, because the same host quirk that forced private-binary invocation
+(`fd 3 to external on Windows` on every Windows `.exe`/`.cmd`) also broke redirecting the later legs
+into one file. The transcript blocks are the record; the log file is a partial copy.
+
+The kickoff orders the UI first because the Rust build embeds `ui/dist`. Shell notes for this host:
+`npm`/`npx` POSIX shims fail here, `npm run <script>` only echoes the script name, and a stray open
+file descriptor makes every Windows external fail with `fd 3 to external on Windows` — so the
+binaries are invoked directly and the descriptor is closed first.
+
+```
+$ npm.cmd ci
+added 347 packages in 4s
+npm warn install-scripts 1 package had install scripts blocked because they are not covered by allowScripts:
+npm warn install-scripts   esbuild@0.25.12 (postinstall: node install.js)
+```
+
+```
+$ node node_modules/eslint/bin/eslint.js .
+eslint exit=0
+```
+
+```
+$ node node_modules/typescript/bin/tsc --noEmit
+tsc exit=0
+$ node node_modules/vite/bin/vite.js build
+dist/assets/query-CZ0gEZfc.js                        35.77 kB │ gzip: 10.58 kB
+dist/assets/Recall-B6Gd9bgo.js                       36.49 kB │ gzip: 11.77 kB
+dist/assets/main-ChFmf-rL.js                         41.23 kB │ gzip: 12.55 kB
+dist/assets/router-BlutWn1T.js                       90.35 kB │ gzip: 30.67 kB
+dist/assets/index-BZi6S_xo.js                        99.79 kB │ gzip: 28.30 kB
+dist/assets/react-vendor-LgzazqmD.js                143.35 kB │ gzip: 45.97 kB
+dist/assets/CitationTile-Dttm3Yto.js                157.84 kB │ gzip: 47.99 kB
+✓ built in 2.09s
+vite exit=0
+```
+
+```
+$ node scripts/stage-mcp.mjs
+[stage-mcp] building screensearch-mcp (release)...
+    Finished `release` profile [optimized] target(s) in 2.80s
+[stage-mcp] up to date: C:\Users\nicol\Documents\GitHub\screensearch\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
+stage-mcp exit=0
+$ cargo fmt --all -- --check
+fmt exit=0
+```
+
+```
+$ cargo clippy --workspace --all-targets -- -D warnings
+warning: failed to parse serde attribute
+  = note: ts-rs failed to parse this attribute. It will be ignored.
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.55s
+```
+
+The `ts-rs failed to parse serde attribute` notes are the pre-existing ts-rs/serde notes on
+`#[serde(skip_serializing_if …)]`, unchanged by this phase and not clippy diagnostics.
+
+```
+$ cargo build --workspace
+   Compiling harness v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\harness)
+   Compiling screensearch v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.39s
+```
+
+```
+$ cargo test --workspace
+binaries: 86 passed: 1612 failed: 0 ignored: 16
+```
+
+```
+$ git diff --exit-code -- ui/src/bindings
+bindings diff exit=0
+```
+
+```
+$ node --experimental-strip-types --test test/*.test.mjs
+ℹ tests 142
+ℹ pass 142
+ℹ fail 0
+```
+
+### Acceptance: the state matrix (4 screens × 5 states)
+
+Every cell was produced in the running Tauri app (`tauri dev` with
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`, driven over CDP against the
+real WebView). `loading`/`error` are forced through the repo's own dev switch
+(`?__devState=…&__devStateKey=<query-key-head>`, `ui/src/lib/dev/devState.ts`); `empty`, `partial`
+and `populated` are real data, never mocked.
+
+| Screen | loading | error | empty | partial | populated |
+|---|---|---|---|---|---|
+| Work `/work` | `work-loading.png` — "Loading threads" | `work-error.png` — "Could not load your threads" + Try again | `work-empty-filter.png` — "No threads touched this entity" + "Clear the filter" (a filter that matches nothing; the list has no unreachable empty state of its own) | `work-partial-clustering.png` — "217 of 218 sessions clustered" | `work-populated-pine-light.png` — one thread, 217 sessions, 3 d 23 h |
+| Thread `/work/:id` | `thread-loading.png` — "Loading this thread" | `thread-error.png` — "Could not load this thread · The work graph read failed. Retrying keeps this address." | `thread-empty.png` (`/work/999999`) — "That thread no longer exists" | `thread-partial.png` — "Still clustering — some sessions may not appear yet." | `thread-populated.png`, `thread-full-*.png` — timeline, 10 entity chips, open loop with evidence, one connected thread |
+| Insights `/insights` | `insights-loading.png` — "Loading insights…" | `insights-error.png` — "Couldn't load insights" + Try again | `insights-empty-window.png` (`from=2020-01-01&to=2020-01-08`) — "No insights for this window" | `insights-partial.png` — "Still computing insights for this window — 1 pass left" | `insights-populated.png` — 15 cards: thread activity 1, open loops 0, recurrence 10, semantic neighbours 3, resumption 1 |
+| Ask `/ask` | `ask-loading.png` — "Loading conversations" | `ask-error.png` — "Couldn't load conversations" + Try again | `ask-empty.png` — "No conversations yet" + the preset questions | `ask-partial.png` — "3 turns · 2 turns have no answer yet — retry them below." with one answered and two failed turns | `ask-populated.png` — an answer with 5 session and 8 moment citations |
+
+A note on how the two forced Thread cells were produced, because a first attempt was wrong: the
+thread page's query key is `["work","thread",id]` (`ui/src/lib/ipc/queryKeys.ts`), so the dev switch's
+key head is **`work`**, not `thread`. Driving it with `__devStateKey=thread` rendered the populated page
+and the two screenshots from that attempt were replaced by re-captures with the correct key, whose own
+text reads "Loading this thread" / "Could not load this thread · The work graph read failed. Retrying
+keeps this address." (`thread-loading.png`, `thread-error.png`; both 1280×800 and distinct from
+`thread-populated.png`).
+
+Two further thread states are reachable and captured: `thread-merged-away.png` (a merged-away source
+explains the merge and links the survivor) and the empty-sub-section copy inside a populated thread
+("No connected threads yet. They appear when threads share an entity.").
+
+How the two forcing steps were made honest:
+- the Insights `partial` state needs a queued generation pass, and the real pass finishes in
+  milliseconds, so one `insight_generate` row was inserted into the acceptance DB for the length of
+  one screenshot and deleted afterwards (the app claimed and completed it otherwise);
+- the Thread `partial` state needs a running graph, so `graph_cluster` rows were held pending for the
+  duration of the screenshot and then removed. Neither touched application code, schema or seeds.
+
+### Acceptance: keyboard paths (all eleven, walked with the keyboard only)
+
+The rail is a roving-tabindex list (`ui/src/components/shell/NavRail.tsx:7`, one Tab stop, Arrow
+Up/Down, Enter), so `Tab → ArrowDown ×2 → Enter` opens Work from the Deck. Nothing below used a mouse.
+
+| # | Path | What the walk did | Observed |
+|---|---|---|---|
+| 1 | open Work | Tab to the rail (focus `Deck`), ArrowDown → `Ask`, ArrowDown → `Work`, Enter | `focus thread row: A /work` on the URL `/work` |
+| 2 | sort the list | Tab to the sort group (focus `BUTTON role=radio "Last touched" aria-checked=true`), ArrowRight | focus `Time spent`, `aria-checked=true`, URL `/work?sort=time` |
+| 3 | open a thread | Tab to the row link, Enter | URL `/work/1` |
+| 4 | rename inline | Tab to `Rename`, Enter, type, Enter | field focused (`New title for …`), toast "Thread renamed", field reports `selectionStart=0 selectionEnd=25` (after the `06` #113 fix) |
+| 5 | merge to a named survivor | Tab to `Merge…`, Enter, Tab to the `<select>`, ArrowDown picks the survivor, Shift+Tab to `Merge threads`, Enter | toast "Threads merged"; the survivor named in the dialog kept the sessions (`threads` row `(1,'Payroll import',217)`), the emptied source went to `session_count = 0` |
+| 6 | split a chosen set | Tab to `Split…`, Enter, Tab → first session (`role=checkbox`), Space, Shift+Tab ×2 → `Split 1 session`, Enter | confirm disabled before a pick, label `Split 1 session` after, toast "Sessions moved into a new thread" |
+| 7 | switch Insights window | Tab to the window group (`role=radio "30 days"`), ArrowLeft | `7 days` `aria-checked=true`, URL `/insights?window=7d` |
+| 8 | open a card's evidence | Tab to an evidence link in a card, Enter | focus `A "Thread 3" /work/3` → URL `/work/3` |
+| 9 | submit an ask turn | Tab to the composer (17 stops from the body), type, Enter | "Reading…" then a new conversation titled by the question |
+| 10 | edit a scope chip | Tab to `Edit scope`, Enter, Tab to the time-window `<select>` (`inherit,all,range`), ArrowDown | select `inherit → all`, chip reads "All history", and the next turn persisted `window_start/window_end = NULL` |
+| 11 | retry a failed turn | Tab to `Retry` (15 stops), Enter | a new turn in the same conversation (ordinal 3) with an answer, and the thread then reported "2 turns have no answer yet" |
+
+### Acceptance: every rendered claim links to evidence
+
+Ground rule used here: a *claim* is a value the screen asserts about the user's history; its
+*evidence link* is a rendered link that opens the record behind it. Counts are of unique hrefs on
+the screen, and each one was opened in the app to see whether it resolves (a route that renders
+"This moment is gone" / "This session is gone" / "That thread no longer exists" — calibrated first
+on `/timeline/999999`, `/timeline/session/999999`, `/work/999999` — or an error boundary counts as
+unresolved).
+
+| Screen | Claims rendered | Evidence links (unique) | Resolved | What the links are |
+|---|---|---|---|---|
+| Work | 1 row × 4 facts (title, last touched, sessions, time spent) + 1 filter chip | 2 | 2 | the row → `/work/:id`; the empty-state action |
+| Thread | 4 header facts + 2 session rows × 4 + 10 entity chips + 1 open loop × 5 fields + 1 connection | 15 | 15 | sessions → `/timeline/session/:id`, entities → `/work?entity=:id`, the thread back-link, the survivor of a merge |
+| Insights | 15 cards (1/0/10/3/1 per kind) each with its typed payload fields | 63 | 63 | thread → `/work/:id`, entity → `/work?entity=:id`, sessions → `/timeline/session/:id`, moments → `/timeline/:id` |
+| Ask (`#3`) | 1 answered turn: 361-character answer naming 8 frames, 5 session chips, 8 moment chips | 26 | 26 | sessions and moments of the persisted `citations` pair |
+| **Total** | | **106** | **106** | |
+
+Two destination classes are honest non-links by design (`07` D5): a `mark` whose payload carries no
+frame renders `aria-disabled` with the copy "mark (no page yet)", and `report` evidence lands on
+`/settings/data`, the only surface that lists saved runs.
+
+### Acceptance: themes
+
+All four themes `UI_REFERENCE §1` ships, applied from Settings · General → Appearance (the real
+control, not a URL hack) and measured off the captured PNGs:
+
+| Theme | mean luminance (0–255) across the four screens |
+|---|---|
+| `pine-light` | 240.4 – 242.5 |
+| `pine-dark` | 25.0 – 28.3 |
+| `ink-light` | 240.4 – 241.8 |
+| `ink-dark` | 25.7 – 30.0 |
+
+Files: `work-<theme>.png`, `thread-full-<theme>.png`, `insights-<theme>.png`, `ask-<theme>.png`.
+Light and dark are separated by ~215 luminance units on every screen, so the claim is measured, not
+asserted.
+
+### Acceptance: overrides round-trip (written, then applied by the clusterer)
+
+| Step | Override row written | Effect observed in the app and the DB |
+|---|---|---|
+| rename | `(1/2/5, rename, thread 1, {"title"…})` | applied after the next cluster pass: the Work list and the thread header read the new title; `threads.title` followed |
+| split | `(3, split, thread 1, {"thread_id":1,"session_ids":[1,2]})` | a new thread appears (2 sessions) with its own entities; the survivor drops to 215 |
+| merge | `(4, merge, thread 2 → 1, {"session_ids":[1,2]})` | survivor back to 217 sessions, source retained at `session_count = 0` and filtered out of Work; `/work/2` explains the merge and links the survivor |
+
+The merge's survivor is the one the dialog named in each direction tested (2 → 1 and 1 → 3), and the
+emptied source never appears in the list (`src-tauri/src/graph.rs:136` drops `session_count = 0`
+before truncation).
+
+**What this needed, and why it is recorded as an environment step, not a feature:** the fixture DB's
+`sessions.backfill_done_until` marker arrived incomplete (`cursor_ms 1789626562000 < target_ms
+1793956595833`), and the graph lane stays gated until that pass completes
+(`crates/kernel/src/graph_scheduler.rs:205-211`). With the marker incomplete every override was
+written successfully and applied never — three `graph_cluster` rows sat `pending` across an app
+restart. Advancing the marker to its own `target_ms` (a dev-side edit of the acceptance DB, no code
+change) let the real scheduler run, and each override then applied through the real clusterer. This
+is the honest shape of the P5 gate, not a P9 workaround; see `07` P9 D12.
+
+### Acceptance: a follow-up turn reuses the previous window and entities
+
+| Turn | Question | Persisted window | Evidence |
+|---|---|---|---|
+| 1 | "What did I work on last week?" | `1792969200000 – 1793574000000` | planned from the question |
+| 2 | "And what about the payroll import?" | `1792969200000 – 1793574000000` (identical) | the chip reads "Inherited from the previous turn — change or clear it" |
+
+The follow-up states no time intent, and the window it persisted is byte-identical to the previous
+turn's, which is §7i.4's inheritance rule visible in both the row and the UI.
+
+### Acceptance: the ten-question spot check (P4's automatic set, asked through the UI)
+
+`crates/harness` writes `pairs.jsonl` before it contacts the API, so the set can be generated without
+a server: `cargo run -p harness --bin harness -- eval --db harness-data/fixture/screensearch.db --api
+http://127.0.0.1:1 --pairs 10 --seed 7 --out harness-data/eval-probe` wrote 10 pairs (2 per generator:
+`last_seen`, `involvement`, `sequence`, `window_recall`, `seen_again`) and then exited with "the API is
+not reachable" — the questions and their `expected_frames`/`expected_sessions`/`expected_strings` are
+P4's generator's, unmodified. **The harness supplied the questions and the known facts only; the
+harness `eval` loop was not run, so nothing here is harness-graded.** Each question was then typed
+into the app's composer and submitted (keyboard path 9), and what is tabulated is what the app's own
+kernel pipeline produced — the answer text and the `ask_turns.citations` row it persisted.
+
+The metric, stated so the table cannot read as self-contradictory: **session recall** is the number of
+the pair's expected sessions present among that turn's persisted citation **sessions** (the chips),
+and **frame recall** the same over its cited **frames** — never a search of the prose for an id. So a
+turn can name "frame 295, session 50" in its sentence while still scoring 1/1 on sessions, because the
+expected session 168 is one of the seven the turn actually read and cited. The denominator is the
+pair's expected set: a `last_seen` pair expects the single session (and the frames) where the thing was
+last open, while `window_recall` expects every session in the window.
+
+| Pair | Known fact (P4) | Session recall | Frame recall | Answer (head) |
+|---|---|---|---|---|
+| `last_seen-001` | `C:\dev\fieldnotes` last seen, session 168 | 1/1 | 1/10 | "…the last time `C:\dev\fieldnotes` was open was on frame 295, session 50…" |
+| `last_seen-002` | `C:\dev\inkwell`, session 215 | 1/1 | 3/10 | "…was open was on frame 734, session 126…" |
+| `involvement-001` | `codeberg.org/fabrikam-data/skyline-etl`, 6 sessions | 1/6 | 0/10 | "The sessions that involved … are: [frame 425/session 75] …" |
+| `involvement-002` | `github.com/contoso/orbitctl`, 4 sessions | 2/4 | 1/7 | "…are: [frame 416/session 73] [frame 872/session 150] …" |
+| `sequence-001` | what came before session 28 | 0/1 | 0/4 | "I was not working on session 28 … as it is not present in the provided context snippets." |
+| `sequence-002` | what came before session 72 | 0/1 | 0/4 | "The provided context snippets only show the actions taken within session 72…" |
+| `window_recall-001` | 2026-10-16 morning | 3/4 | 5/10 | "…the morning of 2026-10-16, you worked on: [frame 1239/session 216] …" |
+| `window_recall-002` | 2026-10-14 morning | 2/5 | 1/10 | "…there is no specific mention of work done on 2026-10-14 in the morning." |
+| `seen_again-001` | the mail-toolbar text | 1/1 | 3/3 | "…appears in the inbox of the email client, as seen in frames 1, 2, and 3 of session 1." |
+| `seen_again-002` | the "Emma Larsen" line | 0/2 | 0/2 | "I cannot find the text … in the provided context snippets." (no citations) |
+
+All ten were answered and nine carried citations. **Retrieval recall is the honest headline: 11/26
+expected sessions and 14/70 expected frames were cited.** Both `sequence` questions missed entirely
+(the retriever surfaced the anchor session's own frames, not its predecessor's) and
+`window_recall-002` refused a window it had frames for. That is a P4/P6 measurement, not a P9 UI
+verdict — P9's own claim (a turn renders its answer with the citations it actually read) holds — but
+it is recorded here because the kickoff asked for the spot check, and reporting "10/10 answered" alone
+would misrepresent what the answers contained.
+
+### Acceptance: composed components, and the no-gamification check
+
+- `ConnectionsPanel` and `EntityChips` are prop-driven and fetch nothing — their whole import list
+  is React, `react-router-dom`, `../primitives`, `cn`, `../lib/time`, the `ConnectedThread` binding
+  and `evidenceLink`; no query hook, no `invoke`. They therefore render standalone, which the running
+  app shows (`thread-full-*.png`, four themes), `ConnectionsPanel` both empty ("No connected threads
+  yet. They appear when threads share an entity.") and populated (a connected thread with the shared
+  entities listed as its evidence).
+- Keyboard operability: an `EntityChip` takes focus and Enter opens `/work?entity=7`; the
+  `ConnectionsPanel` rows are plain links in the same tab order; `ScopeChips`' editor is two native
+  `<select>`s reachable by Tab. `specs/UI_REFERENCE.md §5` lists all five under "Composed components".
+- No notification, badge, streak, score or grade appears on any of the four screens: a text scan of
+  each rendered screen finds none of those patterns, and nothing in the four routes renders a
+  timer-driven prompt. Insights are statements with evidence, never goals or ratings.
+
+### Honest reading — what this does not prove
+
+- **Retrieval quality.** The spot-check numbers above are a snapshot of the P4/P6 pipeline against a
+  synthetic fixture, not a P9 claim; the two `sequence` misses and the recall figures belong to that
+  phase's measurement.
+- **The answer-dependent states needed a model, and this machine had none at first.** With the
+  provider attached but no weights, a turn opened and never emitted (the whole story is `06` #116);
+  the `ask-turn-no-model` / `ask-turn-failed` / `ask-turn-cancelled` screenshots are that state, and
+  the populated/partial cells only became reachable after the local model finished preparing. A
+  reviewer without a model can reproduce the empty/loading/error/partial-without-answer cells and not
+  the answered ones.
+- **The fixture DB is not a real profile.** Two dev-side steps made it usable and are named above and
+  in `07` P9 D12; nothing else was synthesized.
+- **The four defects only a walk finds** are in `06` #113–#116: two fixed here, one deferred to P10
+  with its rationale, one left with P6 as an open stream issue.
+- **Not re-run here:** the harness `eval` loop itself (it needs the app's loopback API plus a model and
+  produces its own answer metrics), and the `MCP`/HTTP surfaces (P8's, unchanged). The spot check above
+  therefore has P4's questions and P4's known facts, but no harness grade beside them.
+- **The `NoAnswerModel` start error was never exercised.** A provider was attached for this walk (turns
+  were created, which that check runs before), so the `AskTurnError::NoAnswerModel` → 503 path that the
+  route maps for a machine with no provider is code-read, not observed; the failure state captured here
+  is the *stalled provider* one (`06` #116).
+- **The low-confidence caveat never rendered with real data.** Every `thread_sessions.confidence` in
+  the fixture is 0.85–0.95, so no thread falls under the `< 0.7` line (`07` P9 D13) and the muted
+  "Low confidence — few shared entities" text is unobserved in a screenshot. The aggregate behind it is
+  asserted in `crates/store/tests/insights.rs` (`:1969`, `:1982`, `:1990`, `:2002`, `:2250`); the
+  threshold and its rendering are not, and this record does not pretend otherwise.
+- **One transient render was seen once and not reproduced.** Immediately after the first conversation
+  was created, a single DOM read caught the Ask list's empty state ("No conversations yet") and the new
+  row's title in the same read. The branches are mutually exclusive in the code — the copy appears
+  exactly once (`ui/src/routes/Ask.tsx:1130-1135`) and the render is `loading / error / empty / rows`,
+  so one React commit cannot show both; the read most plausibly straddled the empty→populated flip
+  while the invalidation resolved. A follow-up turn and every later reload rendered cleanly. Recorded
+  because it was observed, not because it is a defect a reader should chase.
+
+### Dev-side actions on this machine (for the record)
+
+- `cargo run -p evalfixture -- gen --out harness-data/fixture`, whose printed summary is the
+  reproducible identity of the data every screenshot was taken over (re-run for this record into a
+  fresh directory, same arguments, same digest):
+
+  ```
+  weeks=6
+  frames=1260
+  sessions=218
+  embeddings=1260
+  digest=69dac6e6ae417c0a6bc25590948a4dde8a6e1d500f99bb177f80a6bc794b8ab9
+  db=harness-data/fixture-check/screensearch.db
+  ```
+
+  then `cargo run -p evalfixture -- graph --db harness-data/fixture/screensearch.db`, whose own
+  evidence line is the same five counts the kernel logs:
+
+  ```
+  INFO kernel::graph_cluster: graph backfill complete entities=243 entity_aliases=11 session_entities=1385 threads=1 thread_sessions=217
+  graph backfill elapsed: 0.0s
+  ```
+
+  and the DB copied to `%APPDATA%\app.screensearchv2c.desktop\screensearch.db` — the app's own dev
+  data dir, created for this walk.
+- `settings.sessions.backfill_done_until` cursor advanced to its target (see above).
+- Temporary pending `insight_generate` / `graph_cluster` rows for two screenshots, deleted after.
+- The app was launched with the CDP flag; `harness-data/` is gitignored, so no artifact is committed.
+
+### Review-fix pass on PR #165 (four findings, all reproduced before they were fixed)
+
+Codex reviewed the delivered branch and raised four findings. Each was checked against the code,
+reproduced with the fix temporarily removed, fixed, and re-run. `06` #118–#121 hold the rows; the raw
+orders are here.
+
+**1. A scoped turn cited out-of-scope frames (#118, P1).** The turn below is scoped to thread 1
+(session 5, frame 1) with thread 2 present (session 6, frame 2), no entity in the question, and no
+session winner — the state the fixture calls "no summaries and no vectors yet". With stage 3's
+pre-fix condition restored:
+
+```
+thread 'ask_thread_scope_holds_through_stage_three_and_empty_membership' panicked at crates\kernel\tests\ask.rs:2474:
+assertion `left == right` failed: the scope constrains stage 3 even when stage 2 ranked nothing
+  left: [1, 2]
+ right: [1]
+test result: FAILED. 0 passed; 1 failed; 0 ignored
+```
+
+With the fix, the same test:
+
+```
+running 1 test
+test ask_thread_scope_holds_through_stage_three_and_empty_membership ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored
+```
+
+The test also asserts the control direction — an unscoped, unranked turn still keeps the documented
+window fallback (`frames [1, 2]`), so the fix narrows scope without disabling the `§7i.1` fallback
+for questions that have no scope — and that a scope naming a thread the read cannot find cites
+nothing at all.
+
+**2 and 3. Conversation state on delete and on switch (#119, #120).** Both are React state, so each
+was walked in the running Tauri app over CDP, with the guard removed and then restored — the same
+fail-without/pass-with order as the two above. The app ran on the acceptance DB copy.
+
+*#120, composer overrides crossing conversations.* On a new conversation, set an entity override
+(`SKY-52`), then select a saved conversation:
+
+```
+# guard removed (pre-fix behaviour)
+override set: {"clearEntity":true}
+after switch: {"clearEntity":true,"url":"http://localhost:5173/ask?thread=11","selectEntity":""}
+
+# guard restored (fix)
+override set: {"clearEntity":true}
+after switch: {"clearEntity":false,"url":"http://localhost:5173/ask?thread=11"}
+```
+
+`Clear entity scope` is the override's own control, so its presence on `thread=11` is the leak and its
+absence is the fix; the `<select>` resetting to its placeholder in both runs is why the assertion is
+on the rendered chip, not the input.
+
+*#119, deleting the live conversation.* All conversations were deleted first so the live one could be
+the only one, then a question was asked (creating conversation 1, `?thread=1`) and that conversation
+deleted. Time in seconds after the confirming click:
+
+```
+# guard removed (pre-fix behaviour)
+opened confirmed
+0s {"url":"http://localhost:5173/ask?thread=1","empty":true}
+...
+5s {"url":"http://localhost:5173/ask?thread=1","empty":true}
+
+# and the next question, in that resurrected address:
+{"url":"http://localhost:5173/ask?thread=1",
+ "tail":"… That conversation no longer exists | It was deleted, so the question was not saved."}
+
+# guard restored (fix)
+opened confirmed
+0s {"url":"http://localhost:5173/ask","empty":true}
+...
+5s {"url":"http://localhost:5173/ask","empty":true}
+
+# and the next question starts a new conversation instead:
+{"url":"http://localhost:5173/ask?thread=1","deletedMsg":false,
+ "head":"… New conversation | Selected | What did I work on last Tuesday? | 1 turn · just now"}
+```
+
+So the pre-fix address resurrection is not cosmetic: the question typed next is discarded with "the
+question was not saved". The 13 saved conversations and 15 turns the walk used were snapshotted
+before this check and restored from the snapshot afterwards (`harness-data/ask-tables-backup.json`);
+the one conversation created for the reproduction was deleted with it, so the acceptance DB is the
+pre-reproduction state minus that test row.
+
+**4. The range end added 24 h (#121, P2).** `ui/test/localDateMidnight.test.mjs` pins
+`America/New_York` before the first `Date` is constructed, so the 23 h and 25 h days are real on any
+machine. With the old `+ DAY_MS` behaviour in the helper:
+
+```
+✔ the zone pin is in effect, so the DST days below are 23h and 25h
+✖ the exclusive end of a range is the next local midnight across the fall-back day
+✖ the exclusive end is the next local midnight across the spring-forward day
+✔ offsets roll the calendar month and year, not a millisecond count
+✔ empty and impossible dates are rejected instead of normalised
+ℹ tests 5
+ℹ pass 3
+ℹ fail 2
+```
+
+With the calendar-day helper:
+
+```
+ℹ tests 5
+ℹ pass 5
+ℹ fail 0
+```
+
+### Review-fix pass 2 on PR #165 (two more findings, one raced by construction)
+
+The re-review after the first fix round raised two further findings; both were confirmed in the code
+and fixed, and the second was proved in the running app with a probe entity. `06` #122–#123.
+
+**5. A superseded `ask_turn` response wrote into the newer request's state (#122, P2).** Verified by
+reading the two paths side by side: deltas are gated (`event.request_id === activeRequest.current`,
+`useAskConversation.ts:167`) but the command's `started`/`fail` dispatches were not, and `ask_turn`
+assembles context before resolving. Both outcomes now use the same guard. This one is
+**code-verified, not raced live**: forcing the interleaving needs a planner delay the app does not
+expose, so no raw output is claimed for it beyond the diff and the suite.
+
+**6. Entity extraction never reached a mounted catalogue (#123, P2).** Verified live with probe rows
+inserted straight into the acceptance DB (ids 9005–9007, deleted afterwards), the Ask entity picker
+mounted and open throughout, and a page-side `job_completed` listener imported from the Vite bundle
+(`/node_modules/.vite/deps/@tauri-apps_api_event.js`) so the events themselves are evidence rather
+than an assumption about timing.
+
+The first version of this record attributed the refresh to a `graph_cluster` row inserted by hand. That
+was wrong, and the code says so: `completion_info` (`crates/kernel/src/worker_pool.rs:453-466`) emits
+`job_completed` only for a job that reports `changed_data` **and** carries a `frame_id`, while
+`graph_cluster` reports `changed_data: false` (`crates/kernel/src/graph_cluster.rs:128`) and is
+frame-less. The kinds in `GRAPH_JOB_KINDS` that can actually reach this handler are therefore
+`graph_extract` (per frame, `changed_data: true` when it inserts anything,
+`crates/kernel/src/graph_extract.rs:33`) — the entity creator — while cluster, normalize and backfill
+never emit at all. The probe run below was redone with that as the trigger, and the wrong attribution
+is corrected in `06` #123 too.
+
+```
+# control: same page, same mounted picker, a frame-bound `embed_text` job (not a graph kind)
+t0:     events ["embed_text#1"]            probes []            # probe 9005 in the DB
+20s:    events ["embed_text#1"]            probes []            # no refresh, as designed
+
+# fix present: force a changed `graph_extract` (session 1's links deleted so extraction re-inserts)
+5s:     events ["embed_text#1","graph_extract#1"]   probes ["AAE p9 review probe 5"]
+30s:    events ["embed_text#1","graph_extract#1"]   probes ["AAE p9 review probe 5"]
+
+# invalidation removed from the source: probe 9007 in the DB, session 2's links deleted, extraction queued
+t0:     events ["graph_extract#4"]         probes ["AAF p9 review probe 6","AAE p9 review probe 5"]
+35s:    events ["graph_extract#4"]         probes ["AAF p9 review probe 6","AAE p9 review probe 5"]
+```
+
+The two graph runs differ only in whether the line is present: the `graph_extract` event is recorded in
+both, and the catalogue picks up the probe in one and never does in the other. The `embed_text` control
+is what makes the attribution non-circular — the same page refreshed nothing for a non-graph completion
+seconds earlier. A remount after the neutered run showed the probe, so the data and the query were
+never the problem.
+
+### Review-fix pass 8 on PR #165 (two ways a question could be destroyed)
+
+`06` #133–#134.
+
+**16. No answer model lost the question (#133, P2).** `submitQuestion` clears the composer as soon as it
+dispatches, and `ask_turn` rejects with `no_answer_model` before persisting anything; that error block
+offers only Settings, whose link unmounts the route. `lastRequest.query` was then the only copy and it
+went with the mount. The two start failures with no retry (`no_answer_model`, `thread_not_found`) now
+restore the question into an empty composer; `failed` keeps its existing Retry.
+
+**17. A saved-turn Retry cancelled a streaming answer (#134, P2).** Confirmed by following the call:
+`retryTurn` → `ask`, whose first act is `await cmd.cancelAsk(inFlight)`. The composer's own path guards
+on `streaming`; this one did not, and its button stayed enabled. Both now agree — the callback returns
+while streaming and the button is disabled — which is #124's rule applied to the second submission path
+instead of the first.
+
+Both code-verified and recorded as such: one needs an absent answer model, the other a live stream, and
+each fix is a short guard.
+
+### Review-fix pass 7 on PR #165 (a completion the route could not hear, and a chip that lied)
+
+`06` #131–#132.
+
+**14. A turn that finished after leaving Ask kept rendering as unanswered (#131, P2).** Confirmed from
+the hook: the `answer_delta` subscription lives for the hook's lifetime and scopes deltas to
+`activeRequest.current`; leaving the route unmounts it, and the remounted hook starts with a null ref,
+so the remaining deltas — `done` among them — are dropped by `event.request_id === activeRequest.current`.
+The terminal effect that invalidates `askTurns`/`askThreads` is that mount's, so it never runs for a
+request it knows nothing about, and the turn list keeps the NULL-answer row it fetched while the answer
+was still generating. No polling, no focus refetch.
+
+Fixed in the global manager rather than by cancelling on unmount: `useLiveEvents` (mounted once in
+AppShell, independent of the route) invalidates `askTurnsPrefix` + `askThreads` on a `done` delta. Live
+text stays request-scoped in `useAsk` — that is why the manager excluded `answer_delta` before; only
+completion reconciliation moved. Code-verified: the classification is a type check on a generated
+payload, and the invalidation needs a React Query client plus a live stream.
+
+**15. A scope chip named a period that was not searched (#132, P2).** The label test was one-sided
+(`range.end >= now - HOUR`) while the planner's rolling windows end at the *next* local midnight
+(`ask_plan.rs::last_days_window`), so `this week` and future-ending custom ranges read "Last 7 days" on a
+chip whose doc comment claims otherwise. Now two-sided, `end <= now + DAY + HOUR`.
+
+Fail-without (the one-sided predicate restored byte-for-byte from a backup copy, new test file):
+
+```
+✔ a rolling window ending at tomorrow's local midnight reads as a rolling window
+✔ a window ending now still reads as a rolling window
+✖ this week's Monday-to-next-Monday window is dated, not 'Last 7 days'
+    AssertionError [ERR_ASSERTION]: got Last 7 days
+✖ a custom range ending in the future is dated, however whole its days
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+ℹ pass 4  fail 2
+```
+
+Restored (`grep -c NEUTERED` → 0) and green: `ℹ tests 6  pass 6  fail 0`; full UI suite
+`ℹ tests 153  pass 153  fail 0`. The label moved to `ui/src/lib/scopeWindow.ts` because exporting it
+from the component module tripped `react-refresh/only-export-components` (a warning, not an error — but
+a new warning is still a regression).
+
+### Review-fix pass 6 on PR #165 (two Ask state bugs, both about what a turn belongs to)
+
+`06` #129–#130.
+
+**12. A retry ran the older turn under the conversation's latest scope (#129, P2).** Confirmed at the
+kernel: `AskThreadScope::Inherit` resolves to `previous.as_ref().and_then(|turn| turn.scope_thread_id)`
+(`crates/kernel/src/ask.rs:195`) — the **previous** turn, not the one being retried, and the same
+"inherit" reading applies to the window and entity overrides. An unanswered turn stays in the thread
+offering a retry, so a later question could have moved all three scopes first. `retryTurn` now re-asks
+the turn from its own row:
+
+```
+window:                turn.window === null ? {mode:"all"} : {mode:"range", start, end}
+entities:              turn.resolved_entities          // [] clears, per the kernel's Some(vec![])
+scope_thread_id:       turn.scope_thread_id
+clear_thread_scope:    turn.scope_thread_id === null   // graph.rs:472 → AskThreadScope::None
+```
+
+Code-verified, not walked: staging the case needs a stream that dies after the turn row is written, and
+a fake failure would only test the fake.
+
+**13. A failed conversation's error followed the selection (#130, P2).** Confirmed against the render:
+`error={conversation.state.error}` and a `onRetryStart` that submits `lastRequest` were both ungated,
+while the live answer has `liveMatchesSelection` precisely because the hook state outlives a selection
+change. The error is now gated on `lastRequest.thread_id` (or, for a request that started a new
+conversation, the id adoption gave it), which hides the message *and* the Retry button — the button is
+rendered from the same non-null error. Code-verified for the same reason as #129: it needs a genuinely
+failing turn to observe.
+
+### Review-fix pass 5 on PR #165 (the open-loop join and the scope seed)
+
+`06` #127–#128.
+
+**10. An unresolved mark inside a thread's own sessions was invisible on that thread (#127, P2).**
+Confirmed by reading both sides of the join: `get_thread_page` asks for loops by `thread` and
+member-`session` evidence, while `derive_open_loops` gave an unresolved mark only `(mark, frame)`
+evidence. The mark input now carries the frame's `session_id` (a `LEFT JOIN`, so an unassigned or
+retention-pruned frame still yields a loop) and the derivation maps that session to its thread:
+
+```
+cargo test -p kernel --lib insights   test insights::tests::insights_generator_open_loop_marks_and_abandoned_threads ... ok
+cargo test -p store --test insights   test insights_open_marks_input_rows ... ok
+```
+
+The first asserts the four dense evidence ordinals — `(mark 4, frame 40, session 10, thread 1)` — for a
+mark whose frame belongs to a member session, and that a mark whose session is outside the window's
+threads keeps exactly the two rows it can honestly claim. The second asserts the store reports the
+owning session for an assigned frame and `None` for an unassigned one. The payload was left alone on
+purpose: `OpenLoopPayload.thread_id` is the abandoned-thread field and `InsightCard` renders it as a
+subject ("Thread 42") and as a fact row, so filling it for marks would have changed what a loop is
+called rather than where it is found.
+
+**11. A `?scopeThread=` seed survived its question (#128, P2).** Confirmed by tracing the precedence
+chain at `Ask.tsx:785` — `threadScopeCleared ? null : urlScopeThreadId ?? lastTurn.scope_thread_id` —
+against the adoption effect, which wrote `?thread=<new id>` and left the seed in place: `scopeKey`
+changed, `resetScopeOverrides()` cleared `threadScopeCleared`, and the seed then outranked the
+conversation's own (unscoped) turn. The effect now deletes the seed on adoption, and the reset block
+treats adoption as "not a switch" so the chip state and the composer overrides set while the answer
+streamed survive it. Code-verified, not walked live: the app budget for this pass went on the two
+`list_threads` measurements, and observing the second request's `scope_thread_id` needs a page-side
+call log.
+
+### Review-fix pass 4 on PR #165 (one finding: the emitter, not the handler)
+
+`06` #126.
+
+**9. A frame-less pass never announced its completion (#126, P2).** `completion_info` admitted an
+event only for `changed_data && frame_id`, and every whole-graph kind is frame-less and reports
+`changed_data: false` — so `graph_cluster` (the regroup an override queues), `graph_normalize`,
+`graph_backfill` and `insight_generate` completed silently, and of the five kinds the UI lists only
+`graph_extract` ever reached its invalidation block. The UI side needed no new machinery: it already
+listed all five kinds. The rule is now "changed data **or** no frame", carried by
+`JobCompleted.frame_id: Option<i64>`, so frame-bound no-ops stay silent and enrichment traffic is
+unchanged.
+
+```
+cargo test -p kernel --lib worker_pool
+  test worker_pool::tests::completion_info_reports_changed_frame_jobs_and_every_frameless_pass ... ok
+  test worker_pool::tests::frameless_completions_reach_the_event_channel ... ok
+  test result: ok. 6 passed; 0 failed
+```
+
+The second test is the emitter-level proof rather than a rule-shaped one: it drives `emit_progress`
+through a real broadcast receiver and asserts that a `job_completed` with `kind: GraphCluster` and
+`frame_id: None` follows the stats event. What it does **not** observe is the browser side — the
+four-line `frame_id !== null` guard sits on the same handler the second round exercised live, and no
+app rebuild was spent re-observing it.
+
+### Review-fix pass 3 on PR #165 (two findings; one reproduced by invoking the command directly)
+
+`06` #124–#125.
+
+**7. Enter in the thread composer restarted the turn (#124, P2).** `ThreadAsk.submit` checked only for
+empty text, so Enter during a streaming answer cancelled the turn and started a second conversation
+(`thread_id: null` is by design there — the panel creates one conversation per question). The Ask
+route already guarded this; the thread panel now does too (`phase === "streaming"`). Walked live with
+the guard in place, submitting twice from the textarea's Enter path while the first turn streamed:
+
+```
+ask_threads 13 → 14   (one conversation, one turn: "What is still open in this thread?")
+```
+
+The second submission was ignored and the first answer completed with its citations. The pre-fix path
+was **not** re-run live: it needs another app rebuild, and its mechanism is the removed condition plus
+`ask`'s documented cancel-and-restart, so this record claims the positive observation and says so.
+
+**8. The Work page came back short when a merge source was emptied (#125, P2).** The unfiltered
+`list_threads` read applied the request's `limit` in SQL (`threads_in_range`) and filtered emptied rows
+afterwards, so a retained audit row consumed a page slot with no pagination to recover it. Measured by
+invoking the command itself from the page (`window.__TAURI_INTERNALS__.invoke('list_threads', …)`),
+against the pre-fix binary and again after the rebuild, on a graph of four threads where the two
+newest are thread 4 (216 sessions) and thread 1 (an emptied merge source):
+
+```
+# pre-fix binary
+limit2:  ["4:216"]              limit10: ["4:216","3:2"]
+
+# after the fix: the read over-reads to LIST_LIMIT_MAX, drops empty rows, then truncates
+limit2:  ["4:216","3:2"]        limit3:  ["4:216","3:2"]
+entityLimit2 (entity 69): ["4:216"]      # the entity arm still truncates
+```
+
+So the page now returns two live threads for `limit: 2` instead of one, and only two exist at
+`limit: 3` — the missing slot was the emptied row. The entity-scoped read is unchanged, which is what
+makes the fix a narrowing change rather than a new ordering rule.
+
 ## 2026-11-06: P8 insights + connections engine and agent surface — build, verification and live proof (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P8.md`. Contradictions and rulings: `06` #93–#101. Decisions, grants and

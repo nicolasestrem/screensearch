@@ -1,7 +1,7 @@
-//! `gen` - the seeded synthetic v14 history.
+//! `gen` - the seeded synthetic v15 history.
 //!
 //! Builds `<out>/screensearch.db` through the production Store writers only (no hand-written
-//! SQL, no extra tables): [`SqliteStore::open_path`] creates the v14 baseline, every frame is
+//! SQL, no extra tables): [`SqliteStore::open_path`] creates the baseline, every frame is
 //! written with `insert_frame` and its screen text with `insert_ocr_filtered` (so
 //! `content_text` is the real attention-filter output), sessions with `insert_session` and
 //! `assign_frames_session`, the API bearer token with `set_setting`, and optional text

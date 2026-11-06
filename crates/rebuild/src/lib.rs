@@ -1,8 +1,8 @@
-//! # `ssv2c-rebuild` - dev-only v13 → v14 database rebuild (0.4.5 D3)
+//! # `ssv2c-rebuild` - dev-only v13 → v15 database rebuild (0.4.5 D3, D2)
 //!
 //! The app ships **no migration chain** (0.4.5 D2): a database whose
-//! `schema_version` is not 14 is refused, and this tool is the documented way to
-//! carry a `v13` history into a fresh v14 file (`specs/03 §4`).
+//! `schema_version` is not `store::LATEST_SCHEMA_VERSION` is refused, and this tool is the
+//! documented way to carry a `v13` history into a fresh baseline file (`specs/03 §4`).
 //!
 //! Guarantees this crate implements:
 //!
@@ -10,7 +10,7 @@
 //!   mutating pragma, no `VACUUM`, no WAL checkpoint, no rename. Its bytes and
 //!   modification time are unchanged by a run (asserted by the crate's test fence).
 //! - The **destination must not exist**; it is created from
-//!   [`store::create_baseline`], the single source of truth for the v14 DDL.
+//!   [`store::create_baseline`], the single source of truth for the baseline DDL.
 //! - Rows are copied **generically**: for every carry table the source and
 //!   destination column names are intersected via `PRAGMA table_info`, and only
 //!   that intersection is selected and inserted. There is no v13 DDL and no
@@ -22,7 +22,7 @@
 //!   `UI` + `file-only` keys, the `memory.*` keys owned by `03 §8c/§8d`, the API
 //!   read credential, and the **reserved** history identity and allocator
 //!   high-water, which are copied verbatim and never recomputed.
-//! - The result is verified, not assumed: `schema_version = 14`,
+//! - The result is verified, not assumed: `schema_version = store::LATEST_SCHEMA_VERSION`,
 //!   `PRAGMA integrity_check` is `ok`, and `PRAGMA foreign_key_check` is empty.
 //!
 //! The tool never renames the source. `*.v13.bak` is a maintainer step after the
@@ -106,7 +106,7 @@ pub fn register_vec_extension() {
 pub struct RebuildOptions {
     /// The v13 database to read. Opened read-only.
     pub source: PathBuf,
-    /// The v14 database to create. Must not exist.
+    /// The baseline database to create. Must not exist.
     pub dest: PathBuf,
     /// How many random frame ids to print from the rebuilt file (`--sample-frames`).
     pub sample_frames: Option<usize>,
@@ -128,7 +128,7 @@ pub struct TableCopy {
 pub struct RebuildReport {
     /// `schema_version` found in the source (13).
     pub source_version: i32,
-    /// `schema_version` written to the destination (14).
+    /// `schema_version` written to the destination (`store::LATEST_SCHEMA_VERSION`).
     pub dest_version: i32,
     /// Ordinary-table row counts of the source, shadows excluded.
     pub source_counts: Vec<(String, i64)>,
@@ -156,7 +156,7 @@ pub struct RebuildReport {
     pub warnings: Vec<String>,
 }
 
-/// Rebinds `source` into a fresh v14 database at `dest`.
+/// Rebinds `source` into a fresh baseline database at `dest`.
 ///
 /// The destination is removed again (best effort) if any step fails, so a failed run
 /// does not intentionally leave a half-written file behind.
@@ -214,7 +214,7 @@ fn create_and_copy(
 ) -> Result<RebuildReport> {
     let mut dest = Connection::open(&options.dest)
         .with_context(|| format!("create destination {}", options.dest.display()))?;
-    store::create_baseline(&dest).context("create the v14 baseline at the destination")?;
+    store::create_baseline(&dest).context("create the baseline at the destination")?;
     // Rows are copied parent-first anyway; disabling enforcement lets an unusual
     // source order succeed and the explicit `foreign_key_check` below is the real
     // verification, not the insert-time behaviour.
@@ -319,7 +319,7 @@ fn table_columns(conn: &Connection, table: &str) -> Result<Vec<String>> {
 
 /// Copies every row of `table`, selecting only the columns both sides declare.
 ///
-/// This is the whole version handling: v13 → v14 is a column intersection, never a
+/// This is the whole version handling: v13 → v15 is a column intersection, never a
 /// restated DDL or a per-version branch.
 fn copy_table(source: &Connection, tx: &Transaction<'_>, table: &str) -> Result<i64> {
     let source_columns: std::collections::BTreeSet<String> =

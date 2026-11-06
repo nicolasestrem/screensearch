@@ -102,7 +102,7 @@ const PRAGMAS: &str = "PRAGMA busy_timeout=5000;
          PRAGMA foreign_keys=ON;
          PRAGMA recursive_triggers=ON;";
 
-/// Prepares a brand-new database: pragmas, the v14 baseline, then the history metadata
+/// Prepares a brand-new database: pragmas, the v15 baseline, then the history metadata
 /// rows the allocator needs.
 fn open_fresh(conn: Connection) -> Result<Connection> {
     conn.execute_batch(PRAGMAS)?;
@@ -194,8 +194,8 @@ impl SqliteStore {
     ///
     /// Decided by the database's contents, not by whether the file exists. An empty
     /// database (no file, a zero-byte file, or a first run that rolled back) is created
-    /// from the v14 baseline with `schema_version = 14` in the same transaction. Anything
-    /// with schema objects must be at `schema_version = 14`; every other state, including
+    /// from the v15 baseline with `schema_version = 15` in the same transaction. Anything
+    /// with schema objects must be at `schema_version = 15`; every other state, including
     /// a file that is not SQLite, is refused untouched with a message naming the version
     /// found and the `ssv2c-rebuild` tool.
     pub fn open_path(path: &Path) -> Result<Self> {
@@ -210,7 +210,7 @@ impl SqliteStore {
         //   refuse that last case forever (`ssv2c-rebuild` cannot repair it either), and
         //   would race a file appearing between the check and the open.
         // - Anything with at least one schema object is someone's database: it goes
-        //   through the strict v14 check and is refused, untouched, if it is not v14.
+        //   through the strict v15 check and is refused, untouched, if it is not v15.
         // - A file that is not SQLite at all fails the probe and is refused, never
         //   overwritten.
         //
@@ -752,6 +752,39 @@ impl Store for SqliteStore {
     async fn graph_backfill_status(&self) -> Result<traits::GraphBackfillStatus> {
         SqliteStore::graph_backfill_status(self).await
     }
+    async fn graph_progress(&self) -> Result<traits::GraphProgress> {
+        SqliteStore::graph_progress(self).await
+    }
+    async fn threads_for_entity(
+        &self,
+        entity_id: i64,
+        limit: u32,
+    ) -> Result<Vec<traits::ThreadSummary>> {
+        SqliteStore::threads_for_entity(self, entity_id, limit).await
+    }
+    async fn connected_threads(
+        &self,
+        thread_id: i64,
+        limit: u32,
+    ) -> Result<Vec<traits::ConnectedThread>> {
+        SqliteStore::connected_threads(self, thread_id, limit).await
+    }
+    async fn thread_merge_target(&self, thread_id: i64) -> Result<Option<i64>> {
+        SqliteStore::thread_merge_target(self, thread_id).await
+    }
+    async fn insights_for_evidence(
+        &self,
+        kind: Option<traits::InsightKind>,
+        refs: &[(traits::EvidenceKind, i64)],
+    ) -> Result<Vec<traits::Insight>> {
+        SqliteStore::insights_for_evidence(self, kind, refs).await
+    }
+    async fn insight_window_status(&self) -> Result<traits::InsightWindowStatus> {
+        SqliteStore::insight_window_status(self).await
+    }
+    async fn entities_by_ids(&self, ids: &[i64]) -> Result<Vec<traits::EntitySummary>> {
+        SqliteStore::entities_by_ids(self, ids).await
+    }
     async fn graph_sessions_with_summaries(
         &self,
         limit: u32,
@@ -828,11 +861,22 @@ impl Store for SqliteStore {
     async fn append_ask_turn(&self, turn: NewAskTurn) -> Result<AskTurnRecord> {
         SqliteStore::append_ask_turn(self, turn).await
     }
-    async fn finish_ask_turn(&self, turn_id: i64, answer: &str) -> Result<bool> {
-        SqliteStore::finish_ask_turn(self, turn_id, answer).await
+    async fn finish_ask_turn(
+        &self,
+        turn_id: i64,
+        answer: &str,
+        citations: &traits::AskCitations,
+    ) -> Result<bool> {
+        SqliteStore::finish_ask_turn(self, turn_id, answer, citations).await
     }
     async fn list_ask_turns(&self, thread_id: i64) -> Result<Vec<AskTurnRecord>> {
         SqliteStore::list_ask_turns(self, thread_id).await
+    }
+    async fn list_ask_threads(&self, limit: u32) -> Result<Vec<traits::AskThreadSummary>> {
+        SqliteStore::list_ask_threads(self, limit).await
+    }
+    async fn set_ask_thread_title(&self, thread_id: i64, title: &str) -> Result<bool> {
+        SqliteStore::set_ask_thread_title(self, thread_id, title).await
     }
     async fn session_embed_candidates(&self, limit: u32) -> Result<Vec<SessionEmbedInput>> {
         SqliteStore::session_embed_candidates(self, limit).await

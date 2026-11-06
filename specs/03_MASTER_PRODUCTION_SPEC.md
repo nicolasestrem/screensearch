@@ -196,11 +196,11 @@ with **no backfill** (clean-DB assumption — see `07`).
 ## 4. Data model (SQLite, WAL) — authoritative DDL
 
 Single file `screensearch.db`. **Baseline rule (0.4.5 D2):** this section holds the complete DDL for
-the current `schema_version = 14`; the app creates a fresh DB from it and ships **no migration
+the current `schema_version = 15`; the app creates a fresh DB from it and ships **no migration
 chain**. A schema change edits this baseline and bumps `schema_version`; there are no populated-DB
-migration tests. A DB whose `schema_version` is not 14 refuses to open with a message naming the
+migration tests. A DB whose `schema_version` is not 15 refuses to open with a message naming the
 rebuild tool (`crates/rebuild`'s `ssv2c-rebuild`); that dev-only tool reads the old DB **read-only**
-and writes a fresh v14 file, and the old file is renamed `*.v13.bak` only after the maintainer
+and writes a fresh v15 file, and the old file is renamed `*.v14.bak` only after the maintainer
 confirms the new one opens — a clean start instead of a rebuild is the maintainer's Gate A choice,
 never automatic (0.4.5 D3). The shipped app never migrates history; the 0.2.x–0.4.2 forward-only
 chain is history, not the rule (0.4.5 D2).
@@ -513,6 +513,8 @@ CREATE TABLE ask_turns (
   window_start   INTEGER,
   window_end     INTEGER,
   resolved_entities TEXT,                -- JSON array of entity ids resolved for this turn
+  scope_thread_id INTEGER,               -- work-graph thread the turn was scoped to (no FK)
+  citations      TEXT,                   -- JSON {"sessions":[…],"frames":[…]}; NULL until it finishes
   created_at     INTEGER NOT NULL DEFAULT (unixepoch()*1000),
   UNIQUE(thread_id, ordinal)
 );
@@ -532,7 +534,7 @@ removes `embeddings`, and an `AFTER DELETE` trigger (or app-side txn) removes th
 `embedding_vectors` rows. *(0.3.0 removed the image-embedding lane, so there is no second vec0 sync.)*
 
 **Historical migrations (0.2.x–0.4.2; context only).** Under the baseline rule above these steps
-exist only in git history and in `CHANGELOG-ARCHIVE.md`; the v14 baseline is the whole story.
+exist only in git history and in `CHANGELOG-ARCHIVE.md`; the v15 baseline is the whole story.
 Retained so the provenance of `frames.session_id`, `marks`, `report_runs.kind` and the removed image
 lane stays readable.
 

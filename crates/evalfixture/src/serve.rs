@@ -196,7 +196,7 @@ impl ServedFixture {
 pub async fn start(opts: &ServeOptions) -> Result<ServedFixture> {
     // `serve` is a read surface over a *generated* fixture: the database must already
     // exist, and a missing one names the fix instead of silently creating a fresh one
-    // (`SqliteStore::open_path` would happily initialize an empty v14 file).
+    // (`SqliteStore::open_path` would happily initialize an empty baseline file).
     if !opts.db.is_file() {
         bail!(
             "no fixture database at {} - run `ssv2c-evalfixture gen --out <dir>` first; \
