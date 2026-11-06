@@ -1,6 +1,6 @@
 # 08 — AI Changelog
 
-## 2026-11-06: P9 intelligence UI — Work, Thread, Insights v2 and Ask v2 (branch `feat/0.4.5-p9-intelligence-ui`, from `main` `eb556d1`; **PR open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
+## 2026-11-06: P9 intelligence UI — Work, Thread, Insights v2 and Ask v2 (branch `feat/0.4.5-p9-intelligence-ui`, from `main` `eb556d1`; **PR [#165](https://github.com/nicolasestrem/screensearch/pull/165) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P9.md`. Build record, gate output and the acceptance matrix: `05` (2026-11-06 P9
 section). Decisions, grants and deferrals: `07` (P9 D1–D12). Contradiction rows `#106`–`#116`: `06`.

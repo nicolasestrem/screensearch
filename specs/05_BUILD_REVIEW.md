@@ -1,6 +1,6 @@
 # 05 — Build Review
 
-## 2026-11-06: P9 intelligence UI — build, ordered gate and the acceptance walk (branch `feat/0.4.5-p9-intelligence-ui`, from `main` `eb556d1`; **PR open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
+## 2026-11-06: P9 intelligence UI — build, ordered gate and the acceptance walk (branch `feat/0.4.5-p9-intelligence-ui`, from `main` `eb556d1`; **PR [#165](https://github.com/nicolasestrem/screensearch/pull/165) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P9.md`. Contradictions and rulings: `06` #106–#116. Decisions, grants and
 deferrals: `07` (2026-11-06 P9 section, D1–D12). Interface contract the slices coded against:
