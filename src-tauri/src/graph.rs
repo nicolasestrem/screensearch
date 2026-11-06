@@ -109,7 +109,7 @@ pub async fn list_threads(
 ) -> Result<ThreadListPage, String> {
     let store = open_store(&state)?;
     let limit = clamp_limit(query.limit);
-    let mut threads = match query.entity_id {
+    let threads = match query.entity_id {
         Some(entity_id) => {
             // `threads_for_entity` takes the entity but no window, so the documented window
             // predicate is applied here over the same bounded read. Filtering after the store's
@@ -120,21 +120,30 @@ pub async fn list_threads(
                 .await
                 .map_err(|e| e.to_string())?;
             threads.retain(|thread| overlaps_window(thread, query.from_ms, query.to_ms));
+            threads.truncate(limit as usize);
             threads
         }
-        None => store
-            .threads_in_range(ThreadFilter {
-                from_ms: query.from_ms,
-                to_ms: query.to_ms,
-                limit,
-            })
-            .await
-            .map_err(|e| e.to_string())?,
+        None => {
+            // The store applies `LIMIT` in SQL, so a read bounded by the *page* size would let
+            // emptied merge sources inside that window shorten the page: with two empty rows
+            // ahead of a live thread, `limit: 2` returned one thread. Read the list ceiling (the
+            // same over-read the entity branch above makes, for the same reason), drop the empty
+            // rows, then truncate to the request.
+            let mut threads = store
+                .threads_in_range(ThreadFilter {
+                    from_ms: query.from_ms,
+                    to_ms: query.to_ms,
+                    limit: LIST_LIMIT_MAX,
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+            threads.retain(|thread| thread.session_count > 0);
+            threads.truncate(limit as usize);
+            threads
+        }
     };
-    // An emptied merge source is durability evidence, not work (`03 §7h.5`). Dropping them before
-    // the truncation keeps the page full when the newest rows happen to be folded threads.
-    threads.retain(|thread| thread.session_count > 0);
-    threads.truncate(limit as usize);
+    // Both branches over-read and then narrow to `limit` themselves: the store's `LIMIT` cannot
+    // know which rows the window or the emptied-source rule will keep.
     let progress = store.graph_progress().await.map_err(|e| e.to_string())?;
     Ok(ThreadListPage { threads, progress })
 }

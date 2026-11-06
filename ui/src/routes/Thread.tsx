@@ -248,7 +248,10 @@ function ThreadAsk({
 
   const submit = (text: string) => {
     const trimmed = text.trim();
-    if (trimmed.length === 0) return;
+    // A turn is already answering: `ask` cancels it and starts a *second* conversation, so the
+    // partial answer disappears and the first turn stays unanswered. The button is disabled while
+    // streaming, but Enter in the textarea goes through this same path (`03 §7i.4`).
+    if (trimmed.length === 0 || streaming) return;
     setAsked(trimmed);
     void conversation.ask({
       query: trimmed,
