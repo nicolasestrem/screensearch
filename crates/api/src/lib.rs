@@ -22,6 +22,7 @@ pub mod auth;
 pub mod error;
 pub mod export;
 pub mod extract;
+mod graph_reads;
 mod history;
 mod permissions;
 mod reports;
@@ -587,6 +588,12 @@ pub fn build_router(state: ApiState) -> Router {
         // other read routes — no new permission, generation or mutation route.
         .get("/v1/reports", reports::list_reports, HistoryRead)
         .get("/v1/reports/{run_id}", reports::report_detail, HistoryRead)
+        // P8 connection/insight reads (`03 §7c` P8 block): history.read only, like every
+        // other read route. A GET here never writes, re-clusters or generates an insight.
+        .get("/v1/threads", graph_reads::threads, HistoryRead)
+        .get("/v1/threads/{id}", graph_reads::thread_detail, HistoryRead)
+        .get("/v1/entities", graph_reads::entities, HistoryRead)
+        .get("/v1/insights", graph_reads::insights, HistoryRead)
         .finish(state)
 }
 

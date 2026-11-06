@@ -137,7 +137,7 @@ Where they ever disagree, the specs win — open an issue.
 
 ## 2. Crate map
 
-A 15-crate Rust workspace plus the React/TS `ui/`. `src-tauri` is the **composition root**: it opens
+An 18-crate Rust workspace plus the React/TS `ui/`. `src-tauri` is the **composition root**: it opens
 the store, spawns OCR, builds the `kernel`, loads the embedder + inference off-thread, owns the
 Flow overlay window/hotkey plumbing and the local-API host, and registers commands. `kernel`
 orchestrates (event bus, capture loop, worker pool, vision scheduler, readiness, the where-was-i
@@ -147,9 +147,12 @@ the module crates — `capture` (WGC + triggers + privacy), `ocr` (WinRT), `uia`
 `llama-server` sidecar), `textfilter` (attention-first span classifier), `sysmon` (pressure probe),
 `doctor` (env smoke-check), `api` (opt-in HTTP API + export), `mcp` (the
 `screensearch-mcp.exe` stdio wrapper over that API), `sessions` (0.4.0 — the pure heuristic
-segmentation + tool-recognition engine), and `harness` (0.4.0 — a dev-only, read-only segmentation
-validation harness, not shipped in the app) — each
-depend only on the contracts in `traits`, never on one another's concrete impls.
+segmentation + tool-recognition engine), and `graph` (0.4.5 — the pure work-graph engine:
+extraction, entity identity, thread clustering) — each
+depend only on the contracts in `traits`, never on one another's concrete impls. Three workspace
+crates are dev-only and never shipped in the app: `harness` (0.4.0 — the read-only segmentation
+validation harness), `rebuild` (the database rebuild path) and `evalfixture` (the seeded P4–P6
+evaluation fixture).
 
 **Authoritative crate map & dependency rule: `specs/03_MASTER_PRODUCTION_SPEC.md` §2.** The
 per-crate file-level guide to where each concern lives is the rest of this document (§4–§11).
@@ -180,7 +183,11 @@ vs. filtered `content_text` plus per-span and static-chrome metadata, with conte
 FTS mirrors), the text embedding lane, vision analysis (P4), the durable `jobs`
 queue, tags, `marks` (0.3.0), **sessions** (`sessions` + `session_artifacts`, 0.4.0 — derived-but-
 persisted: a wiped `sessions` table is fully recomputable from frames, so `frames.session_id` is
-`ON DELETE SET NULL` while `session_artifacts` CASCADE with their session), and `settings`. The
+`ON DELETE SET NULL` while `session_artifacts` CASCADE with their session), the **0.4.5 work graph**
+(`threads`, `thread_sessions`, `thread_overrides`, `entities`, `entity_aliases`, `session_entities`),
+**insights** (`insights` + `insight_evidence`; the typed statement and the ids it rests on), the
+session-vector lane (`session_vectors`, 0.4.5 — a `vec0` mirror of `sessions` used for semantic
+neighbours), and `settings`. The
 notes below capture the two as-built decisions that the DDL alone doesn't convey.
 
 Each embedding lives in **two** lock-step places — a metadata row and its `vec0` `FLOAT[768]` cosine
@@ -272,6 +279,7 @@ claim_jobs(dynamic provider-backed lanes, 1, now)
   → process_job:                       # public, so tests drive one job deterministically
       embed_text:  read OCR text → embed_texts → upsert_text_embedding(chunk 0, source=ocr)
       vision_tag:  load JPEG → VisionProvider.analyze → insert_vision   (P4)
+      insight_generate:  kernel::insights::run_insight_generate(store, now)  (0.4.5 — P8)
   → complete_job / fail_job(backoff) / dead-letter
   → emit KernelEvent::JobProgress(job_stats)
 ```
@@ -280,6 +288,9 @@ Workers build the claim-kind list on every poll. `EmbedText` is claimed only whe
 attached and `enrich.embed_text` is enabled; `VisionTag` is claimed once the sidecar vision provider
 is attached. Both providers live in `Arc<RwLock<Option<…>>>` **slots** that are snapshotted per job,
 so `vision_tag` backlogs drain even when embeddings are disabled or unavailable.
+`InsightGenerate` needs no provider, so it is claimable at throttle level 0 (the same level as the
+provider-free graph jobs); `kernel::insights` owns an idle producer that enqueues one pass when the
+platform reports idle, gated so a pending pass is never duplicated.
 If a claimed job somehow lacks its provider because of a race, it **retries** (not fails) so the
 backlog drains when the provider appears.
 
@@ -538,7 +549,10 @@ request id, and the UI ignores stale deltas.
   same export code path directly, so export works with the API off. Reference: `docs/API.md`.
   The listener uses plain HTTP; reachable token holders can read history. The inference
   listener stays loopback-only. 0.4.2 adds `/v1/frames`, `/v1/coverage`, `/v1/reports` and
-  `/v1/reports/{run_id}` reads and an independent read-only token (see the section at the top). Existing enabled profiles
+  `/v1/reports/{run_id}` reads and an independent read-only token (see the section at the top). 0.4.5
+  (P8) adds the read-only intelligence surface — `/v1/threads`, `/v1/threads/{id}`, `/v1/entities`
+  and `/v1/insights`, implemented in `api::graph_reads` behind `history.read` for both credential
+  classes — which is what the MCP tools below read. Existing enabled profiles
   without a bind address retain loopback exposure; address/port edits apply immediately. Startup emits a payload-free `api_status_changed` invalidation event;
   tokens are never broadcast through this event. No schema migration is needed.
 - **MCP server** (`crates/mcp` → `screensearch-mcp.exe`, PR8): a dependency-thin **stdio** JSON-RPC
@@ -546,7 +560,9 @@ request id, and the UI ignores stale deltas.
   `SCREENSEARCH_API_URL` / `SCREENSEARCH_API_TOKEN`. Nine tools through 0.4.1
   (`search_screen_history`, `ask_screen_history`, `get_moment`, `where_was_i`, `list_marks`,
   `add_mark`, and the 0.4.0 session trio `list_sessions`, `get_session`, `ask_session`), plus
-  `list_frames`, `get_capture_coverage`, `list_reports` and `get_report` in 0.4.2; loopback by
+  `list_frames`, `get_capture_coverage`, `list_reports` and `get_report` in 0.4.2; 0.4.5 (P8) adds
+  the four work-graph reads `list_threads`, `get_thread`, `find_connections` and `list_insights`,
+  taking the registry to **17 tools in normal mode and 14 under `--read-only`**. Loopback by
   default, with explicit remote HTTP/HTTPS roots allowed from 0.4.2. API-off or bad-token
   states return guided errors ("enable the API in ScreenSearch Settings"), never a crash. Staged as
   the Tauri `externalBin` by `scripts/stage-mcp.mjs` and shipped inside the NSIS installer next to
@@ -609,7 +625,7 @@ request id, and the UI ignores stale deltas.
   PR7 adds `crates/api/tests/http_api.rs` (fixture-DB integration: originally a loopback-only
   bind assertion, 401s, every endpoint, SSE ask, export). The current network increment replaces
   that bind assertion with configurable IPv4/IPv6 binding, safe upgrade defaults and loopback-client checks, and extends route-auth coverage. PR8 adds `crates/mcp/tests/stdio_mcp.rs`, which spawns the
-  real compiled binary over stdio (handshake, nine tools, guided API-off/wrong-token errors).
+  real compiled binary over stdio (handshake, seventeen tools, guided API-off/wrong-token errors).
 - **Inference, deterministic (run in CI, no GPU/network):** the **no-orphan gate**
   (`tests/no_orphan.rs` — kill a parent, assert the Job-Object child dies), startup **reap**
   (`tests/reap.rs` — reaps a matching stray, never a foreign pid), the HTTP **client** against a

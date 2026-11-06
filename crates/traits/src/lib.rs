@@ -18,6 +18,7 @@ pub mod contracts;
 pub mod domain;
 pub mod graph;
 pub mod history;
+pub mod insights;
 pub mod ipc;
 pub mod jobs;
 pub mod memory;
@@ -34,6 +35,7 @@ pub use contracts::{
 pub use domain::*;
 pub use graph::*;
 pub use history::*;
+pub use insights::*;
 pub use ipc::*;
 pub use jobs::*;
 pub use memory::*;

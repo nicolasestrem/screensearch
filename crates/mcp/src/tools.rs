@@ -1,4 +1,4 @@
-//! The thirteen MCP tools and their dispatch to the local API.
+//! The seventeen MCP tools and their dispatch to the local API.
 //!
 //! Each tool maps to one HTTP endpoint (`docs/API.md`). Tool results are pretty-printed
 //! JSON text blocks — full fidelity for the calling model — plus, for `get_moment`, an
@@ -29,7 +29,7 @@ impl ToolError {
     }
 }
 
-/// The thirteen tool definitions, in listing order. One source of truth for `tools/list` and
+/// The seventeen tool definitions, in listing order. One source of truth for `tools/list` and
 /// dispatch, so a name can never drift between them.
 pub fn definitions() -> Value {
     json!([
@@ -220,6 +220,62 @@ pub fn definitions() -> Value {
                 "required": ["session_id", "query"],
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "list_threads",
+            "title": "List activity threads",
+            "description": "List the user's activity threads — long-running threads of related sessions, e.g. a project or a research topic — that overlap the half-open UTC window [from, to), ordered by most recent activity first. from and to are each optional; threads whose first_seen_at < to and last_seen_at >= from are returned. Use a thread id from the results with get_thread. Local data only — served by the ScreenSearch app on the configured API endpoint.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "from": { "type": "integer", "description": "Start of the half-open window [from, to), unix epoch ms. Optional." },
+                    "to": { "type": "integer", "description": "End (exclusive) of the half-open window, unix epoch ms. Optional." },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "description": "Max threads (default 1000)." }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "get_thread",
+            "title": "Get a thread",
+            "description": "Fetch one activity thread by id: its summary (title, first/last activity, session count) plus its member sessions in chronological order and the entities it touched, with their per-thread session counts. A missing thread is a not_found error. Local data only — served by the ScreenSearch app on the configured API endpoint.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "integer", "description": "The thread id, e.g. from list_threads." }
+                },
+                "required": ["id"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "find_connections",
+            "title": "Find connections",
+            "description": "List the entities the user has been working with — repos, files, domains, documents, references and apps — most recently seen first. Optionally filter by entity kind and/or a case-insensitive substring matched against the canonical name or any alias. Returns each entity's canonical name, aliases, first/last seen time and session count. Local data only — served by the ScreenSearch app on the configured API endpoint.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string", "enum": ["repo", "file", "domain", "document", "ref", "app"], "description": "Optional filter on the entity kind (forwarded literally; the API enforces membership)." },
+                    "q": { "type": "string", "description": "Optional case-insensitive substring over the canonical name or any alias." },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "description": "Max entities (default 1000)." }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "list_insights",
+            "title": "List insights",
+            "description": "List the derived, evidenced insights that overlap the half-open UTC window [from, to), ordered window_start DESC then kind. Each insight carries one typed payload (thread activity, open loop, recurrence, semantic neighbour or resumption), its evidence references ({ordinal: 0-based and dense, kind, ref_id}) and a stale flag — a stale insight's evidence no longer resolves, so read it as history rather than current truth. Reads never generate a pass. Local data only — served by the ScreenSearch app on the configured API endpoint.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "from": { "type": "integer", "description": "Start of the half-open window [from, to), unix epoch ms. Optional." },
+                    "to": { "type": "integer", "description": "End (exclusive) of the half-open window, unix epoch ms. Optional." },
+                    "kind": { "type": "string", "enum": ["thread_activity", "open_loop", "recurrence", "semantic_neighbour", "resumption"], "description": "Optional filter on the insight kind (forwarded literally; the API enforces membership)." },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "description": "Max insights (default 1000)." }
+                },
+                "additionalProperties": false
+            }
         }
     ])
 }
@@ -240,6 +296,10 @@ pub fn is_read_tool(name: &str) -> bool {
             | "list_marks"
             | "list_sessions"
             | "get_session"
+            | "list_threads"
+            | "get_thread"
+            | "find_connections"
+            | "list_insights"
     )
 }
 
@@ -284,6 +344,10 @@ pub async fn call(client: &ApiClient, id: Value, params: Value) -> Value {
         "list_sessions" => list_sessions(client, &args).await,
         "get_session" => get_session(client, &args).await,
         "ask_session" => ask_session(client, &args).await,
+        "list_threads" => list_threads(client, &args).await,
+        "get_thread" => get_thread(client, &args).await,
+        "find_connections" => find_connections(client, &args).await,
+        "list_insights" => list_insights(client, &args).await,
         other => {
             return rpc::error(id, rpc::INVALID_PARAMS, &format!("Unknown tool: {other}"));
         }
@@ -557,6 +621,138 @@ async fn get_session(client: &ApiClient, args: &Value) -> Result<Vec<Value>, Too
         .await
         .map_err(ToolError::Api)?;
     Ok(vec![text_block(pretty(&body))])
+}
+
+/// The `limit` bound shared by the thread, entity and insight reads (default 1000, clamped to
+/// 1..=1000 — the session-listing semantics). Validated locally as a convenience only: window
+/// ordering and enum membership stay with the API, which returns the authoritative 400.
+const GRAPH_MAX_LIMIT: i64 = 1000;
+
+/// `list_threads` — the activity threads overlapping the half-open window
+/// (`GET /v1/threads`). The array is returned unmodified in the API's stated order
+/// (`last_seen_at DESC, id DESC`).
+async fn list_threads(client: &ApiClient, args: &Value) -> Result<Vec<Value>, ToolError> {
+    let params = build_threads_query(args)?;
+    let body = client
+        .get_json("/v1/threads", &params)
+        .await
+        .map_err(ToolError::Api)?;
+    let count = body.as_array().map(|a| a.len()).unwrap_or(0);
+    if count == 0 {
+        return Ok(vec![text_block("No threads.")]);
+    }
+    Ok(vec![text_block(pretty(&body))])
+}
+
+/// `get_thread` — one thread's summary plus its member sessions and entities
+/// (`GET /v1/threads/{id}`). A missing thread surfaces the API's own 404 as an `isError`
+/// `not_found` result; no detail is ever synthesised for an id the store does not hold.
+async fn get_thread(client: &ApiClient, args: &Value) -> Result<Vec<Value>, ToolError> {
+    let id = require_i64(args, "id")?;
+    let detail = client
+        .get_json(&format!("/v1/threads/{id}"), &[])
+        .await
+        .map_err(ToolError::Api)?;
+    Ok(vec![text_block(pretty(&detail))])
+}
+
+/// `find_connections` — the entities the user has been working with, most recently seen first
+/// (`GET /v1/entities`). `kind` and `q` are forwarded as literal strings; kind membership and
+/// the substring match stay with the API.
+async fn find_connections(client: &ApiClient, args: &Value) -> Result<Vec<Value>, ToolError> {
+    let params = build_entities_query(args)?;
+    let body = client
+        .get_json("/v1/entities", &params)
+        .await
+        .map_err(ToolError::Api)?;
+    let count = body.as_array().map(|a| a.len()).unwrap_or(0);
+    if count == 0 {
+        return Ok(vec![text_block("No connections.")]);
+    }
+    Ok(vec![text_block(pretty(&body))])
+}
+
+/// `list_insights` — the derived, evidenced insights overlapping the window
+/// (`GET /v1/insights`). Each row keeps its typed payload, its dense 0-based evidence ordinals
+/// and its `stale` flag; a read never starts a generation pass.
+async fn list_insights(client: &ApiClient, args: &Value) -> Result<Vec<Value>, ToolError> {
+    let params = build_insights_query(args)?;
+    let body = client
+        .get_json("/v1/insights", &params)
+        .await
+        .map_err(ToolError::Api)?;
+    let count = body.as_array().map(|a| a.len()).unwrap_or(0);
+    if count == 0 {
+        return Ok(vec![text_block("No insights.")]);
+    }
+    Ok(vec![text_block(pretty(&body))])
+}
+
+/// The `limit` argument of the thread/entity/insight reads, checked against
+/// [`GRAPH_MAX_LIMIT`] and otherwise forwarded as given.
+fn graph_limit(args: &Value) -> Result<Option<i64>, ToolError> {
+    let limit = optional_integer(args, "limit")?;
+    if let Some(limit) = limit {
+        if !(1..=GRAPH_MAX_LIMIT).contains(&limit) {
+            return Err(ToolError::Input(format!(
+                "`limit` must be between 1 and {GRAPH_MAX_LIMIT}"
+            )));
+        }
+    }
+    Ok(limit)
+}
+
+/// Builds the `GET /v1/threads` query: every parameter is optional and only the ones given are
+/// forwarded — `from` and `to` are independently optional here (unlike the required-both frame
+/// page), because a single-bound window is a documented thread-read form.
+fn build_threads_query(args: &Value) -> Result<Vec<(&'static str, String)>, ToolError> {
+    let mut params: Vec<(&'static str, String)> = Vec::new();
+    if let Some(from) = optional_integer(args, "from")? {
+        params.push(("from", from.to_string()));
+    }
+    if let Some(to) = optional_integer(args, "to")? {
+        params.push(("to", to.to_string()));
+    }
+    if let Some(limit) = graph_limit(args)? {
+        params.push(("limit", limit.to_string()));
+    }
+    Ok(params)
+}
+
+/// Builds the `GET /v1/entities` query: the `entities.kind` token and the substring `q` are
+/// forwarded verbatim, never inspected or reinterpreted here.
+fn build_entities_query(args: &Value) -> Result<Vec<(&'static str, String)>, ToolError> {
+    let mut params: Vec<(&'static str, String)> = Vec::new();
+    if let Some(kind) = optional_string(args, "kind")? {
+        params.push(("kind", kind));
+    }
+    if let Some(q) = optional_string(args, "q")? {
+        params.push(("q", q));
+    }
+    if let Some(limit) = graph_limit(args)? {
+        params.push(("limit", limit.to_string()));
+    }
+    Ok(params)
+}
+
+/// Builds the `GET /v1/insights` query: the half-open window, one `insights.kind` token and the
+/// limit. Each bound is optional; a `from` after `to` is forwarded unchanged so the API returns
+/// the authoritative 400.
+fn build_insights_query(args: &Value) -> Result<Vec<(&'static str, String)>, ToolError> {
+    let mut params: Vec<(&'static str, String)> = Vec::new();
+    if let Some(from) = optional_integer(args, "from")? {
+        params.push(("from", from.to_string()));
+    }
+    if let Some(to) = optional_integer(args, "to")? {
+        params.push(("to", to.to_string()));
+    }
+    if let Some(kind) = optional_string(args, "kind")? {
+        params.push(("kind", kind));
+    }
+    if let Some(limit) = graph_limit(args)? {
+        params.push(("limit", limit.to_string()));
+    }
+    Ok(params)
 }
 
 /// Builds the `POST /v1/marks` body from the tool arguments.
@@ -843,7 +1039,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exactly_thirteen_tools_with_object_schemas() {
+    fn exactly_seventeen_tools_with_object_schemas() {
         let defs = definitions();
         let arr = defs.as_array().unwrap();
         let names: Vec<&str> = arr.iter().map(|t| t["name"].as_str().unwrap()).collect();
@@ -863,6 +1059,10 @@ mod tests {
                 "list_sessions",
                 "get_session",
                 "ask_session",
+                "list_threads",
+                "get_thread",
+                "find_connections",
+                "list_insights",
             ]
         );
         for t in arr {
@@ -935,6 +1135,18 @@ mod tests {
             by_name("ask_session")["inputSchema"]["required"],
             json!(["session_id", "query"])
         );
+        // The 0.4.5 graph/insight reads: only get_thread has a required argument; the three
+        // list tools take optional filters only.
+        for name in ["list_threads", "find_connections", "list_insights"] {
+            assert!(
+                by_name(name)["inputSchema"].get("required").is_none(),
+                "{name} has no required argument"
+            );
+        }
+        assert_eq!(
+            by_name("get_thread")["inputSchema"]["required"],
+            json!(["id"])
+        );
     }
 
     #[test]
@@ -993,6 +1205,10 @@ mod tests {
             "list_marks",
             "list_sessions",
             "get_session",
+            "list_threads",
+            "get_thread",
+            "find_connections",
+            "list_insights",
         ];
         for name in read_names {
             assert!(is_read_tool(name), "{name}");
@@ -1019,8 +1235,8 @@ mod tests {
         for tool in read_only_defs.as_array().unwrap() {
             assert!(is_read_tool(tool["name"].as_str().unwrap()));
         }
-        // Normal mode lists every tool: all thirteen.
-        assert_eq!(definitions_for(false).as_array().unwrap().len(), 13);
+        // Normal mode lists every tool: all seventeen.
+        assert_eq!(definitions_for(false).as_array().unwrap().len(), 17);
     }
 
     #[test]
@@ -1080,6 +1296,55 @@ mod tests {
             "string"
         );
         assert_eq!(report["inputSchema"]["additionalProperties"], false);
+
+        // The 0.4.5 graph/insight reads: integer windows and limits, literal kind tokens, an
+        // integer thread id.
+        let threads = by_name("list_threads");
+        let tprops = &threads["inputSchema"]["properties"];
+        for key in ["from", "to", "limit"] {
+            assert_eq!(tprops[key]["type"], "integer", "list_threads.{key}");
+        }
+        assert_eq!(tprops["limit"]["minimum"], 1);
+        assert_eq!(tprops["limit"]["maximum"], 1000);
+        assert_eq!(threads["inputSchema"]["additionalProperties"], false);
+
+        let thread = by_name("get_thread");
+        assert_eq!(thread["inputSchema"]["required"], json!(["id"]));
+        assert_eq!(thread["inputSchema"]["properties"]["id"]["type"], "integer");
+        assert_eq!(thread["inputSchema"]["additionalProperties"], false);
+
+        let entities = by_name("find_connections");
+        let eprops = &entities["inputSchema"]["properties"];
+        assert_eq!(eprops["kind"]["type"], "string");
+        assert_eq!(
+            eprops["kind"]["enum"],
+            json!(["repo", "file", "domain", "document", "ref", "app"])
+        );
+        assert_eq!(eprops["q"]["type"], "string");
+        assert_eq!(eprops["limit"]["type"], "integer");
+        assert_eq!(eprops["limit"]["minimum"], 1);
+        assert_eq!(eprops["limit"]["maximum"], 1000);
+        assert_eq!(entities["inputSchema"]["additionalProperties"], false);
+
+        let insights = by_name("list_insights");
+        let iprops = &insights["inputSchema"]["properties"];
+        for key in ["from", "to", "limit"] {
+            assert_eq!(iprops[key]["type"], "integer", "list_insights.{key}");
+        }
+        assert_eq!(iprops["kind"]["type"], "string");
+        assert_eq!(
+            iprops["kind"]["enum"],
+            json!([
+                "thread_activity",
+                "open_loop",
+                "recurrence",
+                "semantic_neighbour",
+                "resumption"
+            ])
+        );
+        assert_eq!(iprops["limit"]["minimum"], 1);
+        assert_eq!(iprops["limit"]["maximum"], 1000);
+        assert_eq!(insights["inputSchema"]["additionalProperties"], false);
     }
 
     fn frames_params(args: Value) -> Vec<(&'static str, String)> {
@@ -1366,6 +1631,152 @@ mod tests {
         );
     }
 
+    fn threads_params(args: Value) -> Vec<(&'static str, String)> {
+        match build_threads_query(&args) {
+            Ok(params) => params,
+            Err(e) => panic!("expected Ok for {args}, got: {}", e.message()),
+        }
+    }
+
+    fn entities_params(args: Value) -> Vec<(&'static str, String)> {
+        match build_entities_query(&args) {
+            Ok(params) => params,
+            Err(e) => panic!("expected Ok for {args}, got: {}", e.message()),
+        }
+    }
+
+    fn insights_params(args: Value) -> Vec<(&'static str, String)> {
+        match build_insights_query(&args) {
+            Ok(params) => params,
+            Err(e) => panic!("expected Ok for {args}, got: {}", e.message()),
+        }
+    }
+
+    fn input_error<T: std::fmt::Debug>(result: Result<T, ToolError>) -> String {
+        match result {
+            Err(ToolError::Input(message)) => message,
+            Err(other) => panic!("expected an input error, got: {}", other.message()),
+            Ok(value) => panic!("expected an input error, got {value:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_read_queries_forward_only_the_given_parameters() {
+        // No arguments at all: the routes apply their own defaults, so nothing is sent.
+        assert_eq!(threads_params(json!({})), Vec::new());
+        assert_eq!(entities_params(json!({})), Vec::new());
+        assert_eq!(insights_params(json!({})), Vec::new());
+
+        // Each bound is independently optional — a single-bound window is a documented form.
+        assert_eq!(
+            threads_params(json!({ "from": 1000 })),
+            vec![("from", "1000".to_string())]
+        );
+        assert_eq!(
+            threads_params(json!({ "to": 2000, "limit": 5 })),
+            vec![("to", "2000".to_string()), ("limit", "5".to_string())]
+        );
+        assert_eq!(
+            threads_params(json!({ "from": 1000, "to": 2000, "limit": 1000 })),
+            vec![
+                ("from", "1000".to_string()),
+                ("to", "2000".to_string()),
+                ("limit", "1000".to_string()),
+            ]
+        );
+        // Null means "not given" — never a forwarded empty string.
+        assert_eq!(
+            threads_params(json!({ "from": null, "to": null, "limit": null })),
+            Vec::new()
+        );
+
+        assert_eq!(
+            entities_params(json!({ "kind": "repo", "q": "screen search", "limit": 3 })),
+            vec![
+                ("kind", "repo".to_string()),
+                ("q", "screen search".to_string()),
+                ("limit", "3".to_string()),
+            ]
+        );
+        // Kind membership is NOT decided locally: a literal token is forwarded verbatim and
+        // the API returns the authoritative 400.
+        assert_eq!(
+            entities_params(json!({ "kind": "bogus" })),
+            vec![("kind", "bogus".to_string())]
+        );
+
+        assert_eq!(
+            insights_params(json!({
+                "from": 1,
+                "to": 2,
+                "kind": "recurrence",
+                "limit": 7
+            })),
+            vec![
+                ("from", "1".to_string()),
+                ("to", "2".to_string()),
+                ("kind", "recurrence".to_string()),
+                ("limit", "7".to_string()),
+            ]
+        );
+        // An inverted window is forwarded unchanged so the API returns the authoritative 400.
+        assert_eq!(
+            insights_params(json!({ "from": 5, "to": 1 })),
+            vec![("from", "5".to_string()), ("to", "1".to_string())]
+        );
+    }
+
+    #[test]
+    fn graph_read_queries_reject_bad_argument_types_and_limits() {
+        // Strict JSON types: numeric strings and floats are never coerced.
+        assert!(input_error(build_threads_query(&json!({ "from": "1000" })))
+            .contains("`from` must be an integer"));
+        assert!(input_error(build_threads_query(&json!({ "to": 2000.5 })))
+            .contains("`to` must be an integer"));
+        assert!(input_error(build_insights_query(
+            &json!({ "from": 1, "to": 2, "kind": 7 })
+        ))
+        .contains("`kind` must be a string"));
+        assert!(input_error(build_entities_query(&json!({ "kind": true })))
+            .contains("`kind` must be a string"));
+        assert!(input_error(build_entities_query(&json!({ "q": ["a"] })))
+            .contains("`q` must be a string"));
+        for bad in [0, -1, 1001, i64::MAX] {
+            for message in [
+                input_error(build_threads_query(&json!({ "limit": bad }))),
+                input_error(build_entities_query(&json!({ "limit": bad }))),
+                input_error(build_insights_query(&json!({ "limit": bad }))),
+            ] {
+                assert!(
+                    message.contains("between 1 and 1000"),
+                    "limit {bad}: {message}"
+                );
+            }
+        }
+        assert!(input_error(build_insights_query(&json!({ "limit": "10" })))
+            .contains("`limit` must be an integer"));
+    }
+
+    #[test]
+    fn get_thread_requires_an_integer_id() {
+        // The id is required and never coerced from a string or a float.
+        for bad in [
+            json!({}),
+            json!({ "id": null }),
+            json!({ "id": "42" }),
+            json!({ "id": 1.5 }),
+        ] {
+            assert!(
+                matches!(require_i64(&bad, "id"), Err(ToolError::Input(_))),
+                "expected an input error for {bad}"
+            );
+        }
+        assert_eq!(
+            require_i64(&json!({ "id": 42 }), "id").unwrap_or_default(),
+            42
+        );
+    }
+
     #[test]
     fn run_id_is_encoded_as_a_single_url_segment() {
         // A slash, question mark, hash or percent can never add a path segment, start a query
@@ -1427,7 +1838,7 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names.len(), 13);
+        assert_eq!(names.len(), 17);
         for forbidden in ["generate", "retry", "deliver", "queue", "send"] {
             assert!(
                 !names.iter().any(|n| n.contains(forbidden)),

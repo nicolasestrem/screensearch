@@ -74,8 +74,11 @@ fn backoff_ms(attempts: i64) -> i64 {
 }
 
 /// What to do with a job after running its provider. Shared with the work-graph job
-/// modules (`03 §7h.7`), which return the same three outcomes the pool already maps.
-pub(crate) enum Outcome {
+/// modules (`03 §7h.7`) and the insights generator (`03 §7j.3`, which re-exports it), so
+/// every producer lane names the same three outcomes the pool maps onto the queue. `Debug`
+/// is part of the contract: a caller's assertion on a pass has to be able to print it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
     /// Done (or nothing to do) → `complete_job`.
     Complete { changed_data: bool },
     /// Unrecoverable (malformed job, missing file) → dead-letter now, no retry.
@@ -249,16 +252,18 @@ impl Drop for EmbedTextGuard {
 /// scheduler has started and paused by the same `level >= 1` throttle that pauses vision.
 /// `session_embed` is equally additive (`03 §7i.2`, 0.4.5 D11): producer-driven (enqueued by
 /// the Ask v2 pipeline on demand and by its idle scheduler), claimed only while the embedder
-/// is attached and paused by the same throttle. `embed_text` and `vision_tag` keep their
-/// exact previous conditions.
-fn claim_kinds(shared: &Shared, level: u8, allow_embed_text: bool) -> ([JobKind; 7], usize) {
+/// is attached and paused by the same throttle. `insight_generate` is additive the same way
+/// (`03 §7j.3`, 0.4.5 P8/D10) but needs **no** provider at all — a pass is pure store reads
+/// and arithmetic — so it stays claimable at level 0 whichever slots are attached.
+/// `embed_text` and `vision_tag` keep their exact previous conditions.
+fn claim_kinds(shared: &Shared, level: u8, allow_embed_text: bool) -> ([JobKind; 8], usize) {
     let embedder_ready = shared
         .embedder
         .read()
         .expect("embedder slot lock")
         .is_some();
     let vision_ready = shared.vision.read().expect("vision slot lock").is_some();
-    let mut kinds = [JobKind::EmbedText; 7];
+    let mut kinds = [JobKind::EmbedText; 8];
     let mut len = 0;
     if embedder_ready && shared.enable_embed_text && allow_embed_text {
         kinds[len] = JobKind::EmbedText;
@@ -292,6 +297,13 @@ fn claim_kinds(shared: &Shared, level: u8, allow_embed_text: bool) -> ([JobKind;
     // same throttle that pauses vision, and never enqueued on the capture hot path.
     if embedder_ready && level == 0 {
         kinds[len] = JobKind::SessionEmbed;
+        len += 1;
+    }
+    // Insights (`03 §7j.3`, 0.4.5 P8/D10): producer-driven and model-free — the pass reads the
+    // store and computes, so no provider gate applies; the same `level >= 1` throttle pauses
+    // it like every other background lane.
+    if level == 0 {
+        kinds[len] = JobKind::InsightGenerate;
         len += 1;
     }
     (kinds, len)
@@ -415,6 +427,9 @@ async fn process_job_with_providers(
             Some(embedder) => crate::session_vectors::run_session_embed(store, embedder).await,
             None => Outcome::Retry("embedding provider not attached".to_string()),
         },
+        // Insights (`03 §7j.3`, 0.4.5 P8/D10): model-free, so the arm never looks at a
+        // provider slot — the pass derives every row from the store's own history.
+        JobKind::InsightGenerate => crate::insights::run_insight_generate(store, now_ms()).await,
     };
     match outcome {
         Outcome::Complete { changed_data } => {
@@ -688,8 +703,10 @@ mod tests {
     #[test]
     fn graph_kinds_are_claimed_only_when_enabled_and_not_throttled() {
         let shared = test_shared(test_store());
-        let (_, len) = claim_kinds(&shared, 0, true);
-        assert_eq!(len, 0, "no provider lane and no graph producer yet");
+        // Insights (`03 §7j.3`) need no provider, so they are the one kind claimable on a
+        // bare pool — the graph lane is still gated on its producer.
+        let (kinds, len) = claim_kinds(&shared, 0, true);
+        assert_eq!(&kinds[..len], &[JobKind::InsightGenerate]);
 
         shared.graph_enabled.store(true, Ordering::Relaxed);
         let (kinds, len) = claim_kinds(&shared, 0, true);
@@ -700,14 +717,16 @@ mod tests {
                 JobKind::GraphNormalize,
                 JobKind::GraphCluster,
                 JobKind::GraphBackfill,
+                JobKind::InsightGenerate,
             ],
             "the four graph kinds are claimable with no inference provider attached"
         );
 
         shared.graph_ready.store(false, Ordering::Relaxed);
-        let (_, len) = claim_kinds(&shared, 0, true);
+        let (kinds, len) = claim_kinds(&shared, 0, true);
         assert_eq!(
-            len, 0,
+            &kinds[..len],
+            &[JobKind::InsightGenerate],
             "stale graph jobs wait for the sessions historical pass (06 #43)"
         );
         shared.graph_ready.store(true, Ordering::Relaxed);
@@ -735,6 +754,8 @@ mod tests {
                 JobKind::GraphBackfill,
                 // Ask v2's session vectors need only the embedder (0.4.5 D11).
                 JobKind::SessionEmbed,
+                // Insights are model-free, so they follow regardless of the slots (P8).
+                JobKind::InsightGenerate,
             ]
         );
 

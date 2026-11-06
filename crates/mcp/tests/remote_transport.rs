@@ -358,7 +358,11 @@ async fn read_only_mode_is_an_explicit_allowlist_at_listing_and_dispatch() {
             "where_was_i",
             "list_marks",
             "list_sessions",
-            "get_session"
+            "get_session",
+            "list_threads",
+            "get_thread",
+            "find_connections",
+            "list_insights"
         ]
     );
     let all = mcp::tools::definitions();
@@ -370,7 +374,7 @@ async fn read_only_mode_is_an_explicit_allowlist_at_listing_and_dispatch() {
         .filter(|name| mcp::tools::is_read_tool(name))
         .collect();
     assert_eq!(names, expected);
-    assert_eq!(all.as_array().unwrap().len(), 13);
+    assert_eq!(all.as_array().unwrap().len(), 17);
 
     // The predicate is explicit and default-deny: a name that is not classified as a read
     // (a known mutator, Ask, or a tool added later) is not a read tool.
@@ -379,6 +383,10 @@ async fn read_only_mode_is_an_explicit_allowlist_at_listing_and_dispatch() {
     assert!(mcp::tools::is_read_tool("get_capture_coverage"));
     assert!(mcp::tools::is_read_tool("list_reports"));
     assert!(mcp::tools::is_read_tool("get_report"));
+    assert!(mcp::tools::is_read_tool("list_threads"));
+    assert!(mcp::tools::is_read_tool("get_thread"));
+    assert!(mcp::tools::is_read_tool("find_connections"));
+    assert!(mcp::tools::is_read_tool("list_insights"));
     for name in [
         "add_mark",
         "ask_screen_history",
@@ -411,7 +419,7 @@ async fn read_only_mode_is_an_explicit_allowlist_at_listing_and_dispatch() {
     }
 
     // Normal mode keeps the retained behavior: unknown names are protocol errors (-32602),
-    // and the full thirteen-tool listing is unchanged.
+    // and the full seventeen-tool listing is unchanged.
     let normal = ApiClient::new(base, Some("token".into())).unwrap();
     let resp = mcp::tools::call(
         &normal,
@@ -422,7 +430,7 @@ async fn read_only_mode_is_an_explicit_allowlist_at_listing_and_dispatch() {
     assert_eq!(resp["error"]["code"], -32602, "{resp}");
     assert_eq!(
         mcp::tools::definitions_for(false).as_array().unwrap().len(),
-        13
+        17
     );
 
     // No request reached the API for any call above.
@@ -786,7 +794,7 @@ async fn proxy_environment_is_not_used_for_json_image_and_sse_paths() {
     let init = mcp.handshake();
     assert_eq!(init["protocolVersion"], "2025-06-18");
     let listed = mcp.request("tools/list", json!({}));
-    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 13);
+    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 17);
 
     // JSON path.
     let search = mcp.call_tool("search_screen_history", json!({ "query": "proxy probe" }));

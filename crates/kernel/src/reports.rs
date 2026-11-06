@@ -24,14 +24,23 @@
 //! Grounding is always `content_text` (via [`Store::ocr_texts`], never raw text); the
 //! report cites the frames the model actually read; empty ranges produce honest
 //! no-evidence output with **no** sidecar call.
+//!
+//! Reports are an additive consumer of the insight engine (`03 §8b`, `§8e`, 0.4.5 D12): a
+//! window report (daily, weekly, durable memory, custom range) appends an "insights in
+//! window" context block rendered purely from the window's typed insight payloads — no
+//! model call and no judgement language (`03 §7j.4`) — and appends nothing at all when the
+//! window holds no renderable insight, so the framing is byte-identical to what this seam
+//! predates. A failed insight read degrades to "no block", never to a failed report;
+//! citations, the saved-report shape and the markdown/frontmatter stay untouched: every
+//! insight line names the frame/session ids the model may cite.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{anyhow, Result};
 use traits::{
-    AnswerOpts, AnswerProvider, ReportConfig, ReportMode, ReportOutcome, ReportOutput, ReportRange,
-    ReportRun, RetrievedChunk, SearchHit, SearchQuery, SegmenterFrame, Store, TimeRange,
-    TimelineBucket,
+    AnswerOpts, AnswerProvider, Insight, InsightFilter, InsightPayload, OpenLoopSource,
+    ReportConfig, ReportMode, ReportOutcome, ReportOutput, ReportRange, ReportRun, RetrievedChunk,
+    SearchHit, SearchQuery, SegmenterFrame, Store, TimeRange, TimelineBucket,
 };
 
 const DAY_MS: i64 = 86_400_000;
@@ -53,6 +62,11 @@ const MAX_REPORT_PASSES: u32 = 64;
 /// Cap on cited frame ids returned (the UI renders a subset anyway); the honest
 /// `frames_summarized` count still reflects the full union.
 const MAX_REPORT_CITATIONS: usize = 200;
+
+/// Bound on the insights read that feeds a report's context block (`03 §8b`/`§8e`, P8
+/// reports seam): the block is an additive context hint, not a dump of the insight table,
+/// so the read is capped exactly like `GET /v1/insights`' own default.
+const INSIGHTS_CONTEXT_LIMIT: u32 = 1000;
 
 /// Fallback answer context window used only when the provider doesn't report its own
 /// (e.g. a test fake) — matches the answer lane's `sidecar.ctx_size` default. The live
@@ -360,6 +374,21 @@ async fn generate_report_scoped(
         (frames_sampled as u64) < total_in_range
     };
 
+    // --- Insights in window (P8 reports seam, `03 §8b`/`§8e`, 0.4.5 D12) ---
+    // Additive context for a window report: typed, evidenced statements already derived for
+    // `[start, end)`, rendered without a model call. A session recap keeps its own scope (the
+    // named session's frames) and gets no window block; a failed read, zero insights or an
+    // unrenderable payload leave the framing byte-for-byte unchanged.
+    let insights_block = if matches!(scope, CoverageScope::TimeRange) {
+        insights_context_for_window(store, start, end).await
+    } else {
+        String::new()
+    };
+    let final_prompt = instruction_with_insights(
+        final_instruction(range, prompt, start, end),
+        &insights_block,
+    );
+
     // Bound every group to a single map pass. The map step summarizes each group in exactly
     // one pass, and a dense period — or a whole single-period Daily range, which is one
     // group — can hold far more content than one 8192 window. Without this it would be
@@ -396,12 +425,7 @@ async fn generate_report_scoped(
             all.sort_by_key(|c| c.captured_at); // coverage report narrates a timeline
         }
         let (markdown, cited) = answer
-            .summarize(
-                FINAL_SYSTEM_PROMPT,
-                &final_instruction(range, prompt, start, end),
-                &all,
-                opts,
-            )
+            .summarize(FINAL_SYSTEM_PROMPT, &final_prompt, &all, opts)
             .await?;
         let (cited, frame_ids) = report_citations(cited);
         let summarized = frame_ids.len() as u32;
@@ -499,7 +523,7 @@ async fn generate_report_scoped(
     let (markdown, _) = answer
         .summarize(
             FINAL_SYSTEM_PROMPT,
-            &final_instruction(range, prompt, start, end),
+            &final_prompt,
             &nodes_as_chunks(&nodes),
             opts,
         )
@@ -667,10 +691,18 @@ pub async fn generate_weekly_synthesis(
     // daily run of every day described, and the manifest makes it satisfiable on both paths
     // (the collapse flattens day labels away; the reduce path is where the user-facing
     // prose is written).
-    let final_prompt = format!(
-        "{}\n\n{}",
-        weekly_final_instruction(&week_label, start, end),
-        weekly_manifest(&manifest)
+    //
+    // The week's insights (`03 §8e`, P8 reports seam) are additive context in the same
+    // framing — rendered without a model call, and appended only when they render, so a week
+    // with none is framed byte-for-byte as before.
+    let insights_block = insights_context_for_window(store, start, end).await;
+    let final_prompt = instruction_with_insights(
+        format!(
+            "{}\n\n{}",
+            weekly_final_instruction(&week_label, start, end),
+            weekly_manifest(&manifest)
+        ),
+        &insights_block,
     );
 
     // --- Single-pass fast path (mirrors the daily coverage path) ---
@@ -1613,6 +1645,237 @@ fn final_instruction(range: ReportRange, prompt: Option<&str>, start: i64, end: 
     }
 }
 
+/// One RFC3339 UTC instant, or the exact unix-ms figure when the value is outside chrono's
+/// representable range — never a guessed date.
+fn context_timestamp(value: i64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(value)
+        .map(|at| at.to_rfc3339())
+        .unwrap_or_else(|| format!("{value} unix_ms"))
+}
+
+/// Collapses a free-text payload field (title, note, name) onto one line and escapes
+/// embedded quotes, so a stored string can never restructure the prompt around it.
+/// Deterministic: the same input always renders the same text.
+fn context_text(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('"', "\\\"")
+}
+
+/// A payload string as it appears in the block, quoted so its extent is unambiguous.
+fn quoted(text: &str) -> String {
+    format!("\"{}\"", context_text(text))
+}
+
+/// An optional payload string, rendered only when the payload carries one (an absent title
+/// is absent, never an empty quote pair).
+fn quoted_opt(text: Option<&str>) -> Option<String> {
+    text.map(quoted)
+}
+
+/// Renders one insight from its typed payload: the kind label, its window bounds and every
+/// evidence entry (`kind` + `ref_id`), using the payload's own figures and nothing else —
+/// no model call and no judgement (`03 §7j.4`): no score, streak, target or rating.
+///
+/// `None` when the row cannot be rendered honestly: the column and the payload state
+/// different kinds, the row has no evidence (it must never be presented as "evidenced"), or
+/// a payload omits a field its own source variant requires.
+///
+/// **Id convention.** The block tells the model to cite only frame and session ids, so those are
+/// the only ids written plainly (`frame 9`, `session 5`). Every other id — thread, entity, mark —
+/// and every evidence ref is written `kind#id` (`thread#3`, `mark#4`, `session#2`). Without that
+/// distinction a model echoing `thread 3` as a scene number could produce a citation that the
+/// validator accepts against an unrelated frame: technically valid, factually wrong.
+fn insight_line(insight: &Insight) -> Option<String> {
+    if insight.payload.kind() != insight.kind || insight.evidence.is_empty() {
+        return None;
+    }
+    let facts = match &insight.payload {
+        InsightPayload::ThreadActivity(p) => format!(
+            "thread#{} {}; sessions {}; active_ms {}; first_touched {}; last_touched {}",
+            p.thread_id,
+            quoted(&p.title),
+            p.session_count,
+            p.active_ms,
+            context_timestamp(p.first_touched_at),
+            context_timestamp(p.last_touched_at),
+        ),
+        InsightPayload::OpenLoop(p) => match p.source {
+            OpenLoopSource::UnresolvedMark => {
+                let (mark_id, frame_id) = (p.mark_id?, p.frame_id?);
+                let note = match quoted_opt(p.note.as_deref()) {
+                    Some(note) => format!("; note {note}"),
+                    None => String::new(),
+                };
+                format!(
+                    "source unresolved_mark; mark#{} on frame {frame_id}{note}; \
+                     opened_at {}; idle_ms {}",
+                    mark_id,
+                    context_timestamp(p.opened_at),
+                    p.idle_ms
+                )
+            }
+            OpenLoopSource::AbandonedThread => {
+                let thread_id = p.thread_id?;
+                let title = match quoted_opt(p.title.as_deref()) {
+                    Some(title) => format!(" {title}"),
+                    None => String::new(),
+                };
+                format!(
+                    "source abandoned_thread; thread#{thread_id}{title}; opened_at {}; idle_ms {}",
+                    context_timestamp(p.opened_at),
+                    p.idle_ms
+                )
+            }
+        },
+        InsightPayload::Recurrence(p) => format!(
+            "entity#{} ({}) {}; first_session {} at {}; second_session {} at {}; gap_ms {}; \
+             occurrence_count {}",
+            p.entity_id,
+            context_text(&p.entity_kind),
+            quoted(&p.entity_name),
+            p.first_session_id,
+            context_timestamp(p.first_seen_at),
+            p.second_session_id,
+            context_timestamp(p.second_seen_at),
+            p.gap_ms,
+            p.occurrence_count,
+        ),
+        InsightPayload::SemanticNeighbour(p) => {
+            // The payload's own contract: at least one neighbour, ordered by similarity. A
+            // neighbour list that is empty states nothing renderable.
+            if p.neighbours.is_empty() {
+                return None;
+            }
+            // `similarity` stays out of the prompt on purpose: the block carries no score of
+            // any kind (`03 §7j.4`), and the citable facts a neighbour contributes are its
+            // session id and its time. The ordering the payload already applies is what
+            // makes the list meaningful.
+            let neighbours: Vec<String> = p
+                .neighbours
+                .iter()
+                .map(|n| match quoted_opt(n.title.as_deref()) {
+                    Some(title) => format!(
+                        "session {} {title} at {}",
+                        n.session_id,
+                        context_timestamp(n.started_at)
+                    ),
+                    None => format!(
+                        "session {} at {}",
+                        n.session_id,
+                        context_timestamp(n.started_at)
+                    ),
+                })
+                .collect();
+            format!(
+                "session {} at {}; neighbours: {}",
+                p.session_id,
+                context_timestamp(p.session_started_at),
+                neighbours.join(", ")
+            )
+        }
+        InsightPayload::Resumption(p) => {
+            let last_doing = match quoted_opt(p.last_doing.as_deref()) {
+                Some(last) => format!("; last_doing {last}"),
+                None => String::new(),
+            };
+            format!(
+                "thread#{} {}; previous_session {} ended {}; resumed_session {} at {}; gap_ms {}\
+                 {last_doing}",
+                p.thread_id,
+                quoted(&p.title),
+                p.previous_session_id,
+                context_timestamp(p.previous_ended_at),
+                p.resumed_session_id,
+                context_timestamp(p.resumed_at),
+                p.gap_ms,
+            )
+        }
+    };
+    let evidence: Vec<String> = insight
+        .evidence
+        .iter()
+        .map(|entry| format!("{}#{}", entry.kind.as_str(), entry.ref_id))
+        .collect();
+    Some(format!(
+        "- {} [{} inclusive, {} exclusive): {facts}; evidence: {}",
+        insight.kind.as_str(),
+        context_timestamp(insight.window_start),
+        context_timestamp(insight.window_end),
+        evidence.join(", ")
+    ))
+}
+
+/// The report's "insights in window" context block (`03 §8b`, `§8e`, 0.4.5 D12): typed,
+/// evidenced statements rendered straight from their payloads. Empty for an empty slice
+/// **and** empty as soon as one payload cannot be rendered honestly — a partly-guessed block
+/// would be a fabrication, so the whole block is dropped rather than invented (a report
+/// without a block is exactly the report this seam predates).
+fn insights_context(insights: &[Insight]) -> String {
+    if insights.is_empty() {
+        return String::new();
+    }
+    let mut lines: Vec<String> = Vec::with_capacity(insights.len());
+    for insight in insights {
+        match insight_line(insight) {
+            Some(line) => lines.push(line),
+            None => return String::new(),
+        }
+    }
+    let mut block = String::from(
+        "Insights recorded for this window (typed and evidenced; context only — cite only \
+         their frame and session ids, never an insight id):",
+    );
+    for line in lines {
+        block.push('\n');
+        block.push_str(&line);
+    }
+    block
+}
+
+/// Reads the window's insights for the report's context block. A failed read degrades to
+/// "no block" — an insight lookup never fails a report — and is logged at debug without any
+/// id (`07:447`): counts and kinds only.
+async fn insights_context_for_window(
+    store: &dyn Store,
+    window_start: i64,
+    window_end: i64,
+) -> String {
+    let filter = InsightFilter {
+        from_ms: Some(window_start),
+        to_ms: Some(window_end),
+        kind: None,
+        limit: INSIGHTS_CONTEXT_LIMIT,
+    };
+    match store.list_insights(filter).await {
+        Ok(insights) => {
+            let block = insights_context(&insights);
+            tracing::debug!(
+                count = insights.len(),
+                rendered = !block.is_empty(),
+                "report insights context read"
+            );
+            block
+        }
+        Err(_) => {
+            tracing::debug!("report insights context unavailable; continuing without it");
+            String::new()
+        }
+    }
+}
+
+/// Appends the insights block to a report's instruction **only** when one rendered: with
+/// zero insights, a failed read or an unrenderable payload the instruction comes back
+/// byte-for-byte unchanged.
+fn instruction_with_insights(base: String, insights_block: &str) -> String {
+    if insights_block.is_empty() {
+        base
+    } else {
+        format!("{base}\n\n{insights_block}")
+    }
+}
+
 fn empty_output(periods_total: u32) -> ReportOutput {
     ReportOutput {
         markdown: "No screen activity was captured for this range — there is nothing to summarize."
@@ -1658,8 +1921,11 @@ mod tests {
     use std::sync::Arc;
     use store::SqliteStore;
     use traits::{
-        AnswerDelta, MemoryReportRange, NewFrame, NewSession, OcrResult, ReportError,
-        ReportRunKind, ReportRunPhase, SavedReport, SessionHost, SessionKind,
+        AnswerDelta, EvidenceKind, InsightEvidence, InsightGenerator, InsightKind,
+        MemoryReportRange, NewFrame, NewInsight, NewSession, OcrResult, OpenLoopPayload,
+        RecurrencePayload, ReportError, ReportRunKind, ReportRunPhase, ResumptionPayload,
+        SavedReport, SemanticNeighbourPayload, SessionHost, SessionKind, SessionNeighbour,
+        ThreadActivityPayload,
     };
 
     use crate::report_service::{execute_weekly, WeeklyExecutionRequest};
@@ -3793,5 +4059,546 @@ mod tests {
         (chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap()
             + chrono::Duration::days(offset as i64))
         .to_string()
+    }
+
+    // ---- Insights-in-window context block (P8 reports seam, `03 §8b`/`§8e`, D12) ----
+
+    /// Records every instruction it is handed, so a test can pin the exact framing the model
+    /// received rather than the markdown a fake chose to echo.
+    struct RecordingAnswer {
+        instructions: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl AnswerProvider for RecordingAnswer {
+        async fn answer(
+            &self,
+            _query: &str,
+            _context: &[RetrievedChunk],
+            _opts: AnswerOpts,
+            _tx: tokio::sync::mpsc::Sender<AnswerDelta>,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn summarize(
+            &self,
+            _system: &str,
+            instruction: &str,
+            context: &[RetrievedChunk],
+            _opts: AnswerOpts,
+        ) -> Result<(String, Vec<i64>)> {
+            self.instructions
+                .lock()
+                .expect("instruction log")
+                .push(instruction.to_string());
+            let cited: Vec<i64> = context.iter().map(|c| c.frame_id).collect();
+            Ok((format!("[{} frames]", context.len()), cited))
+        }
+    }
+
+    /// One `recurrence` insight in `[window_start, window_end)` inserting `entity_name` as the
+    /// entity's canonical name, so a test can tell which rows a read returned.
+    fn recurrence_insight_at(window_start: i64, window_end: i64, entity_name: &str) -> NewInsight {
+        NewInsight {
+            window_start,
+            window_end,
+            payload: InsightPayload::Recurrence(RecurrencePayload {
+                entity_id: 3,
+                entity_kind: "repo".to_string(),
+                entity_name: entity_name.to_string(),
+                first_session_id: 5,
+                first_seen_at: window_start + 100_000,
+                second_session_id: 9,
+                second_seen_at: window_start + 70_000_000,
+                gap_ms: 69_999_900_000,
+                occurrence_count: 4,
+            }),
+            generator: InsightGenerator::Heuristic,
+            evidence: vec![
+                InsightEvidence {
+                    ordinal: 0,
+                    kind: EvidenceKind::Entity,
+                    ref_id: 3,
+                },
+                InsightEvidence {
+                    ordinal: 1,
+                    kind: EvidenceKind::Session,
+                    ref_id: 5,
+                },
+                InsightEvidence {
+                    ordinal: 2,
+                    kind: EvidenceKind::Session,
+                    ref_id: 9,
+                },
+            ],
+        }
+    }
+
+    /// The persisted read shape of [`recurrence_insight_at`] (store-assigned id and
+    /// `generated_at`, never-stale) so the renderer can be tested without a database. Every
+    /// assertion derives its expectation from this value's own fields.
+    fn recurrence_insight() -> Insight {
+        let stored = recurrence_insight_at(1_760_000_000_000, 1_760_086_400_000, "owner/project");
+        Insight {
+            id: 11,
+            kind: InsightKind::Recurrence,
+            window_start: stored.window_start,
+            window_end: stored.window_end,
+            payload: stored.payload,
+            generator: stored.generator,
+            generated_at: 1_760_090_000_000,
+            stale: false,
+            evidence: stored.evidence,
+        }
+    }
+
+    #[test]
+    fn insights_context_renders_every_evidence_ref() {
+        let insight = recurrence_insight();
+        let block = insights_context(std::slice::from_ref(&insight));
+
+        // Kind label plus both window bounds head the line.
+        assert!(
+            block.contains(&format!(
+                "- {} [{} inclusive",
+                insight.kind.as_str(),
+                context_timestamp(insight.window_start)
+            )),
+            "kind label and window start must be rendered: {block}"
+        );
+        assert!(
+            block.contains(&format!(
+                "{} exclusive)",
+                context_timestamp(insight.window_end)
+            )),
+            "window end must be rendered: {block}"
+        );
+
+        // Every evidence entry, as its own kind token plus its ref id.
+        for entry in &insight.evidence {
+            assert!(
+                block.contains(&format!("{}#{}", entry.kind.as_str(), entry.ref_id)),
+                "evidence {entry:?} must be rendered: {block}"
+            );
+        }
+
+        // The payload's own typed figures.
+        let InsightPayload::Recurrence(payload) = &insight.payload else {
+            panic!("fixture is a recurrence payload");
+        };
+        for figure in [
+            format!(
+                "entity#{} ({}) {}",
+                payload.entity_id,
+                context_text(&payload.entity_kind),
+                quoted(&payload.entity_name)
+            ),
+            format!(
+                "first_session {} at {}",
+                payload.first_session_id,
+                context_timestamp(payload.first_seen_at)
+            ),
+            format!(
+                "second_session {} at {}",
+                payload.second_session_id,
+                context_timestamp(payload.second_seen_at)
+            ),
+            format!("gap_ms {}", payload.gap_ms),
+            format!("occurrence_count {}", payload.occurrence_count),
+        ] {
+            assert!(block.contains(&figure), "missing {figure:?} in: {block}");
+        }
+
+        // One header line and exactly one line per insight — nothing else is added.
+        let rendered = std::slice::from_ref(&insight);
+        assert_eq!(block.lines().count(), 1 + rendered.len());
+
+        // Deterministic: the same slice always renders the same text.
+        assert_eq!(insights_context(std::slice::from_ref(&insight)), block);
+
+        // Appended after a blank line when there is a block.
+        let base = final_instruction(
+            ReportRange::Daily,
+            None,
+            insight.window_start,
+            insight.window_end,
+        );
+        assert_eq!(
+            instruction_with_insights(base.clone(), &block),
+            format!("{base}\n\n{block}")
+        );
+    }
+
+    #[test]
+    fn insights_context_writes_only_citable_ids_plainly() {
+        // The block tells the model to cite frame and session ids, so those may appear as bare
+        // numbers. Thread, entity and mark ids must not, or a model echoing `thread 3` as a
+        // scene number yields a citation the validator accepts against an unrelated frame.
+        let template = recurrence_insight();
+        let thread_id = 7;
+        let entity_id = 11;
+        let mark_id = 13;
+
+        let mut thread_activity = template.clone();
+        thread_activity.kind = InsightKind::ThreadActivity;
+        thread_activity.payload = InsightPayload::ThreadActivity(ThreadActivityPayload {
+            thread_id,
+            title: "Schema work".to_string(),
+            session_count: 2,
+            active_ms: 1_000,
+            first_touched_at: 1_760_000_000_000,
+            last_touched_at: 1_760_000_060_000,
+        });
+
+        let mut open_loop = template.clone();
+        open_loop.kind = InsightKind::OpenLoop;
+        open_loop.payload = InsightPayload::OpenLoop(OpenLoopPayload {
+            source: OpenLoopSource::UnresolvedMark,
+            mark_id: Some(mark_id),
+            frame_id: Some(42),
+            note: None,
+            opened_at: 1_760_000_000_000,
+            idle_ms: 1_000,
+            thread_id: None,
+            title: None,
+        });
+
+        let mut recurrence = template.clone();
+        recurrence.kind = InsightKind::Recurrence;
+        recurrence.payload = InsightPayload::Recurrence(RecurrencePayload {
+            entity_id,
+            entity_kind: "repo".to_string(),
+            entity_name: "acme/widgets".to_string(),
+            first_session_id: 3,
+            first_seen_at: 1_760_000_000_000,
+            second_session_id: 4,
+            second_seen_at: 1_760_600_000_000,
+            gap_ms: 600_000,
+            occurrence_count: 2,
+        });
+
+        let mut neighbour = template.clone();
+        neighbour.kind = InsightKind::SemanticNeighbour;
+        neighbour.payload = InsightPayload::SemanticNeighbour(SemanticNeighbourPayload {
+            session_id: 5,
+            session_title: None,
+            session_started_at: 1_760_000_000_000,
+            neighbours: vec![SessionNeighbour {
+                session_id: 6,
+                title: None,
+                started_at: 1_759_000_000_000,
+                similarity: 0.9,
+            }],
+        });
+
+        let mut resumption = template;
+        resumption.kind = InsightKind::Resumption;
+        resumption.payload = InsightPayload::Resumption(ResumptionPayload {
+            thread_id,
+            title: "Schema work".to_string(),
+            previous_session_id: 3,
+            previous_ended_at: 1_760_000_000_000,
+            resumed_session_id: 4,
+            resumed_at: 1_760_600_000_000,
+            gap_ms: 600_000,
+            last_doing: None,
+        });
+
+        let all = [
+            thread_activity,
+            open_loop,
+            recurrence,
+            neighbour,
+            resumption,
+        ];
+        let block = insights_context(&all);
+        assert!(!block.is_empty());
+
+        // One line per kind — every variant renders.
+        assert_eq!(block.lines().count(), 1 + all.len());
+
+        for bare in ["thread ", "entity ", "mark "] {
+            assert!(
+                !block.contains(bare),
+                "{bare:?} must never be followed by a bare id: {block}"
+            );
+        }
+        for hashed in ["thread#", "entity#", "mark#"] {
+            assert!(
+                block.contains(hashed),
+                "{hashed:?} must carry the ids the block mentions: {block}"
+            );
+        }
+
+        // The citable ids the instruction names stay plain, and the ids that appear are the
+        // payload's own.
+        assert!(block.contains("frame 42"), "{block}");
+        assert!(block.contains("session 5"), "{block}");
+        assert!(block.contains(&format!("thread#{thread_id}")), "{block}");
+        assert!(block.contains(&format!("entity#{entity_id}")), "{block}");
+        assert!(block.contains(&format!("mark#{mark_id}")), "{block}");
+    }
+
+    #[tokio::test]
+    async fn insights_context_is_empty_for_no_insights() {
+        // An empty slice renders nothing at all — not even the header — and an empty block
+        // never changes an instruction.
+        assert_eq!(insights_context(&[]), "");
+        let base = final_instruction(ReportRange::Daily, None, 0, DAY_MS);
+        assert_eq!(instruction_with_insights(base.clone(), ""), base);
+
+        // The prompt a zero-insight window assembles is byte-identical to the instruction
+        // this seam predates: compared against the live assembly function, never a re-typed
+        // prompt. Both the desktop `Daily` and the durable `MemoryDaily` framings cover the
+        // two branches `final_instruction` has.
+        let store = SqliteStore::open_in_memory().unwrap();
+        seed_day(&store, 0, 5).await;
+        let instructions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let answer = RecordingAnswer {
+            instructions: instructions.clone(),
+        };
+        for range in [ReportRange::Daily, ReportRange::MemoryDaily] {
+            instructions.lock().expect("instruction log").clear();
+            let output = generate_report(
+                &store,
+                &answer,
+                range,
+                0,
+                DAY_MS,
+                None,
+                None,
+                cfg(),
+                None,
+                &AtomicBool::new(false),
+            )
+            .await
+            .unwrap();
+            assert!(output.passes > 0, "the seeded window must reach the model");
+            let seen = instructions.lock().expect("instruction log").clone();
+            assert_eq!(seen.len(), 1, "five frames collapse to one final pass");
+            assert_eq!(
+                seen[0],
+                final_instruction(range, None, 0, DAY_MS),
+                "zero insights must leave the framing byte-identical"
+            );
+            assert!(
+                !seen[0].contains("Insights recorded for this window"),
+                "no block may be assembled with no insights: {}",
+                seen[0]
+            );
+        }
+
+        // The weekly synthesis is pinned the same way: a week whose saved dailies carry no
+        // renderable insight is framed exactly as the framing + consumed manifest this seam
+        // predates.
+        let (week_start, week_end) = week_bounds();
+        let dates = week_dates();
+        let week_store = SqliteStore::open_in_memory().unwrap();
+        let runs: Vec<ReportRun> = (0..2)
+            .map(|offset| {
+                let day_start = week_start + offset as i64 * DAY_MS;
+                weekly_run(
+                    &format!("daily-{}", dates[offset]),
+                    day_start,
+                    day_start + DAY_MS,
+                    &dates[offset],
+                    Vec::new(),
+                    false,
+                    ReportOutcome::Ok,
+                )
+            })
+            .collect();
+        for run in &runs {
+            week_store.create_report_run(run.clone()).await.unwrap();
+        }
+        instructions.lock().expect("instruction log").clear();
+        let week_output = generate_weekly_synthesis(
+            &week_store,
+            &answer,
+            &runs,
+            week_start,
+            week_end,
+            "Etc/UTC",
+            cfg(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .await
+        .unwrap();
+        assert!(week_output.passes > 0, "the week must reach the model");
+        let weekly = instructions.lock().expect("instruction log").clone();
+        assert_eq!(weekly.len(), 1, "two saved-prose days need one final pass");
+        let labels: Vec<String> = runs
+            .iter()
+            .map(|run| {
+                let sessions: Vec<i64> = run
+                    .result
+                    .as_ref()
+                    .map(|result| result.session_ids.clone())
+                    .unwrap_or_default();
+                weekly_day_label(&run.local_date, &run.run_id, &sessions)
+            })
+            .collect();
+        let week_label = crate::memory_schedule::week_label("Etc/UTC", week_start).unwrap();
+        assert_eq!(
+            weekly[0],
+            format!(
+                "{}\n\n{}",
+                weekly_final_instruction(&week_label, week_start, week_end),
+                weekly_manifest(&labels)
+            ),
+            "zero insights must leave the weekly framing byte-identical"
+        );
+        assert!(!weekly[0].contains("Insights recorded for this window"));
+    }
+
+    #[tokio::test]
+    async fn report_insights_context_appends_the_window_block() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        seed_day(&store, 0, 5).await;
+        // Two persisted insights: one overlaps the reported window, one lies wholly outside
+        // it, so the read's window predicate is measurable from the prompt alone.
+        let inside = recurrence_insight_at(0, DAY_MS, "inside-the-window");
+        let outside = recurrence_insight_at(2 * DAY_MS, 3 * DAY_MS, "outside-the-window");
+        store.insert_insight(inside).await.unwrap();
+        store.insert_insight(outside).await.unwrap();
+
+        let instructions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let answer = RecordingAnswer {
+            instructions: instructions.clone(),
+        };
+        let output = generate_report(
+            &store,
+            &answer,
+            ReportRange::Daily,
+            0,
+            DAY_MS,
+            None,
+            None,
+            cfg(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .await
+        .unwrap();
+        assert!(output.passes > 0, "the seeded window must reach the model");
+        let seen = instructions.lock().expect("instruction log").clone();
+        assert_eq!(seen.len(), 1, "five frames collapse to one final pass");
+
+        // The pre-change framing survives verbatim as the prefix, and the block follows it
+        // after a blank line — the exact text the renderer produces from what the store read
+        // back for this window.
+        let base = final_instruction(ReportRange::Daily, None, 0, DAY_MS);
+        assert!(
+            seen[0].starts_with(&base),
+            "the daily framing must stay the prefix of: {}",
+            seen[0]
+        );
+        let read_back = store
+            .list_insights(InsightFilter {
+                from_ms: Some(0),
+                to_ms: Some(DAY_MS),
+                kind: None,
+                limit: INSIGHTS_CONTEXT_LIMIT,
+            })
+            .await
+            .unwrap();
+        assert_eq!(read_back.len(), 1, "only the in-window insight is read");
+        let block = insights_context(&read_back);
+        assert!(!block.is_empty(), "a renderable insight yields a block");
+        assert_eq!(
+            seen[0],
+            instruction_with_insights(base, &block),
+            "the assembled prompt must be the framing plus what the store's rows render"
+        );
+
+        // The rendered block names the in-window insight's figures and evidence only.
+        let InsightPayload::Recurrence(payload) = &read_back[0].payload else {
+            panic!("fixture is a recurrence payload");
+        };
+        for needle in [
+            payload.entity_name.clone(),
+            format!("gap_ms {}", payload.gap_ms),
+            format!("session {}", payload.first_session_id),
+            format!("session {}", payload.second_session_id),
+        ] {
+            assert!(
+                seen[0].contains(&needle),
+                "the prompt must carry {needle:?}: {}",
+                seen[0]
+            );
+        }
+        assert!(
+            !seen[0].contains("outside-the-window"),
+            "an insight outside the reported window must not be rendered: {}",
+            seen[0]
+        );
+    }
+
+    #[test]
+    fn report_insights_context_drops_an_unrenderable_payload() {
+        let renderable = recurrence_insight();
+        assert!(!insights_context(std::slice::from_ref(&renderable)).is_empty());
+
+        // A `semantic_neighbour` payload with no neighbours contradicts its own contract
+        // (never empty): there is nothing to render, and a guessed line is a fabrication.
+        let mut empty_neighbours = recurrence_insight();
+        empty_neighbours.kind = InsightKind::SemanticNeighbour;
+        empty_neighbours.payload = InsightPayload::SemanticNeighbour(SemanticNeighbourPayload {
+            session_id: 5,
+            session_title: Some("Design docs".to_string()),
+            session_started_at: 1_760_000_100_000,
+            neighbours: Vec::new(),
+        });
+        empty_neighbours.evidence = vec![InsightEvidence {
+            ordinal: 0,
+            kind: EvidenceKind::Session,
+            ref_id: 5,
+        }];
+
+        // A row whose payload states a different kind than its own column cannot be trusted.
+        let mut mismatched = renderable.clone();
+        mismatched.kind = InsightKind::ThreadActivity;
+
+        // A row without evidence must never be presented as evidenced.
+        let mut unevidenced = renderable.clone();
+        unevidenced.evidence.clear();
+
+        // An `open_loop` that omits the id its own source variant requires.
+        let mut missing_mark = recurrence_insight();
+        missing_mark.kind = InsightKind::OpenLoop;
+        missing_mark.payload = InsightPayload::OpenLoop(OpenLoopPayload {
+            source: OpenLoopSource::UnresolvedMark,
+            mark_id: None,
+            frame_id: Some(88),
+            note: Some("follow up".to_string()),
+            thread_id: None,
+            title: None,
+            opened_at: 1_760_000_000_000,
+            idle_ms: 3_600_000,
+        });
+        missing_mark.evidence = vec![InsightEvidence {
+            ordinal: 0,
+            kind: EvidenceKind::Frame,
+            ref_id: 88,
+        }];
+
+        for unrenderable in [empty_neighbours, mismatched, unevidenced, missing_mark] {
+            assert!(
+                insight_line(&unrenderable).is_none(),
+                "no line may be invented for {unrenderable:?}"
+            );
+            assert_eq!(
+                insights_context(std::slice::from_ref(&unrenderable)),
+                "",
+                "an unrenderable payload drops the whole block"
+            );
+            // A partly-rendered block would still be a guess: one bad row drops it all.
+            assert_eq!(
+                insights_context(&[renderable.clone(), unrenderable]),
+                "",
+                "a mixed slice must not keep the renderable half"
+            );
+        }
     }
 }

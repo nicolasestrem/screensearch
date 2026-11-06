@@ -1559,7 +1559,7 @@ pass), `graph_cluster` (threads + overrides), `graph_backfill` (the resumable hi
 on the capture hot path:** capture, OCR and storage never wait on a graph job, and a throttled graph
 job degrades to "the graph is behind", never to a capture stall. Failure logs and degrades; it never
 blocks capture, search or Ask. The job-kind registry gains these four values in **one** edit (P5
-owns it; P6's own job kind is added beside them).
+owns it; P6's `session_embed` and P8's `insight_generate` are added beside them).
 
 ## 7i. Ask v2 contract (0.4.5)
 

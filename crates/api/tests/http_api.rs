@@ -13,9 +13,12 @@ use store::SqliteStore;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::Sender;
 use traits::{
-    AnswerDelta, AnswerOpts, AnswerProvider, ExportFrameRow, FrameDetail, NewFrame, NewSession,
-    NewSessionArtifact, OcrResult, ResumeContext, RetrievedChunk, SessionArtifactKind,
-    SessionArtifactRole, SessionHost, SessionKind, Settings, Store,
+    AnswerDelta, AnswerOpts, AnswerProvider, EntityKind, EvidenceKind, ExportFrameRow, FrameDetail,
+    GraphSessionLinkAggregate, InsightEvidence, InsightGenerator, InsightPayload, NewFrame,
+    NewInsight, NewSession, NewSessionArtifact, OcrResult, OpenLoopPayload, OpenLoopSource,
+    RecurrencePayload, ResumeContext, ResumptionPayload, RetrievedChunk, SemanticNeighbourPayload,
+    SessionArtifactKind, SessionArtifactRole, SessionHost, SessionKind, SessionNeighbour, Settings,
+    Store, ThreadActivityPayload, ThreadDraft, ThreadMemberDraft, ThreadPlan,
 };
 
 #[path = "support/history_reads.rs"]
@@ -374,6 +377,10 @@ async fn all_routes_require_bearer() {
         (reqwest::Method::POST, "/v1/marks/1/resolve"),
         (reqwest::Method::POST, "/v1/ask"),
         (reqwest::Method::GET, "/v1/export"),
+        (reqwest::Method::GET, "/v1/threads"),
+        (reqwest::Method::GET, "/v1/threads/1"),
+        (reqwest::Method::GET, "/v1/entities"),
+        (reqwest::Method::GET, "/v1/insights"),
         (reqwest::Method::GET, "/v1/does-not-exist"),
     ] {
         for token in [None, Some("wrong-token")] {
@@ -1192,6 +1199,842 @@ async fn session_detail_include_summary_never_generates() {
     assert!(
         s.summary.is_none() && s.summary_model.is_none(),
         "a GET must not write sessions.summary/summary_model (D12)"
+    );
+
+    server.stop().await;
+}
+
+// ---- P8 connection & insight reads (`03 §7c` P8 block, `§7h.4`, `§7j`) ----
+
+/// The read credential used by every P8 case: `history.read` and nothing else.
+const P8_READ_TOKEN: &str = "p8-read-credential";
+
+const DEPLOY_CLUSTER: &str = "cluster-deploy";
+const FOCUS_CLUSTER: &str = "cluster-focus";
+const REPO_ENTITY_KEY: &str = "repo:screensearch";
+const DOMAIN_ENTITY_KEY: &str = "domain:example.com";
+/// The repo entity's seeded alias — a string that appears in no canonical name, so a query
+/// matching it can only have matched through the alias table.
+const REPO_ALIAS: &str = "ssv2c-repo";
+
+/// Seeded thread-member confidences (inputs to the fixture, referenced by the assertions).
+const DEPLOY_CONF_A: f64 = 0.9;
+const DEPLOY_CONF_B: f64 = 0.8;
+const FOCUS_CONF_C: f64 = 0.95;
+const FOCUS_CONF_D: f64 = 0.7;
+/// Seeded session↔entity confidences.
+const REPO_CONF_A: f64 = 0.9;
+const REPO_CONF_B: f64 = 0.75;
+const DOMAIN_CONF_C: f64 = 0.7;
+const DOMAIN_CONF_D: f64 = 0.6;
+
+/// Everything the P8 fixture seeds. Row ids are **read back** through independent store
+/// reads (threads by `cluster_key`, entities by `normalized_key`), so assertions name real
+/// rows without assuming an allocation order; `insights` keeps the exact [`NewInsight`]
+/// values handed to the store, which is what `/v1/insights` must project back.
+struct GraphFixture {
+    thread_deploy: i64,
+    thread_focus: i64,
+    session_a: i64,
+    session_b: i64,
+    session_c: i64,
+    session_d: i64,
+    entity_repo: i64,
+    entity_domain: i64,
+    insights: Vec<NewInsight>,
+}
+
+impl GraphFixture {
+    /// The kind tokens `/v1/insights` must return them in: `window_start DESC, kind ASC`
+    /// (`id DESC` only breaks ties this fixture does not create).
+    fn insight_order(&self) -> Vec<String> {
+        let mut order: Vec<&NewInsight> = self.insights.iter().collect();
+        order.sort_by(|a, b| {
+            b.window_start
+                .cmp(&a.window_start)
+                .then_with(|| a.payload.kind().as_str().cmp(b.payload.kind().as_str()))
+        });
+        order
+            .iter()
+            .map(|insight| insight.payload.kind().as_str().to_string())
+            .collect()
+    }
+
+    fn insight(&self, kind: &str) -> &NewInsight {
+        self.insights
+            .iter()
+            .find(|insight| insight.payload.kind().as_str() == kind)
+            .expect("the fixture seeds one insight per kind")
+    }
+}
+
+/// Two threads, four sessions, two entities (one aliased), one unresolved mark and one
+/// insight per kind with real evidence — the data the four P8 read routes project.
+///
+/// deploy = sessions A `[1000,5000]` + B `[3000,9000]`; focus = C `[10000,12000]` +
+/// D `[20000,22000]`. `repo:screensearch` (alias `ssv2c-repo`) is touched by A and B,
+/// `domain:example.com` by C and D, so both entities report `session_count = 2` and the
+/// entity/thread orders have two distinguishable rows each.
+async fn seed_graph(store: &SqliteStore) -> GraphFixture {
+    let session_a = store
+        .insert_session(new_session(
+            1_000,
+            Some(5_000),
+            SessionKind::Ai,
+            Some("claude-code"),
+            Some(SessionHost::Terminal),
+            "ai:claude-code",
+        ))
+        .await
+        .unwrap();
+    let session_b = store
+        .insert_session(new_session(
+            3_000,
+            Some(9_000),
+            SessionKind::Ai,
+            Some("codex"),
+            Some(SessionHost::Terminal),
+            "ai:codex",
+        ))
+        .await
+        .unwrap();
+    let session_c = store
+        .insert_session(new_session(
+            10_000,
+            Some(12_000),
+            SessionKind::Focus,
+            None,
+            Some(SessionHost::Desktop),
+            "focus:vscode",
+        ))
+        .await
+        .unwrap();
+    let session_d = store
+        .insert_session(new_session(
+            20_000,
+            Some(22_000),
+            SessionKind::Focus,
+            None,
+            Some(SessionHost::Desktop),
+            "focus:vscode",
+        ))
+        .await
+        .unwrap();
+
+    // The mark's frame belongs to session A, so `open_loop` evidence names real rows.
+    let frame = seed_frame(store, 1_500, "deploy pipeline config change").await;
+    store
+        .assign_frames_session(&[frame], Some(session_a))
+        .await
+        .unwrap();
+    let mark = store
+        .insert_mark(frame, 4_000, Some("check the deploy".to_string()))
+        .await
+        .unwrap();
+
+    store
+        .graph_apply_thread_plan(&ThreadPlan {
+            threads: vec![
+                ThreadDraft {
+                    cluster_key: DEPLOY_CLUSTER.to_string(),
+                    title: "Deploy pipeline".to_string(),
+                    first_seen_at: 1_000,
+                    last_seen_at: 9_000,
+                    sessions: vec![
+                        ThreadMemberDraft {
+                            session_id: session_a,
+                            confidence: DEPLOY_CONF_A,
+                        },
+                        ThreadMemberDraft {
+                            session_id: session_b,
+                            confidence: DEPLOY_CONF_B,
+                        },
+                    ],
+                },
+                ThreadDraft {
+                    cluster_key: FOCUS_CLUSTER.to_string(),
+                    title: "Focus block".to_string(),
+                    first_seen_at: 10_000,
+                    last_seen_at: 22_000,
+                    sessions: vec![
+                        ThreadMemberDraft {
+                            session_id: session_c,
+                            confidence: FOCUS_CONF_C,
+                        },
+                        ThreadMemberDraft {
+                            session_id: session_d,
+                            confidence: FOCUS_CONF_D,
+                        },
+                    ],
+                },
+            ],
+            ..ThreadPlan::default()
+        })
+        .await
+        .unwrap();
+
+    for (session, confidence, hit_count, first_seen_at, last_seen_at, aliases) in [
+        (
+            session_a,
+            REPO_CONF_A,
+            2,
+            1_000,
+            5_000,
+            vec![REPO_ALIAS.to_string()],
+        ),
+        (session_b, REPO_CONF_B, 1, 3_000, 9_000, Vec::new()),
+    ] {
+        store
+            .graph_replace_session_links(
+                session,
+                &[GraphSessionLinkAggregate {
+                    kind: EntityKind::Repo,
+                    canonical_name: "screensearch".to_string(),
+                    normalized_key: REPO_ENTITY_KEY.to_string(),
+                    confidence,
+                    hit_count,
+                    first_seen_at,
+                    last_seen_at,
+                    aliases,
+                }],
+            )
+            .await
+            .unwrap();
+    }
+    for (session, confidence, first_seen_at, last_seen_at) in [
+        (session_c, DOMAIN_CONF_C, 10_000, 12_000),
+        (session_d, DOMAIN_CONF_D, 20_000, 22_000),
+    ] {
+        store
+            .graph_replace_session_links(
+                session,
+                &[GraphSessionLinkAggregate {
+                    kind: EntityKind::Domain,
+                    canonical_name: "example.com".to_string(),
+                    normalized_key: DOMAIN_ENTITY_KEY.to_string(),
+                    confidence,
+                    hit_count: 1,
+                    first_seen_at,
+                    last_seen_at,
+                    aliases: Vec::new(),
+                }],
+            )
+            .await
+            .unwrap();
+    }
+
+    let thread_deploy = store
+        .graph_stored_threads()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|thread| thread.cluster_key == DEPLOY_CLUSTER)
+        .expect("deploy thread stored")
+        .id;
+    let thread_focus = store
+        .graph_stored_threads()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|thread| thread.cluster_key == FOCUS_CLUSTER)
+        .expect("focus thread stored")
+        .id;
+    let catalog = store.graph_entity_catalog(50).await.unwrap();
+    let entity_repo = catalog
+        .iter()
+        .find(|entity| entity.normalized_key == REPO_ENTITY_KEY)
+        .expect("repo entity stored")
+        .id;
+    let entity_domain = catalog
+        .iter()
+        .find(|entity| entity.normalized_key == DOMAIN_ENTITY_KEY)
+        .expect("domain entity stored")
+        .id;
+
+    // One insight per kind. Windows are chosen so each payload is honest for its own
+    // window, and every evidence list is dense from ordinal 0 (`03 §7j.2`, which the store
+    // validates): the response must project that list back ordinal-ascending.
+    let insights = vec![
+        NewInsight {
+            window_start: 1_000,
+            window_end: 9_500,
+            payload: InsightPayload::ThreadActivity(ThreadActivityPayload {
+                thread_id: thread_deploy,
+                title: "Deploy pipeline".to_string(),
+                session_count: 2,
+                active_ms: (5_000 - 1_000) + (9_000 - 3_000),
+                first_touched_at: 1_000,
+                last_touched_at: 9_000,
+            }),
+            generator: InsightGenerator::Heuristic,
+            evidence: vec![
+                InsightEvidence {
+                    ordinal: 0,
+                    kind: EvidenceKind::Thread,
+                    ref_id: thread_deploy,
+                },
+                InsightEvidence {
+                    ordinal: 1,
+                    kind: EvidenceKind::Session,
+                    ref_id: session_a,
+                },
+                InsightEvidence {
+                    ordinal: 2,
+                    kind: EvidenceKind::Session,
+                    ref_id: session_b,
+                },
+            ],
+        },
+        NewInsight {
+            window_start: 1_000,
+            window_end: 9_500,
+            payload: InsightPayload::OpenLoop(OpenLoopPayload {
+                source: OpenLoopSource::UnresolvedMark,
+                mark_id: Some(mark),
+                frame_id: Some(frame),
+                note: Some("check the deploy".to_string()),
+                thread_id: None,
+                title: None,
+                opened_at: 4_000,
+                idle_ms: 9_500 - 4_000,
+            }),
+            generator: InsightGenerator::Heuristic,
+            evidence: vec![
+                InsightEvidence {
+                    ordinal: 0,
+                    kind: EvidenceKind::Mark,
+                    ref_id: mark,
+                },
+                InsightEvidence {
+                    ordinal: 1,
+                    kind: EvidenceKind::Frame,
+                    ref_id: frame,
+                },
+            ],
+        },
+        NewInsight {
+            window_start: 3_000,
+            window_end: 9_500,
+            payload: InsightPayload::Recurrence(RecurrencePayload {
+                entity_id: entity_repo,
+                entity_kind: EntityKind::Repo.as_str().to_string(),
+                entity_name: "screensearch".to_string(),
+                first_session_id: session_a,
+                first_seen_at: 1_000,
+                second_session_id: session_b,
+                second_seen_at: 3_000,
+                gap_ms: 3_000 - 1_000,
+                occurrence_count: 2,
+            }),
+            generator: InsightGenerator::Heuristic,
+            evidence: vec![
+                InsightEvidence {
+                    ordinal: 0,
+                    kind: EvidenceKind::Entity,
+                    ref_id: entity_repo,
+                },
+                InsightEvidence {
+                    ordinal: 1,
+                    kind: EvidenceKind::Session,
+                    ref_id: session_a,
+                },
+                InsightEvidence {
+                    ordinal: 2,
+                    kind: EvidenceKind::Session,
+                    ref_id: session_b,
+                },
+            ],
+        },
+        NewInsight {
+            window_start: 3_000,
+            window_end: 9_500,
+            payload: InsightPayload::SemanticNeighbour(SemanticNeighbourPayload {
+                session_id: session_b,
+                session_title: None,
+                session_started_at: 3_000,
+                neighbours: vec![SessionNeighbour {
+                    session_id: session_c,
+                    title: None,
+                    started_at: 10_000,
+                    similarity: 0.91,
+                }],
+            }),
+            generator: InsightGenerator::Heuristic,
+            evidence: vec![
+                InsightEvidence {
+                    ordinal: 0,
+                    kind: EvidenceKind::Session,
+                    ref_id: session_b,
+                },
+                InsightEvidence {
+                    ordinal: 1,
+                    kind: EvidenceKind::Session,
+                    ref_id: session_c,
+                },
+            ],
+        },
+        NewInsight {
+            window_start: 10_000,
+            window_end: 22_500,
+            payload: InsightPayload::Resumption(ResumptionPayload {
+                thread_id: thread_focus,
+                title: "Focus block".to_string(),
+                previous_session_id: session_c,
+                previous_ended_at: 12_000,
+                resumed_session_id: session_d,
+                resumed_at: 20_000,
+                gap_ms: 20_000 - 12_000,
+                last_doing: None,
+            }),
+            generator: InsightGenerator::Heuristic,
+            evidence: vec![
+                InsightEvidence {
+                    ordinal: 0,
+                    kind: EvidenceKind::Thread,
+                    ref_id: thread_focus,
+                },
+                InsightEvidence {
+                    ordinal: 1,
+                    kind: EvidenceKind::Session,
+                    ref_id: session_c,
+                },
+                InsightEvidence {
+                    ordinal: 2,
+                    kind: EvidenceKind::Session,
+                    ref_id: session_d,
+                },
+            ],
+        },
+    ];
+    for insight in &insights {
+        store.insert_insight(insight.clone()).await.unwrap();
+    }
+
+    GraphFixture {
+        thread_deploy,
+        thread_focus,
+        session_a,
+        session_b,
+        session_c,
+        session_d,
+        entity_repo,
+        entity_domain,
+        insights,
+    }
+}
+
+/// The P8 fixture host over an already-seeded store (no answer provider: these routes never
+/// infer).
+fn graph_host(store: Arc<SqliteStore>) -> Arc<TestHost> {
+    Arc::new(TestHost {
+        store,
+        answer: None,
+        started_at_ms: 500,
+        capture_kernel: None,
+        history_fault: None,
+        report_page_override: None,
+    })
+}
+
+/// An in-memory P8 fixture plus its running server with the read credential installed.
+async fn start_graph_server() -> (String, ApiServer, Arc<SqliteStore>, GraphFixture) {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
+    let fixture = seed_graph(&store).await;
+    let (base, server, _t) = start_server(graph_host(store.clone())).await;
+    server.set_read_token(Some(P8_READ_TOKEN.to_string()));
+    (base, server, store, fixture)
+}
+
+/// Authenticated GET with the read credential.
+async fn get_read(base: &str, path: &str) -> reqwest::Response {
+    client()
+        .get(format!("{base}{path}"))
+        .bearer_auth(P8_READ_TOKEN)
+        .send()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn threads_list_is_ordered_and_window_filtered() {
+    let (base, server, _store, fixture) = start_graph_server().await;
+
+    let body: serde_json::Value = get_read(&base, "/v1/threads").await.json().await.unwrap();
+    assert_eq!(
+        ids_of(&body),
+        vec![fixture.thread_focus, fixture.thread_deploy],
+        "last_seen_at DESC, id DESC"
+    );
+    assert_eq!(body[0]["title"], "Focus block");
+    assert_eq!(body[0]["first_seen_at"], 10_000);
+    assert_eq!(body[0]["last_seen_at"], 22_000);
+    assert_eq!(body[0]["session_count"], 2);
+    assert_eq!(body[1]["title"], "Deploy pipeline");
+    assert_eq!(body[1]["first_seen_at"], 1_000);
+    assert_eq!(body[1]["last_seen_at"], 9_000);
+    assert_eq!(body[1]["session_count"], 2);
+
+    // Overlap predicate `first_seen_at < to AND last_seen_at >= from`: `to=10_000` keeps
+    // deploy (last_seen 9_000) and drops focus, whose first_seen is exactly 10_000.
+    let body: serde_json::Value = get_read(&base, "/v1/threads?to=10000")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ids_of(&body), vec![fixture.thread_deploy]);
+    // A single lower bound keeps only threads still live at/after it.
+    let body: serde_json::Value = get_read(&base, "/v1/threads?from=10000")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ids_of(&body), vec![fixture.thread_focus]);
+    // A window no thread overlaps is an empty array, never an error.
+    let body: serde_json::Value = get_read(&base, "/v1/threads?from=9001&to=9999")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert!(body.as_array().unwrap().is_empty());
+
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn thread_detail_returns_ordered_sessions_and_entities() {
+    let (base, server, _store, fixture) = start_graph_server().await;
+
+    let body: serde_json::Value =
+        get_read(&base, &format!("/v1/threads/{}", fixture.thread_deploy))
+            .await
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(body["thread"]["id"], fixture.thread_deploy);
+    assert_eq!(body["thread"]["title"], "Deploy pipeline");
+    assert_eq!(body["thread"]["session_count"], 2);
+    let sessions = body["sessions"].as_array().unwrap();
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|s| s["session_id"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![fixture.session_a, fixture.session_b],
+        "member sessions ascend by started_at"
+    );
+    assert_eq!(sessions[0]["started_at"], 1_000);
+    assert_eq!(sessions[1]["started_at"], 3_000);
+    assert_eq!(sessions[0]["ended_at"], 5_000);
+    assert_eq!(sessions[0]["kind"], "ai");
+    assert!(sessions[0]["title"].is_null());
+    assert!((sessions[0]["confidence"].as_f64().unwrap() - DEPLOY_CONF_A).abs() < 1e-9);
+    assert!((sessions[1]["confidence"].as_f64().unwrap() - DEPLOY_CONF_B).abs() < 1e-9);
+
+    let entities = body["entities"].as_array().unwrap();
+    assert_eq!(entities.len(), 1);
+    assert_eq!(entities[0]["entity_id"], fixture.entity_repo);
+    assert_eq!(entities[0]["kind"], "repo");
+    assert_eq!(entities[0]["canonical_name"], "screensearch");
+    assert_eq!(entities[0]["session_count"], 2);
+    assert!((entities[0]["confidence"].as_f64().unwrap() - REPO_CONF_A).abs() < 1e-9);
+
+    // The other thread projects its own members and entity.
+    let body: serde_json::Value = get_read(&base, &format!("/v1/threads/{}", fixture.thread_focus))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        body["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["session_id"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![fixture.session_c, fixture.session_d]
+    );
+    let entities = body["entities"].as_array().unwrap();
+    assert_eq!(entities.len(), 1);
+    assert_eq!(entities[0]["entity_id"], fixture.entity_domain);
+    assert_eq!(entities[0]["kind"], "domain");
+    assert_eq!(entities[0]["session_count"], 2);
+    assert!((entities[0]["confidence"].as_f64().unwrap() - DOMAIN_CONF_C).abs() < 1e-9);
+
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn entities_list_filters_by_kind_and_alias_substring() {
+    let (base, server, _store, fixture) = start_graph_server().await;
+
+    let body: serde_json::Value = get_read(&base, "/v1/entities").await.json().await.unwrap();
+    assert_eq!(
+        ids_of(&body),
+        vec![fixture.entity_domain, fixture.entity_repo],
+        "last_seen_at DESC, id DESC"
+    );
+    assert_eq!(body[0]["kind"], "domain");
+    assert_eq!(body[0]["canonical_name"], "example.com");
+    assert_eq!(body[0]["first_seen_at"], 10_000);
+    assert_eq!(body[0]["last_seen_at"], 22_000);
+    assert_eq!(body[0]["session_count"], 2);
+    assert_eq!(body[0]["aliases"], serde_json::json!([]));
+    assert_eq!(body[1]["kind"], "repo");
+    assert_eq!(body[1]["first_seen_at"], 1_000);
+    assert_eq!(body[1]["last_seen_at"], 9_000);
+    assert_eq!(body[1]["session_count"], 2);
+    assert_eq!(
+        body[1]["aliases"],
+        serde_json::json!([REPO_ALIAS]),
+        "the seeded alias is carried"
+    );
+
+    let body: serde_json::Value = get_read(&base, "/v1/entities?kind=repo")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ids_of(&body), vec![fixture.entity_repo]);
+    // `q` is a case-insensitive substring over the canonical name…
+    let body: serde_json::Value = get_read(&base, "/v1/entities?q=SCREEN")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ids_of(&body), vec![fixture.entity_repo]);
+    // …and over any alias: the alias is the only place this substring exists, and the
+    // match is ASCII-case-insensitive.
+    let body: serde_json::Value = get_read(&base, "/v1/entities?q=SSV2C")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ids_of(&body), vec![fixture.entity_repo]);
+    let body: serde_json::Value = get_read(&base, "/v1/entities?kind=domain&q=screensearch")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert!(body.as_array().unwrap().is_empty());
+    let body: serde_json::Value = get_read(&base, "/v1/entities?q=example")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ids_of(&body), vec![fixture.entity_domain]);
+
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn insights_list_carries_typed_payloads_and_evidence() {
+    let (base, server, _store, fixture) = start_graph_server().await;
+
+    let body: serde_json::Value = get_read(&base, "/v1/insights").await.json().await.unwrap();
+    let items = body.as_array().unwrap();
+    assert_eq!(items.len(), fixture.insights.len());
+    assert_eq!(
+        items
+            .iter()
+            .map(|insight| insight["kind"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>(),
+        fixture.insight_order(),
+        "window_start DESC, kind ASC, id DESC"
+    );
+
+    for item in items {
+        let kind = item["kind"].as_str().unwrap();
+        let seeded = fixture.insight(kind);
+        assert_eq!(item["window_start"], seeded.window_start);
+        assert_eq!(item["window_end"], seeded.window_end);
+        assert_eq!(item["generator"], "heuristic");
+        assert_eq!(item["stale"], false);
+        assert!(
+            item["generated_at"].as_i64().unwrap() > 0,
+            "the store assigns generated_at"
+        );
+        // The payload is the exact typed value handed to the store, tagged by kind.
+        assert_eq!(
+            item["payload"],
+            serde_json::to_value(&seeded.payload).unwrap(),
+            "{kind} payload round-trips"
+        );
+        // Evidence comes back per insight, ordinal-ascending starting at 0 and identical to
+        // what the store was given — the row is never served with evidence stripped.
+        let mut expected: Vec<serde_json::Value> = seeded
+            .evidence
+            .iter()
+            .map(|evidence| {
+                serde_json::json!({
+                    "ordinal": evidence.ordinal,
+                    "kind": evidence.kind.as_str(),
+                    "ref_id": evidence.ref_id,
+                })
+            })
+            .collect();
+        expected.sort_by_key(|evidence| evidence["ordinal"].as_u64().unwrap());
+        assert_eq!(
+            item["evidence"],
+            serde_json::Value::Array(expected),
+            "{kind}"
+        );
+    }
+
+    // `kind` narrows to the single row of that kind.
+    let body: serde_json::Value = get_read(&base, "/v1/insights?kind=recurrence")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body.as_array().unwrap().len(), 1);
+    assert_eq!(body[0]["kind"], "recurrence");
+
+    // Window overlap `window_start < to AND window_end > from`: `to=9000` drops only the
+    // resumption insight, which starts at 10_000.
+    let body: serde_json::Value = get_read(&base, "/v1/insights?from=0&to=9000")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        body.as_array()
+            .unwrap()
+            .iter()
+            .map(|insight| insight["kind"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>(),
+        vec![
+            "recurrence",
+            "semantic_neighbour",
+            "open_loop",
+            "thread_activity"
+        ]
+    );
+    // A lower bound only keeps insights still in range at/after it.
+    let body: serde_json::Value = get_read(&base, "/v1/insights?from=19000")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body.as_array().unwrap().len(), 1);
+    assert_eq!(body[0]["kind"], "resumption");
+
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn p8_reads_validate_queries_and_missing_threads() {
+    let (base, server, _store, fixture) = start_graph_server().await;
+
+    for path in [
+        "/v1/threads?bogus=1",
+        "/v1/threads?from=abc",
+        "/v1/threads?from=1.5",
+        "/v1/threads?from=10&to=5",
+        "/v1/threads?from=0&from=1",
+        "/v1/threads?limit=one",
+        "/v1/threads?limit=-1",
+        "/v1/entities?kind=bogus",
+        "/v1/entities?unknown=",
+        "/v1/entities?limit=1.0",
+        "/v1/entities?q=%FF",
+        "/v1/insights?kind=bogus",
+        "/v1/insights?from=10&to=5",
+        "/v1/insights?limit=+1",
+        "/v1/insights?kind=open_loop&kind=open_loop",
+        "/v1/insights?q=deploy",
+    ] {
+        let r = get_read(&base, path).await;
+        assert_eq!(r.status(), 400, "{path}");
+        let body: serde_json::Value = r.json().await.unwrap();
+        assert_eq!(body["error"], "bad_request", "{path}");
+    }
+
+    // A non-integer path segment is a strict 400, not a 404.
+    let r = get_read(&base, "/v1/threads/not-an-id").await;
+    assert_eq!(r.status(), 400);
+    assert_eq!(
+        r.json::<serde_json::Value>().await.unwrap()["error"],
+        "bad_request"
+    );
+    // An absent thread is a typed 404.
+    let r = get_read(&base, "/v1/threads/999999").await;
+    assert_eq!(r.status(), 404);
+    assert_eq!(
+        r.json::<serde_json::Value>().await.unwrap()["error"],
+        "not_found"
+    );
+
+    // `limit` clamps rather than rejecting: 0 → the newest row only, an oversized value →
+    // the whole fixture, and the default page already covers it.
+    let body: serde_json::Value = get_read(&base, "/v1/insights?limit=0")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body.as_array().unwrap().len(), 1);
+    assert_eq!(body[0]["kind"], fixture.insight_order()[0].as_str());
+    let body: serde_json::Value = get_read(&base, "/v1/insights?limit=5000")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body.as_array().unwrap().len(), fixture.insights.len());
+    let body: serde_json::Value = get_read(&base, "/v1/threads?limit=1")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ids_of(&body), vec![fixture.thread_focus]);
+
+    server.stop().await;
+}
+
+/// A successful read of all four P8 routes must leave `insights` byte-identical in row count
+/// and newest `generated_at` — a GET can never generate or replace an insight (`§7j.5`).
+#[tokio::test]
+async fn reads_never_write_insights() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("graph-reads.db");
+    let store = Arc::new(SqliteStore::open_path(&db).expect("open fixture store"));
+    let fixture = seed_graph(&store).await;
+
+    // Fixture-only direct SQL against the disposable file database (the same labeled class
+    // as `examples/memory_consumer_fixture.rs`), because the assertion is about rows the
+    // store's own read API cannot report: the API crate itself never does this.
+    let insight_state = |db: &std::path::Path| -> (i64, Option<i64>) {
+        let conn = rusqlite::Connection::open(db).expect("open the fixture db for a read");
+        conn.query_row(
+            "SELECT COUNT(*), MAX(generated_at) FROM insights",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read the insight state")
+    };
+    let before = insight_state(&db);
+    assert_eq!(
+        before.0,
+        i64::try_from(fixture.insights.len()).unwrap(),
+        "the fixture seeds one insight per kind"
+    );
+    assert!(before.1.is_some(), "seeded insights carry a generated_at");
+
+    let (base, server, _t) = start_server(graph_host(store)).await;
+    server.set_read_token(Some(P8_READ_TOKEN.to_string()));
+    for path in [
+        "/v1/insights".to_string(),
+        "/v1/threads".to_string(),
+        format!("/v1/threads/{}", fixture.thread_deploy),
+        "/v1/entities".to_string(),
+    ] {
+        let r = get_read(&base, &path).await;
+        assert_eq!(r.status(), 200, "{path}");
+        assert!(!r.bytes().await.unwrap().is_empty(), "{path} body");
+    }
+
+    assert_eq!(
+        insight_state(&db),
+        before,
+        "a GET must not insert, regenerate or restamp an insight"
     );
 
     server.stop().await;

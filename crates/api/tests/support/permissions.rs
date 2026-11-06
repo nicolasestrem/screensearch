@@ -22,6 +22,9 @@ async fn read_token_route_matrix_including_head_image_cached_summary_and_methods
             "/v1/sessions/1?include_summary=1",
             "/v1/export",
             "/v1/reports?from=0&to=1",
+            "/v1/threads",
+            "/v1/entities",
+            "/v1/insights",
         ] {
             for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
                 let r = c
@@ -49,6 +52,10 @@ async fn read_token_route_matrix_including_head_image_cached_summary_and_methods
             ("/v1/ask", "POST"),
             ("/v1/reports", "GET,HEAD"),
             ("/v1/reports/1", "GET,HEAD"),
+            ("/v1/threads", "GET,HEAD"),
+            ("/v1/threads/1", "GET,HEAD"),
+            ("/v1/entities", "GET,HEAD"),
+            ("/v1/insights", "GET,HEAD"),
         ] {
             for method in [
                 reqwest::Method::PUT,
@@ -148,6 +155,10 @@ async fn read_token_route_matrix_including_head_image_cached_summary_and_methods
         "/v1/export",
         "/v1/reports",
         "/v1/reports/1",
+        "/v1/threads",
+        "/v1/threads/1",
+        "/v1/entities",
+        "/v1/insights",
         "/outside-v1",
     ] {
         for method in [

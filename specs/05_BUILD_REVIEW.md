@@ -1,5 +1,390 @@
 # 05 — Build Review
 
+## 2026-11-06: P8 insights + connections engine and agent surface — build, verification and live proof (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **not committed, not pushed** — 0.4.5 D18 waits for the maintainer)
+
+Phase: `docs/kickoffs/P8.md`. Contradictions and rulings: `06` #93–#101. Decisions, grants and
+deferrals: `07` (2026-11-06 P8 section). Interface contract the six slices coded against:
+`local://p8-contract.md` (session-local notes, not part of the tree).
+
+Base condition: P5 (#157), P6 (#160), P7 (#161) and #163 are merged on `main`; **no `v0.4.4` tag
+exists**, so the wave rule (`docs/0.4.5.md` §4.2 — "next wave starts when all three phases of the
+current wave are merged, not when its debug window ends") is what let P8 start. Schema stayed at
+**v14**: `insights`, `insight_evidence` and `session_vectors` are already in the baseline.
+
+### What landed
+
+|Slice|Files|What it does|
+|---|---|---|
+|traits|`crates/traits/src/ipc.rs`, `crates/traits/src/insights.rs` (new), `lib.rs`, `contracts.rs`, `jobs.rs`|19 TS-exported types (5 payloads, `InsightPayload`, `Insight`, `NewInsight`, thread/entity/response shapes, 4 closed enums with `as_str`/`from_token`), 5 generator input structs, 13 additive default-bodied `Store` methods, `JobKind::InsightGenerate`|
+|store|`crates/store/src/insights.rs`, `lib.rs`, `jobs.rs`, `tests/insights.rs` (new)|Transactional evidenced insert + rollback-safe replace, the sweep, the staleness marking, the four read routes' store reads, and the five generator input readers (incl. a `session_vectors` KNN read)|
+|kernel|`crates/kernel/src/insights.rs` (new), `worker_pool.rs`, `lib.rs`, `tests/insights.rs` (new)|5 pure per-kind derive rules, `run_insight_generate`, the idle producer + scheduler, the claim/dispatch registration, `request_insights_generation()`|
+|api|`crates/api/src/graph_reads.rs` (new), `lib.rs`, `tests/http_api.rs`, `tests/support/permissions.rs`|The four strict `history.read` GET routes|
+|mcp|`crates/mcp/src/tools.rs`, `tests/*`, `docs/MCP.md`|`list_threads`, `get_thread`, `find_connections`, `list_insights`; counts 13→17 / 10→14|
+|reports|`crates/kernel/src/reports.rs`|Additive "insights in window" context block for daily + weekly synthesis (byte-identical when empty)|
+|docs|`docs/API.md`|The four routes, the payloads, the evidence shape, the 0-based ordinal, strict parsing|
+
+### Verification (raw, in kickoff order)
+
+UI first, because the Rust build embeds `ui/dist`:
+
+```
+$ npm ci                                    (in ui/)
+added 347 packages in 4s
+$ npm run lint
+npm notice run screensearch-ui@0.4.2 lint
+npm notice run eslint .                     ← no findings
+$ npm run build
+dist/assets/main-BtNh64aT.js                   39.73 kB │ gzip: 12.13 kB
+✓ built in 2.17s
+```
+
+```
+$ node scripts/stage-mcp.mjs
+[stage-mcp] building screensearch-mcp (release)...
+[stage-mcp] staged ...\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
+stage_exit=0
+
+$ cargo fmt --all -- --check
+fmt_exit=0
+
+$ cargo clippy --workspace --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.52s
+
+$ cargo build --workspace
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 46.67s
+
+$ cargo test --workspace
+```
+Definitive run on the final tree (`/tmp/p8gate/final_tests.log`, 2136 lines, **1570** individual
+`test … ok` lines, `test_exit=0`): 86 binaries reported `test result: ok`, zero `FAILED`, zero
+`error[`/panics. Per-binary summary of the binaries this phase touches, verbatim:
+
+```
+kernel-514210275b62bb22.exe        test result: ok. 218 passed; 0 failed; 0 ignored; finished in 1.23s
+store-c91831e043349b95.exe         test result: ok. 106 passed; 0 failed; 0 ignored; finished in 0.34s
+insights-2da72e6163d349dd.exe      test result: ok. 16 passed; 0 failed; 0 ignored; finished in 0.13s
+insights-ae52dbed44d758e0.exe      test result: ok. 5 passed; 0 failed; 0 ignored; finished in 0.03s
+traits-d96ad371f41332e6.exe        test result: ok. 157 passed; 0 failed; 0 ignored; finished in 0.10s
+http_api-37c014cc18f8426a.exe      test result: ok. 58 passed; 0 failed; 1 ignored; finished in 30.09s
+mcp-54159d6e954364e0.exe           test result: ok. 55 passed; 0 failed; 0 ignored; finished in 0.00s
+memory_tools-4cfa3e5d76b445f2.exe  test result: ok. 15 passed; 0 failed; 0 ignored; finished in 0.27s
+remote_transport-c12c33b1324f3a83.exe test result: ok. 9 passed; 0 failed; 0 ignored; finished in 0.74s
+stdio_mcp-445b3cb5b7ebf383.exe     test result: ok. 22 passed; 0 failed; 0 ignored; finished in 2.03s
+screensearch_lib-c928a0fad95e1d75.exe test result: ok. 168 passed; 0 failed; 0 ignored; finished in 0.65s
+```
+
+**Reconciliation note (2026-11-06, after the review pass).** These numbers are from the last gate run,
+after every edit this record describes. Two figures moved during the phase and are stated rather than
+silently replaced: kernel unit was quoted `216` from the first full run, became `217` when the cosine
+clamp regression test landed, and is `218` with the report-context id test added by the review pass.
+The kernel `insights` filter moved `16 → 17` for the same reason (12 generator/scheduler + 5
+report-context). Store unit `106`, store `insights` `16` and kernel `insights` integration `5` are
+unchanged: the `q`-literal `_` case was added as an assertion inside an existing test, not a new one.
+
+```
+$ git diff --exit-code -- ui/src/bindings
+bindings_exit=1
+```
+**Re-measured cleanly** (the first attempt had its stderr sent to a path this shell cannot open, so
+that exit code came from bash, not git — the guard was re-run without redirection and genuinely
+exits 1). The diff is exactly:
+
+```
+diff --git a/ui/src/bindings/JobKind.ts b/ui/src/bindings/JobKind.ts
+--- a/ui/src/bindings/JobKind.ts
++++ b/ui/src/bindings/JobKind.ts
+-export type JobKind = "embed_text" | … | "session_embed";
++export type JobKind = "embed_text" | … | "session_embed" | "insight_generate";
+```
+**This guard does not pass, and that is the expected result under this phase's instruction:**
+`cargo test` regenerated 1 modified + 19 new TS binding files and 0.4.5 D18 forbids the agent from
+committing. The diff is the generator's output only (no hand edit). It becomes clean the moment the
+maintainer commits the tree; nothing else is in `ui/src/bindings`.
+
+P8-specific filters:
+
+```
+$ cargo test -p store insights
+test insights_insert_rejects_empty_evidence ... ok
+test insights_insert_rejects_non_dense_ordinals ... ok
+test insights_insert_writes_insight_and_evidence_atomically ... ok
+test insights_replace_replaces_overlapping_rows_only ... ok
+test insights_replace_rolls_back_on_a_bad_batch ... ok
+test insights_list_orders_by_window_kind_and_id ... ok
+test insights_unevidenced_ids_find_orphaned_rows ... ok
+test insights_stale_marks_only_rows_with_a_dangling_ref ... ok
+test insights_threads_in_range_overlap_and_order ... ok
+test insights_thread_detail_returns_sessions_and_entities ... ok
+test insights_entities_filtered_by_kind_and_alias_substring ... ok
+test insights_entity_sessions_input_rows ... ok
+test insights_thread_activity_input_rows ... ok
+test insights_thread_sessions_input_rows ... ok
+test insights_session_neighbours_input_rows ... ok
+test insights_open_marks_input_rows ... ok
+test result: ok. 16 passed; 0 failed
+test insights_summary_aggregates_truthfully ... ok
+test insights_summary_uses_requested_bucket_count ... ok
+test result: ok. 2 passed; 0 failed        ← the pre-existing counts path still passes unchanged
+
+$ cargo test -p kernel insights
+test insights::tests::insights_generator_thread_activity_half_open_window_boundaries ... ok
+test insights::tests::insights_generator_thread_activity_sums_window_overlap ... ok
+test insights::tests::insights_generator_open_loop_marks_and_abandoned_threads ... ok
+test insights::tests::insights_generator_recurrence_gap_boundary ... ok
+test insights::tests::insights_generator_resumption_gap_boundary ... ok
+test insights::tests::insights_generator_resumption_last_doing_falls_back_to_the_title_then_none ... ok
+test insights::tests::insights_generator_semantic_neighbour_threshold_and_day_rule ... ok
+test insights::tests::insights_generator_semantic_neighbour_keeps_top_k_by_similarity ... ok
+test insights::tests::insights_generator_semantic_neighbour_clamps_cosine_float_noise ... ok
+test insights::tests::insights_generator_evidence_ordinals_are_dense_for_every_kind ... ok
+test insights::tests::insights_scheduler_enqueues_one_pass_when_idle_and_throttled_gate_holds ... ok
+test insights::tests::insights_on_demand_enqueue_ignores_idle_but_not_the_pending_guard ... ok
+test reports::tests::insights_context_renders_every_evidence_ref ... ok
+test reports::tests::insights_context_writes_only_citable_ids_plainly ... ok
+test reports::tests::insights_context_is_empty_for_no_insights ... ok
+test reports::tests::report_insights_context_appends_the_window_block ... ok
+test reports::tests::report_insights_context_drops_an_unrenderable_payload ... ok
+test result: ok. 17 passed; 0 failed      ← 12 generator/scheduler + 5 report-context tests
+test insights_pass_generates_every_kind_with_evidence ... ok
+test insights_second_pass_replaces_instead_of_duplicating ... ok
+test insights_stale_rows_are_flagged_then_replaced_on_the_next_pass ... ok
+test insights_forced_replace_failure_retries_and_leaves_rows_untouched ... ok
+test insights_on_demand_request_through_the_kernel_queues_one_pass ... ok
+test result: ok. 5 passed; 0 failed
+
+$ cargo test -p api --test http_api
+test result: ok. 58 passed; 0 failed; 1 ignored
+$ cargo test -p mcp
+test result: ok. 55 passed; 0 failed   (+ 15, 9, 22 in the other binaries)
+```
+
+```
+$ grep -n '/v1/threads\|/v1/entities\|/v1/insights' crates/api/src/lib.rs
+593:        .get("/v1/threads", graph_reads::threads, HistoryRead)
+594:        .get("/v1/threads/{id}", graph_reads::thread_detail, HistoryRead)
+595:        .get("/v1/entities", graph_reads::entities, HistoryRead)
+596:        .get("/v1/insights", graph_reads::insights, HistoryRead)
+
+$ grep -n 'list_threads\|get_thread\|find_connections\|list_insights' crates/mcp/src/tools.rs
+225:            "name": "list_threads",
+239:            "name": "get_thread",
+252:            "name": "find_connections",
+266:            "name": "list_insights",
+299:            | "list_threads"
+300:            | "get_thread"
+301:            | "find_connections"
+302:            | "list_insights"
+347:        "list_threads" => list_threads(client, &args).await,
+…
+```
+
+### Real-DB pass and the five samples
+
+The maintainer chose "live DB", but **no profile database exists on this machine**
+(`%APPDATA%\app.screensearchv2c.desktop` was absent; only the WebView cache dir under
+`%LOCALAPPDATA%` exists). So the pass ran over a **real v14 database on disk**, created and seeded
+through the app's own store write paths (`insert_session`, `set_session_title_summary`,
+`upsert_session_vector`, `graph_apply_thread_plan`, `graph_apply_hits`, `insert_mark`, `insert_frame`,
+`assign_frames_session`, `freeze_sessions`) and then generated by the real
+`kernel::insights::run_insight_generate`. This is **not** the maintainer's profile and is not
+presented as such; a pass over the real profile is still the maintainer's run. One sample per kind,
+verbatim from that run:
+
+```
+pass_outcome=Complete { changed_data: true }
+insight_rows=10
+--- thread_activity: 3 row(s)
+--- open_loop: 3 row(s)
+--- recurrence: 1 row(s)
+--- semantic_neighbour: 2 row(s)
+--- resumption: 1 row(s)
+unevidenced_ids=[]
+
+{"evidence":[{"kind":"thread","ordinal":0,"ref_id":1},{"kind":"session","ordinal":1,"ref_id":1},
+ {"kind":"session","ordinal":2,"ref_id":2}],"generated_at":1793964889000,"generator":"heuristic",
+ "id":10,"kind":"resumption","payload":{"gap_ms":604800000,"kind":"resumption",
+ "last_doing":"Sketching tables","previous_ended_at":1792236780000,"previous_session_id":1,
+ "resumed_at":1792841580000,"resumed_session_id":2,"thread_id":1,"title":"Schema work"},
+ "stale":false,"window_end":1793964840000,"window_start":1791372840000}
+
+{"evidence":[{"kind":"entity","ordinal":0,"ref_id":1},{"kind":"session","ordinal":1,"ref_id":1},
+ {"kind":"session","ordinal":2,"ref_id":2}],"generated_at":1793964889000,"generator":"heuristic",
+ "id":7,"kind":"recurrence","payload":{"entity_id":1,"entity_kind":"repo",
+ "entity_name":"acme/widgets","first_seen_at":1791718440000,"first_session_id":1,
+ "gap_ms":1123200000,"kind":"recurrence","occurrence_count":2,"second_seen_at":1792841640000,
+ "second_session_id":2},"stale":false,"window_end":1793964840000,"window_start":1791372840000}
+
+{"evidence":[{"kind":"session","ordinal":0,"ref_id":5},{"kind":"session","ordinal":1,"ref_id":1}],
+ "generated_at":1793964889000,"generator":"heuristic","id":9,"kind":"semantic_neighbour",
+ "payload":{"kind":"semantic_neighbour","neighbours":[{"session_id":1,"similarity":1.0,
+ "started_at":1791718440000,"title":"Draft the schema"}],"session_id":5,
+ "session_started_at":1793532840000,"session_title":"Vector twin"},"stale":false,
+ "window_end":1793964840000,"window_start":1791372840000}
+
+{"evidence":[{"kind":"thread","ordinal":0,"ref_id":2},{"kind":"session","ordinal":1,"ref_id":3}],
+ "generated_at":1793964889000,"generator":"heuristic","id":6,"kind":"open_loop",
+ "payload":{"frame_id":null,"idle_ms":2073600000,"kind":"open_loop","mark_id":null,"note":null,
+ "opened_at":1791891180000,"source":"abandoned_thread","thread_id":2,"title":"Abandoned spike"},
+ "stale":false,"window_end":1793964840000,"window_start":1791372840000}
+
+{"evidence":[{"kind":"thread","ordinal":0,"ref_id":3},{"kind":"session","ordinal":1,"ref_id":4}],
+ "generated_at":1793964889000,"generator":"heuristic","id":3,"kind":"thread_activity",
+ "payload":{"active_ms":86400000,"first_touched_at":1793878380000,"kind":"thread_activity",
+ "last_touched_at":1793964780000,"session_count":1,"thread_id":3,"title":"Live work"},
+ "stale":false,"window_end":1793964840000,"window_start":1791372840000}
+```
+
+The first run of this pass exposed a real defect the fixture tests could not: two identical vectors
+produced `"similarity": 1.0000000000000002`, because vec0's cosine distance lands a couple of ULP
+below zero. Fixed in `crates/kernel/src/insights.rs` (`cosine_similarity` clamps to `[-1, 1]`) with
+the regression test `insights_generator_semantic_neighbour_clamps_cosine_float_noise`; the re-run
+prints `"similarity": 1.0`.
+
+### Live app: MCP round trip, reads-never-write, sweep, job surface
+
+The dev app was started against that database (a scratch profile, deleted afterwards) with the API
+enabled. Startup:
+
+```
+INFO store opened db=…\app.screensearchv2c.desktop\screensearch.db schema_version=14
+INFO kernel: insight scheduler started
+INFO api: local API listening local_addr=127.0.0.1:43219
+```
+
+MCP wrapper (`screensearch-mcp.exe`) over stdio, read credential:
+
+```
+##### normal mode
+tool_count: 17
+four_present: True
+  list_threads       isError=False -> [{ "first_seen_at":1793879220000,"id":3,"last_seen_at":…,
+                                      "session_count":1,"title":"Live work" }, { … "id":1, …}]
+  get_thread         isError=False -> { "entities":[{"canonical_name":"acme/widgets","confidence":0.9,
+                                      "entity_id":1,"kind":"repo","session_count":2}],
+                                      "sessions":[{ "confidence":0.9,"ended_at":1792237620000, …
+  find_connections   isError=False -> [{"aliases":[],"canonical_name":"acme/widgets",…,"session_count":2}]
+  list_insights      isError=False -> [{"evidence":[{"kind":"entity","ordinal":0,"ref_id":1}, …]}]
+
+##### read-only mode
+tool_count: 14
+four_present: True
+  list_insights      isError=False -> [ … ]
+  add_mark           isError=True -> Tool unavailable in --read-only mode: only read tools are
+                                      accepted (marks/capture and Ask are excluded). API token
+                                      permissions are enforced independently.
+  ask_screen_history isError=True -> (same refusal)
+```
+
+Reads never write, against the live app (count, distinct evidence owners, unevidenced, `max(generated_at)`
+before vs after all four GETs):
+
+```
+before: insights 10 distinct_evidence_owners 10 unevidenced 0 max_generated_at 1793965631000
+GET /v1/threads?limit=10 -> 200 items=3
+GET /v1/threads/1        -> 200 items=1
+GET /v1/entities?q=acme  -> 200 items=1
+GET /v1/insights?limit=50-> 200 items=10
+after:  insights 10 distinct_evidence_owners 10 unevidenced 0 max_generated_at 1793965631000
+READS_NEVER_WRITE: True
+```
+
+The kickoff's sweep, verbatim, against the live DB:
+
+```
+$ sqlite3 …/screensearch.db "SELECT count(*) FROM insights WHERE id NOT IN (SELECT insight_id FROM insight_evidence);"
+0
+```
+
+`insights` rows == distinct `insight_id` in `insight_evidence`: **10 == 10**.
+
+Job kind on the existing job surface — a pending `insight_generate` row inserted into the live
+database was claimed and completed by the running app:
+
+```
+enqueued job id 8 kind insight_generate
+  t+2s state=done attempts=0 err=None
+insights now: 9 unevidenced: 0 stale: 0
+job kinds seen: [('embed_text','done',7), ('insight_generate','done',1)]
+```
+
+**How the failure path was forced:** not on the live app (there is no live trigger without a code
+change), but in `crates/kernel/tests/insights.rs`
+`insights_forced_replace_failure_retries_and_leaves_rows_untouched`, which wraps the real
+`SqliteStore` in a decorator whose `replace_insights` returns `Err`; the pass returns
+`Outcome::Retry(..)`, the worker logs it (`tracing::debug!` "job retry scheduled"), and the
+`insights` table is byte-for-byte unchanged. Capture, search and Ask are unaffected because the pass
+takes no provider, holds no shared lock and runs under the same worker pool and pressure gate as the
+P5/P6 kinds; the live run above shows capture continuing (`embed_text` jobs completing) while the
+insight job ran.
+
+**No notification, badge, streak, score, grade or target was added.** `git diff -U0 | grep '^+'`
+for `notif|badge|streak|score|grade|daily prompt|productivity metric` returns only comments that
+forbid them (`reports.rs`: "no model call and no judgement (`03 §7j.4`): no score, streak, target or
+rating"; "`similarity` stays out of the prompt on purpose").
+
+### Credential semantics the api tests pin (and one wording correction)
+
+- **401 without a bearer**: the four paths were added to `all_routes_require_bearer`.
+- **Allowed for both classes**: `read_token_route_matrix_including_head_image_cached_summary_and_methods`
+  loops `for token in [TEST_TOKEN, READ]` and asserts `200` for `GET` and `HEAD` on
+  `/v1/threads`, `/v1/entities` and `/v1/insights`, plus the method-denial `Allow` lists that now
+  include `/v1/threads/1`.
+- **403**: the kickoff's "write-credential 403 path" cannot exist *on these four routes*, and that is
+  by contract, not an omission. `permissions.rs` grants `history.read` to **both** classes
+  (`LEGACY = [HistoryRead, MarksWrite, CaptureRequest, AnswerGenerate]`, `READ = [HistoryRead]`), so
+  no credential can be denied one of them (`03 §7f.7`: "`history.read` is granted to both … no class
+  automatically expands to future routes"). The 403 assertion in this suite is the one the contract
+  does define — a read credential calling the write/ask routes — and it still passes for
+  `/v1/marks*` and `/v1/ask` (12 cases). Recorded in `07` so the acceptance line is not read as a
+  missing test.
+
+### Honest reading, deviations and what is not claimed
+
+- **`git diff --exit-code -- ui/src/bindings` is red by construction** (uncommitted regenerated
+  bindings, 0.4.5 D18). Not worked around, not hand-edited.
+- **The real-DB samples come from a locally built v14 database, not the maintainer's profile** (none
+  exists on this machine). A pass over the real profile remains the maintainer's run.
+- **The live proof surfaced `07` #101 for real**: the app's session reconciliation deleted the
+  first seed's sessions (they owned no frames) and `thread_sessions`/`session_entities` cascaded,
+  while the 10 insight rows survived. The staleness pass is what stops those rows being served as
+  truth; it had not run yet on that snapshot because the pass is idle-gated. The second seed gave
+  its sessions frame ownership (`frames.session_id`, `03 §7e`) and froze them, after which four of
+  five sessions and three of four links survived across a restart.
+- **`similarity` clamping** was added during the live proof, not planned: a real number above 1 is
+  float noise, and publishing it would have been a false measurement.
+- **`Outcome` became `pub`/**`Debug`** in `worker_pool.rs` so the new public `run_insight_generate`
+  can return it; `spawn` takes the shared `IdleSlot` rather than a bare `IdleSource`, because the
+  platform idle probe arrives with `attach_inference`, which can run after the producer starts.
+  `request_insights_generation() -> ()` is best-effort by design (the queue path logs and degrades),
+  so a `Result` would have been dishonest.
+- **`semantic_neighbour` uses a UTC day bucket** (`started_at / 86_400_000`) for "another day";
+  P9 may localise the label. Documented in `docs/API.md`.
+- **No threshold was added to settings.** The five numeric values are kernel constants per the
+  maintainer's ruling (`07`, `06` #93), documented at their definition.
+- **With zero insights the report prompt is byte-identical**, pinned by
+  `insights_context_is_empty_for_no_insights` against the live instruction assembly rather than a
+  re-typed copy.
+- **A review pass on the report block found an ambiguous-id hazard and it was fixed inside this
+  phase.** The block tells the model to cite only frame and session ids, but it originally printed
+  `thread 3`, `entity 1` and `mark 4` as bare numbers next to them. A model echoing `thread 3` as a
+  scene number would produce a citation that the existing validator **accepts** against an unrelated
+  frame — technically valid, factually wrong. Non-citable ids are now written `kind#id`
+  (`thread#3`, `mark#4`, and `session#2` in the evidence trailer) while the two citable forms stay
+  plain (`frame 9`, `session 5`), and
+  `insights_context_writes_only_citable_ids_plainly` renders one row of every kind to pin both
+  halves of that rule. No citation validator change, no format change.
+- **A second review pass found two stale contradiction numbers in `07`** (a `#71` that is now `#94`
+  and a `#74` that is now `#96`, both left behind by the P8 renumbering) — corrected, and
+  `grep '#7[0-9]\|#8[0-9]'` over the P8 section now returns nothing.
+- **Two `q`-semantics gaps were closed in the store tests.** The docs promise a literal substring
+  that is "not a `LIKE`/glob"; `%` was tested but the other `LIKE` metacharacter, `_`, was not. Both
+  are now asserted literal against `instr`, alongside the existing ASCII case-fold and alias
+  substring cases.
+- **A resolved mark does not clear its `open_loop` row immediately**, and the pass documents now say
+  so: staleness fires only when an evidence row disappears, so a resolved mark's insight survives
+  until the window is regenerated. Named in the `derive_open_loops` docs so it is not mistaken for a
+  bug.
+
 ## 2026-11-05: P7 app shell + Settings v2 — build, verification and native acceptance (branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, **not merged**, from `main` `6d906a7`; committed and pushed on the maintainer's authorization under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P7.md`. Contradictions: `06` #60–#70. Decisions, silences and deferrals:

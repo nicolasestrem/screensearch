@@ -12,8 +12,9 @@ use traits::{Job, JobKind, JobState, JobStats, NewJob, Result};
 use crate::SqliteStore;
 
 /// DB `kind` token (`03 §4`). The four `graph_*` values are the 0.4.5 P5 work-graph job
-/// kinds (`03 §7h.7`, 0.4.5 D11) and `session_embed` is the P6 Ask v2 session-vector kind
-/// (`03 §7i.2`, 0.4.5 D11); every pre-existing kind keeps its persisted string.
+/// kinds (`03 §7h.7`, 0.4.5 D11), `session_embed` is the P6 Ask v2 session-vector kind
+/// (`03 §7i.2`, 0.4.5 D11) and `insight_generate` is the P8 insights pass (`03 §7j.3`,
+/// 0.4.5 D11); every pre-existing kind keeps its persisted string.
 fn kind_token(kind: JobKind) -> &'static str {
     match kind {
         JobKind::EmbedText => "embed_text",
@@ -23,6 +24,7 @@ fn kind_token(kind: JobKind) -> &'static str {
         JobKind::GraphCluster => "graph_cluster",
         JobKind::GraphBackfill => "graph_backfill",
         JobKind::SessionEmbed => "session_embed",
+        JobKind::InsightGenerate => "insight_generate",
     }
 }
 
@@ -35,6 +37,7 @@ fn kind_from_token(s: &str) -> rusqlite::Result<JobKind> {
         "graph_cluster" => Ok(JobKind::GraphCluster),
         "graph_backfill" => Ok(JobKind::GraphBackfill),
         "session_embed" => Ok(JobKind::SessionEmbed),
+        "insight_generate" => Ok(JobKind::InsightGenerate),
         other => Err(rusqlite::Error::FromSqlConversionFailure(
             0,
             rusqlite::types::Type::Text,

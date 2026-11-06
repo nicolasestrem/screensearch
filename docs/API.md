@@ -1,7 +1,8 @@
 # ScreenSearch HTTP API (v1)
 
 The **HTTP API** exposes ScreenSearch's search, ask, frames, sessions, where-was-i, and
-marks to scripts and agents. It is **opt-in and off by default** (0.3.0
+marks to scripts and agents, plus the read-only thread, entity and insight surfaces
+([0.4.5 P8](#threads-entities-and-insights-045-p8)). It is **opt-in and off by default** (0.3.0
 PR7; the sessions surface added in 0.4.0 PR6, specs `03 §7c` / `§7e`).
 
 **External-agent memory reads (shipped in v0.4.2).** This guide also describes the
@@ -98,6 +99,7 @@ is exposed. Keep credentials out of URLs, logs and ordinary settings/export/repo
 | Operation | Legacy | Read |
 |---|---|---|
 | `GET`/`HEAD` health, search, frame listing, coverage, frame detail/image, context, marks, sessions/detail/cached summary, export, report listing/detail | allow | allow |
+| `GET`/`HEAD` `/v1/threads`, `/v1/threads/{id}`, `/v1/entities`, `/v1/insights` (`history.read`, P8) | allow | allow |
 | `POST /v1/marks` for a stored frame; `POST /v1/marks/{id}/resolve` | allow (`marks.write`) | 403 |
 | `POST /v1/marks` with `now:true` | allow (`marks.write` **and** `capture.request`) | 403 |
 | `POST /v1/ask`, including session Ask | allow (`answer.generate`) | 403 |
@@ -130,10 +132,10 @@ failures can close a socket without an HTTP response. Do not parse these as empt
 
 | Status | `error`         | When |
 |--------|-----------------|------|
-| 400    | `bad_request`   | Malformed params/body (e.g. missing `q`, `from`/`to` not paired, `from` > `to`, invalid session `kind`, non-integer session id, `format` ≠ `json`, both `frame_id` and `now`). |
+| 400    | `bad_request`   | Malformed params/body (e.g. missing `q`, `from`/`to` not paired, `from` > `to`, invalid session `kind`, non-integer session/thread id, an unknown or duplicate query parameter or an unknown entity/insight `kind` on the P8 reads, `format` ≠ `json`, both `frame_id` and `now`). |
 | 401    | `unauthorized`  | Missing or invalid bearer token, including on unknown paths. |
 | 403    | `forbidden`     | Authenticated token lacks the classified permission; no write/capture/Ask has started. |
-| 404    | `not_found`     | Unknown frame, mark, or session (or unknown endpoint with a valid token). |
+| 404    | `not_found`     | Unknown frame, mark, session or thread (or unknown endpoint with a valid token). |
 | 404    | `image_purged`  | The frame exists but its screenshot was retention-purged (text is preserved). |
 | 405    | *(no envelope)* | Unsupported method on a classified route; inspect `Allow`. |
 | 409    | `history_changed` | Frame cursor belongs to another initialized history; restart/reconcile traversal. |
@@ -573,6 +575,271 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 Only `kind = exchange` artifacts are returned (transcript / note are reserved and never
 served). Each artifact's `role` is `user` | `agent` | `null` and `frame_id` may be `null`.
+
+### Threads, entities and insights (0.4.5 P8)
+
+Four read routes over the 0.4.5 work graph and the insights table (`03 §7c` P8 block): `GET
+/v1/threads`, `GET /v1/threads/{id}`, `GET /v1/entities` and `GET /v1/insights`. **Threads** are
+the clusterer's persisted session clusters, **entities** the extracted repos, files, domains,
+documents, references and apps, **insights** the generator's typed statements about a window. All
+four are `history.read` reads — the legacy token and the read token are both allowed, and so is
+the implicit `HEAD` variant, which runs the same authorized read before dropping the body.
+
+None of them generates, writes or starts inference: each handler performs exactly one store read
+and no other side effect. An empty array is **no stored row matching the query**, not "nothing
+happened"; a storage failure is an explicit `500`, never an empty success. Insight generation runs
+as a background job (idle, throttled, claimable only at throttle level 0) and is not reachable
+over HTTP.
+
+`insights` and `insight_evidence` are part of the v14 baseline, so these routes add no schema.
+They do not change the `/v1/sessions` routes, and they do not change the in-app IPC insights
+summary (`traits::InsightsSummary`), which is not served over HTTP.
+
+#### Strict query parsing
+
+The four routes share one strict parser. It is **deliberately stricter than `/v1/sessions`**:
+
+| Input | Exact contract |
+|---|---|
+| Parameter set | Exactly the parameters the route documents. Any other name, the same name twice, or a pair without `=` → **400 `bad_request`**. |
+| Encoding | Malformed percent escapes and invalid UTF-8 → **400**. Form-query `+` means space; URL-encode literal plus signs. |
+| Numbers | ASCII decimal integers, optional leading `-` where the value is signed. No floats, decimal points, leading `+`, whitespace, exponents or `i64` overflow → **400**. |
+| `from` / `to` | Unix epoch milliseconds, **each independently optional** (as on `/v1/sessions`), half-open `[from, to)`. Absent means unbounded on that side; both present with `from > to` → **400**. |
+| `limit` | Default **1000**, clamped to **1–1000**. An out-of-range value clamps (the same semantics as `/v1/sessions`), it is not rejected — unlike `/v1/frames` and `/v1/reports`, which reject. |
+| `kind` | Only the closed set the route documents. An unknown value is **400**, never ignored and never silently unfiltered. |
+
+**`/v1/sessions` keeps its earlier laxer behaviour**: an unknown parameter there is ignored and a
+duplicated one is not rejected, because that route deserializes into its parameter struct rather
+than validating the parameter set. The difference is documented rather than implied — do not infer
+the strict rules above for the sessions routes, and do not infer the sessions laxness for these
+four.
+
+### `GET /v1/threads`
+
+Threads that **overlap** the requested window. Query params: `from`, `to` (unix ms, each
+independently optional, half-open), `limit` (default 1000, clamped `1..=1000`). The overlap
+predicate is `first_seen_at < to AND last_seen_at >= from`; with one bound the analogous half
+applies (`last_seen_at >= from`, or `first_seen_at < to`). Note the asymmetry: `to` is exclusive
+but `last_seen_at = from` is still an overlap, so a thread is listed from the moment of `from` up
+to the instant before `to`.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:43210/v1/threads?from=1720000000000&to=1720086400000&limit=50"
+```
+
+Returns a bare JSON array of thread summaries, ordered **`last_seen_at DESC, id DESC`**. Each row
+carries the clusterer's own persisted figures; nothing is recomputed for the list:
+
+```json
+[
+  { "id": 3, "title": "Refactor the store crate", "first_seen_at": 1719990000000,
+    "last_seen_at": 1720003600000, "session_count": 2 }
+]
+```
+
+`session_count` is the stored `threads.session_count`, not a recount of the detail's `sessions`.
+The route has no continuation cursor: `limit` bounds the returned rows, so a window with more
+threads than the limit yields the leading prefix of this order, not a page.
+
+### `GET /v1/threads/{id}`
+
+One thread with its member sessions and the entities those sessions touch. `id` is a decimal
+integer path segment: a non-integer id is **400**, an unknown thread **404 `not_found`**. The route
+takes no parameters.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:43210/v1/threads/3"
+```
+
+```json
+{
+  "thread": { "id": 3, "title": "Refactor the store crate", "first_seen_at": 1719990000000,
+    "last_seen_at": 1720003600000, "session_count": 2 },
+  "sessions": [
+    { "session_id": 43, "started_at": 1719990000000, "ended_at": 1719993600000,
+      "kind": "focus", "title": null, "confidence": 0.74 },
+    { "session_id": 42, "started_at": 1720000000000, "ended_at": 1720003600000,
+      "kind": "ai", "title": "Refactor the store crate", "confidence": 0.82 }
+  ],
+  "entities": [
+    { "entity_id": 11, "kind": "repo", "canonical_name": "screensearch",
+      "session_count": 2, "confidence": 0.91 }
+  ]
+}
+```
+
+`sessions` is ordered **`started_at ASC`**; `ended_at` is `null` for a session still open and
+`title` may be `null`. `confidence` there is the **cluster edge weight** that placed the session
+in the thread (`thread_sessions.confidence`), not the entity extraction's confidence. A session's
+`kind` is the `sessions.kind` token (`focus` | `meeting` | `ai` | `other`).
+
+`entities` is ordered **`confidence DESC, canonical_name`**. `session_count` counts how many of
+**this thread's** member sessions touch the entity, while `confidence` is the maximum confidence
+over those sessions — both are thread-scoped, so they are not comparable with the all-history
+`session_count` of `GET /v1/entities`. `kind` on an entity is the `entities.kind` token.
+
+### `GET /v1/entities`
+
+Entities, optionally filtered. Query params: `kind`, `q`, `limit` (default 1000, clamped
+`1..=1000`).
+
+- `kind` — one of `repo` | `file` | `domain` | `document` | `ref` | `app`, the closed
+  `entities.kind` set. Absent means every kind; any other value is **400**, never ignored.
+- `q` — a **case-insensitive substring** of the entity's `canonical_name` **or any of its
+  aliases**. Absent means no name filter. Matching is a literal substring, not a `LIKE`/glob
+  pattern: `%`, `_` and `\` are ordinary characters. Folding is **ASCII-only** (the same SQLite
+  `lower()` rule as the frame filters), so a name containing non-ASCII characters matches only
+  when its case matches exactly — there is no Unicode casefolding and no locale collation.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:43210/v1/entities?kind=repo&q=dark&limit=20"
+```
+
+Returns a bare JSON array ordered **`last_seen_at DESC, id DESC`**:
+
+```json
+[
+  { "id": 11, "kind": "repo", "canonical_name": "screensearch",
+    "first_seen_at": 1719000000000, "last_seen_at": 1720700000000,
+    "session_count": 7, "aliases": ["screensearch-v2", "estrem/screensearch"] }
+]
+```
+
+`session_count` here counts the sessions linked to the entity across the whole history
+(`session_entities`), not the requested window — this route has no window. `aliases` lists the
+`entity_aliases` names in insertion order and may be empty (`[]`), never `null`. Like threads,
+this route has no cursor: `limit` bounds the rows returned.
+
+### Insights
+
+`GET /v1/insights` serves the persisted insights of the 0.4.5 insights engine (`03 §7j`). An
+insight is a **typed, evidenced statement about a half-open window**: the payload is the truth and
+is renderable without a model.
+
+#### The five closed kinds and their payloads
+
+`insight.kind` is a closed set. A sixth kind would be a **schema change** (baseline DDL edit plus a
+`schema_version` bump), not an additive route change. The payload is a tagged object that repeats
+the row's `kind`, so a row can never be read as a different kind; the variant and the column are
+written together and always agree.
+
+| `kind` | Payload fields (all present; nullable ones may be `null`) |
+|---|---|
+| `thread_activity` | `thread_id`, `title`, `session_count`, `active_ms`, `first_touched_at`, `last_touched_at` |
+| `open_loop` | `source` (`unresolved_mark` \| `abandoned_thread`), `mark_id`, `frame_id`, `note`, `thread_id`, `title`, `opened_at`, `idle_ms` |
+| `recurrence` | `entity_id`, `entity_kind`, `entity_name`, `first_session_id`, `first_seen_at`, `second_session_id`, `second_seen_at`, `gap_ms`, `occurrence_count` |
+| `semantic_neighbour` | `session_id`, `session_title`, `session_started_at`, `neighbours[]` — each `{session_id, title, started_at, similarity}` |
+| `resumption` | `thread_id`, `title`, `previous_session_id`, `previous_ended_at`, `resumed_session_id`, `resumed_at`, `gap_ms`, `last_doing` |
+
+Per kind:
+
+- **`thread_activity`** — time spent and sessions touched on one thread inside the window. Every
+  figure is a real overlap computation over the member sessions, nothing estimated:
+  `session_count` counts the member sessions overlapping the window; `active_ms` sums their
+  overlap with the window (an open session contributes up to `window_end`); `first_touched_at` is
+  the earliest member-session `started_at` inside the window and `last_touched_at` the latest
+  `COALESCE(ended_at, window_end)` inside it.
+- **`open_loop`** — something left unresolved and how long it has been open. `source` says which
+  half is populated: `unresolved_mark` fills `mark_id` (and the `frame_id` it flags, plus the
+  mark's optional `note`), `abandoned_thread` fills `thread_id` and `title` — a thread whose last
+  activity is at least that 7-day horizon before `window_end` and whose last member session has
+  actually ended. The other half's
+  fields are `null`, never a fabricated value. `opened_at` is the mark's `created_at` or the
+  thread's `last_seen_at`; `idle_ms` is `window_end - opened_at`. There is no third source in
+  0.4.5 — the spec's "open question from a synthesis" source is deferred.
+- **`recurrence`** — the same entity seen again after at least `RECURRENCE_GAP_MS` (7 days).
+  `first_*`/`second_*` name the two sessions forming the recurrence — the latest qualifying pair
+  inside the window — (evidence order: entity, first session, second session); `gap_ms` is
+  `second_seen_at - first_seen_at` and is always at least the 7-day horizon; `occurrence_count`
+  counts every session touching the entity inside the window. `entity_kind` is the `entities.kind`
+  token rendered as a string.
+- **`semantic_neighbour`** — sessions similar to a given session on **other calendar days** (day
+  compared in UTC; localisation may come later). A session in the window without a session vector
+  yields no such insight. `neighbours` is never empty, is ordered by descending `similarity`,
+  holds at most the top 5, and every entry is at least 0.80 cosine similarity
+  (`1 - vec0 distance`). `session_title` and a neighbour's `title` may be `null`.
+- **`resumption`** — a thread picked up after at least `RESUMPTION_GAP_MS` (7 days):
+  `gap_ms = resumed_at - previous_ended_at` is always at least that horizon, and `last_doing`
+  is the previous session's summary, else its title, else `null`.
+
+The thresholds named above (7-day horizons, 0.80 similarity, top 5) are **compile-time kernel
+constants, not settings** — they are fixed for 0.4.5 and cannot be configured through the API,
+Settings or a query parameter.
+
+#### Evidence
+
+```json
+{ "ordinal": 0, "kind": "thread", "ref_id": 3 }
+```
+
+`ordinal` is **0-based and dense** within its insight (`0, 1, 2 …`, no gaps) and orders the
+evidence for display. `kind` is the closed set `frame` | `session` | `thread` | `entity` | `mark` |
+`report` and says which table `ref_id` names. `evidence` is **never empty** — an insight without
+evidence is a defect (the kernel dead-letters the pass), never an empty-but-successful row.
+`report` is in the closed set and in the DDL check, but **no generator emits it** in 0.4.5:
+`open_loop` comes from unresolved marks and abandoned threads only.
+
+#### Generator, staleness and replacement
+
+`generator` is `heuristic` | `llm_phrased`. `heuristic` means the payload was produced
+deterministically from stored facts; `llm_phrased` means a model only **restated** a payload that
+already existed. **Phrasing is additive**: the typed payload is the truth, phrasings add no claim,
+and 0.4.5 emits `heuristic` only.
+
+`window_start`/`window_end` are unix milliseconds and half-open `[window_start, window_end)`.
+
+`stale` (`true`/`false`) means at least one referenced row — frame, session, thread, entity or
+mark — no longer exists since the insight was generated: the window, the entities or the evidence
+changed. A stale row is still listed, with the flag set, and is **replaced** by the next
+generation pass rather than repaired or hidden; never treat a stale row as current truth. Rows are
+not stable across passes: generation is **replace-per-window** — a pass covers one window, deletes
+the rows of each kind whose window overlaps it and inserts the fresh set in one transaction — so an
+`id` may name a different statement after a pass.
+
+#### `GET /v1/insights`
+
+Query params: `from`, `to` (unix ms, each independently optional, half-open), `kind` (one of the
+five tokens above; unknown → **400**), `limit` (default **1000**, clamped **1..=1000**).
+
+The overlap predicate is `window_start < to AND window_end > from`, with the analogous single-bound
+forms. Order is **`window_start DESC, kind ASC, id DESC`**, and each row's `evidence` is ordered by
+`ordinal`. Because one generation pass covers one window, rows from the same pass share
+`window_start`/`window_end` and are therefore grouped by `kind` in that order.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:43210/v1/insights?from=1791928800000&to=1794520800000&kind=recurrence&limit=50"
+```
+
+```json
+[
+  {
+    "id": 18, "kind": "recurrence",
+    "window_start": 1791928800000, "window_end": 1794520800000,
+    "payload": {
+      "kind": "recurrence",
+      "entity_id": 11, "entity_kind": "repo", "entity_name": "screensearch",
+      "first_session_id": 42, "first_seen_at": 1720000000000,
+      "second_session_id": 57, "second_seen_at": 1720700000000,
+      "gap_ms": 700000000, "occurrence_count": 6
+    },
+    "generator": "heuristic", "generated_at": 1794520805000, "stale": false,
+    "evidence": [
+      { "ordinal": 0, "kind": "entity", "ref_id": 11 },
+      { "ordinal": 1, "kind": "session", "ref_id": 42 },
+      { "ordinal": 2, "kind": "session", "ref_id": 57 }
+    ]
+  }
+]
+```
+
+The response is a bare array; `payload` is always present and always carries its own `kind` tag;
+`stale` is a JSON boolean, never `0`/`1`. These are **reads**: a `GET` never generates an insight,
+never writes or repairs a row, never starts inference and never changes `stale`. The pass window is
+`[now - 30 days, now)` truncated to whole minutes, so an insight describes the generator's window,
+not the window you asked for — `from`/`to` only select which stored rows you see.
 
 ### Marks — the only write surface
 

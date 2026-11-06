@@ -1,5 +1,106 @@
 # 07 — Known Gaps
 
+## 2026-11-06: P8 insights + connections engine and agent surface — grants, maintainer decisions and deferrals (owner: maintainer for the decisions; agent for code; branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`, **not committed, not pushed**)
+
+Phase: `docs/kickoffs/P8.md`. Base condition: P5 (#157), P6 (#160) and P7 (#161) are all merged on
+`main` and **no `v0.4.4` tag exists**, so the wave rule (`docs/0.4.5.md` §4.2 — "next wave starts when
+all three phases of the current wave are merged, not when its debug window ends") is the condition
+that applied, not the tag. The P8 kickoff's dependency sentence ("Both are merged at your base") is
+therefore true of the tree even though `01 §8`, `04 §1` and `07:185` still describe P6/#160 as open —
+those three records are stale and are corrected in `06` (#94).
+
+Every kickoff stop condition the two read-only scouts surfaced was put to the maintainer in one
+batched round **before** any code was written. Contradiction rows are `06` #93–#101.
+
+**Grants (one-time, maintainer, 2026-11-06).**
+- **`crates/traits/src/contracts.rs`** — additive, default-bodied `Store` methods for the insights
+  writes and the thread/entity/insight reads. Required because `crates/api` reaches data only through
+  `Arc<dyn Store>` (`api/src/lib.rs:122-124`); no existing signature changes.
+- **`crates/traits/src/jobs.rs`** — one additive `JobKind::InsightGenerate` variant. The kickoff
+  orders the job kind registered "in the same registry", and that registry is this enum plus
+  `worker_pool.rs`'s claim array and dispatch arm.
+- **`crates/kernel/src/reports.rs`, `crates/kernel/src/report_service.rs`** (and
+  `crates/store/src/memory.rs` only if a read is needed there) — for the additive insights-in-window
+  report input. See the report decision below.
+- **`src-tauri/src/local_api.rs`** — granted, **not used**: the four routes read through
+  `ApiHost::store()`, so no `src-tauri` edit was needed.
+
+**Maintainer decisions (2026-11-06).**
+- **Thresholds are kernel constants, not settings.** `03 §7j` fixes no value and `03 §8` has no
+  `insights.*` key (the UI set is closed at 26 keys by 0.4.5 D6). This conflicts with
+  `07:602-603`'s earlier "P8 owns the values inside the contract", so the maintainer ruled: the
+  values are named `pub const` kernel constants following the P5/P6 precedent
+  (`graph_scheduler::TICK`, `NORMALIZE_IDLE_MS`, `graph_backfill::BATCH`/`LOW_WATER`,
+  `session_vectors::TICK`, each documented "a kernel constant, never a setting"): lookback 30 days,
+  recurrence gap 7 days, resumption gap 7 days (also the abandoned-thread threshold), neighbour
+  cosine similarity floor 0.80, neighbour top-k 5. The 7/30-day values borrow `03 §7h.4`'s
+  spec-fixed cluster horizon rather than inventing numbers. Recorded in `05`.
+- **Evidence sweep location.** `03 §7j.2` says the zero-row sweep "runs as a harness invariant", but
+  `crates/harness` is P4's, is not owned by P8, and holds no invariant runner (it is the eval crate).
+  Ruled: the sweep is `Store::unevidenced_insight_ids()`, asserted by a store test, re-checked after
+  every generation pass by the kernel (a violation dead-letters the job and logs a count), and also
+  run against the live database of a running app (`sqlite3 … → 0`, see the live-proof note below).
+  The wording contradiction is `06` #95.
+- **`report` evidence is deferred, not invented.** `insight_evidence.ref_id` is `INTEGER`
+  (`schema.rs:348`) while `report_runs.run_id` is a `TEXT` UUID (`schema.rs:413-414`), so "an open
+  question from a weekly synthesis" has no legal evidence id. Ruled: P8 produces `open_loop` from
+  unresolved marks and abandoned threads only; `EvidenceKind::Report` stays in the enum (the DDL
+  `CHECK` allows it) but no generator emits it. A later schema decision can add the source; it is
+  **not** a P8 change. Contradiction `06` #96.
+- **Reports cite insights additively.** Daily and weekly synthesis receive an "insights in window"
+  context block rendered deterministically from the typed payloads; citations stay frame/session/
+  daily-run ids, and `SavedReportView`, the markdown format and the frontmatter are untouched
+  (`03 §8b`, `§8e`). With zero insights in the window the prompt is byte-identical to before, and a
+  test asserts that. No report format change was needed.
+- **Live proof: ruled live, executed on a locally built v14 database — and the difference is
+  recorded rather than glossed.** The maintainer asked for a live DB; **no profile database exists on
+  this machine** (`%APPDATA%\app.screensearchv2c.desktop` was absent; only the WebView cache dir
+  under `%LOCALAPPDATA%` exists). So the proof ran against a real v14 database on disk, seeded
+  through the app's own store write paths, with the real `run_insight_generate`, the real API served
+  by a running app and the real MCP stdio wrapper. A pass over the maintainer's own profile remains
+  **their** run; `05` states this next to the samples.
+- **Git:** branch only. Under 0.4.5 D18 the agent made no commit and no push; the
+  `git diff --exit-code -- ui/src/bindings` guard therefore reports the expected regenerated-binding
+  diff rather than passing, and that raw output is pasted in `05`. The maintainer decides the commit.
+
+**Agent decisions inside the contract (recorded so P9 can rely on them).**
+- `insight_evidence.ordinal` is **0-based and dense**; stated in `docs/API.md`.
+- Route orders: `/v1/threads` `last_seen_at DESC, id DESC`; `/v1/insights` `window_start DESC,
+  kind ASC, id DESC`; `/v1/entities` `last_seen_at DESC, id DESC`.
+- Overlap predicates: threads `first_seen_at < to AND last_seen_at >= from`; insights
+  `window_start < to AND window_end > from`.
+- The four routes use the strict `history::query_fields`/`parse_integer` parser: an unknown or
+  duplicated parameter, a non-integer, or `from > to` is `400 bad_request`. `/v1/sessions` keeps its
+  laxer serde extractor; that difference is stated in `docs/API.md` (`06` #98).
+- A pass covers `[now - 30 days, now)` truncated to whole minutes, replaces every row of each kind
+  whose window overlaps it (`03 §7j.5`), and then marks `stale=1` any row whose evidence refs no
+  longer exist. A missing-evidence row is regenerated rather than served as truth (`07:409-412`'s
+  cascade risk is answered this way, not by a schema change).
+- `semantic_neighbour` treats "other days" as a different UTC day bucket
+  (`started_at / 86_400_000`); P9 may localise the label. Similarity is `1 - distance` from the
+  `session_vectors` cosine metric — no second embedding path (`03 §7i.2`).
+- On-demand generation is `Kernel::request_insights_generation()`; P8 calls it only from tests
+  because the four surfaces are GETs and the IPC command is P9's (`03 §7j.3`, `07:595-597`).
+
+**Deferrals with owners.**
+- **Weekly-synthesis open questions as `open_loop` evidence — owner: maintainer (schema decision).**
+  Blocked on a representable report reference; see `06` #96.
+- **Report-side structured insight citations — owner: maintainer/P9.** The additive context block is
+  what "may cite insights" needed; a first-class `insight_ids` citation field would be a report
+  format change and was not made.
+- **`report_runs` is absent from `03 §4`** while P8 must read it; already tracked as `06` #30, still
+  open (owner: maintainer/P3).
+- **D12's maintainer-side consumers (Hermes, the second-brain pipeline) — owner: maintainer.** The
+  exact wire shapes are published in `docs/API.md`; this repository cannot update those consumers.
+
+- **The acceptance line "the write-credential 403 path" has no instance on the four read routes.**
+  `03 §7f.7` grants `history.read` to both credential classes and forbids implicit expansion, so a
+  403 on `/v1/threads`, `/v1/threads/{id}`, `/v1/entities` or `/v1/insights` is unreachable by
+  design. The api suite instead pins `401` without a bearer, `200` for **both** classes (GET and
+  HEAD), the method-denial `Allow` lists, and the 403 that the contract does define — a read
+  credential calling `/v1/marks*` or `/v1/ask`. Not a missing test; a wording mismatch in the
+  kickoff checklist, recorded rather than papered over.
+
 ## 2026-11-05: P7 app shell + Settings v2 — grants, maintainer decisions and deferrals (owner: maintainer for the decisions; agent for code; branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, **not merged**; pushed on the maintainer's authorization)
 
 Phase: `docs/kickoffs/P7.md`, branched from `main` `6d906a7` (P2–P6 merged; no `v0.4.3` tag exists,
