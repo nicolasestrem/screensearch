@@ -11,9 +11,10 @@ use std::sync::Arc;
 use rusqlite::{params, Connection};
 use store::{SqliteStore, EMBEDDING_DIM};
 use traits::{
-    AskSessionHit, AskThreadCandidate, ChunkSource, Embedding, EmbeddingProvider, EntityKind,
-    GraphHit, JobKind, NewAskTurn, NewFrame, NewJob, NewSession, OcrResult, SearchQuery,
-    SessionHost, SessionKind, ThreadDraft, ThreadMemberDraft, ThreadPlan, TimeRange,
+    AskCitations, AskSessionHit, AskThreadCandidate, ChunkSource, Embedding, EmbeddingProvider,
+    EntityKind, EvidenceKind, GraphHit, InsightEvidence, InsightGenerator, InsightPayload, JobKind,
+    NewAskTurn, NewFrame, NewInsight, NewJob, NewSession, OcrResult, RecurrencePayload,
+    SearchQuery, SessionHost, SessionKind, ThreadDraft, ThreadMemberDraft, ThreadPlan, TimeRange,
 };
 
 /// Deterministic query embedding: no model download or inference belongs in these tests.
@@ -978,6 +979,7 @@ async fn ask_turn_ordinals_cascade_and_the_unique_guard_holds() {
             question: "what did I do last week?".to_string(),
             window: Some(window),
             resolved_entities: vec![3, 5],
+            scope_thread_id: None,
         })
         .await
         .unwrap();
@@ -987,14 +989,25 @@ async fn ask_turn_ordinals_cascade_and_the_unique_guard_holds() {
             question: "and the day before?".to_string(),
             window: None,
             resolved_entities: Vec::new(),
+            scope_thread_id: None,
         })
         .await
         .unwrap();
     assert_eq!((first.ordinal, second.ordinal), (1, 2));
     assert_eq!(first.answer, None, "the answer stays NULL while streaming");
 
-    assert!(store.finish_ask_turn(first.id, "answer one").await.unwrap());
-    assert!(!store.finish_ask_turn(999_999, "ghost").await.unwrap());
+    let cited = traits::AskCitations {
+        sessions: vec![7],
+        frames: vec![11],
+    };
+    assert!(store
+        .finish_ask_turn(first.id, "answer one", &cited)
+        .await
+        .unwrap());
+    assert!(!store
+        .finish_ask_turn(999_999, "ghost", &cited)
+        .await
+        .unwrap());
 
     // `UNIQUE(thread_id, ordinal)` is the durable guard: the store always picks the next ordinal,
     // so a second writer is the only way to observe the constraint. Checked through a second
@@ -1041,6 +1054,7 @@ async fn ask_turn_ordinals_cascade_and_the_unique_guard_holds() {
             question: "orphan".to_string(),
             window: None,
             resolved_entities: Vec::new(),
+            scope_thread_id: None,
         })
         .await
         .is_err());
@@ -1093,6 +1107,7 @@ async fn ask_follow_up_reads_back_the_window_and_entity_ids() {
             question: "what shipped last week?".to_string(),
             window: Some(window),
             resolved_entities: resolved.clone(),
+            scope_thread_id: None,
         })
         .await
         .unwrap();
@@ -1115,6 +1130,7 @@ async fn ask_follow_up_reads_back_the_window_and_entity_ids() {
             question: "and then?".to_string(),
             window: None,
             resolved_entities: Vec::new(),
+            scope_thread_id: None,
         })
         .await
         .unwrap();
@@ -1465,4 +1481,400 @@ async fn ask_pending_jobs_of_kind_counts_pending_and_running_session_embed_jobs(
             .unwrap(),
         1
     );
+}
+
+// ---- P9 conversations (`03 §7i.4`) -----------------------------------------------------
+
+/// `list_ask_threads` reports each conversation's turn count, its latest turn and its title,
+/// ordered newest-first (`last_turn_at` when it has turns, else `created_at`); `finish_ask_turn`
+/// writes the answer and the citations in one row, and `list_ask_turns` reads that exact pair
+/// back together with the scope thread the turn ran under.
+#[tokio::test]
+async fn ask_threads_list_titles_and_citations_round_trip() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let db_path = temp.path().join("ask-threads.sqlite");
+    let store = SqliteStore::open_path(&db_path).expect("open store");
+    // A second connection pins the row timestamps: `created_at` has one-second granularity, so
+    // without this every thread would tie and the order would only prove the id tiebreak.
+    let raw = Connection::open(&db_path).expect("second connection");
+
+    let older = store.create_ask_thread().await.expect("create thread");
+    let newer_but_quiet = store.create_ask_thread().await.expect("create thread");
+    let unused = store.create_ask_thread().await.expect("create thread");
+
+    let scoped = store
+        .append_ask_turn(NewAskTurn {
+            thread_id: older,
+            question: "what did I ship?".to_string(),
+            window: Some(TimeRange {
+                start: 1_000,
+                end: 2_000,
+            }),
+            resolved_entities: vec![11],
+            scope_thread_id: Some(42),
+        })
+        .await
+        .expect("append the first turn");
+    let finished = store
+        .append_ask_turn(NewAskTurn {
+            thread_id: older,
+            question: "and the day before?".to_string(),
+            window: None,
+            resolved_entities: Vec::new(),
+            scope_thread_id: None,
+        })
+        .await
+        .expect("append the follow-up");
+    let quieter = store
+        .append_ask_turn(NewAskTurn {
+            thread_id: newer_but_quiet,
+            question: "where are the invoices?".to_string(),
+            window: None,
+            resolved_entities: Vec::new(),
+            scope_thread_id: None,
+        })
+        .await
+        .expect("append the other thread's turn");
+
+    // Pinned so the order below is derived from these values and nothing else.
+    let pinned = [
+        (older, 1_000_i64),
+        (newer_but_quiet, 2_000),
+        (unused, 3_000),
+    ];
+    for (thread_id, created_at) in pinned {
+        raw.execute(
+            "UPDATE ask_threads SET created_at = ?2 WHERE id = ?1",
+            params![thread_id, created_at],
+        )
+        .expect("pin the conversation's created_at");
+    }
+    let turn_times = [
+        (scoped.id, 4_000_i64),
+        (finished.id, 5_000),
+        (quieter.id, 2_500),
+    ];
+    for (turn_id, created_at) in turn_times {
+        raw.execute(
+            "UPDATE ask_turns SET created_at = ?2 WHERE id = ?1",
+            params![turn_id, created_at],
+        )
+        .expect("pin the turn's created_at");
+    }
+
+    let listed = store
+        .list_ask_threads(10)
+        .await
+        .expect("list conversations");
+    assert_eq!(
+        listed.iter().map(|summary| summary.id).collect::<Vec<_>>(),
+        vec![older, newer_but_quiet, unused],
+        "conversations with turns lead in turn-recency order, and the unused one falls to the \
+         end even though it was opened after the second conversation's turn"
+    );
+    let by_id = |id: i64| {
+        listed
+            .iter()
+            .find(|summary| summary.id == id)
+            .expect("the conversation is listed")
+    };
+    assert_eq!(by_id(older).turn_count, 2);
+    assert_eq!(by_id(older).last_turn_at, Some(5_000));
+    assert_eq!(by_id(older).created_at, 1_000);
+    assert_eq!(by_id(newer_but_quiet).turn_count, 1);
+    assert_eq!(by_id(newer_but_quiet).last_turn_at, Some(2_500));
+    assert_eq!(
+        (by_id(unused).turn_count, by_id(unused).last_turn_at),
+        (0, None),
+        "a conversation with no turns reports neither"
+    );
+    assert_eq!(by_id(older).title, None, "nobody named it yet");
+
+    let limited = store.list_ask_threads(2).await.expect("list two");
+    assert_eq!(
+        limited.iter().map(|summary| summary.id).collect::<Vec<_>>(),
+        vec![older, newer_but_quiet],
+        "the limit cuts the tail of the same order"
+    );
+
+    // Naming a conversation is a write the list reflects; an unknown id changes nothing.
+    assert!(store
+        .set_ask_thread_title(older, "Deploys")
+        .await
+        .expect("set the title"));
+    assert!(!store
+        .set_ask_thread_title(999_999, "ghost")
+        .await
+        .expect("set a missing title"));
+    let listed = store
+        .list_ask_threads(10)
+        .await
+        .expect("list conversations");
+    let titled = listed
+        .iter()
+        .find(|summary| summary.id == older)
+        .expect("the conversation is listed")
+        .title
+        .as_deref();
+    assert_eq!(titled, Some("Deploys"));
+    assert_eq!(
+        listed
+            .iter()
+            .filter(|summary| summary.id != older)
+            .map(|summary| summary.title.clone())
+            .collect::<Vec<_>>(),
+        vec![None, None],
+        "naming one conversation does not name another"
+    );
+
+    // The answer and the citations land in one row, and the reload sees exactly that pair.
+    let citations = AskCitations {
+        sessions: vec![5, 7],
+        frames: vec![31],
+    };
+    assert!(store
+        .finish_ask_turn(finished.id, "It landed.", &citations)
+        .await
+        .expect("finish the turn"));
+
+    let turns = store.list_ask_turns(older).await.expect("read the turns");
+    let by_turn = |id: i64| {
+        turns
+            .iter()
+            .find(|turn| turn.id == id)
+            .expect("the turn is listed")
+    };
+    let reloaded = by_turn(finished.id);
+    assert_eq!(reloaded.answer.as_deref(), Some("It landed."));
+    assert_eq!(
+        reloaded.citations,
+        Some(citations.clone()),
+        "`list_ask_turns` returns the citations `finish_ask_turn` wrote"
+    );
+    assert_eq!(reloaded.scope_thread_id, None);
+    let streaming = by_turn(scoped.id);
+    assert_eq!(
+        (streaming.answer.clone(), streaming.citations.clone()),
+        (None, None),
+        "an unfinished turn carries neither an answer nor citations"
+    );
+    assert_eq!(
+        streaming.scope_thread_id,
+        Some(42),
+        "the scope thread the turn ran under is persisted, with no thread row required"
+    );
+    assert_eq!(
+        streaming.window,
+        Some(TimeRange {
+            start: 1_000,
+            end: 2_000
+        })
+    );
+
+    // `last_ask_turn` is the same row, so a follow-up inherits the persisted scope too.
+    let last = store
+        .last_ask_turn(older)
+        .await
+        .expect("read the last turn")
+        .expect("the conversation has turns");
+    assert_eq!(last, reloaded.clone());
+}
+
+/// A turn whose `citations` column does not decode is an error, never a silent "no citations":
+/// a finished answer must not render as if it had no evidence (`03 §7i.3`).
+#[tokio::test]
+async fn ask_turn_with_undecodable_citations_is_an_error() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let db_path = temp.path().join("ask-citations.sqlite");
+    let store = SqliteStore::open_path(&db_path).expect("open store");
+    let raw = Connection::open(&db_path).expect("second connection");
+
+    let thread = store.create_ask_thread().await.expect("create thread");
+    let turn = store
+        .append_ask_turn(NewAskTurn {
+            thread_id: thread,
+            question: "what shipped?".to_string(),
+            window: None,
+            resolved_entities: Vec::new(),
+            scope_thread_id: None,
+        })
+        .await
+        .expect("append a turn");
+    assert!(store
+        .finish_ask_turn(
+            turn.id,
+            "the deploy",
+            &AskCitations {
+                sessions: vec![1],
+                frames: vec![2],
+            },
+        )
+        .await
+        .expect("finish the turn"));
+
+    raw.execute(
+        "UPDATE ask_turns SET citations = ?2 WHERE id = ?1",
+        params![turn.id, "{not json"],
+    )
+    .expect("corrupt the row");
+
+    let error = store
+        .list_ask_turns(thread)
+        .await
+        .expect_err("a malformed citations column must not decode");
+    let message = format!("{error:#}").to_lowercase();
+    assert!(
+        message.contains("conversion error") && message.contains("text"),
+        "the error must describe the undecodable column, got {error:#}"
+    );
+    assert!(
+        store.last_ask_turn(thread).await.is_err(),
+        "every turn read goes through the same decoder"
+    );
+
+    // A structurally valid but wrong-shaped value is refused too.
+    raw.execute(
+        "UPDATE ask_turns SET citations = ?2 WHERE id = ?1",
+        params![turn.id, "[1,2]"],
+    )
+    .expect("write a wrong-shaped value");
+    assert!(store.list_ask_turns(thread).await.is_err());
+}
+
+/// Deleting a conversation removes its turns and nothing else: the sessions, frames, graph rows
+/// and insights a turn cited all survive (`03 §7i.4`).
+#[tokio::test]
+async fn deleting_a_conversation_keeps_history_graph_and_insights() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let db_path = temp.path().join("ask-delete.sqlite");
+    let store = SqliteStore::open_path(&db_path).expect("open store");
+    let raw = Connection::open(&db_path).expect("second connection");
+    let count = |table: &str| -> i64 {
+        raw.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+            row.get(0)
+        })
+        .expect("count rows")
+    };
+
+    // History the conversation will cite: a session, a frame, an entity link, two threads with
+    // their members, and an evidenced insight.
+    let threads = seed_threads(&store).await;
+    let frame_id = seed_frame(&store, 1_500, "deploy notes").await;
+    let entity_id = seed_entity(
+        &store,
+        threads.session_a,
+        frame_id,
+        GraphHit {
+            kind: EntityKind::Repo,
+            canonical_name: "screensearch".to_string(),
+            normalized_key: "screensearch".to_string(),
+            confidence: 0.9,
+            aliases: vec!["ss".to_string()],
+        },
+    )
+    .await;
+    let insight_id = store
+        .insert_insight(NewInsight {
+            window_start: 100,
+            window_end: 700,
+            payload: InsightPayload::Recurrence(RecurrencePayload {
+                entity_id,
+                entity_kind: EntityKind::Repo.as_str().to_string(),
+                entity_name: "screensearch".to_string(),
+                first_session_id: threads.session_a,
+                first_seen_at: 100,
+                second_session_id: threads.session_b,
+                second_seen_at: 300,
+                gap_ms: 200,
+                occurrence_count: 2,
+            }),
+            generator: InsightGenerator::Heuristic,
+            evidence: vec![InsightEvidence {
+                ordinal: 0,
+                kind: EvidenceKind::Session,
+                ref_id: threads.session_a,
+            }],
+        })
+        .await
+        .expect("insert an evidenced insight");
+
+    let watched = [
+        "sessions",
+        "frames",
+        "entities",
+        "entity_aliases",
+        "session_entities",
+        "threads",
+        "thread_sessions",
+        "insights",
+        "insight_evidence",
+    ];
+    let before = watched.map(|table| (table, count(table)));
+
+    let thread = store.create_ask_thread().await.expect("create thread");
+    let turn = store
+        .append_ask_turn(NewAskTurn {
+            thread_id: thread,
+            question: "what did I ship?".to_string(),
+            window: None,
+            resolved_entities: vec![entity_id],
+            // A work-graph thread id: persisted without an FK, so a later merge or re-cluster
+            // cannot block a turn from being written.
+            scope_thread_id: Some(threads.thread_a),
+        })
+        .await
+        .expect("append a turn");
+    assert!(store
+        .finish_ask_turn(
+            turn.id,
+            "the deploy",
+            &AskCitations {
+                sessions: vec![threads.session_a],
+                frames: vec![frame_id],
+            },
+        )
+        .await
+        .expect("finish the turn"));
+    assert_eq!(count("ask_turns"), 1);
+
+    assert!(store.delete_ask_thread(thread).await.expect("delete it"));
+    assert_eq!(count("ask_threads"), 0);
+    assert_eq!(
+        count("ask_turns"),
+        0,
+        "the turns cascade with their conversation"
+    );
+    for (table, expected) in before {
+        assert_eq!(
+            count(table),
+            expected,
+            "`{table}` must be untouched by deleting a conversation"
+        );
+    }
+    // The insight is still readable, not merely still counted.
+    assert!(
+        store
+            .list_ask_turns(thread)
+            .await
+            .expect("read the deleted thread")
+            .is_empty(),
+        "the conversation is gone"
+    );
+    assert_eq!(
+        store
+            .graph_stored_threads()
+            .await
+            .expect("read the graph")
+            .len(),
+        2,
+        "the work graph survives"
+    );
+    let insight_count: i64 = raw
+        .query_row(
+            "SELECT COUNT(*) FROM insights WHERE id = ?1",
+            [insight_id],
+            |row| row.get(0),
+        )
+        .expect("count the insight");
+    assert_eq!(insight_count, 1, "the insight survives the conversation");
 }

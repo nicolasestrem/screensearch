@@ -2,7 +2,7 @@
 //! conversation rows, and the `session_vectors` backfill.
 //!
 //! ## Why stage 2 builds a `temp.` FTS5 index
-//! The v14 baseline (`03 §4`) has no FTS index over `sessions.title`/`summary`, and adding a
+//! The v15 baseline (`03 §4`) has no FTS index over `sessions.title`/`summary`, and adding a
 //! persisted one is a P3 DDL change (0.4.5 D2). Stage 2 therefore builds a per-query
 //! `temp.ask_session_fts` FTS5 index over exactly the candidate sessions' concatenated
 //! title/summary, ranks it with `bm25()`, and drops it before returning. A temp table is
@@ -26,10 +26,10 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::{params, params_from_iter, types::Value, OptionalExtension, Row};
+use rusqlite::{named_params, params, params_from_iter, types::Value, OptionalExtension, Row};
 use traits::{
-    AskEntityMatch, AskSessionHit, AskThreadCandidate, AskTurnRecord, Embedding, NewAskTurn,
-    Result, SearchHit, SearchQuery, SessionEmbedInput, TimeRange,
+    AskEntityMatch, AskSessionHit, AskThreadCandidate, AskThreadSummary, AskTurnRecord, Embedding,
+    NewAskTurn, Result, SearchHit, SearchQuery, SessionEmbedInput, TimeRange,
 };
 
 use crate::embeddings::{f32_blob, SQLITE_VEC_MAX_K};
@@ -321,6 +321,22 @@ fn row_to_ask_turn(row: &Row<'_>) -> rusqlite::Result<AskTurnRecord> {
             )
         })?,
     };
+    // `ask_turns.citations` holds the exact `{"sessions":[…],"frames":[…]}` pair the terminal
+    // `citations` delta emitted (`§7i.3`). A row whose JSON does not decode is an error, never
+    // a silent "no citations": that would render a finished answer as if it had no evidence.
+    let citations: Option<String> = row.get(9)?;
+    let citations = match citations {
+        None => None,
+        Some(json) => Some(serde_json::from_str::<traits::AskCitations>(&json).map_err(
+            |error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    9,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            },
+        )?),
+    };
     Ok(AskTurnRecord {
         id: row.get(0)?,
         thread_id: row.get(1)?,
@@ -329,13 +345,17 @@ fn row_to_ask_turn(row: &Row<'_>) -> rusqlite::Result<AskTurnRecord> {
         answer: row.get(4)?,
         window,
         resolved_entities,
-        created_at: row.get(8)?,
+        scope_thread_id: row.get(8)?,
+        citations,
+        created_at: row.get(10)?,
     })
 }
 
-/// The column order [`row_to_ask_turn`] expects.
-const ASK_TURN_COLUMNS: &str =
-    "id, thread_id, ordinal, question, answer, window_start, window_end, resolved_entities, created_at";
+/// The `ask_turns` column list every conversation read selects, in
+/// [`row_to_ask_turn`]'s order.
+const ASK_TURN_COLUMNS: &str = "id, thread_id, ordinal, question, answer, window_start,
+                                window_end, resolved_entities, scope_thread_id, citations,
+                                created_at";
 
 impl SqliteStore {
     /// Embeds `text` with the store's injected embedder, or `None` when no embedder is
@@ -990,13 +1010,15 @@ impl SqliteStore {
     /// Appends a turn at the next `ordinal` with a `NULL` answer (`§7i.4`): the next ordinal is
     /// `MAX(ordinal) + 1` read inside the same transaction as the insert, so two appends for one
     /// thread cannot pick the same value (`UNIQUE(thread_id, ordinal)`). `window` writes both
-    /// columns or neither; `resolved_entities` is stored as a JSON array.
+    /// columns or neither; `resolved_entities` is stored as a JSON array and `scope_thread_id`
+    /// as given (the work-graph thread the turn was scoped to, no FK).
     pub async fn append_ask_turn(&self, turn: NewAskTurn) -> Result<AskTurnRecord> {
         let NewAskTurn {
             thread_id,
             question,
             window,
             resolved_entities,
+            scope_thread_id,
         } = turn;
         let (window_start, window_end) = match window {
             Some(range) => (Some(range.start), Some(range.end)),
@@ -1013,15 +1035,16 @@ impl SqliteStore {
             tx.execute(
                 "INSERT INTO ask_turns
                    (thread_id, ordinal, question, answer, window_start, window_end,
-                    resolved_entities)
-                 VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6)",
+                    resolved_entities, scope_thread_id)
+                 VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7)",
                 params![
                     thread_id,
                     ordinal,
                     question,
                     window_start,
                     window_end,
-                    resolved
+                    resolved,
+                    scope_thread_id
                 ],
             )?;
             let turn_id = tx.last_insert_rowid();
@@ -1036,15 +1059,22 @@ impl SqliteStore {
         .await
     }
 
-    /// Stores the final answer of a streamed turn. `§7i.4`: the column stays `NULL` while the
-    /// answer streams and on failure, so only a completed answer is written. Returns whether a
-    /// turn row was updated.
-    pub async fn finish_ask_turn(&self, turn_id: i64, answer: &str) -> Result<bool> {
+    /// Stores the final answer of a streamed turn together with its citations, in one
+    /// statement. `§7i.4`: both columns stay `NULL` while the answer streams and on failure,
+    /// so only a completed turn carries either; writing them together means a reader can never
+    /// see a finished answer with no citations. Returns whether a turn row was updated.
+    pub async fn finish_ask_turn(
+        &self,
+        turn_id: i64,
+        answer: &str,
+        citations: &traits::AskCitations,
+    ) -> Result<bool> {
         let answer = answer.to_string();
+        let citations = serde_json::to_string(citations)?;
         self.with_conn(move |conn| {
             Ok(conn.execute(
-                "UPDATE ask_turns SET answer = ?2 WHERE id = ?1",
-                params![turn_id, answer],
+                "UPDATE ask_turns SET answer = ?2, citations = ?3 WHERE id = ?1",
+                params![turn_id, answer, citations],
             )? > 0)
         })
         .await
@@ -1062,6 +1092,54 @@ impl SqliteStore {
                 .query_map([thread_id], row_to_ask_turn)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
+        })
+        .await
+    }
+
+    /// Every conversation, newest first, bounded by `limit` (`03 §7i.4`).
+    ///
+    /// The order is the conversation's latest turn, `NULLS LAST` — a conversation that has never
+    /// been used goes below every one that has, however recently it was opened, because a new
+    /// empty thread is not more interesting than a real exchange. Those turn-less rows then fall
+    /// back to `created_at`. `turn_count` and `last_turn_at` are aggregates of the thread's own
+    /// `ask_turns` rows, so a deleted turn is never counted; ties break on `id DESC` so the order
+    /// is total.
+    pub async fn list_ask_threads(&self, limit: u32) -> Result<Vec<AskThreadSummary>> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT t.id, t.title, t.created_at, COUNT(tu.id) AS turn_count,
+                        MAX(tu.created_at) AS last_turn_at
+                 FROM ask_threads t
+                 LEFT JOIN ask_turns tu ON tu.thread_id = t.id
+                 GROUP BY t.id, t.title, t.created_at
+                 ORDER BY last_turn_at DESC NULLS LAST, t.created_at DESC, t.id DESC
+                 LIMIT :limit",
+            )?;
+            let rows = stmt.query_map(named_params! { ":limit": i64::from(limit) }, |row| {
+                Ok(AskThreadSummary {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    created_at: row.get(2)?,
+                    turn_count: u32::try_from(row.get::<_, i64>(3)?).unwrap_or(u32::MAX),
+                    last_turn_at: row.get(4)?,
+                })
+            })?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+    }
+
+    /// Sets one conversation's title (`03 §7i.4`: the first turn names it) and returns whether
+    /// a row changed. `updated_at` moves with it, so a later reader can tell the row was edited;
+    /// nothing else about the thread changes.
+    pub async fn set_ask_thread_title(&self, thread_id: i64, title: &str) -> Result<bool> {
+        let title = title.to_string();
+        self.with_conn(move |conn| {
+            Ok(conn.execute(
+                "UPDATE ask_threads SET title = ?2, updated_at = unixepoch()*1000
+                 WHERE id = ?1",
+                params![thread_id, title],
+            )? > 0)
         })
         .await
     }

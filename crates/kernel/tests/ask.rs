@@ -29,10 +29,10 @@ use kernel::{CaptureFactory, Kernel};
 use store::SqliteStore;
 use traits::{
     AnswerDelta, AnswerOpts, AnswerProvider, AskEntityMatch, AskSessionHit, AskThreadCandidate,
-    AskTurnRecord, CapturedFrame, Embedding, EmbeddingProvider, Job, JobKind, NewAskTurn, NewFrame,
-    NewJob, NewSession, OcrProvider, OcrResult, Readiness, RetrievedChunk, SearchQuery,
-    SessionEmbedInput, SessionFilter, SessionKind, StageCounts, Store, TimeRange, VisionAnalysis,
-    VisionProvider,
+    AskThreadScope, AskTurnRecord, AskWindowOverride, CapturedFrame, Embedding, EmbeddingProvider,
+    Job, JobKind, NewAskTurn, NewFrame, NewJob, NewSession, OcrProvider, OcrResult, Readiness,
+    RetrievedChunk, SearchQuery, SessionEmbedInput, SessionFilter, SessionKind, StageCounts, Store,
+    TimeRange, VisionAnalysis, VisionProvider,
 };
 
 fn now_ms() -> i64 {
@@ -102,6 +102,10 @@ struct AskStore {
     /// documented "no summaries, no vectors" fallback.
     session_winners: bool,
     threads: Mutex<HashMap<i64, Vec<AskTurnRecord>>>,
+    /// The work-graph threads this fixture holds (`threads.id` → member session ids). Empty is
+    /// the documented empty-graph case; the real store's window/entity narrowing of stage 1 is
+    /// covered by its own tests, so this fixture returns every seeded thread as a candidate.
+    work_threads: Mutex<HashMap<i64, Vec<i64>>>,
     next_thread: AtomicI64,
     next_turn: AtomicI64,
     /// The `session_vectors` rows this fixture holds, keyed by session.
@@ -121,6 +125,7 @@ impl AskStore {
             frames: Mutex::new(Vec::new()),
             session_winners: false,
             threads: Mutex::new(HashMap::new()),
+            work_threads: Mutex::new(HashMap::new()),
             next_thread: AtomicI64::new(1),
             next_turn: AtomicI64::new(1),
             vectors: Mutex::new(HashMap::new()),
@@ -211,6 +216,14 @@ impl AskStore {
             ended_at,
             label: label.to_string(),
         });
+    }
+
+    /// Seeds one work-graph thread with its member sessions — stage 1's candidates.
+    fn add_work_thread(&self, thread_id: i64, sessions: &[i64]) {
+        self.work_threads
+            .lock()
+            .expect("work threads lock")
+            .insert(thread_id, sessions.to_vec());
     }
 
     fn session(&self, id: i64) -> Option<&FixtureSession> {
@@ -376,8 +389,78 @@ impl Store for AskStore {
         _window: Option<TimeRange>,
         _entity_ids: &[i64],
     ) -> traits::Result<Vec<AskThreadCandidate>> {
-        // The empty-graph case the fallback is specified for: no threads, ever.
-        Ok(Vec::new())
+        // Every seeded thread with its members, ascending by thread id like the store's own
+        // read. An empty map (the default) is the empty-graph case the fallback is for.
+        let threads = self.work_threads.lock().expect("work threads lock");
+        let mut candidates: Vec<AskThreadCandidate> = threads
+            .iter()
+            .map(|(thread_id, session_ids)| {
+                let mut session_ids = session_ids.clone();
+                session_ids.sort_unstable();
+                AskThreadCandidate {
+                    thread_id: *thread_id,
+                    session_ids,
+                }
+            })
+            .collect();
+        candidates.sort_by_key(|candidate| candidate.thread_id);
+        Ok(candidates)
+    }
+
+    async fn thread_detail(&self, thread_id: i64) -> traits::Result<Option<traits::ThreadDetail>> {
+        // The scoped-Ask read (`§7i.2` stage 1). Only the member sessions matter to the kernel;
+        // the thread summary and the entity list are filled from the same fixture so a caller
+        // that reads them gets fixture values, never invented ones.
+        let members = self
+            .work_threads
+            .lock()
+            .expect("work threads lock")
+            .get(&thread_id)
+            .cloned();
+        let Some(mut session_ids) = members else {
+            return Ok(None);
+        };
+        session_ids.sort_unstable();
+        let mut sessions = Vec::with_capacity(session_ids.len());
+        for session_id in &session_ids {
+            let session = self
+                .session(*session_id)
+                .expect("a work thread's member session is in the fixture");
+            sessions.push(traits::ThreadSessionRef {
+                session_id: *session_id,
+                started_at: session.started_at,
+                ended_at: Some(session.ended_at),
+                kind: SessionKind::Focus.as_str().to_string(),
+                title: Some(session.label.clone()),
+                confidence: 1.0,
+            });
+        }
+        let first_seen_at = sessions
+            .iter()
+            .map(|session| session.started_at)
+            .min()
+            .unwrap_or(0);
+        let last_seen_at = sessions
+            .iter()
+            .map(|session| session.ended_at.unwrap_or(0))
+            .max()
+            .unwrap_or(0);
+        Ok(Some(traits::ThreadDetail {
+            thread: traits::ThreadSummary {
+                id: thread_id,
+                title: format!("thread-{thread_id}"),
+                first_seen_at,
+                last_seen_at,
+                session_count: u32::try_from(sessions.len()).expect("fixture thread size"),
+                active_ms: sessions
+                    .iter()
+                    .map(|session| session.ended_at.unwrap_or(0) - session.started_at)
+                    .sum(),
+                confidence: 1.0,
+            },
+            sessions,
+            entities: Vec::new(),
+        }))
     }
 
     async fn ask_candidate_sessions(
@@ -538,17 +621,25 @@ impl Store for AskStore {
             answer: None,
             window: turn.window,
             resolved_entities: turn.resolved_entities,
+            scope_thread_id: turn.scope_thread_id,
+            citations: None,
             created_at: now_ms(),
         };
         turns.push(record.clone());
         Ok(record)
     }
 
-    async fn finish_ask_turn(&self, turn_id: i64, answer: &str) -> traits::Result<bool> {
+    async fn finish_ask_turn(
+        &self,
+        turn_id: i64,
+        answer: &str,
+        citations: &traits::AskCitations,
+    ) -> traits::Result<bool> {
         let mut threads = self.threads.lock().expect("threads lock");
         for turns in threads.values_mut() {
             if let Some(turn) = turns.iter_mut().find(|turn| turn.id == turn_id) {
                 turn.answer = Some(answer.to_string());
+                turn.citations = Some(citations.clone());
                 return Ok(true);
             }
         }
@@ -863,10 +954,30 @@ fn request(question: &str, thread_id: Option<i64>) -> traits::AskTurnRequest {
         thread_id,
         session_id: None,
         top_k: 20,
+        window_override: None,
+        entity_override: None,
+        thread_scope: traits::AskThreadScope::Inherit,
         opts: AnswerOpts {
             thinking: true,
             max_tokens: 512,
         },
+    }
+}
+
+/// The same request with the P9 scope overrides set (`§7i.4`): the three fields the UI's scope
+/// chips send, so a test names only what it changes.
+fn scoped_request(
+    question: &str,
+    thread_id: Option<i64>,
+    window_override: Option<AskWindowOverride>,
+    entity_override: Option<Vec<i64>>,
+    thread_scope: AskThreadScope,
+) -> traits::AskTurnRequest {
+    traits::AskTurnRequest {
+        window_override,
+        entity_override,
+        thread_scope,
+        ..request(question, thread_id)
     }
 }
 
@@ -1890,4 +2001,375 @@ async fn ask_real_store_cites_the_window_session_and_persists_the_turn() {
         "the cited frame lies inside the persisted window"
     );
     assert_eq!(turn.answer.as_deref(), Some("It landed."));
+}
+
+// ---------------------------------------------------------------------------------------
+// P9 scope overrides (`§7i.4`): window, entities, work-graph thread.
+// ---------------------------------------------------------------------------------------
+
+/// `Range` is exactly the window the request named (no planning) and `All` clears it, while a
+/// request with no override still plans the question's date — so the override is provably what
+/// decided the window, not a coincidence of the phrase.
+#[tokio::test]
+async fn ask_window_override_beats_the_planner() {
+    let date = date_days_ago(1);
+    let day_start = local_ms(date, 0);
+    let day_end = local_ms(date.checked_add_days(Days::new(1)).expect("next day"), 0);
+    let mut fixture = AskStore::new();
+    fixture.add_session(5, day_start, day_end, "Ingest work");
+    let store = Arc::new(fixture);
+    let dyn_store: Arc<dyn Store> = store.clone();
+    let (kernel, _temp) = kernel_with_answer(
+        dyn_store,
+        Arc::new(CitingAnswer {
+            budget: Some(8_192),
+            answer: "It landed.".to_string(),
+        }),
+    )
+    .await;
+    let question = format!("zebra deployment on {date}");
+
+    // No override: the planner parses the date into that local day.
+    let (thread_id, planned_id, _) = drain(
+        kernel
+            .ask_turn(request(&question, None))
+            .await
+            .expect("the planned turn starts"),
+    )
+    .await;
+    let planned = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == planned_id)
+        .expect("the planned turn was persisted");
+    assert_eq!(
+        planned.window,
+        Some(TimeRange {
+            start: day_start,
+            end: day_end
+        }),
+        "without an override the question's date is the window"
+    );
+
+    // `Range` replaces it outright — the question's own date phrase is ignored.
+    let ranged = TimeRange {
+        start: day_start - 7 * 86_400_000,
+        end: day_start - 6 * 86_400_000,
+    };
+    let (_, ranged_id, _) = drain(
+        kernel
+            .ask_turn(scoped_request(
+                &question,
+                Some(thread_id),
+                Some(AskWindowOverride::Range(ranged)),
+                None,
+                AskThreadScope::Inherit,
+            ))
+            .await
+            .expect("the overridden turn starts"),
+    )
+    .await;
+    let overridden = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == ranged_id)
+        .expect("the overridden turn was persisted");
+    assert_eq!(
+        overridden.window,
+        Some(ranged),
+        "the explicit range is the window, not the parsed date"
+    );
+
+    // `All` clears it to the whole history (both columns NULL), again ignoring the date phrase.
+    let (_, all_id, _) = drain(
+        kernel
+            .ask_turn(scoped_request(
+                &question,
+                Some(thread_id),
+                Some(AskWindowOverride::All),
+                None,
+                AskThreadScope::Inherit,
+            ))
+            .await
+            .expect("the all-history turn starts"),
+    )
+    .await;
+    let all = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == all_id)
+        .expect("the all-history turn was persisted");
+    assert_eq!(all.window, None, "`All` leaves both window columns NULL");
+}
+
+/// `Some([])` clears the entity scope — a mention of a known entity in the question cannot
+/// re-add one — `Some(ids)` is exactly those ids, and no override still inherits the previous
+/// turn's scope (`§7i.4`).
+#[tokio::test]
+async fn ask_entity_override_replaces_resolution_and_inheritance() {
+    let date = date_days_ago(1);
+    let day_start = local_ms(date, 0);
+    let day_end = local_ms(date.checked_add_days(Days::new(1)).expect("next day"), 0);
+    let mut fixture = AskStore::new();
+    // One entity linked to one session; every question below names it in its canonical text.
+    fixture.entities.push(("zebra".to_string(), 42));
+    fixture.entity_sessions.insert(42, vec![5]);
+    fixture.add_session(5, day_start, day_end, "Ingest work");
+    fixture
+        .seed_frame(
+            local_ms(date, 9),
+            Some(5),
+            &format!("zebra deployment on {date}"),
+        )
+        .await;
+    let store = Arc::new(fixture);
+    let dyn_store: Arc<dyn Store> = store.clone();
+    let (kernel, _temp) = kernel_with_answer(
+        dyn_store,
+        Arc::new(CitingAnswer {
+            budget: Some(8_192),
+            answer: "It landed.".to_string(),
+        }),
+    )
+    .await;
+    let question = format!("zebra deployment on {date}");
+
+    let (thread_id, first_id, _) = drain(
+        kernel
+            .ask_turn(request(&question, None))
+            .await
+            .expect("the first turn starts"),
+    )
+    .await;
+    let first = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == first_id)
+        .expect("the first turn was persisted");
+    assert_eq!(
+        first.resolved_entities,
+        vec![42],
+        "the mention resolves against the graph"
+    );
+
+    // `Some([])`: the same question still mentions "zebra", and the planner must not resolve it.
+    let (_, cleared_id, _) = drain(
+        kernel
+            .ask_turn(scoped_request(
+                &question,
+                Some(thread_id),
+                None,
+                Some(Vec::new()),
+                AskThreadScope::Inherit,
+            ))
+            .await
+            .expect("the cleared turn starts"),
+    )
+    .await;
+    let cleared = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == cleared_id)
+        .expect("the cleared turn was persisted");
+    assert!(
+        cleared.resolved_entities.is_empty(),
+        "`Some([])` clears the scope instead of resolving or inheriting, got {:?}",
+        cleared.resolved_entities
+    );
+
+    // `Some([id])`: exactly that scope, whatever the question mentions.
+    let explicit_entity = 77;
+    let (_, explicit_id, _) = drain(
+        kernel
+            .ask_turn(scoped_request(
+                &question,
+                Some(thread_id),
+                None,
+                Some(vec![explicit_entity]),
+                AskThreadScope::Inherit,
+            ))
+            .await
+            .expect("the explicitly scoped turn starts"),
+    )
+    .await;
+    let explicit = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == explicit_id)
+        .expect("the explicitly scoped turn was persisted");
+    assert_eq!(explicit.resolved_entities, vec![explicit_entity]);
+
+    // No override on a follow-up that mentions no entity: with nothing to resolve, the previous
+    // turn's explicit scope is inherited.
+    let (_, inherited_id, _) = drain(
+        kernel
+            .ask_turn(request("and then?", Some(thread_id)))
+            .await
+            .expect("the follow-up starts"),
+    )
+    .await;
+    let inherited = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == inherited_id)
+        .expect("the follow-up was persisted");
+    assert_eq!(
+        inherited.resolved_entities,
+        vec![explicit_entity],
+        "a follow-up with no override inherits the previous turn's scope"
+    );
+}
+
+/// `Thread(id)` makes stage 1 exactly that work-graph thread, `None` clears the scope, and
+/// `Inherit` keeps the previous turn's — with the scope persisted on every turn (`§7i.2`).
+///
+/// Stage 2 ranks the fixture's candidate sessions, so the scoped turn's citations show which
+/// sessions stage 1 actually admitted: both threads' sessions unscoped, one thread's when scoped.
+#[tokio::test]
+async fn ask_thread_scope_narrows_stage_one_and_follow_ups_inherit_it() {
+    let date = date_days_ago(1);
+    let day_start = local_ms(date, 0);
+    let day_end = local_ms(date.checked_add_days(Days::new(1)).expect("next day"), 0);
+    let mut fixture = AskStore::new();
+    // Stage 2 must rank the candidates, otherwise no session wins and stage 3 searches the
+    // whole window — which would hide stage 1's narrowing.
+    fixture.session_winners = true;
+    fixture.add_session(5, day_start, day_end, "Thread one work");
+    fixture.add_session(6, day_start, day_end, "Thread two work");
+    let in_first = fixture
+        .seed_frame(
+            local_ms(date, 9),
+            Some(5),
+            &format!("zebra deployment on {date}"),
+        )
+        .await;
+    let in_second = fixture
+        .seed_frame(
+            local_ms(date, 15),
+            Some(6),
+            &format!("zebra deployment on {date}"),
+        )
+        .await;
+    fixture.add_work_thread(1, &[5]);
+    fixture.add_work_thread(2, &[6]);
+    let store = Arc::new(fixture);
+    let dyn_store: Arc<dyn Store> = store.clone();
+    let (kernel, _temp) = kernel_with_answer(
+        dyn_store,
+        Arc::new(CitingAnswer {
+            budget: Some(8_192),
+            answer: "It landed.".to_string(),
+        }),
+    )
+    .await;
+    let question = format!("zebra deployment on {date}");
+
+    // Unscoped: both threads are stage-1 candidates and both threads' sessions are retrieved.
+    let (thread_id, unscoped_id, unscoped_deltas) = drain(
+        kernel
+            .ask_turn(request(&question, None))
+            .await
+            .expect("the unscoped turn starts"),
+    )
+    .await;
+    let unscoped = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == unscoped_id)
+        .expect("the unscoped turn was persisted");
+    assert_eq!(unscoped.scope_thread_id, None);
+    let unscoped_event = &citation_events(&unscoped_deltas)[0];
+    assert_eq!(
+        unscoped_event.stage_counts.threads, 2,
+        "both work threads are candidates"
+    );
+    assert_eq!(unscoped_event.sessions, vec![5, 6]);
+    assert_eq!(unscoped_event.frames, vec![in_first, in_second]);
+    assert_eq!(
+        unscoped.citations,
+        Some(traits::AskCitations {
+            sessions: unscoped_event.sessions.clone(),
+            frames: unscoped_event.frames.clone(),
+        }),
+        "the persisted citations are the pair the turn emitted"
+    );
+
+    // Scoped to thread 1: stage 1 is exactly that thread, so only its session and frame survive.
+    let (_, scoped_id, scoped_deltas) = drain(
+        kernel
+            .ask_turn(scoped_request(
+                &question,
+                Some(thread_id),
+                None,
+                None,
+                AskThreadScope::Thread(1),
+            ))
+            .await
+            .expect("the scoped turn starts"),
+    )
+    .await;
+    let scoped = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == scoped_id)
+        .expect("the scoped turn was persisted");
+    assert_eq!(scoped.scope_thread_id, Some(1), "the scope is persisted");
+    let scoped_event = &citation_events(&scoped_deltas)[0];
+    assert_eq!(scoped_event.stage_counts.threads, 1);
+    assert_eq!(
+        scoped_event.sessions,
+        vec![5],
+        "only the scoped thread's session is retrieved"
+    );
+    assert_eq!(scoped_event.frames, vec![in_first]);
+
+    // `Inherit` keeps it.
+    let (_, inherited_id, inherited_deltas) = drain(
+        kernel
+            .ask_turn(scoped_request(
+                &question,
+                Some(thread_id),
+                None,
+                None,
+                AskThreadScope::Inherit,
+            ))
+            .await
+            .expect("the inheriting follow-up starts"),
+    )
+    .await;
+    let inherited = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == inherited_id)
+        .expect("the inheriting follow-up was persisted");
+    assert_eq!(
+        inherited.scope_thread_id,
+        Some(1),
+        "`Inherit` reuses the previous turn's scope"
+    );
+    assert_eq!(citation_events(&inherited_deltas)[0].sessions, vec![5]);
+
+    // `None` clears it, and stage 1 widens again.
+    let (_, cleared_id, cleared_deltas) = drain(
+        kernel
+            .ask_turn(scoped_request(
+                &question,
+                Some(thread_id),
+                None,
+                None,
+                AskThreadScope::None,
+            ))
+            .await
+            .expect("the cleared turn starts"),
+    )
+    .await;
+    let cleared = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == cleared_id)
+        .expect("the cleared turn was persisted");
+    assert_eq!(cleared.scope_thread_id, None, "`None` clears the scope");
+    let cleared_event = &citation_events(&cleared_deltas)[0];
+    assert_eq!(cleared_event.stage_counts.threads, 2);
+    assert_eq!(cleared_event.sessions, vec![5, 6]);
 }

@@ -12,7 +12,7 @@ use evalfixture::gen::{generate, world_entities, GenManifest, GenOptions};
 use evalfixture::{
     db_path, API_TOKEN_SETTING, DEFAULT_FRAMES_PER_WEEK, DEFAULT_SEED, DEFAULT_WEEKS,
 };
-use store::SqliteStore;
+use store::{SqliteStore, LATEST_SCHEMA_VERSION};
 use traits::{
     EvidenceWindow, FrameContinuation, FrameEvidence, FrameFilters, FramePageRequest, Session,
     SessionFilter, FRAME_PAGE_MAX_LIMIT,
@@ -137,7 +137,7 @@ fn the_default_fixture_reads_back_with_every_entity_in_content_text() {
     assert_eq!(manifest.embeddings, 0);
 
     let back = read_back(&manifest.db);
-    assert_eq!(back.schema_version, 14);
+    assert_eq!(back.schema_version, store::LATEST_SCHEMA_VERSION);
     assert_eq!(back.frames.len() as u64, manifest.frames);
     assert_eq!(back.sessions.len() as u64, manifest.sessions);
 

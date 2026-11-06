@@ -2,7 +2,7 @@
 //!
 //! Two subcommands, both dev-only and neither reachable from the app:
 //!
-//! - `gen` builds a **seeded, synthetic v14 history** through the production Store writers:
+//! - `gen` builds a **seeded, synthetic v15 history** through the production Store writers:
 //!   several weeks of frames, sessions, OCR text and embeddings across many apps,
 //!   repositories, files, domains and ticket references. The seed is printed and committed
 //!   ([`DEFAULT_SEED`]), so P4, P5 and P6 measure the same database.

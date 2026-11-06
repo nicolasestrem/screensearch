@@ -22,7 +22,7 @@ USAGE:
   ssv2c-evalfixture graph --db <path>
 
 COMMANDS:
-  gen     Build the seeded synthetic v14 history (frames, sessions, text, embeddings,
+  gen     Build the seeded synthetic v15 history (frames, sessions, text, embeddings,
           settings incl. api.token) in <dir>, printing its counts and content digest.
           Re-running with the same --seed prints the same digest.
   serve   Run the product's local HTTP API (/v1/search, /v1/ask) over that database.

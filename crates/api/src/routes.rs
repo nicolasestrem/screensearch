@@ -317,6 +317,13 @@ pub async fn ask(
         thread_id: body.thread_id,
         session_id: body.session_id,
         top_k,
+        // `/v1/ask` exposes no scope chips, so it asks for the planner's own behaviour: no
+        // window override (parse the question / inherit the previous turn), no entity override
+        // (resolve mentions, else inherit) and an inherited thread scope. The P9 `ask_turn`
+        // command is what sends overrides (`03 §7i.4`).
+        window_override: None,
+        entity_override: None,
+        thread_scope: traits::AskThreadScope::Inherit,
         opts,
     };
     match state.host.ask_turn(request).await {

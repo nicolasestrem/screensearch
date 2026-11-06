@@ -6,7 +6,7 @@
 //! app's; the runner never needs one of its own.
 //!
 //! Optional surfaces (`frame_text`, `ocr_text`, the FTS mirror, the 0.4.5 work-graph tables) are
-//! detected once at open time, so a v14 DB whose graph tables are still empty reports
+//! detected once at open time, so a baseline DB whose graph tables are still empty reports
 //! `n/a (no entity surface)` instead of failing, and a legacy DB without `frame_text` degrades to
 //! title/URL matching instead of erroring.
 

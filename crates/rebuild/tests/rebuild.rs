@@ -144,7 +144,7 @@ fn rebuild_carries_history_and_repopulates_indexes() -> Result<()> {
     // The destination was created fresh, not upgraded in place.
     assert!(dest.is_file());
     assert_eq!(report.source_version, 13);
-    assert_eq!(report.dest_version, 14);
+    assert_eq!(report.dest_version, store::LATEST_SCHEMA_VERSION);
     assert_eq!(report.integrity_check, ["ok"]);
     assert_eq!(report.foreign_key_violations, 0);
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
@@ -315,11 +315,11 @@ fn rebuild_carries_history_and_repopulates_indexes() -> Result<()> {
     drop(conn);
 
     // The app's own open path accepts the rebuilt file (version + every baseline
-    // table + the carried history metadata), which is what "boots on v14" reduces
-    // to at the store boundary.
+    // table + the carried history metadata), which is what "boots on the current
+    // baseline" reduces to at the store boundary.
     let store = store::SqliteStore::open_path(&dest)
-        .context("the store must accept the rebuilt v14 file")?;
-    assert_eq!(store.schema_version()?, 14);
+        .context("the store must accept the rebuilt file")?;
+    assert_eq!(store.schema_version()?, store::LATEST_SCHEMA_VERSION);
     Ok(())
 }
 

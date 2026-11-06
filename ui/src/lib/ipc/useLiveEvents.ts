@@ -15,6 +15,7 @@ import { queryKeys } from "./queryKeys";
 import { toast as toastStore } from "../../state/toastStore";
 import type { Readiness } from "../../bindings/Readiness";
 import type { SetupStatus } from "../../bindings/SetupStatus";
+import type { JobKind } from "../../bindings/JobKind";
 import { newerSetupStatus } from "../setup";
 import { memoryKeys } from "./memory";
 
@@ -22,6 +23,20 @@ import { memoryKeys } from "./memory";
 const TICK_DEBOUNCE_MS = 800;
 /** Debounce window for coalescing job_progress bursts (e.g. an enrichment backlog drain). */
 const ENRICH_DEBOUNCE_MS = 1000;
+
+/**
+ * Job kinds whose completion can change the work graph or the P8 insight rows (`03 §7h`, §7j):
+ * extraction adds entity links, normalization renames them, clustering re-folds threads (and
+ * applies UI overrides), backfill enqueues those batches, and `insight_generate` rewrites the
+ * insight window. Their completions arrive in bursts, so they share one debounced invalidation.
+ */
+const GRAPH_JOB_KINDS: readonly JobKind[] = [
+  "graph_extract",
+  "graph_normalize",
+  "graph_cluster",
+  "graph_backfill",
+  "insight_generate",
+];
 
 export function useLiveEvents() {
   const qc = useQueryClient();
@@ -55,6 +70,7 @@ export function useLiveEvents() {
     );
 
     let enrichTimer: ReturnType<typeof setTimeout> | undefined;
+    let workTimer: ReturnType<typeof setTimeout> | undefined;
     track(
       listenTo("job_completed", (completed) => {
         qc.setQueryData(queryKeys.jobStats, completed.stats);
@@ -63,9 +79,20 @@ export function useLiveEvents() {
           qc.invalidateQueries({ queryKey: queryKeys.searchPrefix });
         }
         if (completed.kind === "vision_tag") {
-          if (enrichTimer) clearTimeout(enrichTimer);
+          clearTimeout(enrichTimer);
           enrichTimer = setTimeout(() => {
             qc.invalidateQueries({ queryKey: queryKeys.insightsPrefix });
+          }, ENRICH_DEBOUNCE_MS);
+        }
+        // The work graph and the P8 insight rows change only when a graph/insight job finishes
+        // (`03 §7h`, §7j), and those finish in bursts: one debounced invalidation covers the
+        // whole family — every window/limit variant of the Work list, every thread page and the
+        // insight list — instead of one refetch per job.
+        if (GRAPH_JOB_KINDS.includes(completed.kind)) {
+          clearTimeout(workTimer);
+          workTimer = setTimeout(() => {
+            qc.invalidateQueries({ queryKey: queryKeys.workPrefix });
+            qc.invalidateQueries({ queryKey: queryKeys.insightListPrefix });
           }, ENRICH_DEBOUNCE_MS);
         }
       }),
@@ -215,6 +242,7 @@ export function useLiveEvents() {
       active = false;
       if (tickTimer) clearTimeout(tickTimer);
       if (enrichTimer) clearTimeout(enrichTimer);
+      clearTimeout(workTimer);
       unlisteners.forEach((u) => u());
     };
   }, [qc]);

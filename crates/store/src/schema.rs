@@ -1,4 +1,4 @@
-//! The v14 baseline schema (`03 §4`, 0.4.5 D2).
+//! The v15 baseline schema (`03 §4`, 0.4.5 D2).
 //!
 //! There is no migration chain. [`BASELINE_SQL`] is the complete DDL: a fresh
 //! database is created from it and `schema_version` is written as
@@ -8,15 +8,15 @@
 //! rebuilt with the dev-only `ssv2c-rebuild` tool (`03 §4`, 0.4.5 D2/D3).
 //!
 //! The v1 to v13 migration SQL lives in git history and `CHANGELOG-ARCHIVE.md`.
-//! It is deliberately absent here: the v14 schema is v13 plus the eleven 0.4.5
-//! tables, carried as one script instead of a replay.
+//! It is deliberately absent here: the v15 schema is the v14 baseline plus P9's two
+//! `ask_turns` columns, carried as one script instead of a replay.
 
 use std::sync::LazyLock;
 
 use rusqlite::Connection;
 
 /// The schema version this build creates and requires (`03 §4`).
-pub const LATEST_SCHEMA_VERSION: i32 = 14;
+pub const LATEST_SCHEMA_VERSION: i32 = 15;
 
 /// Vector dimensionality for every embedding lane (`03 §3/§4`,
 /// [`traits::EmbeddingProvider::dim`]).
@@ -366,6 +366,8 @@ CREATE TABLE ask_turns (
   window_start      INTEGER,
   window_end        INTEGER,
   resolved_entities TEXT,                -- JSON array of entity ids resolved for this turn
+  scope_thread_id   INTEGER,             -- work-graph thread the turn was scoped to (no FK)
+  citations         TEXT,                -- JSON {"sessions":[…],"frames":[…]}; NULL until it finishes
   created_at        INTEGER NOT NULL DEFAULT (unixepoch()*1000),
   UNIQUE(thread_id, ordinal)
 );
@@ -443,7 +445,7 @@ CREATE TABLE report_files (
 );
 "#;
 
-/// Creates the v14 database: executes [`BASELINE_SQL`] and writes
+/// Creates the v15 database: executes [`BASELINE_SQL`] and writes
 /// `schema_version = LATEST_SCHEMA_VERSION` in one transaction.
 ///
 /// The connection must already have the `sqlite-vec` extension registered (the

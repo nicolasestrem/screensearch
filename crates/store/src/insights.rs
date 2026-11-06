@@ -29,9 +29,9 @@ use rusqlite::{named_params, params, params_from_iter, Connection, OptionalExten
 use traits::{
     ActivityCount, AppCount, EntityFilter, EntitySessionInput, EntitySummary, EvidenceKind,
     Insight, InsightEvidence, InsightFilter, InsightGenerator, InsightKind, InsightPayload,
-    InsightsSummary, NewInsight, OpenMarkInput, Result, SessionNeighbourInput, ThreadActivityInput,
-    ThreadDetail, ThreadEntityRef, ThreadFilter, ThreadSessionInput, ThreadSessionRef,
-    ThreadSummary,
+    InsightWindowStatus, InsightsSummary, NewInsight, OpenMarkInput, Result, SessionNeighbourInput,
+    ThreadActivityInput, ThreadDetail, ThreadEntityRef, ThreadFilter, ThreadSessionInput,
+    ThreadSessionRef, ThreadSummary,
 };
 
 use crate::embeddings::SQLITE_VEC_MAX_K;
@@ -46,6 +46,37 @@ const TOP_N: i64 = 12;
 /// selects it last, so [`decode_insight_row`]'s indices stay fixed.
 const INSIGHT_COLUMNS: &str = "id, kind, window_start, window_end, payload, generator,
                                generated_at";
+
+/// The `threads` select every thread read shares (`03 §7h.4`, P9 grant 4): the persisted
+/// columns the clusterer maintains, plus `active_ms` and `confidence` from ONE grouped pass
+/// over `thread_sessions` joined to `sessions`.
+///
+/// `active_ms` is the `ThreadActivityPayload` formula with no window — `Σ max(0,
+/// COALESCE(ended_at, now_ms) − started_at)` over the thread's member sessions — with the
+/// database's own clock (`unixepoch()*1000`, the same one the `ask` window reads use) as
+/// `now_ms`, so an open session counts up to the read. `max(0, …)` keeps a clock-skewed
+/// session from contributing a negative duration. `confidence` is `MAX(thread_sessions.
+/// confidence)`.
+///
+/// The aggregate is one LEFT JOIN subquery rather than a per-thread read, so a list read is
+/// two statements regardless of length; a thread with no member rows (an emptied merge
+/// source) joins to nothing and reads `0`/`0.0` through `COALESCE`.
+///
+/// Callers append their own `WHERE`/`ORDER BY`/`LIMIT`, and map rows with
+/// [`decode_thread_summary`], so no read can compute these figures differently.
+pub(crate) const THREAD_SUMMARY_SELECT: &str = "SELECT t.id, t.title, t.first_seen_at,
+            t.last_seen_at, t.session_count,
+            COALESCE(agg.active_ms, 0) AS active_ms,
+            COALESCE(agg.confidence, 0.0) AS confidence
+     FROM threads t
+     LEFT JOIN (
+        SELECT ts.thread_id AS thread_id,
+               SUM(max(0, COALESCE(s.ended_at, unixepoch()*1000) - s.started_at)) AS active_ms,
+               MAX(ts.confidence) AS confidence
+        FROM thread_sessions ts
+        JOIN sessions s ON s.id = ts.session_id
+        GROUP BY ts.thread_id
+     ) agg ON agg.thread_id = t.id";
 
 /// The `stale` flag a reader gets: already flagged, **or** citing something that has gone.
 ///
@@ -246,33 +277,110 @@ impl SqliteStore {
     pub async fn list_insights(&self, filter: InsightFilter) -> Result<Vec<Insight>> {
         self.with_conn(move |conn| {
             let kind = filter.kind.map(InsightKind::as_str);
-            let mut stmt = conn.prepare(&format!(
-                "SELECT {INSIGHT_COLUMNS}, {} AS stale FROM insights
-                 WHERE (:from IS NULL OR window_end > :from)
-                   AND (:to IS NULL OR window_start < :to)
-                   AND (:kind IS NULL OR kind = :kind)
-                 ORDER BY window_start DESC, kind ASC, id DESC
-                 LIMIT :limit",
-                effective_stale_sql()
-            ))?;
-            let rows = stmt.query_map(
-                named_params! {
-                    ":from": filter.from_ms,
-                    ":to": filter.to_ms,
-                    ":kind": kind,
-                    ":limit": i64::from(filter.limit),
-                },
-                decode_insight_row,
+            let bound: [(&str, &dyn rusqlite::ToSql); 3] = [
+                (":from", &filter.from_ms),
+                (":to", &filter.to_ms),
+                (":kind", &kind),
+            ];
+            read_insights(
+                conn,
+                "(:from IS NULL OR window_end > :from)
+                 AND (:to IS NULL OR window_start < :to)
+                 AND (:kind IS NULL OR kind = :kind)",
+                &bound,
+                i64::from(filter.limit),
+            )
+        })
+        .await
+    }
+
+    /// Insights of `kind` (every kind when `None`) with at least one `insight_evidence` row
+    /// naming one of `refs`, ordered exactly like [`Self::list_insights`] and carrying the same
+    /// read-time `stale` rule — both go through [`read_insights`], so the two reads cannot
+    /// disagree about ordering or staleness (`03 §7j.2`/`§7j.5`).
+    ///
+    /// This is the Thread page's read: it asks for the `open_loop` insights evidenced by that
+    /// thread or one of its sessions, instead of scanning every kind. A duplicated ref adds
+    /// nothing (the `EXISTS` is per row), and `refs` is read in bounded batches so a long
+    /// evidence list cannot hit SQLite's bound-parameter ceiling; rows matching more than one
+    /// batch are kept once and the merged list is re-sorted into the SQL order.
+    pub async fn insights_for_evidence(
+        &self,
+        kind: Option<InsightKind>,
+        refs: &[(EvidenceKind, i64)],
+    ) -> Result<Vec<Insight>> {
+        let distinct: Vec<(EvidenceKind, i64)> = {
+            let mut seen = HashSet::new();
+            refs.iter()
+                .copied()
+                .filter(|item| seen.insert(*item))
+                .collect()
+        };
+        if distinct.is_empty() {
+            return Ok(Vec::new());
+        }
+        let distinct = std::sync::Arc::new(distinct);
+        self.with_conn(move |conn| {
+            let kind = kind.map(InsightKind::as_str);
+            let mut merged: HashMap<i64, Insight> = HashMap::new();
+            for chunk in distinct.chunks(EVIDENCE_REF_CHUNK) {
+                let names: Vec<String> = (0..chunk.len())
+                    .map(|index| format!(":ref_kind_{index}"))
+                    .collect();
+                let ids: Vec<String> = (0..chunk.len())
+                    .map(|index| format!(":ref_id_{index}"))
+                    .collect();
+                let kinds: Vec<&str> = chunk.iter().map(|(kind, _)| kind.as_str()).collect();
+                let ref_ids: Vec<i64> = chunk.iter().map(|(_, ref_id)| *ref_id).collect();
+                let terms: Vec<String> = (0..chunk.len())
+                    .map(|index| {
+                        format!(
+                            "(ev.kind = {} AND ev.ref_id = {})",
+                            names[index], ids[index]
+                        )
+                    })
+                    .collect();
+                let mut bound: Vec<(&str, &dyn rusqlite::ToSql)> =
+                    Vec::with_capacity(2 * chunk.len() + 1);
+                bound.push((":kind", &kind));
+                for index in 0..chunk.len() {
+                    bound.push((names[index].as_str(), &kinds[index]));
+                    bound.push((ids[index].as_str(), &ref_ids[index]));
+                }
+                let where_clause = format!(
+                    "(:kind IS NULL OR kind = :kind)
+                     AND EXISTS (SELECT 1 FROM insight_evidence ev
+                                 WHERE ev.insight_id = insights.id
+                                   AND ({}))",
+                    terms.join(" OR ")
+                );
+                for insight in read_insights(conn, &where_clause, &bound, UNBOUNDED_LIMIT)? {
+                    merged.insert(insight.id, insight);
+                }
+            }
+            Ok(sorted_insights(merged.into_values().collect()))
+        })
+        .await
+    }
+
+    /// Whether an insight window is still filling (`03 §7j.5`): `pending_jobs` counts the
+    /// `insight_generate` jobs still queued or running — the same jobs table
+    /// [`SqliteStore::graph_backfill_status`] reads — and `last_generated_at` is the newest
+    /// `insights.generated_at`, `None` before the first pass has written anything.
+    pub async fn insight_window_status(&self) -> Result<InsightWindowStatus> {
+        self.with_conn(|conn| {
+            let (pending, last_generated_at) = conn.query_row(
+                "SELECT (SELECT COUNT(*) FROM jobs
+                         WHERE kind = 'insight_generate'
+                           AND state IN ('pending', 'running')),
+                        (SELECT MAX(generated_at) FROM insights)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
             )?;
-            let mut raw = Vec::new();
-            for row in rows {
-                raw.push(row?);
-            }
-            let mut insights = Vec::with_capacity(raw.len());
-            for row in raw {
-                insights.push(decode_insight(conn, row)?);
-            }
-            Ok(insights)
+            Ok(InsightWindowStatus {
+                pending_jobs: u64::try_from(pending).unwrap_or(0),
+                last_generated_at,
+            })
         })
         .await
     }
@@ -324,32 +432,25 @@ impl SqliteStore {
 
     /// Threads overlapping `filter`'s window (`first_seen_at < to AND last_seen_at >= from`;
     /// a missing bound leaves that side open), ordered `last_seen_at DESC, id DESC`.
-    /// `session_count` is the persisted figure the clusterer maintains, never recomputed here.
+    /// `session_count` is the persisted figure the clusterer maintains, never recomputed here;
+    /// `active_ms` and `confidence` come from [`THREAD_SUMMARY_SELECT`]'s one aggregate join.
     pub async fn threads_in_range(&self, filter: ThreadFilter) -> Result<Vec<ThreadSummary>> {
         self.with_conn(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, title, first_seen_at, last_seen_at, session_count
-                 FROM threads
-                 WHERE (:from IS NULL OR last_seen_at >= :from)
-                   AND (:to IS NULL OR first_seen_at < :to)
-                 ORDER BY last_seen_at DESC, id DESC
-                 LIMIT :limit",
-            )?;
+            let sql = format!(
+                "{THREAD_SUMMARY_SELECT}
+                 WHERE (:from IS NULL OR t.last_seen_at >= :from)
+                   AND (:to IS NULL OR t.first_seen_at < :to)
+                 ORDER BY t.last_seen_at DESC, t.id DESC
+                 LIMIT :limit"
+            );
+            let mut stmt = conn.prepare(&sql)?;
             let rows = stmt.query_map(
                 named_params! {
                     ":from": filter.from_ms,
                     ":to": filter.to_ms,
                     ":limit": i64::from(filter.limit),
                 },
-                |row| {
-                    Ok(ThreadSummary {
-                        id: row.get(0)?,
-                        title: row.get(1)?,
-                        first_seen_at: row.get(2)?,
-                        last_seen_at: row.get(3)?,
-                        session_count: count_u32(row.get::<_, i64>(4)?),
-                    })
-                },
+                decode_thread_summary,
             )?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
         })
@@ -365,21 +466,9 @@ impl SqliteStore {
     /// list never borrows weight from sessions outside it.
     pub async fn thread_detail(&self, thread_id: i64) -> Result<Option<ThreadDetail>> {
         self.with_conn(move |conn| {
+            let sql = format!("{THREAD_SUMMARY_SELECT} WHERE t.id = ?1");
             let thread = conn
-                .query_row(
-                    "SELECT id, title, first_seen_at, last_seen_at, session_count
-                     FROM threads WHERE id = ?1",
-                    [thread_id],
-                    |row| {
-                        Ok(ThreadSummary {
-                            id: row.get(0)?,
-                            title: row.get(1)?,
-                            first_seen_at: row.get(2)?,
-                            last_seen_at: row.get(3)?,
-                            session_count: count_u32(row.get::<_, i64>(4)?),
-                        })
-                    },
-                )
+                .query_row(&sql, [thread_id], decode_thread_summary)
                 .optional()?;
             let Some(thread) = thread else {
                 return Ok(None);
@@ -453,9 +542,8 @@ impl SqliteStore {
     /// `EntityFilter` carries no time window, so nothing narrows it.
     pub async fn entities_filtered(&self, filter: EntityFilter) -> Result<Vec<EntitySummary>> {
         self.with_conn(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT e.id, e.kind, e.canonical_name, e.first_seen_at, e.last_seen_at,
-                        (SELECT COUNT(*) FROM session_entities se WHERE se.entity_id = e.id)
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {ENTITY_COLUMNS}
                  FROM entities e
                  WHERE (:kind IS NULL OR e.kind = :kind)
                    AND (:query IS NULL
@@ -464,34 +552,63 @@ impl SqliteStore {
                                    WHERE a.entity_id = e.id
                                      AND instr(lower(a.alias), lower(:query)) > 0))
                  ORDER BY e.last_seen_at DESC, e.id DESC
-                 LIMIT :limit",
-            )?;
+                 LIMIT :limit"
+            ))?;
             let rows = stmt.query_map(
                 named_params! {
                     ":kind": filter.kind,
                     ":query": filter.query,
                     ":limit": i64::from(filter.limit),
                 },
-                |row| {
-                    Ok(EntitySummary {
-                        id: row.get(0)?,
-                        kind: row.get(1)?,
-                        canonical_name: row.get(2)?,
-                        first_seen_at: row.get(3)?,
-                        last_seen_at: row.get(4)?,
-                        session_count: count_u32(row.get::<_, i64>(5)?),
-                        aliases: Vec::new(),
-                    })
-                },
+                decode_entity_row,
             )?;
             let mut entities = rows.collect::<rusqlite::Result<Vec<_>>>()?;
-            let mut alias_stmt =
-                conn.prepare("SELECT alias FROM entity_aliases WHERE entity_id = ?1 ORDER BY id")?;
-            for entity in &mut entities {
-                entity.aliases = alias_stmt
-                    .query_map([entity.id], |row| row.get::<_, String>(0))?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
+            fill_aliases(conn, &mut entities)?;
+            Ok(entities)
+        })
+        .await
+    }
+
+    /// The entities named by `ids`, same row shape, ordering (`last_seen_at DESC, id DESC`)
+    /// and alias decoding as [`Self::entities_filtered`], for the `?entity=<id>` chip and for
+    /// evidence labels (`03 §7c` P8 block).
+    ///
+    /// An id that no longer exists is simply absent: the caller gets a shorter list rather
+    /// than a fabricated row. Ids are read in bounded batches so a wide list cannot hit
+    /// SQLite's bound-parameter ceiling.
+    pub async fn entities_by_ids(&self, ids: &[i64]) -> Result<Vec<EntitySummary>> {
+        let ids = std::sync::Arc::new({
+            let mut sorted: Vec<i64> = ids.to_vec();
+            sorted.sort_unstable();
+            sorted.dedup();
+            sorted
+        });
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.with_conn(move |conn| {
+            let mut entities = Vec::new();
+            for chunk in ids.chunks(READ_CHUNK) {
+                let sql = format!(
+                    "SELECT {ENTITY_COLUMNS}
+                     FROM entities e
+                     WHERE e.id IN ({})
+                     ORDER BY e.last_seen_at DESC, e.id DESC",
+                    placeholders(chunk.len())
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                let rows =
+                    stmt.query_map(params_from_iter(chunk.iter().copied()), decode_entity_row)?;
+                entities.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
             }
+            fill_aliases(conn, &mut entities)?;
+            // Chunked reads must not change the answer: restore the single-statement order.
+            entities.sort_by(|left, right| {
+                right
+                    .last_seen_at
+                    .cmp(&left.last_seen_at)
+                    .then(right.id.cmp(&left.id))
+            });
             Ok(entities)
         })
         .await
@@ -828,6 +945,68 @@ fn write_insight(tx: &Connection, insight: &NewInsight) -> Result<i64> {
     Ok(insight_id)
 }
 
+/// The `entities` select shared by [`SqliteStore::entities_filtered`] and
+/// [`SqliteStore::entities_by_ids`]: the persisted columns plus the all-history
+/// `session_entities` count, mapped by [`decode_entity_row`].
+const ENTITY_COLUMNS: &str = "e.id, e.kind, e.canonical_name, e.first_seen_at, e.last_seen_at,
+                              (SELECT COUNT(*) FROM session_entities se WHERE se.entity_id = e.id)";
+
+/// Evidence refs bound per [`SqliteStore::insights_for_evidence`] batch: two parameters each,
+/// kept far below SQLite's bound-parameter ceiling.
+const EVIDENCE_REF_CHUNK: usize = 400;
+
+/// The `LIMIT` a read without a bound binds: SQLite treats a negative limit as "no upper
+/// bound", and rejects `LIMIT NULL` outright.
+const UNBOUNDED_LIMIT: i64 = -1;
+
+/// Runs the one insight read both [`SqliteStore::list_insights`] and
+/// [`SqliteStore::insights_for_evidence`] use: `where_clause` filters `insights` (referenced by
+/// its own name) and may bind any named parameters the caller passes plus `:limit`, rows are
+/// ordered `window_start DESC, kind ASC, id DESC`, and `stale` is computed by
+/// [`effective_stale_sql`] — so ordering and the freshness rule exist once.
+fn read_insights(
+    conn: &Connection,
+    where_clause: &str,
+    bound: &[(&str, &dyn rusqlite::ToSql)],
+    limit: i64,
+) -> Result<Vec<Insight>> {
+    // `:limit` is bound here, never by the caller: SQLite rejects `LIMIT NULL` with a
+    // "datatype mismatch", so a read without a bound must say so with [`UNBOUNDED_LIMIT`].
+    let mut params: Vec<(&str, &dyn rusqlite::ToSql)> = Vec::with_capacity(bound.len() + 1);
+    params.extend_from_slice(bound);
+    params.push((":limit", &limit));
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {INSIGHT_COLUMNS}, {} AS stale FROM insights
+         WHERE {where_clause}
+         ORDER BY window_start DESC, kind ASC, id DESC
+         LIMIT :limit",
+        effective_stale_sql()
+    ))?;
+    let rows = stmt.query_map(params.as_slice(), decode_insight_row)?;
+    let mut raw = Vec::new();
+    for row in rows {
+        raw.push(row?);
+    }
+    let mut insights = Vec::with_capacity(raw.len());
+    for row in raw {
+        insights.push(decode_insight(conn, row)?);
+    }
+    Ok(insights)
+}
+
+/// The read order `read_insights` gets from SQL, applied in Rust: a reader that merged
+/// several batches hands back exactly what one statement would have.
+fn sorted_insights(mut insights: Vec<Insight>) -> Vec<Insight> {
+    insights.sort_by(|left, right| {
+        right
+            .window_start
+            .cmp(&left.window_start)
+            .then(left.kind.as_str().cmp(right.kind.as_str()))
+            .then(right.id.cmp(&left.id))
+    });
+    insights
+}
+
 /// One raw `insights` row, tokens and payload still unparsed.
 struct RawInsight {
     id: i64,
@@ -913,6 +1092,48 @@ fn decode_insight(conn: &Connection, raw: RawInsight) -> Result<Insight> {
 /// idiom the P5 aggregates above use: a count that cannot fit is still a truthful "many").
 fn count_u32(count: i64) -> u32 {
     u32::try_from(count).unwrap_or(u32::MAX)
+}
+
+/// Maps a row selected with [`THREAD_SUMMARY_SELECT`] — `id, title, first_seen_at,
+/// last_seen_at, session_count, active_ms, confidence` — to a [`ThreadSummary`]. Every thread
+/// read maps through this, so the aggregate figures cannot be filled differently by a caller.
+pub(crate) fn decode_thread_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadSummary> {
+    Ok(ThreadSummary {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        first_seen_at: row.get(2)?,
+        last_seen_at: row.get(3)?,
+        session_count: count_u32(row.get::<_, i64>(4)?),
+        active_ms: row.get(5)?,
+        confidence: row.get(6)?,
+    })
+}
+
+/// Maps a row selected with [`ENTITY_COLUMNS`] to an [`EntitySummary`]; `aliases` is left
+/// empty for [`fill_aliases`].
+fn decode_entity_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EntitySummary> {
+    Ok(EntitySummary {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        canonical_name: row.get(2)?,
+        first_seen_at: row.get(3)?,
+        last_seen_at: row.get(4)?,
+        session_count: count_u32(row.get::<_, i64>(5)?),
+        aliases: Vec::new(),
+    })
+}
+
+/// Fills `aliases` on every row of `entities` from `entity_aliases`, in `(entity_id, id)`
+/// order — the one alias read both entity listings use.
+fn fill_aliases(conn: &Connection, entities: &mut [EntitySummary]) -> Result<()> {
+    let mut alias_stmt =
+        conn.prepare("SELECT alias FROM entity_aliases WHERE entity_id = ?1 ORDER BY id")?;
+    for entity in entities.iter_mut() {
+        entity.aliases = alias_stmt
+            .query_map([entity.id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+    }
+    Ok(())
 }
 
 /// `?,?,?` for an `IN (…)` list of `count` bound parameters.

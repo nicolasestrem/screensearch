@@ -1619,7 +1619,7 @@ pub struct NewInsight {
 
 /// One thread row for the thread list (`03 §7c` P8 block, `§7h.4`): the same figures the
 /// clusterer maintains, never recomputed differently.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 pub struct ThreadSummary {
     #[ts(type = "number")]
@@ -1630,6 +1630,17 @@ pub struct ThreadSummary {
     #[ts(type = "number")]
     pub last_seen_at: i64,
     pub session_count: u32,
+    /// Time actually spent on this thread, in unix ms (P9 grant 4; the `active_ms` formula of
+    /// [`ThreadActivityPayload`], with no window): the sum over all of the thread's
+    /// `thread_sessions` member sessions of `max(0, COALESCE(ended_at, now_ms) - started_at)`.
+    /// A session still running counts up to the read's `now_ms`; a clock skew can never produce a
+    /// negative contribution. Reported by every thread read that fills it, never recomputed
+    /// differently by a caller.
+    #[ts(type = "number")]
+    pub active_ms: i64,
+    /// Maximum `thread_sessions.confidence` over the thread's member sessions; below `0.7` the
+    /// UI renders the thread as low-confidence (`§7h.4`'s clustering threshold).
+    pub confidence: f64,
 }
 
 /// A session belonging to a thread, as carried by [`ThreadDetail`]. `kind` is the

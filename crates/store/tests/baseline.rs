@@ -1,8 +1,8 @@
 //! Baseline schema tests (`03 §4`, 0.4.5 D2).
 //!
 //! There is no migration chain any more, so these replace the populated-DB migration
-//! tests: a fresh store must materialise the whole v14 baseline, and any database that
-//! is not at v14 must refuse to open without being touched.
+//! tests: a fresh store must materialise the whole latest baseline, and any database that
+//! is not at the latest version must refuse to open without being touched.
 
 use std::fs;
 use std::path::Path;
@@ -109,10 +109,10 @@ fn table_row_count(conn: &Connection, table: &str) -> i64 {
         .expect("count rows")
 }
 
-/// A fresh store is the whole v14 baseline: version 14, exactly the tables the script
-/// declares, empty 0.4.5 tables, clean integrity and no foreign-key violations.
+/// A fresh store is the whole latest baseline: `LATEST_SCHEMA_VERSION` (exactly), the tables
+/// the script declares, empty 0.4.5 tables, clean integrity and no foreign-key violations.
 #[test]
-fn fresh_store_is_the_v14_baseline() {
+fn fresh_store_is_the_latest_baseline() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("screensearch.db");
 
@@ -121,7 +121,10 @@ fn fresh_store_is_the_v14_baseline() {
         store.schema_version().expect("read schema_version"),
         LATEST_SCHEMA_VERSION
     );
-    assert_eq!(LATEST_SCHEMA_VERSION, 14, "the baseline version is 14");
+    assert_eq!(
+        LATEST_SCHEMA_VERSION, 15,
+        "the baseline version is 15 (`03 §4`)"
+    );
     drop(store);
 
     // The store is closed, so a plain read-only connection sees the file as written.
@@ -168,14 +171,14 @@ fn synthetic_version_file(path: &Path, version: i32) {
     .expect("version row");
 }
 
-/// Any database that is not v14 refuses to open, names the version found and
-/// `ssv2c-rebuild`, and is left byte for byte untouched (`03 §4`, 0.4.5 D2).
+/// Any database that is not at the latest version refuses to open, names the version found
+/// and `ssv2c-rebuild`, and is left byte for byte untouched (`03 §4`, 0.4.5 D2).
 #[test]
-fn refuses_any_database_that_is_not_v14() {
+fn refuses_any_database_that_is_not_at_the_latest_version() {
     let dir = tempfile::tempdir().expect("temp dir");
 
-    // A v13 file (the release this arc starts from) and a v15 file (a newer build).
-    for version in [13_i32, 15_i32] {
+    // A v13 file (the release this arc starts from) and the superseded v14 baseline.
+    for version in [13_i32, 14_i32] {
         let path = dir.path().join(format!("screensearch-v{version}.db"));
         synthetic_version_file(&path, version);
         let bytes_before = fs::read(&path).expect("read before");
@@ -233,7 +236,7 @@ fn initialises_a_zero_byte_file_instead_of_refusing_it() {
         store::LATEST_SCHEMA_VERSION
     );
     drop(store);
-    // And it reopens normally as a v14 store afterwards.
+    // And it reopens normally as a current-version store afterwards.
     SqliteStore::open_path(&path).expect("the initialised file reopens");
 }
 
@@ -282,9 +285,10 @@ fn refuses_a_non_sqlite_file_and_leaves_it_untouched() {
     );
 }
 
-/// Reopening a v14 store succeeds: the refusal path must not reject a healthy file.
+/// Reopening a current-version store succeeds: the refusal path must not reject a healthy
+/// file.
 #[test]
-fn reopening_a_v14_store_succeeds() {
+fn reopening_a_current_version_store_succeeds() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("screensearch.db");
 
@@ -296,7 +300,7 @@ fn reopening_a_v14_store_succeeds() {
         );
     }
 
-    let store = SqliteStore::open_path(&path).expect("reopen the v14 store");
+    let store = SqliteStore::open_path(&path).expect("reopen the current-version store");
     assert_eq!(
         store.schema_version().expect("read schema_version"),
         LATEST_SCHEMA_VERSION
@@ -307,17 +311,17 @@ fn reopening_a_v14_store_succeeds() {
     assert_eq!(integrity_check(&conn), "ok", "PRAGMA integrity_check");
 }
 
-/// A database that claims to be v14 but is missing baseline tables is refused: the
+/// A database that claims the current version but is missing baseline tables is refused: the
 /// version row alone does not make a usable store (`03 §4`, 0.4.5 D2).
 #[test]
-fn refuses_a_v14_file_missing_baseline_tables() {
+fn refuses_a_current_version_file_missing_baseline_tables() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("screensearch.db");
     synthetic_version_file(&path, LATEST_SCHEMA_VERSION);
     let bytes_before = fs::read(&path).expect("read before");
 
     let err = match SqliteStore::open_path(&path) {
-        Ok(_) => panic!("a v14 file without the baseline tables must not open"),
+        Ok(_) => panic!("a current-version file without the baseline tables must not open"),
         Err(e) => e.to_string(),
     };
     assert!(

@@ -52,6 +52,21 @@ import type { PromotionProposal } from "../../bindings/PromotionProposal";
 import type { PromotionReceipt } from "../../bindings/PromotionReceipt";
 import type { PromotionSelection } from "../../bindings/PromotionSelection";
 import type { SetupStatus } from "../../bindings/SetupStatus";
+import type { ThreadListQuery } from "../../bindings/ThreadListQuery";
+import type { ThreadListPage } from "../../bindings/ThreadListPage";
+import type { ThreadPage } from "../../bindings/ThreadPage";
+import type { EntityListQuery } from "../../bindings/EntityListQuery";
+import type { EntitySummary } from "../../bindings/EntitySummary";
+import type { InsightListQuery } from "../../bindings/InsightListQuery";
+import type { InsightListPage } from "../../bindings/InsightListPage";
+import type { RenameThreadRequest } from "../../bindings/RenameThreadRequest";
+import type { MergeThreadsRequest } from "../../bindings/MergeThreadsRequest";
+import type { SplitThreadRequest } from "../../bindings/SplitThreadRequest";
+import type { OverrideReceipt } from "../../bindings/OverrideReceipt";
+import type { AskThreadSummary } from "../../bindings/AskThreadSummary";
+import type { AskTurn } from "../../bindings/AskTurn";
+import type { AskConversationRequest } from "../../bindings/AskConversationRequest";
+import type { AskTurnStarted } from "../../bindings/AskTurnStarted";
 
 /** Liveness probe for the IPC bridge. */
 export const ping = (): Promise<string> => invoke<string>("ping");
@@ -390,4 +405,40 @@ export const preparePromotion = (
 export const confirmPromotion = (
   proposal: PromotionProposal,
 ): Promise<PromotionReceipt> => invoke("confirm_promotion", { proposal });
+
+// P9 intelligence (`03 §7h`, §7i.4, §7j). The three override commands return a receipt for the
+// `thread_overrides` row they wrote; the threads themselves are re-folded by the `graph_cluster`
+// job, so a caller re-reads after that job completes rather than trusting the receipt as a fold.
+export const listThreads = (query: ThreadListQuery): Promise<ThreadListPage> =>
+  invoke("list_threads", { query });
+export const getThreadPage = (threadId: number): Promise<ThreadPage> =>
+  invoke("get_thread_page", { threadId });
+export const listEntities = (query: EntityListQuery): Promise<EntitySummary[]> =>
+  invoke("list_entities", { query });
+export const getEntities = (ids: number[]): Promise<EntitySummary[]> =>
+  invoke("get_entities", { ids });
+export const listInsights = (query: InsightListQuery): Promise<InsightListPage> =>
+  invoke("list_insights", { query });
+export const renameThread = (request: RenameThreadRequest): Promise<OverrideReceipt> =>
+  invoke("rename_thread", { request });
+export const mergeThreads = (request: MergeThreadsRequest): Promise<OverrideReceipt> =>
+  invoke("merge_threads", { request });
+export const splitThread = (request: SplitThreadRequest): Promise<OverrideReceipt> =>
+  invoke("split_thread", { request });
+
+// Ask conversations (`03 §7i.4`). `askTurn` streams through the same `answer_delta` event as the
+// legacy `ask` command; it rejects with an `AskTurnStartError` payload (a plain object, not an
+// `Error`) when the turn cannot start, so callers narrow on `kind`.
+export const listAskThreads = (limit: number): Promise<AskThreadSummary[]> =>
+  invoke("list_ask_threads", { limit });
+export const listAskTurns = (threadId: number): Promise<AskTurn[]> =>
+  invoke("list_ask_turns", { threadId });
+export const deleteAskThread = (threadId: number): Promise<boolean> =>
+  invoke("delete_ask_thread", { threadId });
+export const setAskThreadTitle = (
+  threadId: number,
+  title: string,
+): Promise<boolean> => invoke("set_ask_thread_title", { threadId, title });
+export const askTurn = (request: AskConversationRequest): Promise<AskTurnStarted> =>
+  invoke<AskTurnStarted>("ask_turn", { request });
 
