@@ -524,6 +524,18 @@ the save resolves and retires it only on success, which removes the restore enti
 guarding it. Native: typed 45, toggled off → `enabled=false interval=2700000`; re-enabled → the field
 reads 45 from the store with no stale draft.
 
+The reset path row 90 claimed was checked afterwards, because the claim had run ahead of the probe:
+
+```
+interval 90 min, draft 120 typed (no Enter):   store=5400000  field="120"
+invoke the interval row's Reset:               store=3600000  field="60"
+blur away from the row:                        store=3600000   (draft did not re-commit)
+```
+
+With a pointer click the input blurs before the click lands, so the draft is committed as one
+transient write and the reset then stores the default — same end state, one wasted write; recorded
+rather than glossed.
+
 **Gate after the fixes (raw):** `npm run lint` clean · `npm run build` ✓ (`tsc --noEmit` + vite, no
 diagnostics) · `npm test` **118 pass / 0 fail** (96 before + 22 new) · `git diff --exit-code --
 ui/src/bindings` = 0 · `git diff --check` clean · no Rust file touched, so the cargo half of the gate
