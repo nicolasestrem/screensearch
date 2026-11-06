@@ -469,26 +469,39 @@ assembles context before resolving. Both outcomes now use the same guard. This o
 expose, so no raw output is claimed for it beyond the diff and the suite.
 
 **6. Entity extraction never reached a mounted catalogue (#123, P2).** Verified live with probe rows
-inserted straight into the acceptance DB (ids 9001–9004, deleted afterwards). The Ask entity picker
-was mounted and open throughout; the fourth probe was inserted together with a `graph_cluster` job.
+inserted straight into the acceptance DB (ids 9005–9007, deleted afterwards), the Ask entity picker
+mounted and open throughout, and a page-side `job_completed` listener imported from the Vite bundle
+(`/node_modules/.vite/deps/@tauri-apps_api_event.js`) so the events themselves are evidence rather
+than an assumption about timing.
+
+The first version of this record attributed the refresh to a `graph_cluster` row inserted by hand. That
+was wrong, and the code says so: `completion_info` (`crates/kernel/src/worker_pool.rs:453-466`) emits
+`job_completed` only for a job that reports `changed_data` **and** carries a `frame_id`, while
+`graph_cluster` reports `changed_data: false` (`crates/kernel/src/graph_cluster.rs:128`) and is
+frame-less. The kinds in `GRAPH_JOB_KINDS` that can actually reach this handler are therefore
+`graph_extract` (per frame, `changed_data: true` when it inserts anything,
+`crates/kernel/src/graph_extract.rs:33`) — the entity creator — while cluster, normalize and backfill
+never emit at all. The probe run below was redone with that as the trigger, and the wrong attribution
+is corrected in `06` #123 too.
 
 ```
-# control: probe 3 in the DB, no job — the mounted catalogue does not refresh on its own
-baseline (probe3 in DB, no job, +8s): ["AAB p9 review probe 2","AAA p9 review probe"]
+# control: same page, same mounted picker, a frame-bound `embed_text` job (not a graph kind)
+t0:     events ["embed_text#1"]            probes []            # probe 9005 in the DB
+20s:    events ["embed_text#1"]            probes []            # no refresh, as designed
 
-# invalidation present — probe 3 inserted together with job 2942
-db: jobs id=2942 kind=graph_cluster state=done created_at=…745719 updated_at=…746000
-10s: ["AAC p9 review probe 3","AAB p9 review probe 2","AAA p9 review probe"]
-20s–90s: unchanged (the refetch happened once, as the debounce intends)
+# fix present: force a changed `graph_extract` (session 1's links deleted so extraction re-inserts)
+5s:     events ["embed_text#1","graph_extract#1"]   probes ["AAE p9 review probe 5"]
+30s:    events ["embed_text#1","graph_extract#1"]   probes ["AAE p9 review probe 5"]
 
-# invalidation removed from the source — probe 4 inserted together with job 2978
-10s (neutered, job done): ["AAC p9 review probe 3","AAB p9 review probe 2","AAA p9 review probe"]
-60s (neutered, job done): ["AAC p9 review probe 3","AAB p9 review probe 2","AAA p9 review probe"]
+# invalidation removed from the source: probe 9007 in the DB, session 2's links deleted, extraction queued
+t0:     events ["graph_extract#4"]         probes ["AAF p9 review probe 6","AAE p9 review probe 5"]
+35s:    events ["graph_extract#4"]         probes ["AAF p9 review probe 6","AAE p9 review probe 5"]
 ```
 
-So the refresh is caused by the invalidation: it appears within the 10 s sample when the line is
-present and never within 60 s when it is removed, with the job confirmed `done` in the database in
-both cases. A remount after the neutered run showed the probe, confirming the data and the query were
+The two graph runs differ only in whether the line is present: the `graph_extract` event is recorded in
+both, and the catalogue picks up the probe in one and never does in the other. The `embed_text` control
+is what makes the attribution non-circular — the same page refreshed nothing for a non-graph completion
+seconds earlier. A remount after the neutered run showed the probe, so the data and the query were
 never the problem.
 
 ## 2026-11-06: P8 insights + connections engine and agent surface — build, verification and live proof (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)

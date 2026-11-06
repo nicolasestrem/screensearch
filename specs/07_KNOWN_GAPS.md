@@ -268,6 +268,17 @@ contradiction rows are `specs/06_PATCH_PLAN.md` #106–#112. Answers, verbatim i
   minimum) would change which threads carry the caveat. Contradiction `06` #117.
 
 **Deferrals with owners.**
+- **`job_completed` cannot describe a clustering pass — owner: P8/P6 (traits + IPC).**
+  `completion_info` (`crates/kernel/src/worker_pool.rs:453-466`) emits the event only for a job that
+  reports `changed_data` **and** carries a `frame_id`; `graph_cluster` is frame-less and reports
+  `changed_data: false` (`graph_cluster.rs:128`), as do `graph_normalize` and `graph_backfill`. So of
+  the five kinds in `useLiveEvents`' `GRAPH_JOB_KINDS`, only `graph_extract` (per frame, and the
+  entity creator) ever reaches that handler: the Work list and the insight list refresh on extraction
+  completions and on the user's own mutations, but **not** after an idle clustering pass that changes
+  the graph with no new frames. `06` #123 fixed the entity half by adding `entitiesPrefix` to the same
+  block; the general fix is an event that does not require a frame (`CompletedJobInfo.frame_id`
+  optional, or a separate graph-changed signal), which is a traits/IPC change and out of scope for a
+  review fix. Recorded so the list's claim is not read as broader coverage than it has.
 - **`report → /settings/data` has no producer yet — owner: maintainer (schema decision).** P8 emits
   no `report` evidence (`06` #96: `insight_evidence.ref_id` is `INTEGER` while `report_runs.run_id`
   is a `TEXT` UUID), so D5's last destination is implemented and documented ahead of its generator.

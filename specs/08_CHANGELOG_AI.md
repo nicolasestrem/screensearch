@@ -82,12 +82,16 @@ would have been a test of the timer.
 
 The second was a missing invalidation: `job_completed` refreshed Work and insights but not the entity
 catalogue, and `useEntityList` neither polls nor refetches on focus (`providers.tsx:12`), so a picker
-mounted before the graph caught up stayed empty until it remounted. The live proof used probe rows
-inserted directly into the acceptance DB and deleted afterwards: probe present in the DB and absent
-from the mounted picker at 8 s with no job; present within 10 s of a `graph_cluster` job completing
-with the invalidation; still absent at 60 s with the invalidation removed and the job confirmed
-`done` in the database. A remount after the neutered run showed the probe, so the data and the query
-were never the problem — the invalidation was.
+mounted before the graph caught up stayed empty until it remounted. **The first version of this proof
+was wrong and is corrected here:** it attributed the refresh to a hand-inserted `graph_cluster` job,
+but `completion_info` emits only for jobs reporting `changed_data` *and* carrying a `frame_id`, and
+`graph_cluster` is frame-less and reports `changed_data: false` — so it never emits, and the kinds in
+`GRAPH_JOB_KINDS` that actually reach the handler are `graph_extract` (the entity creator) alone.
+The proof was rerun with a page-side listener recording the events themselves: a frame-bound
+`embed_text` completion refreshed nothing (control, same page, same mounted picker seconds earlier); a
+forced `graph_extract` completion picked the probe up within 5 s with the invalidation and never
+within 35 s with it removed, the event recorded in both runs. Relabelling the trigger also sharpened
+the fix's comment, which now says which member of the list can fire and why.
 
 **Review pass.** Reading this record back surfaced three documentation gaps, all fixed here without
 touching behaviour: the low-confidence ruling existed only in the code comments that cite it
