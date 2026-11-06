@@ -69,6 +69,26 @@ helper (the trap was already documented in `ReportBuilder`; the third copy is wh
 test pinning `America/New_York` before the first `Date` is constructed so the 23 h and 25 h days are
 real on any machine.
 
+**Review pass 4 (PR #165).** The reviewer found the gap this branch had already written down as
+deferred (`07`: "`job_completed` cannot describe a clustering pass — owner: P8/P6"), and was right that
+a deferred record is not a fix: a P2 that leaves Work showing the pre-override grouping and Insights
+empty is a defect with a note attached, not a scope decision.
+
+The wrong turn was mine twice over. First in the second round, when the `entitiesPrefix` finding was
+narrowed to "which kinds emit" and the answer ("only `graph_extract`") was recorded as a limitation
+instead of a bug. Second in treating the fix as a traits/IPC change when the payload type was the
+smallest possible edit: `frame_id: Option<i64>` and one condition. The corrected rule has a reason
+worth keeping — `changed_data` describes *frame* data, so it cannot be the admission test for a pass
+that has no frame; the event for such a pass is "I finished", and the UI already knows what to
+invalidate.
+
+Proven at the emitter, not by assertion: `frameless_completions_reach_the_event_channel` drives
+`emit_progress` through a real broadcast receiver and asserts the `job_completed` that follows the
+stats event carries `kind: GraphCluster` and `frame_id: None`. Frame-bound no-ops remain silent, so
+the widening is exactly the frame-less kinds — no new enrichment traffic. The `07` entry now records
+the rule and its resolution instead of deferring it to an owner who was never going to be the one to
+notice.
+
 **Review pass 3 (PR #165).** Two more from the third round (`06` #124–#125), both small and both
 verified rather than argued.
 

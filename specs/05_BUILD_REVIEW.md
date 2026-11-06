@@ -504,6 +504,32 @@ is what makes the attribution non-circular — the same page refreshed nothing f
 seconds earlier. A remount after the neutered run showed the probe, so the data and the query were
 never the problem.
 
+### Review-fix pass 4 on PR #165 (one finding: the emitter, not the handler)
+
+`06` #126.
+
+**9. A frame-less pass never announced its completion (#126, P2).** `completion_info` admitted an
+event only for `changed_data && frame_id`, and every whole-graph kind is frame-less and reports
+`changed_data: false` — so `graph_cluster` (the regroup an override queues), `graph_normalize`,
+`graph_backfill` and `insight_generate` completed silently, and of the five kinds the UI lists only
+`graph_extract` ever reached its invalidation block. The UI side needed no new machinery: it already
+listed all five kinds. The rule is now "changed data **or** no frame", carried by
+`JobCompleted.frame_id: Option<i64>`, so frame-bound no-ops stay silent and enrichment traffic is
+unchanged.
+
+```
+cargo test -p kernel --lib worker_pool
+  test worker_pool::tests::completion_info_reports_changed_frame_jobs_and_every_frameless_pass ... ok
+  test worker_pool::tests::frameless_completions_reach_the_event_channel ... ok
+  test result: ok. 6 passed; 0 failed
+```
+
+The second test is the emitter-level proof rather than a rule-shaped one: it drives `emit_progress`
+through a real broadcast receiver and asserts that a `job_completed` with `kind: GraphCluster` and
+`frame_id: None` follows the stats event. What it does **not** observe is the browser side — the
+four-line `frame_id !== null` guard sits on the same handler the second round exercised live, and no
+app rebuild was spent re-observing it.
+
 ### Review-fix pass 3 on PR #165 (two findings; one reproduced by invoking the command directly)
 
 `06` #124–#125.

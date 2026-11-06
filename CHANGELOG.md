@@ -52,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed: two more things the PR review found
 
+- **Work and Insights now refresh when the graph is reorganised without new captured frames.** A merge
+  override's regrouping pass, a normalization pass and an insight generation run all finished without
+  telling the interface, so Work could keep the old grouping and title and Insights could stay empty
+  until you navigated away and back. Those passes now report completion, and the frame-scoped
+  refreshes stay as narrow as before.
 - **Pressing Enter again while a thread's answer was still arriving started a second conversation.**
   The first question was cancelled and its partial answer disappeared, while the cancelled turn stayed
   behind unanswered. The thread panel now ignores a submission while its turn is streaming, the same
