@@ -47,8 +47,11 @@ was written only by the idle sweep, so a reader could receive a claim citing del
 block was unbounded against a shared context window — 148,067 estimated tokens for a 1000-row
 window, appended over the packing budget — now capped at 1200 with the instruction charged in
 `fits_single_pass`; `semantic_neighbour` applied the other-day rule after the KNN limit, losing a
-connection behind five same-day rows (now widens until eligible-or-exhausted); and three CodeQL
-"cleartext logging" alerts came from session ids in test panic messages, now counts only.
+connection behind five same-day rows (now widens until the day rule is satisfied or the pool is
+spent — and the widening decision deliberately ignores the similarity floor, which is monotone in
+distance; the first version of the fix counted it and would have widened for nothing, so
+`is_other_day_edge` is the predicate and a unit test pins it); and three CodeQL "cleartext logging"
+alerts came from session ids in test panic messages, now counts only.
 
 **Not claimed.** The real-DB samples came from a locally built v14 database, not the maintainer's
 profile (none exists on this machine). The bindings guard was red only until the regenerated

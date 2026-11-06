@@ -524,24 +524,31 @@ pub fn derive_recurrence(
     out
 }
 
-/// Whether one KNN edge is usable for `semantic_neighbour`: not the subject itself, a
-/// similarity the floor accepts, and **another UTC day** (the same day is one continuous piece
-/// of work, not a connection).
+/// Whether one KNN edge names a *different* session on **another UTC day** — the two conditions
+/// that do not follow the distance ordering (the same day is one continuous piece of work, not a
+/// connection).
 ///
-/// This is the single copy of that rule. [`derive_semantic_neighbours`] emits by it, and
-/// [`neighbours_are_complete`] decides with it whether the fetch went deep enough — so the
-/// predicate that says "read more" and the one that says "keep this" cannot drift apart.
+/// This is the rule that makes a nearest-first fetch insufficient, so both the derivation and the
+/// deepening decision ask it, in one place.
+fn is_other_day_edge(row: &SessionNeighbourInput) -> bool {
+    row.neighbour_session_id != row.session_id
+        && row.session_started_at / DAY_MS != row.neighbour_started_at / DAY_MS
+}
+
+/// Whether one KNN edge is usable for `semantic_neighbour`: [`is_other_day_edge`] and a similarity
+/// the floor accepts.
+///
+/// The floor is deliberately **not** part of the deepening decision: distance is monotone, so a row
+/// below the floor means every row beyond it is below the floor too — reading deeper cannot rescue
+/// it. Only the other-day rule can, because it discards rows regardless of rank.
 fn eligible_similarity(row: &SessionNeighbourInput) -> Option<f64> {
-    if row.neighbour_session_id == row.session_id {
+    if !is_other_day_edge(row) {
         return None;
     }
     let similarity = cosine_similarity(row.distance);
     // vec0 never produces a NaN distance, but a corrupt row must be dropped here rather than
     // slip through an inverted comparison.
     if similarity.is_nan() || similarity < NEIGHBOUR_MIN_SIMILARITY {
-        return None;
-    }
-    if row.session_started_at / DAY_MS == row.neighbour_started_at / DAY_MS {
         return None;
     }
     Some(similarity)
@@ -566,7 +573,8 @@ fn neighbours_are_complete(inputs: &[SessionNeighbourInput], depth: u32) -> bool
     let mut eligible: BTreeMap<i64, std::collections::BTreeSet<i64>> = BTreeMap::new();
     for row in inputs {
         *rows_seen.entry(row.session_id).or_default() += 1;
-        if eligible_similarity(row).is_some() {
+        // Count on the other-day rule, not the similarity floor: see [`eligible_similarity`].
+        if is_other_day_edge(row) {
             eligible
                 .entry(row.session_id)
                 .or_default()
@@ -963,6 +971,46 @@ mod tests {
 
     fn payload(insight: &NewInsight) -> &InsightPayload {
         &insight.payload
+    }
+
+    /// Deepening is driven by the other-day rule alone. A subject whose nearest rows are all on
+    /// other days but below the similarity floor is already settled — distance is monotone, so
+    /// every further row is below the floor too, and widening would pay a KNN per doubling for
+    /// nothing.
+    #[test]
+    fn neighbour_depth_stops_when_only_the_similarity_floor_rejects_rows() {
+        let depth = NEIGHBOUR_TOP_K;
+        let day = |offset: i64| NOW + offset * DAY_MS;
+        // Five rows on other days, all far below the floor (distance 1.0 => similarity 0).
+        let dissimilar: Vec<SessionNeighbourInput> = (1..=5)
+            .map(|offset| neighbour(1, day(0), 100 + offset, day(offset), 1.0))
+            .collect();
+        assert!(
+            dissimilar
+                .iter()
+                .all(|row| eligible_similarity(row).is_none()),
+            "the fixture is below the floor"
+        );
+        assert!(
+            neighbours_are_complete(&dissimilar, depth),
+            "the floor alone must not ask for a deeper read"
+        );
+
+        // Five same-day rows at the same distance: the rule rejects them, so deeper rows could
+        // still qualify and the read must continue.
+        let same_day: Vec<SessionNeighbourInput> = (1..=5)
+            .map(|offset| neighbour(1, day(0), 100 + offset, day(0) + offset * 60_000, 1.0))
+            .collect();
+        assert!(
+            !neighbours_are_complete(&same_day, depth),
+            "same-day rows fill the limit without satisfying the rule"
+        );
+
+        // A short read means the pool is spent, whatever the rows say.
+        assert!(
+            neighbours_are_complete(&same_day[..4], depth),
+            "fewer rows than asked for means nothing deeper exists"
+        );
     }
 
     #[test]

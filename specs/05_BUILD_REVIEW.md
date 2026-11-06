@@ -3950,11 +3950,22 @@ thread '...' panicked at crates\kernel\tests\insights.rs:1031:13:
 the subject must reach the other-day neighbour; 1 neighbour rows exist
 ```
 
-Fixed in the kernel, with the store's contract unchanged: `eligible_similarity` is the one copy of
-"not self, similarity ≥ 0.80, another UTC day", used both by the derivation and by
-`neighbours_are_complete`, and the pass widens the fetch `5 → 10 → … ≤ 4096` until every subject
-has `NEIGHBOUR_TOP_K` eligible neighbours or its pool is exhausted (`rows < depth`, which the store
-only returns when nothing is left).
+Fixed in the kernel, with the store's contract unchanged: the pass widens the fetch
+`5 → 10 → … ≤ 4096` until every subject has `NEIGHBOUR_TOP_K` neighbours satisfying the rule or its
+pool is exhausted (`rows < depth`, which the store only returns when nothing is left).
+
+The first version of this fix counted *fully eligible* rows when deciding whether to widen, and that
+was wrong: the similarity floor is monotone in distance, so a subject whose nearest rows are simply
+dissimilar would have widened all the way to 4096 for nothing. Only the other-day rule is
+non-monotone, so the decision is made by `is_other_day_edge` and regression-pinned by
+`neighbour_depth_stops_when_only_the_similarity_floor_rejects_rows`, which fails if the floor is put
+back into the decision:
+
+```
+test insights::tests::neighbour_depth_stops_when_only_the_similarity_floor_rejects_rows ... FAILED
+thread '...' panicked at crates\\kernel\\src\\insights.rs:994:9:
+the floor alone must not ask for a deeper read
+```
 
 **4. Session ids reached a log sink from test panic messages (`06` #105).** Three CodeQL alerts
 (cleartext logging) on assertions that interpolated `first_session_id`/`second_session_id`/
@@ -3973,18 +3984,19 @@ computed at read time and that two reads can differ without any write.
 cargo fmt --all -- --check                                     exit=0
 cargo clippy --workspace --all-targets -- -D warnings          exit=0
 cargo test --workspace                                         exit=0
-  passed 1575   failed 0
+  passed 1576   failed 0
   kernel unit 220      store unit 106     traits 157      screensearch_lib 168
   store insights 17    kernel insights 6  http_api 58 (+1 ignored)
   mcp 55 + memory_tools 15 + remote_transport 9 + stdio_mcp 22
 git diff --exit-code -- ui/src/bindings                        exit=0
 ```
 
-1571 → 1575 passed is exactly the four new tests (`insights_read_computes_staleness_from_surviving_evidence`,
+1571 → 1576 passed is exactly the five new tests (`insights_read_computes_staleness_from_surviving_evidence`,
 `insights_context_skips_stale_rows`, `insights_context_is_bounded_by_its_token_budget`,
-`semantic_neighbours_reach_past_same_day_rows_to_fill_the_limit`); no test was relaxed or deleted, and
-the two pre-existing fixtures that the staleness rule correctly invalidated were made honest rather
-than exempted.
+`semantic_neighbours_reach_past_same_day_rows_to_fill_the_limit`,
+`neighbour_depth_stops_when_only_the_similarity_floor_rejects_rows`); no test was relaxed or deleted,
+and the two pre-existing fixtures that the staleness rule correctly invalidated were made honest
+rather than exempted.
 
 ## 2026-11-03: 0.4.5 P4 automatic evaluation harness (branch `feat/0.4.5-p4-auto-eval`)
 

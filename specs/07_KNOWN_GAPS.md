@@ -93,8 +93,11 @@ in P8's own guarantees; the rulings below are what the fixes settle, so P9 can r
 - **"Sessions similar on other days" is fetched, not filtered.** The neighbour read widens
   (5 → 10 → … ≤ 4096) until each subject has `NEIGHBOUR_TOP_K` eligible neighbours or its pool is
   spent, so the other-day rule cannot silently swallow a qualifying connection. The store's contract
-  (`k` nearest by distance, no day policy) is unchanged; `eligible_similarity` is the single
-  implementation of the rule, used by both the derivation and the widening check.
+  (`k` nearest by distance, no day policy) is unchanged; `is_other_day_edge` is the single
+  implementation of the non-monotone half of the rule and is used by both the derivation and the
+  widening check. The similarity floor is deliberately excluded from the widening test — it is
+  monotone in distance, so counting rows it rejects would pay an extra KNN per doubling on every
+  subject with dissimilar neighbours and could never find a better one.
 - **Ids stay out of sinks, tests included.** `07:447` covers panic messages: the test harness writes
   them to a log, and three CodeQL alerts landed on assertions that interpolated session ids. The
   flagged messages now report counts and kinds.
