@@ -50,6 +50,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (deleting it would delete your own override with it) and only stops appearing in Work. The dialog
   now says exactly that.
 
+### Fixed: two more things the PR review found in Ask
+
+- **A question started while the previous one was still being prepared could adopt the wrong
+  conversation.** The app cancelled the earlier request, but that request's own reply — its
+  conversation and turn ids — was still written into the state of the question you had just asked,
+  so the screen could jump to the earlier conversation and hide the answer you were waiting for. A
+  superseded reply is now ignored, the same way its streaming text already was.
+- **Newly discovered entities did not appear in an Ask scope picker that was already open.** The
+  entity catalogue loaded once and nothing refreshed it when extraction finished, so a session that
+  opened Ask before the work graph caught up kept offering no entities until the screen was left and
+  re-entered. Finishing a graph job now refreshes it, so the picker offers what has just been found.
+
 ### Fixed: four things the PR review found in Ask
 
 - **A question scoped to a thread could answer from other threads.** When the scoped thread's

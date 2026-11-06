@@ -69,6 +69,26 @@ helper (the trap was already documented in `ReportBuilder`; the third copy is wh
 test pinning `America/New_York` before the first `Date` is constructed so the 23 h and 25 h days are
 real on any machine.
 
+**Review pass 2 (PR #165).** The re-review after the first fix round raised two more, both in the
+"what the screen says vs what it does" class (`06` #122–#123).
+
+`useAskConversation` gated its *deltas* on the request id but not the command's own outcome, so a
+superseded `ask_turn` — one still assembling context when a newer question started — wrote its
+thread/turn ids into the newer request's state; the adoption effect could then select the old
+conversation while the deltas of the live request were dropped by the scope they do respect. Both
+outcomes now use the same guard. This is the one finding in either round recorded as code-verified
+only: the interleaving needs a planner delay the app does not expose, and inventing a timer to race it
+would have been a test of the timer.
+
+The second was a missing invalidation: `job_completed` refreshed Work and insights but not the entity
+catalogue, and `useEntityList` neither polls nor refetches on focus (`providers.tsx:12`), so a picker
+mounted before the graph caught up stayed empty until it remounted. The live proof used probe rows
+inserted directly into the acceptance DB and deleted afterwards: probe present in the DB and absent
+from the mounted picker at 8 s with no job; present within 10 s of a `graph_cluster` job completing
+with the invalidation; still absent at 60 s with the invalidation removed and the job confirmed
+`done` in the database. A remount after the neutered run showed the probe, so the data and the query
+were never the problem — the invalidation was.
+
 **Review pass.** Reading this record back surfaced three documentation gaps, all fixed here without
 touching behaviour: the low-confidence ruling existed only in the code comments that cite it
 (`0.4.5 D13`), so it is now written down in `07` P9 D13 with the contradiction row `06` #117 —

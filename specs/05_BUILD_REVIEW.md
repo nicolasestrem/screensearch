@@ -456,6 +456,41 @@ With the calendar-day helper:
 ℹ fail 0
 ```
 
+### Review-fix pass 2 on PR #165 (two more findings, one raced by construction)
+
+The re-review after the first fix round raised two further findings; both were confirmed in the code
+and fixed, and the second was proved in the running app with a probe entity. `06` #122–#123.
+
+**5. A superseded `ask_turn` response wrote into the newer request's state (#122, P2).** Verified by
+reading the two paths side by side: deltas are gated (`event.request_id === activeRequest.current`,
+`useAskConversation.ts:167`) but the command's `started`/`fail` dispatches were not, and `ask_turn`
+assembles context before resolving. Both outcomes now use the same guard. This one is
+**code-verified, not raced live**: forcing the interleaving needs a planner delay the app does not
+expose, so no raw output is claimed for it beyond the diff and the suite.
+
+**6. Entity extraction never reached a mounted catalogue (#123, P2).** Verified live with probe rows
+inserted straight into the acceptance DB (ids 9001–9004, deleted afterwards). The Ask entity picker
+was mounted and open throughout; the fourth probe was inserted together with a `graph_cluster` job.
+
+```
+# control: probe 3 in the DB, no job — the mounted catalogue does not refresh on its own
+baseline (probe3 in DB, no job, +8s): ["AAB p9 review probe 2","AAA p9 review probe"]
+
+# invalidation present — probe 3 inserted together with job 2942
+db: jobs id=2942 kind=graph_cluster state=done created_at=…745719 updated_at=…746000
+10s: ["AAC p9 review probe 3","AAB p9 review probe 2","AAA p9 review probe"]
+20s–90s: unchanged (the refetch happened once, as the debounce intends)
+
+# invalidation removed from the source — probe 4 inserted together with job 2978
+10s (neutered, job done): ["AAC p9 review probe 3","AAB p9 review probe 2","AAA p9 review probe"]
+60s (neutered, job done): ["AAC p9 review probe 3","AAB p9 review probe 2","AAA p9 review probe"]
+```
+
+So the refresh is caused by the invalidation: it appears within the 10 s sample when the line is
+present and never within 60 s when it is removed, with the job confirmed `done` in the database in
+both cases. A remount after the neutered run showed the probe, confirming the data and the query were
+never the problem.
+
 ## 2026-11-06: P8 insights + connections engine and agent surface — build, verification and live proof (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P8.md`. Contradictions and rulings: `06` #93–#101. Decisions, grants and
