@@ -71,7 +71,7 @@ import {
   useEntityList,
   useThreadList,
 } from "../lib/ipc/queries";
-import { absoluteTime, relativeTime } from "../lib/time";
+import { absoluteTime, localDateMidnight, relativeTime } from "../lib/time";
 import type { AskCitations } from "../bindings/AskCitations";
 import type { AskConversationRequest } from "../bindings/AskConversationRequest";
 import type { AskThreadSummary } from "../bindings/AskThreadSummary";
@@ -86,7 +86,6 @@ import type { TimeRange } from "../bindings/TimeRange";
 /** Generation budget for one answer, the same 2048 the legacy Ask uses: the default answer
  *  models reason before answering, and a smaller budget truncated the answer to nothing. */
 const ASK_MAX_TOKENS = 2048;
-const DAY_MS = 86_400_000;
 
 /** Work-graph threads, for the thread chip's title. The page needs the untruncated title of
  *  any thread a turn was scoped to, so it reads one page and builds a map. */
@@ -125,25 +124,6 @@ function parseId(value: string | null): number | null {
   if (value === null) return null;
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-/** A native date input's `YYYY-MM-DD` as local midnight, or `null` when it is empty or not a
- *  real date (`2026-02-31` normalises, so the round trip has to be checked). */
-function parseDateInput(value: string): number | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(year, month - 1, day);
-  if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
-  ) {
-    return null;
-  }
-  return date.getTime();
 }
 
 /**
@@ -813,8 +793,12 @@ export function Component() {
       ? null
       : (threadTitles.get(scopeThreadId) ?? `Thread ${scopeThreadId}`);
 
-  const rangeStartMs = parseDateInput(rangeStart);
-  const rangeEndMs = parseDateInput(rangeEnd);
+  // `rangeEndMs` is the end date's own midnight, so the ordering check compares calendar days
+  // rather than the exclusive bound; `rangeEndExclusiveMs` is the half-open end the request
+  // carries, one local calendar day later (`localDateMidnight`, DST-safe — never `+ DAY_MS`).
+  const rangeStartMs = localDateMidnight(rangeStart);
+  const rangeEndMs = localDateMidnight(rangeEnd);
+  const rangeEndExclusiveMs = localDateMidnight(rangeEnd, 1);
   const rangeMode = windowMode === "range";
   const rangeIncomplete = rangeMode && (rangeStartMs === null || rangeEndMs === null);
   const rangeOutOfOrder =
@@ -828,12 +812,19 @@ export function Component() {
 
   const windowScope = useMemo<AskWindowScope>(() => {
     if (windowMode === "all") return { mode: "all" };
-    if (rangeMode && rangeStartMs !== null && rangeEndMs !== null && rangeEndMs >= rangeStartMs) {
-      // Half-open `[start, end)`: the end date the person picked is included in full.
-      return { mode: "range", start: rangeStartMs, end: rangeEndMs + DAY_MS };
+    if (
+      rangeMode &&
+      rangeStartMs !== null &&
+      rangeEndMs !== null &&
+      rangeEndExclusiveMs !== null &&
+      rangeEndMs >= rangeStartMs
+    ) {
+      // Half-open `[start, end)`: the end date the person picked is included in full, in any
+      // zone — a 23h or 25h local day still ends at the next local midnight.
+      return { mode: "range", start: rangeStartMs, end: rangeEndExclusiveMs };
     }
     return { mode: "inherit" };
-  }, [windowMode, rangeMode, rangeStartMs, rangeEndMs]);
+  }, [windowMode, rangeMode, rangeStartMs, rangeEndMs, rangeEndExclusiveMs]);
 
   const displayWindow = useMemo<TimeRange | null>(() => {
     if (windowScope.mode === "all") return null;
@@ -921,8 +912,30 @@ export function Component() {
     [askTurn],
   );
 
+  // Scope and window overrides are edits to *this* conversation's retrieval, not to the page, so
+  // a new conversation identity drops them — otherwise the next question pushes the previous
+  // conversation's cleared thread scope, entity or window onto a conversation that never asked
+  // for it.
+  const resetScopeOverrides = () => {
+    setWindowMode("inherit");
+    setRangeStart("");
+    setRangeEnd("");
+    setEntityOverride(null);
+    setThreadScopeCleared(false);
+  };
+  // Adjusted during render, not in an effect: an effect runs after paint, so one committed frame
+  // (and any submit taken from it) would still carry the previous conversation's scope. The key
+  // also covers "New conversation" (it clears `?thread=`) and a `?scopeThread=` deep link.
+  const scopeKey = `${selectedId ?? "new"}:${urlScopeThreadId ?? "none"}`;
+  const [scopeKeySeen, setScopeKeySeen] = useState(scopeKey);
+  if (scopeKeySeen !== scopeKey) {
+    setScopeKeySeen(scopeKey);
+    resetScopeOverrides();
+  }
+
   const startNewConversation = useCallback(() => {
     resetConversation();
+    resetScopeOverrides();
     setLastRequest(null);
     const next = new URLSearchParams(searchParams);
     next.delete("thread");
@@ -957,6 +970,14 @@ export function Component() {
       return;
     }
     setDeleteTarget(null);
+    // The deleted conversation may be the one the live stream still holds (a finished turn keeps
+    // its id and text in `conversation.state`). Leaving it there lets the adoption effect put the
+    // deleted id straight back into `?thread=`, so the composer would then ask into a conversation
+    // that no longer exists (`thread_not_found`) instead of starting a new one.
+    if (target.id === liveThreadId) {
+      resetConversation();
+      setLastRequest(null);
+    }
     if (target.id !== selectedId) return;
     // Select the next conversation, else the previous one, else the empty state.
     const index = threadList.findIndex((thread) => thread.id === target.id);

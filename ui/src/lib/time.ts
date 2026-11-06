@@ -126,3 +126,35 @@ export function reportFileStem(
         : "";
   return `screensearch-report-${kindSegment}${y}-${mo}-${day}-${h}${mi}`;
 }
+
+/**
+ * Local midnight of a `<input type="date">` value (`YYYY-MM-DD`), `offsetDays` calendar days
+ * from it, or `null` when the value is empty or not a real day.
+ *
+ * Built from calendar components rather than arithmetic on milliseconds, because a local day is
+ * not always 86,400,000 ms: on the DST switch days it is 23h or 25h, so `date + DAY_MS` lands at
+ * 23:00 the same evening (losing the last hour of the day) or at 01:00 the next morning
+ * (stealing an hour from it). The `Date` constructor normalises day overflow, so `offsetDays = 1`
+ * rolls to the next calendar day in any zone — which is what a half-open `[start, end)` range
+ * needs for its exclusive end (`03 §7f`; `ReportBuilder` documents the same trap).
+ *
+ * The round-trip check keeps `2026-02-31` (which `Date` would silently normalise to March 3) out,
+ * so a typo cannot quietly widen a range.
+ */
+export function localDateMidnight(value: string, offsetDays = 0): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const base = new Date(year, month - 1, day);
+  if (
+    base.getFullYear() !== year ||
+    base.getMonth() !== month - 1 ||
+    base.getDate() !== day
+  ) {
+    return null;
+  }
+  if (offsetDays === 0) return base.getTime();
+  return new Date(year, month - 1, day + offsetDays).getTime();
+}
