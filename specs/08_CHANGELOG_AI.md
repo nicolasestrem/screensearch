@@ -69,6 +69,22 @@ helper (the trap was already documented in `ReportBuilder`; the third copy is wh
 test pinning `America/New_York` before the first `Date` is constructed so the 23 h and 25 h days are
 real on any machine.
 
+**Review pass 7 (PR #165).** The subtlest round. Both findings are consequences of a fix or a rule
+that only holds in the place it was written: the Ask stream's completion handling lives in a route-local
+hook, so it stops existing exactly when the person navigates away and back; and the scope label's
+"ends now" test was written for windows ending at `now` while the planner produces windows ending at the
+next midnight, so the predicate was never exercised by the case it was supposed to reject.
+
+The first fix is architectural rather than local: completion reconciliation belongs to the manager that
+outlives routes (`useLiveEvents`), while the live text stays where it is. The tempting alternative —
+cancel on unmount — is wrong for the reason the finding implies: the person left the screen, not the
+question.
+
+The second is an example of a doc comment that was more honest than the code beneath it; the comment
+already said "only ever said about a window that really is seven days ending today". Its proof is the
+cleanest of the pass: the neutered predicate fails exactly the two legs the finding describes and leaves
+the correct ones green, so the test discriminates rather than merely failing.
+
 **Comment honesty pass (PR #165).** Two comments claimed more than the code does. `completion_info`'s
 new doc read as if a frame-less completion meant "the graph moved", when `graph_cluster` also runs on
 its schedule with nothing to regroup — the event means "this pass finished", and the debounced

@@ -504,6 +504,46 @@ is what makes the attribution non-circular — the same page refreshed nothing f
 seconds earlier. A remount after the neutered run showed the probe, so the data and the query were
 never the problem.
 
+### Review-fix pass 7 on PR #165 (a completion the route could not hear, and a chip that lied)
+
+`06` #131–#132.
+
+**14. A turn that finished after leaving Ask kept rendering as unanswered (#131, P2).** Confirmed from
+the hook: the `answer_delta` subscription lives for the hook's lifetime and scopes deltas to
+`activeRequest.current`; leaving the route unmounts it, and the remounted hook starts with a null ref,
+so the remaining deltas — `done` among them — are dropped by `event.request_id === activeRequest.current`.
+The terminal effect that invalidates `askTurns`/`askThreads` is that mount's, so it never runs for a
+request it knows nothing about, and the turn list keeps the NULL-answer row it fetched while the answer
+was still generating. No polling, no focus refetch.
+
+Fixed in the global manager rather than by cancelling on unmount: `useLiveEvents` (mounted once in
+AppShell, independent of the route) invalidates `askTurnsPrefix` + `askThreads` on a `done` delta. Live
+text stays request-scoped in `useAsk` — that is why the manager excluded `answer_delta` before; only
+completion reconciliation moved. Code-verified: the classification is a type check on a generated
+payload, and the invalidation needs a React Query client plus a live stream.
+
+**15. A scope chip named a period that was not searched (#132, P2).** The label test was one-sided
+(`range.end >= now - HOUR`) while the planner's rolling windows end at the *next* local midnight
+(`ask_plan.rs::last_days_window`), so `this week` and future-ending custom ranges read "Last 7 days" on a
+chip whose doc comment claims otherwise. Now two-sided, `end <= now + DAY + HOUR`.
+
+Fail-without (the one-sided predicate restored byte-for-byte from a backup copy, new test file):
+
+```
+✔ a rolling window ending at tomorrow's local midnight reads as a rolling window
+✔ a window ending now still reads as a rolling window
+✖ this week's Monday-to-next-Monday window is dated, not 'Last 7 days'
+    AssertionError [ERR_ASSERTION]: got Last 7 days
+✖ a custom range ending in the future is dated, however whole its days
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+ℹ pass 4  fail 2
+```
+
+Restored (`grep -c NEUTERED` → 0) and green: `ℹ tests 6  pass 6  fail 0`; full UI suite
+`ℹ tests 153  pass 153  fail 0`. The label moved to `ui/src/lib/scopeWindow.ts` because exporting it
+from the component module tripped `react-refresh/only-export-components` (a warning, not an error — but
+a new warning is still a regression).
+
 ### Review-fix pass 6 on PR #165 (two Ask state bugs, both about what a turn belongs to)
 
 `06` #129–#130.

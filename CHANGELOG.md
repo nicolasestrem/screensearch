@@ -52,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed: two more things the PR review found
 
+- **An answer that finished while you were on another screen no longer stays looking unanswered.**
+  Leaving Ask mid-answer and coming back before it finished meant neither screen refreshed the turn
+  when the answer landed, so the conversation kept showing the question with no answer until it was
+  reopened. The completion now refreshes the record wherever you are.
+- **A scope chip no longer names a period you did not search.** "This week" asked on a Wednesday, or a
+  custom range ending in the future, could be labelled "Last 7 days"; the chip now only says that for a
+  window that really does end today, and otherwise shows the dates it covers.
 - **Retrying a question re-asks it over the scope it originally used.** A question that failed stayed
   in the conversation offering a retry, but the retry inherited the *latest* question's date range,
   entities and thread — so a question originally asked about one day could come back answered from
