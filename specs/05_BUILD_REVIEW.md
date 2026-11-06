@@ -25,6 +25,12 @@ Base condition: P5 (#157), P6 (#160), P7 (#161), #163 and **P8 (#164, merged as 
 
 ### Verification (raw, in kickoff order)
 
+Each block below is that leg's captured output on the final tree, with its exit status where the
+command prints nothing on success. `harness-data/p9-acceptance/gate.log` is **not** the full record —
+it holds only the `npm ci` leg, because the same host quirk that forced private-binary invocation
+(`fd 3 to external on Windows` on every Windows `.exe`/`.cmd`) also broke redirecting the later legs
+into one file. The transcript blocks are the record; the log file is a partial copy.
+
 The kickoff orders the UI first because the Rust build embeds `ui/dist`. Shell notes for this host:
 `npm`/`npx` POSIX shims fail here, `npm run <script>` only echoes the script name, and a stray open
 file descriptor makes every Windows external fail with `fd 3 to external on Windows` — so the
@@ -115,6 +121,14 @@ and `populated` are real data, never mocked.
 | Thread `/work/:id` | `thread-loading.png` — "Loading this thread" | `thread-error.png` — "Could not load this thread · The work graph read failed. Retrying keeps this address." | `thread-empty.png` (`/work/999999`) — "That thread no longer exists" | `thread-partial.png` — "Still clustering — some sessions may not appear yet." | `thread-populated.png`, `thread-full-*.png` — timeline, 10 entity chips, open loop with evidence, one connected thread |
 | Insights `/insights` | `insights-loading.png` — "Loading insights…" | `insights-error.png` — "Couldn't load insights" + Try again | `insights-empty-window.png` (`from=2020-01-01&to=2020-01-08`) — "No insights for this window" | `insights-partial.png` — "Still computing insights for this window — 1 pass left" | `insights-populated.png` — 15 cards: thread activity 1, open loops 0, recurrence 10, semantic neighbours 3, resumption 1 |
 | Ask `/ask` | `ask-loading.png` — "Loading conversations" | `ask-error.png` — "Couldn't load conversations" + Try again | `ask-empty.png` — "No conversations yet" + the preset questions | `ask-partial.png` — "3 turns · 2 turns have no answer yet — retry them below." with one answered and two failed turns | `ask-populated.png` — an answer with 5 session and 8 moment citations |
+
+A note on how the two forced Thread cells were produced, because a first attempt was wrong: the
+thread page's query key is `["work","thread",id]` (`ui/src/lib/ipc/queryKeys.ts`), so the dev switch's
+key head is **`work`**, not `thread`. Driving it with `__devStateKey=thread` rendered the populated page
+and the two screenshots from that attempt were replaced by re-captures with the correct key, whose own
+text reads "Loading this thread" / "Could not load this thread · The work graph read failed. Retrying
+keeps this address." (`thread-loading.png`, `thread-error.png`; both 1280×800 and distinct from
+`thread-populated.png`).
 
 Two further thread states are reachable and captured: `thread-merged-away.png` (a merged-away source
 explains the merge and links the survivor) and the empty-sub-section copy inside a populated thread
@@ -220,8 +234,19 @@ turn's, which is §7i.4's inheritance rule visible in both the row and the UI.
 a server: `cargo run -p harness --bin harness -- eval --db harness-data/fixture/screensearch.db --api
 http://127.0.0.1:1 --pairs 10 --seed 7 --out harness-data/eval-probe` wrote 10 pairs (2 per generator:
 `last_seen`, `involvement`, `sequence`, `window_recall`, `seen_again`) and then exited with "the API is
-not reachable" — the questions are P4's, unmodified. Each was then typed into the app's composer and
-submitted (keyboard path 9); answers and citations were read back from `ask_turns`.
+not reachable" — the questions and their `expected_frames`/`expected_sessions`/`expected_strings` are
+P4's generator's, unmodified. **The harness supplied the questions and the known facts only; the
+harness `eval` loop was not run, so nothing here is harness-graded.** Each question was then typed
+into the app's composer and submitted (keyboard path 9), and what is tabulated is what the app's own
+kernel pipeline produced — the answer text and the `ask_turns.citations` row it persisted.
+
+The metric, stated so the table cannot read as self-contradictory: **session recall** is the number of
+the pair's expected sessions present among that turn's persisted citation **sessions** (the chips),
+and **frame recall** the same over its cited **frames** — never a search of the prose for an id. So a
+turn can name "frame 295, session 50" in its sentence while still scoring 1/1 on sessions, because the
+expected session 168 is one of the seven the turn actually read and cited. The denominator is the
+pair's expected set: a `last_seen` pair expects the single session (and the frames) where the thing was
+last open, while `window_recall` expects every session in the window.
 
 | Pair | Known fact (P4) | Session recall | Frame recall | Answer (head) |
 |---|---|---|---|---|
@@ -275,7 +300,24 @@ would misrepresent what the answers contained.
 - **The four defects only a walk finds** are in `06` #113–#116: two fixed here, one deferred to P10
   with its rationale, one left with P6 as an open stream issue.
 - **Not re-run here:** the harness `eval` loop itself (it needs the app's loopback API plus a model and
-  produces its own answer metrics), and the `MCP`/HTTP surfaces (P8's, unchanged).
+  produces its own answer metrics), and the `MCP`/HTTP surfaces (P8's, unchanged). The spot check above
+  therefore has P4's questions and P4's known facts, but no harness grade beside them.
+- **The `NoAnswerModel` start error was never exercised.** A provider was attached for this walk (turns
+  were created, which that check runs before), so the `AskTurnError::NoAnswerModel` → 503 path that the
+  route maps for a machine with no provider is code-read, not observed; the failure state captured here
+  is the *stalled provider* one (`06` #116).
+- **The low-confidence caveat never rendered with real data.** Every `thread_sessions.confidence` in
+  the fixture is 0.85–0.95, so no thread falls under the `< 0.7` line (`07` P9 D13) and the muted
+  "Low confidence — few shared entities" text is unobserved in a screenshot. The aggregate behind it is
+  asserted in `crates/store/tests/insights.rs` (`:1969`, `:1982`, `:1990`, `:2002`, `:2250`); the
+  threshold and its rendering are not, and this record does not pretend otherwise.
+- **One transient render was seen once and not reproduced.** Immediately after the first conversation
+  was created, a single DOM read caught the Ask list's empty state ("No conversations yet") and the new
+  row's title in the same read. The branches are mutually exclusive in the code — the copy appears
+  exactly once (`ui/src/routes/Ask.tsx:1130-1135`) and the render is `loading / error / empty / rows`,
+  so one React commit cannot show both; the read most plausibly straddled the empty→populated flip
+  while the invalidation resolved. A follow-up turn and every later reload rendered cleanly. Recorded
+  because it was observed, not because it is a defect a reader should chase.
 
 ### Dev-side actions on this machine (for the record)
 

@@ -250,6 +250,23 @@ contradiction rows are `specs/06_PATCH_PLAN.md` #106–#112. Answers, verbatim i
   NULL means the turn did not finish through `finish_ask_turn`, which is a defect, not a display
   state.
 
+- **P9 D13 — no thread-level confidence existed, and the Work list must flag one anyway.**
+  *Question:* `docs/kickoffs/P9.md:124` requires the Work list to flag low-confidence threads, and
+  `§4` repeats the caveat, but nothing in the schema holds a thread-level confidence: `threads` has
+  title/keys/times/`session_count`, and the only confidence anywhere is per link
+  (`thread_sessions.confidence`, `session_entities.confidence`). This is the same class as "time
+  spent" (`07` P9 D4): a product decision the specs do not answer, which the kickoff makes a stop
+  condition. *Ruling (derived, then implemented):* a thread's confidence is the **maximum**
+  `thread_sessions.confidence` over its members — the thread is only as trustworthy as its strongest
+  membership evidence — exposed as the additive `ThreadSummary.confidence`, and "low" is
+  **< 0.7**, the threshold `03 §7h.4` already uses for a clustered edge that is certain enough to
+  present without a caveat. *Consequence:* `THREAD_SUMMARY_SELECT` computes it in the same aggregate
+  join as `active_ms` (one statement, no second formula); the Work row and the Thread header render
+  it as one muted line ("Low confidence — few shared entities"), and a session row uses the same
+  rule against its own link. It is never a badge, count or score (`§4`, `0.4.5 D13` in the comments
+  that cite it). Threshold and aggregation are recorded here because a different choice (mean, or
+  minimum) would change which threads carry the caveat. Contradiction `06` #117.
+
 **Deferrals with owners.**
 - **`report → /settings/data` has no producer yet — owner: maintainer (schema decision).** P8 emits
   no `report` evidence (`06` #96: `insight_evidence.ref_id` is `INTEGER` while `report_runs.run_id`

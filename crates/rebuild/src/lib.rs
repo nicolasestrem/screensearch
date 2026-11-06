@@ -1,8 +1,8 @@
 //! # `ssv2c-rebuild` - dev-only v13 → v15 database rebuild (0.4.5 D3, D2)
 //!
 //! The app ships **no migration chain** (0.4.5 D2): a database whose
-//! `schema_version` is not 14 is refused, and this tool is the documented way to
-//! carry a `v13` history into a fresh baseline file (`specs/03 §4`).
+//! `schema_version` is not `store::LATEST_SCHEMA_VERSION` is refused, and this tool is the
+//! documented way to carry a `v13` history into a fresh baseline file (`specs/03 §4`).
 //!
 //! Guarantees this crate implements:
 //!
@@ -22,7 +22,7 @@
 //!   `UI` + `file-only` keys, the `memory.*` keys owned by `03 §8c/§8d`, the API
 //!   read credential, and the **reserved** history identity and allocator
 //!   high-water, which are copied verbatim and never recomputed.
-//! - The result is verified, not assumed: `schema_version = 14`,
+//! - The result is verified, not assumed: `schema_version = store::LATEST_SCHEMA_VERSION`,
 //!   `PRAGMA integrity_check` is `ok`, and `PRAGMA foreign_key_check` is empty.
 //!
 //! The tool never renames the source. `*.v13.bak` is a maintainer step after the
@@ -128,7 +128,7 @@ pub struct TableCopy {
 pub struct RebuildReport {
     /// `schema_version` found in the source (13).
     pub source_version: i32,
-    /// `schema_version` written to the destination (14).
+    /// `schema_version` written to the destination (`store::LATEST_SCHEMA_VERSION`).
     pub dest_version: i32,
     /// Ordinary-table row counts of the source, shadows excluded.
     pub source_counts: Vec<(String, i64)>,

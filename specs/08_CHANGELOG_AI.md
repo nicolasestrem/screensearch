@@ -36,6 +36,15 @@ folded, emptied source retained and filtered), a follow-up turn reusing the prev
 inherited chip proving it, 97/97 rendered evidence links resolving, and the ten questions P4's
 automatic generator produces asked through the UI with their known facts checked.
 
+**Review pass.** Reading this record back surfaced three documentation gaps, all fixed here without
+touching behaviour: the low-confidence ruling existed only in the code comments that cite it
+(`0.4.5 D13`), so it is now written down in `07` P9 D13 with the contradiction row `06` #117 —
+`MAX(thread_sessions.confidence)` over members, low at `< 0.7`, the threshold `03 §7h.4` already uses;
+`crates/rebuild/src/lib.rs` still described the destination as `schema_version = 14` in three places
+after the v15 baseline bump, so those now name `store::LATEST_SCHEMA_VERSION` (the crate already read
+the constant in code and its tests); and the acceptance record now states the spot-check metric, which
+legs wrote `gate.log`, and the three states this machine could not exercise.
+
 **Honest limits.** Two properties of a real install were supplied by hand in the acceptance DB and
 are recorded in `07` (P9 D12): the sessions-history marker advanced so the graph lane could run, and
 one pending `insight_generate` row held for a single screenshot. Retrieval quality is *not* a P9

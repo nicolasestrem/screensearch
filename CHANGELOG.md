@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entity, and honest about a graph that is still catching up ("217 of 218 sessions clustered").
   `/work/:id` opens one: its session timeline, the entities those sessions touch, the open loops it
   still holds (each with its evidence), the threads it connects to through shared subjects, and Ask
-  scoped to it.
+  scoped to it. A thread clustered only on weak links says so — one muted line, "Low confidence — few
+  shared entities" — rather than a badge, count or score.
 - **Insights are a list of claims, grouped by kind, each with the evidence that supports it.** The
   window control (today / 7 days / 30 days / custom) reads real rows; a card whose evidence is gone
   says so instead of asserting a fact; a window still being computed says how many passes are left;
