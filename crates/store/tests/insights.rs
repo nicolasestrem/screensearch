@@ -1406,6 +1406,15 @@ async fn insights_open_marks_input_rows() {
     let first_frame = frame(&fixture.store, 500).await;
     let second_frame = frame(&fixture.store, 1_500).await;
     let third_frame = frame(&fixture.store, 4_000).await;
+    // The first frame belongs to a session (the shape a real capture has after assignment), so the
+    // read must report that session: the open-loop derivation attaches the loop to its session and
+    // thread from this field, and without it the Thread page could not see the loop at all.
+    let owner = session(&fixture.store, 100, Some(9_000)).await;
+    fixture
+        .store
+        .assign_frames_session(&[first_frame], Some(owner))
+        .await
+        .expect("assign the frame to a session");
 
     let open_with_note = fixture
         .store
@@ -1450,12 +1459,16 @@ async fn insights_open_marks_input_rows() {
                 frame_id: first_frame,
                 created_at: 1_000,
                 note: Some("send the revised invoice".to_string()),
+                session_id: Some(owner),
             },
             OpenMarkInput {
                 mark_id: open_without_note,
                 frame_id: second_frame,
                 created_at: 1_500,
                 note: None,
+                // No session: a frame captured outside a session, or one whose session was pruned.
+                // The `LEFT JOIN` keeps the loop rather than dropping it.
+                session_id: None,
             },
         ],
         "the resolved mark and the mark created after window_end are absent"

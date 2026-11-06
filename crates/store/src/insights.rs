@@ -657,12 +657,17 @@ impl SqliteStore {
     /// `open_loop` input: every mark still open (`resolved_at IS NULL`) created before
     /// `window_end`, ordered `created_at` then id (`03 §7j.1`). A resolved mark is no longer a
     /// loop and a later mark belongs to a later window, so neither is read.
+    ///
+    /// The frame's `session_id` comes along because the derivation attaches the loop to the
+    /// session (and its thread) it interrupted; a `LEFT JOIN` keeps a mark whose frame has no
+    /// session or was pruned by retention, which is still a loop.
     pub async fn insight_open_marks(&self, window_end: i64) -> Result<Vec<OpenMarkInput>> {
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, frame_id, created_at, note FROM marks
-                 WHERE resolved_at IS NULL AND created_at < ?1
-                 ORDER BY created_at, id",
+                "SELECT m.id, m.frame_id, m.created_at, m.note, f.session_id
+                 FROM marks m LEFT JOIN frames f ON f.id = m.frame_id
+                 WHERE m.resolved_at IS NULL AND m.created_at < ?1
+                 ORDER BY m.created_at, m.id",
             )?;
             let rows = stmt.query_map([window_end], |row| {
                 Ok(OpenMarkInput {
@@ -670,6 +675,7 @@ impl SqliteStore {
                     frame_id: row.get(1)?,
                     created_at: row.get(2)?,
                     note: row.get(3)?,
+                    session_id: row.get(4)?,
                 })
             })?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

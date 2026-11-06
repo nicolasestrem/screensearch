@@ -930,7 +930,12 @@ export function Component() {
   const [scopeKeySeen, setScopeKeySeen] = useState(scopeKey);
   if (scopeKeySeen !== scopeKey) {
     setScopeKeySeen(scopeKey);
-    resetScopeOverrides();
+    // Adopting the conversation this page just created is not a switch: the key moves from
+    // `new:` to that conversation's id a second after the first question is asked, and resetting
+    // here would discard what the user set for the *next* question while the answer arrived —
+    // including a thread chip they had deliberately cleared.
+    const adopting = selectedId !== null && selectedId === conversation.state.threadId;
+    if (!adopting) resetScopeOverrides();
   }
 
   const startNewConversation = useCallback(() => {
@@ -954,6 +959,11 @@ export function Component() {
     if (phase !== "streaming" && phase !== "done") return;
     const next = new URLSearchParams(searchParams);
     next.set("thread", String(liveThreadId));
+    // The deep-link seed has now been consumed: it existed to scope the question about to be
+    // asked, and from here the turn's persisted scope is the truth. Leaving it in the URL made it
+    // win every later turn (`?scopeThread=` outranks the conversation's own scope), so clearing
+    // the chip and asking once did not survive the adoption that followed.
+    next.delete("scopeThread");
     setSearchParams(next, { replace: true });
   }, [liveThreadId, phase, searchParams, selectedId, setSearchParams]);
 

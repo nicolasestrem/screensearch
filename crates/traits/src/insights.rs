@@ -44,6 +44,14 @@ pub struct OpenMarkInput {
     pub created_at: i64,
     /// The mark's optional intention note, verbatim.
     pub note: Option<String>,
+    /// `frames.session_id` — the session the marked frame belonged to, if the frame has one.
+    ///
+    /// The open-loop payload carries only `mark` and `frame` evidence, which is enough for the
+    /// Insights list but not for the Thread page: that read matches a loop to a thread by `thread`
+    /// and member-`session` evidence (`src-tauri/src/graph.rs::get_thread_page`). Without the
+    /// session the derivation cannot attach the loop to the work the mark interrupted, so a thread
+    /// with an unresolved mark in its history reported "No open loops in this thread".
+    pub session_id: Option<i64>,
 }
 
 /// One (entity, session) link for the `recurrence` generator (`03 §7j.1`, `03 §7h.4`).

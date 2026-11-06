@@ -379,12 +379,34 @@ pub fn derive_open_loops(
 ) -> Vec<NewInsight> {
     let mut out = Vec::new();
 
+    // The thread each member session belongs to, so an unresolved mark can name the work it
+    // interrupted instead of only the moment it happened (`03 §7j.1`): the Thread page matches a
+    // loop by `thread` and member-`session` evidence, so a mark with only `mark`/`frame` evidence
+    // was invisible there even though it opened on one of those sessions' frames.
+    let thread_of_session: BTreeMap<i64, i64> = threads
+        .iter()
+        .map(|row| (row.session_id, row.thread_id))
+        .collect();
+
     let mut open_marks: Vec<&OpenMarkInput> = marks
         .iter()
         .filter(|mark| mark.created_at < window_end)
         .collect();
     open_marks.sort_by_key(|mark| mark.mark_id);
     for mark in open_marks {
+        let mut evidence = vec![
+            (EvidenceKind::Mark, mark.mark_id),
+            (EvidenceKind::Frame, mark.frame_id),
+        ];
+        // A frame with no session (retention pruned it, or capture had none) keeps the two
+        // evidence rows it can honestly claim; the loop is still real.
+        let thread_id = mark
+            .session_id
+            .and_then(|session_id| thread_of_session.get(&session_id).copied());
+        if let (Some(session_id), Some(thread_id)) = (mark.session_id, thread_id) {
+            evidence.push((EvidenceKind::Session, session_id));
+            evidence.push((EvidenceKind::Thread, thread_id));
+        }
         out.push(new_insight(
             window_start,
             window_end,
@@ -393,15 +415,15 @@ pub fn derive_open_loops(
                 mark_id: Some(mark.mark_id),
                 frame_id: Some(mark.frame_id),
                 note: mark.note.clone(),
+                // The payload still describes a *moment*: the thread arrives as evidence (above),
+                // which is what the Thread page matches on. `thread_id` stays the abandoned-thread
+                // source's field so the payload keeps one meaning per field.
                 thread_id: None,
                 title: None,
                 opened_at: mark.created_at,
                 idle_ms: window_end - mark.created_at,
             }),
-            &[
-                (EvidenceKind::Mark, mark.mark_id),
-                (EvidenceKind::Frame, mark.frame_id),
-            ],
+            &evidence,
         ));
     }
 
@@ -1113,12 +1135,16 @@ mod tests {
                 frame_id: 90,
                 created_at: NOW - 2 * DAY_MS,
                 note: Some("check the failing gate".to_string()),
+                session_id: Some(90),
             },
             OpenMarkInput {
                 mark_id: 4,
                 frame_id: 40,
                 created_at: NOW - DAY_MS,
                 note: None,
+                // Belongs to session 10, which is thread 1's member — so this loop must reach the
+                // Thread page, not just the Insights list.
+                session_id: Some(10),
             },
             // Created at the window end: a later window's loop.
             OpenMarkInput {
@@ -1126,6 +1152,7 @@ mod tests {
                 frame_id: 50,
                 created_at: window_end,
                 note: None,
+                session_id: None,
             },
         ];
         let threads = vec![
@@ -1189,6 +1216,10 @@ mod tests {
         assert_eq!(first.title, None);
         assert_eq!(first.opened_at, NOW - DAY_MS);
         assert_eq!(first.idle_ms, window_end - (NOW - DAY_MS));
+        // The mark's frame belongs to session 10 (thread 1's member), so the loop names the
+        // session and the thread as well: `get_thread_page` matches a thread's loops on exactly
+        // those two kinds, and without them an unresolved mark inside a thread's history was
+        // reported as "No open loops in this thread".
         assert_eq!(
             out[0].evidence,
             vec![
@@ -1202,6 +1233,16 @@ mod tests {
                     kind: EvidenceKind::Frame,
                     ref_id: 40,
                 },
+                InsightEvidence {
+                    ordinal: 2,
+                    kind: EvidenceKind::Session,
+                    ref_id: 10,
+                },
+                InsightEvidence {
+                    ordinal: 3,
+                    kind: EvidenceKind::Thread,
+                    ref_id: 1,
+                },
             ]
         );
 
@@ -1210,6 +1251,16 @@ mod tests {
         };
         assert_eq!(second.mark_id, Some(9));
         assert_eq!(second.note.as_deref(), Some("check the failing gate"));
+        // Session 90 is in no thread this window covers, so this loop keeps the two evidence rows
+        // it can honestly claim — it is still listed, it just cannot name work.
+        assert_eq!(
+            out[1]
+                .evidence
+                .iter()
+                .map(|row| (row.ordinal, row.kind, row.ref_id))
+                .collect::<Vec<_>>(),
+            vec![(0, EvidenceKind::Mark, 9), (1, EvidenceKind::Frame, 90),]
+        );
 
         let InsightPayload::OpenLoop(third) = payload(&out[2]) else {
             panic!("expected an open_loop payload");
@@ -1603,6 +1654,7 @@ mod tests {
                 frame_id: 2,
                 created_at: NOW - DAY_MS,
                 note: None,
+                session_id: None,
             }],
             &[
                 thread_session(
