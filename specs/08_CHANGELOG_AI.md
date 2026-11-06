@@ -69,6 +69,16 @@ helper (the trap was already documented in `ReportBuilder`; the third copy is wh
 test pinning `America/New_York` before the first `Date` is constructed so the 23 h and 25 h days are
 real on any machine.
 
+**Review pass 8 (PR #165).** Both findings are the same failure mode from two directions: a question
+the person wrote being destroyed by machinery they did not ask for. One clears the composer for a
+request that never started, the other cancels a live answer because a *different* conversation's retry
+button was reachable.
+
+The pattern worth keeping: every path that calls `ask` must agree on when it may. `submitQuestion` had
+the `streaming` guard since #124 — the saved-turn retry, the other caller, did not, and its button
+stayed enabled to invite it. When two entry points share one destructive primitive, the guard belongs
+next to the primitive or in both callers, never in one.
+
 **Review pass 7 (PR #165).** The subtlest round. Both findings are consequences of a fix or a rule
 that only holds in the place it was written: the Ask stream's completion handling lives in a route-local
 hook, so it stops existing exactly when the person navigates away and back; and the scope label's

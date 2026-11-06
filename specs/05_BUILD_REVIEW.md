@@ -504,6 +504,25 @@ is what makes the attribution non-circular — the same page refreshed nothing f
 seconds earlier. A remount after the neutered run showed the probe, so the data and the query were
 never the problem.
 
+### Review-fix pass 8 on PR #165 (two ways a question could be destroyed)
+
+`06` #133–#134.
+
+**16. No answer model lost the question (#133, P2).** `submitQuestion` clears the composer as soon as it
+dispatches, and `ask_turn` rejects with `no_answer_model` before persisting anything; that error block
+offers only Settings, whose link unmounts the route. `lastRequest.query` was then the only copy and it
+went with the mount. The two start failures with no retry (`no_answer_model`, `thread_not_found`) now
+restore the question into an empty composer; `failed` keeps its existing Retry.
+
+**17. A saved-turn Retry cancelled a streaming answer (#134, P2).** Confirmed by following the call:
+`retryTurn` → `ask`, whose first act is `await cmd.cancelAsk(inFlight)`. The composer's own path guards
+on `streaming`; this one did not, and its button stayed enabled. Both now agree — the callback returns
+while streaming and the button is disabled — which is #124's rule applied to the second submission path
+instead of the first.
+
+Both code-verified and recorded as such: one needs an absent answer model, the other a live stream, and
+each fix is a short guard.
+
 ### Review-fix pass 7 on PR #165 (a completion the route could not hear, and a chip that lied)
 
 `06` #131–#132.

@@ -52,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed: two more things the PR review found
 
+- **Your question is kept when it cannot be sent.** Asking with no answer model loaded used to clear
+  the composer and then offer only a link to Settings — the words were gone when you came back. The
+  question is now put back in the box (and kept when its conversation has been deleted), ready to send
+  once the model is loaded.
+- **Retrying an unanswered question no longer cancels an answer you are waiting for.** The Retry action
+  on an older turn stayed clickable while another answer was streaming and would have restarted it in
+  its place; it is disabled until the stream finishes.
 - **An answer that finished while you were on another screen no longer stays looking unanswered.**
   Leaving Ask mid-answer and coming back before it finished meant neither screen refreshed the turn
   when the answer landed, so the conversation kept showing the question with no answer until it was
