@@ -52,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed: two more things the PR review found
 
+- **A thread page now shows an open marker that was left on one of its own captures.** An unresolved
+  marker opened the loop on the moment it flagged, but the loop was only ever attached to that moment,
+  so a thread whose history contained the marker could still say "No open loops in this thread". The
+  loop is now attached to the session it interrupted and to the thread that session belongs to.
 - **Work and Insights now refresh when the graph is reorganised without new captured frames.** A merge
   override's regrouping pass, a normalization pass and an insight generation run all finished without
   telling the interface, so Work could keep the old grouping and title and Insights could stay empty

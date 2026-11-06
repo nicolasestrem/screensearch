@@ -504,6 +504,39 @@ is what makes the attribution non-circular — the same page refreshed nothing f
 seconds earlier. A remount after the neutered run showed the probe, so the data and the query were
 never the problem.
 
+### Review-fix pass 5 on PR #165 (the open-loop join and the scope seed)
+
+`06` #127–#128.
+
+**10. An unresolved mark inside a thread's own sessions was invisible on that thread (#127, P2).**
+Confirmed by reading both sides of the join: `get_thread_page` asks for loops by `thread` and
+member-`session` evidence, while `derive_open_loops` gave an unresolved mark only `(mark, frame)`
+evidence. The mark input now carries the frame's `session_id` (a `LEFT JOIN`, so an unassigned or
+retention-pruned frame still yields a loop) and the derivation maps that session to its thread:
+
+```
+cargo test -p kernel --lib insights   test insights::tests::insights_generator_open_loop_marks_and_abandoned_threads ... ok
+cargo test -p store --test insights   test insights_open_marks_input_rows ... ok
+```
+
+The first asserts the four dense evidence ordinals — `(mark 4, frame 40, session 10, thread 1)` — for a
+mark whose frame belongs to a member session, and that a mark whose session is outside the window's
+threads keeps exactly the two rows it can honestly claim. The second asserts the store reports the
+owning session for an assigned frame and `None` for an unassigned one. The payload was left alone on
+purpose: `OpenLoopPayload.thread_id` is the abandoned-thread field and `InsightCard` renders it as a
+subject ("Thread 42") and as a fact row, so filling it for marks would have changed what a loop is
+called rather than where it is found.
+
+**11. A `?scopeThread=` seed survived its question (#128, P2).** Confirmed by tracing the precedence
+chain at `Ask.tsx:785` — `threadScopeCleared ? null : urlScopeThreadId ?? lastTurn.scope_thread_id` —
+against the adoption effect, which wrote `?thread=<new id>` and left the seed in place: `scopeKey`
+changed, `resetScopeOverrides()` cleared `threadScopeCleared`, and the seed then outranked the
+conversation's own (unscoped) turn. The effect now deletes the seed on adoption, and the reset block
+treats adoption as "not a switch" so the chip state and the composer overrides set while the answer
+streamed survive it. Code-verified, not walked live: the app budget for this pass went on the two
+`list_threads` measurements, and observing the second request's `scope_thread_id` needs a page-side
+call log.
+
 ### Review-fix pass 4 on PR #165 (one finding: the emitter, not the handler)
 
 `06` #126.

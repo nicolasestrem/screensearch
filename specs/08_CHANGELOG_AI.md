@@ -69,6 +69,23 @@ helper (the trap was already documented in `ReportBuilder`; the third copy is wh
 test pinning `America/New_York` before the first `Date` is constructed so the 23 h and 25 h days are
 real on any machine.
 
+**Review pass 5 (PR #165).** Two P2s, both real, both judged by reading the join rather than by
+argument.
+
+The open-loop one is the better find: the Thread page matches a loop by `thread` and member-`session`
+evidence, the derivation attached only `(mark, frame)`, and nobody noticed because the loop *was* on
+the Insights list — the two surfaces disagree about what a loop is attached to. The fix carries the
+frame's session into the mark input and maps it to a thread through the membership list the derivation
+already had. The payload stays untouched: `OpenLoopPayload.thread_id` means "the abandoned thread" and
+`InsightCard` prints it as a subject, so filling it for marks would have renamed the loop instead of
+finding it.
+
+The scope-seed one is a lifetime bug with a familiar shape on this branch: a value that should expire
+after one use (a deep-link seed) outranking the state that replaces it. Adoption both failed to
+consume the seed and reset the composer as if the user had switched conversations, so the cleared chip
+came back on the next question. Both halves are fixed; only the seed-consumption half was asked for,
+and the reset half is the same line of reasoning (`03 §7i`: adoption is not a switch).
+
 **Review pass 4 (PR #165).** The reviewer found the gap this branch had already written down as
 deferred (`07`: "`job_completed` cannot describe a clustering pass — owner: P8/P6"), and was right that
 a deferred record is not a fix: a P2 that leaves Work showing the pre-override grouping and Insights
