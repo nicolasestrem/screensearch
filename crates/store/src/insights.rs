@@ -41,14 +41,59 @@ use crate::SqliteStore;
 /// not the full long tail).
 const TOP_N: i64 = 12;
 
-/// Columns every insight read selects, in the order [`decode_insight_row`] expects.
+/// Row shape of [`SqliteStore::list_insights`]: the persisted columns up to `generated_at`.
+/// `stale` is not among them on purpose — [`effective_stale_sql`] computes it and the read
+/// selects it last, so [`decode_insight_row`]'s indices stay fixed.
 const INSIGHT_COLUMNS: &str = "id, kind, window_start, window_end, payload, generator,
-                               generated_at, stale";
+                               generated_at";
+
+/// The `stale` flag a reader gets: already flagged, **or** citing something that has gone.
+///
+/// Reading the stored column alone reports a claim as fresh until the next generation pass sweeps
+/// it, and that pass waits for idle at throttle level 0 — so a reader could be handed a claim
+/// whose session was deleted hours ago. Computing it here makes the flag honest at every read
+/// without turning a GET into a write.
+fn effective_stale_sql() -> String {
+    format!(
+        "(CASE
+            WHEN insights.stale = 1 THEN 1
+            WHEN EXISTS (
+                SELECT 1 FROM insight_evidence ev
+                WHERE ev.insight_id = insights.id
+                  AND {EVIDENCE_MISSING_SQL}
+            ) THEN 1
+            ELSE 0
+        END)"
+    )
+}
 
 /// Chunk size for `IN (…)` reads. The neighbour map and the entity/thread joins stay small,
 /// but a long history can name thousands of session ids and SQLite's bound-parameter ceiling
 /// is finite, so ids are read in bounded batches.
 const READ_CHUNK: usize = 500;
+
+/// SQL fragment: this `insight_evidence` row (`ev`) names a target that no longer exists.
+///
+/// Evidence carries only a kind and an integer, so nothing enforces that the target survives —
+/// a deleted session, a frame dropped by retention, a thread erased by a re-cluster all leave the
+/// reference dangling. Two callers must agree on what that means, and this is the single copy:
+/// [`SqliteStore::mark_insights_stale_where_evidence_missing`] writes the flag with it, and
+/// [`SqliteStore::list_insights`] computes the flag it returns with it.
+///
+/// `report` evidence is deferred ('06' #96: `ref_id` is an integer, `report_runs.run_id` is a
+/// UUID), so no such row is ever emitted; if one ever were, it could not be resolved and is
+/// therefore missing rather than silently trusted.
+const EVIDENCE_MISSING_SQL: &str = "((ev.kind = 'frame'
+        AND NOT EXISTS (SELECT 1 FROM frames f WHERE f.id = ev.ref_id))
+    OR (ev.kind = 'session'
+        AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id = ev.ref_id))
+    OR (ev.kind = 'thread'
+        AND NOT EXISTS (SELECT 1 FROM threads t WHERE t.id = ev.ref_id))
+    OR (ev.kind = 'entity'
+        AND NOT EXISTS (SELECT 1 FROM entities e WHERE e.id = ev.ref_id))
+    OR (ev.kind = 'mark'
+        AND NOT EXISTS (SELECT 1 FROM marks m WHERE m.id = ev.ref_id))
+    OR ev.kind = 'report')";
 
 impl SqliteStore {
     /// Aggregates frame activity over the half-open window `[start, end)`. Returns an
@@ -193,16 +238,22 @@ impl SqliteStore {
     /// A stored payload that does not decode — or that states a different kind than the row's
     /// `insights.kind` column — is an error: a row is the truth of what was generated, and
     /// skipping it would silently hide a real insight.
+    ///
+    /// `stale` is computed per row rather than read from the column: a row already flagged, or
+    /// citing a target that no longer exists, comes back stale ([`effective_stale_sql`]). The
+    /// generation sweep writes the same flag, but it only runs on an idle pass, so a reader
+    /// cannot rely on it having run since a session, frame, thread, entity or mark went away.
     pub async fn list_insights(&self, filter: InsightFilter) -> Result<Vec<Insight>> {
         self.with_conn(move |conn| {
             let kind = filter.kind.map(InsightKind::as_str);
             let mut stmt = conn.prepare(&format!(
-                "SELECT {INSIGHT_COLUMNS} FROM insights
+                "SELECT {INSIGHT_COLUMNS}, {} AS stale FROM insights
                  WHERE (:from IS NULL OR window_end > :from)
                    AND (:to IS NULL OR window_start < :to)
                    AND (:kind IS NULL OR kind = :kind)
                  ORDER BY window_start DESC, kind ASC, id DESC
-                 LIMIT :limit"
+                 LIMIT :limit",
+                effective_stale_sql()
             ))?;
             let rows = stmt.query_map(
                 named_params! {
@@ -253,22 +304,15 @@ impl SqliteStore {
     pub async fn mark_insights_stale_where_evidence_missing(&self) -> Result<u64> {
         self.with_conn(move |conn| {
             let marked = conn.execute(
-                "UPDATE insights SET stale = 1
-                 WHERE stale = 0
-                   AND EXISTS (
-                     SELECT 1 FROM insight_evidence ev
-                     WHERE ev.insight_id = insights.id
-                       AND ((ev.kind = 'frame'
-                             AND NOT EXISTS (SELECT 1 FROM frames f WHERE f.id = ev.ref_id))
-                         OR (ev.kind = 'session'
-                             AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id = ev.ref_id))
-                         OR (ev.kind = 'thread'
-                             AND NOT EXISTS (SELECT 1 FROM threads t WHERE t.id = ev.ref_id))
-                         OR (ev.kind = 'entity'
-                             AND NOT EXISTS (SELECT 1 FROM entities e WHERE e.id = ev.ref_id))
-                         OR (ev.kind = 'mark'
-                             AND NOT EXISTS (SELECT 1 FROM marks m WHERE m.id = ev.ref_id)))
-                   )",
+                &format!(
+                    "UPDATE insights SET stale = 1
+                     WHERE stale = 0
+                       AND EXISTS (
+                         SELECT 1 FROM insight_evidence ev
+                         WHERE ev.insight_id = insights.id
+                           AND {EVIDENCE_MISSING_SQL}
+                       )"
+                ),
                 [],
             )?;
             Ok(marked as u64)
@@ -796,7 +840,8 @@ struct RawInsight {
     stale: bool,
 }
 
-/// Maps a row selected with [`INSIGHT_COLUMNS`].
+/// Maps a row selected with [`INSIGHT_COLUMNS`] plus the computed `stale` flag as its last
+/// column (the order [`SqliteStore::list_insights`] selects).
 fn decode_insight_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawInsight> {
     Ok(RawInsight {
         id: row.get(0)?,

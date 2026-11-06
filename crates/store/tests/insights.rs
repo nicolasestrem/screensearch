@@ -1692,7 +1692,7 @@ async fn insights_session_neighbours_input_rows() {
     let gamma_neighbour = neighbour_of(gamma);
     assert!(
         gamma_neighbour == alpha || gamma_neighbour == beta,
-        "gamma's nearest is one of its equidistant candidates, got {gamma_neighbour}"
+        "gamma's nearest is one of its equidistant candidates"
     );
 
     // A session outside the window is never a subject, even with a vector: add one whose
@@ -1790,5 +1790,83 @@ async fn insights_thread_sessions_input_rows() {
             },
         ],
         "the older member is carried for the gap, the non-overlapping thread is absent"
+    );
+}
+
+/// A reader must not be told a claim is fresh once the row it cites has gone (`03 §7j.2`):
+/// staleness is a property of the data at read time, not of whichever sweep ran last.
+///
+/// The generation sweep only runs on an idle/level-0 pass, and evidence rows carry no foreign
+/// key to the table they name, so a session (or a purged frame, or a recomputed thread) can
+/// disappear long before the next pass. Reading the stored flag alone would report
+/// `stale: false` for a statement whose evidence no longer exists.
+#[tokio::test]
+async fn insights_read_computes_staleness_from_surviving_evidence() {
+    let fixture = Fixture::new("stale-at-read");
+    let kept = session(&fixture.store, 1_000, Some(2_000)).await;
+    let doomed = session(&fixture.store, 3_000, Some(4_000)).await;
+
+    let insight = fixture
+        .store
+        .insert_insight(new_insight(
+            (500, 5_000),
+            recurrence_payload(1),
+            evidence(&[
+                (EvidenceKind::Session, kept),
+                (EvidenceKind::Session, doomed),
+            ]),
+        ))
+        .await
+        .expect("insert evidenced insight");
+
+    let before = fixture
+        .store
+        .list_insights(all_insights())
+        .await
+        .expect("read before the deletion");
+    assert_eq!(before.len(), 1);
+    assert!(!before[0].stale, "every citation still resolves");
+
+    assert!(
+        fixture
+            .store
+            .delete_unfrozen_session(doomed)
+            .await
+            .expect("delete the cited session"),
+        "the cited session existed"
+    );
+
+    let after = fixture
+        .store
+        .list_insights(all_insights())
+        .await
+        .expect("read after the deletion");
+    assert_eq!(
+        after.len(),
+        1,
+        "the row is still returned, flagged rather than hidden"
+    );
+    assert!(
+        after[0].stale,
+        "a claim citing a deleted session is stale even though no sweep has run yet"
+    );
+
+    // The read is not a write: the persisted flag is untouched, and the sweep agrees with the
+    // reader about which rows are unverifiable.
+    let raw = fixture.raw();
+    let stored: i64 = raw
+        .query_row("SELECT stale FROM insights WHERE id=?1", [insight], |row| {
+            row.get(0)
+        })
+        .expect("read the stored flag");
+    assert_eq!(stored, 0, "a GET must not rewrite the stored flag");
+    assert_eq!(
+        fixture
+            .store
+            .mark_insights_stale_where_evidence_missing()
+            .await
+            .expect("sweep"),
+        1,
+        "the sweep marks exactly the row the reader already called stale"
     );
 }
