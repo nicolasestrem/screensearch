@@ -1,5 +1,62 @@
 # 08 — AI Changelog
 
+## 2026-11-06: P8 insights + connections engine and agent surface (backend) (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
+
+Phase: `docs/kickoffs/P8.md`. Build record, gate output and live proof: `05` (2026-11-06 P8
+section). Decisions, grants and deferrals: `07`. Contradiction rows `#93`–`#101`: `06`.
+
+**Change.** Insights become a real, evidenced product surface (*backend only* — nothing renders yet;
+P9 does that). `insights.kind` stays the closed set of five (`thread_activity`, `open_loop`,
+`recurrence`, `semantic_neighbour`, `resumption`), each with its own typed payload in `traits` that
+renders completely without the model. Generation is one job kind (`insight_generate`) under the
+existing worker pool, pressure throttle and idle gate — never on the capture path, never blocking
+capture, search or Ask. Four read-only HTTP routes (`/v1/threads`, `/v1/threads/{id}`,
+`/v1/entities`, `/v1/insights`) behind `history.read` for both credential classes, and four MCP
+tools over them (`list_threads`, `get_thread`, `find_connections`, `list_insights`). Daily reports
+and weekly synthesis may now cite the window's insights through an additive context block.
+
+**Why.** The 0.4.5 arc promises an "insights + connections engine": the work graph (P5) and session
+vectors (P6) existed but nothing turned them into statements, and agents could not reach either.
+
+**Consistency.** A new job kind touches three registries (`traits::JobKind`, the store's
+`kind_token`/`kind_from_token`, and the worker pool's fixed-size claim array + exhaustive dispatch
+match) — all three changed together. New MCP tools change every hardcoded count assertion in the
+crate and `docs/MCP.md` (13→17 normal, 10→14 read-only); the grep after the change finds none left.
+The pre-existing counts path (`insights_summary`, `InsightsSummary`, `get_insights`) is untouched:
+deleting it is P9's cutover.
+
+**Verification.** `cargo test --workspace` green (86 binaries, 0 failures, `test_exit=0`),
+`clippy --workspace --all-targets -D warnings` clean, `fmt --check` clean, UI lint + build clean. P8
+filters: store `insights` 16 + 2, kernel `insights` 17 + 5, `api --test http_api` 58, `mcp`
+55+15+9+22; kernel unit `218`, store unit `106`. Live proof against a running app: the four tools
+returned real threads/entities/insights over stdio, the four GETs left `insights` count and
+`max(generated_at)` unchanged, the sweep returned `0`, and a pending `insight_generate` job was
+claimed and completed by the running app in 2s.
+
+**Review pass.** A later review of this record found and fixed four things inside the phase's own
+files: an ambiguous-id hazard in the report context block (non-citable ids are now `kind#id`, so a
+model cannot echo `thread 3` into a frame citation), two stale contradiction numbers in `07` left by
+the renumbering, a missing `_`-literal `q` case in the store tests, and an overstated sentence in `07`
+that claimed the live proof ran on the maintainer's profile database when no profile database exists
+on this machine.
+
+**Review pass (PR #164).** The automated review of the open PR found four defects in P8's own
+guarantees, all fixed with a reproduction first (`06` #102–#105, full raw output in `05`): staleness
+was written only by the idle sweep, so a reader could receive a claim citing deleted evidence with
+`stale: false` (now computed at read from the same predicate the sweep writes); the report's insights
+block was unbounded against a shared context window — 148,067 estimated tokens for a 1000-row
+window, appended over the packing budget — now capped at 1200 with the instruction charged in
+`fits_single_pass`; `semantic_neighbour` applied the other-day rule after the KNN limit, losing a
+connection behind five same-day rows (now widens until the day rule is satisfied or the pool is
+spent — and the widening decision deliberately ignores the similarity floor, which is monotone in
+distance; the first version of the fix counted it and would have widened for nothing, so
+`is_other_day_edge` is the predicate and a unit test pins it); and three CodeQL "cleartext logging"
+alerts came from session ids in test panic messages, now counts only.
+
+**Not claimed.** The real-DB samples came from a locally built v14 database, not the maintainer's
+profile (none exists on this machine). The bindings guard was red only until the regenerated
+bindings were committed; on the committed branch it exits 0.
+
 ## 2026-11-05: P7 app shell + Settings v2 — v2 shell rebuild and the 26-key Settings surface (branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, **not merged**, from `main` `6d906a7`; pushed on the maintainer's authorization under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P7.md`. Build record, gate output, acceptance tables and screenshots: `05`

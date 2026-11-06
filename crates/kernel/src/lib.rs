@@ -37,6 +37,7 @@ mod graph_extract;
 mod graph_normalize;
 mod graph_reconcile;
 mod graph_scheduler;
+pub mod insights;
 pub mod memory_schedule;
 pub mod report_service;
 pub mod reports;
@@ -733,6 +734,10 @@ pub struct Kernel {
     /// scheduler it only enqueues durable jobs on a timer, never on the capture path; it
     /// starts with the embedder because session vectors need no other provider.
     session_embed_scheduler: Mutex<Option<session_vectors::SchedulerHandle>>,
+    /// The P8 insights producer (`03 §7j.3`, 0.4.5 D10). Store-only: it enqueues one
+    /// `insight_generate` job per idle tick and regenerates every typed statement from the
+    /// history the store already holds. Never on the capture path.
+    insight_scheduler: Mutex<Option<insights::SchedulerHandle>>,
     /// Sessions whose graph links may be missing or stale after a session-ownership change.
     /// The sessions scheduler writes it, the graph scheduler drains it in bounded batches
     /// (`crate::graph_reconcile`); process-local memory, never a setting or table.
@@ -860,6 +865,7 @@ impl Kernel {
             sessions_scheduler: Mutex::new(None),
             graph_scheduler: Mutex::new(None),
             session_embed_scheduler: Mutex::new(None),
+            insight_scheduler: Mutex::new(None),
             dirty_sessions: graph_reconcile::new_dirty_sessions(),
             graph_enabled: Arc::new(AtomicBool::new(false)),
             graph_ready: Arc::new(AtomicBool::new(false)),
@@ -1227,6 +1233,9 @@ impl Kernel {
         *self.embedder.write().expect("embedder slot lock") = Some(embedder);
         self.set_embed_readiness(ComponentStatus::Ready, None);
         self.start_session_embed_scheduler().await;
+        // The insights pass needs no model at all (`03 §7j.1`), so it starts here beside the
+        // other store-backed producers rather than with a provider-gated lane.
+        self.start_insight_scheduler().await;
         self.reconfigure_enrichment().await;
     }
 
@@ -1398,6 +1407,10 @@ impl Kernel {
         // The graph lane is now enabled; start the pool so backfill can drain even when
         // no embedder or inference provider has attached yet (`03 §7h.7`).
         self.start_workers().await;
+        // Insights are store-only (`03 §7j.1`), so they must not wait for a model: this is
+        // the first attachment point that exists on a provider-less machine. Idempotent, so
+        // a run that also attaches an embedder starts it exactly once.
+        self.start_insight_scheduler().await;
     }
 
     /// Stops the sessions scheduler (idempotent). Called on application shutdown.
@@ -1440,6 +1453,40 @@ impl Kernel {
             handle.stop().await;
             tracing::info!("session embed scheduler stopped");
         }
+    }
+
+    /// Starts the P8 insights producer (idempotent, `03 §7j.3`). It needs only the store and
+    /// the platform idle source — which inference fills into the shared slot later, so an
+    /// empty slot simply means "wait" — and enqueues one `insight_generate` job per idle
+    /// tick. Starting it beside the other store-only producers is enough; no model provider
+    /// gates it (`03 §7j.1`: the pass is heuristic).
+    async fn start_insight_scheduler(&self) {
+        let mut guard = self.insight_scheduler.lock().await;
+        if guard.is_none() {
+            *guard = Some(insights::spawn(
+                self.store.clone(),
+                self.throttle_level.clone(),
+                self.graph_idle.clone(),
+            ));
+            tracing::info!("insight scheduler started");
+        }
+    }
+
+    /// Stops the insights producer (idempotent). Called on shutdown.
+    pub async fn stop_insight_scheduler(&self) {
+        if let Some(handle) = self.insight_scheduler.lock().await.take() {
+            handle.stop().await;
+            tracing::info!("insight scheduler stopped");
+        }
+    }
+
+    /// Regenerates the typed insights on demand (`03 §7j.3`, the P9 seam): enqueues one
+    /// `insight_generate` job unless one is already queued, so a burst of requests cannot
+    /// stack passes. Best-effort by design — the queue's own backoff and dead-letter bound a
+    /// failing pass, and a producer must never fail the caller that asked for a refresh.
+    /// Never called on the capture path.
+    pub async fn request_insights_generation(&self) {
+        insights::enqueue_on_demand(self.store.as_ref()).await;
     }
 
     /// Enqueues deferred vision tagging for a frame or a time range (`enqueue_vision`,

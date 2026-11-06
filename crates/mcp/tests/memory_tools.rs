@@ -1,14 +1,17 @@
-//! Protocol-fixture tests for the memory read tools (`list_frames`, `get_capture_coverage`).
+//! Protocol-fixture tests for the read tools (`list_frames`, `get_capture_coverage`,
+//! `list_reports`, `get_report`, and the 0.4.5 graph/insight reads `list_threads`,
+//! `get_thread`, `find_connections`, `list_insights`).
 //!
 //! These drive the real `screensearch-mcp` binary over stdio against a **raw HTTP fixture**
-//! that speaks the frozen `03 §7f.1`/`§7f.2` wire contract (the exact JSON shapes the parent
-//! P1 API serves: `FramePage`/`CaptureCoverage`). They verify the MCP's translation and
-//! forwarding, the shared read-only allowlist, and full-fidelity passthrough (no truncation,
-//! no auto-drain, unknowns preserved).
+//! that speaks the frozen wire contract (the exact JSON shapes the parent API serves:
+//! `FramePage`/`CaptureCoverage`/`ReportPage`/`ThreadSummary`/`ThreadDetail`/`EntitySummary`/
+//! `Insight`). They verify the MCP's translation and forwarding, the shared read-only
+//! allowlist, and full-fidelity passthrough (no truncation, no auto-drain, unknowns
+//! preserved).
 //!
 //! They are protocol-fixture evidence, **not** real-product acceptance: this branch's base
-//! API does not have the `/v1/frames` or `/v1/coverage` routes, so the real end-to-end
-//! consumer run against the P1 stack is a separate, still-pending gate.
+//! API does not have these routes, so the real end-to-end consumer run against the P1 stack
+//! is a separate, still-pending gate.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -549,12 +552,130 @@ fn report_detail(run_id: &str, phase: &str, outcome: Value, result: Value) -> Va
 }
 
 // ---------------------------------------------------------------------------
+// Graph / insight fixture data (contract § Types) — authored from the normative shapes
+// (`traits::ThreadSummary`/`ThreadDetail`/`EntitySummary`/`Insight`), never captured from a
+// running API.
+// ---------------------------------------------------------------------------
+
+/// One `ThreadSummary` row.
+fn thread_summary(
+    id: i64,
+    title: &str,
+    first_seen_at: i64,
+    last_seen_at: i64,
+    session_count: u32,
+) -> Value {
+    json!({
+        "id": id,
+        "title": title,
+        "first_seen_at": first_seen_at,
+        "last_seen_at": last_seen_at,
+        "session_count": session_count
+    })
+}
+
+/// One `ThreadSessionRef` row (chronological within a thread).
+fn thread_session_ref(
+    session_id: i64,
+    started_at: i64,
+    ended_at: Value,
+    kind: &str,
+    title: Value,
+    confidence: f64,
+) -> Value {
+    json!({
+        "session_id": session_id,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "kind": kind,
+        "title": title,
+        "confidence": confidence
+    })
+}
+
+/// One `ThreadEntityRef` row (confidence-descending within a thread).
+fn thread_entity_ref(
+    entity_id: i64,
+    kind: &str,
+    canonical_name: &str,
+    session_count: u32,
+    confidence: f64,
+) -> Value {
+    json!({
+        "entity_id": entity_id,
+        "kind": kind,
+        "canonical_name": canonical_name,
+        "session_count": session_count,
+        "confidence": confidence
+    })
+}
+
+/// A `ThreadDetail`: the thread summary, its sessions, and the entities it touched.
+fn thread_detail(summary: &Value, sessions: Vec<Value>, entities: Vec<Value>) -> Value {
+    json!({ "thread": summary, "sessions": sessions, "entities": entities })
+}
+
+/// One `EntitySummary` row.
+fn entity_summary(
+    id: i64,
+    kind: &str,
+    canonical_name: &str,
+    first_seen_at: i64,
+    last_seen_at: i64,
+    session_count: u32,
+    aliases: &[&str],
+) -> Value {
+    json!({
+        "id": id,
+        "kind": kind,
+        "canonical_name": canonical_name,
+        "first_seen_at": first_seen_at,
+        "last_seen_at": last_seen_at,
+        "session_count": session_count,
+        "aliases": aliases
+    })
+}
+
+/// One `InsightEvidence` reference: `ordinal` is 0-based and dense within its insight.
+fn insight_evidence(ordinal: u32, kind: &str, ref_id: i64) -> Value {
+    json!({ "ordinal": ordinal, "kind": kind, "ref_id": ref_id })
+}
+
+/// One `Insight` row. `payload_fields` are the kind-specific fields; the payload is an
+/// internally tagged union, so its token is the row's own `kind` value.
+#[allow(clippy::too_many_arguments)]
+fn insight_row(
+    id: i64,
+    kind: &str,
+    mut payload_fields: Value,
+    window_start: i64,
+    window_end: i64,
+    generator: &str,
+    generated_at: i64,
+    stale: bool,
+    evidence: Vec<Value>,
+) -> Value {
+    payload_fields["kind"] = json!(kind);
+    json!({
+        "id": id,
+        "kind": kind,
+        "window_start": window_start,
+        "window_end": window_end,
+        "payload": payload_fields,
+        "generator": generator,
+        "generated_at": generated_at,
+        "stale": stale,
+        "evidence": evidence
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-/// The two new read tools are listed in normal (11) and read-only (8) mode with schemas that
-/// match the wire contract; read-only mode accepts them while still refusing mutators, Ask
-/// and unknown names in-band — before any HTTP client is entered.
+/// The read tools added in 0.4.2 and 0.4.5 are listed in normal (17) and read-only (14) mode
+/// with schemas that match the wire contract; read-only mode accepts them while still refusing
+/// mutators, Ask and unknown names in-band — before any HTTP client is entered.
 #[test]
 fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
     let page = empty_page();
@@ -564,11 +685,59 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
         json!(null),
     );
     let report_one = report_detail("r1", "finished", json!("OK"), json!(null));
+    let thread = thread_summary(7, "0.4.5 P8 insights", 1_000, 2_000, 2);
+    let thread_rows = json!([thread.clone()]);
+    let thread_one = thread_detail(
+        &thread,
+        vec![thread_session_ref(
+            11,
+            1_100,
+            json!(1_400),
+            "focus",
+            json!("P8 store slice"),
+            0.91,
+        )],
+        vec![thread_entity_ref(3, "repo", "screensearch", 1, 0.77)],
+    );
+    let entity_rows = json!([entity_summary(
+        3,
+        "repo",
+        "screensearch",
+        1_000,
+        2_000,
+        4,
+        &["screen-search"]
+    )]);
+    let insight_rows = json!([insight_row(
+        5,
+        "thread_activity",
+        json!({
+            "thread_id": 7,
+            "title": "0.4.5 P8 insights",
+            "session_count": 2,
+            "active_ms": 900,
+            "first_touched_at": 1_100,
+            "last_touched_at": 2_000
+        }),
+        1_000,
+        2_000,
+        "heuristic",
+        2_500,
+        false,
+        vec![
+            insight_evidence(0, "thread", 7),
+            insight_evidence(1, "session", 11)
+        ]
+    )]);
     let fixture = MemoryFixture::start(Box::new(move |_method, path, _query| match path {
         "/v1/frames" => (200, "application/json", json_body(&page)),
         "/v1/coverage" => (200, "application/json", json_body(&coverage)),
         "/v1/reports" => (200, "application/json", json_body(&report_rows)),
         "/v1/reports/r1" => (200, "application/json", json_body(&report_one)),
+        "/v1/threads" => (200, "application/json", json_body(&thread_rows)),
+        "/v1/threads/7" => (200, "application/json", json_body(&thread_one)),
+        "/v1/entities" => (200, "application/json", json_body(&entity_rows)),
+        "/v1/insights" => (200, "application/json", json_body(&insight_rows)),
         _ => (
             404,
             "application/json",
@@ -576,7 +745,7 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
         ),
     }));
 
-    // Normal mode: eleven tools, accurate schemas on the two new ones.
+    // Normal mode: seventeen tools, accurate schemas on the read tools.
     let mut normal = McpChild::spawn(&fixture.base(), Some(TEST_TOKEN), &[]);
     normal.handshake();
     let listed = normal.request("tools/list", json!({}));
@@ -598,6 +767,10 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
             "list_sessions",
             "get_session",
             "ask_session",
+            "list_threads",
+            "get_thread",
+            "find_connections",
+            "list_insights",
         ],
         "normal mode lists every tool"
     );
@@ -684,7 +857,7 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
     );
     assert_eq!(unknown["error"]["code"], -32602, "{unknown}");
 
-    // Read-only mode: exactly the ten read tools, the report reads included.
+    // Read-only mode: exactly the fourteen read tools.
     let mut read_only = McpChild::spawn(&fixture.base(), Some(TEST_TOKEN), &["--read-only"]);
     read_only.handshake();
     let listed = read_only.request("tools/list", json!({}));
@@ -707,12 +880,16 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
             "list_marks",
             "list_sessions",
             "get_session",
+            "list_threads",
+            "get_thread",
+            "find_connections",
+            "list_insights",
         ],
         "read-only mode lists the shared allowlist"
     );
 
-    // Every read tool — including the report reads — is accepted in read-only mode and
-    // reaches the fixture.
+    // Every read tool — the report reads and the 0.4.5 graph/insight reads included — is
+    // accepted in read-only mode and reaches the fixture.
     let frames_result = read_only.call_tool("list_frames", json!({ "from": 1000, "to": 2000 }));
     assert_ne!(frames_result["isError"], json!(true), "{frames_result}");
     let coverage_result =
@@ -722,10 +899,23 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
     assert_ne!(reports_result["isError"], json!(true), "{reports_result}");
     let report_result = read_only.call_tool("get_report", json!({ "run_id": "r1" }));
     assert_ne!(report_result["isError"], json!(true), "{report_result}");
-    let recorded = fixture.wait_for_requests(4, Duration::from_secs(10));
+    let threads_result = read_only.call_tool("list_threads", json!({ "from": 1000, "to": 2000 }));
+    assert_ne!(threads_result["isError"], json!(true), "{threads_result}");
+    let thread_result = read_only.call_tool("get_thread", json!({ "id": 7 }));
+    assert_ne!(thread_result["isError"], json!(true), "{thread_result}");
+    let connections_result =
+        read_only.call_tool("find_connections", json!({ "kind": "repo", "q": "screen" }));
+    assert_ne!(
+        connections_result["isError"],
+        json!(true),
+        "{connections_result}"
+    );
+    let insights_result = read_only.call_tool("list_insights", json!({ "from": 1000, "to": 2000 }));
+    assert_ne!(insights_result["isError"], json!(true), "{insights_result}");
+    let recorded = fixture.wait_for_requests(8, Duration::from_secs(10));
     assert_eq!(
         recorded.len(),
-        4,
+        8,
         "read-only calls reached the API: {recorded:?}"
     );
     assert_eq!(recorded[0].method, "GET");
@@ -733,9 +923,13 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
     assert_eq!(recorded[1].path, "/v1/coverage");
     assert_eq!(recorded[2].path, "/v1/reports");
     assert_eq!(recorded[3].path, "/v1/reports/r1");
+    assert_eq!(recorded[4].path, "/v1/threads");
+    assert_eq!(recorded[5].path, "/v1/threads/7");
+    assert_eq!(recorded[6].path, "/v1/entities");
+    assert_eq!(recorded[7].path, "/v1/insights");
 
     // Read-only refuses mutators, Ask and unknown names — in-band, before any HTTP client
-    // is entered. (The report reads are now classified reads, so they are no longer here.)
+    // is entered. (The report and graph reads are classified reads, so they are not here.)
     for name in [
         "add_mark",
         "ask_screen_history",
@@ -757,7 +951,7 @@ fn new_read_tools_are_listed_with_accurate_schemas_and_read_only_allowlist() {
     thread::sleep(Duration::from_millis(150));
     assert_eq!(
         fixture.requests().len(),
-        4,
+        8,
         "denied read-only calls must not reach the API"
     );
 
@@ -1872,6 +2066,321 @@ fn report_read_errors_404_500_503_surface_as_tool_errors() {
             "{tool} ({status}): a served error is not unreachable: {message}"
         );
     }
+
+    assert_eq!(mcp.close_and_wait(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Graph / insight read tools (contract § MCP seam) — protocol-fixture evidence over the raw
+// HTTP fixture. These prove the MCP's translation/forwarding and full-fidelity passthrough
+// against a fixture that speaks the frozen wire contract. They are NOT real-product
+// acceptance: the real `/v1/threads`, `/v1/entities` and `/v1/insights` routes are a
+// separate, still-pending gate.
+// ---------------------------------------------------------------------------
+
+/// The four graph/insight reads build exactly the documented request: `list_threads` and
+/// `list_insights` forward only the parameters given (each bound independently optional),
+/// `get_thread` addresses one thread by id with no query, and `find_connections` forwards its
+/// literal kind/substring filters. Served bodies come back verbatim — including the insight
+/// evidence ordinals and the `stale` flag — and an empty array is reported as empty rather
+/// than silently dropped.
+#[test]
+fn graph_read_tools_forward_path_and_query_exactly() {
+    let thread = thread_summary(7, "0.4.5 P8 insights", 1_000, 2_000, 2);
+    let threads = json!([
+        thread.clone(),
+        thread_summary(8, "Settings v2", 1_500, 2_500, 1)
+    ]);
+    let one = thread_detail(
+        &thread,
+        vec![
+            thread_session_ref(11, 1_100, json!(1_400), "focus", json!("store slice"), 0.91),
+            thread_session_ref(12, 1_800, json!(null), "focus", json!(null), 0.80),
+        ],
+        vec![
+            thread_entity_ref(3, "repo", "screensearch", 2, 0.93),
+            thread_entity_ref(4, "file", "insights.rs", 1, 0.61),
+        ],
+    );
+    let entities = json!([
+        entity_summary(
+            3,
+            "repo",
+            "screensearch",
+            1_000,
+            2_000,
+            4,
+            &["screen-search", "ScreenSearch"]
+        ),
+        entity_summary(4, "file", "insights.rs", 1_500, 2_500, 1, &[]),
+    ]);
+    let insights = json!([insight_row(
+        5,
+        "recurrence",
+        json!({
+            "entity_id": 3,
+            "entity_kind": "repo",
+            "entity_name": "screensearch",
+            "first_session_id": 11,
+            "first_seen_at": 1_100,
+            "second_session_id": 12,
+            "second_seen_at": 1_900,
+            "gap_ms": 800,
+            "occurrence_count": 2
+        }),
+        1_000,
+        2_000,
+        "heuristic",
+        2_500,
+        true,
+        vec![
+            insight_evidence(0, "entity", 3),
+            insight_evidence(1, "session", 11),
+            insight_evidence(2, "session", 12),
+        ]
+    )]);
+    let served_threads = threads.clone();
+    let served_one = one.clone();
+    let served_entities = entities.clone();
+    let served_insights = insights.clone();
+    let fixture = MemoryFixture::start(Box::new(move |_method, path, query| {
+        // A dedicated empty window lets one case assert the empty-list rendering without
+        // disturbing the passthrough cases.
+        if path == "/v1/entities" && query_map(query).get("q").map(String::as_str) == Some("none") {
+            return (200, "application/json", json_body(&json!([])));
+        }
+        let body = match path {
+            "/v1/threads" => Some(&served_threads),
+            "/v1/threads/7" => Some(&served_one),
+            "/v1/entities" => Some(&served_entities),
+            "/v1/insights" => Some(&served_insights),
+            _ => None,
+        };
+        match body {
+            Some(body) => (200, "application/json", json_body(body)),
+            None => (
+                404,
+                "application/json",
+                br#"{"error":"not_found","message":"no route"}"#.to_vec(),
+            ),
+        }
+    }));
+
+    let mut mcp = McpChild::spawn(&fixture.base(), Some(TEST_TOKEN), &[]);
+    mcp.handshake();
+
+    // list_threads with no filters: the route applies its own defaults, so no query is sent.
+    let result = mcp.call_tool("list_threads", json!({}));
+    assert_ne!(result["isError"], json!(true), "{result}");
+    let recorded = fixture.wait_for_requests(1, Duration::from_secs(10));
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].method, "GET");
+    assert_eq!(recorded[0].path, "/v1/threads");
+    assert_eq!(
+        recorded[0].query, "",
+        "no filter means no query string: {recorded:?}"
+    );
+    let text = first_text(&result);
+    assert_eq!(
+        serde_json::from_str::<Value>(&text).expect("thread list JSON"),
+        threads,
+        "the thread list is returned verbatim"
+    );
+
+    // list_threads with a window and limit: exactly those parameters, in that shape.
+    let result = mcp.call_tool(
+        "list_threads",
+        json!({ "from": 1000, "to": 2000, "limit": 2 }),
+    );
+    assert_ne!(result["isError"], json!(true), "{result}");
+    let recorded = fixture.wait_for_requests(2, Duration::from_secs(10));
+    assert_eq!(
+        query_map(&recorded[1].query),
+        params(&[("from", "1000"), ("to", "2000"), ("limit", "2")]),
+        "the thread read forwards exactly the documented parameters"
+    );
+
+    // A null bound means "not given": the other bound alone is still a valid request.
+    let result = mcp.call_tool("list_threads", json!({ "from": 1000, "to": null }));
+    assert_ne!(result["isError"], json!(true), "{result}");
+    let recorded = fixture.wait_for_requests(3, Duration::from_secs(10));
+    assert_eq!(
+        query_map(&recorded[2].query),
+        params(&[("from", "1000")]),
+        "an omitted bound is never forwarded as an empty value"
+    );
+
+    // get_thread: one path segment carrying the integer id, no query string.
+    let result = mcp.call_tool("get_thread", json!({ "id": 7 }));
+    assert_ne!(result["isError"], json!(true), "{result}");
+    let recorded = fixture.wait_for_requests(4, Duration::from_secs(10));
+    assert_eq!(recorded[3].method, "GET");
+    assert_eq!(recorded[3].path, "/v1/threads/7");
+    assert_eq!(recorded[3].query, "");
+    let text = first_text(&result);
+    let detail: Value = serde_json::from_str(&text).expect("thread detail JSON");
+    assert_eq!(detail, one, "the thread detail is returned verbatim");
+    assert_eq!(detail["thread"]["title"], thread["title"]);
+    assert_eq!(detail["sessions"][1]["ended_at"], json!(null));
+    assert_eq!(detail["entities"][0]["confidence"], 0.93);
+
+    // find_connections: the literal kind token, the substring and the limit.
+    let result = mcp.call_tool(
+        "find_connections",
+        json!({ "kind": "repo", "q": "screen search", "limit": 5 }),
+    );
+    assert_ne!(result["isError"], json!(true), "{result}");
+    let recorded = fixture.wait_for_requests(5, Duration::from_secs(10));
+    assert_eq!(recorded[4].path, "/v1/entities");
+    assert_eq!(
+        query_map(&recorded[4].query),
+        params(&[("kind", "repo"), ("q", "screen search"), ("limit", "5")]),
+        "the entity read forwards the kind, the substring and the limit"
+    );
+    let text = first_text(&result);
+    assert_eq!(
+        serde_json::from_str::<Value>(&text).expect("entity list JSON"),
+        entities,
+        "the entity list is returned verbatim (aliases included)"
+    );
+
+    // find_connections with no filters sends no query at all.
+    let result = mcp.call_tool("find_connections", json!({}));
+    assert_ne!(result["isError"], json!(true), "{result}");
+    let recorded = fixture.wait_for_requests(6, Duration::from_secs(10));
+    assert_eq!(recorded[5].query, "");
+
+    // An empty result set is reported as empty, not as a missing or failed read.
+    let result = mcp.call_tool("find_connections", json!({ "q": "none" }));
+    assert_ne!(result["isError"], json!(true), "{result}");
+    assert_eq!(first_text(&result), "No connections.");
+
+    // list_insights: the window, one kind token and the limit.
+    let result = mcp.call_tool(
+        "list_insights",
+        json!({ "from": 1000, "to": 2000, "kind": "recurrence", "limit": 1000 }),
+    );
+    assert_ne!(result["isError"], json!(true), "{result}");
+    let recorded = fixture.wait_for_requests(8, Duration::from_secs(10));
+    assert_eq!(recorded[7].path, "/v1/insights");
+    assert_eq!(
+        query_map(&recorded[7].query),
+        params(&[
+            ("from", "1000"),
+            ("to", "2000"),
+            ("kind", "recurrence"),
+            ("limit", "1000"),
+        ]),
+        "the insight read forwards the window, the kind token and the limit"
+    );
+    let text = first_text(&result);
+    let rows: Value = serde_json::from_str(&text).expect("insight list JSON");
+    assert_eq!(rows, insights, "the insight rows are returned verbatim");
+    assert_eq!(rows[0]["payload"]["kind"], "recurrence");
+    assert_eq!(rows[0]["stale"], true);
+    assert_eq!(rows[0]["evidence"][0]["ordinal"], 0);
+    assert_eq!(rows[0]["evidence"][2]["ordinal"], 2);
+    assert_eq!(rows[0]["evidence"][2]["ref_id"], 12);
+
+    // A kind token outside the closed set is forwarded literally — the API owns membership
+    // and answers with the authoritative 400 (asserted by the error-path test), so the MCP
+    // never reinterprets or silently drops the filter.
+    let result = mcp.call_tool("list_insights", json!({ "kind": "bogus" }));
+    assert_ne!(result["isError"], json!(true), "{result}");
+    let recorded = fixture.wait_for_requests(9, Duration::from_secs(10));
+    assert_eq!(
+        query_map(&recorded[8].query),
+        params(&[("kind", "bogus")]),
+        "the rejected token is forwarded unmodified"
+    );
+
+    assert_eq!(mcp.close_and_wait(), 0);
+}
+
+/// Served failures on the graph/insight reads surface as guided in-band tool errors — a
+/// strict-parse `400` for an unknown kind token / inverted window / unknown parameter and a
+/// `404` for a missing thread — never as empty data or the API-off guidance.
+#[test]
+fn graph_read_errors_400_and_404_surface_as_in_band_tool_errors() {
+    let fixture = MemoryFixture::start(Box::new(|_method, path, _query| match path {
+        "/v1/threads" => (
+            400,
+            "application/json",
+            br#"{"error":"bad_request","message":"invalid thread query"}"#.to_vec(),
+        ),
+        "/v1/threads/999" => (
+            404,
+            "application/json",
+            br#"{"error":"not_found","message":"no thread for id"}"#.to_vec(),
+        ),
+        "/v1/entities" => (
+            400,
+            "application/json",
+            br#"{"error":"bad_request","message":"invalid entity query"}"#.to_vec(),
+        ),
+        "/v1/insights" => (
+            400,
+            "application/json",
+            br#"{"error":"bad_request","message":"invalid insight query"}"#.to_vec(),
+        ),
+        _ => (
+            404,
+            "application/json",
+            br#"{"error":"not_found","message":"no route"}"#.to_vec(),
+        ),
+    }));
+
+    let mut mcp = McpChild::spawn(&fixture.base(), Some(TEST_TOKEN), &[]);
+    mcp.handshake();
+
+    let cases = [
+        ("list_threads", json!({ "from": 5, "to": 1 }), "bad_request"),
+        ("get_thread", json!({ "id": 999 }), "not_found"),
+        (
+            "find_connections",
+            json!({ "kind": "bogus" }),
+            "bad_request",
+        ),
+        ("list_insights", json!({ "kind": "bogus" }), "bad_request"),
+        (
+            "list_insights",
+            json!({ "from": 5, "to": 1 }),
+            "bad_request",
+        ),
+    ];
+    for (tool, args, code) in cases {
+        let result = mcp.call_tool(tool, args.clone());
+        assert_eq!(result["isError"], json!(true), "{tool} {args}: {result}");
+        let message = first_text(&result);
+        assert!(message.contains(code), "{tool} {args}: {message}");
+        assert!(
+            !message.contains("enable the API"),
+            "{tool} {args}: a served error is not API-off: {message}"
+        );
+        assert!(
+            !message.contains("not responding"),
+            "{tool} {args}: a served error is not unreachable: {message}"
+        );
+    }
+    // Every failure was served: the MCP forwarded the call instead of rejecting it locally.
+    let recorded = fixture.wait_for_requests(5, Duration::from_secs(10));
+    assert_eq!(recorded.len(), 5, "{recorded:?}");
+    assert_eq!(
+        query_map(&recorded[0].query),
+        params(&[("from", "5"), ("to", "1")]),
+        "the inverted window was forwarded unmodified"
+    );
+    assert_eq!(recorded[1].path, "/v1/threads/999");
+    assert_eq!(
+        query_map(&recorded[2].query),
+        params(&[("kind", "bogus")]),
+        "the unknown entity kind was forwarded unmodified"
+    );
+    assert_eq!(
+        query_map(&recorded[3].query),
+        params(&[("kind", "bogus")]),
+        "the unknown insight kind was forwarded unmodified"
+    );
 
     assert_eq!(mcp.close_and_wait(), 0);
 }

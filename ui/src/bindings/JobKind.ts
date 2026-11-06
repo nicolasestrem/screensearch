@@ -9,4 +9,4 @@
  * D11). They are additive: `embed_text` and `vision_tag` keep their persisted strings, and
  * no existing variant is reordered or renamed (`jobs.kind` stores these strings).
  */
-export type JobKind = "embed_text" | "vision_tag" | "graph_extract" | "graph_normalize" | "graph_cluster" | "graph_backfill" | "session_embed";
+export type JobKind = "embed_text" | "vision_tag" | "graph_extract" | "graph_normalize" | "graph_cluster" | "graph_backfill" | "session_embed" | "insight_generate";

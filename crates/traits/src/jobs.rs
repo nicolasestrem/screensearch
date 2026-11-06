@@ -28,6 +28,11 @@ pub enum JobKind {
     /// embeds a session's concatenated title/summary in bounded batches, most recently
     /// updated first. Runs on demand and on idle, never on the capture hot path.
     SessionEmbed,
+    /// 0.4.5 P8 insights generation (`03 §7j.3`, D11): one model-free pass over the 30-day
+    /// lookback window that regenerates all five insight kinds for that window and then sweeps
+    /// evidence that no longer exists. Enqueued on idle and on demand, claimable only at
+    /// throttle level 0, and never on the capture hot path.
+    InsightGenerate,
 }
 
 /// State of a job in the queue. Serializes to the DB `state` column

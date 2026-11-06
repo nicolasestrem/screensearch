@@ -473,6 +473,74 @@ impl Store for SqliteStore {
     ) -> Result<InsightsSummary> {
         SqliteStore::insights_summary(self, start, end, bucket_count).await
     }
+    async fn insert_insight(&self, insight: traits::NewInsight) -> Result<i64> {
+        SqliteStore::insert_insight(self, insight).await
+    }
+    async fn replace_insights(
+        &self,
+        kind: traits::InsightKind,
+        window_start: i64,
+        window_end: i64,
+        batch: Vec<traits::NewInsight>,
+    ) -> Result<Vec<i64>> {
+        SqliteStore::replace_insights(self, kind, window_start, window_end, batch).await
+    }
+    async fn list_insights(&self, filter: traits::InsightFilter) -> Result<Vec<traits::Insight>> {
+        SqliteStore::list_insights(self, filter).await
+    }
+    async fn unevidenced_insight_ids(&self) -> Result<Vec<i64>> {
+        SqliteStore::unevidenced_insight_ids(self).await
+    }
+    async fn mark_insights_stale_where_evidence_missing(&self) -> Result<u64> {
+        SqliteStore::mark_insights_stale_where_evidence_missing(self).await
+    }
+    async fn threads_in_range(
+        &self,
+        filter: traits::ThreadFilter,
+    ) -> Result<Vec<traits::ThreadSummary>> {
+        SqliteStore::threads_in_range(self, filter).await
+    }
+    async fn thread_detail(&self, thread_id: i64) -> Result<Option<traits::ThreadDetail>> {
+        SqliteStore::thread_detail(self, thread_id).await
+    }
+    async fn entities_filtered(
+        &self,
+        filter: traits::EntityFilter,
+    ) -> Result<Vec<traits::EntitySummary>> {
+        SqliteStore::entities_filtered(self, filter).await
+    }
+    async fn insight_thread_activity(
+        &self,
+        window_start: i64,
+        window_end: i64,
+    ) -> Result<Vec<traits::ThreadActivityInput>> {
+        SqliteStore::insight_thread_activity(self, window_start, window_end).await
+    }
+    async fn insight_open_marks(&self, window_end: i64) -> Result<Vec<traits::OpenMarkInput>> {
+        SqliteStore::insight_open_marks(self, window_end).await
+    }
+    async fn insight_entity_sessions(
+        &self,
+        window_start: i64,
+        window_end: i64,
+    ) -> Result<Vec<traits::EntitySessionInput>> {
+        SqliteStore::insight_entity_sessions(self, window_start, window_end).await
+    }
+    async fn insight_session_neighbours(
+        &self,
+        window_start: i64,
+        window_end: i64,
+        k: u32,
+    ) -> Result<Vec<traits::SessionNeighbourInput>> {
+        SqliteStore::insight_session_neighbours(self, window_start, window_end, k).await
+    }
+    async fn insight_thread_sessions(
+        &self,
+        window_start: i64,
+        window_end: i64,
+    ) -> Result<Vec<traits::ThreadSessionInput>> {
+        SqliteStore::insight_thread_sessions(self, window_start, window_end).await
+    }
     async fn get_enrichment_input(&self, frame_id: i64) -> Result<Option<FrameEnrichmentInput>> {
         SqliteStore::frame_enrichment_input(self, frame_id).await
     }

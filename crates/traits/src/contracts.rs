@@ -16,9 +16,14 @@ use crate::domain::{
     Embedding, FrameContextRow, FrameEnrichmentInput, NewAskTurn, NewFrame, OcrResult,
     RetrievedChunk, SessionEmbedInput, TextFilterContext, VisionAnalysis,
 };
+use crate::insights::{
+    EntitySessionInput, OpenMarkInput, SessionNeighbourInput, ThreadActivityInput,
+    ThreadSessionInput,
+};
 use crate::ipc::{
-    AnswerDelta, AppSuppression, FrameMeta, InsightsSummary, Mark, PressureSample, SearchHit,
-    SearchQuery, SessionReference, TimelineBucket,
+    AnswerDelta, AppSuppression, EntityFilter, EntitySummary, FrameMeta, Insight, InsightFilter,
+    InsightKind, InsightsSummary, Mark, NewInsight, PressureSample, SearchHit, SearchQuery,
+    SessionReference, ThreadDetail, ThreadFilter, ThreadSummary, TimelineBucket,
 };
 use crate::jobs::{Job, JobKind, JobStats, NewJob};
 use crate::sessions::{
@@ -983,6 +988,126 @@ pub trait Store: Send + Sync {
     /// run on an idle tick. Default returns `0`.
     async fn pending_jobs_of_kind(&self, _kind: JobKind) -> Result<u64> {
         Ok(0)
+    }
+
+    /// Inserts one insight with its evidence in ONE transaction (`03 §7j.2`): an insight
+    /// without evidence is a defect, so an empty `evidence` list is an error and no row is
+    /// written. Returns the new `insights.id`. Default refuses — `insights are unsupported`.
+    async fn insert_insight(&self, _insight: NewInsight) -> Result<i64> {
+        anyhow::bail!("insights are unsupported")
+    }
+
+    /// Replace semantics for one generation pass (`03 §7j.5`): in ONE transaction, delete every
+    /// insight of `kind` whose window overlaps `[window_start, window_end)` (its evidence rows
+    /// cascade away) and insert `batch`. A regeneration **replaces** rows — it never mutates one
+    /// in place under a reader. Each batch entry must carry at least one evidence row; an empty
+    /// list fails the call and the whole transaction rolls back. Returns the inserted ids.
+    /// Default refuses — `insights are unsupported`.
+    async fn replace_insights(
+        &self,
+        _kind: InsightKind,
+        _window_start: i64,
+        _window_end: i64,
+        _batch: Vec<NewInsight>,
+    ) -> Result<Vec<i64>> {
+        anyhow::bail!("insights are unsupported")
+    }
+
+    /// Insights whose window overlaps `filter`'s (`window_start < to AND window_end > from`),
+    /// each with its evidence ordered by `ordinal`, ordered `window_start DESC, kind ASC,
+    /// id DESC` (`03 §7c` P8 block). This is a pure read: `GET /v1/insights` never generates.
+    /// Default returns nothing.
+    async fn list_insights(&self, _filter: InsightFilter) -> Result<Vec<Insight>> {
+        Ok(Vec::new())
+    }
+
+    /// The evidence invariant's sweep (`03 §7j.2`): ids of insights with no `insight_evidence`
+    /// row. The kernel runs it after every generation pass and treats a non-empty result as a
+    /// defect. Default returns nothing.
+    async fn unevidenced_insight_ids(&self) -> Result<Vec<i64>> {
+        Ok(Vec::new())
+    }
+
+    /// Marks `stale=1` every insight with at least one evidence row whose referenced row no
+    /// longer exists — frame, session, thread, entity or mark (`report` refs are never emitted,
+    /// so they are skipped) — and returns how many rows were newly marked (`03 §7j.5`). A stale
+    /// row is still listed with the flag set and is replaced by the next pass. Default marks
+    /// nothing.
+    async fn mark_insights_stale_where_evidence_missing(&self) -> Result<u64> {
+        Ok(0)
+    }
+
+    /// Threads overlapping `filter`'s window (`first_seen_at < to AND last_seen_at >= from`),
+    /// ordered `last_seen_at DESC, id DESC` (`03 §7c` P8 block, `03 §7h.4`). Default returns
+    /// nothing.
+    async fn threads_in_range(&self, _filter: ThreadFilter) -> Result<Vec<ThreadSummary>> {
+        Ok(Vec::new())
+    }
+
+    /// One thread with its member sessions (ordered by `started_at` ascending) and the entities
+    /// those sessions touch (ordered by `confidence` descending, then `canonical_name`), or
+    /// `None` when the thread does not exist — which the route renders as `404 not_found`
+    /// (`03 §7c` P8 block). Default returns `None`.
+    async fn thread_detail(&self, _thread_id: i64) -> Result<Option<ThreadDetail>> {
+        Ok(None)
+    }
+
+    /// Entities filtered by an exact `kind` token and by a case-insensitive substring over
+    /// `canonical_name` or any alias, ordered `last_seen_at DESC, id DESC` (`03 §7c` P8 block).
+    /// Default returns nothing.
+    async fn entities_filtered(&self, _filter: EntityFilter) -> Result<Vec<EntitySummary>> {
+        Ok(Vec::new())
+    }
+
+    /// `thread_activity` generator input (`03 §7j.1`): one row per thread × member session
+    /// overlapping the window, so the pass can sum real overlap times. Default returns nothing.
+    async fn insight_thread_activity(
+        &self,
+        _window_start: i64,
+        _window_end: i64,
+    ) -> Result<Vec<ThreadActivityInput>> {
+        Ok(Vec::new())
+    }
+
+    /// `open_loop` generator input (`03 §7j.1`): marks still open (`marks.resolved_at IS NULL`)
+    /// created before `window_end`. Default returns nothing.
+    async fn insight_open_marks(&self, _window_end: i64) -> Result<Vec<OpenMarkInput>> {
+        Ok(Vec::new())
+    }
+
+    /// `recurrence` generator input (`03 §7j.1`): `session_entities` joined to `sessions` and
+    /// `entities` for the sessions inside the window, ordered `entity_id` then the session's
+    /// `started_at`. Default returns nothing.
+    async fn insight_entity_sessions(
+        &self,
+        _window_start: i64,
+        _window_end: i64,
+    ) -> Result<Vec<EntitySessionInput>> {
+        Ok(Vec::new())
+    }
+
+    /// `semantic_neighbour` generator input (`03 §7j.1`, `03 §7i`): for each session inside the
+    /// window that has a `session_vectors` row, the KNN `k + 1` nearest neighbours with the
+    /// self-match dropped — one edge per neighbour, carrying both sessions' timestamps and
+    /// titles plus the vec0 cosine distance. Default returns nothing.
+    async fn insight_session_neighbours(
+        &self,
+        _window_start: i64,
+        _window_end: i64,
+        _k: u32,
+    ) -> Result<Vec<SessionNeighbourInput>> {
+        Ok(Vec::new())
+    }
+
+    /// `resumption` generator input (`03 §7j.1`): every `thread_sessions` row of the threads
+    /// overlapping the window, with the session's own `started_at`/`ended_at`/title/summary,
+    /// ordered `thread_id` then `started_at`. Default returns nothing.
+    async fn insight_thread_sessions(
+        &self,
+        _window_start: i64,
+        _window_end: i64,
+    ) -> Result<Vec<ThreadSessionInput>> {
+        Ok(Vec::new())
     }
 }
 

@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: Insights engine and agent read surface (backend)
+
+- **Insights are now real, evidenced statements about your history — and agents can read them.**
+  Five kinds (`thread activity`, `open loops`, `recurrence`, `semantic neighbours`, `resumption`)
+  are generated as typed rows whose payload renders completely without a model: every row carries at
+  least one evidence reference (`frame`/`session`/`thread`/`entity`/`mark`), enforced inside the
+  store's write transaction, and a row whose evidence disappears is flagged stale and regenerated
+  rather than shown as truth.
+- **Nothing runs on the capture path and nothing notifies.** Generation is one job under the existing
+  worker pool, pressure throttle and idle gate; a failed pass logs and degrades silently. There are no
+  badges, streaks, scores or targets.
+- **Four read-only HTTP routes** — `/v1/threads`, `/v1/threads/{id}`, `/v1/entities`, `/v1/insights` —
+  behind `history.read` for both the legacy and the read credential, with strict query validation and
+  documented ordering. A GET never generates, writes or starts inference.
+- **Four MCP tools over them** — `list_threads`, `get_thread`, `find_connections`, `list_insights` —
+  registered as read tools, so `--read-only` dispatches them and still refuses `add_mark` and Ask.
+- **Daily reports and weekly synthesis may cite the window's insights** through an additive context
+  block; with no insights in the window the prompt is byte-identical to before.
+- `docs/API.md` and `docs/MCP.md` document the routes, the payloads, the evidence shape and the
+  ordering. Schema is unchanged (still v14): the tables were already in the baseline.
+
+### Fixed: insights that outlived their evidence, and two ways one could distort a report
+
+- **An insight is never reported as current once what it cites has gone.** The staleness flag was
+  only written by the idle generation pass, so between a deleted session (or a frame dropped by
+  retention, or a re-clustered thread) and the next pass, `/v1/insights` and the report prompt
+  described the row as current. Readers now compute the flag from surviving evidence, using the same
+  predicate the sweep writes, and the read path stays write-free.
+- **A window full of insights can no longer push a report's grounding out of the prompt.** The
+  context block is capped at roughly 1200 estimated tokens and says how many rows it left out; the
+  report planner also charges that block against the model's window instead of assuming a fixed
+  instruction. A thousand-row block measured ~148,000 tokens before the cap — eighteen times an 8192
+  window.
+- **`semantic_neighbour` no longer loses connections behind same-day clutter.** The nearest-neighbour
+  read used to fetch five rows and then discard the same-day ones, so five closer sessions on one day
+  hid a genuine link to another day; the fetch now widens until the rule can be satisfied or the
+  candidates run out.
+- Test failure messages no longer interpolate session ids (three CodeQL "cleartext logging" alerts);
+  they report counts and kinds.
+
 ### Changed: App shell and Settings v2
 
 - **The app shell is rebuilt on the v2 design system, and Settings is a searchable, autosaving

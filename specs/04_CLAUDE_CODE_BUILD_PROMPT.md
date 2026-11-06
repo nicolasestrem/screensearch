@@ -101,11 +101,18 @@ settings and the rebuild tool, and `docs/kickoffs/P3-READY.md` is its hand-off. 
 fixture-backed automatic evaluation and the frozen P5/P6 thresholds) is merged as `aceca58` (PR
 #155), and P5 (the work graph engine) is merged as `722f29e` (PR #157); read its acceptance
 evidence and recorded decisions in `05`/`06` #37-#42/`07` before starting P7 work. P6 (Ask v2) is
-**implemented and open for review** as `feat/0.4.5-p6-ask-v2`
-([#160](https://github.com/nicolasestrem/screensearch/pull/160)), not merged: read its build record,
+merged ([#160](https://github.com/nicolasestrem/screensearch/pull/160)), as are P7 (shell + Settings
+v2, [#161](https://github.com/nicolasestrem/screensearch/pull/161)) and its follow-ups (#159, #162,
+#163): read P6's build record,
 the fourteen maintainer decisions/grants and the eight contradiction rows in `05`/`07`/`06` #46-#53
 before touching the ask path, the `session_vectors` lane or `Kernel::ask_turn`. Its acceptance
 numbers are the maintainer's live-DB run and are not yet recorded.
+
+P8 (insights + agent surface) is implemented on `feat/0.4.5-p8-insights-agent` and open as
+[#164](https://github.com/nicolasestrem/screensearch/pull/164) (committed on the maintainer's
+instruction, not merged): the five insight kinds, the `insight_generate` job kind, the four
+`history.read` routes and the four MCP tools — read `05` (2026-11-06) and `06` #93–#101 first. P9
+(the intelligence UI) has not started: `/ask` and `/work` do not exist yet.
 
 Three hard arc constraints, all decided: **baseline schema instead of a migration chain** — `03 §4`
 holds the full DDL at v14, a schema change edits it and bumps the version, there are no populated-DB
@@ -120,8 +127,9 @@ And **no agent commit or push** until the maintainer validates the content and n
 
 ## 1b. External-agent memory API execution (approved 2026-10-16)
 
-**Status:** P0–P3 merged (#126–#130) and shipped in v0.4.2 (2026-10-19). Native Settings UI and
-separate-machine network acceptance remain open (`05`); wrapper archives are not release assets.
+**Status:** P0–P3 merged (#126–#130) and shipped in v0.4.2 (2026-10-19). Native Settings UI for the
+read credential is verified (P7, `05`); separate-machine network acceptance remains open (`05`);
+wrapper archives are not release assets.
 The authority limits and gates below still apply to any follow-up work.
 
 Read `02 §5h`, the complete `03 §7f` contract (including wire types, route/tool permission matrix,

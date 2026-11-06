@@ -137,7 +137,7 @@ Where they ever disagree, the specs win — open an issue.
 
 ## 2. Crate map
 
-A 15-crate Rust workspace plus the React/TS `ui/`. `src-tauri` is the **composition root**: it opens
+An 18-crate Rust workspace plus the React/TS `ui/`. `src-tauri` is the **composition root**: it opens
 the store, spawns OCR, builds the `kernel`, loads the embedder + inference off-thread, owns the
 Flow overlay window/hotkey plumbing and the local-API host, and registers commands. `kernel`
 orchestrates (event bus, capture loop, worker pool, vision scheduler, readiness, the where-was-i
@@ -147,9 +147,12 @@ the module crates — `capture` (WGC + triggers + privacy), `ocr` (WinRT), `uia`
 `llama-server` sidecar), `textfilter` (attention-first span classifier), `sysmon` (pressure probe),
 `doctor` (env smoke-check), `api` (opt-in HTTP API + export), `mcp` (the
 `screensearch-mcp.exe` stdio wrapper over that API), `sessions` (0.4.0 — the pure heuristic
-segmentation + tool-recognition engine), and `harness` (0.4.0 — a dev-only, read-only segmentation
-validation harness, not shipped in the app) — each
-depend only on the contracts in `traits`, never on one another's concrete impls.
+segmentation + tool-recognition engine), and `graph` (0.4.5 — the pure work-graph engine:
+extraction, entity identity, thread clustering) — each
+depend only on the contracts in `traits`, never on one another's concrete impls. Three workspace
+crates are dev-only and never shipped in the app: `harness` (0.4.0 — the read-only segmentation
+validation harness), `rebuild` (the database rebuild path) and `evalfixture` (the seeded P4–P6
+evaluation fixture).
 
 **Authoritative crate map & dependency rule: `specs/03_MASTER_PRODUCTION_SPEC.md` §2.** The
 per-crate file-level guide to where each concern lives is the rest of this document (§4–§11).
@@ -158,13 +161,16 @@ per-crate file-level guide to where each concern lives is the rest of this docum
 
 ## 3. Data model (SQLite, WAL)
 
-Single file `screensearch.db`; forward-only migrations tracked in `schema_version` (`store::schema`).
-*(0.4.5 onward: baseline edit + version bump, `03 §4`.)*
+Single file `screensearch.db`; `schema_version` records the baseline the build creates and requires.
+Since 0.4.5 D2 the store is built from **one baseline script** at `LATEST_SCHEMA_VERSION = 14`, not a
+migration chain: a database at any other version refuses to open (`store::schema`), and the version
+moves by editing `03 §4`'s DDL.
 Per-connection pragmas: `journal_mode=WAL`, `foreign_keys=ON`, `recursive_triggers=ON`,
-`busy_timeout=5000`. **Authoritative as-built DDL (every table, column, index, trigger, and the full
-v1→v13 migration chain): `crates/store/src/schema.rs` (`LATEST_SCHEMA_VERSION = 13`)** — this is
-code, so it never drifts. `03 §4` is the design contract for the schema; where the migrations have
-moved ahead of it (v3 drops legacy `ocr_text`, v4 adds `text_spans.line_index`, v5 adds the nullable
+`busy_timeout=5000`. **Authoritative as-built DDL (every table, column, index and trigger):
+`crates/store/src/schema.rs` (`LATEST_SCHEMA_VERSION = 14`)** — this is
+code, so it never drifts. `03 §4` is the design contract for the schema. The pre-0.4.5 migration
+history is kept below for context — where those increments had moved ahead of `03 §4` (v3 drops
+legacy `ocr_text`, v4 adds `text_spans.line_index`, v5 adds the nullable
 `frames.capture_trigger`, v6 widens that trigger token set for click / scroll-stop, v7 adds
 `frames.image_purged` for degrade-to-text retention, v8 adds the partial
 `idx_frames_image_retention` index for the retention sweep, v9 drops the removed image-embedding
@@ -180,7 +186,11 @@ vs. filtered `content_text` plus per-span and static-chrome metadata, with conte
 FTS mirrors), the text embedding lane, vision analysis (P4), the durable `jobs`
 queue, tags, `marks` (0.3.0), **sessions** (`sessions` + `session_artifacts`, 0.4.0 — derived-but-
 persisted: a wiped `sessions` table is fully recomputable from frames, so `frames.session_id` is
-`ON DELETE SET NULL` while `session_artifacts` CASCADE with their session), and `settings`. The
+`ON DELETE SET NULL` while `session_artifacts` CASCADE with their session), the **0.4.5 work graph**
+(`threads`, `thread_sessions`, `thread_overrides`, `entities`, `entity_aliases`, `session_entities`),
+**insights** (`insights` + `insight_evidence`; the typed statement and the ids it rests on), the
+session-vector lane (`session_vectors`, 0.4.5 — a `vec0` mirror of `sessions` used for semantic
+neighbours), and `settings`. The
 notes below capture the two as-built decisions that the DDL alone doesn't convey.
 
 Each embedding lives in **two** lock-step places — a metadata row and its `vec0` `FLOAT[768]` cosine
@@ -272,6 +282,7 @@ claim_jobs(dynamic provider-backed lanes, 1, now)
   → process_job:                       # public, so tests drive one job deterministically
       embed_text:  read OCR text → embed_texts → upsert_text_embedding(chunk 0, source=ocr)
       vision_tag:  load JPEG → VisionProvider.analyze → insert_vision   (P4)
+      insight_generate:  kernel::insights::run_insight_generate(store, now)  (0.4.5 — P8)
   → complete_job / fail_job(backoff) / dead-letter
   → emit KernelEvent::JobProgress(job_stats)
 ```
@@ -280,6 +291,9 @@ Workers build the claim-kind list on every poll. `EmbedText` is claimed only whe
 attached and `enrich.embed_text` is enabled; `VisionTag` is claimed once the sidecar vision provider
 is attached. Both providers live in `Arc<RwLock<Option<…>>>` **slots** that are snapshotted per job,
 so `vision_tag` backlogs drain even when embeddings are disabled or unavailable.
+`InsightGenerate` needs no provider, so it is claimable at throttle level 0 (the same level as the
+provider-free graph jobs); `kernel::insights` owns an idle producer that enqueues one pass when the
+platform reports idle, gated so a pending pass is never duplicated.
 If a claimed job somehow lacks its provider because of a race, it **retries** (not fails) so the
 backlog drains when the provider appears.
 
@@ -538,7 +552,10 @@ request id, and the UI ignores stale deltas.
   same export code path directly, so export works with the API off. Reference: `docs/API.md`.
   The listener uses plain HTTP; reachable token holders can read history. The inference
   listener stays loopback-only. 0.4.2 adds `/v1/frames`, `/v1/coverage`, `/v1/reports` and
-  `/v1/reports/{run_id}` reads and an independent read-only token (see the section at the top). Existing enabled profiles
+  `/v1/reports/{run_id}` reads and an independent read-only token (see the section at the top). 0.4.5
+  (P8) adds the read-only intelligence surface — `/v1/threads`, `/v1/threads/{id}`, `/v1/entities`
+  and `/v1/insights`, implemented in `api::graph_reads` behind `history.read` for both credential
+  classes — which is what the MCP tools below read. Existing enabled profiles
   without a bind address retain loopback exposure; address/port edits apply immediately. Startup emits a payload-free `api_status_changed` invalidation event;
   tokens are never broadcast through this event. No schema migration is needed.
 - **MCP server** (`crates/mcp` → `screensearch-mcp.exe`, PR8): a dependency-thin **stdio** JSON-RPC
@@ -546,11 +563,46 @@ request id, and the UI ignores stale deltas.
   `SCREENSEARCH_API_URL` / `SCREENSEARCH_API_TOKEN`. Nine tools through 0.4.1
   (`search_screen_history`, `ask_screen_history`, `get_moment`, `where_was_i`, `list_marks`,
   `add_mark`, and the 0.4.0 session trio `list_sessions`, `get_session`, `ask_session`), plus
-  `list_frames`, `get_capture_coverage`, `list_reports` and `get_report` in 0.4.2; loopback by
+  `list_frames`, `get_capture_coverage`, `list_reports` and `get_report` in 0.4.2; 0.4.5 (P8) adds
+  the four work-graph reads `list_threads`, `get_thread`, `find_connections` and `list_insights`,
+  taking the registry to **17 tools in normal mode and 14 under `--read-only`**. Loopback by
   default, with explicit remote HTTP/HTTPS roots allowed from 0.4.2. API-off or bad-token
   states return guided errors ("enable the API in ScreenSearch Settings"), never a crash. Staged as
   the Tauri `externalBin` by `scripts/stage-mcp.mjs` and shipped inside the NSIS installer next to
   `ScreenSearch.exe`. Reference: `docs/MCP.md`.
+
+---
+
+## 9c. Insights + work graph (0.4.5)
+
+- **Work graph** (`crates/graph`, P5): four kernel job kinds (`graph_extract` heuristic
+  extraction + linking, `graph_normalize` the LLM alias pass, `graph_cluster` thread clustering,
+  `graph_backfill` the resumable historical pass that enqueues bounded extracts) populate
+  `threads`, `thread_sessions`, `entities`, `entity_aliases` and `session_entities`.
+  Operator corrections — rename, merge, split — live in `thread_overrides` and survive
+  recomputation. The engine is pure and unit-tested; the persistence seam is `store`.
+- **Insights** (`kernel::insights`, P8): five typed kinds — `thread_activity`, `open_loop`,
+  `recurrence`, `semantic_neighbour`, `resumption` — each with its own payload in `traits`. **The
+  payload is the truth and renders without a model**; there is no scoring, grading, streak or
+  target anywhere in the payloads (`03 §7j.4`). One pass covers a 30-day window, is enqueued as job
+  kind `insight_generate` on the shared pool (idle producer, on-demand request, same pressure gate),
+  and replaces every row of each kind whose window overlaps. The numeric thresholds are named
+  constants in `kernel::insights`, not settings — the settings surface is closed (`03 §8`, D6) and
+  `03 §7j` fixes no value.
+- **The evidence invariant** is the point of the design: an `insights` row carries at least one
+  `insight_evidence` reference (`frame`/`session`/`thread`/`entity`/`mark`) with dense 0-based
+  ordinals, validated **inside** the write transaction, so a row can never exist without something
+  to open. A pass that would leave any row unevidenced dead-letters the job and logs a count; a row
+  whose evidence disappears is flagged stale and regenerated rather than served as truth. A resolved
+  mark is different — its row survives until the window regenerates, which is documented on
+  `derive_open_loops` so it is not read as a bug.
+- **Read surface** (P8, backend only — P9 renders it): `GET /v1/threads`, `/v1/threads/{id}`,
+  `/v1/entities`, `/v1/insights` in `api::graph_reads`, behind `history.read` for both credential
+  classes, with four MCP tools over them (`list_threads`, `get_thread`, `find_connections`,
+  `list_insights`). A GET never generates, writes or starts inference. Daily and weekly reports may
+  additionally cite the window's insights through an additive prompt context block; with no insights
+  the prompt is byte-identical to before. Contract: `03 §7j`; wire shapes and ordering:
+  `docs/API.md`; build evidence: `specs/05_BUILD_REVIEW.md` (2026-11-06).
 
 ---
 
@@ -609,7 +661,7 @@ request id, and the UI ignores stale deltas.
   PR7 adds `crates/api/tests/http_api.rs` (fixture-DB integration: originally a loopback-only
   bind assertion, 401s, every endpoint, SSE ask, export). The current network increment replaces
   that bind assertion with configurable IPv4/IPv6 binding, safe upgrade defaults and loopback-client checks, and extends route-auth coverage. PR8 adds `crates/mcp/tests/stdio_mcp.rs`, which spawns the
-  real compiled binary over stdio (handshake, nine tools, guided API-off/wrong-token errors).
+  real compiled binary over stdio (handshake, seventeen tools, guided API-off/wrong-token errors).
 - **Inference, deterministic (run in CI, no GPU/network):** the **no-orphan gate**
   (`tests/no_orphan.rs` — kill a parent, assert the Job-Object child dies), startup **reap**
   (`tests/reap.rs` — reaps a matching stray, never a foreign pid), the HTTP **client** against a

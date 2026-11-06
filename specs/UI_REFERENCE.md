@@ -466,8 +466,9 @@ no credential-store migration, account system or scope editor. A dedicated crede
 may reveal/copy the token; passive status reports only availability. Keep successful values
 private, hide by default, and never render into errors or event payloads.
 
-Explain: read token can access captured raw/filtered history, stored images and saved reports,
-but cannot Ask/generate, mutate marks, capture now, retry reports or deliver content. Plain HTTP
+Explain: read token can access captured raw/filtered history, stored images, saved reports, and the
+thread, entity and insight reads, but cannot Ask/generate, mutate marks, capture now, retry reports
+or deliver content. Plain HTTP
 may expose tokens/history to network observers; explicitly configured remote wrapper clients
 use the same threat model. Revocation affects subsequent requests, not guaranteed cancellation
 of already authorized streams. Creating a credential is not evidence that the API is listening.

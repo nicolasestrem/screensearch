@@ -12,7 +12,13 @@ no proxies or redirects), `--read-only` mode and the four memory read tools (`li
 installer ([#127](https://github.com/nicolasestrem/screensearch/pull/127),
 [#130](https://github.com/nicolasestrem/screensearch/pull/130)). v0.4.1 and earlier installs
 carry the baseline wrapper — nine tools, `--url` only, loopback-only validation, no read-only
-mode. Native credential-UI and cross-machine acceptance are not claimed; see
+mode.
+
+**On the 0.4.5 branch (not yet released):** four more read tools — `list_threads`, `get_thread`,
+`find_connections`, `list_insights` — are added to the registry described below. They need an
+app build that serves `/v1/threads`, `/v1/entities` and `/v1/insights`.
+
+Native credential-UI and cross-machine acceptance are not claimed; see
 [verification status](TESTING.md#external-agent-memory-api-p1p2--verification-status).
 The active source repository is [nicolasestrem/screensearch](https://github.com/nicolasestrem/screensearch).
 
@@ -84,9 +90,10 @@ this client option does not add app TLS, change listener/CORS, or broaden infere
 ### Read-only mode
 
 `--read-only` both filters `tools/list` and refuses non-allowlisted dispatch **before HTTP**.
-The v0.4.2 registry allows **ten** read tools (of **thirteen** in normal mode):
+The registry allows **fourteen** read tools (of **seventeen** in normal mode):
 `search_screen_history`, `get_moment`, `where_was_i`, `list_marks`, `list_sessions`,
-`get_session`, `list_frames`, `get_capture_coverage`, `list_reports`, `get_report` (see
+`get_session`, `list_frames`, `get_capture_coverage`, `list_reports`, `get_report`,
+`list_threads`, `get_thread`, `find_connections`, `list_insights` (see
 [Tools](#tools)). Ask tools and `add_mark` are excluded; unknown/future names
 default-deny. This is tool-selection ergonomics,
 **not authorization**: omitting the flag does not elevate a read token, and enabling it does
@@ -136,10 +143,11 @@ before this?"*, *"mark this moment."*
 
 ## Tools
 
-The v0.4.2 wrapper has **thirteen tools in normal mode, ten in read-only mode**. v0.4.1 and
+The source wrapper has **seventeen tools in normal mode, fourteen in read-only mode**. v0.4.1 and
 earlier wrappers have only the first nine rows below and no `--read-only` flag. The four memory
 read tools need a v0.4.2 or later app, which serves `/v1/frames`, `/v1/coverage` and
-`/v1/reports`.
+`/v1/reports`. The four graph/insight reads (`list_threads`, `get_thread`, `find_connections`,
+`list_insights`) need an app build that serves `/v1/threads`, `/v1/entities` and `/v1/insights`.
 
 The report tools (`list_reports`, `get_report`) expose saved output by **stored presence**
 (`03 §7f.10`): output is readable while delivery is queued or retrying, and absent output stays
@@ -147,10 +155,17 @@ explicit `null`. They are HTTP-only `Value` passthrough tools (no producer-crate
 no phase/`result` logic of their own — the producer's projection is passed through verbatim.
 Remote report generation, retry, scheduling and delivery remain out of scope.
 
+The graph/insight reads are HTTP-only passthroughs too: each returns the API's bare JSON array
+(or, for `get_thread`, the thread object) unmodified. Insight rows keep their typed payload,
+their evidence references (`{ordinal, kind, ref_id}`, where `ordinal` is 0-based and dense per
+insight) and their `stale` flag — a stale insight's evidence no longer resolves, so read it as
+history rather than current truth. **A read never generates**: no tool enqueues or runs an
+insights pass.
+
 | Tool | Wraps | Arguments | Returns |
 |---|---|---|---|
 | `search_screen_history` | `GET /v1/search` | `query` (required); `from`, `to` (unix ms, both or neither); `limit` (1–100); `include_chrome` | Matching frames (id, snippet, score, time, app). |
-| `ask_screen_history` | `POST /v1/ask` | `query` (required); `top_k`; `thinking`; `max_tokens` | A grounded answer, plus the frame ids it cited. |
+| `ask_screen_history` | `POST /v1/ask` | `query` (required); `top_k`; `thinking`; `max_tokens` | A grounded answer, plus the sessions **and** frame ids it cited. |
 | `get_moment` | `GET /v1/frames/{id}` | `frame_id` (required); `include_image` (default false) | Frame detail + text; with `include_image`, the screenshot too. |
 | `where_was_i` | `GET /v1/context/where-was-i` | *(none)* | The last sustained context before your current activity, or a "nothing to resume" note. |
 | `list_marks` | `GET /v1/marks` | *(none)* | Your marks, unresolved first then newest-first. |
@@ -162,11 +177,20 @@ Remote report generation, retry, scheduling and delivery remain out of scope.
 | `get_capture_coverage` *(v0.4.2)* | `GET /v1/coverage` | `from`, `to` (both required, unix ms) | Bounded coverage counts plus allocator/retention facts and capture observations with explicit unknowns. |
 | `list_reports` *(v0.4.2)* | `GET /v1/reports` | `from`+`to` (first page) **or** `cursor` (continuation); optional `phase`, `outcome`, `limit` (1–1000) | One page of saved-report summaries over the half-open UTC window, newest first, with the exact `next_cursor`; rows omit `markdown`/full evidence. Each summary row carries the required persisted `kind` (`daily` \| `weekly_synthesis`) alongside the metadata, phase, outcome and error code. |
 | `get_report` *(v0.4.2)* | `GET /v1/reports/{run_id}` | `run_id` (required, opaque UUID string) | One saved report's public detail — the summary fields (including the required `kind`) plus `result`: the frozen eleven-field saved result (markdown/model/coverage/provenance) or explicit `null`. |
+| `list_threads` *(0.4.5)* | `GET /v1/threads` | `from`, `to` (unix ms, each optional); `limit` (1–1000, default 1000) | The activity threads overlapping the half-open UTC window (`first_seen_at < to` and `last_seen_at >= from`), ordered `last_seen_at DESC, id DESC`. |
+| `get_thread` *(0.4.5)* | `GET /v1/threads/{id}` | `id` (required, integer) | One thread's summary plus its member sessions (chronological) and the entities it touched (confidence-descending). A missing thread is a `not_found` error. |
+| `find_connections` *(0.4.5)* | `GET /v1/entities` | `kind` (`repo` \| `file` \| `domain` \| `document` \| `ref` \| `app`); `q` (case-insensitive substring over the canonical name or an alias); `limit` (1–1000, default 1000) | The entities the user has been working with, ordered `last_seen_at DESC, id DESC`, each with its aliases and session count. |
+| `list_insights` *(0.4.5)* | `GET /v1/insights` | `from`, `to` (unix ms, each optional); `kind` (`thread_activity` \| `open_loop` \| `recurrence` \| `semantic_neighbour` \| `resumption`); `limit` (1–1000, default 1000) | The derived insights overlapping the window (`window_start < to` and `window_end > from`), ordered `window_start DESC, kind ASC, id DESC`, each with its typed payload, evidence references and `stale` flag. |
 
 The API's `health`, `export`, and mark-`resolve` surfaces are intentionally **not** exposed as
 tools. Normal mode includes reads, Ask generation and add-a-mark. `list_sessions` and
 `get_session` read stored data; **`ask_session` generates an answer** and needs
 `answer.generate`, so it is excluded from read-only mode. MCP has no store access.
+
+Both Ask tools report **both** kinds of evidence the answer was grounded in: the cited
+**sessions** and the cited **frames** (0.4.5, `03 §7i.3`). Each line is omitted when its set is
+empty, so a stream from an app that predates the Ask v2 `citations` event renders exactly the
+answer and frame citations it rendered before.
 
 ### Frame and coverage reads
 

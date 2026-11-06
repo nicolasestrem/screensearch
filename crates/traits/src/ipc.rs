@@ -1252,6 +1252,477 @@ pub struct ExportResult {
     pub bytes: u64,
 }
 
+// ——— 0.4.5 P8: insights, threads and entities (`03 §7j`, `§7h`, `§7c` P8 block) ———
+
+/// Closed set of `insights.kind` (`03 §7j.1`, 0.4.5 D10) — the five typed statements P8
+/// generates. A sixth type is a **schema change** (baseline edit plus a `schema_version`
+/// bump, 0.4.5 D2), so this enum and the `insights.kind` CHECK stay in lockstep.
+/// `as_str()`/`from_token()` translate the persisted token exactly like
+/// [`crate::graph::EntityKind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub enum InsightKind {
+    /// Time and session counts for one thread over the window, plus when it was last
+    /// touched.
+    ThreadActivity,
+    /// Something unresolved — an unresolved mark, or a thread abandoned mid-way.
+    OpenLoop,
+    /// The same entity seen again after a gap.
+    Recurrence,
+    /// Sessions similar to a given session on a different day, via `session_vectors`
+    /// (`03 §7i`).
+    SemanticNeighbour,
+    /// A thread picked up after a gap, with what it was last doing.
+    Resumption,
+}
+
+impl InsightKind {
+    /// The `insights.kind` token; the closed CHECK set in `03 §4`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ThreadActivity => "thread_activity",
+            Self::OpenLoop => "open_loop",
+            Self::Recurrence => "recurrence",
+            Self::SemanticNeighbour => "semantic_neighbour",
+            Self::Resumption => "resumption",
+        }
+    }
+
+    /// Parses a persisted `insights.kind` token. `None` for a token outside the closed set.
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            "thread_activity" => Some(Self::ThreadActivity),
+            "open_loop" => Some(Self::OpenLoop),
+            "recurrence" => Some(Self::Recurrence),
+            "semantic_neighbour" => Some(Self::SemanticNeighbour),
+            "resumption" => Some(Self::Resumption),
+            _ => None,
+        }
+    }
+}
+
+/// `insights.generator` (`03 §7j.5`): `heuristic` means the payload was produced
+/// deterministically; `llm_phrased` means a model only **restated** a payload that already
+/// existed — phrasing is additive and is never the source of a claim. P8 emits `heuristic`
+/// only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub enum InsightGenerator {
+    Heuristic,
+    LlmPhrased,
+}
+
+impl InsightGenerator {
+    /// The `insights.generator` token; the closed CHECK set in `03 §4`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Heuristic => "heuristic",
+            Self::LlmPhrased => "llm_phrased",
+        }
+    }
+
+    /// Parses a persisted `insights.generator` token. `None` outside the closed set.
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            "heuristic" => Some(Self::Heuristic),
+            "llm_phrased" => Some(Self::LlmPhrased),
+            _ => None,
+        }
+    }
+}
+
+/// `insight_evidence.kind` (`03 §7j.2`): which table `ref_id` points at.
+///
+/// `Report` is in the closed set (and in the DDL CHECK), but no generator emits it: P8's
+/// `open_loop` comes from unresolved marks and abandoned threads only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub enum EvidenceKind {
+    Frame,
+    Session,
+    Thread,
+    Entity,
+    Mark,
+    Report,
+}
+
+impl EvidenceKind {
+    /// The `insight_evidence.kind` token; the closed CHECK set in `03 §4`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Frame => "frame",
+            Self::Session => "session",
+            Self::Thread => "thread",
+            Self::Entity => "entity",
+            Self::Mark => "mark",
+            Self::Report => "report",
+        }
+    }
+
+    /// Parses a persisted `insight_evidence.kind` token. `None` outside the closed set.
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            "frame" => Some(Self::Frame),
+            "session" => Some(Self::Session),
+            "thread" => Some(Self::Thread),
+            "entity" => Some(Self::Entity),
+            "mark" => Some(Self::Mark),
+            "report" => Some(Self::Report),
+            _ => None,
+        }
+    }
+}
+
+/// One evidence reference of an insight (`03 §7j.2`). `ordinal` is **0-based and dense**
+/// within its insight (0, 1, 2 …) and orders the evidence for display; `kind` says which
+/// table `ref_id` names. Evidence deletes with its insight (`ON DELETE CASCADE`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct InsightEvidence {
+    pub ordinal: u32,
+    pub kind: EvidenceKind,
+    #[ts(type = "number")]
+    pub ref_id: i64,
+}
+
+/// `thread_activity` payload (`03 §7j.1`): time and session counts per thread over the
+/// window, plus when it was last touched. Every figure is a real overlap computation over
+/// the member sessions — nothing is estimated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct ThreadActivityPayload {
+    #[ts(type = "number")]
+    pub thread_id: i64,
+    pub title: String,
+    /// Sessions of this thread overlapping the window.
+    pub session_count: u32,
+    /// Sum of the member sessions' overlap with the window; an open session uses
+    /// `window_end`.
+    #[ts(type = "number")]
+    pub active_ms: i64,
+    /// Earliest member-session `started_at` inside the window.
+    #[ts(type = "number")]
+    pub first_touched_at: i64,
+    /// Latest `COALESCE(ended_at, window_end)` inside the window.
+    #[ts(type = "number")]
+    pub last_touched_at: i64,
+}
+
+/// Which half of [`OpenLoopPayload`] is populated (`03 §7j.1`).
+///
+/// The "open question from a weekly synthesis" source the spec lists is deferred: P8 opens
+/// loops from unresolved marks and abandoned threads only, so there is no third variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub enum OpenLoopSource {
+    UnresolvedMark,
+    AbandonedThread,
+}
+
+impl OpenLoopSource {
+    /// The token stored inside `insights.payload`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UnresolvedMark => "unresolved_mark",
+            Self::AbandonedThread => "abandoned_thread",
+        }
+    }
+
+    /// Parses a payload `source` token. `None` outside the closed set.
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            "unresolved_mark" => Some(Self::UnresolvedMark),
+            "abandoned_thread" => Some(Self::AbandonedThread),
+            _ => None,
+        }
+    }
+}
+
+/// `open_loop` payload (`03 §7j.1`): something left unresolved, and how long it has been
+/// open. The `mark_*` fields are `Some` only for [`OpenLoopSource::UnresolvedMark`] and the
+/// `thread_*` fields only for [`OpenLoopSource::AbandonedThread`]; the other branch renders
+/// as `null`, never as a fabricated value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct OpenLoopPayload {
+    pub source: OpenLoopSource,
+    /// The unresolved mark (`source = unresolved_mark`).
+    #[ts(type = "number | null")]
+    pub mark_id: Option<i64>,
+    /// The frame that mark flags, so the loop can be reopened from the row.
+    #[ts(type = "number | null")]
+    pub frame_id: Option<i64>,
+    /// The mark's optional intention note.
+    pub note: Option<String>,
+    /// The abandoned thread (`source = abandoned_thread`).
+    #[ts(type = "number | null")]
+    pub thread_id: Option<i64>,
+    /// That thread's title.
+    pub title: Option<String>,
+    /// When the loop opened: the mark's `created_at`, or the thread's `last_seen_at`.
+    #[ts(type = "number")]
+    pub opened_at: i64,
+    /// How long it has been open: `window_end - opened_at`.
+    #[ts(type = "number")]
+    pub idle_ms: i64,
+}
+
+/// `recurrence` payload (`03 §7j.1`): the same entity seen again after at least
+/// `RECURRENCE_GAP_MS` (`03 §7h.4`'s full-weight horizon). `first_*`/`second_*` name the two
+/// sessions that form the recurrence; `occurrence_count` counts every session touching the
+/// entity inside the window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct RecurrencePayload {
+    #[ts(type = "number")]
+    pub entity_id: i64,
+    /// The `entities.kind` token (repo/file/domain/document/ref/app). A `String` rather than
+    /// [`crate::graph::EntityKind`] because the payload is a persisted, additive JSON shape
+    /// and `graph`'s enum carries no `TS` derive.
+    pub entity_kind: String,
+    pub entity_name: String,
+    #[ts(type = "number")]
+    pub first_session_id: i64,
+    #[ts(type = "number")]
+    pub first_seen_at: i64,
+    #[ts(type = "number")]
+    pub second_session_id: i64,
+    #[ts(type = "number")]
+    pub second_seen_at: i64,
+    /// `second_seen_at - first_seen_at`; always `>= RECURRENCE_GAP_MS`.
+    #[ts(type = "number")]
+    pub gap_ms: i64,
+    /// Sessions touching the entity inside the window.
+    pub occurrence_count: u32,
+}
+
+/// `semantic_neighbour` payload (`03 §7j.1`): sessions similar to a given session on
+/// **other days**, via Session vectors (`03 §7i`). `neighbours` is never empty and is ordered
+/// by descending similarity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct SemanticNeighbourPayload {
+    #[ts(type = "number")]
+    pub session_id: i64,
+    pub session_title: Option<String>,
+    #[ts(type = "number")]
+    pub session_started_at: i64,
+    pub neighbours: Vec<SessionNeighbour>,
+}
+
+/// One neighbour inside [`SemanticNeighbourPayload`]. `similarity` is cosine similarity
+/// (`1.0 - vec0 distance`) and only neighbours at or above `NEIGHBOUR_MIN_SIMILARITY` appear.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct SessionNeighbour {
+    #[ts(type = "number")]
+    pub session_id: i64,
+    pub title: Option<String>,
+    #[ts(type = "number")]
+    pub started_at: i64,
+    pub similarity: f64,
+}
+
+/// `resumption` payload (`03 §7j.1`): a thread picked up after at least `RESUMPTION_GAP_MS`,
+/// with what it was last doing. `last_doing` is the previous session's summary preferred,
+/// then its title, and `None` when the session has neither.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct ResumptionPayload {
+    #[ts(type = "number")]
+    pub thread_id: i64,
+    pub title: String,
+    #[ts(type = "number")]
+    pub previous_session_id: i64,
+    #[ts(type = "number")]
+    pub previous_ended_at: i64,
+    #[ts(type = "number")]
+    pub resumed_session_id: i64,
+    #[ts(type = "number")]
+    pub resumed_at: i64,
+    /// `resumed_at - previous_ended_at`; always `>= RESUMPTION_GAP_MS`.
+    #[ts(type = "number")]
+    pub gap_ms: i64,
+    pub last_doing: Option<String>,
+}
+
+/// The typed JSON stored in `insights.payload` (`03 §7j.5`) — the **truth** of a row,
+/// renderable without a model. Tagged by `kind` with the same tokens as the `insights.kind`
+/// column, so a payload can never be read as a different kind; the variant and the column
+/// are written together and always agree. Additive forever: fields may be appended, none
+/// removed or retyped.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub enum InsightPayload {
+    ThreadActivity(ThreadActivityPayload),
+    OpenLoop(OpenLoopPayload),
+    Recurrence(RecurrencePayload),
+    SemanticNeighbour(SemanticNeighbourPayload),
+    Resumption(ResumptionPayload),
+}
+
+impl InsightPayload {
+    /// The [`InsightKind`] this payload states — always the row's `insights.kind` value.
+    pub fn kind(&self) -> InsightKind {
+        match self {
+            Self::ThreadActivity(_) => InsightKind::ThreadActivity,
+            Self::OpenLoop(_) => InsightKind::OpenLoop,
+            Self::Recurrence(_) => InsightKind::Recurrence,
+            Self::SemanticNeighbour(_) => InsightKind::SemanticNeighbour,
+            Self::Resumption(_) => InsightKind::Resumption,
+        }
+    }
+}
+
+/// A persisted insight with its evidence (`03 §7j`) — the store read shape and the
+/// `GET /v1/insights` response shape. `window_start`/`window_end` are unix ms and half-open
+/// (`[window_start, window_end)`); `stale` is `true` once a referenced row disappeared, and
+/// such a row is never served as truth without the flag (`07` C10). `evidence` is ordered by
+/// `ordinal` and never empty — an insight without evidence is a defect (`03 §7j.2`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct Insight {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub kind: InsightKind,
+    #[ts(type = "number")]
+    pub window_start: i64,
+    #[ts(type = "number")]
+    pub window_end: i64,
+    pub payload: InsightPayload,
+    pub generator: InsightGenerator,
+    #[ts(type = "number")]
+    pub generated_at: i64,
+    pub stale: bool,
+    pub evidence: Vec<InsightEvidence>,
+}
+
+/// Insert shape for one insight (`03 §7j.2`): everything except the store-assigned `id` and
+/// `generated_at`. Callers must supply at least one [`InsightEvidence`]; the store rejects an
+/// empty list rather than writing an unevidenced row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct NewInsight {
+    #[ts(type = "number")]
+    pub window_start: i64,
+    #[ts(type = "number")]
+    pub window_end: i64,
+    pub payload: InsightPayload,
+    pub generator: InsightGenerator,
+    pub evidence: Vec<InsightEvidence>,
+}
+
+/// One thread row for the thread list (`03 §7c` P8 block, `§7h.4`): the same figures the
+/// clusterer maintains, never recomputed differently.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct ThreadSummary {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub title: String,
+    #[ts(type = "number")]
+    pub first_seen_at: i64,
+    #[ts(type = "number")]
+    pub last_seen_at: i64,
+    pub session_count: u32,
+}
+
+/// A session belonging to a thread, as carried by [`ThreadDetail`]. `kind` is the
+/// `sessions.kind` token (`03 §7e`); `confidence` is the cluster edge weight that put the
+/// session in the thread (`thread_sessions.confidence`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct ThreadSessionRef {
+    #[ts(type = "number")]
+    pub session_id: i64,
+    #[ts(type = "number")]
+    pub started_at: i64,
+    #[ts(type = "number | null")]
+    pub ended_at: Option<i64>,
+    pub kind: String,
+    pub title: Option<String>,
+    pub confidence: f64,
+}
+
+/// An entity that co-occurs with a thread's sessions, as carried by [`ThreadDetail`].
+/// `kind` is the `entities.kind` token; `session_count` counts the thread's member sessions
+/// touching it; `confidence` is the maximum over those sessions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct ThreadEntityRef {
+    #[ts(type = "number")]
+    pub entity_id: i64,
+    pub kind: String,
+    pub canonical_name: String,
+    pub session_count: u32,
+    pub confidence: f64,
+}
+
+/// `GET /v1/threads/{id}` response (`03 §7c` P8 block): the thread, its sessions ordered by
+/// `started_at` ascending, and its member entities ordered by `confidence` descending then
+/// `canonical_name`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct ThreadDetail {
+    pub thread: ThreadSummary,
+    pub sessions: Vec<ThreadSessionRef>,
+    pub entities: Vec<ThreadEntityRef>,
+}
+
+/// One entity row for the entity list (`03 §7c` P8 block, `§7h.1`). `kind` is the
+/// `entities.kind` token; `aliases` are the `entity_aliases` names in insertion order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct EntitySummary {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub kind: String,
+    pub canonical_name: String,
+    #[ts(type = "number")]
+    pub first_seen_at: i64,
+    #[ts(type = "number")]
+    pub last_seen_at: i64,
+    pub session_count: u32,
+    pub aliases: Vec<String>,
+}
+
+/// Query for `Store::threads_in_range` / `GET /v1/threads`: threads overlapping the
+/// half-open `[from_ms, to_ms)` window (`first_seen_at < to AND last_seen_at >= from`;
+/// a missing bound leaves that side open). `limit` arrives already resolved — the API layer
+/// applies the 1000 default and the `1..=1000` clamp before calling the store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadFilter {
+    pub from_ms: Option<i64>,
+    pub to_ms: Option<i64>,
+    pub limit: u32,
+}
+
+/// Query for `Store::entities_filtered` / `GET /v1/entities`. `kind` is an exact
+/// `entities.kind` token; `query` is a case-insensitive substring matched against
+/// `canonical_name` or any alias. `limit` is already resolved and clamped by the API layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityFilter {
+    pub kind: Option<String>,
+    pub query: Option<String>,
+    pub limit: u32,
+}
+
+/// Query for `Store::list_insights` / `GET /v1/insights`: insights whose window overlaps
+/// `[from_ms, to_ms)` (`window_start < to AND window_end > from`). `kind: None` means every
+/// kind. `limit` is already resolved and clamped by the API layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InsightFilter {
+    pub from_ms: Option<i64>,
+    pub to_ms: Option<i64>,
+    pub kind: Option<InsightKind>,
+    pub limit: u32,
+}
+
 #[cfg(test)]
 mod ts_number_guard {
     use super::*;
@@ -1296,6 +1767,28 @@ mod ts_number_guard {
             ("ApiStatus", ApiStatus::inline()),
             ("ExportRequest", ExportRequest::inline()),
             ("ExportResult", ExportResult::inline()),
+            ("InsightKind", InsightKind::inline()),
+            ("InsightGenerator", InsightGenerator::inline()),
+            ("EvidenceKind", EvidenceKind::inline()),
+            ("InsightEvidence", InsightEvidence::inline()),
+            ("OpenLoopSource", OpenLoopSource::inline()),
+            ("ThreadActivityPayload", ThreadActivityPayload::inline()),
+            ("OpenLoopPayload", OpenLoopPayload::inline()),
+            ("RecurrencePayload", RecurrencePayload::inline()),
+            (
+                "SemanticNeighbourPayload",
+                SemanticNeighbourPayload::inline(),
+            ),
+            ("SessionNeighbour", SessionNeighbour::inline()),
+            ("ResumptionPayload", ResumptionPayload::inline()),
+            ("InsightPayload", InsightPayload::inline()),
+            ("Insight", Insight::inline()),
+            ("NewInsight", NewInsight::inline()),
+            ("ThreadSummary", ThreadSummary::inline()),
+            ("ThreadSessionRef", ThreadSessionRef::inline()),
+            ("ThreadEntityRef", ThreadEntityRef::inline()),
+            ("ThreadDetail", ThreadDetail::inline()),
+            ("EntitySummary", EntitySummary::inline()),
         ];
         for (name, decl) in decls {
             assert!(
@@ -1369,5 +1862,302 @@ mod api_status_redaction {
         for field in ["bind_address", "enabled", "running", "port", "last_error"] {
             assert!(decl.contains(field), "binding lost {field}: {decl}");
         }
+    }
+}
+
+#[cfg(test)]
+mod insights_payload_fixtures {
+    use super::*;
+    use serde_json::Value;
+
+    /// Serializes `payload`, pins the internal `kind` tag (`03 §7j.5`), deserializes it back
+    /// and asserts the round trip is lossless. Returns the serialized object so the caller can
+    /// assert each rendered field.
+    fn round_trip(payload: InsightPayload, tag: &str) -> Value {
+        let value = serde_json::to_value(&payload).expect("insight payload serializes");
+        assert_eq!(
+            value.get("kind").and_then(Value::as_str),
+            Some(tag),
+            "kind tag missing or wrong: {value}"
+        );
+        let back: InsightPayload =
+            serde_json::from_value(value.clone()).expect("insight payload deserializes");
+        assert_eq!(back, payload, "round trip changed the payload");
+        value
+    }
+
+    /// Asserts `object[field]` is present and equals the JSON rendering of `expected` — always
+    /// derived from the constructed value, never a second copy of the literal.
+    fn assert_field<T: serde::Serialize>(object: &Value, field: &str, expected: &T) {
+        let expected = serde_json::to_value(expected).expect("field value serializes");
+        assert_eq!(
+            object.get(field),
+            Some(&expected),
+            "rendered field `{field}` is missing or differs: {object}"
+        );
+    }
+
+    #[test]
+    fn insights_payload_thread_activity_round_trips() {
+        let payload = ThreadActivityPayload {
+            thread_id: 41,
+            title: "Quarterly budget review".to_string(),
+            session_count: 3,
+            active_ms: 5_400_000,
+            first_touched_at: 1_760_000_000_000,
+            last_touched_at: 1_760_003_600_000,
+        };
+        let value = round_trip(
+            InsightPayload::ThreadActivity(payload.clone()),
+            "thread_activity",
+        );
+        assert_field(&value, "thread_id", &payload.thread_id);
+        assert_field(&value, "title", &payload.title);
+        assert_field(&value, "session_count", &payload.session_count);
+        assert_field(&value, "active_ms", &payload.active_ms);
+        assert_field(&value, "first_touched_at", &payload.first_touched_at);
+        assert_field(&value, "last_touched_at", &payload.last_touched_at);
+        assert_eq!(
+            InsightPayload::ThreadActivity(payload).kind(),
+            InsightKind::ThreadActivity
+        );
+    }
+
+    #[test]
+    fn insights_payload_open_loop_round_trips() {
+        // Every optional branch populated, so no field can pass merely by being `None`.
+        let populated = OpenLoopPayload {
+            source: OpenLoopSource::UnresolvedMark,
+            mark_id: Some(88),
+            frame_id: Some(1_204),
+            note: Some("send the revised invoice".to_string()),
+            thread_id: Some(17),
+            title: Some("Billing migration".to_string()),
+            opened_at: 1_759_999_000_000,
+            idle_ms: 900_000,
+        };
+        let value = round_trip(InsightPayload::OpenLoop(populated.clone()), "open_loop");
+        assert_field(&value, "source", &populated.source);
+        assert_field(&value, "mark_id", &populated.mark_id);
+        assert_field(&value, "frame_id", &populated.frame_id);
+        assert_field(&value, "note", &populated.note);
+        assert_field(&value, "thread_id", &populated.thread_id);
+        assert_field(&value, "title", &populated.title);
+        assert_field(&value, "opened_at", &populated.opened_at);
+        assert_field(&value, "idle_ms", &populated.idle_ms);
+
+        // The two shapes a generator really emits: the other branch renders as `null` rather
+        // than a missing key, so a reader never has to tell "absent" from "null".
+        let unresolved_mark = OpenLoopPayload {
+            source: OpenLoopSource::UnresolvedMark,
+            mark_id: Some(12),
+            frame_id: Some(34),
+            note: None,
+            thread_id: None,
+            title: None,
+            opened_at: 1_760_000_000_000,
+            idle_ms: 600_000,
+        };
+        let value = round_trip(
+            InsightPayload::OpenLoop(unresolved_mark.clone()),
+            "open_loop",
+        );
+        assert_field(&value, "source", &unresolved_mark.source);
+        assert_field(&value, "mark_id", &unresolved_mark.mark_id);
+        assert_field(&value, "frame_id", &unresolved_mark.frame_id);
+        assert_field(&value, "note", &unresolved_mark.note);
+        assert_field(&value, "thread_id", &unresolved_mark.thread_id);
+        assert_field(&value, "title", &unresolved_mark.title);
+
+        let abandoned_thread = OpenLoopPayload {
+            source: OpenLoopSource::AbandonedThread,
+            mark_id: None,
+            frame_id: None,
+            note: None,
+            thread_id: Some(17),
+            title: Some("Billing migration".to_string()),
+            opened_at: 1_759_000_000_000,
+            idle_ms: 1_000_000,
+        };
+        let value = round_trip(
+            InsightPayload::OpenLoop(abandoned_thread.clone()),
+            "open_loop",
+        );
+        assert_field(&value, "source", &abandoned_thread.source);
+        assert_field(&value, "mark_id", &abandoned_thread.mark_id);
+        assert_field(&value, "frame_id", &abandoned_thread.frame_id);
+        assert_field(&value, "thread_id", &abandoned_thread.thread_id);
+        assert_field(&value, "title", &abandoned_thread.title);
+        assert_field(&value, "opened_at", &abandoned_thread.opened_at);
+        assert_field(&value, "idle_ms", &abandoned_thread.idle_ms);
+
+        assert_eq!(
+            InsightPayload::OpenLoop(abandoned_thread).kind(),
+            InsightKind::OpenLoop
+        );
+    }
+
+    #[test]
+    fn insights_payload_recurrence_round_trips() {
+        let payload = RecurrencePayload {
+            entity_id: 7,
+            entity_kind: "repo".to_string(),
+            entity_name: "screensearch".to_string(),
+            first_session_id: 480,
+            first_seen_at: 1_759_000_000_000,
+            second_session_id: 512,
+            second_seen_at: 1_760_000_000_000,
+            gap_ms: 1_000_000_000,
+            occurrence_count: 4,
+        };
+        let value = round_trip(InsightPayload::Recurrence(payload.clone()), "recurrence");
+        assert_field(&value, "entity_id", &payload.entity_id);
+        assert_field(&value, "entity_kind", &payload.entity_kind);
+        assert_field(&value, "entity_name", &payload.entity_name);
+        assert_field(&value, "first_session_id", &payload.first_session_id);
+        assert_field(&value, "first_seen_at", &payload.first_seen_at);
+        assert_field(&value, "second_session_id", &payload.second_session_id);
+        assert_field(&value, "second_seen_at", &payload.second_seen_at);
+        assert_field(&value, "gap_ms", &payload.gap_ms);
+        assert_field(&value, "occurrence_count", &payload.occurrence_count);
+        assert_eq!(
+            InsightPayload::Recurrence(payload).kind(),
+            InsightKind::Recurrence
+        );
+    }
+
+    #[test]
+    fn insights_payload_semantic_neighbour_round_trips() {
+        let payload = SemanticNeighbourPayload {
+            session_id: 512,
+            session_title: Some("Postgres index tuning".to_string()),
+            session_started_at: 1_760_000_000_000,
+            neighbours: vec![
+                SessionNeighbour {
+                    session_id: 480,
+                    title: Some("Vacuum and autovacuum".to_string()),
+                    started_at: 1_759_913_600_000,
+                    similarity: 0.93,
+                },
+                SessionNeighbour {
+                    session_id: 502,
+                    title: None,
+                    started_at: 1_759_999_000_000,
+                    similarity: 0.87,
+                },
+            ],
+        };
+        let value = round_trip(
+            InsightPayload::SemanticNeighbour(payload.clone()),
+            "semantic_neighbour",
+        );
+        assert_field(&value, "session_id", &payload.session_id);
+        assert_field(&value, "session_title", &payload.session_title);
+        assert_field(&value, "session_started_at", &payload.session_started_at);
+        assert_field(&value, "neighbours", &payload.neighbours);
+
+        // Each neighbour renders its own fields; `title: None` must survive as `null`.
+        let rendered = value["neighbours"]
+            .as_array()
+            .expect("neighbours renders as an array");
+        assert_eq!(rendered.len(), payload.neighbours.len());
+        for (rendered, neighbour) in rendered.iter().zip(&payload.neighbours) {
+            assert_field(rendered, "session_id", &neighbour.session_id);
+            assert_field(rendered, "title", &neighbour.title);
+            assert_field(rendered, "started_at", &neighbour.started_at);
+            assert_field(rendered, "similarity", &neighbour.similarity);
+        }
+
+        assert_eq!(
+            InsightPayload::SemanticNeighbour(payload).kind(),
+            InsightKind::SemanticNeighbour
+        );
+    }
+
+    #[test]
+    fn insights_payload_resumption_round_trips() {
+        let payload = ResumptionPayload {
+            thread_id: 17,
+            title: "Billing migration".to_string(),
+            previous_session_id: 480,
+            previous_ended_at: 1_759_000_000_000,
+            resumed_session_id: 512,
+            resumed_at: 1_760_000_000_000,
+            gap_ms: 1_000_000_000,
+            last_doing: Some("rewriting the invoice model".to_string()),
+        };
+        let value = round_trip(InsightPayload::Resumption(payload.clone()), "resumption");
+        assert_field(&value, "thread_id", &payload.thread_id);
+        assert_field(&value, "title", &payload.title);
+        assert_field(&value, "previous_session_id", &payload.previous_session_id);
+        assert_field(&value, "previous_ended_at", &payload.previous_ended_at);
+        assert_field(&value, "resumed_session_id", &payload.resumed_session_id);
+        assert_field(&value, "resumed_at", &payload.resumed_at);
+        assert_field(&value, "gap_ms", &payload.gap_ms);
+        assert_field(&value, "last_doing", &payload.last_doing);
+        assert_eq!(
+            InsightPayload::Resumption(payload).kind(),
+            InsightKind::Resumption
+        );
+    }
+
+    /// The DB tokens (`as_str`/`from_token`, the `03 §4` CHECK sets) must be exactly the JSON
+    /// tokens: otherwise a row persisted with one string would be read back under a different
+    /// one, and the `insights.kind`/`payload.kind` pair would disagree.
+    #[test]
+    fn insight_closed_set_tokens_match_their_serde_tokens() {
+        fn check<T>(values: &[T], as_str: fn(T) -> &'static str, from_token: fn(&str) -> Option<T>)
+        where
+            T: Copy + std::fmt::Debug + PartialEq + serde::Serialize,
+        {
+            for &value in values {
+                let token = as_str(value);
+                let serialized = serde_json::to_value(value).expect("closed set serializes");
+                assert_eq!(
+                    serialized,
+                    Value::String(token.to_string()),
+                    "DB token and serde token disagree for {value:?}"
+                );
+                assert_eq!(from_token(token), Some(value), "from_token({token})");
+            }
+            assert_eq!(from_token("not_a_token"), None);
+        }
+
+        check(
+            &[
+                InsightKind::ThreadActivity,
+                InsightKind::OpenLoop,
+                InsightKind::Recurrence,
+                InsightKind::SemanticNeighbour,
+                InsightKind::Resumption,
+            ],
+            InsightKind::as_str,
+            InsightKind::from_token,
+        );
+        check(
+            &[InsightGenerator::Heuristic, InsightGenerator::LlmPhrased],
+            InsightGenerator::as_str,
+            InsightGenerator::from_token,
+        );
+        check(
+            &[
+                EvidenceKind::Frame,
+                EvidenceKind::Session,
+                EvidenceKind::Thread,
+                EvidenceKind::Entity,
+                EvidenceKind::Mark,
+                EvidenceKind::Report,
+            ],
+            EvidenceKind::as_str,
+            EvidenceKind::from_token,
+        );
+        check(
+            &[
+                OpenLoopSource::UnresolvedMark,
+                OpenLoopSource::AbandonedThread,
+            ],
+            OpenLoopSource::as_str,
+            OpenLoopSource::from_token,
+        );
     }
 }

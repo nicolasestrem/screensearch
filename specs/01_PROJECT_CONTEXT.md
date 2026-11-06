@@ -130,9 +130,10 @@ for self-contained contracts and source-inspected inventory.
   `03 §7f`, #126–#130: chronological evidence pages, bounded coverage, independent read-only
   credentials, saved-report HTTP/MCP reads) and F3 deeper memory G1–G6 (`02 §5i`, `03 §8e`,
   #136–#141: weekly synthesis, weekly notes and index entries, project-note promotion, weekly
-  scheduler and weekly Telegram digest). Still open (`05_BUILD_REVIEW.md`): F3 native Windows
-  interactive acceptance has not been performed, and the external-agent API's native Settings
-  UI and separate-machine network gates remain open. Only the Windows NSIS installer, its
+  scheduler and weekly Telegram digest). F3 native Windows interactive acceptance was **accepted**
+  on the maintainer's report (`07`, 2026-10-19), and the read credential's native Settings UI was
+  verified in P7 (`05`). Still open (`05_BUILD_REVIEW.md`): the external-agent API's separate-machine
+  network gate. Only the Windows NSIS installer, its
   updater `.sig` and `latest.json` are release assets; standalone MCP wrapper archives are not
   published. Post-release increments on
   `main`: llama.cpp bootstrap recovery (#145, merged) and setup visibility (`02 §5j`, `03 §7g`,
@@ -140,28 +141,44 @@ for self-contained contracts and source-inspected inventory.
   `CHANGELOG-ARCHIVE.md` and `specs/archive/`; code-signing is the lone packaging follow-up
   (`03 §11b`).
 
-- **0.4.5 arc status (2026-11-05):** the arc is merged through Wave A and the first Wave B phase.
+- **0.4.5 arc status (2026-11-06):** the arc is merged through Wave B — P1–P7 are on `main` — and
+  **P8** is implemented on `feat/0.4.5-p8-insights-agent` ([#164], open, not merged; committed and
+  pushed on the maintainer's explicit instruction, 0.4.5 D18).
   On `main`: **P1** specs contract (`e27f42c`, PR #150), **P2** design system v2 (`7e73e30`, PR
   #151), **P3** baseline schema **v14** plus settings v2 (`0dfa2f5`, PR #153; the working tree now
   carries the v14 baseline instead of the migration chain, `03 §4`, 0.4.5 D2), **P4** automatic
-  evaluation with the frozen P5/P6 thresholds (`aceca58`, PR #155), and **P5** work graph engine
+  evaluation with the frozen P5/P6 thresholds (`aceca58`, PR #155), **P5** work graph engine
   (`722f29e`, PR #157; pure `crates/graph`, graph persistence, four kernel job kinds and the idle
-  scheduler; acceptance, decisions and evidence in `05`, `06` #37-#42 and `07`). **P6** (Ask v2) is
-  implemented and open for review as `feat/0.4.5-p6-ask-v2`
+  scheduler; acceptance, decisions and evidence in `05`, `06` #37-#42 and `07`), **P6** Ask v2
   ([#160](https://github.com/nicolasestrem/screensearch/pull/160)) — planning, the four ordered
-  retrieval stages, both-kind citations, multi-turn conversations and the `session_embed` job lane;
-  nothing on `main` yet, and its acceptance numbers await the maintainer's live-DB run. **P7**
-  (shell + Settings v2) is implemented on `feat/0.4.5-p7-shell-settings`
-  ([#161](https://github.com/nicolasestrem/screensearch/pull/161), open, **not merged**) and awaits the
-  maintainer's review before merge (0.4.5 D18; committed and pushed on their authorization); its gate output, 26-row
-  acceptance table, search/keyboard/state passes and screenshot set are in `05`. Gate A (`v0.4.3`) and
-  Gate B (`v0.4.4`) tags remain the maintainer's calls; the executing phases ran under the
-  maintainer's overrides (fixture evidence instead of the real-DB maintainer run, D18 waived per
-  branch on the maintainer's explicit instruction). The full app is a Rust workspace of **18 module
+  retrieval stages, both-kind citations, multi-turn conversations and the `session_embed` job lane,
+  whose acceptance numbers await the maintainer's live-DB run — and **P7** shell + Settings v2
+  ([#161](https://github.com/nicolasestrem/screensearch/pull/161)), merged after the maintainer's
+  review (0.4.5 D18; committed and pushed on their authorization), with its gate output, 26-row
+  acceptance table, search/keyboard/state passes and screenshot set in `05`. Gate A (`v0.4.3`) and
+  Gate B (`v0.4.4`) tags remain the maintainer's calls; **no `v0.4.3` or `v0.4.4` tag exists**, and
+  the wave rule (`docs/0.4.5.md` §4.2 — a wave starts when every phase of the previous one is
+  merged) is what allowed P8 to start. The executing phases ran under the maintainer's overrides
+  (fixture evidence instead of the real-DB maintainer run, D18 waived per branch on the maintainer's
+  explicit instruction). The full app is a Rust workspace of **18 module
   crates** plus `src-tauri` (the Tauri composition root) and a React/TS UI.
 
-- **P6 Ask v2 (2026-11-05):** implemented on `feat/0.4.5-p6-ask-v2`
-  ([#160](https://github.com/nicolasestrem/screensearch/pull/160), open, **not merged**). Ask is now
+- **P8 insights + agent surface (2026-11-06):** implemented on `feat/0.4.5-p8-insights-agent`,
+  committed and pushed on the maintainer's instruction, open as
+  [#164](https://github.com/nicolasestrem/screensearch/pull/164) (0.4.5 D18; not merged).
+  Five kinds (`thread_activity`, `open_loop`, `recurrence`,
+  `semantic_neighbour`, `resumption`) generate from history as job kind `insight_generate` under the
+  existing worker pool, pressure throttle and idle gate; the store writes each insight with its
+  evidence in one transaction, and a sweep dead-letters a pass that would leave one unevidenced. Four
+  read routes (`GET /v1/threads`, `/v1/threads/{id}`, `/v1/entities`, `/v1/insights`, all
+  `history.read` with strict parsing) and four MCP tools (`list_threads`, `get_thread`,
+  `find_connections`, `list_insights`; counts 13→17 normal / 10→14 read-only). Daily reports and
+  weekly synthesis may cite the window's insights through an additive prompt context block. **No
+  schema change** (v14 already carried `insights`, `insight_evidence`, `session_vectors`) and **no
+  UI** — P9 renders the screens. Verification and evidence are in `05` (2026-11-06), contradictions
+  `06` #93–#101.
+
+- **P6 Ask v2 (2026-11-05):** merged ([#160](https://github.com/nicolasestrem/screensearch/pull/160)). Ask is now
   planned before it retrieves (time intent → half-open window in system-local calendar terms; entity
   mentions resolved through the work graph with a plain-text fallback), retrieves in the normative
   stage order (threads → sessions → frames → assembly, each stage narrowing the previous), cites both
@@ -178,7 +195,7 @@ for self-contained contracts and source-inspected inventory.
 - **P5 review-fix pass (2026-11-05):** the merged P5 work graph (`722f29e`, PR #157) still had one
   P1 and three P2 automated-review findings unresolved at merge time. The fixes are on
   `fix/p5-157-review-findings` ([#159](https://github.com/nicolasestrem/screensearch/pull/159),
-  open, not merged): per-session link
+  **merged** 2026-11-05): per-session link
   reconciliation after session ownership changes, ownership-only linking, a sessions-history
   ordering gate, and the override-model corrections (rename membership, merge retention,
   stale-session filtering). No schema, settings, job-kind, command or UI change. The repository now
