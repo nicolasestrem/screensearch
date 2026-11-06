@@ -52,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed: two more things the PR review found
 
+- **Retrying a question re-asks it over the scope it originally used.** A question that failed stayed
+  in the conversation offering a retry, but the retry inherited the *latest* question's date range,
+  entities and thread — so a question originally asked about one day could come back answered from
+  unrelated history. The retry now reads the failed turn's own recorded scope.
+- **A failure no longer follows you into another conversation.** After a question failed, switching to
+  a different conversation still showed that error and its Retry button, which would have resubmitted
+  the question into the conversation you left. Both now stay with the conversation they belong to.
 - **A thread page now shows an open marker that was left on one of its own captures.** An unresolved
   marker opened the loop on the moment it flagged, but the loop was only ever attached to that moment,
   so a thread whose history contained the marker could still say "No open loops in this thread". The

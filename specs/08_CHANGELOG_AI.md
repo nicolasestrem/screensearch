@@ -69,6 +69,16 @@ helper (the trap was already documented in `ReportBuilder`; the third copy is wh
 test pinning `America/New_York` before the first `Date` is constructed so the 23 h and 25 h days are
 real on any machine.
 
+**Review pass 6 (PR #165).** Two Ask findings, both instances of one question the earlier rounds kept
+asking: what does a piece of state belong to? "Inherit" means *the previous turn*, which is not the
+turn being retried; and the hook's error belongs to *the request that produced it*, which is not
+whatever the URL selects now. Neither needed new machinery — one reads the turn's own row, the other
+gates a prop on the same identity the live answer already used.
+
+Both are recorded as code-verified. Staging a failed turn means a stream that dies after the row is
+written, and a fake failure would test the fake; the honest thing is to say so in the row rather than
+dress a hand-built error up as a walk.
+
 **Review pass 5 (PR #165).** Two P2s, both real, both judged by reading the join rather than by
 argument.
 

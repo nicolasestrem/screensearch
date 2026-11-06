@@ -504,6 +504,35 @@ is what makes the attribution non-circular — the same page refreshed nothing f
 seconds earlier. A remount after the neutered run showed the probe, so the data and the query were
 never the problem.
 
+### Review-fix pass 6 on PR #165 (two Ask state bugs, both about what a turn belongs to)
+
+`06` #129–#130.
+
+**12. A retry ran the older turn under the conversation's latest scope (#129, P2).** Confirmed at the
+kernel: `AskThreadScope::Inherit` resolves to `previous.as_ref().and_then(|turn| turn.scope_thread_id)`
+(`crates/kernel/src/ask.rs:195`) — the **previous** turn, not the one being retried, and the same
+"inherit" reading applies to the window and entity overrides. An unanswered turn stays in the thread
+offering a retry, so a later question could have moved all three scopes first. `retryTurn` now re-asks
+the turn from its own row:
+
+```
+window:                turn.window === null ? {mode:"all"} : {mode:"range", start, end}
+entities:              turn.resolved_entities          // [] clears, per the kernel's Some(vec![])
+scope_thread_id:       turn.scope_thread_id
+clear_thread_scope:    turn.scope_thread_id === null   // graph.rs:472 → AskThreadScope::None
+```
+
+Code-verified, not walked: staging the case needs a stream that dies after the turn row is written, and
+a fake failure would only test the fake.
+
+**13. A failed conversation's error followed the selection (#130, P2).** Confirmed against the render:
+`error={conversation.state.error}` and a `onRetryStart` that submits `lastRequest` were both ungated,
+while the live answer has `liveMatchesSelection` precisely because the hook state outlives a selection
+change. The error is now gated on `lastRequest.thread_id` (or, for a request that started a new
+conversation, the id adoption gave it), which hides the message *and* the Retry button — the button is
+rendered from the same non-null error. Code-verified for the same reason as #129: it needs a genuinely
+failing turn to observe.
+
 ### Review-fix pass 5 on PR #165 (the open-loop join and the scope seed)
 
 `06` #127–#128.
