@@ -69,6 +69,15 @@ helper (the trap was already documented in `ReportBuilder`; the third copy is wh
 test pinning `America/New_York` before the first `Date` is constructed so the 23 h and 25 h days are
 real on any machine.
 
+**Comment honesty pass (PR #165).** Two comments claimed more than the code does. `completion_info`'s
+new doc read as if a frame-less completion meant "the graph moved", when `graph_cluster` also runs on
+its schedule with nothing to regroup — the event means "this pass finished", and the debounced
+invalidation in `useLiveEvents` is what makes a no-op pass cost one refetch that finds the cache
+already right. And `list_threads`' entity arm carried no `session_count > 0` filter without saying why,
+which invites the next reader to "fix" the asymmetry: `threads_for_entity` matches only through
+`EXISTS (thread_sessions ⨝ session_entities)`, so a thread with no member sessions cannot appear there
+at all. Both are now stated where the code is, and in `06` #125/#126.
+
 **Review pass 6 (PR #165).** Two Ask findings, both instances of one question the earlier rounds kept
 asking: what does a piece of state belong to? "Inherit" means *the previous turn*, which is not the
 turn being retried; and the hook's error belongs to *the request that produced it*, which is not

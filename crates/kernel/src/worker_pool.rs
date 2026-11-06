@@ -455,11 +455,16 @@ async fn process_job_with_providers(
 /// A frame-bound job reports only when it changed data: an `embed_text` whose frame turned out to
 /// have no text changed nothing, and announcing it would refetch that frame for no reason.
 ///
-/// A frame-less pass has no frame to bind its effect to, so its completion is the only signal the
-/// graph moved — and it reports `changed_data: false` by design (the flag describes *frame* data),
+/// A frame-less pass has no frame to bind its effect to, so its completion is the only notice the
+/// UI gets, and it reports `changed_data: false` by design (the flag describes *frame* data) —
 /// which used to silence it completely: a regroup triggered by a merge override, or an
-/// `insight_generate` run, never reached the UI's invalidation block, so Work kept the old
-/// grouping and Insights stayed empty until remount (`03 §7h`, §7j).
+/// `insight_generate` run, never reached the UI's invalidation block, so Work kept the old grouping
+/// and Insights stayed empty until remount (`03 §7h`, §7j).
+///
+/// "Finished" is not the same claim as "changed something", and the event should not be read as the
+/// latter: `graph_cluster` also runs on its schedule with nothing to regroup. Consumers debounce the
+/// invalidation (`useLiveEvents` coalesces the whole graph-job family), so a no-op pass costs one
+/// refetch that finds the cache already right — cheaper than the stale page it replaces.
 fn completion_info(
     job_id: i64,
     kind: JobKind,

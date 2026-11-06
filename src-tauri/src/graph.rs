@@ -115,6 +115,11 @@ pub async fn list_threads(
             // predicate is applied here over the same bounded read. Filtering after the store's
             // `LIMIT` would silently page matches away; reading the full 1000 and truncating to
             // the request keeps "window AND entity" exact.
+            //
+            // No emptied-source filter on this arm: `threads_for_entity` matches only through
+            // `EXISTS (thread_sessions ⨝ session_entities)`, so a thread with no member sessions
+            // cannot appear here at all — which is why only the unfiltered read below needs the
+            // `session_count > 0` rule.
             let mut threads = store
                 .threads_for_entity(entity_id, LIST_LIMIT_MAX)
                 .await
