@@ -3971,7 +3971,8 @@ the floor alone must not ask for a deeper read
 (cleartext logging) on assertions that interpolated `first_session_id`/`second_session_id`/
 `neighbour_session_id`, and on the block body itself. The messages now report **counts**, not
 identities, matching `07:447`; the same rule was applied to the new tests written in this pass so
-the alerts are not replaced by new ones.
+the alerts are not replaced by new ones, and to two further assertions in the same file that printed
+the whole assembled prompt (which renders session ids) on failure — they now report sizes.
 
 **Agent decisions inside the contract that changed here** are recorded in `07` (review-fix pass
 block): `insights.stale` is now a cache written by the sweep and computed by readers; the block is a

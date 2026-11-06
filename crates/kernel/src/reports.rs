@@ -4551,10 +4551,12 @@ mod tests {
                 final_instruction(range, None, 0, DAY_MS),
                 "zero insights must leave the framing byte-identical"
             );
+            // Length, not text: the instruction carries frame ids, and a panic message is a log
+            // sink (`07:447`).
             assert!(
                 !seen[0].contains("Insights recorded for this window"),
-                "no block may be assembled with no insights: {}",
-                seen[0]
+                "no block may be assembled with no insights (prompt is {} chars)",
+                seen[0].len()
             );
         }
 
@@ -4692,10 +4694,12 @@ mod tests {
         // after a blank line — the exact text the renderer produces from what the store read
         // back for this window.
         let base = final_instruction(ReportRange::Daily, None, 0, DAY_MS);
+        // Report sizes, not the prompt: it renders session ids (`07:447`).
         assert!(
             seen[0].starts_with(&base),
-            "the daily framing must stay the prefix of: {}",
-            seen[0]
+            "the daily framing must stay the prefix (prompt {} chars, framing {} chars)",
+            seen[0].len(),
+            base.len()
         );
         let read_back = store
             .list_insights(InsightFilter {
