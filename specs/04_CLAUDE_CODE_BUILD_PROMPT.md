@@ -108,8 +108,9 @@ the fourteen maintainer decisions/grants and the eight contradiction rows in `05
 before touching the ask path, the `session_vectors` lane or `Kernel::ask_turn`. Its acceptance
 numbers are the maintainer's live-DB run and are not yet recorded.
 
-P8 (insights + agent surface) is implemented on `feat/0.4.5-p8-insights-agent`, committed on the
-maintainer's instruction: the five insight kinds, the `insight_generate` job kind, the four
+P8 (insights + agent surface) is implemented on `feat/0.4.5-p8-insights-agent` and open as
+[#164](https://github.com/nicolasestrem/screensearch/pull/164) (committed on the maintainer's
+instruction, not merged): the five insight kinds, the `insight_generate` job kind, the four
 `history.read` routes and the four MCP tools — read `05` (2026-11-06) and `06` #93–#101 first. P9
 (the intelligence UI) has not started: `/ask` and `/work` do not exist yet.
 

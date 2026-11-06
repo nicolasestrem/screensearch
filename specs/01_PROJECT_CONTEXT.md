@@ -142,7 +142,8 @@ for self-contained contracts and source-inspected inventory.
   (`03 §11b`).
 
 - **0.4.5 arc status (2026-11-06):** the arc is merged through Wave B — P1–P7 are on `main` — and
-  **P8** is implemented on `feat/0.4.5-p8-insights-agent` (not committed, 0.4.5 D18).
+  **P8** is implemented on `feat/0.4.5-p8-insights-agent` ([#164], open, not merged; committed and
+  pushed on the maintainer's explicit instruction, 0.4.5 D18).
   On `main`: **P1** specs contract (`e27f42c`, PR #150), **P2** design system v2 (`7e73e30`, PR
   #151), **P3** baseline schema **v14** plus settings v2 (`0dfa2f5`, PR #153; the working tree now
   carries the v14 baseline instead of the migration chain, `03 §4`, 0.4.5 D2), **P4** automatic
@@ -162,8 +163,10 @@ for self-contained contracts and source-inspected inventory.
   explicit instruction). The full app is a Rust workspace of **18 module
   crates** plus `src-tauri` (the Tauri composition root) and a React/TS UI.
 
-- **P8 insights + agent surface (2026-11-06):** implemented on `feat/0.4.5-p8-insights-agent`, not
-  committed or pushed (0.4.5 D18). Five kinds (`thread_activity`, `open_loop`, `recurrence`,
+- **P8 insights + agent surface (2026-11-06):** implemented on `feat/0.4.5-p8-insights-agent`,
+  committed and pushed on the maintainer's instruction, open as
+  [#164](https://github.com/nicolasestrem/screensearch/pull/164) (0.4.5 D18; not merged).
+  Five kinds (`thread_activity`, `open_loop`, `recurrence`,
   `semantic_neighbour`, `resumption`) generate from history as job kind `insight_generate` under the
   existing worker pool, pressure throttle and idle gate; the store writes each insight with its
   evidence in one transaction, and a sweep dead-letters a pass that would leave one unevidenced. Four

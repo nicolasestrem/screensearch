@@ -1,6 +1,6 @@
 # 07 — Known Gaps
 
-## 2026-11-06: P8 insights + connections engine and agent surface — grants, maintainer decisions and deferrals (owner: maintainer for the decisions; agent for code; branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`, **not committed, not pushed**)
+## 2026-11-06: P8 insights + connections engine and agent surface — grants, maintainer decisions and deferrals (owner: maintainer for the decisions; agent for code; branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`, **PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) open, not merged**)
 
 Phase: `docs/kickoffs/P8.md`. Base condition: P5 (#157), P6 (#160) and P7 (#161) are all merged on
 `main` and **no `v0.4.4` tag exists**, so the wave rule (`docs/0.4.5.md` §4.2 — "next wave starts when
@@ -59,9 +59,10 @@ batched round **before** any code was written. Contradiction rows are `06` #93�
   through the app's own store write paths, with the real `run_insight_generate`, the real API served
   by a running app and the real MCP stdio wrapper. A pass over the maintainer's own profile remains
   **their** run; `05` states this next to the samples.
-- **Git:** branch only. Under 0.4.5 D18 the agent made no commit and no push; the
-  `git diff --exit-code -- ui/src/bindings` guard therefore reports the expected regenerated-binding
-  diff rather than passing, and that raw output is pasted in `05`. The maintainer decides the commit.
+- **Git:** branch only, never `main`. Under 0.4.5 D18 the agent committed, pushed and opened
+  PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) **only on the maintainer's
+  explicit instruction**; the PR is open and the merge remains theirs. The regenerated bindings are
+  part of that commit, so `git diff --exit-code -- ui/src/bindings` exits 0 (`05`).
 
 **Agent decisions inside the contract (recorded so P9 can rely on them).**
 - `insight_evidence.ordinal` is **0-based and dense**; stated in `docs/API.md`.

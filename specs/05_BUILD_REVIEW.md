@@ -1,6 +1,6 @@
 # 05 — Build Review
 
-## 2026-11-06: P8 insights + connections engine and agent surface — build, verification and live proof (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **not committed, not pushed** — 0.4.5 D18 waits for the maintainer)
+## 2026-11-06: P8 insights + connections engine and agent surface — build, verification and live proof (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P8.md`. Contradictions and rulings: `06` #93–#101. Decisions, grants and
 deferrals: `07` (2026-11-06 P8 section). Interface contract the six slices coded against:
@@ -96,10 +96,16 @@ diff --git a/ui/src/bindings/JobKind.ts b/ui/src/bindings/JobKind.ts
 -export type JobKind = "embed_text" | … | "session_embed";
 +export type JobKind = "embed_text" | … | "session_embed" | "insight_generate";
 ```
-**This guard does not pass, and that is the expected result under this phase's instruction:**
-`cargo test` regenerated 1 modified + 19 new TS binding files and 0.4.5 D18 forbids the agent from
-committing. The diff is the generator's output only (no hand edit). It becomes clean the moment the
-maintainer commits the tree; nothing else is in `ui/src/bindings`.
+**On the pre-commit tree this guard does not pass, and that was the expected result while 0.4.5 D18
+was in force:** `cargo test` regenerated 1 modified + 19 new TS binding files and the agent may not
+commit unprompted. The diff is the generator's output only (no hand edit), nothing else is in
+`ui/src/bindings`. **After the maintainer authorized the commit, the same command exits 0:**
+
+```
+$ git diff --exit-code -- ui/src/bindings
+bindings_exit=0
+```
+
 
 P8-specific filters:
 
@@ -340,8 +346,9 @@ rating"; "`similarity` stays out of the prompt on purpose").
 
 ### Honest reading, deviations and what is not claimed
 
-- **`git diff --exit-code -- ui/src/bindings` is red by construction** (uncommitted regenerated
-  bindings, 0.4.5 D18). Not worked around, not hand-edited.
+- **`git diff --exit-code -- ui/src/bindings` was red before the commit and is green after it** —
+  the regenerated bindings are committed, which is what `CLAUDE.md` §4 requires. They were never
+  hand-edited or worked around.
 - **The real-DB samples come from a locally built v14 database, not the maintainer's profile** (none
   exists on this machine). A pass over the real profile remains the maintainer's run.
 - **The live proof surfaced `07` #101 for real**: the app's session reconciliation deleted the

@@ -1,6 +1,6 @@
 # 08 — AI Changelog
 
-## 2026-11-06: P8 insights + connections engine and agent surface (backend) (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **not committed, not pushed** — 0.4.5 D18 waits for the maintainer)
+## 2026-11-06: P8 insights + connections engine and agent surface (backend) (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P8.md`. Build record, gate output and live proof: `05` (2026-11-06 P8
 section). Decisions, grants and deferrals: `07`. Contradiction rows `#93`–`#101`: `06`.
@@ -41,8 +41,8 @@ that claimed the live proof ran on the maintainer's profile database when no pro
 on this machine.
 
 **Not claimed.** The real-DB samples came from a locally built v14 database, not the maintainer's
-profile (none exists on this machine). The bindings guard is red only because the regenerated
-bindings are uncommitted.
+profile (none exists on this machine). The bindings guard was red only until the regenerated
+bindings were committed; on the committed branch it exits 0.
 
 ## 2026-11-05: P7 app shell + Settings v2 — v2 shell rebuild and the 26-key Settings surface (branch `feat/0.4.5-p7-shell-settings`, [#161](https://github.com/nicolasestrem/screensearch/pull/161) open, **not merged**, from `main` `6d906a7`; pushed on the maintainer's authorization under 0.4.5 D18)
 
