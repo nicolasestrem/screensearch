@@ -161,13 +161,16 @@ per-crate file-level guide to where each concern lives is the rest of this docum
 
 ## 3. Data model (SQLite, WAL)
 
-Single file `screensearch.db`; forward-only migrations tracked in `schema_version` (`store::schema`).
-*(0.4.5 onward: baseline edit + version bump, `03 §4`.)*
+Single file `screensearch.db`; `schema_version` records the baseline the build creates and requires.
+Since 0.4.5 D2 the store is built from **one baseline script** at `LATEST_SCHEMA_VERSION = 14`, not a
+migration chain: a database at any other version refuses to open (`store::schema`), and the version
+moves by editing `03 §4`'s DDL.
 Per-connection pragmas: `journal_mode=WAL`, `foreign_keys=ON`, `recursive_triggers=ON`,
-`busy_timeout=5000`. **Authoritative as-built DDL (every table, column, index, trigger, and the full
-v1→v13 migration chain): `crates/store/src/schema.rs` (`LATEST_SCHEMA_VERSION = 13`)** — this is
-code, so it never drifts. `03 §4` is the design contract for the schema; where the migrations have
-moved ahead of it (v3 drops legacy `ocr_text`, v4 adds `text_spans.line_index`, v5 adds the nullable
+`busy_timeout=5000`. **Authoritative as-built DDL (every table, column, index and trigger):
+`crates/store/src/schema.rs` (`LATEST_SCHEMA_VERSION = 14`)** — this is
+code, so it never drifts. `03 §4` is the design contract for the schema. The pre-0.4.5 migration
+history is kept below for context — where those increments had moved ahead of `03 §4` (v3 drops
+legacy `ocr_text`, v4 adds `text_spans.line_index`, v5 adds the nullable
 `frames.capture_trigger`, v6 widens that trigger token set for click / scroll-stop, v7 adds
 `frames.image_purged` for degrade-to-text retention, v8 adds the partial
 `idx_frames_image_retention` index for the retention sweep, v9 drops the removed image-embedding
@@ -567,6 +570,39 @@ request id, and the UI ignores stale deltas.
   states return guided errors ("enable the API in ScreenSearch Settings"), never a crash. Staged as
   the Tauri `externalBin` by `scripts/stage-mcp.mjs` and shipped inside the NSIS installer next to
   `ScreenSearch.exe`. Reference: `docs/MCP.md`.
+
+---
+
+## 9c. Insights + work graph (0.4.5)
+
+- **Work graph** (`crates/graph`, P5): four kernel job kinds (`graph_extract` heuristic
+  extraction + linking, `graph_normalize` the LLM alias pass, `graph_cluster` thread clustering,
+  `graph_backfill` the resumable historical pass that enqueues bounded extracts) populate
+  `threads`, `thread_sessions`, `entities`, `entity_aliases` and `session_entities`.
+  Operator corrections — rename, merge, split — live in `thread_overrides` and survive
+  recomputation. The engine is pure and unit-tested; the persistence seam is `store`.
+- **Insights** (`kernel::insights`, P8): five typed kinds — `thread_activity`, `open_loop`,
+  `recurrence`, `semantic_neighbour`, `resumption` — each with its own payload in `traits`. **The
+  payload is the truth and renders without a model**; there is no scoring, grading, streak or
+  target anywhere in the payloads (`03 §7j.4`). One pass covers a 30-day window, is enqueued as job
+  kind `insight_generate` on the shared pool (idle producer, on-demand request, same pressure gate),
+  and replaces every row of each kind whose window overlaps. The numeric thresholds are named
+  constants in `kernel::insights`, not settings — the settings surface is closed (`03 §8`, D6) and
+  `03 §7j` fixes no value.
+- **The evidence invariant** is the point of the design: an `insights` row carries at least one
+  `insight_evidence` reference (`frame`/`session`/`thread`/`entity`/`mark`) with dense 0-based
+  ordinals, validated **inside** the write transaction, so a row can never exist without something
+  to open. A pass that would leave any row unevidenced dead-letters the job and logs a count; a row
+  whose evidence disappears is flagged stale and regenerated rather than served as truth. A resolved
+  mark is different — its row survives until the window regenerates, which is documented on
+  `derive_open_loops` so it is not read as a bug.
+- **Read surface** (P8, backend only — P9 renders it): `GET /v1/threads`, `/v1/threads/{id}`,
+  `/v1/entities`, `/v1/insights` in `api::graph_reads`, behind `history.read` for both credential
+  classes, with four MCP tools over them (`list_threads`, `get_thread`, `find_connections`,
+  `list_insights`). A GET never generates, writes or starts inference. Daily and weekly reports may
+  additionally cite the window's insights through an additive prompt context block; with no insights
+  the prompt is byte-identical to before. Contract: `03 §7j`; wire shapes and ordering:
+  `docs/API.md`; build evidence: `specs/05_BUILD_REVIEW.md` (2026-11-06).
 
 ---
 
