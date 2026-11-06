@@ -900,11 +900,22 @@ export function Component() {
         thinking: false,
         max_tokens: ASK_MAX_TOKENS,
         top_k: null,
-        // §7i.4: a retry reuses the conversation's own scope rather than inventing one.
-        window: { mode: "inherit" },
-        entities: null,
-        scope_thread_id: null,
-        clear_thread_scope: false,
+        // §7i.4: a retry re-asks *this* turn, so it carries the scope that turn was answered
+        // against — read back from the turn's own row. `inherit` would take the *previous* turn's
+        // window/entities/thread instead, and the previous turn is not necessarily the failed one:
+        // a later question in the same conversation can have changed all three, so retrying an
+        // older unanswered turn would answer it over unrelated history.
+        window:
+          turn.window === null
+            ? { mode: "all" }
+            : { mode: "range", start: turn.window.start, end: turn.window.end },
+        // An empty array clears the entity scope explicitly (the kernel reads `Some([])` as
+        // "no entities", not as "inherit").
+        entities: turn.resolved_entities,
+        scope_thread_id: turn.scope_thread_id,
+        // The turn's row records `null` when it ran unscoped; `clear_thread_scope` is what says
+        // so, since a bare `null` id would inherit the previous turn's thread.
+        clear_thread_scope: turn.scope_thread_id === null,
       };
       setLastRequest(request);
       void askTurn(request);
@@ -1011,6 +1022,11 @@ export function Component() {
   // an answer streams cannot show another conversation's words here.
   const liveMatchesSelection =
     liveThreadId === null ? selectedId === null : liveThreadId === selectedId;
+  // The conversation the failed request belongs to: the one it named, or — for a request that
+  // started a new conversation — the id adoption gave that conversation.
+  const errorThreadId =
+    lastRequest === null ? null : (lastRequest.thread_id ?? conversation.state.threadId);
+  const composerError = errorThreadId === selectedId ? conversation.state.error : null;
   const persistedLiveTurn =
     conversation.state.turnId !== null &&
     turnList.some(
@@ -1247,7 +1263,11 @@ export function Component() {
                 }}
                 streaming={streaming}
                 onStop={conversation.cancel}
-                error={conversation.state.error}
+                // The composer's error and its Retry belong to the request that produced them,
+                // not to whatever is selected now: after a failure in A, selecting B must not show
+                // A's failure with a Retry that submits back into A while B is on screen. A request
+                // that started a new conversation pairs with the id adoption gave it.
+                error={composerError}
                 onRetryStart={() => {
                   if (lastRequest !== null) void askTurn(lastRequest);
                 }}
