@@ -2373,3 +2373,151 @@ async fn ask_thread_scope_narrows_stage_one_and_follow_ups_inherit_it() {
     assert_eq!(cleared_event.stage_counts.threads, 2);
     assert_eq!(cleared_event.sessions, vec![5, 6]);
 }
+
+/// A scope thread is a hard constraint, not a hint the frame stage may drop when stage 2 ranks
+/// nothing (`§7i.1`, `§7i.2`). Two ways that used to leak, both fixed here:
+///
+///  * no entity resolved and no session winner (no summaries or vectors yet) ⇒ the frame stage
+///    must still search inside the scope's member sessions, not the whole window;
+///  * a scope naming a thread the read cannot find (deleted, or emptied by a merge) ⇒ no
+///    evidence at all, because the window fallback would answer from conversations the scope
+///    excludes while the turn still persists `scope_thread_id`.
+///
+/// The fixture leaves `session_winners` off, which is exactly the "nothing ranked" state the
+/// fixture in `ask_thread_scope_narrows_stage_one_and_follow_ups_inherit_it` has to switch on to
+/// make stage 1's narrowing visible.
+#[tokio::test]
+async fn ask_thread_scope_holds_through_stage_three_and_empty_membership() {
+    let date = date_days_ago(1);
+    let day_start = local_ms(date, 0);
+    let day_end = local_ms(date.checked_add_days(Days::new(1)).expect("next day"), 0);
+    let mut fixture = AskStore::new();
+    fixture.add_session(5, day_start, day_end, "Thread one work");
+    fixture.add_session(6, day_start, day_end, "Thread two work");
+    let in_first = fixture
+        .seed_frame(
+            local_ms(date, 9),
+            Some(5),
+            &format!("zebra deployment on {date}"),
+        )
+        .await;
+    let in_second = fixture
+        .seed_frame(
+            local_ms(date, 15),
+            Some(6),
+            &format!("zebra deployment on {date}"),
+        )
+        .await;
+    fixture.add_work_thread(1, &[5]);
+    fixture.add_work_thread(2, &[6]);
+    let store = Arc::new(fixture);
+    let dyn_store: Arc<dyn Store> = store.clone();
+    let (kernel, _temp) = kernel_with_answer(
+        dyn_store,
+        Arc::new(CitingAnswer {
+            budget: Some(8_192),
+            answer: "It landed.".to_string(),
+        }),
+    )
+    .await;
+    // `zebra` resolves no entity in this fixture, so nothing but the scope narrows retrieval.
+    let question = format!("zebra deployment on {date}");
+
+    // Unscoped control: no winner and no entity ⇒ the window fallback still sees both threads.
+    let (thread_id, unscoped_id, unscoped_deltas) = drain(
+        kernel
+            .ask_turn(scoped_request(
+                &question,
+                None,
+                None,
+                None,
+                AskThreadScope::None,
+            ))
+            .await
+            .expect("the unscoped turn starts"),
+    )
+    .await;
+    let _unscoped = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == unscoped_id)
+        .expect("the unscoped turn was persisted");
+    let unscoped_event = &citation_events(&unscoped_deltas)[0];
+    assert_eq!(
+        unscoped_event.frames,
+        vec![in_first, in_second],
+        "an unscoped, unranked turn keeps the documented window fallback"
+    );
+
+    // Scoped to thread 1 with the same "nothing ranked" state: the window fallback must not
+    // admit thread 2's frame.
+    let (_, scoped_id, scoped_deltas) = drain(
+        kernel
+            .ask_turn(scoped_request(
+                &question,
+                Some(thread_id),
+                None,
+                None,
+                AskThreadScope::Thread(1),
+            ))
+            .await
+            .expect("the scoped turn starts"),
+    )
+    .await;
+    let scoped = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == scoped_id)
+        .expect("the scoped turn was persisted");
+    assert_eq!(scoped.scope_thread_id, Some(1));
+    let scoped_event = &citation_events(&scoped_deltas)[0];
+    assert_eq!(
+        scoped_event.frames,
+        vec![in_first],
+        "the scope constrains stage 3 even when stage 2 ranked nothing"
+    );
+    assert_eq!(
+        scoped
+            .citations
+            .as_ref()
+            .map(|citations| citations.frames.clone()),
+        Some(vec![in_first]),
+        "and the persisted citations match what the turn read"
+    );
+
+    // A scope the read cannot resolve has no membership to search: no evidence, never the
+    // window. Thread 404 does not exist.
+    let (_, missing_id, missing_deltas) = drain(
+        kernel
+            .ask_turn(scoped_request(
+                &question,
+                Some(thread_id),
+                None,
+                None,
+                AskThreadScope::Thread(404),
+            ))
+            .await
+            .expect("the turn against a missing scope starts"),
+    )
+    .await;
+    let missing = store
+        .turn(thread_id)
+        .into_iter()
+        .find(|turn| turn.id == missing_id)
+        .expect("the turn against a missing scope was persisted");
+    assert_eq!(
+        missing.scope_thread_id,
+        Some(404),
+        "the requested scope is still what the turn records"
+    );
+    let missing_event = &citation_events(&missing_deltas)[0];
+    assert!(
+        missing_event.frames.is_empty(),
+        "an unresolvable scope yields no evidence rather than the window: {:?}",
+        missing_event.frames
+    );
+    assert!(
+        missing_event.sessions.is_empty(),
+        "and no session is retrieved for it"
+    );
+}

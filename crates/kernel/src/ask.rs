@@ -224,9 +224,7 @@ impl Kernel {
                 // Stage 1 — threads. With a scope thread, stage 1 is exactly that thread: its
                 // member sessions are the candidate set regardless of the window or the entity
                 // scope, which stage 2 then narrows. `thread_detail` reads only that thread, so a
-                // scoped turn never scans the whole graph; a scope naming a thread that no
-                // longer exists yields no candidates, the documented empty-graph fallback rather
-                // than an unfiltered answer.
+                // scoped turn never scans the whole graph.
                 let threads = match scope_thread_id {
                     Some(id) => match self
                         .store
@@ -253,11 +251,25 @@ impl Kernel {
                 };
                 // Stage 2 — sessions over the candidate set (no thread candidates ⇒ the
                 // window's sessions), keeping at most `SESSION_K` winners.
-                let candidates = self
-                    .store
-                    .ask_candidate_sessions(&threads, window, &entity_scope)
-                    .await
-                    .map_err(AskTurnError::Failed)?;
+                //
+                // An explicit scope is authoritative, so it must never take that window
+                // fallback: `ask_candidate_sessions` widens to the window when the member list
+                // is empty, which for a scope naming a thread that no longer exists (or one the
+                // merge left with no sessions) would answer from every conversation on disk
+                // while still persisting the requested scope. Empty membership is an empty
+                // candidate set — no evidence, rather than unrelated evidence.
+                let scoped_members = threads
+                    .iter()
+                    .map(|thread| thread.session_ids.len())
+                    .sum::<usize>();
+                let candidates = if scope_thread_id.is_some() && scoped_members == 0 {
+                    Vec::new()
+                } else {
+                    self.store
+                        .ask_candidate_sessions(&threads, window, &entity_scope)
+                        .await
+                        .map_err(AskTurnError::Failed)?
+                };
                 let session_hits = self
                     .store
                     .ask_search_sessions(&question, &candidates, SESSION_K)
@@ -276,31 +288,40 @@ impl Kernel {
             time_range: window,
             include_chrome: false,
         };
-        // Stage 3 — frames inside the winning sessions. Reaching "no winner" has two meanings
-        // and they must not be conflated:
-        //  * no entity resolved and nothing ranked (no summaries, no vectors yet) ⇒ the
-        //    mandated non-blocking fallback: the existing frame search over the window alone
-        //    (`§7i.1`, "never worse than the previous Ask"), i.e. no session restriction.
-        //  * an entity resolved **and its linked sessions are in scope** ⇒ the mention is a
-        //    constraint (`§7i.1`), so the search stays inside those candidate sessions even
-        //    when stage 2 could not rank them (no summaries or vectors yet); without this the
-        //    frame stage would silently discard the constraint and cite unrelated sessions.
+        // Stage 3 — frames inside the winning sessions. Reaching "no winner" has three
+        // meanings and they must not be conflated:
+        //  * no entity resolved, no explicit scope, and nothing ranked (no summaries, no vectors
+        //    yet) ⇒ the mandated non-blocking fallback: the existing frame search over the
+        //    window alone (`§7i.1`, "never worse than the previous Ask"), i.e. no session
+        //    restriction.
+        //  * an entity resolved **and its linked sessions are in scope**, or an explicit thread
+        //    scope ⇒ the constraint holds (`§7i.1`, `§7i.2`), so the search stays inside those
+        //    candidate sessions even when stage 2 could not rank them. Without this the frame
+        //    stage would silently discard the scope and cite unrelated sessions while the turn
+        //    still reads as scoped.
         //  * an entity resolved but no candidate session survives the window ⇒ the mention has
         //    no usable match, which `§7i.1` answers with plain-text matching, so the window
         //    fallback applies rather than a dead answer.
         let entity_constrained = !entity_scope.is_empty() && !candidates.is_empty();
+        let narrowed_by_scope = scope_thread_id.is_some() || entity_constrained;
         let frame_scope: Vec<i64> = if !winning_sessions.is_empty() {
             winning_sessions.clone()
-        } else if entity_constrained {
+        } else if narrowed_by_scope && !candidates.is_empty() {
             candidates.clone()
         } else {
             Vec::new()
         };
-        let hits = self
-            .store
-            .ask_search_frames(&search, &frame_scope)
-            .await
-            .map_err(AskTurnError::Failed)?;
+        // A scope that admits no session has no evidence to search: the window fallback would
+        // answer from conversations outside the scope the turn is about to persist.
+        let scope_is_empty = scope_thread_id.is_some() && candidates.is_empty();
+        let hits = if scope_is_empty {
+            Vec::new()
+        } else {
+            self.store
+                .ask_search_frames(&search, &frame_scope)
+                .await
+                .map_err(AskTurnError::Failed)?
+        };
         let stage_counts = StageCounts {
             threads: u32::try_from(threads.len()).unwrap_or(u32::MAX),
             sessions: u32::try_from(winning_sessions.len()).unwrap_or(u32::MAX),
