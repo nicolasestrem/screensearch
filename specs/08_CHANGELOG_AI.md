@@ -69,6 +69,24 @@ helper (the trap was already documented in `ReportBuilder`; the third copy is wh
 test pinning `America/New_York` before the first `Date` is constructed so the 23 h and 25 h days are
 real on any machine.
 
+**Review pass 3 (PR #165).** Two more from the third round (`06` #124–#125), both small and both
+verified rather than argued.
+
+The thread panel's composer checked only for empty text, so Enter during a streaming answer cancelled
+it and started a second conversation — the Ask route had the guard, the thread panel did not, which is
+the same class as the composer-override leak in pass 1 (two screens, one rule, one of them missed).
+Verified live with the guard: submitting twice from the textarea's Enter path while a turn streamed
+produced exactly one conversation (`ask_threads` 13 → 14), the second submission ignored. The pre-fix
+path was not rebuilt just to watch it fail; the row says so.
+
+The Work list applied the emptied-source filter after the store's `LIMIT`, so a retained merge source
+consumed a page slot and older live threads fell off a page with no pagination. The entity-scoped arm
+of the same command already over-read before narrowing; the unfiltered arm now does the same, and both
+arms truncate themselves. Measured by invoking the command from the page around a rebuild:
+`list_threads(limit: 2)` returned `["4:216"]` before and `["4:216","3:2"]` after, with the
+entity-scoped read still truncating. Stating the page numbers rather than "the page is full now" is
+what makes it checkable against any graph the maintainer has.
+
 **Review pass 2 (PR #165).** The re-review after the first fix round raised two more, both in the
 "what the screen says vs what it does" class (`06` #122–#123).
 

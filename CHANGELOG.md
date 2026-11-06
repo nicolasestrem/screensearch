@@ -50,6 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (deleting it would delete your own override with it) and only stops appearing in Work. The dialog
   now says exactly that.
 
+### Fixed: two more things the PR review found
+
+- **Pressing Enter again while a thread's answer was still arriving started a second conversation.**
+  The first question was cancelled and its partial answer disappeared, while the cancelled turn stayed
+  behind unanswered. The thread panel now ignores a submission while its turn is streaming, the same
+  way the Ask screen already did.
+- **The Work list could come back short.** Threads emptied by a merge are kept on record but hidden
+  from the list, and that hiding happened after the page had already been cut to size — so a hidden
+  row could take a slot and older live threads dropped off a page with no way to page past them. The
+  list now filters before it cuts.
+
 ### Fixed: two more things the PR review found in Ask
 
 - **A question started while the previous one was still being prepared could adopt the wrong

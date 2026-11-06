@@ -504,6 +504,44 @@ is what makes the attribution non-circular — the same page refreshed nothing f
 seconds earlier. A remount after the neutered run showed the probe, so the data and the query were
 never the problem.
 
+### Review-fix pass 3 on PR #165 (two findings; one reproduced by invoking the command directly)
+
+`06` #124–#125.
+
+**7. Enter in the thread composer restarted the turn (#124, P2).** `ThreadAsk.submit` checked only for
+empty text, so Enter during a streaming answer cancelled the turn and started a second conversation
+(`thread_id: null` is by design there — the panel creates one conversation per question). The Ask
+route already guarded this; the thread panel now does too (`phase === "streaming"`). Walked live with
+the guard in place, submitting twice from the textarea's Enter path while the first turn streamed:
+
+```
+ask_threads 13 → 14   (one conversation, one turn: "What is still open in this thread?")
+```
+
+The second submission was ignored and the first answer completed with its citations. The pre-fix path
+was **not** re-run live: it needs another app rebuild, and its mechanism is the removed condition plus
+`ask`'s documented cancel-and-restart, so this record claims the positive observation and says so.
+
+**8. The Work page came back short when a merge source was emptied (#125, P2).** The unfiltered
+`list_threads` read applied the request's `limit` in SQL (`threads_in_range`) and filtered emptied rows
+afterwards, so a retained audit row consumed a page slot with no pagination to recover it. Measured by
+invoking the command itself from the page (`window.__TAURI_INTERNALS__.invoke('list_threads', …)`),
+against the pre-fix binary and again after the rebuild, on a graph of four threads where the two
+newest are thread 4 (216 sessions) and thread 1 (an emptied merge source):
+
+```
+# pre-fix binary
+limit2:  ["4:216"]              limit10: ["4:216","3:2"]
+
+# after the fix: the read over-reads to LIST_LIMIT_MAX, drops empty rows, then truncates
+limit2:  ["4:216","3:2"]        limit3:  ["4:216","3:2"]
+entityLimit2 (entity 69): ["4:216"]      # the entity arm still truncates
+```
+
+So the page now returns two live threads for `limit: 2` instead of one, and only two exist at
+`limit: 3` — the missing slot was the emptied row. The entity-scoped read is unchanged, which is what
+makes the fix a narrowing change rather than a new ordering rule.
+
 ## 2026-11-06: P8 insights + connections engine and agent surface — build, verification and live proof (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P8.md`. Contradictions and rulings: `06` #93–#101. Decisions, grants and
