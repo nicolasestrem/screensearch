@@ -1,5 +1,311 @@
 # 05 — Build Review
 
+## 2026-11-06: P9 intelligence UI — build, ordered gate and the acceptance walk (branch `feat/0.4.5-p9-intelligence-ui`, from `main` `eb556d1`; **PR open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
+
+Phase: `docs/kickoffs/P9.md`. Contradictions and rulings: `06` #106–#116. Decisions, grants and
+deferrals: `07` (2026-11-06 P9 section, D1–D12). Interface contract the slices coded against:
+`local://p9-contract.md` (session-local notes, not part of the tree).
+
+Base condition: P5 (#157), P6 (#160), P7 (#161), #163 and **P8 (#164, merged as `eb556d1`)** are on
+`main`; no `v0.4.3`/`v0.4.4` tag exists, so the wave rule is what let P9 start. Schema moved
+**v14 → v15** (the D2 baseline edit in `07` D9: `ask_turns.citations`, `ask_turns.scope_thread_id`).
+
+### What landed
+
+|Slice|Files|What it does|
+|---|---|---|
+|wire|`crates/traits/src/graph_ipc.rs` (new), `ask_ipc.rs` (new), `ipc.rs` (+`ThreadSummary.active_ms`, `.confidence`; `AskTurnRequest` overrides; `+scope_thread_id`, `+citations`), `lib.rs`|13 graph/Ask read-and-write wire types, 7 ask-conversation types, `OverrideKind`; one additive default-bodied `Store::finish_ask_turn` signature change (clean cutover of its one caller)|
+|store|`crates/store/src/graph.rs`, `insights.rs`, `schema.rs`, `lib.rs`|`THREAD_SUMMARY_SELECT` shared const; `graph_progress`, `threads_for_entity`, `connected_threads`, `thread_merge_target`, `insights_for_evidence`, `insight_window_status`, `entities_by_ids`, `list_ask_threads`, `set_ask_thread_title`; schema v15|
+|kernel|`crates/kernel/src/ask.rs`, `tests`|override fields take effect; persisted citations equal the emitted `Citations` delta|
+|glue|`src-tauri/src/graph.rs` (new), `lib.rs` (one registration hunk), regenerated `ui/src/bindings`|13 commands incl. `ask_turn`; `get_insights` intentionally left in place (`07` D7)|
+|ui data|`ui/src/lib/ipc/{commands,queryKeys,queries,mutations,useAskConversation,useLiveEvents}.ts`|queries for the four screens, five mutations behind one override path, the conversation hook, job-completion invalidation for graph/insight kinds|
+|ui screens|`ui/src/routes/Work.tsx` (544), `Thread.tsx` (687), `Insights.tsx` (469, rewritten), `Ask.tsx` (1294); `ui/src/components/intelligence/{ConnectionsPanel,EntityChips,InsightCard,ScopeChips,evidenceLink,format,threadOverrides,index}`; `app/router.tsx`, `app/nav.ts`, `components/icons.tsx`|the four screens, five composed components, the two rail entries and their glyphs|
+|tests|`ui/test/intelligence.test.mjs`|evidence destinations, override payloads, formatting rules (part of the 142)|
+|docs|`specs/UI_REFERENCE.md §5` (Composed components), `06`, `07`, `08`, `CHANGELOG.md`|the inventory row, the rulings and the change records|
+
+### Verification (raw, in kickoff order)
+
+The kickoff orders the UI first because the Rust build embeds `ui/dist`. Shell notes for this host:
+`npm`/`npx` POSIX shims fail here, `npm run <script>` only echoes the script name, and a stray open
+file descriptor makes every Windows external fail with `fd 3 to external on Windows` — so the
+binaries are invoked directly and the descriptor is closed first.
+
+```
+$ npm.cmd ci
+added 347 packages in 4s
+npm warn install-scripts 1 package had install scripts blocked because they are not covered by allowScripts:
+npm warn install-scripts   esbuild@0.25.12 (postinstall: node install.js)
+```
+
+```
+$ node node_modules/eslint/bin/eslint.js .
+eslint exit=0
+```
+
+```
+$ node node_modules/typescript/bin/tsc --noEmit
+tsc exit=0
+$ node node_modules/vite/bin/vite.js build
+dist/assets/query-CZ0gEZfc.js                        35.77 kB │ gzip: 10.58 kB
+dist/assets/Recall-B6Gd9bgo.js                       36.49 kB │ gzip: 11.77 kB
+dist/assets/main-ChFmf-rL.js                         41.23 kB │ gzip: 12.55 kB
+dist/assets/router-BlutWn1T.js                       90.35 kB │ gzip: 30.67 kB
+dist/assets/index-BZi6S_xo.js                        99.79 kB │ gzip: 28.30 kB
+dist/assets/react-vendor-LgzazqmD.js                143.35 kB │ gzip: 45.97 kB
+dist/assets/CitationTile-Dttm3Yto.js                157.84 kB │ gzip: 47.99 kB
+✓ built in 2.09s
+vite exit=0
+```
+
+```
+$ node scripts/stage-mcp.mjs
+[stage-mcp] building screensearch-mcp (release)...
+    Finished `release` profile [optimized] target(s) in 2.80s
+[stage-mcp] up to date: C:\Users\nicol\Documents\GitHub\screensearch\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
+stage-mcp exit=0
+$ cargo fmt --all -- --check
+fmt exit=0
+```
+
+```
+$ cargo clippy --workspace --all-targets -- -D warnings
+warning: failed to parse serde attribute
+  = note: ts-rs failed to parse this attribute. It will be ignored.
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.55s
+```
+
+The `ts-rs failed to parse serde attribute` notes are the pre-existing ts-rs/serde notes on
+`#[serde(skip_serializing_if …)]`, unchanged by this phase and not clippy diagnostics.
+
+```
+$ cargo build --workspace
+   Compiling harness v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\crates\harness)
+   Compiling screensearch v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.39s
+```
+
+```
+$ cargo test --workspace
+binaries: 86 passed: 1612 failed: 0 ignored: 16
+```
+
+```
+$ git diff --exit-code -- ui/src/bindings
+bindings diff exit=0
+```
+
+```
+$ node --experimental-strip-types --test test/*.test.mjs
+ℹ tests 142
+ℹ pass 142
+ℹ fail 0
+```
+
+### Acceptance: the state matrix (4 screens × 5 states)
+
+Every cell was produced in the running Tauri app (`tauri dev` with
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`, driven over CDP against the
+real WebView). `loading`/`error` are forced through the repo's own dev switch
+(`?__devState=…&__devStateKey=<query-key-head>`, `ui/src/lib/dev/devState.ts`); `empty`, `partial`
+and `populated` are real data, never mocked.
+
+| Screen | loading | error | empty | partial | populated |
+|---|---|---|---|---|---|
+| Work `/work` | `work-loading.png` — "Loading threads" | `work-error.png` — "Could not load your threads" + Try again | `work-empty-filter.png` — "No threads touched this entity" + "Clear the filter" (a filter that matches nothing; the list has no unreachable empty state of its own) | `work-partial-clustering.png` — "217 of 218 sessions clustered" | `work-populated-pine-light.png` — one thread, 217 sessions, 3 d 23 h |
+| Thread `/work/:id` | `thread-loading.png` — "Loading this thread" | `thread-error.png` — "Could not load this thread · The work graph read failed. Retrying keeps this address." | `thread-empty.png` (`/work/999999`) — "That thread no longer exists" | `thread-partial.png` — "Still clustering — some sessions may not appear yet." | `thread-populated.png`, `thread-full-*.png` — timeline, 10 entity chips, open loop with evidence, one connected thread |
+| Insights `/insights` | `insights-loading.png` — "Loading insights…" | `insights-error.png` — "Couldn't load insights" + Try again | `insights-empty-window.png` (`from=2020-01-01&to=2020-01-08`) — "No insights for this window" | `insights-partial.png` — "Still computing insights for this window — 1 pass left" | `insights-populated.png` — 15 cards: thread activity 1, open loops 0, recurrence 10, semantic neighbours 3, resumption 1 |
+| Ask `/ask` | `ask-loading.png` — "Loading conversations" | `ask-error.png` — "Couldn't load conversations" + Try again | `ask-empty.png` — "No conversations yet" + the preset questions | `ask-partial.png` — "3 turns · 2 turns have no answer yet — retry them below." with one answered and two failed turns | `ask-populated.png` — an answer with 5 session and 8 moment citations |
+
+Two further thread states are reachable and captured: `thread-merged-away.png` (a merged-away source
+explains the merge and links the survivor) and the empty-sub-section copy inside a populated thread
+("No connected threads yet. They appear when threads share an entity.").
+
+How the two forcing steps were made honest:
+- the Insights `partial` state needs a queued generation pass, and the real pass finishes in
+  milliseconds, so one `insight_generate` row was inserted into the acceptance DB for the length of
+  one screenshot and deleted afterwards (the app claimed and completed it otherwise);
+- the Thread `partial` state needs a running graph, so `graph_cluster` rows were held pending for the
+  duration of the screenshot and then removed. Neither touched application code, schema or seeds.
+
+### Acceptance: keyboard paths (all eleven, walked with the keyboard only)
+
+The rail is a roving-tabindex list (`ui/src/components/shell/NavRail.tsx:7`, one Tab stop, Arrow
+Up/Down, Enter), so `Tab → ArrowDown ×2 → Enter` opens Work from the Deck. Nothing below used a mouse.
+
+| # | Path | What the walk did | Observed |
+|---|---|---|---|
+| 1 | open Work | Tab to the rail (focus `Deck`), ArrowDown → `Ask`, ArrowDown → `Work`, Enter | `focus thread row: A /work` on the URL `/work` |
+| 2 | sort the list | Tab to the sort group (focus `BUTTON role=radio "Last touched" aria-checked=true`), ArrowRight | focus `Time spent`, `aria-checked=true`, URL `/work?sort=time` |
+| 3 | open a thread | Tab to the row link, Enter | URL `/work/1` |
+| 4 | rename inline | Tab to `Rename`, Enter, type, Enter | field focused (`New title for …`), toast "Thread renamed", field reports `selectionStart=0 selectionEnd=25` (after the `06` #113 fix) |
+| 5 | merge to a named survivor | Tab to `Merge…`, Enter, Tab to the `<select>`, ArrowDown picks the survivor, Shift+Tab to `Merge threads`, Enter | toast "Threads merged"; the survivor named in the dialog kept the sessions (`threads` row `(1,'Payroll import',217)`), the emptied source went to `session_count = 0` |
+| 6 | split a chosen set | Tab to `Split…`, Enter, Tab → first session (`role=checkbox`), Space, Shift+Tab ×2 → `Split 1 session`, Enter | confirm disabled before a pick, label `Split 1 session` after, toast "Sessions moved into a new thread" |
+| 7 | switch Insights window | Tab to the window group (`role=radio "30 days"`), ArrowLeft | `7 days` `aria-checked=true`, URL `/insights?window=7d` |
+| 8 | open a card's evidence | Tab to an evidence link in a card, Enter | focus `A "Thread 3" /work/3` → URL `/work/3` |
+| 9 | submit an ask turn | Tab to the composer (17 stops from the body), type, Enter | "Reading…" then a new conversation titled by the question |
+| 10 | edit a scope chip | Tab to `Edit scope`, Enter, Tab to the time-window `<select>` (`inherit,all,range`), ArrowDown | select `inherit → all`, chip reads "All history", and the next turn persisted `window_start/window_end = NULL` |
+| 11 | retry a failed turn | Tab to `Retry` (15 stops), Enter | a new turn in the same conversation (ordinal 3) with an answer, and the thread then reported "2 turns have no answer yet" |
+
+### Acceptance: every rendered claim links to evidence
+
+Ground rule used here: a *claim* is a value the screen asserts about the user's history; its
+*evidence link* is a rendered link that opens the record behind it. Counts are of unique hrefs on
+the screen, and each one was opened in the app to see whether it resolves (a route that renders
+"This moment is gone" / "This session is gone" / "That thread no longer exists" — calibrated first
+on `/timeline/999999`, `/timeline/session/999999`, `/work/999999` — or an error boundary counts as
+unresolved).
+
+| Screen | Claims rendered | Evidence links (unique) | Resolved | What the links are |
+|---|---|---|---|---|
+| Work | 1 row × 4 facts (title, last touched, sessions, time spent) + 1 filter chip | 2 | 2 | the row → `/work/:id`; the empty-state action |
+| Thread | 4 header facts + 2 session rows × 4 + 10 entity chips + 1 open loop × 5 fields + 1 connection | 15 | 15 | sessions → `/timeline/session/:id`, entities → `/work?entity=:id`, the thread back-link, the survivor of a merge |
+| Insights | 15 cards (1/0/10/3/1 per kind) each with its typed payload fields | 63 | 63 | thread → `/work/:id`, entity → `/work?entity=:id`, sessions → `/timeline/session/:id`, moments → `/timeline/:id` |
+| Ask (`#3`) | 1 answered turn: 361-character answer naming 8 frames, 5 session chips, 8 moment chips | 26 | 26 | sessions and moments of the persisted `citations` pair |
+| **Total** | | **106** | **106** | |
+
+Two destination classes are honest non-links by design (`07` D5): a `mark` whose payload carries no
+frame renders `aria-disabled` with the copy "mark (no page yet)", and `report` evidence lands on
+`/settings/data`, the only surface that lists saved runs.
+
+### Acceptance: themes
+
+All four themes `UI_REFERENCE §1` ships, applied from Settings · General → Appearance (the real
+control, not a URL hack) and measured off the captured PNGs:
+
+| Theme | mean luminance (0–255) across the four screens |
+|---|---|
+| `pine-light` | 240.4 – 242.5 |
+| `pine-dark` | 25.0 – 28.3 |
+| `ink-light` | 240.4 – 241.8 |
+| `ink-dark` | 25.7 – 30.0 |
+
+Files: `work-<theme>.png`, `thread-full-<theme>.png`, `insights-<theme>.png`, `ask-<theme>.png`.
+Light and dark are separated by ~215 luminance units on every screen, so the claim is measured, not
+asserted.
+
+### Acceptance: overrides round-trip (written, then applied by the clusterer)
+
+| Step | Override row written | Effect observed in the app and the DB |
+|---|---|---|
+| rename | `(1/2/5, rename, thread 1, {"title"…})` | applied after the next cluster pass: the Work list and the thread header read the new title; `threads.title` followed |
+| split | `(3, split, thread 1, {"thread_id":1,"session_ids":[1,2]})` | a new thread appears (2 sessions) with its own entities; the survivor drops to 215 |
+| merge | `(4, merge, thread 2 → 1, {"session_ids":[1,2]})` | survivor back to 217 sessions, source retained at `session_count = 0` and filtered out of Work; `/work/2` explains the merge and links the survivor |
+
+The merge's survivor is the one the dialog named in each direction tested (2 → 1 and 1 → 3), and the
+emptied source never appears in the list (`src-tauri/src/graph.rs:136` drops `session_count = 0`
+before truncation).
+
+**What this needed, and why it is recorded as an environment step, not a feature:** the fixture DB's
+`sessions.backfill_done_until` marker arrived incomplete (`cursor_ms 1789626562000 < target_ms
+1793956595833`), and the graph lane stays gated until that pass completes
+(`crates/kernel/src/graph_scheduler.rs:205-211`). With the marker incomplete every override was
+written successfully and applied never — three `graph_cluster` rows sat `pending` across an app
+restart. Advancing the marker to its own `target_ms` (a dev-side edit of the acceptance DB, no code
+change) let the real scheduler run, and each override then applied through the real clusterer. This
+is the honest shape of the P5 gate, not a P9 workaround; see `07` P9 D12.
+
+### Acceptance: a follow-up turn reuses the previous window and entities
+
+| Turn | Question | Persisted window | Evidence |
+|---|---|---|---|
+| 1 | "What did I work on last week?" | `1792969200000 – 1793574000000` | planned from the question |
+| 2 | "And what about the payroll import?" | `1792969200000 – 1793574000000` (identical) | the chip reads "Inherited from the previous turn — change or clear it" |
+
+The follow-up states no time intent, and the window it persisted is byte-identical to the previous
+turn's, which is §7i.4's inheritance rule visible in both the row and the UI.
+
+### Acceptance: the ten-question spot check (P4's automatic set, asked through the UI)
+
+`crates/harness` writes `pairs.jsonl` before it contacts the API, so the set can be generated without
+a server: `cargo run -p harness --bin harness -- eval --db harness-data/fixture/screensearch.db --api
+http://127.0.0.1:1 --pairs 10 --seed 7 --out harness-data/eval-probe` wrote 10 pairs (2 per generator:
+`last_seen`, `involvement`, `sequence`, `window_recall`, `seen_again`) and then exited with "the API is
+not reachable" — the questions are P4's, unmodified. Each was then typed into the app's composer and
+submitted (keyboard path 9); answers and citations were read back from `ask_turns`.
+
+| Pair | Known fact (P4) | Session recall | Frame recall | Answer (head) |
+|---|---|---|---|---|
+| `last_seen-001` | `C:\dev\fieldnotes` last seen, session 168 | 1/1 | 1/10 | "…the last time `C:\dev\fieldnotes` was open was on frame 295, session 50…" |
+| `last_seen-002` | `C:\dev\inkwell`, session 215 | 1/1 | 3/10 | "…was open was on frame 734, session 126…" |
+| `involvement-001` | `codeberg.org/fabrikam-data/skyline-etl`, 6 sessions | 1/6 | 0/10 | "The sessions that involved … are: [frame 425/session 75] …" |
+| `involvement-002` | `github.com/contoso/orbitctl`, 4 sessions | 2/4 | 1/7 | "…are: [frame 416/session 73] [frame 872/session 150] …" |
+| `sequence-001` | what came before session 28 | 0/1 | 0/4 | "I was not working on session 28 … as it is not present in the provided context snippets." |
+| `sequence-002` | what came before session 72 | 0/1 | 0/4 | "The provided context snippets only show the actions taken within session 72…" |
+| `window_recall-001` | 2026-10-16 morning | 3/4 | 5/10 | "…the morning of 2026-10-16, you worked on: [frame 1239/session 216] …" |
+| `window_recall-002` | 2026-10-14 morning | 2/5 | 1/10 | "…there is no specific mention of work done on 2026-10-14 in the morning." |
+| `seen_again-001` | the mail-toolbar text | 1/1 | 3/3 | "…appears in the inbox of the email client, as seen in frames 1, 2, and 3 of session 1." |
+| `seen_again-002` | the "Emma Larsen" line | 0/2 | 0/2 | "I cannot find the text … in the provided context snippets." (no citations) |
+
+All ten were answered and nine carried citations. **Retrieval recall is the honest headline: 11/26
+expected sessions and 14/70 expected frames were cited.** Both `sequence` questions missed entirely
+(the retriever surfaced the anchor session's own frames, not its predecessor's) and
+`window_recall-002` refused a window it had frames for. That is a P4/P6 measurement, not a P9 UI
+verdict — P9's own claim (a turn renders its answer with the citations it actually read) holds — but
+it is recorded here because the kickoff asked for the spot check, and reporting "10/10 answered" alone
+would misrepresent what the answers contained.
+
+### Acceptance: composed components, and the no-gamification check
+
+- `ConnectionsPanel` and `EntityChips` are prop-driven and fetch nothing — their whole import list
+  is React, `react-router-dom`, `../primitives`, `cn`, `../lib/time`, the `ConnectedThread` binding
+  and `evidenceLink`; no query hook, no `invoke`. They therefore render standalone, which the running
+  app shows (`thread-full-*.png`, four themes), `ConnectionsPanel` both empty ("No connected threads
+  yet. They appear when threads share an entity.") and populated (a connected thread with the shared
+  entities listed as its evidence).
+- Keyboard operability: an `EntityChip` takes focus and Enter opens `/work?entity=7`; the
+  `ConnectionsPanel` rows are plain links in the same tab order; `ScopeChips`' editor is two native
+  `<select>`s reachable by Tab. `specs/UI_REFERENCE.md §5` lists all five under "Composed components".
+- No notification, badge, streak, score or grade appears on any of the four screens: a text scan of
+  each rendered screen finds none of those patterns, and nothing in the four routes renders a
+  timer-driven prompt. Insights are statements with evidence, never goals or ratings.
+
+### Honest reading — what this does not prove
+
+- **Retrieval quality.** The spot-check numbers above are a snapshot of the P4/P6 pipeline against a
+  synthetic fixture, not a P9 claim; the two `sequence` misses and the recall figures belong to that
+  phase's measurement.
+- **The answer-dependent states needed a model, and this machine had none at first.** With the
+  provider attached but no weights, a turn opened and never emitted (the whole story is `06` #116);
+  the `ask-turn-no-model` / `ask-turn-failed` / `ask-turn-cancelled` screenshots are that state, and
+  the populated/partial cells only became reachable after the local model finished preparing. A
+  reviewer without a model can reproduce the empty/loading/error/partial-without-answer cells and not
+  the answered ones.
+- **The fixture DB is not a real profile.** Two dev-side steps made it usable and are named above and
+  in `07` P9 D12; nothing else was synthesized.
+- **The four defects only a walk finds** are in `06` #113–#116: two fixed here, one deferred to P10
+  with its rationale, one left with P6 as an open stream issue.
+- **Not re-run here:** the harness `eval` loop itself (it needs the app's loopback API plus a model and
+  produces its own answer metrics), and the `MCP`/HTTP surfaces (P8's, unchanged).
+
+### Dev-side actions on this machine (for the record)
+
+- `cargo run -p evalfixture -- gen --out harness-data/fixture`, whose printed summary is the
+  reproducible identity of the data every screenshot was taken over (re-run for this record into a
+  fresh directory, same arguments, same digest):
+
+  ```
+  weeks=6
+  frames=1260
+  sessions=218
+  embeddings=1260
+  digest=69dac6e6ae417c0a6bc25590948a4dde8a6e1d500f99bb177f80a6bc794b8ab9
+  db=harness-data/fixture-check/screensearch.db
+  ```
+
+  then `cargo run -p evalfixture -- graph --db harness-data/fixture/screensearch.db`, whose own
+  evidence line is the same five counts the kernel logs:
+
+  ```
+  INFO kernel::graph_cluster: graph backfill complete entities=243 entity_aliases=11 session_entities=1385 threads=1 thread_sessions=217
+  graph backfill elapsed: 0.0s
+  ```
+
+  and the DB copied to `%APPDATA%\app.screensearchv2c.desktop\screensearch.db` — the app's own dev
+  data dir, created for this walk.
+- `settings.sessions.backfill_done_until` cursor advanced to its target (see above).
+- Temporary pending `insight_generate` / `graph_cluster` rows for two screenshots, deleted after.
+- The app was launched with the CDP flag; `harness-data/` is gitignored, so no artifact is committed.
+
 ## 2026-11-06: P8 insights + connections engine and agent surface — build, verification and live proof (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P8.md`. Contradictions and rulings: `06` #93–#101. Decisions, grants and

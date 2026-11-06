@@ -3,14 +3,11 @@
 // jump-to entries from it. Keeping it here (not inside the rail) is what lets
 // P9 add Ask and Work without restructuring the rail.
 //
-// The rail order is Deck · Ask · Work · Recall · Insights · Settings. Ask and
-// Work have no route yet, and a rail entry that leads nowhere is forbidden
-// (§10.1), so they are deliberately absent — never placeholders. P9 inserts
-// both **between Deck and Recall** by adding two entries to this array; nothing
-// else changes (the rail renders whatever is here):
-//
-//   { to: "/ask",  label: "Ask",  icon: IconAsk,  match: (p) => under(p, "/ask") },
-//   { to: "/work", label: "Work", icon: IconWork, match: (p) => under(p, "/work") },
+// The rail order is Deck · Ask · Work · Recall · Insights · Settings (UI_REFERENCE
+// §3, 0.4.5 D7). P9 added the Ask and Work entries between Deck and Recall when
+// their routes landed (/ask, /work, /work/:id); a rail entry that leads nowhere
+// is forbidden (§10.1), which is why they arrived with the screens and not
+// before them. Nothing else changed — the rail renders whatever is here.
 //
 // `/timeline` and its detail routes are Recall's second surface, not a rail
 // entry (§3): Recall's `match` covers them so the rail still shows where the
@@ -18,10 +15,12 @@
 import type { ComponentType } from "react";
 
 import {
+  IconAsk,
   IconDeck,
   IconInsights,
   IconRecall,
   IconSettings,
+  IconWork,
 } from "../components/icons";
 
 export interface NavEntry {
@@ -46,6 +45,18 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     label: "Deck",
     icon: IconDeck,
     match: (pathname) => pathname === "/",
+  },
+  {
+    to: "/ask",
+    label: "Ask",
+    icon: IconAsk,
+    match: (pathname) => under(pathname, "/ask"),
+  },
+  {
+    to: "/work",
+    label: "Work",
+    icon: IconWork,
+    match: (pathname) => under(pathname, "/work"),
   },
   {
     to: "/recall",

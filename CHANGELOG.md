@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: Work, Thread and Ask screens, and Insights rewritten as claims you can check
+
+- **Your history now has a place to look for what is in flight.** `/work` lists the threads the
+  clusterer found — last touched, session count, time spent — sortable by either, filterable by
+  entity, and honest about a graph that is still catching up ("217 of 218 sessions clustered").
+  `/work/:id` opens one: its session timeline, the entities those sessions touch, the open loops it
+  still holds (each with its evidence), the threads it connects to through shared subjects, and Ask
+  scoped to it.
+- **Insights are a list of claims, grouped by kind, each with the evidence that supports it.** The
+  window control (today / 7 days / 30 days / custom) reads real rows; a card whose evidence is gone
+  says so instead of asserting a fact; a window still being computed says how many passes are left;
+  and an empty window says it is empty rather than rendering nothing.
+- **Ask is a conversation.** Turns are saved, the list is titled by the question that started it, a
+  failed or stopped turn keeps its question with Retry, and a follow-up keeps the previous turn's
+  window and entities — with a chip that says "Inherited from the previous turn" so the reuse is
+  visible rather than implied. Answers carry both kinds of citation the answer read (sessions and
+  moments) as links.
+- **Four screens' worth of new IPC**: 13 graph/Ask read-and-write commands (`list_threads`,
+  `get_thread_page`, `list_entities`, `list_insights`, the three override writes, `ask_turn` and the
+  conversation reads), wire types in `crates/traits/src/graph_ipc.rs` and `ask_ipc.rs`, and the
+  regenerated `ui/src/bindings` in the same commit. Every override — rename, merge, split — is
+  written to `thread_overrides` with a receipt and applied by the clusterer, so a user's edit keeps
+  beating the automatic grouping.
+- **Schema v15** adds `ask_turns.citations` and `ask_turns.scope_thread_id`: a reloaded turn renders
+  its citations from the row rather than from a replayed stream, and a turn's thread scope is
+  readable after a restart. Rows written before v15 keep `NULL` citations and render without
+  citation chips rather than with invented ones.
+- `specs/UI_REFERENCE.md §5` gains a "Composed components" table (`ConnectionsPanel`, `EntityChips`,
+  `InsightCard`, `ScopeChips`, `EvidenceLink`), so the composed pieces P10 places in Session and
+  Moment are inventoried beside the primitives without changing the primitive count.
+
+### Fixed: two things the acceptance walk found in the new screens
+
+- **Renaming a thread appended to its name instead of replacing it.** The inline field opened
+  pre-filled with the caret at the end, so typing produced `Payroll importPayroll ops`. The field now
+  selects its value on first focus; typing replaces the name.
+- **The merge dialog claimed the emptied thread is "removed".** It is not: it is retained on record
+  (deleting it would delete your own override with it) and only stops appearing in Work. The dialog
+  now says exactly that.
+
 ### Added: Insights engine and agent read surface (backend)
 
 - **Insights are now real, evidenced statements about your history — and agents can read them.**

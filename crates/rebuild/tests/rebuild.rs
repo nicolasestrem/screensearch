@@ -179,8 +179,8 @@ fn rebuild_carries_history_and_repopulates_indexes() -> Result<()> {
     let conn = Connection::open(&dest)?;
     assert_eq!(
         count(&conn, "SELECT version FROM schema_version")?,
-        14,
-        "the baseline writes schema_version = 14"
+        store::LATEST_SCHEMA_VERSION as i64,
+        "the baseline writes the current schema_version"
     );
     assert_eq!(
         count(
@@ -317,8 +317,8 @@ fn rebuild_carries_history_and_repopulates_indexes() -> Result<()> {
     // The app's own open path accepts the rebuilt file (version + every baseline
     // table + the carried history metadata), which is what "boots on the current
     // baseline" reduces to at the store boundary.
-    let store = store::SqliteStore::open_path(&dest)
-        .context("the store must accept the rebuilt file")?;
+    let store =
+        store::SqliteStore::open_path(&dest).context("the store must accept the rebuilt file")?;
     assert_eq!(store.schema_version()?, store::LATEST_SCHEMA_VERSION);
     Ok(())
 }
@@ -753,9 +753,10 @@ fn cli_reports_counts_and_rebuilds_the_fixture() -> Result<()> {
         String::from_utf8_lossy(&rebuilt.stderr)
     );
     let stdout = String::from_utf8(rebuilt.stdout)?;
+    let version_line = format!("schema_version {}", store::LATEST_SCHEMA_VERSION);
     for needle in [
         "rebuild OK",
-        "schema_version 14",
+        version_line.as_str(),
         "integrity_check: ok",
         "foreign_key_check: clean",
         "sample frames (2 requested",

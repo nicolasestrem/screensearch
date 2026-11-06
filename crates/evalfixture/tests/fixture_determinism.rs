@@ -137,7 +137,7 @@ fn the_default_fixture_reads_back_with_every_entity_in_content_text() {
     assert_eq!(manifest.embeddings, 0);
 
     let back = read_back(&manifest.db);
-    assert_eq!(back.schema_version, store::LATEST_SCHEMA_VERSION);
+    assert_eq!(back.schema_version, LATEST_SCHEMA_VERSION);
     assert_eq!(back.frames.len() as u64, manifest.frames);
     assert_eq!(back.sessions.len() as u64, manifest.sessions);
 

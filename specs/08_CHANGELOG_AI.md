@@ -1,5 +1,52 @@
 # 08 — AI Changelog
 
+## 2026-11-06: P9 intelligence UI — Work, Thread, Insights v2 and Ask v2 (branch `feat/0.4.5-p9-intelligence-ui`, from `main` `eb556d1`; **PR open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
+
+Phase: `docs/kickoffs/P9.md`. Build record, gate output and the acceptance matrix: `05` (2026-11-06 P9
+section). Decisions, grants and deferrals: `07` (P9 D1–D12). Contradiction rows `#106`–`#116`: `06`.
+
+**Change.** The 0.4.5 wave's intelligence surfaces become real screens over the P5 work graph, the P6
+Ask pipeline and the P8 insights engine: `/work` (threads, sortable, entity-filterable, honest about a
+graph still catching up), `/work/:id` (timeline, entities, open loops with evidence, connected
+threads, scoped Ask), `/insights` rewritten from charts to a grouped list of evidenced claims with a
+window control, and `/ask` promoted from a single-turn panel to a saved conversation with typed
+scope chips. The rail gains the two prepared entries (Ask, Work) between Deck and Recall.
+
+**Why.** P5, P6 and P8 built the engines and never a surface; the arc's own rail comment named P9 as
+the phase that inserts them, and `UI_REFERENCE §3`/`§4` define all four screens and their states while
+no code implemented them.
+
+**Consistency.** The new wire types live in two new files (`graph_ipc.rs`, `ask_ipc.rs`) rather than in
+P8's `ipc.rs` — its one additive field is `ThreadSummary.active_ms` on the type the work list renders.
+Overrides are one code path: three store writes behind one `thread_overrides` table, applied by the
+clusterer, so no screen patches a list optimistically into a state the server disagrees with. Every
+evidence destination is decided once in `evidenceLink.tsx` (`frame`, `session`, `thread`, `entity`,
+`mark`, `report`), so no caller invents a seventh route. Schema v15 (D2 baseline edit) stores the
+citation pair and the thread scope on the turn, which is what makes "a reloaded answer renders its
+citations" true instead of aspirational.
+
+**Verification.** The kickoff's ordered gate, run on the final tree: `npm ci` (347 packages),
+`eslint` 0, `tsc --noEmit` 0, `vite build` 0, `stage-mcp` up to date, `cargo fmt --check` 0,
+`cargo clippy --workspace --all-targets -D warnings` 0, `cargo build --workspace` 0,
+`cargo test --workspace` 0 failures, `git diff --exit-code -- ui/src/bindings` 0, UI unit suite 142
+passing. Acceptance was walked in the running Tauri app over a `evalfixture` graph (1 260 frames, 218
+sessions, 243 entities): four screens × five states with screenshots, four themes × four screens, the
+eleven named keyboard paths, an override round trip (rename → applied, split → new thread, merge →
+folded, emptied source retained and filtered), a follow-up turn reusing the previous window with the
+inherited chip proving it, 97/97 rendered evidence links resolving, and the ten questions P4's
+automatic generator produces asked through the UI with their known facts checked.
+
+**Honest limits.** Two properties of a real install were supplied by hand in the acceptance DB and
+are recorded in `07` (P9 D12): the sessions-history marker advanced so the graph lane could run, and
+one pending `insight_generate` row held for a single screenshot. Retrieval quality is *not* a P9
+verdict: the ten-question spot check answered all ten with citations, but session recall was 11/26
+and frame recall 14/70 against P4's expected sets, with the two `sequence` questions missing entirely —
+that is the P4/P6 pipeline's measurement to make, and `05` records it with the per-question numbers
+rather than a summary verdict. Four defects surfaced only in the walk (`06` #113–#116): two fixed here
+(rename appended instead of replacing; the merge dialog claimed a deletion that does not happen), one
+deferred to P10 (the split dialog's confirm sits after 217 rows in tab order), one left with P6 (a
+turn whose provider never generates stays open with no terminal delta).
+
 ## 2026-11-06: P8 insights + connections engine and agent surface (backend) (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P8.md`. Build record, gate output and live proof: `05` (2026-11-06 P8

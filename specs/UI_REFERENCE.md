@@ -321,6 +321,16 @@ Loading uses skeletons that match final layout (no spinner-only screens). Empty 
 
 **`Expander` stays in the barrel.** Its only production consumer was the single-file `routes/Settings.tsx`, which P7 deleted; since then the only importers are the dev-only gallery (`routes/Kitchen.tsx`, `KitchenPrimitives.tsx`). P10 decides whether it survives as a v2 primitive or leaves the barrel.
 
+**Composed components (0.4.5 P9).** Not primitives and not in the barrel: these are route-level components built on the primitives above, they take their data as props, and they fetch nothing. They live in `ui/src/components/intelligence/` with their own barrel, and P10 places them on Session and Moment.
+
+| Component | States it ships | Notes |
+| --- | --- | --- |
+| `ConnectionsPanel` | loading, empty, error, partial, populated | The threads that share an entity — each row links to `/work/:id` and lists the shared entity names, which are the evidence of the connection. Static: `connections` + `entityNames` in, nothing fetched |
+| `EntityChips` | default, selected, removable, empty label | An entity as a chip: a link to `/work?entity=<id>` when it is not selectable, a `button` with `aria-pressed` when it is; `onRemove` for scope editing |
+| `InsightCard` | one per kind, plus stale | Renders the insight's typed payload without the model — phrasing from the `llm_phrased` generator is additive and never the only text; every card lists its evidence through `EvidenceLink`, and a `stale` row is labelled and never styled as current |
+| `ScopeChips` | read-only, editable, inherited | The window, thread and entity scope actually applied to a turn; an inherited scope says so instead of reusing it silently |
+| `EvidenceLink` (with `evidenceHref`) | navigable, labelled non-link | One claim → the row that proves it. `frame` → `/timeline/:id`, `session` → `/timeline/session/:id`, `thread` → `/work/:id`, `entity` → `/work?entity=<id>`, `report` → `/settings/data`; `mark` has no page, so it renders as a labelled non-link rather than a dead end |
+
 ## 6. Data & state (reliability by construction)
 - **Typed IPC only.** Every command/event payload is a Rust struct exported via **`ts-rs`** and
   imported by the UI. The UI **never** hand-writes an API type. Contract drift is impossible.
