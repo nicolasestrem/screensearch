@@ -348,6 +348,114 @@ would misrepresent what the answers contained.
 - Temporary pending `insight_generate` / `graph_cluster` rows for two screenshots, deleted after.
 - The app was launched with the CDP flag; `harness-data/` is gitignored, so no artifact is committed.
 
+### Review-fix pass on PR #165 (four findings, all reproduced before they were fixed)
+
+Codex reviewed the delivered branch and raised four findings. Each was checked against the code,
+reproduced with the fix temporarily removed, fixed, and re-run. `06` #118–#121 hold the rows; the raw
+orders are here.
+
+**1. A scoped turn cited out-of-scope frames (#118, P1).** The turn below is scoped to thread 1
+(session 5, frame 1) with thread 2 present (session 6, frame 2), no entity in the question, and no
+session winner — the state the fixture calls "no summaries and no vectors yet". With stage 3's
+pre-fix condition restored:
+
+```
+thread 'ask_thread_scope_holds_through_stage_three_and_empty_membership' panicked at crates\kernel\tests\ask.rs:2474:
+assertion `left == right` failed: the scope constrains stage 3 even when stage 2 ranked nothing
+  left: [1, 2]
+ right: [1]
+test result: FAILED. 0 passed; 1 failed; 0 ignored
+```
+
+With the fix, the same test:
+
+```
+running 1 test
+test ask_thread_scope_holds_through_stage_three_and_empty_membership ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored
+```
+
+The test also asserts the control direction — an unscoped, unranked turn still keeps the documented
+window fallback (`frames [1, 2]`), so the fix narrows scope without disabling the `§7i.1` fallback
+for questions that have no scope — and that a scope naming a thread the read cannot find cites
+nothing at all.
+
+**2 and 3. Conversation state on delete and on switch (#119, #120).** Both are React state, so each
+was walked in the running Tauri app over CDP, with the guard removed and then restored — the same
+fail-without/pass-with order as the two above. The app ran on the acceptance DB copy.
+
+*#120, composer overrides crossing conversations.* On a new conversation, set an entity override
+(`SKY-52`), then select a saved conversation:
+
+```
+# guard removed (pre-fix behaviour)
+override set: {"clearEntity":true}
+after switch: {"clearEntity":true,"url":"http://localhost:5173/ask?thread=11","selectEntity":""}
+
+# guard restored (fix)
+override set: {"clearEntity":true}
+after switch: {"clearEntity":false,"url":"http://localhost:5173/ask?thread=11"}
+```
+
+`Clear entity scope` is the override's own control, so its presence on `thread=11` is the leak and its
+absence is the fix; the `<select>` resetting to its placeholder in both runs is why the assertion is
+on the rendered chip, not the input.
+
+*#119, deleting the live conversation.* All conversations were deleted first so the live one could be
+the only one, then a question was asked (creating conversation 1, `?thread=1`) and that conversation
+deleted. Time in seconds after the confirming click:
+
+```
+# guard removed (pre-fix behaviour)
+opened confirmed
+0s {"url":"http://localhost:5173/ask?thread=1","empty":true}
+...
+5s {"url":"http://localhost:5173/ask?thread=1","empty":true}
+
+# and the next question, in that resurrected address:
+{"url":"http://localhost:5173/ask?thread=1",
+ "tail":"… That conversation no longer exists | It was deleted, so the question was not saved."}
+
+# guard restored (fix)
+opened confirmed
+0s {"url":"http://localhost:5173/ask","empty":true}
+...
+5s {"url":"http://localhost:5173/ask","empty":true}
+
+# and the next question starts a new conversation instead:
+{"url":"http://localhost:5173/ask?thread=1","deletedMsg":false,
+ "head":"… New conversation | Selected | What did I work on last Tuesday? | 1 turn · just now"}
+```
+
+So the pre-fix address resurrection is not cosmetic: the question typed next is discarded with "the
+question was not saved". The 13 saved conversations and 15 turns the walk used were snapshotted
+before this check and restored from the snapshot afterwards (`harness-data/ask-tables-backup.json`);
+the one conversation created for the reproduction was deleted with it, so the acceptance DB is the
+pre-reproduction state minus that test row.
+
+**4. The range end added 24 h (#121, P2).** `ui/test/localDateMidnight.test.mjs` pins
+`America/New_York` before the first `Date` is constructed, so the 23 h and 25 h days are real on any
+machine. With the old `+ DAY_MS` behaviour in the helper:
+
+```
+✔ the zone pin is in effect, so the DST days below are 23h and 25h
+✖ the exclusive end of a range is the next local midnight across the fall-back day
+✖ the exclusive end is the next local midnight across the spring-forward day
+✔ offsets roll the calendar month and year, not a millisecond count
+✔ empty and impossible dates are rejected instead of normalised
+ℹ tests 5
+ℹ pass 3
+ℹ fail 2
+```
+
+With the calendar-day helper:
+
+```
+ℹ tests 5
+ℹ pass 5
+ℹ fail 0
+```
+
 ## 2026-11-06: P8 insights + connections engine and agent surface — build, verification and live proof (branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`; **PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P8.md`. Contradictions and rulings: `06` #93–#101. Decisions, grants and

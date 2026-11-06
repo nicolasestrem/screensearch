@@ -50,6 +50,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (deleting it would delete your own override with it) and only stops appearing in Work. The dialog
   now says exactly that.
 
+### Fixed: four things the PR review found in Ask
+
+- **A question scoped to a thread could answer from other threads.** When the scoped thread's
+  sessions had nothing to rank — no summaries or vectors yet — the frame search fell back to the
+  whole window and cited whatever else matched, while the turn still recorded the scope. A scope that
+  named a thread the app could not find was worse: it searched the window too. The scope is now a
+  hard constraint: the frame search stays inside it, and a scope with no sessions to search returns
+  no evidence rather than unrelated evidence.
+- **Deleting the conversation you were reading brought it back.** A finished turn keeps its
+  conversation id in memory, so removing the last conversation put that id straight back into the
+  address; the next question then failed because the conversation no longer existed. Deleting now
+  clears the live conversation first, so the deletion sticks and the next question starts a new one.
+- **Scope and window overrides followed you between conversations.** Clearing the thread scope in one
+  conversation, then opening another, sent "clear the scope" for the second — and an entity or window
+  override crossed the same way, including through "New conversation". Overrides now belong to the
+  conversation they were set in and are dropped when you switch.
+- **A custom range could lose an hour at each end on a daylight-saving day.** The range's exclusive
+  end was the start plus exactly 24 hours, so in a zone with DST an end date of 1 November stopped at
+  23:00 that day, and 8 March ran an hour into the next. The end is now the next local midnight, and
+  the shared helper is tested against both switch days.
+
 ### Added: Insights engine and agent read surface (backend)
 
 - **Insights are now real, evidenced statements about your history — and agents can read them.**

@@ -36,6 +36,39 @@ folded, emptied source retained and filtered), a follow-up turn reusing the prev
 inherited chip proving it, 97/97 rendered evidence links resolving, and the ten questions P4's
 automatic generator produces asked through the UI with their known facts checked.
 
+**Review pass (PR #165).** The automated review of the open PR found four defects, all reproduced
+before they were fixed (`06` #118–#121, raw orders in `05`).
+
+The one that matters is a scope leak: Ask held a thread scope as a *hint* rather than a constraint.
+Stage 1 selected the scoped thread, but stage 3 only honoured a narrowed candidate set when an
+**entity** had resolved, so a scoped question that resolved no entity and whose sessions had nothing
+to rank (no summaries or vectors yet) searched the whole window and cited other threads' frames while
+persisting the scope it had not used. A scope naming a thread the read could not find was worse:
+`ask_candidate_sessions` widens to the window when the member list is empty, so an unresolvable scope
+answered from every conversation on disk. Both paths now treat explicit membership as authoritative,
+and empty membership yields no evidence rather than unrelated evidence. The regression test asserts
+the unscoped control too, so the fix narrows scope without disabling the `§7i.1` window fallback for
+questions that have none — the first draft of that test asserted on citations' sessions, which are
+derived from the cited frames rather than from stage-2 winners, and failed for that reason.
+
+Two were React state that outlived what it described. A finished turn keeps its conversation id in
+memory, so deleting the only conversation removed `?thread=` and the adoption effect immediately put
+the deleted id back: the next question was then discarded with "That conversation no longer exists"
+(walked in the app, guard removed and restored, six one-second samples each way). And the composer's
+thread-scope/entity/window overrides were page state keyed to nothing, so clearing the scope in one
+conversation pushed `clear_thread_scope` onto the next one it opened — fixed by dropping the overrides
+when the conversation identity changes. That reset is a render-phase adjustment keyed on
+`?thread=`/`?scopeThread=`, not an effect: an effect runs after paint, leaving one committed frame
+whose submit would still carry the previous conversation's scope.
+
+The fourth is a daylight-saving bug: the custom range's exclusive end was `start + 24h`, so in a zone
+with DST an end date of 2026-11-01 stopped at 23:00 that day and 2026-03-08 ran an hour into the next
+— and that bound ships as an explicit retrieval override, so the wrong window is what retrieval and
+inherited turns used. `localDateMidnight(value, offsetDays)` joins `lib/time.ts` as the calendar-day
+helper (the trap was already documented in `ReportBuilder`; the third copy is what drifted), with the
+test pinning `America/New_York` before the first `Date` is constructed so the 23 h and 25 h days are
+real on any machine.
+
 **Review pass.** Reading this record back surfaced three documentation gaps, all fixed here without
 touching behaviour: the low-confidence ruling existed only in the code comments that cite it
 (`0.4.5 D13`), so it is now written down in `07` P9 D13 with the contradiction row `06` #117 —
