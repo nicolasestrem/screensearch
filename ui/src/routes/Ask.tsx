@@ -197,6 +197,8 @@ interface TurnBlockProps {
   entityById: Map<number, EntitySummary>;
   threadTitles: Map<number, string>;
   onRetry: (turn: AskTurn) => void;
+  /** An answer is streaming, so a retry here would cancel it (`useAskConversation.ask`). */
+  retryDisabled?: boolean;
 }
 
 function TurnBlock({
@@ -205,6 +207,7 @@ function TurnBlock({
   entityById,
   threadTitles,
   onRetry,
+  retryDisabled = false,
 }: TurnBlockProps) {
   const answer = turn.answer ?? "";
   const hasAnswer = answer.trim() !== "";
@@ -254,7 +257,12 @@ function TurnBlock({
             No answer was recorded for this turn.
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="secondary" onClick={() => onRetry(turn)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={retryDisabled}
+              onClick={() => onRetry(turn)}
+            >
               Retry
             </Button>
             <span className="text-t-xs text-fg-tertiary">
@@ -894,6 +902,11 @@ export function Component() {
 
   const retryTurn = useCallback(
     (turn: AskTurn) => {
+      // `ask` cancels whatever is streaming before it starts, so a saved-turn retry taken while
+      // another answer is generating would throw that answer away — the composer refuses the same
+      // thing during a stream, and this path has to agree (`03 §7i.4`). The button is disabled too;
+      // the guard is what makes the callback itself safe.
+      if (streaming) return;
       const request: Omit<AskConversationRequest, "request_id"> = {
         query: turn.question,
         thread_id: turn.thread_id,
@@ -920,7 +933,7 @@ export function Component() {
       setLastRequest(request);
       void askTurn(request);
     },
-    [askTurn],
+    [askTurn, streaming],
   );
 
   // Scope and window overrides are edits to *this* conversation's retrieval, not to the page, so
@@ -1027,6 +1040,17 @@ export function Component() {
   const errorThreadId =
     lastRequest === null ? null : (lastRequest.thread_id ?? conversation.state.threadId);
   const composerError = errorThreadId === selectedId ? conversation.state.error : null;
+  // A start failure persisted nothing and the composer was cleared on submit, so `lastRequest` holds
+  // the only copy of the question. The two errors that offer no retry put it back: "Answer model not
+  // loaded" sends the person to Settings, which unmounts this route, and a deleted conversation has
+  // to be re-asked somewhere new. Restoring into an empty composer only — words typed since are the
+  // person's, not ours to overwrite.
+  useEffect(() => {
+    if (composerError === null || lastRequest === null) return;
+    if (composerError.kind !== "no_answer_model" && composerError.kind !== "thread_not_found") return;
+    setQuery((current) => (current === "" ? lastRequest.query : current));
+  }, [composerError, lastRequest]);
+
   const persistedLiveTurn =
     conversation.state.turnId !== null &&
     turnList.some(
@@ -1118,6 +1142,7 @@ export function Component() {
               entityById={entityById}
               threadTitles={threadTitles}
               onRetry={retryTurn}
+              retryDisabled={streaming}
             />
           ))}
         </ol>
