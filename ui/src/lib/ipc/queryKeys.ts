@@ -74,6 +74,8 @@ export const queryKeys = {
   // (a sent turn changes both, and a deleted thread removes its turns).
   askPrefix: ["ask"] as const,
   askThreads: ["ask", "threads"] as const,
+  /** Every conversation's turn list — an `askTurns(id)` key starts with this prefix. */
+  askTurnsPrefix: ["ask", "turns"] as const,
   askTurns: (threadId: number) => ["ask", "turns", threadId] as const,
   // 0.3.0 flow recall (PR6): the where-was-i card/strip and the Intentions strip. A
   // `marks_changed` event invalidates `marks`; the overlay re-fetches `whereWasI` on

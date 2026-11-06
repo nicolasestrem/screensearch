@@ -11,25 +11,11 @@
 import type { TimeRange } from "../../bindings/TimeRange";
 import { useId } from "react";
 import { Button, Chip } from "../primitives";
-import { absoluteDate, absoluteTime } from "../../lib/time";
+import { absoluteTime } from "../../lib/time";
+import { windowLabel } from "../../lib/scopeWindow";
 import { cn } from "../../lib/cn";
 
-const DAY = 86_400_000;
-const HOUR = 3_600_000;
 
-/**
- * "Last 7 days" for a window that ends now and spans whole days, else the dated
- * range: `Last 7 days` is only ever said about a window that really is seven days
- * ending today.
- */
-function windowLabel(range: TimeRange, now: number): string {
-  const span = Math.max(0, range.end - range.start);
-  const days = Math.round(span / DAY);
-  if (days >= 1 && Math.abs(span - days * DAY) < HOUR && range.end >= now - HOUR) {
-    return days === 1 ? "Last 24 hours" : `Last ${days} days`;
-  }
-  return `${absoluteDate(range.start)} – ${absoluteDate(range.end)}`;
-}
 
 export interface ScopeEntity {
   id: number;

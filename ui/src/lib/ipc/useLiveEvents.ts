@@ -5,7 +5,9 @@
 //   • job_completed     → surgical frame/search/insights invalidation
 //   • sidecar_status    → patch the sidecarStatus cache + refresh readiness
 //   • capture_tick      → high-frequency; debounce-invalidate timeline + insights
-// `answer_delta` is intentionally NOT handled here — useAsk owns it.
+//   • answer_delta      → ONLY the terminal delta, to refresh the persisted turn
+// The live text of `answer_delta` stays out of here — useAsk owns it, request-scoped. What this
+// manager does with it is reconcile the record: see the handler below.
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -109,6 +111,24 @@ export function useLiveEvents() {
             qc.invalidateQueries({ queryKey: queryKeys.entitiesPrefix });
           }, ENRICH_DEBOUNCE_MS);
         }
+      }),
+    );
+
+    // The stream's live text belongs to `useAskConversation`, but its *completion* does not: if the
+    // person leaves Ask while an answer streams and comes back before it finishes, the remounted
+    // hook has a fresh `activeRequest` ref (`null`) and ignores the remaining deltas — including
+    // `done` — so its terminal invalidation never runs and the turn keeps rendering as unanswered
+    // even after the backend saved the answer. No polling backs that query and focus refetch is
+    // off, so nothing would correct it until the conversation remounted (`03 §7i.4`).
+    //
+    // Reconciling here rather than cancelling on unmount is deliberate: the answer is nearly done
+    // and the person left the screen, not the question. One refetch per completed turn, only on
+    // the terminal delta — never per token.
+    track(
+      listenTo("answer_delta", (event) => {
+        if (event.delta.type !== "done") return;
+        qc.invalidateQueries({ queryKey: queryKeys.askTurnsPrefix });
+        qc.invalidateQueries({ queryKey: queryKeys.askThreads });
       }),
     );
 
