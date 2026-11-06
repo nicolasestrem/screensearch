@@ -30,6 +30,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/API.md` and `docs/MCP.md` document the routes, the payloads, the evidence shape and the
   ordering. Schema is unchanged (still v14): the tables were already in the baseline.
 
+### Fixed: insights that outlived their evidence, and two ways one could distort a report
+
+- **An insight is never reported as current once what it cites has gone.** The staleness flag was
+  only written by the idle generation pass, so between a deleted session (or a frame dropped by
+  retention, or a re-clustered thread) and the next pass, `/v1/insights` and the report prompt
+  described the row as current. Readers now compute the flag from surviving evidence, using the same
+  predicate the sweep writes, and the read path stays write-free.
+- **A window full of insights can no longer push a report's grounding out of the prompt.** The
+  context block is capped at roughly 1200 estimated tokens and says how many rows it left out; the
+  report planner also charges that block against the model's window instead of assuming a fixed
+  instruction. A thousand-row block measured ~148,000 tokens before the cap — eighteen times an 8192
+  window.
+- **`semantic_neighbour` no longer loses connections behind same-day clutter.** The nearest-neighbour
+  read used to fetch five rows and then discard the same-day ones, so five closer sessions on one day
+  hid a genuine link to another day; the fetch now widens until the rule can be satisfied or the
+  candidates run out.
+- Test failure messages no longer interpolate session ids (three CodeQL "cleartext logging" alerts);
+  they report counts and kinds.
+
 ### Changed: App shell and Settings v2
 
 - **The app shell is rebuilt on the v2 design system, and Settings is a searchable, autosaving

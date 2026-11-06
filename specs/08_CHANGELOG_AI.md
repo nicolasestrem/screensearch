@@ -40,6 +40,16 @@ the renumbering, a missing `_`-literal `q` case in the store tests, and an overs
 that claimed the live proof ran on the maintainer's profile database when no profile database exists
 on this machine.
 
+**Review pass (PR #164).** The automated review of the open PR found four defects in P8's own
+guarantees, all fixed with a reproduction first (`06` #102–#105, full raw output in `05`): staleness
+was written only by the idle sweep, so a reader could receive a claim citing deleted evidence with
+`stale: false` (now computed at read from the same predicate the sweep writes); the report's insights
+block was unbounded against a shared context window — 148,067 estimated tokens for a 1000-row
+window, appended over the packing budget — now capped at 1200 with the instruction charged in
+`fits_single_pass`; `semantic_neighbour` applied the other-day rule after the KNN limit, losing a
+connection behind five same-day rows (now widens until eligible-or-exhausted); and three CodeQL
+"cleartext logging" alerts came from session ids in test panic messages, now counts only.
+
 **Not claimed.** The real-DB samples came from a locally built v14 database, not the maintainer's
 profile (none exists on this machine). The bindings guard was red only until the regenerated
 bindings were committed; on the committed branch it exits 0.

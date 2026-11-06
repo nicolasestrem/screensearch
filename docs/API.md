@@ -792,8 +792,10 @@ and 0.4.5 emits `heuristic` only.
 
 `stale` (`true`/`false`) means at least one referenced row — frame, session, thread, entity or
 mark — no longer exists since the insight was generated: the window, the entities or the evidence
-changed. A stale row is still listed, with the flag set, and is **replaced** by the next
-generation pass rather than repaired or hidden; never treat a stale row as current truth. Rows are
+changed. The flag is computed **when you read**, from the evidence that survives, so it turns true
+as soon as the cited row goes — not at some later generation pass (a stale row is also still listed,
+with the flag set, and is **replaced** by the next generation pass rather than repaired or hidden;
+never treat a stale row as current truth). Rows are
 not stable across passes: generation is **replace-per-window** — a pass covers one window, deletes
 the rows of each kind whose window overlaps it and inserts the fresh set in one transaction — so an
 `id` may name a different statement after a pass.
@@ -837,7 +839,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 The response is a bare array; `payload` is always present and always carries its own `kind` tag;
 `stale` is a JSON boolean, never `0`/`1`. These are **reads**: a `GET` never generates an insight,
-never writes or repairs a row, never starts inference and never changes `stale`. The pass window is
+never writes or repairs a row, never starts inference, and never persists a `stale` change — the
+flag it reports is derived from the references that exist at that moment, so it can differ between
+two reads while nothing was written. The pass window is
 `[now - 30 days, now)` truncated to whole minutes, so an insight describes the generator's window,
 not the window you asked for — `from`/`to` only select which stored rows you see.
 

@@ -73,6 +73,31 @@ batched round **before** any code was written. Contradiction rows are `06` #93�
 - The four routes use the strict `history::query_fields`/`parse_integer` parser: an unknown or
   duplicated parameter, a non-integer, or `from > to` is `400 bad_request`. `/v1/sessions` keeps its
   laxer serde extractor; that difference is stated in `docs/API.md` (`06` #98).
+
+**Review-fix pass (2026-11-06, PR #164, `06` #102–#105).** The automated review found four defects
+in P8's own guarantees; the rulings below are what the fixes settle, so P9 can rely on them.
+- **`stale` is computed where it is read, not only where it is swept.** `insights.stale` becomes a
+  cache the generation pass may write; every reader (`list_insights`, hence `GET /v1/insights`, the
+  MCP tools and the report block) additionally checks that the row's evidence still resolves, using
+  the same SQL fragment the sweep writes with. A GET stays write-free — pinned by asserting the
+  stored column is untouched after a read flags a row. Choosing read-side computation over a
+  `delete_unfrozen_session` hook was deliberate: retention purges frames and a re-cluster erases
+  threads, so hooking deletions would need a hook on every one of them, and would still miss any
+  path added later.
+- **The report's insights block is a bounded hint.** `INSIGHTS_CONTEXT_TOKEN_BUDGET` (1200 estimated
+  tokens) stops the listing and states how many read rows were omitted; the block therefore cannot
+  crowd the grounding chunks out of the pass, and a report may legitimately mention fewer insights
+  than the window holds. `fits_single_pass` now charges the assembled instruction against the
+  window, because P8 made that cost data-dependent; a window that used to collapse into one pass can
+  now fold, which is the correct trade.
+- **"Sessions similar on other days" is fetched, not filtered.** The neighbour read widens
+  (5 → 10 → … ≤ 4096) until each subject has `NEIGHBOUR_TOP_K` eligible neighbours or its pool is
+  spent, so the other-day rule cannot silently swallow a qualifying connection. The store's contract
+  (`k` nearest by distance, no day policy) is unchanged; `eligible_similarity` is the single
+  implementation of the rule, used by both the derivation and the widening check.
+- **Ids stay out of sinks, tests included.** `07:447` covers panic messages: the test harness writes
+  them to a log, and three CodeQL alerts landed on assertions that interpolated session ids. The
+  flagged messages now report counts and kinds.
 - A pass covers `[now - 30 days, now)` truncated to whole minutes, replaces every row of each kind
   whose window overlaps it (`03 §7j.5`), and then marks `stale=1` any row whose evidence refs no
   longer exist. A missing-evidence row is regenerated rather than served as truth (`07:409-412`'s

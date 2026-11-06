@@ -3886,6 +3886,106 @@ ink-dark    1 anti-pattern found.
   earlier 1233 plus 8 new regression tests; 88 UI tests = the earlier 82 plus 6 for the blocker.
   The P3 branch alone was also run green.
 
+### Review-fix pass (2026-11-06, PR #164 — `06` #102–#105)
+
+The automated review of PR #164 reported six findings: three Codex (P1/P2) and three CodeQL
+"cleartext logging" alerts. All six were real; none was rejected. Each behavioural fix was
+reproduced first — the block below is the failure observed *before* the change, with the code then
+restored and re-run green.
+
+**1. Staleness was only written by the sweep, so a reader could be handed an unverifiable claim
+(`06` #102).** `#101` rules that such a row "is never served as truth without the flag", but the
+only writer was the generation pass, which waits for idle at throttle level 0. Test written first:
+
+```
+$ cargo test -p store --test insights insights_read_computes_staleness
+test insights_read_computes_staleness_from_surviving_evidence ... FAILED
+thread '...' panicked at crates\store\tests\insights.rs:1846:5:
+a claim citing a deleted session is stale even though no sweep has run yet
+test result: FAILED. 0 passed; 1 failed
+```
+
+Fixed by computing the flag at read from one shared SQL fragment (`EVIDENCE_MISSING_SQL`) that the
+sweep also writes with, so the two cannot disagree. The test also asserts the **stored** column is
+still `0` after a read flags the row (a GET writes nothing) and that the sweep then marks exactly
+that one row. The report block skips stale rows, pinned by
+`insights_context_skips_stale_rows`. A pre-existing fixture in
+`report_insights_context_appends_the_window_block` cited sessions that never existed and stopped
+rendering — corrected by seeding the sessions it names (`recurrence_insight_citing`), not by
+relaxing the renderer.
+
+**2. The report's insights block was unbounded inside a shared context window (`06` #103).** The
+token cost was measured by neutering the cap:
+
+```
+test reports::tests::insights_context_is_bounded_by_its_token_budget ... FAILED
+thread '...' panicked at crates\kernel\src\reports.rs:4427:9:
+the block must stay near its budget, got 148067 tokens
+```
+
+**148,067 estimated tokens for a 1000-row window** — 18× an 8192-token window, and the instruction
+is appended to the user turn regardless of the packing budget in
+`crates/inference/src/answer.rs::build_summary_messages`. Fixed with
+`INSIGHTS_CONTEXT_TOKEN_BUDGET = 1200` (stops listing, states how many read rows were omitted) and
+by charging the assembled instruction in `fits_single_pass`. Neutering that charge fails the gate
+test:
+
+```
+test reports::tests::fits_single_pass_detects_overflow ... FAILED
+thread '...' panicked at crates\kernel\src\reports.rs:2046:9:
+the same summaries plus a half-window instruction do not
+```
+
+(The assertion was strengthened to a full-window instruction after this run: half a window still
+left room for four medium nodes, so it did not prove the charge. The neutered code fails the final
+form too.)
+
+**3. `semantic_neighbour` applied the other-day rule after the KNN limit (`06` #104).** Five
+same-day sessions were seeded closer to a subject than one qualifying session on an earlier day;
+the pass produced no row for the subject:
+
+```
+test semantic_neighbours_reach_past_same_day_rows_to_fill_the_limit ... FAILED
+thread '...' panicked at crates\kernel\tests\insights.rs:1031:13:
+the subject must reach the other-day neighbour; 1 neighbour rows exist
+```
+
+Fixed in the kernel, with the store's contract unchanged: `eligible_similarity` is the one copy of
+"not self, similarity ≥ 0.80, another UTC day", used both by the derivation and by
+`neighbours_are_complete`, and the pass widens the fetch `5 → 10 → … ≤ 4096` until every subject
+has `NEIGHBOUR_TOP_K` eligible neighbours or its pool is exhausted (`rows < depth`, which the store
+only returns when nothing is left).
+
+**4. Session ids reached a log sink from test panic messages (`06` #105).** Three CodeQL alerts
+(cleartext logging) on assertions that interpolated `first_session_id`/`second_session_id`/
+`neighbour_session_id`, and on the block body itself. The messages now report **counts**, not
+identities, matching `07:447`; the same rule was applied to the new tests written in this pass so
+the alerts are not replaced by new ones.
+
+**Agent decisions inside the contract that changed here** are recorded in `07` (review-fix pass
+block): `insights.stale` is now a cache written by the sweep and computed by readers; the block is a
+bounded hint; the neighbour widening lives in the kernel; `docs/API.md` states that the flag is
+computed at read time and that two reads can differ without any write.
+
+**Final gate on the review-fix tree, raw:**
+
+```
+cargo fmt --all -- --check                                     exit=0
+cargo clippy --workspace --all-targets -- -D warnings          exit=0
+cargo test --workspace                                         exit=0
+  passed 1575   failed 0
+  kernel unit 220      store unit 106     traits 157      screensearch_lib 168
+  store insights 17    kernel insights 6  http_api 58 (+1 ignored)
+  mcp 55 + memory_tools 15 + remote_transport 9 + stdio_mcp 22
+git diff --exit-code -- ui/src/bindings                        exit=0
+```
+
+1571 → 1575 passed is exactly the four new tests (`insights_read_computes_staleness_from_surviving_evidence`,
+`insights_context_skips_stale_rows`, `insights_context_is_bounded_by_its_token_budget`,
+`semantic_neighbours_reach_past_same_day_rows_to_fill_the_limit`); no test was relaxed or deleted, and
+the two pre-existing fixtures that the staleness rule correctly invalidated were made honest rather
+than exempted.
+
 ## 2026-11-03: 0.4.5 P4 automatic evaluation harness (branch `feat/0.4.5-p4-auto-eval`)
 
 - **Scope (roadmap P4, kickoff `docs/kickoffs/P4.md`):** dev-only eval runner in `crates/harness`.
