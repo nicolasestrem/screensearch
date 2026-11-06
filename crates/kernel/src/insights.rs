@@ -142,15 +142,28 @@ pub async fn run_insight_generate(store: &Arc<dyn Store>, now_ms: i64) -> Outcom
             return Outcome::Retry(format!("read entity session input: {error}"));
         }
     };
-    let neighbours = match store
-        .insight_session_neighbours(window_start, window_end, NEIGHBOUR_TOP_K)
-        .await
-    {
-        Ok(rows) => rows,
-        Err(error) => {
-            tracing::warn!(error = %error, "insights: session neighbours read failed");
-            return Outcome::Retry(format!("read session neighbour input: {error}"));
+    // The KNN limit and the other-day rule do not commute: a subject with several same-day
+    // sessions near it fills `NEIGHBOUR_TOP_K` with rows the rule then rejects, hiding a
+    // qualifying neighbour one slot deeper. Widen until every subject either has enough
+    // eligible neighbours or its candidate pool is spent, so "the nearest session on another
+    // day" means exactly that.
+    let mut depth = NEIGHBOUR_TOP_K.max(1);
+    let neighbours = loop {
+        let rows = match store
+            .insight_session_neighbours(window_start, window_end, depth)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(error = %error, "insights: session neighbours read failed");
+                return Outcome::Retry(format!("read session neighbour input: {error}"));
+            }
+        };
+        if neighbours_are_complete(&rows, depth) || depth >= NEIGHBOUR_FETCH_CEIL {
+            break rows;
         }
+        depth = depth.saturating_mul(2).min(NEIGHBOUR_FETCH_CEIL);
+        tracing::debug!(depth, "insights: widening the neighbour fetch");
     };
     let thread_sessions = match store
         .insight_thread_sessions(window_start, window_end)
@@ -511,6 +524,65 @@ pub fn derive_recurrence(
     out
 }
 
+/// Whether one KNN edge is usable for `semantic_neighbour`: not the subject itself, a
+/// similarity the floor accepts, and **another UTC day** (the same day is one continuous piece
+/// of work, not a connection).
+///
+/// This is the single copy of that rule. [`derive_semantic_neighbours`] emits by it, and
+/// [`neighbours_are_complete`] decides with it whether the fetch went deep enough — so the
+/// predicate that says "read more" and the one that says "keep this" cannot drift apart.
+fn eligible_similarity(row: &SessionNeighbourInput) -> Option<f64> {
+    if row.neighbour_session_id == row.session_id {
+        return None;
+    }
+    let similarity = cosine_similarity(row.distance);
+    // vec0 never produces a NaN distance, but a corrupt row must be dropped here rather than
+    // slip through an inverted comparison.
+    if similarity.is_nan() || similarity < NEIGHBOUR_MIN_SIMILARITY {
+        return None;
+    }
+    if row.session_started_at / DAY_MS == row.neighbour_started_at / DAY_MS {
+        return None;
+    }
+    Some(similarity)
+}
+
+/// Whether fetching `depth` neighbours per subject already exhausted what a deeper read could
+/// return for every subject, so the caller can stop widening.
+///
+/// The other-day rule and the similarity floor both reject rows *after* the KNN has applied its
+/// limit, so a subject whose nearest `depth` rows are all same-day could still have eligible
+/// neighbours just beyond it. Two things settle that:
+///
+/// * the subject already has [`NEIGHBOUR_TOP_K`] distinct eligible neighbours — nothing deeper
+///   can enter the list;
+/// * the read came back short for that subject (fewer than `depth` rows), which only happens
+///   when the candidate pool ran out — the store returns exactly `depth` whenever there are
+///   more.
+fn neighbours_are_complete(inputs: &[SessionNeighbourInput], depth: u32) -> bool {
+    let top_k = NEIGHBOUR_TOP_K as usize;
+    let per_subject = usize::try_from(depth).unwrap_or(usize::MAX);
+    let mut rows_seen: BTreeMap<i64, usize> = BTreeMap::new();
+    let mut eligible: BTreeMap<i64, std::collections::BTreeSet<i64>> = BTreeMap::new();
+    for row in inputs {
+        *rows_seen.entry(row.session_id).or_default() += 1;
+        if eligible_similarity(row).is_some() {
+            eligible
+                .entry(row.session_id)
+                .or_default()
+                .insert(row.neighbour_session_id);
+        }
+    }
+    rows_seen.iter().all(|(subject_id, seen)| {
+        let usable = eligible.get(subject_id).map_or(0, |set| set.len());
+        usable >= top_k || *seen < per_subject
+    })
+}
+
+/// The deepest fetch the pass will make, mirroring sqlite-vec's own `k` ceiling (the store
+/// clamps to the same figure), so widening always terminates.
+const NEIGHBOUR_FETCH_CEIL: u32 = 4_096;
+
 /// `semantic_neighbour` (`03 §7j.1`, session vectors `03 §7i`): sessions similar to a given
 /// session, on **another day**.
 ///
@@ -549,18 +621,9 @@ pub fn derive_semantic_neighbours(
         // of the top-k list or two evidence ordinals.
         let mut best: BTreeMap<i64, &SessionNeighbourInput> = BTreeMap::new();
         for row in rows {
-            if row.neighbour_session_id == session_id {
+            let Some(similarity) = eligible_similarity(row) else {
                 continue;
-            }
-            let similarity = cosine_similarity(row.distance);
-            // vec0 never produces a NaN distance, but a corrupt row must be dropped here
-            // rather than slip through an inverted comparison.
-            if similarity.is_nan() || similarity < NEIGHBOUR_MIN_SIMILARITY {
-                continue;
-            }
-            if row.session_started_at / DAY_MS == row.neighbour_started_at / DAY_MS {
-                continue;
-            }
+            };
             match best.get(&row.neighbour_session_id) {
                 Some(existing) if cosine_similarity(existing.distance) >= similarity => {}
                 _ => {

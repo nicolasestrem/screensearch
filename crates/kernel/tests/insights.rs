@@ -931,3 +931,127 @@ async fn insights_on_demand_request_through_the_kernel_queues_one_pass() {
     );
     kernel.stop_insight_scheduler().await;
 }
+
+/// `semantic_neighbour` must find the nearest session **on another day**, not the nearest
+/// session overall and then filter.
+///
+/// A day with five closer same-day sessions fills the neighbour limit, so reading "the nearest
+/// five" and applying the other-day rule afterwards swallows a sixth, qualifying neighbour and
+/// emits nothing — a connection between two similar days silently disappears. The read has to go
+/// deep enough that the rule can be satisfied, and stop only when the candidate pool is spent.
+#[tokio::test]
+async fn semantic_neighbours_reach_past_same_day_rows_to_fill_the_limit() {
+    let store = SqliteStore::open_in_memory().expect("open in-memory store");
+    let busiest_day = NOW - 10 * DAY;
+
+    // The subject, and five sessions on its own UTC day that are each closer to it than
+    // anything else in the store.
+    let subject = insert_session(&store, busiest_day, Some(busiest_day + 3_600_000)).await;
+    let mut same_day = Vec::new();
+    for step in 1..=5 {
+        let id = insert_session(
+            &store,
+            busiest_day + step * 60_000,
+            Some(busiest_day + step * 60_000 + 60_000),
+        )
+        .await;
+        same_day.push(id);
+    }
+    // One session an earlier day, closer than the similarity floor but further than all five.
+    let other_day = insert_session(&store, NOW - 3 * DAY, Some(NOW - 3 * DAY + 3_600_000)).await;
+
+    for (session_id, title, summary) in [
+        (subject, "subject", "the session being described"),
+        (other_day, "earlier day", "the same work, days before"),
+    ]
+    .into_iter()
+    .chain(
+        same_day
+            .iter()
+            .map(|id| (*id, "same day", "more of the same afternoon")),
+    ) {
+        store
+            .set_session_title_summary(session_id, title, summary, "test-model")
+            .await
+            .expect("title the session");
+    }
+
+    // `similar_to` builds a unit vector whose cosine to `one_hot(0)` is exactly `similarity`,
+    // so the ranking below is arithmetic rather than a threshold guess.
+    let similar_to = |similarity: f32| {
+        let mut vector = vec![0.0_f32; EMBEDDING_DIM];
+        vector[0] = similarity;
+        vector[1] = (1.0 - similarity * similarity).sqrt();
+        Embedding(vector)
+    };
+    for (index, session_id) in same_day.iter().enumerate() {
+        // 0.99, 0.98, … — every one of them above the floor and closer than the other day.
+        let similarity = 0.99 - index as f32 * 0.01;
+        let written = store
+            .upsert_session_vector(
+                *session_id,
+                "same day\nmore of the same afternoon",
+                &similar_to(similarity),
+            )
+            .await
+            .expect("upsert same-day vector");
+        assert!(written, "the seeded vector is accepted");
+    }
+    let other_similarity = 0.90_f32;
+    assert!(
+        f64::from(other_similarity) > NEIGHBOUR_MIN_SIMILARITY,
+        "the target neighbour must clear the threshold"
+    );
+    store
+        .upsert_session_vector(
+            other_day,
+            "earlier day\nthe same work, days before",
+            &similar_to(other_similarity),
+        )
+        .await
+        .expect("upsert other-day vector");
+    store
+        .upsert_session_vector(
+            subject,
+            "subject\nthe session being described",
+            &similar_to(1.0),
+        )
+        .await
+        .expect("upsert subject vector");
+
+    let store: Arc<dyn Store> = Arc::new(store);
+    let outcome = run_insight_generate(&store, NOW).await;
+    assert!(
+        matches!(outcome, Outcome::Complete { .. }),
+        "the pass completes: {outcome:?}"
+    );
+
+    let rows = list_all(store.as_ref()).await;
+    let neighbours = of_kind(&rows, InsightKind::SemanticNeighbour);
+    let subject_row = neighbours
+        .iter()
+        .find(|row| matches!(&row.payload, InsightPayload::SemanticNeighbour(p) if p.session_id == subject))
+        .unwrap_or_else(|| {
+            panic!(
+                "the subject must reach the other-day neighbour; {} neighbour rows exist",
+                neighbours.len()
+            )
+        });
+    let InsightPayload::SemanticNeighbour(payload) = &subject_row.payload else {
+        unreachable!("filtered by kind");
+    };
+    assert_eq!(
+        payload.neighbours.len(),
+        1,
+        "exactly one qualifying neighbour (on another day)"
+    );
+    assert_eq!(
+        payload.neighbours[0].session_id, other_day,
+        "the neighbour is the other-day session, not a same-day one"
+    );
+    assert!(
+        (payload.neighbours[0].similarity - f64::from(other_similarity)).abs() < 1e-3,
+        "the similarity is the seeded one: {}",
+        payload.neighbours[0].similarity
+    );
+}
