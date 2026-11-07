@@ -25,10 +25,13 @@ registration paths with one `apply_hotkey` over an internal `HotkeyEnv` seam. Th
 checked on the whole diff: the only occurrences are two pre-existing comment lines that the diff
 *removes*.
 
-**Field evidence for the hotkey defect** (gathered before any code changed): an OS probe from
-another process returned Win32 `1409` for both `Ctrl+Alt+M` and `Ctrl+Alt+Z`, so the installed
-process already held both chords, while the toast said nothing was registered and omitted the
-"; still using the previous combination" suffix that only the "nothing registered" branch produces.
+**Field evidence for the hotkey defect** (gathered before any code changed): the toast carried no
+"; still using the previous combination" suffix, which only the "nothing registered" branch
+produces, so the stored chord was `None` when the save ran; an OS probe returned Win32 `1409` for
+both chords, which proves *a* process held each but cannot name it (Windows exposes no
+hotkey-owner API); and the rebuilt candidate then showed the mark registration attempted with its
+own registry empty and refused, while `Ctrl+Alt+Z` registered and worked, so `Ctrl+Alt+M` is held
+elsewhere.
 
 **Pre-fix demonstration** (required proof that the new tests catch the defect). The guard inside
 `apply_hotkey` was temporarily reverted to the old raw-string comparison, `registered = None` on

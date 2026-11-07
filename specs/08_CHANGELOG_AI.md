@@ -21,10 +21,11 @@ guard at all and wrote `None` into the stored chord on any failure, including th
 `HotKey already registered` failure that a chord this process already holds must produce. One
 failed startup attempt therefore erased the record, every later save retried the duplicate
 registration and toasted, and a spelling variant of the same chord slipped past the string guard.
-The field state was confirmed before any code changed: an OS probe from another process returned
-Win32 `1409` for both `Ctrl+Alt+M` and `Ctrl+Alt+Z`, so this app already held both while the toast
-claimed nothing was registered, and the missing "; still using the previous combination" suffix
-identified the "nothing registered" branch. The fix replaces both paths with one
+The field state was confirmed before any code changed: the missing
+"; still using the previous combination" suffix identified the "nothing registered" branch, so the
+stored chord was `None` when the save ran; the probe returned Win32 `1409` for both chords without
+naming the owner; and the rebuilt candidate attempted the mark registration with an empty own
+registry and was refused while `Ctrl+Alt+Z` registered and worked. The fix replaces both paths with one
 `apply_hotkey(env, slot, requested)` over an internal `HotkeyEnv` seam (the real `AppHotkeys` over
 the plugin manager and `OverlayState`, plus a fake for tests): ownership is detected before any
 attempt through the stored chord compared canonically (both sides parsed with the plugin's own
