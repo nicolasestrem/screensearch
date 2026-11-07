@@ -107,17 +107,19 @@ forced it. This pass does not tag and does not publish a release; the candidate 
 **Root causes found by this pass.**
 
 - **QA2 F1: the hotkey warning (fixed).** `src-tauri/src/overlay.rs` had two separate registration
-  paths. `init_*` had no idempotency guard at all: any duplicate registration attempt (a chord this
-  process already held) failed with the plugin's `HotKey already registered`, and the failure
-  branch overwrote the stored chord with `None`. From then on the settings-save path
-  (`reregister_*`) saw "nothing registered", so every save retried the same duplicate registration,
-  failed again, and toasted. Its early-return guard compared raw strings, so a spelling variant of
-  the same chord (`ctrl+alt+m`, `Alt+Ctrl+M`) also slipped past it. Evidence: an OS probe showed
-  the installed 0.4.5 process itself holding both `Ctrl+Alt+M` and `Ctrl+Alt+Z` (Win32
-  `RegisterHotKey` from another process returns 1409 for both) while the toast text had no
-  "; still using the previous combination" suffix, and that suffix is only produced by the
-  "nothing was registered" branch. Pre-fix unit output reproduced the field text verbatim,
-  including `key: KeyM, id: 589855`.
+  paths. `init_*` had no idempotency guard and, on any registration failure, overwrote the stored
+  chord with `None`. A failure can come from a chord this process already holds or from another
+  program holding it, and the old init path could not tell those apart. From then on the
+  settings-save path (`reregister_*`) saw "nothing registered", so every save retried the same
+  doomed registration, failed again, and toasted. Its early-return guard also compared raw strings,
+  so a spelling variant of the same chord (`ctrl+alt+m`, `Alt+Ctrl+M`) slipped past it. Evidence:
+  the toast carried no "; still using the previous combination" suffix, which only that
+  "nothing registered" branch produces, so the stored chord was `None` when the save ran; an OS
+  probe returned Win32 `1409` for both chords, which proves *a* process held each but cannot name it
+  (Windows exposes no hotkey-owner API); and the rebuilt candidate settled the question, attempting
+  the mark registration with its own registry empty and being refused while `Ctrl+Alt+Z` registered
+  and worked, so `Ctrl+Alt+M` is held by another program (`QA2 E1`) and was never ours. Pre-fix unit
+  output reproduced the field text verbatim, including `key: KeyM, id: 589855`.
 - **QA2 F2: Ask v2 printed Markdown literally (fixed).** `ui/src/routes/Ask.tsx` rendered the answer
   as `<p className="whitespace-pre-wrap">`, a deliberate P10 shortcut recorded in its own header
   comment (the route could not reuse `AnswerStream`, which is bound to the legacy single-turn
