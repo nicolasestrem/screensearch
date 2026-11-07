@@ -1282,9 +1282,11 @@ async fn set_settings(
     // handler sees the new value immediately (0.3.2 PR3).
     tray::set_close_to_tray(&app, settings.app_close_to_tray);
 
-    // Re-run the shell registration check after every save. Each helper no-ops when the
-    // persisted chord is already active, but retries a previously failed registration for
-    // the same saved chord after the user releases an OS/app conflict (D6).
+    // Re-run the shell registration check after every save. Each helper adopts the chord
+    // when this process already holds it (compared canonically, so a spelling variant is
+    // not a change), so an unchanged chord never registers again and never toasts. A
+    // chord whose registration failed earlier is retried, but silently: it recovers once
+    // the user releases the OS/app conflict without spamming every unrelated save (D6).
     overlay::reregister_overlay_hotkey(&app, &settings.overlay_hotkey);
     overlay::reregister_marks_hotkey(&app, &settings.marks_hotkey);
 

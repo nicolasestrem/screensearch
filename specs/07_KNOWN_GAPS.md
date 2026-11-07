@@ -68,6 +68,81 @@ below is recorded with the evidence that forced it. Evidence artifacts live outs
   ride a release-QA branch) or the maintainer's live-database acceptance run that P6 always
   required. No code, test or threshold was edited to move these numbers.
 
+## 2026-11-07: v0.4.5 installed-build QA fixes (branch `fix/0.4.5-qa-bugs`)
+
+Owner: maintainer for review. The installed 0.4.5 build was exercised by hand after the release
+candidate dry run and produced three defects. The kickoff replaces stop-at-ambiguity with "decide,
+record it here, continue", so each decision taken without asking is recorded with the evidence that
+forced it. This pass does not tag and does not publish a release; the candidate is the same version
+(0.4.5) rebuilt from `main` after this branch merges.
+
+- **QA2 D1: merge authority.** *Conflict:* `CLAUDE.md` forbids merging on the strength of a kickoff
+  file, an untracked override file, "D18 waived" or green CI. *Decision:* the instruction this pass
+  acts on is a live maintainer message in this session that names the PRs, the merge command and the
+  order (PR #168 first, then one PR for the three fixes), so it is the explicit approval that rule
+  requires, for those PRs only. `main` receives a squashed merge through GitHub, never a direct
+  commit and never a force-push; no tag is created and no release is published.
+- **QA2 D2: no version bump.** *Question:* the fixes ship in a rebuilt installer, so does the version
+  move? *Decision:* no. `0.4.5` was never tagged (the release workflow was validated with
+  `workflow_dispatch`), the candidate is the same product version with three QA fixes, and bumping
+  would invalidate the release notes, the tag-versus-version guard and the updater's version
+  comparison for a build that changes no version story. `CHANGELOG.md` records the fixes under
+  `[Unreleased]`.
+- **QA2 D3: an unchanged hotkey is not re-registered, and the failed-registration warning narrows.**
+  *Conflict:* `03 §8` requires a failed hotkey registration to be a visible Settings warning plus a
+  toast, never silent, and the shipped build satisfied that by retrying the registration on every
+  settings save. That retry is what produced the false warning: the chord was already held by this
+  process, so the retry could only fail, and the failure cleared the stored chord, which made every
+  later save repeat the same false alarm. *Decision:* an unchanged chord is never re-registered; the
+  stored chord is kept and the status stays OK. A registration that previously failed may be retried
+  at most silently (no toast) while its chord is unchanged, and the Settings status keeps reporting
+  that failure honestly. The visible warning and toast still fire for a chord the user actually
+  changed and that genuinely cannot be registered. `03 §8` states the rule next to the hotkey table.
+- **QA2 D4: where the evidence lives.** Reproductions, probe output, gate output and the installed
+  build check are recorded in this file and `08`, with the artifacts outside the repository under
+  `C:\Users\nicol\screensearch-evidence` (the hotkey probe script and the dry-run download
+  directory), because the repository holds no binaries or logs.
+
+**Root causes found by this pass.**
+
+- **QA2 F1: the hotkey warning (fixed).** `src-tauri/src/overlay.rs` had two separate registration
+  paths. `init_*` had no idempotency guard at all: any duplicate registration attempt (a chord this
+  process already held) failed with the plugin's `HotKey already registered`, and the failure
+  branch overwrote the stored chord with `None`. From then on the settings-save path
+  (`reregister_*`) saw "nothing registered", so every save retried the same duplicate registration,
+  failed again, and toasted. Its early-return guard compared raw strings, so a spelling variant of
+  the same chord (`ctrl+alt+m`, `Alt+Ctrl+M`) also slipped past it. Evidence: an OS probe showed
+  the installed 0.4.5 process itself holding both `Ctrl+Alt+M` and `Ctrl+Alt+Z` (Win32
+  `RegisterHotKey` from another process returns 1409 for both) while the toast text had no
+  "; still using the previous combination" suffix, and that suffix is only produced by the
+  "nothing was registered" branch. Pre-fix unit output reproduced the field text verbatim,
+  including `key: KeyM, id: 589855`.
+- **QA2 F2: Ask v2 printed Markdown literally (fixed).** `ui/src/routes/Ask.tsx` rendered the answer
+  as `<p className="whitespace-pre-wrap">`, a deliberate P10 shortcut recorded in its own header
+  comment (the route could not reuse `AnswerStream`, which is bound to the legacy single-turn
+  citation view model). The markdown setup now lives in one shared module and both answer surfaces
+  render through it; `AnswerStream` keeps its own container and behavior.
+- **QA2 F3: Settings controls moved with the copy (fixed).** `SettingRow`'s control slot was a
+  content-sized flex item. `Toggle` lays out as `flex items-start justify-between`, which inside a
+  shrink-to-fit box has no slack, so the switch landed right after the hint text. The slot is now a
+  fixed column (`md:w-96`, the `--space-96` token, `max-w-full` so a narrow cell clamps it).
+
+**Observed this pass and deliberately not fixed (owner: maintainer).**
+
+- **QA2 U1: `ReportView` keeps its own Markdown setup.** `ui/src/components/domain/ReportView.tsx`
+  imports `react-markdown` + `remark-gfm` with its own `a`/`img` overrides, so the app now has two
+  configurations of the same library. Folding it into the shared `AnswerProse` renderer needs an
+  `img` override added there; out of this fix's scope and safe as-is (both use the `prose-deck`
+  tokens).
+- **QA2 U2: a stacked settings row renders its `children` above its control.** In the
+  `labelInControl` variant the `children` cell has no `order`, while the control and status cells are
+  `order-1`/`order-2`, so a "Windows refused the launch-at-login change" notice or the Capture hotkey
+  conflict note appears above the control. Pre-existing, unrelated to the reported misalignment, and
+  fixed by one `order-3` on that cell if the maintainer wants it.
+- **QA2 U3: the `CategoryState` loading skeleton uses the old split.** Its placeholder row still
+  places `md:col-span-5 md:justify-self-end`, so the skeleton's block does not match the new fixed
+  control column. Cosmetic, loading-only, and in a file this fix did not own.
+
 ## 2026-11-03 — Carried into the 0.4.5 arc (owner: maintainer unless stated)
 
 Decisions and dispositions for the 0.4.5 arc (P9 — work intelligence + design system v2; `02 §5k`,

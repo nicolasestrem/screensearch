@@ -1,19 +1,20 @@
 // AnswerStream — renders the streamed `ask` answer (UI_REFERENCE §4 Recall/ask).
 // Folds the useAsk view-model into: a collapsible *thinking* trace (native
-// <details>, so keyboard + a11y come free), the answer prose (markdown via
-// react-markdown + GFM, themed with the `prose-deck` typography tokens), and the
-// reviewed source-frame context as clickable tiles that open each source moment.
-// react-markdown is imported only here, so it ships in the /recall route chunk (§8).
+// <details>, so keyboard + a11y come free), the answer prose (rendered through the shared
+// `AnswerProse` markdown renderer, themed with the `prose-deck` typography tokens), and the
+// reviewed source-frame context as clickable tiles that open each source moment. The
+// markdown setup lives in `answerProseMarkdown.ts`, so the Ask v2 conversation renders an
+// answer the same way this stream does instead of keeping a second copy. Markdown still only
+// reaches this component through a route-split module (§8), so it stays out of the entry chunk.
 // The idle phase renders nothing — the Recall screen owns the empty "ask a question"
 // invitation.
 import { useEffect, useRef, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
 import type { AskPhase } from "../../lib/ipc/useAsk";
+import { AnswerProse } from "./AnswerProse";
+import { ANSWER_PROSE_TYPOGRAPHY } from "./answerProseMarkdown";
 import { CitationTile } from "./CitationTile";
 import { ErrorState } from "../primitives";
-import { handleExternalLinkClick } from "../../lib/openExternal";
 
 /** Nearest scrollable ancestor of `el` (the shell `<main>` in the Recall route, the
  *  overlay's own pane in the Flow overlay) — the element to follow while the reasoning
@@ -139,30 +140,9 @@ export function AnswerStream({
         tabIndex={-1}
         role="region"
         aria-label="Answer"
-        className="prose prose-deck max-w-none focus-visible:outline-none"
+        className={`${ANSWER_PROSE_TYPOGRAPHY} max-w-none focus-visible:outline-none`}
       >
-        <Markdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            // Answer text is model output: open any link in the OS browser, never
-            // navigate the app's own WebView (which would unmount the whole UI). Tauri v2
-            // ignores plain `target="_blank"`, so http(s) links are routed through the
-            // opener plugin (0.3.1 D4); browser-dev and non-http(s) links fall back to the
-            // native `target="_blank"`. Used in the main Recall route and the Flow overlay.
-            a: ({ href, children }) => (
-              <a
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => handleExternalLinkClick(e, href)}
-              >
-                {children}
-              </a>
-            ),
-          }}
-        >
-          {answer}
-        </Markdown>
+        <AnswerProse text={answer} />
         {streaming && (
           <span
             className="ml-0.5 inline-block h-4 w-2 bg-accent align-text-bottom"

@@ -1745,10 +1745,10 @@ Obsidian folder settings (`memory.*`, owned by those sections and not counted in
 | `enrich.vision_timer_enabled` | `false` | UI | Intelligence | Timer-driven vision enrichment. |
 | `enrich.vision_timer_interval_ms` | `3600000` | UI | Intelligence | Timer enrichment cadence (one hour). |
 | `enrich.worker_concurrency` | `2` | file-only | advanced.toml | Enrichment worker count. |
-| `marks.hotkey` | `Ctrl+Alt+M` | UI | General | Mark-this-moment; same loud registration-failure handling as `overlay.hotkey` (D6 of 0.3.2). |
+| `marks.hotkey` | `Ctrl+Alt+M` | UI | General | Mark-this-moment; same loud registration-failure handling as `overlay.hotkey` (D6 of 0.3.2). An unchanged chord is never re-registered by a settings save, and a retry after a failed registration is silent while the chord is unchanged (`07` QA2 D3). |
 | `models.answer_tier` | `default` | UI | Models | Each ∈ {`default`,`quality`}; 0.3.0 retired `beta` — a persisted `beta` selection maps to `quality` on load, logged once plus the mapping persisted, and any Beta GGUF already on disk is left alone with no cleanup logic (D3/D4 of 0.3.0). |
 | `models.vision_tier` | `default` | UI | Models | Each ∈ {`default`,`quality`}. |
-| `overlay.hotkey` | `Ctrl+Alt+Z` | UI | General | Global summon; a failed registration is a **visible Settings warning + toast**, never silent (D6 of 0.3.2). |
+| `overlay.hotkey` | `Ctrl+Alt+Z` | UI | General | Global summon; a failed registration is a **visible Settings warning + toast**, never silent (D6 of 0.3.2). An unchanged chord is never re-registered by a settings save, and a retry after a failed registration is silent while the chord is unchanged (`07` QA2 D3). |
 | `overlay.max_results` | `8` | file-only | advanced.toml | Clamp 1..=50; top-N results in the overlay. |
 | `privacy.excluded_apps` | `["1Password","KeePass","Bitwarden"]` | UI | Privacy | Skip the frame when the foreground app matches. |
 | `privacy.pause_on_lock` | `true` | UI | Privacy | Pause capture while the session is locked. |
