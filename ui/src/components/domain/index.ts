@@ -5,6 +5,7 @@ export { FrameTile, type FrameTileProps } from "./FrameTile";
 export { HighlightedSnippet } from "./HighlightedSnippet";
 export { SearchResult, type SearchResultProps } from "./SearchResult";
 export { AnswerStream, type AnswerStreamProps } from "./AnswerStream";
+export { AnswerProse, type AnswerProseProps } from "./AnswerProse";
 export { CitationTile, type CitationTileProps } from "./CitationTile";
 export {
   FrameReconstruction,

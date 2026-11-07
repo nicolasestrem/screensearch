@@ -9,6 +9,83 @@ measured budget and review-fix pass included, is archived at
 
 ## Current arc
 
+### 2026-11-07: v0.4.5 installed-build QA fixes (branch `fix/0.4.5-qa-bugs`, from `main` `9c6a2cb`)
+
+Phase: three defects from hand-testing the installed 0.4.5 candidate (a spurious hotkey warning on
+every settings save, literal Markdown on `/ask`, misaligned Settings controls). Decisions are
+`07` QA2 D1-D4, root causes `07` QA2 F1-F3, the deliberately unfixed observations `07` QA2 U1-U3;
+the work record is `08`. PR #168 merged first.
+
+**What was reviewed before the gate.** Each slice was inspected rather than accepted on report:
+`git diff` on `routes/Ask.tsx` shows only the two answer paragraphs plus comments replaced (the
+citations row, both notes, Retry and the reserved `min-h-24` slot are byte-identical), the settings
+fix is a class-string change plus one descriptor module with no primitive or category file touched,
+and `overlay.rs` keeps its handlers, status bookkeeping and toast channel while replacing the two
+registration paths with one `apply_hotkey` over an internal `HotkeyEnv` seam. The em-dash rule was
+checked on the whole diff: the only occurrences are two pre-existing comment lines that the diff
+*removes*.
+
+**Field evidence for the hotkey defect** (gathered before any code changed): an OS probe from
+another process returned Win32 `1409` for both `Ctrl+Alt+M` and `Ctrl+Alt+Z`, so the installed
+process already held both chords, while the toast said nothing was registered and omitted the
+"; still using the previous combination" suffix that only the "nothing registered" branch produces.
+
+**Pre-fix demonstration** (required proof that the new tests catch the defect). The guard inside
+`apply_hotkey` was temporarily reverted to the old raw-string comparison, `registered = None` on
+failure and raw error text in the warning; the seam means that reverted function *is* the pre-fix
+logic. Result: `4 passed; 5 failed`, including a verbatim reproduction of the field message
+(`key: KeyM, id: 589855`), a duplicate registration attempt, and three repeated toasts for one
+unchanged chord. The file was then restored and verified byte-identical
+(SHA-256 `7eadd0dd55fa0ef046f6b971a77c35fa304f26799045ff0ccc26d20cfe66246d` both ways;
+`grep -c PRE-FIX` returns 0).
+
+**Ordered gate** (`CLAUDE.md` order: UI first, then the sidecar, then cargo), raw summary of
+`gate.log` (the full log is outside the repository at
+`C:\Users\nicol\screensearch-evidence\gate.log`):
+
+````text
+ui_npm_ci      EXIT=0     ui_npm_lint  EXIT=0     ui_npm_test  EXIT=0  (172 tests, 172 pass, 0 fail)
+ui_npm_build   EXIT=0     stage_mcp    EXIT=0  (up to date)
+cargo_fmt      EXIT=0     cargo_clippy EXIT=0     cargo_build  EXIT=0   cargo_test EXIT=0
+cargo_test     EXIT=0  (86 test binaries: 1625 passed, 0 failed, 16 ignored)
+bindings_diff  EXIT=0  (git diff --exit-code -- ui/src/bindings prints nothing)
+OVERALL_FAIL=0
+````
+
+The UI suite grew from 160 to 172 tests (`answer-prose` 8, `settingRowColumns` 4; the five
+`contrast` tests are unchanged and now share their CSS parser and WCAG math through
+`test/lib/contrastTokens.mjs`). The Rust suite grew by the 9 new `overlay::tests`. `cargo clippy`
+prints only the pre-existing `failed to parse serde attribute` build-script noise from `ts-rs`,
+which is not a lint and does not affect the exit code.
+
+**Real-browser measurement of the alignment fix** (throwaway Vite harness rendering the real
+`SettingRow`, the real `Toggle` and the real compiled stylesheet, measured in Chromium; the harness
+and its server were deleted afterwards):
+
+| Row | Hint | Switch left x (px) | Toggle root width (px) |
+|---|---|---|---|
+| new layout (short hint) | 42 chars | 368 | 384 |
+| new layout (long hint) | 146 chars | 368 | 384 |
+| old layout (short hint) | 42 chars | 224 | 240 |
+| old layout (long hint) | 146 chars | 705 | 721 |
+
+The old layout moves the switch 481 px with the hint text, which is the reported defect exactly;
+the new layout puts both switches at the same x and gives both toggles the same 384 px column.
+
+**Real-browser check of the rendered Markdown** (same harness, real `AnswerProse` inside
+`prose prose-deck`, theme switched on `:root[data-theme]`, WCAG contrast of the computed colours):
+
+| Theme | h2 / strong / li / ol li / inline code | link |
+|---|---|---|
+| pine-light | 15.15 | 5.76 |
+| pine-dark | 16.20 | 10.26 |
+| ink-light | 15.13 | 5.32 |
+| ink-dark | 16.08 | 8.97 |
+
+Every element clears AA in every theme; the tightest is a link at 5.32:1, and no token was
+changed. The harness sample had no `em` or fenced block, so those two elements are covered by the
+SSR assertion and the token table test rather than by this pixel run.
+
 ### 2026-11-07: v0.4.5 release QA: merged-tree gate, static release checks and the P4 harness (branch `chore/0.4.5-release`, from `main` `440d2e9`)
 
 Phase: the maintainer's 0.4.5 release kickoff. Decisions taken without asking are `07` QA D1-D6 and

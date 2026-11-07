@@ -21,10 +21,11 @@
 // House rules applied here: TanStack Query owns every server read, `?thread=` (and the
 // optional `?scopeThread=`) are the only view state in the URL, skeletons reserve the final
 // geometry, the shell is the one scroll context (nothing here scrolls itself), and only v2
-// semantic tokens are used. `components/domain` is read-only in this phase (P10 owns it), so
-// the answer prose is rendered pre-wrapped instead of through `AnswerStream`: that component
-// is bound to the legacy single-turn frame-only citations (`useAsk`'s view model), which
-// cannot express a session citation without editing it.
+// semantic tokens are used. The answer body of a turn is rendered by `AnswerProse`, the one
+// markdown renderer shared with `AnswerStream`: an answer is model-written markdown, so it is
+// never printed pre-wrapped (that showed `**Bold**` and `- item` literally). `AnswerStream`
+// itself stays out of this route, because it is bound to the legacy single-turn frame-only
+// citations (`useAsk`'s view model), which cannot express a session citation.
 import {
   useCallback,
   useEffect,
@@ -57,10 +58,14 @@ import {
   formatCount,
   type EntityChipItem,
 } from "../components/intelligence";
-// Direct module import (not the `components/domain` barrel): the premade cards are the one
-// legacy piece this route reuses, and the barrel would pull the whole v1 domain set into the
-// /ask chunk. P10 converts the cards; nothing here edits them.
+// Direct module imports (not the `components/domain` barrel): the barrel would pull the whole
+// v1 domain set into the /ask chunk, and this route needs two modules from it - the premade
+// cards (a legacy piece P10 converts) and the shared answer-prose renderer. Markdown reaches
+// this route through `AnswerProse` only, so it loads with the route chunk, never the entry
+// chunk (UI_REFERENCE §8).
 import { PromptCardGrid } from "../components/domain/PromptCardGrid";
+import { AnswerProse } from "../components/domain/AnswerProse";
+import { ANSWER_PROSE_TYPOGRAPHY } from "../components/domain/answerProseMarkdown";
 import { useAskConversation } from "../lib/ipc/useAskConversation";
 import type { AskStreamError } from "../lib/ipc/useAskConversation";
 import { useDeleteAskThread } from "../lib/ipc/mutations";
@@ -238,9 +243,13 @@ function TurnBlock({
 
       {hasAnswer ? (
         <>
-          <p className="m-0 max-w-prose whitespace-pre-wrap text-t-body text-fg-primary">
-            {answer}
-          </p>
+          {/* Model-written markdown, rendered - never pre-wrapped: `**Focused Work:**` is
+              emphasis and `- item` is a list, not literal characters. */}
+          <div
+            className={`${ANSWER_PROSE_TYPOGRAPHY} max-w-prose min-w-0 break-words text-t-body text-fg-primary`}
+          >
+            <AnswerProse text={answer} />
+          </div>
           {citations !== null && citationCount > 0 ? (
             <Citations citations={citations} />
           ) : (
@@ -322,9 +331,11 @@ function StreamingTurn({
       {/* Reserved answer slot: three prose lines of room while no token has arrived. */}
       <div className="grid min-h-24 min-w-0 content-start gap-2">
         {hasAnswer ? (
-          <p className="m-0 max-w-prose whitespace-pre-wrap text-t-body text-fg-primary">
-            {answer}
-          </p>
+          <div
+            className={`${ANSWER_PROSE_TYPOGRAPHY} max-w-prose min-w-0 break-words text-t-body text-fg-primary`}
+          >
+            <AnswerProse text={answer} />
+          </div>
         ) : (
           <div aria-hidden="true" className="grid gap-2">
             <Skeleton className="h-4 w-full" />

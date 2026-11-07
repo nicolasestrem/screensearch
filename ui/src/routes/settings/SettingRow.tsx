@@ -2,11 +2,15 @@
 // effect, the control slot, a "Changed" marker with reset-to-default, live
 // status, and a failed-save explanation with Retry. `SettingSection` is the same
 // chrome for rows that are an action or a status rather than one of the keys.
+// Every control sits in one fixed column (`settingRowLayout`), so switches,
+// selects and fields line up across a category whatever the copy beside them is.
+
 import type { ReactNode } from "react";
 
 import { Button, Chip } from "../../components/primitives";
 import { cn } from "../../lib/cn";
 import { settingAnchorId, settingDef, type SettingKey } from "./registry";
+import { settingRowLayout } from "./settingRowLayout";
 
 export interface SettingRowProps {
   /** Label, effect and anchor id come from the registry. */
@@ -47,6 +51,7 @@ export function SettingRow({
   labelInControl = false,
 }: SettingRowProps) {
   const def = settingDef(settingKey);
+  const layout = settingRowLayout({ labelInControl });
   return (
     <div
       id={settingAnchorId(settingKey)}
@@ -83,13 +88,8 @@ export function SettingRow({
           </div>
         ) : null}
       </div>
-      <div
-        className={cn(
-          "col-span-12 flex min-w-0 flex-wrap items-center gap-2",
-          labelInControl ? "order-1" : "md:col-span-5 md:justify-end",
-        )}
-      >
-        <div className="min-w-0">{control}</div>
+      <div className={layout.controlCell}>
+        <div className={layout.controlSlot}>{control}</div>
         {changed ? <Chip tone="neutral">Changed</Chip> : null}
         {changed && onReset ? (
           <Button size="sm" variant="ghost" onClick={onReset}>

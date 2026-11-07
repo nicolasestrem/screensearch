@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Detailed AI build records live in `specs/08_CHANGELOG_AI.md`; this file is the
 > human-facing summary.
 
+## [Unreleased]
+
+### Fixed: a settings save stops warning about hotkeys, Ask shows its answers as Markdown, Settings rows line up
+
+- **Saving any setting no longer re-registers an unchanged global hotkey, and no longer shows a
+  spurious warning.** Every save in the shipped 0.4.5 build produced a second toast, `Could not
+  register mark hotkey: HotKey already registered: HotKey { mods: Modifiers(ALT | CONTROL), ... }`,
+  because the registration path treated a chord this process already held as a conflict, cleared
+  the stored chord, and then retried the same doomed registration on every later save. Registration
+  is now idempotent and ownership aware: a chord the app already holds is never registered twice,
+  chords are compared canonically instead of as raw strings, and a failed registration can no longer
+  discard a chord that is still active. Both the mark hotkey (Ctrl+Alt+M) and the Flow overlay
+  hotkey (Ctrl+Alt+Z) go through the same path, and no Rust `Debug` output can reach a toast: a
+  genuine conflict now reads as plain language, for example "another app is already using that
+  shortcut".
+- **Ask v2 renders its answers as Markdown.** `/ask` printed the model's Markdown literally, with
+  visible `**bold**` and `- ` list markers, while the Recall Ask tab rendered it correctly. Both
+  surfaces now render through one shared component (react-markdown with GFM and the `prose-deck`
+  typography), so they look identical; the citations row is unchanged, and react-markdown still
+  loads with the route chunk instead of the initial bundle.
+- **Settings controls sit in one fixed column.** In Settings > General the `Launch at startup`
+  toggle sat further left than the `Close to tray` toggle, because the shared row let the control
+  slot size itself to the hint text. The control column is now fixed in the shared row, so every
+  control in a category starts at the same position.
+
 ## [0.4.5] - 2026-11-07
 
 ### Changed: every screen you own is drawn on one token set, and the old one is gone
