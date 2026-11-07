@@ -478,7 +478,7 @@ leave-uncommitted plan this phase started under. What the branch carries, in thr
 |---|---|---|
 |Backend (additive read)|`crates/store/src/graph.rs`, `crates/store/src/lib.rs`, `crates/traits/src/{contracts,ipc}.rs`, `src-tauri/src/{graph,lib}.rs`, `ui/src/bindings/SessionGraph.ts`|+301/−4: the two store queries (`session_entities`, `session_thread`), the `SessionGraph` wire type, the `get_session_graph` command. Additive only — schema stays v15, no migration, no column|
 |UI refont|the seven owned routes, `ui/src/components/domain`, `ui/src/overlay`, `overlay-main.tsx`, the deleted `tokens.compat.css`, the two fences (`ui/eslint.config.js`, `ui/test/tokens.test.mjs`), `ui/tailwind.config.js`|the refont itself plus the two token fences; `SessionGraph.ts` is the regenerated binding the gate's `git diff --exit-code -- ui/src/bindings` leg requires to be committed|
-|Records|`05` (this section), `06` #135–#149, `07` (deferrals, grants, evidence-pass observations), `08`, `CHANGELOG.md`|781 insertions across those five files|
+|Records|`05` (this section), `06` #135–#149, `07` (deferrals, grants, evidence-pass observations), `08`, `CHANGELOG.md`|822 insertions across those five files as of this record commit (781 at the code commit `78a8cee`) — a figure that moves with every doc fix, so it is dated rather than treated as a constant|
 
 **Held out on purpose: `docs/screenshots/p10/` (202 WebP, 12 MB).** The remote is public. The
 DB-driven content of those cells is the synthetic fixture, but the Deck's Jump-back card and the
