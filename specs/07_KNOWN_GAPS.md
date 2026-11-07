@@ -155,10 +155,12 @@ forced it. This pass does not tag and does not publish a release; the candidate 
   save, an honest Settings status) but cannot make a chord another program holds available. Marks
   therefore cannot be exercised on this machine until that program releases the chord or the user
   picks a different combination, which the reregister path handles.
-- **QA2 E2: capture stored no frame after 13:35 local on 2026-11-07**, before or after the upgrade,
-  while the log reported `capture started`, `capture.interval_ms` is 3000 and there were zero ERROR
-  lines. Nothing in this change touches capture; recorded here rather than investigated, because it
-  is unrelated to the three reported defects and the existing history (385 frames) is intact.
+- **QA2 E2: capture paused for a while and resumed by itself on 2026-11-07.** No frame was stored
+  between 13:35 and roughly 14:15 local, before or after the upgrade, while the log reported
+  `capture started`, `capture.interval_ms` is 3000 and there were zero ERROR lines; the count then
+  climbed from 385 to 391 with the newest frame current. Nothing in this change touches capture, and
+  the existing history was intact throughout. Recorded, not investigated, because it is unrelated to
+  the three reported defects.
 
 ## 2026-11-03 — Carried into the 0.4.5 arc (owner: maintainer unless stated)
 

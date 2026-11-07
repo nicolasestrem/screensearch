@@ -119,9 +119,11 @@ registered`, `still using the previous combination`) and no longer contains the 
 mark chord stays unavailable until whichever other program holds Ctrl+Alt+M releases it, and
 ScreenSearch reports that once instead of on every save.
 
-**Observed and out of scope:** capture reported `capture started` but stored no frame after 13:35
-local, before or after the upgrade (`capture.interval_ms` 3000, diff gate active, zero errors). No
-line of this change touches capture; recorded for the maintainer rather than investigated here.
+**Capture observed, not investigated:** capture reported `capture started` and stored nothing
+between 13:35 and roughly 14:15 local, then resumed on its own; the count went from 385 at the check
+to 391 with the newest frame at the time of writing, `capture.interval_ms` is 3000, the diff gate is
+active and there are zero ERROR lines. No line of this change touches capture, and the store, schema
+and history were intact throughout; recorded here rather than investigated.
 
 ### 2026-11-07: v0.4.5 release QA: merged-tree gate, static release checks and the P4 harness (branch `chore/0.4.5-release`, from `main` `440d2e9`)
 
