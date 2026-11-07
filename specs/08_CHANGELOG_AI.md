@@ -65,6 +65,15 @@ diff` on `Ask.tsx` shows only the two answer paragraphs (plus comments) replaced
 fix is a class-string change in one component. The installed-build check below is the acceptance
 evidence for both.
 
+**Ship and install.** PR #169 (`d98ad66`) merged after all five checks passed. The release workflow
+dry run on `main` (run 42374416657) built and signed `ScreenSearch_0.4.5_x64-setup.exe` plus
+`latest.json`, and that installer was run with `/S` over the previous per-user install: exit code 0,
+`FileVersion`/`DisplayVersion` 0.4.5, no app data removed. The rebuilt app opened the existing store
+at schema 15 with 385 frames and 2 sessions, logged zero ERROR lines after launch, and `Ctrl+Alt+Z`
+opened and hid the overlay live. `Ctrl+Alt+M` is refused by the OS because another running program
+holds it (see `07` QA2 E1), which is the condition that produced the original report; the app now
+reports it once, in plain language, instead of on every save.
+
 ### 2026-11-07: v0.4.5 release preparation and QA (branch `chore/0.4.5-release`, from `main` `440d2e9`)
 
 Phase: the maintainer's 0.4.5 release kickoff. The kickoff replaces stop-at-ambiguity with "decide,

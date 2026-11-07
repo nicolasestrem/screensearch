@@ -99,7 +99,8 @@ forced it. This pass does not tag and does not publish a release; the candidate 
   that failure honestly. The visible warning and toast still fire for a chord the user actually
   changed and that genuinely cannot be registered. `03 §8` states the rule next to the hotkey table.
 - **QA2 D4: where the evidence lives.** Reproductions, probe output, gate output and the installed
-  build check are recorded in this file and `08`, with the artifacts outside the repository under
+  build check are recorded here and in `05` (its "Release dry run and installed build" block), with
+  the artifacts outside the repository under
   `C:\Users\nicol\screensearch-evidence` (the hotkey probe script and the dry-run download
   directory), because the repository holds no binaries or logs.
 
@@ -142,6 +143,22 @@ forced it. This pass does not tag and does not publish a release; the candidate 
 - **QA2 U3: the `CategoryState` loading skeleton uses the old split.** Its placeholder row still
   places `md:col-span-5 md:justify-self-end`, so the skeleton's block does not match the new fixed
   control column. Cosmetic, loading-only, and in a file this fix did not own.
+
+**Environment findings from the installed build (not repository defects).**
+
+- **QA2 E1: another program on this machine owns `Ctrl+Alt+M` (owner: whoever runs the machine).**
+  On the rebuilt candidate the mark chord is refused by the OS (Win32 1409) at startup and the
+  overlay chord `Ctrl+Alt+Z` registers and works (pressing it opened and hid `ScreenSearch Overlay`
+  at 640x460). The refusal is external, not stale bookkeeping: the new code attempts a registration
+  only when this process's own registry is empty, and it was. This condition is what produced the
+  original report, so the fix changes the app's behaviour (one humanized warning, no toast on every
+  save, an honest Settings status) but cannot make a chord another program holds available. Marks
+  therefore cannot be exercised on this machine until that program releases the chord or the user
+  picks a different combination, which the reregister path handles.
+- **QA2 E2: capture stored no frame after 13:35 local on 2026-11-07**, before or after the upgrade,
+  while the log reported `capture started`, `capture.interval_ms` is 3000 and there were zero ERROR
+  lines. Nothing in this change touches capture; recorded here rather than investigated, because it
+  is unrelated to the three reported defects and the existing history (385 frames) is intact.
 
 ## 2026-11-03 — Carried into the 0.4.5 arc (owner: maintainer unless stated)
 
