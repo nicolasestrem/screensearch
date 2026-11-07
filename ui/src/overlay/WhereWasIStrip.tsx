@@ -3,6 +3,8 @@
 // `useWhereWasI` query (so its Enter handler can open the same frame) and passes it in.
 // Five states, tokens only: loading skeleton · error retry · null → honest "Nothing to
 // resume yet" · populated → a "Jump back" row opening the Moment in the main window.
+// The populated row reserves the same geometry and visual weight as a search result
+// row, so the empty-query state reads as the same list rather than an afterthought.
 import { EmptyState, ErrorState, Skeleton } from "../components/primitives";
 import { FrameImage } from "../components/domain";
 import { IconMark } from "../components/icons";
@@ -24,11 +26,14 @@ interface WhereWasIStripProps {
 export function WhereWasIStrip({ resume }: WhereWasIStripProps) {
   if (resume.isLoading) {
     return (
-      <div className="flex items-center gap-3 p-3">
-        <Skeleton className="h-14 w-24 shrink-0" />
-        <div className="flex flex-1 flex-col gap-2">
-          <Skeleton className="h-5 w-2/3" />
-          <Skeleton className="h-4 w-1/3" />
+      <div className="flex flex-col gap-2 p-2">
+        <div className="flex items-center gap-3 rounded-sm border border-line-subtle bg-surface-raised p-2">
+          <Skeleton className="h-14 w-24 shrink-0" />
+          <div className="flex flex-1 flex-col gap-2">
+            <Skeleton className="h-3 w-1/4" />
+            <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-3 w-1/3" />
+          </div>
         </div>
       </div>
     );
@@ -54,25 +59,30 @@ export function WhereWasIStrip({ resume }: WhereWasIStripProps) {
   }
 
   return (
-    <div className="p-2">
+    <div className="flex flex-col gap-2 p-2">
       <button
         type="button"
         onClick={() => void openMoment(ctx.frame_id).catch(() => undefined)}
-        className="flex w-full items-center gap-3 rounded-chip border border-line bg-surface p-2 text-left transition-colors duration-fast ease-ui hover:border-accent"
+        className="flex w-full items-center gap-3 rounded-sm border border-line-subtle bg-surface-raised p-2 text-left motion-safe:transition-colors duration-fast ease-standard hover:border-line-strong hover:bg-surface-hover"
       >
         <FrameImage
           imagePath={ctx.image_path}
           imagePurged={ctx.image_purged}
           alt=""
-          className="h-14 w-24 shrink-0 rounded-chip object-cover bg-overlay"
+          className="h-14 w-24 shrink-0 rounded-sm bg-surface-inset object-cover"
         />
         <span className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="eyebrow text-ink-faint">Jump back</span>
-          <span className="truncate text-body text-ink font-body">
+          <span className="text-t-xs font-medium text-fg-secondary">
+            Jump back
+          </span>
+          <span className="truncate text-t-body text-fg-primary">
             {resumeHeadline(ctx)}
           </span>
-          <span className="font-mono text-data text-ink-faint">
-            until {clockTime(ctx.span_end)}
+          <span className="text-t-xs text-fg-tertiary">
+            until{" "}
+            <span className="font-mono text-t-data">
+              {clockTime(ctx.span_end)}
+            </span>
           </span>
         </span>
       </button>

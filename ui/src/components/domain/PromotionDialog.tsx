@@ -173,7 +173,7 @@ export function PromotionDialog({
   return (
     <div className="fixed inset-0 z-overlay flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-scrim"
+        className="absolute inset-0 bg-surface-scrim"
         aria-hidden="true"
         onClick={() => {
           if (!busy) dismiss();
@@ -187,14 +187,14 @@ export function PromotionDialog({
         aria-describedby={descriptionId}
         tabIndex={-1}
         onKeyDown={handleKeyDown}
-        className="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-panel border border-line bg-overlay"
+        className="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-md border border-line-subtle bg-surface-raised"
       >
-        <header className="flex items-start justify-between gap-3 border-b border-line px-4 py-3">
+        <header className="flex items-start justify-between gap-3 border-b border-line-subtle px-4 py-3">
           <div className="flex flex-col gap-1">
-            <h2 id={titleId} className="font-display text-subtitle text-ink">
+            <h2 id={titleId} className="text-t-h3 font-medium text-fg-primary">
               {title}
             </h2>
-            <p id={descriptionId} className="text-caption text-ink-muted">
+            <p id={descriptionId} className="text-t-sm text-fg-secondary">
               {description}
             </p>
           </div>
@@ -205,24 +205,24 @@ export function PromotionDialog({
 
         <div className="flex flex-col gap-4 overflow-y-auto p-4">
           {displaced ? (
-            <div className="flex flex-col gap-3 text-body">
+            <div className="flex flex-col gap-3 text-t-body">
               <p>
                 {itemCount} item{itemCount === 1 ? "" : "s"} appended for{" "}
                 {proposal.entry_date}. The note changed or could not be verified while
                 they were being written.
               </p>
-              <p className="break-all font-mono text-data">{receipt?.path}</p>
+              <p className="break-all font-mono text-t-data">{receipt?.path}</p>
               {receipt?.recovery_path && (
                 <>
-                  <p className="text-caption text-ink-muted">
+                  <p className="text-t-xs text-fg-secondary">
                     The version the write replaced is kept as a recovery copy. If the
                     note was edited during the promotion, that edit is in the copy, not
                     in the note.
                   </p>
-                  <p className="break-all text-caption text-ink-muted">
+                  <p className="break-all text-t-xs text-fg-secondary">
                     Recovery copy: {receipt.recovery_path}
                   </p>
-                  <p className="text-caption text-ink-muted">
+                  <p className="text-t-xs text-fg-secondary">
                     Promotion needs exactly one note in Projects/, so move or delete the
                     copy once you have compared it.
                   </p>
@@ -230,7 +230,7 @@ export function PromotionDialog({
               )}
             </div>
           ) : conflict ? (
-            <div className="flex flex-col gap-3 text-body">
+            <div className="flex flex-col gap-3 text-t-body">
               {touched ? (
                 <p>
                   This promotion is not in the note as previewed. The note changed, or
@@ -246,15 +246,15 @@ export function PromotionDialog({
                   untouched and no entries were appended.
                 </p>
               )}
-              <p className="break-all font-mono text-data text-ink-muted">
+              <p className="break-all font-mono text-t-data text-fg-secondary">
                 {receipt?.path ?? proposal.note_path ?? "No project note"}
               </p>
               {receipt?.recovery_path && (
-                <p className="break-all text-caption text-ink-muted">
+                <p className="break-all text-t-xs text-fg-secondary">
                   Preserved copy: {receipt.recovery_path}
                 </p>
               )}
-              <p className="text-caption text-ink-muted">
+              <p className="text-t-xs text-fg-secondary">
                 Preparing again rechecks a stale preview. It cannot clear an
                 ownership conflict: the app appends only to the version it last
                 wrote for this profile. Restore that version, keep exactly one
@@ -263,35 +263,35 @@ export function PromotionDialog({
                 yet, preparing again previews its current bytes instead.
               </p>
               {prepareError && (
-                <p role="alert" className="text-caption text-danger">
+                <p role="alert" className="text-t-xs text-status-danger-fg">
                   Couldn't build a new preview: {prepareError}
                 </p>
               )}
             </div>
           ) : failed ? (
-            <div className="flex flex-col gap-3 text-body">
+            <div className="flex flex-col gap-3 text-t-body">
               <p>No entries were appended; the note is unchanged.</p>
               {receipt?.error && (
-                <p role="alert" className="text-caption text-danger">
+                <p role="alert" className="text-t-xs text-status-danger-fg">
                   {receipt.error.message}
                 </p>
               )}
-              <p className="break-all font-mono text-data text-ink-muted">{receipt?.path}</p>
+              <p className="break-all font-mono text-t-data text-fg-secondary">{receipt?.path}</p>
               {receipt?.recovery_path && (
-                <p className="break-all text-caption text-ink-muted">
+                <p className="break-all text-t-xs text-fg-secondary">
                   Preserved copy: {receipt.recovery_path}
                 </p>
               )}
             </div>
           ) : succeeded && receipt ? (
-            <div className="flex flex-col gap-3 text-body">
+            <div className="flex flex-col gap-3 text-t-body">
               <p>
                 {itemCount} item{itemCount === 1 ? "" : "s"} appended for{" "}
                 {proposal.entry_date}. Earlier lines in the note are unchanged.
               </p>
-              <p className="break-all font-mono text-data">{receipt.path}</p>
+              <p className="break-all font-mono text-t-data">{receipt.path}</p>
               {shortHash(receipt.hash) && (
-                <p className="text-caption text-ink-muted">
+                <p className="text-t-xs text-fg-secondary">
                   New content hash{" "}
                   <span className="font-mono" title={receipt.hash ?? undefined}>
                     {shortHash(receipt.hash)}…
@@ -301,21 +301,21 @@ export function PromotionDialog({
             </div>
           ) : (
             <>
-              <dl className="grid grid-cols-1 gap-3 text-caption sm:grid-cols-2">
+              <dl className="grid grid-cols-1 gap-3 text-t-xs sm:grid-cols-2">
                 <div className="flex flex-col gap-1">
-                  <dt className="text-ink-muted">Target note</dt>
-                  <dd className="break-all font-mono text-data">
+                  <dt className="text-fg-secondary">Target note</dt>
+                  <dd className="break-all font-mono text-t-data">
                     {proposal.note_path ?? "No project note"}
                   </dd>
                 </div>
                 <div className="flex flex-col gap-1">
-                  <dt className="text-ink-muted">Promotion date</dt>
-                  <dd className="font-mono text-data">{proposal.entry_date}</dd>
+                  <dt className="text-fg-secondary">Promotion date</dt>
+                  <dd className="font-mono text-t-data">{proposal.entry_date}</dd>
                 </div>
               </dl>
 
               {!canConfirm && (
-                <p role="alert" className="text-caption text-warn">
+                <p role="alert" className="text-t-xs text-status-warn-fg">
                   This note is not available right now — it may have been moved or
                   removed after selection. Nothing will be written. Restore one project
                   note, then prepare the promotion again.
@@ -323,12 +323,12 @@ export function PromotionDialog({
               )}
 
               {prepareError ? (
-                <div className="flex flex-col gap-2 text-body">
-                  <p role="alert" className="text-caption text-danger">
+                <div className="flex flex-col gap-2 text-t-body">
+                  <p role="alert" className="text-t-xs text-status-danger-fg">
                     Couldn't build the preview: {prepareError}
                   </p>
                   {prepareErrorCode === "FILE_CONFLICT" && (
-                    <p className="text-caption text-ink-muted">
+                    <p className="text-t-xs text-fg-secondary">
                       Preparing again only rechecks the note. The app appends only to
                       exactly one project note, and only to the version it last wrote for
                       this profile. An edited note or more than one note in Projects/
@@ -344,22 +344,22 @@ export function PromotionDialog({
                     <section
                       key={entry.section}
                       aria-label={`${SECTION_LABELS[entry.section]} entry`}
-                      className="flex flex-col gap-1 border-t border-line pt-3 first:border-t-0 first:pt-0"
+                      className="flex flex-col gap-1 border-t border-line-subtle pt-3 first:border-t-0 first:pt-0"
                     >
-                      <h3 className="font-display text-body text-ink">
+                      <h3 className="text-t-body font-medium text-fg-primary">
                         {SECTION_LABELS[entry.section]}
                       </h3>
-                      <p className="font-mono text-caption text-ink-muted">
+                      <p className="font-mono text-t-xs text-fg-secondary">
                         ### {entry.heading_date}
                       </p>
-                      <ul className="flex list-disc flex-col gap-1 pl-5 text-body text-ink">
+                      <ul className="flex list-disc flex-col gap-1 pl-5 text-t-body text-fg-primary">
                         {entry.items.map((text, index) => (
                           <li key={`${entry.section}-${index}`} className="break-words">
                             {text}
                           </li>
                         ))}
                       </ul>
-                      <p className="break-words text-caption italic text-ink-faint">
+                      <p className="break-words text-t-xs italic text-fg-tertiary">
                         {plainProvenance(entry.provenance)}
                       </p>
                     </section>
@@ -368,7 +368,7 @@ export function PromotionDialog({
               )}
 
               {confirmError && (
-                <p role="alert" className="text-caption text-danger">
+                <p role="alert" className="text-t-xs text-status-danger-fg">
                   Couldn't promote: {confirmError}
                 </p>
               )}
@@ -376,7 +376,7 @@ export function PromotionDialog({
           )}
         </div>
 
-        <footer className="flex flex-wrap justify-end gap-2 border-t border-line px-4 py-3">
+        <footer className="flex flex-wrap justify-end gap-2 border-t border-line-subtle px-4 py-3">
           {displaced ? (
             <Button variant="primary" size="sm" onClick={onDone}>
               Done

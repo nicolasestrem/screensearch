@@ -45,7 +45,7 @@ use rusqlite::{
 };
 
 use traits::{
-    AliasSource, ConnectedThread, EntityCatalogRow, EntityKind, GraphBackfillStatus,
+    AliasSource, ConnectedThread, EntityCatalogRow, EntityKind, EntitySummary, GraphBackfillStatus,
     GraphClusterInput, GraphClusterLink, GraphFrameInput, GraphHit, GraphProgress,
     GraphSessionInput, GraphSessionInterval, GraphSessionLinkAggregate, GraphTableCounts,
     NormalizationOutcome, NormalizationProposal, Result, SessionHost, SessionSummaryInput,
@@ -350,6 +350,21 @@ fn upsert_heuristic_entity(
     )?;
     insert_heuristic_aliases(tx, entity_id, upsert.aliases, upsert.confidence)?;
     Ok(entity_id)
+}
+
+/// Fills `aliases` on every row of `entities` from `entity_aliases`, in per-entity `id` order —
+/// the alias half of an entity listing, which leaves `aliases` empty until it runs. `ORDER BY id`
+/// is insertion order, the same order the entity list reports, so a listing assembled here cannot
+/// describe an entity's aliases differently.
+fn fill_entity_aliases(conn: &Connection, entities: &mut [EntitySummary]) -> Result<()> {
+    let mut alias_stmt =
+        conn.prepare("SELECT alias FROM entity_aliases WHERE entity_id = ?1 ORDER BY id")?;
+    for entity in entities.iter_mut() {
+        entity.aliases = alias_stmt
+            .query_map([entity.id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+    }
+    Ok(())
 }
 
 impl SqliteStore {
@@ -1182,6 +1197,65 @@ impl SqliteStore {
                     thread,
                 })
                 .collect())
+        })
+        .await
+    }
+
+    /// The entities one session touched (`03 §7h.1`, `§7h.3`), ordered
+    /// `session_entities.confidence DESC, canonical_name ASC` — the session-scoped read behind
+    /// `get_session_graph`'s entity chips.
+    ///
+    /// The row shape is the entity list's, not a session-only projection: `kind` is the
+    /// `entities.kind` token, `session_count` is the entity's all-history `session_entities`
+    /// count (the same subquery [`SqliteStore::entities_filtered`] selects), and `aliases` are
+    /// its `entity_aliases` names in insertion order. A session that does not exist, or touched
+    /// nothing, reads as an empty list — an unknown id is an empty answer, not an error.
+    pub async fn session_entities(&self, session_id: i64) -> Result<Vec<EntitySummary>> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT e.id, e.kind, e.canonical_name, e.first_seen_at, e.last_seen_at,
+                        (SELECT COUNT(*) FROM session_entities all_se
+                         WHERE all_se.entity_id = e.id)
+                 FROM session_entities se
+                 JOIN entities e ON e.id = se.entity_id
+                 WHERE se.session_id = ?1
+                 ORDER BY se.confidence DESC, e.canonical_name ASC",
+            )?;
+            let rows = stmt.query_map([session_id], |row| {
+                Ok(EntitySummary {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    canonical_name: row.get(2)?,
+                    first_seen_at: row.get(3)?,
+                    last_seen_at: row.get(4)?,
+                    session_count: u32::try_from(row.get::<_, i64>(5)?).unwrap_or(u32::MAX),
+                    aliases: Vec::new(),
+                })
+            })?;
+            let mut entities = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            fill_entity_aliases(conn, &mut entities)?;
+            Ok(entities)
+        })
+        .await
+    }
+
+    /// The thread a session was clustered into (`03 §7h.4`), through `thread_sessions` whose
+    /// `session_id` is `UNIQUE` — so at most one row, and `query_row` cannot see a second.
+    ///
+    /// The summary comes from [`THREAD_SUMMARY_SELECT`] and maps with
+    /// [`decode_thread_summary`], exactly like [`SqliteStore::thread_detail`]: `active_ms` and
+    /// `confidence` are the shared aggregate, never a session-side recomputation. `None` when the
+    /// session is unclustered or does not exist.
+    pub async fn session_thread(&self, session_id: i64) -> Result<Option<ThreadSummary>> {
+        self.with_conn(move |conn| {
+            let sql = format!(
+                "{THREAD_SUMMARY_SELECT}
+                 JOIN thread_sessions ts ON ts.thread_id = t.id
+                 WHERE ts.session_id = ?1"
+            );
+            Ok(conn
+                .query_row(&sql, [session_id], decode_thread_summary)
+                .optional()?)
         })
         .await
     }
@@ -2764,6 +2838,135 @@ mod tests {
         assert_eq!(counts.thread_sessions, 3);
         // Applying a plan never enqueues: only the override inserts above did.
         assert_eq!(job_count(&store, "graph_cluster", "pending"), 1);
+    }
+
+    /// `session_entities` / `session_thread` are the session-scoped reads `get_session_graph`
+    /// composes. The entity rows carry the entity list's shape — the all-history
+    /// `session_entities` count, aliases in insertion order — in
+    /// `session_entities.confidence DESC, canonical_name ASC` order; the thread summary is the
+    /// one [`SqliteStore::thread_detail`] reports, so `active_ms`/`confidence` have a single
+    /// formula. Unknown and unclustered sessions are empty answers, not errors.
+    #[tokio::test]
+    async fn session_graph_reads_carry_the_entity_list_shape_and_the_thread_summary() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let first = store
+            .insert_session(session(1_000, Some(10_000)))
+            .await
+            .unwrap();
+        let second = store.insert_session(session(20_000, None)).await.unwrap();
+        let unclustered = store
+            .insert_session(session(30_000, Some(40_000)))
+            .await
+            .unwrap();
+
+        let frame_id = seed_frame(&store, 2_000, "acme/api billing").await;
+        let mut aliased = hit(EntityKind::Repo, "acme/api", "acme/api", 0.55);
+        aliased.aliases = vec!["API".to_string()];
+        store
+            .graph_apply_hits(
+                Some(first),
+                frame_id,
+                2_000,
+                &[
+                    aliased,
+                    hit(EntityKind::File, "acme/api.rs", "acme/api.rs", 0.9),
+                    hit(EntityKind::Document, "billing", "billing", 0.55),
+                ],
+            )
+            .await
+            .unwrap();
+        // The same entity touched from a second session: the row must report the all-history
+        // count (2), not the single link this session holds.
+        store
+            .graph_apply_hits(
+                Some(second),
+                frame_id,
+                20_000,
+                &[hit(EntityKind::Repo, "acme/api", "acme/api", 0.7)],
+            )
+            .await
+            .unwrap();
+
+        let entities = store.session_entities(first).await.unwrap();
+        let names: Vec<&str> = entities
+            .iter()
+            .map(|entity| entity.canonical_name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["acme/api.rs", "acme/api", "billing"],
+            "confidence DESC, then canonical_name ASC"
+        );
+        assert_eq!(entities[0].kind, EntityKind::File.as_str());
+        assert_eq!(entities[0].session_count, 1);
+        let repo = &entities[1];
+        assert_eq!(repo.kind, EntityKind::Repo.as_str());
+        assert_eq!(repo.session_count, 2, "the all-history count, not one link");
+        assert_eq!(repo.aliases, vec!["API".to_string()], "insertion order");
+        assert_eq!(repo.first_seen_at, 2_000);
+        assert_eq!(
+            repo.last_seen_at, 20_000,
+            "the entity's own window, widened by the second session's hit"
+        );
+
+        store
+            .graph_apply_thread_plan(&ThreadPlan {
+                threads: vec![draft(
+                    "seed:1,2",
+                    "Billing",
+                    1_000,
+                    20_000,
+                    vec![member(first, 0.9), member(second, 0.6)],
+                )],
+                ..ThreadPlan::default()
+            })
+            .await
+            .unwrap();
+        let thread_id = store.graph_stored_threads().await.unwrap()[0].id;
+        let thread = store
+            .session_thread(first)
+            .await
+            .unwrap()
+            .expect("the first session is clustered");
+        assert_eq!(thread.id, thread_id);
+        assert_eq!(thread.title, "Billing");
+        assert_eq!(thread.session_count, 2);
+        assert!(
+            (thread.confidence - 0.9).abs() < 1e-12,
+            "MAX(thread_sessions.confidence)"
+        );
+        // The closed session contributes its full 9 s; the open one counts up to the read's
+        // clock, so the figure is far above the closed session's contribution alone.
+        assert!(
+            thread.active_ms > 1_000_000,
+            "an open session counts up to the read: {}",
+            thread.active_ms
+        );
+
+        // One aggregate, no second formula: the summary is `thread_detail`'s, and the only
+        // allowed difference is the read clock's one-second tick.
+        let detail = store.thread_detail(thread_id).await.unwrap().unwrap();
+        assert_eq!(thread.id, detail.thread.id);
+        assert_eq!(thread.title, detail.thread.title);
+        assert_eq!(thread.first_seen_at, detail.thread.first_seen_at);
+        assert_eq!(thread.last_seen_at, detail.thread.last_seen_at);
+        assert_eq!(thread.session_count, detail.thread.session_count);
+        assert_eq!(thread.confidence, detail.thread.confidence);
+        assert!(
+            (thread.active_ms - detail.thread.active_ms).abs() <= 1_000,
+            "both reads use THREAD_SUMMARY_SELECT: {} vs {}",
+            thread.active_ms,
+            detail.thread.active_ms
+        );
+        assert_eq!(
+            store.session_thread(second).await.unwrap().map(|t| t.id),
+            Some(thread_id),
+            "the thread is reached from any member session"
+        );
+
+        assert!(store.session_thread(unclustered).await.unwrap().is_none());
+        assert!(store.session_thread(999_999).await.unwrap().is_none());
+        assert!(store.session_entities(999_999).await.unwrap().is_empty());
     }
 
     /// Documents the delete side of the thread plan: a rename row is not membership management,

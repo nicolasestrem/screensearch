@@ -54,7 +54,7 @@ test("Timeline keeps fixed session lanes in every content state", () => {
   assert.match(
     source,
     /sessionLayer=\{sessionLayer\(/,
-    "the populated branch must keep the bands inside ScanlineTimeline",
+    "the populated branch must keep the bands inside DensityTimeline",
   );
   assert.doesNotMatch(
     source,

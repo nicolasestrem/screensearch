@@ -1,5 +1,61 @@
 # 08 — AI Changelog
 
+## 2026-11-07: P10 recall surfaces refont + v1 token shim removal (branch `feat/0.4.5-p10-refont`, from `main` `9112087`; **left uncommitted on the branch for the maintainer's validation** — no commit, no push, per 0.4.5 D18 and the 2026-11-07 grant in `07` D1)
+
+Phase: `docs/kickoffs/P10.md`. Build record, gate output, budgets and the evidence matrix: `05`
+(2026-11-07 P10 section). Decisions and grants: `07` (P10 D1–D9). Contradiction rows `#135`–`#148`:
+`06`.
+
+**Change.** The last phase of Wave C finishes the v2 token cutover. The v1 compatibility layer
+(`ui/src/styles/tokens.compat.css`, 25 aliases) is deleted and the five owned routes that still
+carried v1 names — Deck, Recall (search + reports), Timeline, Session, Moment — are rebuilt on the v2
+scales directly, with `Session` and `Moment` also gaining P9's `EntityChips` and `ConnectionsPanel`
+through one new additive read. The phase's other two owned routes, NotFound and RouteError, never
+referenced a token and are unchanged. `ScanlineTimeline` becomes `DensityTimeline`: the scan-head glow is
+gone, the four reserved lanes stay, and ribbon heights are real capture counts. Five panels with no
+importers are deleted.
+
+**Why.** The kickoff is the wave's token-cutover phase: v1 names had survived every screen rebuild
+because a shim kept them compiling, so "no legacy token" was true of the reference and false of the
+tree. Deleting the shim is what makes the claim real — and it cannot be deleted while one screen
+still reads a v1 name, which is why the phase is also the refont of every route it owns.
+
+**Consistency.** One additive wire read (`SessionGraph`) rather than four screens assembling graph
+context their own way; `ui/src/bindings` regenerated, with `SessionGraph.ts` a new file. The token
+fence lives in two places on purpose — the unit test over all of `ui/src` and a lint rule at the
+point of authorship — because the test catches a file nobody looks at and the lint catches the line
+being written. The legacy-token evidence is the kickoff's own grep *and* a corrected grep over the
+shim's 25 names, because three names in the kickoff's pattern are v2 (`06` #135).
+
+**Verification.** The kickoff's ordered gate on the final tree: `npm ci` (347 packages),
+`eslint .` 0, `tsc --noEmit && vite build` 0 (521 modules, 2.04 s), `stage-mcp` up to date,
+`cargo fmt --check` 0, `cargo clippy --workspace --all-targets -D warnings` 0, `cargo build
+--workspace` 0, `cargo test --workspace` **exit 0, 86 suites, 1616 tests, zero failures**,
+`git diff --exit-code -- ui/src/bindings` 0 (one untracked new binding), `cargo test -p capture
+privacy` 0 (3 tests). P10-specific: the shim is absent and unreferenced, none of its 25 names
+survives in `ui/src`, `ConnectionsPanel`/`EntityChips` are defined once in `components/intelligence`
+and placed from four routes, and the `Scanline` count is 0.
+
+**Acceptance evidence.** 168 theme/size/DPI cells (7 screens × 4 themes × 6 configurations, dpr 1
+and 1.5, 1280×720 through 3440×1440) with zero failures, driven over CDP against the running
+WebView2 window and committing WebP under `docs/screenshots/p10/`; 35-row per-screen state matrix
+with 26 cells captured and 9 named with their reason (four files that looked like distinct states
+were byte-identical duplicates and were deleted rather than counted); eight route shapes probed at
+both viewport extremes for one scroll context, no document scroll and **zero** horizontal scroll
+contexts; budgets measured from the built entry documents (112.88 KB gzip main, 75.43 KB overlay),
+search-to-paint median 16.4 ms, rail-click-to-paint median 27.9 ms, CLS 0.018/0.001, overlay
+`visible_ms=13` / `input_ready_ms=24` from two real hotkey summons.
+
+**Also recorded.** The profile database was backed up, replaced by a fresh schema for the empty
+cells and restored byte-identically (`sha256` matched, `quick_check` and `integrity_check` ok). The
+committed screenshots mix two provenances and `05` states both: their DB-driven content is the
+synthetic P4 fixture (218 sessions / 1260 frames, generated titles), while the Deck's Jump-back card
+and the overlay's empty-query strip read the live foreground window and therefore carry real desktop
+text — a real Telegram contact name in the later cells — so the directory needs a maintainer review
+before it is added: the 202 WebP are held out of the PR rather than pushed to a public remote.
+Thumbnails are the app's missing-media fallback throughout, because neither database has frame image
+files on this host.
+
 ## 2026-11-06: P9 intelligence UI — Work, Thread, Insights v2 and Ask v2 (branch `feat/0.4.5-p9-intelligence-ui`, from `main` `eb556d1`; **PR [#165](https://github.com/nicolasestrem/screensearch/pull/165) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P9.md`. Build record, gate output and the acceptance matrix: `05` (2026-11-06 P9

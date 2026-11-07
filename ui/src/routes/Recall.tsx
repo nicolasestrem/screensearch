@@ -172,7 +172,7 @@ export function Component() {
           so the page keeps a single scroll context (the shell <main>, UI_REFERENCE §8).
           `pb-4` makes its opaque background butt flush against the content below, so
           scrolling rows are fully hidden behind it (no peek-through seam). */}
-      <div className="sticky top-0 z-rail flex flex-col gap-4 bg-base pb-4">
+      <div className="sticky top-0 z-rail flex flex-col gap-4 bg-surface-app pb-4">
         {/* Mode toggle. */}
         <div className="flex gap-1" role="tablist" aria-label="Recall mode">
           {MODES.map((m) => (
@@ -183,11 +183,11 @@ export function Component() {
               aria-selected={mode === m.value}
               onClick={() => switchMode(m.value)}
               className={cn(
-                "inline-flex items-center gap-2 rounded-chip px-3 min-h-hit-min font-display uppercase tracking-eyebrow text-caption font-semibold",
-                "transition-colors duration-fast ease-ui",
+                "inline-flex items-center gap-2 rounded-sm px-3 min-h-hit-min text-t-xs font-semibold",
+                "transition-colors duration-fast ease-standard",
                 mode === m.value
                   ? "bg-accent-wash text-accent"
-                  : "text-ink-muted hover:text-ink hover:bg-overlay",
+                  : "text-fg-secondary hover:text-fg-primary hover:bg-surface-hover",
               )}
             >
               {m.icon}
@@ -210,7 +210,7 @@ export function Component() {
                   : "Ask a question about what you've seen…"
               }
               aria-label={mode === "search" ? "Search query" : "Question"}
-              className="min-w-0 flex-1 rounded-chip border border-line bg-base px-3 min-h-hit-min text-body text-ink placeholder:text-ink-faint font-body transition-colors duration-fast ease-ui focus:border-accent"
+              className="min-w-0 flex-1 rounded-sm border border-line-control bg-surface-inset px-3 min-h-hit-min text-t-body text-fg-primary placeholder:text-fg-tertiary transition-colors duration-fast ease-standard focus:border-accent"
             />
             <Button
               type="submit"
@@ -247,18 +247,18 @@ export function Component() {
               aria-checked={includeChrome}
               onClick={() => setChromeOverride(!includeChrome)}
               className={cn(
-                "inline-flex items-center gap-2 rounded-chip border px-3 min-h-hit-min text-caption font-display uppercase tracking-eyebrow",
-                "transition-colors duration-fast ease-ui",
+                "inline-flex items-center gap-2 rounded-sm border px-3 min-h-hit-min text-t-xs",
+                "transition-colors duration-fast ease-standard",
                 includeChrome
                   ? "border-accent text-accent bg-accent-wash"
-                  : "border-line text-ink-muted hover:text-ink",
+                  : "border-line-control text-fg-secondary hover:text-fg-primary",
               )}
             >
               {includeChrome
                 ? "Including app chrome + raw text"
                 : "Content text only"}
             </button>
-            <span className="text-caption text-ink-faint">
+            <span className="text-t-xs text-fg-tertiary">
               {includeChrome
                 ? "Searching everything on screen, including toolbars and labels."
                 : "Ignoring static toolbars, taskbars, and repeated labels."}
@@ -380,9 +380,9 @@ function ReportBody({
   if (phase === "generating") {
     return (
       <div className="flex flex-col gap-3">
-        <div className="flex items-center gap-2 text-body text-ink-muted font-body">
+        <div className="flex items-center gap-2 text-t-body text-fg-secondary">
           <span
-            className="inline-block h-3 w-3 animate-pulse rounded-full bg-accent"
+            className="inline-block h-3 w-3 rounded-full bg-accent"
             aria-hidden
           />
           {progress ? progress.stage : "Starting…"}
@@ -390,7 +390,7 @@ function ReportBody({
             ? ` (${progress.done}/${progress.total})`
             : ""}
         </div>
-        <span className="text-caption text-ink-faint">
+        <span className="text-t-xs text-fg-tertiary">
           Reports summarize active periods in bounded passes, so larger ranges
           can take a little longer.
         </span>

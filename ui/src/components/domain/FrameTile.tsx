@@ -27,8 +27,8 @@ export function FrameTile({
       state={navigationState}
       title={absoluteTime(frame.captured_at)}
       className={cn(
-        "group flex flex-col gap-2 rounded-panel border border-line bg-surface p-2",
-        "transition-colors duration-fast ease-ui hover:border-ink-faint",
+        "group flex flex-col gap-2 rounded-md border border-line-subtle bg-surface-pane p-2",
+        "transition-colors duration-fast ease-standard hover:border-line-strong",
         className,
       )}
     >
@@ -36,14 +36,14 @@ export function FrameTile({
         imagePath={frame.image_path}
         imagePurged={frame.image_purged}
         alt={`Capture at ${clockTime(frame.captured_at)}`}
-        className="aspect-video w-full rounded-chip object-cover bg-overlay"
+        className="aspect-video w-full rounded-sm object-cover bg-surface-raised"
       />
       <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-data text-ink-muted">
+        <span className="font-mono text-t-data text-fg-secondary">
           {clockTime(frame.captured_at)}
         </span>
         {frame.app_hint && (
-          <span className="truncate text-caption text-ink-faint font-body">
+          <span className="truncate text-t-xs text-fg-tertiary">
             {frame.app_hint}
           </span>
         )}

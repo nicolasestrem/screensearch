@@ -54,7 +54,7 @@ export function ModelTierPicker({
   const label = LANE_LABEL[lane];
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-caption text-ink-muted font-body">{label}</span>
+      <span className="text-t-xs text-fg-secondary">{label}</span>
       <div role="group" aria-label={`${label} tier`} className="flex gap-1">
         {TIERS.map((t) => (
           <Tooltip
@@ -69,11 +69,11 @@ export function ModelTierPicker({
               disabled={disabled}
               onClick={() => onChange(t.value)}
               className={cn(
-                "inline-flex items-center rounded-chip px-3 min-h-hit-min font-display uppercase tracking-eyebrow text-caption font-semibold",
-                "transition-colors duration-fast ease-ui disabled:opacity-50 disabled:pointer-events-none",
+                "inline-flex items-center rounded-sm px-3 min-h-hit-min font-text text-t-xs font-semibold",
+                "transition-colors duration-fast ease-standard motion-reduce:transition-none disabled:opacity-50 disabled:pointer-events-none",
                 value === t.value
                   ? "bg-accent-wash text-accent"
-                  : "text-ink-muted hover:text-ink hover:bg-overlay",
+                  : "text-fg-secondary hover:text-fg-primary hover:bg-surface-raised",
               )}
             >
               {t.label}
@@ -81,7 +81,7 @@ export function ModelTierPicker({
           </Tooltip>
         ))}
       </div>
-      {hint && <span className="text-caption text-ink-faint">{hint}</span>}
+      {hint && <span className="text-t-xs text-fg-tertiary">{hint}</span>}
     </div>
   );
 }

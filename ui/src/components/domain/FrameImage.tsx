@@ -62,14 +62,14 @@ export function FrameImage({
     return (
       <div
         className={cn(
-          "flex flex-col items-center justify-center gap-1 bg-overlay text-ink-faint",
+          "flex flex-col items-center justify-center gap-1 bg-surface-raised text-fg-tertiary",
           className,
         )}
         role="img"
         aria-label={alt || "Screenshot expired; text kept"}
       >
         <IconDatabase size={20} />
-        <span className="text-caption font-body">Text kept</span>
+        <span className="text-t-xs">Text kept</span>
       </div>
     );
   }
@@ -80,7 +80,7 @@ export function FrameImage({
     return (
       <div
         className={cn(
-          "flex items-center justify-center bg-overlay text-ink-faint",
+          "flex items-center justify-center bg-surface-raised text-fg-tertiary",
           className,
         )}
         role="img"

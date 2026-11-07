@@ -55,6 +55,7 @@ import type { SetupStatus } from "../../bindings/SetupStatus";
 import type { ThreadListQuery } from "../../bindings/ThreadListQuery";
 import type { ThreadListPage } from "../../bindings/ThreadListPage";
 import type { ThreadPage } from "../../bindings/ThreadPage";
+import type { SessionGraph } from "../../bindings/SessionGraph";
 import type { EntityListQuery } from "../../bindings/EntityListQuery";
 import type { EntitySummary } from "../../bindings/EntitySummary";
 import type { InsightListQuery } from "../../bindings/InsightListQuery";
@@ -174,7 +175,7 @@ export const loadModel = (lane: ModelLane): Promise<void> =>
 /** Unload the resident sidecar model now, freeing VRAM/RAM. */
 export const unloadModel = (): Promise<void> => invoke<void>("unload_model");
 
-/** Frame-count density buckets over `[start, end)` for the Scanline Timeline. */
+/** Frame-count density buckets over `[start, end)` for the timeline. */
 export const getTimeline = (
   range: TimeRange,
   bucketCount: number,
@@ -413,6 +414,10 @@ export const listThreads = (query: ThreadListQuery): Promise<ThreadListPage> =>
   invoke("list_threads", { query });
 export const getThreadPage = (threadId: number): Promise<ThreadPage> =>
   invoke("get_thread_page", { threadId });
+/** One session's work-graph context (`03 §7h`): its entities, its thread, that thread's
+ *  connections and the backfill progress — the Session and Moment surfaces read it. */
+export const getSessionGraph = (sessionId: number): Promise<SessionGraph> =>
+  invoke("get_session_graph", { sessionId });
 export const listEntities = (query: EntityListQuery): Promise<EntitySummary[]> =>
   invoke("list_entities", { query });
 export const getEntities = (ids: number[]): Promise<EntitySummary[]> =>

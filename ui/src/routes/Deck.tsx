@@ -115,7 +115,7 @@ export function Component() {
       }
     >
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <p className="text-body text-ink-muted font-body">
+        <p className="text-t-body text-fg-secondary">
           {captureOn
             ? "Recording your screen. Everything stays on this device."
             : "Capture is off. Start it to begin recording your screen."}
@@ -202,14 +202,14 @@ export function Component() {
               onRetry={() => insights.refetch()}
             />
           ) : total === 0 ? (
-            <p className="text-body text-ink-muted font-body">
+            <p className="text-t-body text-fg-secondary">
               No captures today yet.
             </p>
           ) : (
             <div className="flex flex-col gap-4">
               <div className="flex items-baseline gap-2">
-                <span className="font-mono text-display text-ink">{total}</span>
-                <span className="text-body text-ink-muted font-body">
+                <span className="font-mono text-t-display text-fg-primary">{total}</span>
+                <span className="text-t-body text-fg-secondary">
                   captures today
                 </span>
               </div>
@@ -298,7 +298,7 @@ export function Component() {
             ))}
           </div>
         ) : (
-          <p className="text-body text-ink-muted font-body">
+          <p className="text-t-body text-fg-secondary">
             Recent captures will appear here.
           </p>
         )}

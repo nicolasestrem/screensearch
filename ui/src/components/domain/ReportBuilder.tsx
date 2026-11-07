@@ -124,11 +124,11 @@ export function ReportBuilder({
             aria-selected={kind === k.value}
             onClick={() => setKind(k.value)}
             className={cn(
-              "inline-flex items-center rounded-chip px-3 min-h-hit-min font-display uppercase tracking-eyebrow text-caption font-semibold",
-              "transition-colors duration-fast ease-ui",
+              "inline-flex items-center rounded-sm px-3 min-h-hit-min text-t-xs font-semibold",
+              "transition-colors duration-fast ease-standard",
               kind === k.value
                 ? "bg-accent-wash text-accent"
-                : "text-ink-muted hover:text-ink hover:bg-overlay",
+                : "text-fg-secondary hover:text-fg-primary hover:bg-surface-raised",
             )}
           >
             {k.label}
@@ -139,17 +139,17 @@ export function ReportBuilder({
       {kind === "custom" && (
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-end gap-3">
-            <label className="flex flex-col gap-1 text-caption text-ink-muted">
+            <label className="flex flex-col gap-1 text-t-xs text-fg-secondary">
               From
               <input
                 type="date"
                 value={from}
                 max={to}
                 onChange={(e) => setFrom(e.currentTarget.value)}
-                className="rounded-chip border border-line bg-base px-3 min-h-hit-min text-body text-ink font-body focus:border-accent"
+                className="rounded-sm border border-line-control bg-surface-app px-3 min-h-hit-min text-t-body text-fg-primary focus:border-accent"
               />
             </label>
-            <label className="flex flex-col gap-1 text-caption text-ink-muted">
+            <label className="flex flex-col gap-1 text-t-xs text-fg-secondary">
               To
               <input
                 type="date"
@@ -157,25 +157,25 @@ export function ReportBuilder({
                 min={from}
                 max={todayInput()}
                 onChange={(e) => setTo(e.currentTarget.value)}
-                className="rounded-chip border border-line bg-base px-3 min-h-hit-min text-body text-ink font-body focus:border-accent"
+                className="rounded-sm border border-line-control bg-surface-app px-3 min-h-hit-min text-t-body text-fg-primary focus:border-accent"
               />
             </label>
           </div>
-          <label className="flex flex-col gap-1 text-caption text-ink-muted">
+          <label className="flex flex-col gap-1 text-t-xs text-fg-secondary">
             Focus (optional)
             <input
               type="text"
               value={prompt}
               onChange={(e) => setPrompt(e.currentTarget.value)}
               placeholder="e.g. coding work, or a project name — steers what's summarized"
-              className="rounded-chip border border-line bg-base px-3 min-h-hit-min text-body text-ink placeholder:text-ink-faint font-body focus:border-accent"
+              className="rounded-sm border border-line-control bg-surface-app px-3 min-h-hit-min text-t-body text-fg-primary placeholder:text-fg-tertiary focus:border-accent"
             />
           </label>
         </div>
       )}
 
       {rangeError && (
-        <span className="text-caption text-danger">{rangeError}</span>
+        <span className="text-t-xs text-status-danger-fg">{rangeError}</span>
       )}
 
       <div className="flex items-center gap-2">

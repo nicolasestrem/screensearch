@@ -92,7 +92,7 @@ export function HotkeyField({
 
   return (
     <div className="flex flex-col gap-2">
-      <label id={id} className="text-caption text-ink-muted font-body">
+      <label id={id} className="text-t-xs text-fg-secondary">
         {label}
       </label>
       <div className="flex flex-wrap items-center gap-2">
@@ -109,12 +109,12 @@ export function HotkeyField({
           }}
           onKeyDown={record}
           className={cn(
-            "inline-flex min-h-hit-min min-w-48 items-center rounded-chip border bg-base px-3",
-            "font-mono text-data text-ink transition-colors duration-fast ease-ui",
+            "inline-flex min-h-hit-min min-w-48 items-center rounded-sm border bg-surface-inset px-3",
+            "font-text text-t-sm text-fg-primary transition-colors duration-fast ease-standard motion-reduce:transition-none",
             recording
               ? "border-accent text-accent"
-              : "border-line hover:border-ink-faint",
-            shownError && "border-danger",
+              : "border-line-control hover:border-line-strong",
+            shownError && "border-status-danger-border",
           )}
         >
           {recording ? "Recording..." : value}
@@ -127,7 +127,7 @@ export function HotkeyField({
           Reset
         </Button>
       </div>
-      <span className="text-caption text-ink-faint" aria-live="polite">
+      <span className="text-t-xs text-fg-tertiary" aria-live="polite">
         {recording ? "Press a modified key combination." : hint}
       </span>
       {hint && !recording && (
@@ -136,7 +136,7 @@ export function HotkeyField({
         </span>
       )}
       {shownError && (
-        <span id={errorId} className="text-caption text-danger">
+        <span id={errorId} className="text-t-xs text-status-danger-fg">
           {shownError}
         </span>
       )}

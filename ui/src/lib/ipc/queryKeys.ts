@@ -41,6 +41,10 @@ export const queryKeys = {
     ["sessions", "detail", sessionId, includeSummary] as const,
   sessionRecap: (sessionId: number) =>
     ["sessions", "recap", sessionId] as const,
+  // The session's work-graph context (`03 §7h`), under the same `sessions` head so a
+  // `sessionsPrefix` invalidation (capture/retention) refreshes it with its siblings.
+  sessionGraph: (sessionId: number) =>
+    ["sessions", "graph", sessionId] as const,
   // A frame's text spans (for the text+layout reconstruction of a degraded capture).
   frameSpansPrefix: ["frameSpans"] as const,
   frameSpans: (frameId: number) => ["frameSpans", frameId] as const,

@@ -115,7 +115,7 @@ export function ReportView({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="eyebrow">Report · {report.range_label}</span>
+        <span className="text-t-xs font-medium text-fg-secondary">Report · {report.range_label}</span>
         <div className="flex items-center gap-2">
           <Button
             variant="ghost"
@@ -171,7 +171,7 @@ export function ReportView({
 
       {cited.length > 0 && (
         <div className="flex flex-col gap-2">
-          <span className="eyebrow">Source frames</span>
+          <span className="text-t-xs font-medium text-fg-secondary">Source frames</span>
           {/* Wrap onto rows instead of a nested horizontal scroller (D9 — one scroll
               context; Windows draws a permanent scrollbar for overflow-x-auto). */}
           <div className="flex flex-wrap gap-2">
@@ -179,7 +179,7 @@ export function ReportView({
               <CitationTile key={id} frameId={id} onOpenFrame={onOpenFrame} />
             ))}
             {overflow > 0 && (
-              <span className="flex shrink-0 items-center px-2 text-caption text-ink-muted">
+              <span className="flex shrink-0 items-center px-2 text-t-xs text-fg-secondary">
                 +{overflow} more
               </span>
             )}
@@ -188,7 +188,7 @@ export function ReportView({
       )}
 
       {showFooter && footer && (
-        <div className="whitespace-pre-wrap break-words border-t border-line pt-2 text-caption text-ink-faint font-body">
+        <div className="whitespace-pre-wrap break-words border-t border-line-subtle pt-2 text-t-xs text-fg-tertiary">
           {footer}
         </div>
       )}

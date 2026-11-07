@@ -72,21 +72,22 @@ export function MarkToast({ payload, onDone }: MarkToastProps) {
       <section
         role="status"
         aria-live="polite"
-        className="w-full overflow-hidden rounded-panel border border-line bg-overlay shadow-scan"
+        className="w-full overflow-hidden rounded-md border border-line-subtle bg-surface-raised shadow-toast"
       >
-        <div className="h-1 bg-accent shadow-scan" aria-hidden="true" />
-        <div className="scanlines flex items-center gap-3 p-3">
+        <div className="flex items-center gap-3 p-3">
           <span
             className={cn(
-              "grid h-9 w-9 shrink-0 place-items-center rounded-chip",
-              success ? "bg-accent-wash text-accent" : "bg-base text-warn",
+              "grid h-9 w-9 shrink-0 place-items-center rounded-sm border",
+              success
+                ? "border-status-ok-border bg-status-ok-bg text-status-ok-fg"
+                : "border-status-warn-border bg-status-warn-bg text-status-warn-fg",
             )}
             aria-hidden="true"
           >
             <IconMark size={18} />
           </span>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <span className="text-body text-ink font-body">
+            <span className="text-t-body text-fg-primary">
               {success ? "Marked ✓" : payload.message}
             </span>
             {success && (
@@ -105,7 +106,13 @@ export function MarkToast({ payload, onDone }: MarkToastProps) {
                 onBlur={() => setFocused(false)}
                 placeholder="Add a note (optional) — Enter to save"
                 aria-label="Mark note"
-                className="min-w-0 rounded-chip border border-line bg-base px-3 min-h-hit-min text-body text-ink placeholder:text-ink-faint font-body transition-colors duration-fast ease-ui focus:border-accent"
+                className={cn(
+                  "min-w-0 rounded-md border border-line-control bg-surface-inset px-3 min-h-hit-min",
+                  "text-t-body text-fg-primary placeholder:text-fg-tertiary caret-accent",
+                  "transition-colors duration-fast ease-standard motion-reduce:transition-none",
+                  "hover:border-line-strong",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
+                )}
               />
             )}
           </div>

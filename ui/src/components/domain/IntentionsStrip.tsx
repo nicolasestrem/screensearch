@@ -59,19 +59,19 @@ export function IntentionsStrip({ onOpen }: IntentionsStripProps) {
             return (
               <li
                 key={mark.mark_id}
-                className="flex items-center gap-3 rounded-chip border border-line bg-surface p-2"
+                className="flex items-center gap-3 rounded-sm border border-line-subtle bg-surface-pane p-2"
               >
                 <FrameImage
                   imagePath={mark.image_path}
                   imagePurged={mark.image_purged}
                   alt=""
-                  className="h-14 w-24 shrink-0 rounded-chip object-cover bg-overlay"
+                  className="h-14 w-24 shrink-0 rounded-sm object-cover bg-surface-raised"
                 />
                 <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <span className="truncate text-body text-ink font-body">
+                  <span className="truncate text-t-body text-fg-primary">
                     {markLabel(mark)}
                   </span>
-                  <span className="font-mono text-data text-ink-faint">
+                  <span className="font-mono text-t-data text-fg-tertiary">
                     {relativeTime(mark.created_at)}
                   </span>
                 </div>

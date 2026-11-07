@@ -1119,6 +1119,23 @@ pub trait Store: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// The entities one session touched (`session_entities` join `entities`, `03 §7h.1`/`§7h.3`),
+    /// ordered `session_entities.confidence DESC, canonical_name ASC` — the session-scoped
+    /// counterpart of [`Self::entities_filtered`], with the same row shape (the entity's
+    /// all-history `session_count` and its `entity_aliases` names). A session that does not
+    /// exist, or touched nothing, reads as an empty list. Default returns nothing.
+    async fn session_entities(&self, _session_id: i64) -> Result<Vec<EntitySummary>> {
+        Ok(Vec::new())
+    }
+
+    /// The thread `session_id` was clustered into (`thread_sessions`, `UNIQUE(session_id)`, so at
+    /// most one), with the figures every other thread read reports — `active_ms` and
+    /// `confidence` come from the same aggregate, never a second formula (`03 §7h.4`). `None`
+    /// when the session is unclustered or does not exist. Default returns `None`.
+    async fn session_thread(&self, _session_id: i64) -> Result<Option<ThreadSummary>> {
+        Ok(None)
+    }
+
     /// The survivor of the latest `merge` override whose source is `thread_id`, from
     /// `thread_overrides` (`03 §7h.5`), or `None` when the thread was never merged away. A
     /// retained-but-emptied source thread reads its survivor here so the Thread page explains the

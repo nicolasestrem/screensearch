@@ -11,6 +11,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import type { UseQueryResult } from "@tanstack/react-query";
 
 import * as cmd from "./commands";
 import { queryKeys } from "./queryKeys";
@@ -26,6 +27,7 @@ import type { UiResumeContext } from "../../bindings/UiResumeContext";
 import type { ApiStatus } from "../../bindings/ApiStatus";
 import type { UpdateStatus } from "../../bindings/UpdateStatus";
 import type { SessionQuery } from "../../bindings/SessionQuery";
+import type { SessionGraph } from "../../bindings/SessionGraph";
 import type { SetupStatus } from "../../bindings/SetupStatus";
 import type { ThreadListQuery } from "../../bindings/ThreadListQuery";
 import type { EntityListQuery } from "../../bindings/EntityListQuery";
@@ -331,6 +333,22 @@ export function useThreadPage(threadId: number) {
   const q = useQuery({
     queryKey,
     queryFn: () => cmd.getThreadPage(threadId),
+  });
+  return useMaybeOverride(q, queryKey);
+}
+
+/** One session's work-graph context (`03 §7h`): the entities it touched, the thread it was
+ *  clustered into, that thread's connections and the backfill progress that decides "partial" —
+ *  the same figures the Thread page reports. Idle until a session id is known, so a Moment with
+ *  no owning session asks for nothing. */
+export function useSessionGraph(
+  sessionId: number | null,
+): UseQueryResult<SessionGraph> {
+  const queryKey = queryKeys.sessionGraph(sessionId ?? -1);
+  const q = useQuery({
+    queryKey,
+    queryFn: () => cmd.getSessionGraph(sessionId as number),
+    enabled: sessionId !== null,
   });
   return useMaybeOverride(q, queryKey);
 }

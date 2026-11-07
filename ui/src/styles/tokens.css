@@ -19,7 +19,8 @@
  * copied verbatim from the direction D / D2 mockup token blocks. Layer 2
  * (semantic) only references primitives, so a theme swap replaces layer 2 and
  * nothing else. Layer 3 holds the theme-independent scales, density metrics,
- * z layers and durations. v1 token names live in tokens.compat.css.
+ * z layers and durations. Every name here is v2: there is no legacy alias
+ * layer, so a component can only reach styling through these tokens.
  *
  * File order: fonts, 1 primitives, 2 semantic (4 themes), 3 scales/density.
  */

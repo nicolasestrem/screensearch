@@ -142,10 +142,10 @@ export function PromotionPanel({ run }: PromotionPanelProps) {
       ref={sectionRef}
       tabIndex={-1}
       aria-label="Promote to project note"
-      className="flex flex-col gap-3 rounded-panel border border-line p-4"
+      className="flex flex-col gap-3 rounded-md border border-line-subtle p-4"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-display text-subtitle text-ink">
+        <h3 className="text-t-h3 font-medium text-fg-primary">
           Promote to project note
         </h3>
         <Chip tone={promotable ? "neutral" : "warn"}>
@@ -153,20 +153,20 @@ export function PromotionPanel({ run }: PromotionPanelProps) {
         </Chip>
       </div>
 
-      <p className="text-caption text-ink-muted">
+      <p className="text-t-sm text-fg-secondary">
         Tick bullets from this saved report, preview the dated entries, then confirm.
         Nothing is written to the note until you confirm.
       </p>
 
       {run.outcome === "PARTIAL" && (
-        <p className="text-caption text-warn">
+        <p className="text-t-sm text-status-warn-fg">
           Partial coverage. Entries reflect only the periods and frames this report
           covered.
         </p>
       )}
 
       {!promotable ? (
-        <p className="text-caption text-ink-muted">
+        <p className="text-t-sm text-fg-secondary">
           {run.result === null
             ? "This run has no saved report to promote yet."
             : run.outcome === null
@@ -174,18 +174,18 @@ export function PromotionPanel({ run }: PromotionPanelProps) {
               : `Promotion needs a finished report with OK or partial coverage. This run is ${run.outcome}.`}
         </p>
       ) : items.length === 0 ? (
-        <p className="text-caption text-ink-muted">
+        <p className="text-t-sm text-fg-secondary">
           This report has no promotable items. Promotion reads the top-level bullets
           under Activity, Explicitly evidenced decisions, Open questions and Next
           steps.
         </p>
       ) : (
         <>
-          <div className="min-h-6 text-caption" aria-live="polite">
+          <div className="min-h-6 text-t-xs" aria-live="polite">
             {noteStatus.isLoading ? (
-              <p className="text-ink-muted">Checking the project note…</p>
+              <p className="text-fg-secondary">Checking the project note…</p>
             ) : noteStatus.isError ? (
-              <p role="alert" className="text-danger">
+              <p role="alert" className="text-status-danger-fg">
                 Couldn't check the project note — {promotionError(noteStatus.error)}.{" "}
                 <Button
                   variant="ghost"
@@ -196,21 +196,21 @@ export function PromotionPanel({ run }: PromotionPanelProps) {
                 </Button>
               </p>
             ) : noteStatus.data?.count === 0 ? (
-              <p className="text-warn">
+              <p className="text-status-warn-fg">
                 No project note yet. Create one in Settings · Memory reports, then
                 come back to promote.
               </p>
             ) : noteStatus.data && noteStatus.data.count > 1 ? (
-              <p role="alert" className="text-warn">
+              <p role="alert" className="text-status-warn-fg">
                 More than one project note was found ({noteStatus.data.count}).
                 Promotion needs exactly one note in ScreenSearch/Projects/. Keep one
                 file and move or remove the others — ScreenSearch never deletes or
                 renames them.
               </p>
             ) : noteStatus.data?.path ? (
-              <p className="text-ink-muted">
+              <p className="text-fg-secondary">
                 Target note:{" "}
-                <span className="break-all font-mono text-data">
+                <span className="break-all font-mono text-t-data">
                   {noteStatus.data.path.replaceAll("\\", "/")}
                 </span>
               </p>
@@ -218,18 +218,18 @@ export function PromotionPanel({ run }: PromotionPanelProps) {
           </div>
 
           <div
-            className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b border-line pb-3"
+            className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b border-line-subtle pb-3"
             aria-live="polite"
           >
             {selectedCount === 0 ? (
-              <span className="text-caption text-ink-faint">
+              <span className="text-t-xs text-fg-tertiary">
                 Select items to promote.
               </span>
             ) : (
               <>
                 <div className="flex flex-wrap items-center gap-2">
                   <Chip tone="accent">{selectedCount} selected</Chip>
-                  <span className="text-caption text-ink-muted">
+                  <span className="text-t-xs text-fg-secondary">
                     {sectionCount} section{sectionCount === 1 ? "" : "s"}
                   </span>
                 </div>
@@ -259,7 +259,7 @@ export function PromotionPanel({ run }: PromotionPanelProps) {
           <div className="flex flex-col gap-4">
             {groups.map((group) => (
               <fieldset key={group.section} className="flex min-w-0 flex-col gap-1">
-                <legend className="eyebrow mb-1">
+                <legend className="mb-1 text-t-xs font-medium text-fg-secondary">
                   {group.heading} → {SECTION_LABELS[group.section]}
                 </legend>
                 <ul className="flex flex-col">
@@ -269,11 +269,11 @@ export function PromotionPanel({ run }: PromotionPanelProps) {
                       <li key={item.id} className="min-w-0">
                         <label
                           className={cn(
-                            "flex min-h-hit-min items-start gap-3 py-1 text-body font-body",
+                            "flex min-h-hit-min items-start gap-3 py-1 text-t-body",
                             prepare.isPending
                               ? "cursor-not-allowed opacity-60"
                               : "cursor-pointer",
-                            checked ? "text-ink" : "text-ink-muted hover:text-ink",
+                            checked ? "text-fg-primary" : "text-fg-secondary hover:text-fg-primary",
                           )}
                         >
                           <input
@@ -296,13 +296,13 @@ export function PromotionPanel({ run }: PromotionPanelProps) {
           </div>
 
           {prepare.isError && (
-            <div role="alert" className="flex flex-col gap-2 text-caption">
-              <p className="text-danger">
+            <div role="alert" className="flex flex-col gap-2 text-t-xs">
+              <p className="text-status-danger-fg">
                 Couldn't prepare the promotion — {promotionError(prepare.error)}.
                 Nothing was written.
               </p>
               {failureCode(prepare.error) === "FILE_CONFLICT" && (
-                <p className="text-ink-muted">
+                <p className="text-fg-secondary">
                   Preparing again only rechecks the note. The app appends only to
                   exactly one project note, and only to the version it last wrote for
                   this profile. An edited note or more than one note in Projects/ keeps

@@ -51,8 +51,8 @@ function Meta({
   if (!value) return null;
   return (
     <div className="flex flex-col gap-1">
-      <span className="eyebrow">{label}</span>
-      <span className="break-words text-body text-ink font-body">{value}</span>
+      <span className="text-t-xs font-medium text-fg-secondary">{label}</span>
+      <span className="break-words text-t-body text-fg-primary">{value}</span>
     </div>
   );
 }
@@ -89,7 +89,7 @@ export function MomentDetail({
               height={detail.height}
               className="h-auto"
             />
-            <p className="text-caption text-ink-faint font-body">
+            <p className="text-t-xs text-fg-tertiary">
               The screenshot expired to save space — this is a reconstruction
               from the recognized text at its on-screen positions. The full text
               is below.
@@ -101,7 +101,7 @@ export function MomentDetail({
             intrinsicWidth={detail.width}
             intrinsicHeight={detail.height}
             alt={`Capture from ${absoluteTime(detail.captured_at)}`}
-            className="h-auto w-full rounded-panel border border-line bg-overlay object-contain"
+            className="h-auto w-full rounded-md border border-line-subtle bg-surface-raised object-contain"
           />
         )}
         <Panel
@@ -116,23 +116,23 @@ export function MomentDetail({
             // Preformatted capture (tables / code / terminal): preserve columns and
             // scroll this block horizontally rather than wrap them into an unreadable
             // stack — a scoped D9 exemption for recognized text (UI_REFERENCE §8).
-            <pre className="overflow-x-auto whitespace-pre text-body text-ink-muted font-mono">
+            <pre className="overflow-x-auto whitespace-pre text-t-body text-fg-secondary font-mono">
               {detail.content_text}
             </pre>
           ) : (
-            <p className="text-body text-ink-faint font-body">
+            <p className="text-t-body text-fg-tertiary">
               No text was recognized in this frame.
             </p>
           )}
           {detail.raw_text && (
-            <details className="mt-3 border-t border-line pt-3">
-              <summary className="eyebrow cursor-pointer select-none text-ink-muted">
+            <details className="mt-3 border-t border-line-subtle pt-3">
+              <summary className="cursor-pointer select-none text-t-xs font-medium text-fg-secondary">
                 Raw text
                 {detail.raw_text !== detail.content_text
                   ? " (includes app chrome)"
                   : ""}
               </summary>
-              <pre className="mt-2 overflow-x-auto whitespace-pre text-body text-ink-muted font-mono">
+              <pre className="mt-2 overflow-x-auto whitespace-pre text-t-body text-fg-secondary font-mono">
                 {detail.raw_text}
               </pre>
             </details>
@@ -158,10 +158,12 @@ export function MomentDetail({
             <Meta label="URL" value={detail.browser_url} />
             {detail.session ? (
               <div className="flex flex-col gap-1">
-                <span className="eyebrow">Part of session</span>
+                <span className="text-t-xs font-medium text-fg-secondary">
+                  Part of session
+                </span>
                 <Link
                   to={`/timeline/session/${detail.session.id}`}
-                  className="inline-flex min-h-hit-min items-center break-words text-body text-ink underline decoration-line underline-offset-4 hover:text-accent font-body"
+                  className="inline-flex min-h-hit-min items-center break-words text-t-body text-fg-primary underline decoration-line-subtle underline-offset-4 hover:text-accent"
                 >
                   {detail.session.title?.trim() ||
                     `Session ${detail.session.id}`}
@@ -178,7 +180,7 @@ export function MomentDetail({
         <Panel title="Vision" action={confidenceChip}>
           {vision ? (
             <div className="flex flex-col gap-3">
-              <p className="text-body text-ink font-body">
+              <p className="text-t-body text-fg-primary">
                 {vision.description}
               </p>
               <div className="flex flex-wrap items-center gap-2">
@@ -191,7 +193,7 @@ export function MomentDetail({
           ) : (
             // Partial state: vision hasn't run — the on-demand entry point (`03 §5`).
             <div className="flex flex-col items-start gap-3">
-              <p className="text-body text-ink-muted font-body">
+              <p className="text-t-body text-fg-secondary">
                 This frame hasn't been tagged by vision yet.
               </p>
               <Button

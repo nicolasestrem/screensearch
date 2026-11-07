@@ -14,6 +14,7 @@ use ts_rs::TS;
 
 use crate::advanced::AdvancedConfig;
 use crate::domain::{CaptureTrigger, TextSource, VisionAnalysis};
+use crate::graph_ipc::{ConnectedThread, GraphProgress};
 use crate::jobs::{JobKind, JobStats};
 use crate::sessions::{Session, SessionArtifact, SessionHost, SessionKind};
 
@@ -1708,6 +1709,36 @@ pub struct EntitySummary {
     pub aliases: Vec<String>,
 }
 
+/// `get_session_graph` output: the work-graph context of one session (`03 §7h`).
+///
+/// It is the session-scoped twin of [`crate::graph_ipc::ThreadPage`]: the entities the session
+/// touched, the thread it was clustered into, that thread's connections, and the same
+/// [`GraphProgress`] the Work and Thread screens report — so "partial" means the same thing on
+/// every surface instead of a per-screen reading of the backfill.
+///
+/// Nothing here is computed by the command: the store reads supply each field, and this type only
+/// frames them. A session that was never clustered (or does not exist) reports no thread and no
+/// connections rather than an error — the UI renders an honest empty state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../ui/src/bindings/")]
+pub struct SessionGraph {
+    /// Entities this session touched (`session_entities` join `entities`), ordered
+    /// `session_entities.confidence DESC, canonical_name ASC`. Same row shape as the entity
+    /// list — `session_count` is the entity's all-history count, `aliases` its
+    /// `entity_aliases` names in insertion order.
+    pub entities: Vec<EntitySummary>,
+    /// The thread the session belongs to (`thread_sessions`, at most one — the column is
+    /// `UNIQUE(session_id)`), `None` when unclustered. The figures are
+    /// [`ThreadSummary`]'s own: `active_ms` and `confidence` come from the same aggregate
+    /// every thread read uses.
+    pub thread: Option<ThreadSummary>,
+    /// `connected_threads(thread.id, limit)` when `thread` is `Some`, else empty. Each row
+    /// carries the shared entity ids that are the evidence of the connection (`03 §7h.4`).
+    pub connected: Vec<ConnectedThread>,
+    /// Same [`GraphProgress`] the Thread page reports, so "partial" means the same thing.
+    pub progress: GraphProgress,
+}
+
 /// Query for `Store::threads_in_range` / `GET /v1/threads`: threads overlapping the
 /// half-open `[from_ms, to_ms)` window (`first_seen_at < to AND last_seen_at >= from`;
 /// a missing bound leaves that side open). `limit` arrives already resolved — the API layer
@@ -1806,6 +1837,7 @@ mod ts_number_guard {
             ("ThreadEntityRef", ThreadEntityRef::inline()),
             ("ThreadDetail", ThreadDetail::inline()),
             ("EntitySummary", EntitySummary::inline()),
+            ("SessionGraph", SessionGraph::inline()),
         ];
         for (name, decl) in decls {
             assert!(
