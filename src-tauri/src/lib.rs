@@ -1785,6 +1785,7 @@ pub fn run() {
             // writes and the Ask conversations — one group, all from `graph.rs`.
             graph::list_threads,
             graph::get_thread_page,
+            graph::get_session_graph,
             graph::list_entities,
             graph::get_entities,
             graph::list_insights,

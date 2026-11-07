@@ -1,5 +1,219 @@
 # 07 — Known Gaps
 
+## 2026-11-07: P10 Recall surfaces refont + shim removal — grants, decisions and deferrals (owner: maintainer for the decisions; agent for code; branch `feat/0.4.5-p10-refont`, from `main` `9112087`, **work left uncommitted on the branch for validation (D18)**)
+
+Phase: `docs/kickoffs/P10.md`, branch `feat/0.4.5-p10-refont` from `main` `9112087` — P9's commit,
+with P8 (`eb556d1`) and P7 (`5d15301`, `60c60d8`, `8e0883a`) already merged, so P9's
+`ui/src/components/intelligence/ConnectionsPanel.tsx` and `EntityChips.tsx` exist and the route set
+is final. Every decision below was given by the maintainer on 2026-11-07, in one batched round,
+before the slices that depend on it were written; the contradiction rows are
+`specs/06_PATCH_PLAN.md` #135–#149. Answers, verbatim in effect:
+
+**Maintainer decisions and grants (2026-11-07).**
+
+- **P10 D1 — branch and base.** *Decision:* branch from `main` `9112087`; no other base is named.
+  *Consequence:* `git log` confirms `main` **is** `9112087`, so `git diff --exit-code -- ui/src/bindings`
+  is meaningful from the first commit, and P10 is the last phase of Wave C — no peer phase exists to
+  collide with. The kickoff's citation of `docs/0.4.5.md §4.2` for "every Wave-C phase is merged at
+  your base" is wrong (that rule is the next-wave gate); the premise is nonetheless true at this
+  base. Contradiction `06` #148.
+- **P10 D2 — grant to edit `ui/tailwind.config.js` (forced by the shim deletion).** *Question:* the
+  kickoff's owned paths omit `ui/tailwind.config.js`, but that file maps 21 legacy utility keys onto
+  the shim's variables, so deleting `tokens.compat.css` while leaving it untouched resolves `bg-base`,
+  `bg-overlay`, `bg-scrim`, bare `bg-surface`, bare `border-line`, `text-ink*`, `bg-ink-faint`,
+  `text/bg-danger|warn|ok`, `font-display`, `font-body`, `rounded-none`, `shadow-scan`,
+  `text-title|subtitle|caption`, `tracking-eyebrow` and `ease-ui` to undefined custom properties in
+  ~38 owned files. *Ruling:* the legacy keys are **removed** from `ui/tailwind.config.js` as part of
+  the shim deletion, and `rounded-none` is **kept, as the literal `0`** — it is a real v2 radius
+  decision (`0`), not a shim alias, and `KitchenPrimitives.tsx:440` is the only outside consumer.
+  *Consequence:* the file is the one non-`styles` config path this phase touches, and it is touched
+  only to delete dead keys and re-point `rounded-none`; every utility in the mapping table lives on
+  its v2 key, so no consumer resolves to `undefined` and no new token is introduced (`§2`).
+- **P10 D3 — both lint homes, neither weakened.** *Question:* the kickoff orders the "P2 token lint
+  rule in `ui/eslint.config.js`" widened from `ui/src/components/primitives` to all of `ui/src`; that
+  config holds only `react-hooks`/`react-refresh` and no token rule, while the enforced fence is the
+  Node test `ui/test/tokens.test.mjs` scoped to the primitives directory. *Ruling:* **widen
+  `ui/test/tokens.test.mjs` to all of `ui/src` (token files exempt) and author an equivalent inline
+  ESLint rule in `ui/eslint.config.js`; neither may be weakened to go green.** The hex rule tightens
+  on all-decimal matches so prose issue numbers (`#106`, `#161`, …) stop matching while `#fff` still
+  does. *Consequence:* `npm test` and `npm run lint` both fail on a raw hex, a px font size or an
+  arbitrary px spacing, proven by breaking each and reverting; the widened fence reports zero hits on
+  the converted tree, and its one genuine inline-style hit (`SessionBands`'s `gridColumn: 1`) becomes
+  token-valued rather than exempted. Contradiction `06` #136; `06` #106 predicted this widening as
+  P10's job.
+- **P10 D4 — the legacy-token evidence is the kickoff grep *and* a corrected grep.** *Question:* the
+  kickoff's pattern lists `--accent`, `--accent-wash` and `--font-mono` as v1 names; all three are v2
+  (`ui/src/styles/tokens.css:237-240,443`), and `\b` matches before `-`, so `--accent` also catches
+  `--accent-strong`/`--accent-line`/`--accent-wash`. The exact command returns 44 lines in 5 files at
+  this base, only 17 of them genuine v1. *Ruling:* **paste the kickoff grep verbatim and, beside it,
+  a corrected v1-only grep that must be empty**, plus the utility and bare-form greps — the three
+  commands are:
+  ```
+  grep -rnE -- '--(bg-base|bg-surface|bg-overlay|line|ink|ink-muted|ink-faint|scrim|glow-scan|danger|warn|ok|font-display|font-body|radius-panel|radius-chip|radius-ribbon|text-title|text-subtitle|text-caption|tracking-eyebrow|motion-fast|motion-base|motion-slow|ease-ui)\b' ui/src
+  grep -rnE '\b(bg-base|bg-overlay|bg-scrim|text-ink|bg-ink|font-display|font-body|ease-ui|tracking-eyebrow|text-title|text-subtitle|text-caption|rounded-chip|rounded-panel|shadow-scan|scanlines|text-display|text-body|text-data|text-danger|text-warn|text-ok|bg-danger|bg-warn|bg-ok)\b' ui/src
+  grep -rnE '\b(bg-surface|border-line)\b[^-]' ui/src
+  ```
+  *Consequence:* the first grep's surviving v2 lines are reported as v2 and are not "cleaned" by
+  renaming a token — that would be a new token (`§2`) and a P2 contract change — and the corrected
+  greps, which include the eight shim-only names the kickoff's own verification regex omitted
+  (`--text-title|subtitle|caption`, `--tracking-eyebrow`, `--motion-*`, `--ease-ui`), return nothing.
+  Contradiction `06` #135.
+- **P10 D5 — grant for an additive session→graph read.** *Question:* the kickoff orders
+  `ConnectionsPanel` and `EntityChips` placed in Session and Moment, but no typed read maps a session
+  id (or a frame's session) to its entities or its thread: `SessionDetail` carries sessions+frames+
+  exchanges only, `useEntities` needs ids, `EntityListQuery` has no session or thread filter, and
+  `src-tauri/src/graph.rs` exposes thread/entity/insight commands only, although the DB has
+  `session_entities` (`crates/store/src/schema.rs:275-284`). A local copy of the components is
+  forbidden and inventing props is forbidden. *Ruling:* **grant an additive `get_session_graph` read**
+  — one `SessionGraph { entities, thread, connected, progress }` IPC type (ts-rs), two default-bodied
+  `Store`/trait methods (`session_entities`, `session_thread`), the `Tauri` command composing them with
+  the existing `connected_threads` and `graph_progress`, and the regenerated `ui/src/bindings` plus the
+  `commands.ts`/`queries.ts`/`queryKeys.ts` glue. *Consequence:* `ConnectionsPanel` and `EntityChips`
+  are placed as P9 wrote them (props in, nothing fetched), "partial" means the same thing on Session
+  as on the Thread page because it is the same `GraphProgress`, and the read is additive — no schema
+  change, no HTTP route, no MCP tool. The Rust half of the grant is what makes this the one place P10
+  leaves the UI tree.
+- **P10 D6 — the timeline is a density ribbon over four fixed band lanes, renamed `DensityTimeline`.**
+  *Question:* the kickoff builds "the Scanline Timeline or its v2 successor, whichever `§1` names";
+  `§1` names no successor (Scanline appears only in the superseded-v1 list, `:12`), and `§3`, `§4` and
+  `§8` all fix exactly four lanes while `§8:397` allows "the equivalent fixed reservation of its v2
+  successor". *Ruling:* **density ribbon plus four fixed band lanes; the scanline decoration is
+  dropped**, and the component becomes `DensityTimeline` (git mv, barrel line rewritten by the slice
+  that owns the barrel). *Consequence:* the signature is the canvas ribbon that encodes real bucket
+  counts (`drawDensityRibbon`) plus four reserved `--hit-min` lanes; lane-5+ collisions keep the
+  existing neutral, keyboard-operable "more sessions — narrow the range" control that focuses the
+  timeline's existing range presets. That is the equivalent fixed reservation, documented in `05`
+  with the lane height and count; no spec edit, no fifth lane, no behaviour change to scrubbing.
+  Contradiction `06` #139.
+- **P10 D7 — evidence comes from the P4 fixture DB swapped into the app's own profile, and the screenshots
+  are committed WebP.** *Question:* the app has no data-directory override
+  (`src-tauri/src/lib.rs:1408-1414`), the maintainer's live profile held 1 400 frames at this base, and
+  `docs/screenshots/` has `p2/` and `p7/` but P9 committed none — so the matrix had no legal home and
+  the obvious alternatives (an edited `identifier`, a scripted override) are out of P10's paths.
+  *Ruling:* **generate the fixture with the P4 harness (`cargo run -p evalfixture -- gen`, then
+  `-- graph`), back up the profile's `screensearch.db` (plus `-wal`/`-shm`), swap the fixture in,
+  advance `settings.sessions.backfill_done_until` to its `target_ms`, capture, then restore the
+  backup; commit the images as WebP under `docs/screenshots/p10/`.** *Consequence:* the captures come
+  from real data through the real transport (no mock, no stub, `§10.1`), the backup/restore is part of
+  the run and is recorded in `05` with the restore verified afterwards, and each committed frame is
+  named for screen, state, theme, size and DPI with the capture channel stated per cell (WebView2 CDP
+  vs headless Chromium — the P7/P9 disagreement, `06` #144). Contradiction `06` #146.
+  **Owner flag on the images:** their DB-driven content is the synthetic fixture, but the Deck's
+  Jump-back card and the overlay's empty-query strip read the live foreground window, so some cells
+  carry a real contact name and real browsing titles. **Delivery: the 202 WebP are deliberately not in
+  the PR.** The remote is public (`github.com/nicolasestrem/screensearch`) and publishing a contact
+  name is not a call the agent makes on the maintainer's behalf; the set sits untracked under
+  `docs/screenshots/p10/` and is added with one `git add` once it is pruned or the repo is private.
+- **P10 D8 — Session's low-confidence threshold mirrors Thread's, with an explicit line.**
+  *Question:* `§4`'s Session row requires low `confidence` to be surfaced honestly, but the Session
+  route renders the raw number (`Confidence {x}%`) with no threshold, while P9 established **< 0.7** as
+  "low" for a thread (`07` P9 D13, from `03 §7h.4`). Two screens showing one measure under two rules
+  would be the inconsistency this phase exists to remove. *Ruling:* **Session uses the same `< 0.7`
+  threshold and states it on screen** — one muted line beside the figure, like Thread's caveat — rather
+  than inventing a second number or leaving the figure unlabelled. *Consequence:* the threshold lives
+  in one shared constant read by both surfaces, the line is copy not a badge or score (`§4` Tone), and
+  a session at or above 0.7 shows the figure with no caveat.
+- **P10 D9 — D18 stands: the work stays uncommitted on the branch for validation.** *Question:* 0.4.5
+  D18 (`docs/0.4.5.md:441`) forbids an agent committing or pushing without the maintainer validating
+  the content and naming the target repo; P9 lifted it for its own branch. *Ruling:* **not lifted here**
+  — P10 leaves every change uncommitted on `feat/0.4.5-p10-refont` for the maintainer's validation.
+  *Consequence:* the acceptance evidence is the working tree plus the pasted command output, not a
+  commit range; `git diff --exit-code -- ui/src/bindings` is read against `main` in the tree, and the
+  commit, push and PR are the maintainer's steps.
+  **Superseded on 2026-11-07:** the maintainer instructed "document, commit, push, PR (no merge)", so
+  the agent made the commit and opened [#166](https://github.com/nicolasestrem/screensearch/pull/166)
+  without merging it. The D18 boundary that survives is the one that matters — no agent merge, and no
+  publication the maintainer has not seen: the screenshot set stayed out of the commit for exactly
+  that reason (`05` "Delivery").
+
+- **Grant scope actually used (disclosure).** The UI-test grant covered the dead-`ApiPanel` block in
+  `ui/test/apiReadTokenView.test.mjs` and the message string in `ui/test/sessionBandLayout.test.mjs`.
+  A third, one-line change landed in the first file: a stale title clause ("embedding preserves legacy
+  surface") was deleted with the block it described. Nothing else under `ui/test/` changed; the file's
+  copy assertions themselves are untouched.
+
+**Deferrals with owners.** Each is a thing this phase did not do, with the reason and who owns it.
+
+- **`Expander` — owner: P9, or the next phase that removes Ask's last use.** `ui/src/components/primitives/Expander.tsx`
+  and its barrel line (`ui/src/components/primitives/index.ts:13`) stay. The kickoff's premise
+  ("nothing else imports `Expander` today") is false at this base: `routes/Ask.tsx:45,582,696` is a
+  live importer, and `routes/Kitchen.tsx:20,306` / `KitchenPrimitives.tsx:24,152-232` are the gallery
+  the §5 note already knew about. `Ask.tsx` is P9's path and `Kitchen*` is P2's, so deleting the
+  primitive here would break three routes from outside the owned list. The §5 note (`:322`) is the
+  stale half — it reasoned from P7's deletion of the single-file `Settings.tsx` and did not account
+  for P9's Ask panel — and is left as written. Contradiction `06` #137.
+- **`ui/src/components/icons.tsx` — owner: whoever converts its six unowned importers.** The v1
+  inline-SVG set stays whole. It has 19 importers; 13 are in P10 paths, and six are not —
+  `app/nav.ts:24` (P7 nav data), `components/shell/StatusRail.tsx:15` and
+  `components/shell/useShellCommands.ts:30` (P7), `routes/Work.tsx:48`, `routes/Thread.tsx:44` and
+  `routes/Insights.tsx:44` (P9). The v2 set is a different module
+  (`ui/src/components/primitives/icons/`, imported by the primitives as `./icons`), so the file can
+  only be deleted once those six call sites move; converting only the 13 owned ones would leave a
+  half-alive module, which the kickoff's own "no kept component that nothing imports" rule forbids.
+  Contradiction `06` #138.
+- **`get_insights` command removal — owner: the next backend phase.** P9's #112 named P10 or a later
+  `fix/` branch as owner of the removal; the removal needs `src-tauri/src/lib.rs`,
+  `crates/traits/src/contracts.rs`, `crates/store/src/lib.rs` and two store tests, and the kickoff
+  lists `crates/` as not P10's with a stop condition for that exact case. Deck keeps its enrichment
+  line on the same live read (`ui/src/routes/Deck.tsx:72`), so nothing is left dead and nothing is
+  stubbed; the command, the `insights_summary` aggregate, `InsightsSummary` with its nested
+  `AppCount`/`ActivityCount` and the two store tests travel together when it goes. Contradiction
+  `06` #143.
+- **`compact` density — closed, no work (`06` #63 stands).** `§8:396` still promises "`compact` is a
+  choice in Settings", but no density key exists in the closed 26-key setting set, `04 §4` forbids an
+  unattributed setting, `06` #63 ruled comfortable-only for P7, and the kickoff forbids a new setting.
+  P10 adds no density control: rows consume `--row-h`/`--control-h` and `[data-density="compact"]`
+  stays defined (`ui/src/styles/tokens.css:537-543`) and unset by anything user-facing. Re-opening it
+  is a key decision no phase owns. Contradiction `06` #142.
+- **The promotion surface's placement — not movable by P10.** The dialog is P10's component and is
+  restyled; where it is *reachable* is P7's Settings route: `ReportView` renders `PromotionPanel` only
+  when a `run` is passed, and only `MemoryPanel.tsx:175-182` (Settings · Data · memory reports) passes
+  one, while Recall and Session pass `request`/no `run`. Moving the surface would mean editing
+  `ui/src/routes/settings/**` or adding a route, both forbidden here; the contract S5 preserves is
+  `03 §8e` plus the component's own header rules, not `UI_REFERENCE §11` (which is the memory-reports
+  settings section and mentions no promotion). Contradictions `06` #147 and the placement note.
+
+**Evidence-pass observations (2026-11-07).** Found while producing the acceptance evidence, after the
+code was finished. None of them changes a file; each is here so it is not rediscovered later.
+
+- **The committed screenshots contain live desktop text alongside synthetic fixture data.** The two
+  sources are different and the record must not blur them. Every DB-driven value in the 168 matrix
+  cells is the **synthetic P4 fixture** (218 sessions / 1260 frames, generated titles like
+  `alex.morgan@northwind.example`) — no real history is in those pixels. But the Deck's "Where was I?
+  Jump back" card and the overlay's empty-query strip read the **live foreground window at capture
+  time**, so those cells show what was actually on screen: a browser tab title in the matrix cells
+  and, in the four state cells and six overlay cells captured after the profile was restored, a real
+  Telegram contact name. The profile itself was restored byte-identically. The flag is here because
+  the WebP set was headed for a *committed artifact* and is held back instead: review
+  `docs/screenshots/p10/`, prune or re-capture any cell that should not travel, then add it.
+- **Every thumbnail in the evidence is the missing-media fallback, for two different reasons.** The
+  fixture cells render a database with no image files beside it; the profile-backed cells render the
+  app's own sweep keeping text and dropping screenshots ("retention sweep expired screenshots (text
+  kept)"), so that database has 1400 frame rows and no `frames/**/*.webp` on disk.
+  The cells therefore prove layout, lane geometry, ribbon heights, typography and colour — not the
+  content of a thumbnail. Anyone reading the matrix should know that before concluding "images are
+  broken".
+- **Four §4 arms are indistinguishable in this profile, and four more are unexercised.** Deck
+  `partial` (queue: 0 pending, 1844 done), Recall search `partial` (embeddings load in seconds, so
+  the "text only" banner never shows), Session `partial` (no open session) and Session `empty` (no
+  exchanges exist at all, so the populated screen *is* that arm) all rendered byte-identical to
+  another cell; the duplicates were deleted rather than counted. Recall reports `loading` and
+  `error`, Timeline `partial` and Settings · Data `partial` are recorded in
+  `harness-data/p10/evidence/state-matrix.json` with the reason each was not captured. Nothing was
+  faked to fill a cell.
+- **`fill_entity_aliases` duplicates a private helper in `insights.rs`.** P10's
+  `crates/store/src/graph.rs` gained `fill_entity_aliases` to fill alias lists on the session read;
+  `crates/store/src/insights.rs` already has a private `fill_aliases` with a byte-identical body
+  (same `SELECT alias FROM entity_aliases WHERE entity_id = ?1 ORDER BY id`, same loop). Collapsing
+  them needs one `pub(crate)` on that function — `graph.rs` already imports from `crate::insights`
+  (`use crate::insights::{decode_thread_summary, THREAD_SUMMARY_SELECT}`, `graph.rs:56`), so nothing
+  else has to move — but `crates/` is outside P10's owned list (`docs/kickoffs/P10.md`). Owner: the next phase that touches
+  `crates/store/src/insights.rs`. It is a duplication, not a defect: both fill the same field from
+  the same table with the same ordering.
+- **The kickoff's legacy-token grep can never return zero** (`06` #135) — restated here because
+  anyone re-running the P10 verification block will see `27` and needs the corrected grep beside it
+  (`05`, 2026-11-07 P10 section) or they will conclude the phase failed.
+
 ## 2026-11-06: P8 insights + connections engine and agent surface — grants, maintainer decisions and deferrals (owner: maintainer for the decisions; agent for code; branch `feat/0.4.5-p8-insights-agent`, from `main` `8e0883a`, **PR [#164](https://github.com/nicolasestrem/screensearch/pull/164) open, not merged**)
 
 Phase: `docs/kickoffs/P8.md`. Base condition: P5 (#157), P6 (#160) and P7 (#161) are all merged on

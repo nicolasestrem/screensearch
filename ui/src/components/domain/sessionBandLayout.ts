@@ -1,3 +1,10 @@
+/**
+ * The band reservation (`UI_REFERENCE §3`): exactly four lanes exist in every
+ * Timeline state — initial skeleton, loading, error, empty and populated all
+ * reserve these same rows, so data arrival never shifts the layout. Items that
+ * packing would place in lane 5+ are counted by `overflowCount` instead of
+ * growing the layer (no fifth lane, no modal, no new control).
+ */
 export const FIXED_SESSION_LANES = 4;
 
 export interface SessionBandLayoutMetrics {

@@ -47,24 +47,26 @@ export function WhereWasICard({ onOpen }: WhereWasICardProps) {
         <button
           type="button"
           onClick={() => onOpen(resume.data!.frame_id)}
-          className="flex w-full items-center gap-3 rounded-chip border border-line bg-surface p-3 text-left transition-colors duration-fast ease-ui hover:border-accent"
+          className="flex w-full items-center gap-3 rounded-sm border border-line-subtle bg-surface-pane p-3 text-left transition-colors duration-fast ease-standard hover:border-accent"
         >
           <FrameImage
             imagePath={resume.data.image_path}
             imagePurged={resume.data.image_purged}
             alt=""
-            className="h-16 w-28 shrink-0 rounded-chip object-cover bg-overlay"
+            className="h-16 w-28 shrink-0 rounded-sm object-cover bg-surface-raised"
           />
           <span className="flex min-w-0 flex-1 flex-col gap-1">
-            <span className="eyebrow text-ink-faint">Jump back</span>
-            <span className="truncate text-body text-ink font-body">
+            <span className="text-t-xs font-medium text-fg-tertiary">
+              Jump back
+            </span>
+            <span className="truncate text-t-body text-fg-primary">
               {headline(resume.data)}
             </span>
-            <span className="font-mono text-data text-ink-faint">
+            <span className="font-mono text-t-data text-fg-tertiary">
               until {clockTime(resume.data.span_end)}
             </span>
             {resume.data.session ? (
-              <span className="font-mono text-data text-ink-muted">
+              <span className="font-mono text-t-data text-fg-secondary">
                 session {clockTime(resume.data.session.started_at)}–
                 {resume.data.session.ended_at
                   ? clockTime(resume.data.session.ended_at)

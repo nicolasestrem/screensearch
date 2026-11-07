@@ -1,5 +1,569 @@
 # 05 — Build Review
 
+## 2026-11-07: P10 recall surfaces refont + v1 token shim removal — build, ordered gate and the evidence matrix (branch `feat/0.4.5-p10-refont`, from `main` `9112087`; **PR [#166](https://github.com/nicolasestrem/screensearch/pull/166) open, not merged**, committed and pushed on the maintainer's explicit 2026-11-07 instruction — the earlier leave-uncommitted plan under 0.4.5 D18 is superseded, and the 202 WebP evidence set is deliberately held out of that PR: see "Delivery")
+
+Phase: `docs/kickoffs/P10.md` — Wave C's last phase. Contradictions and rulings: `06` #135–#149.
+Decisions and grants: `07` (2026-11-07 P10 section, D1–D9). Interface contract the slices coded
+against: `local://p10-contract.md` (session-local notes, not part of the tree).
+
+Base condition: P5, P6, P7, P8 (`eb556d1`) and P9 (`9112087`) are on `main`; no `v0.4.3`/`v0.4.4`
+tag exists. Schema stays **v15**: P10 adds no migration, no table and no column — `get_session_graph`
+is a read over tables P5/P8 already wrote.
+
+### What landed
+
+|Slice|Files|What it does|
+|---|---|---|
+|wire|`crates/traits/src/contracts.rs` (+17: the `SessionGraph` type), `crates/traits/src/ipc.rs` (+32: the `session_entities`/`session_thread` trait methods, default-bodied), `crates/store/src/graph.rs` (+205: the store impl and its alias fill), `crates/store/src/lib.rs` (+6), `src-tauri/src/graph.rs` (+44: the Tauri command), `src-tauri/src/lib.rs` (+1: its registration), regenerated `ui/src/bindings` including the new `SessionGraph.ts`|one additive read: `get_session_graph(session_id)` → `SessionGraph { entities, thread, connected, progress }` — 301 added lines, 4 removed across six Rust files, which is what makes it a read and not an engine change|
+|styles|`ui/src/styles/tokens.compat.css` (**deleted**), `ui/src/styles/{tokens,globals}.css` (shim imports removed), `ui/tailwind.config.js`|the v1 alias layer is gone; the Tailwind config now maps the few utilities the shim had been feeding onto v2 scales (`06` #136, `07` D2)|
+|lint|`ui/test/tokens.test.mjs`, `ui/eslint.config.js`|the token fence widened to a recursive walk of all of `ui/src` (comment-stripped, `bindings/**` and `styles/tokens.css` exempt, `index.ts` barrels out of scope) **and** an inline `tokens/no-raw-token` ESLint plugin with seven rules — no new dependency, neither rule weakened (`07` D3)|
+|screens|`ui/src/routes/{Deck,Recall,Timeline,Session,Moment}.tsx`|the five owned routes that carried v1 names rebuilt on v2 tokens; `Session` gains P9's `EntityChips`/`ConnectionsPanel` through the new read. `NotFound.tsx` and `RouteError.tsx` are owned but **unmodified**: they have no token reference at all (`grep -cE "text-t-\|bg-surface\|var\(--"` returns 0 on both), so there was nothing to convert — they are still probed for the scroll and shift rules|
+|refont detail|`ui/src/routes/Session.tsx:246`|the exchange cards inside the Exchanges `Panel` moved from `bg-surface-raised` to `bg-surface-inset`. v1 drew them `bg-overlay` on a `bg-surface` pane, i.e. one step **up**; v2's `Panel` primitive is itself `bg-surface-raised` (`primitives/Panel.tsx:49`), so a literal mapping of the old class erased the card boundary and left only its border. The recessed step keeps the card reading as *inside* the panel and matches how `ApiReadTokenControls`, `HotkeyField` and `JobQueueMeter` already use the same token. **Not visually exercised:** `session_artifacts` holds 0 rows in both databases here, so the Exchanges panel renders its empty arm and this branch never draws; the class is verified by `eslint`, `vite build` and the 153 UI tests, and the reader path by the existing Rust test `session_detail_samples_24_frames_and_returns_only_exchanges_without_inference`|
+|timeline|`ui/src/components/domain/ScanlineTimeline.tsx` → `DensityTimeline.tsx` (git mv, export renamed), `sessionBandLayout.ts`, `timelineDraw.ts`, `TimelineMinimap.tsx`, `SessionBands.tsx`|the density ribbon replaces the scan-head: four reserved lanes, ribbon heights are real `TimelineBucket.count` values, no glow/scan decoration|
+|panels|`ui/src/components/domain/*` — `ApiPanel`, `AppPanel`, `RetentionControl`, `InsightsBars`, `CapturesTrend` deleted; the rest retokened|five panels deleted after an importer grep came back empty; `Expander` and `icons.tsx` kept (unowned importers, `07` D7/D8)|
+|overlay|`ui/src/overlay/{FlowOverlay,MarkToast,OverlayResultRow,WhereWasIStrip}.tsx`|the separate Flow-overlay window on v2 tokens, five states intact; `overlay-main.tsx` and `overlay.html` needed no edit (they mount the component and carry no token)|
+|records|`specs/06` #135–#149, `specs/07` D1–D9, `specs/08`, `CHANGELOG.md`|the rulings above|
+
+### Verification (raw, in kickoff order)
+
+Every block below is the captured output on the final tree, re-run for this record (logs under
+`harness-data/p10/gate/`, which is git-ignored). The host quirk that forces private-binary
+invocation is unchanged: `npm`/`npx` shims fail in this shell, so the UI legs run as
+`node "C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js" <cmd>`; the scripts themselves are
+the kickoff's.
+
+```
+$ node npm-cli.js run lint
+> screensearch-ui@0.4.2 lint
+> eslint .
+LINT_EXIT=0
+```
+
+```
+$ node npm-cli.js run build
+> screensearch-ui@0.4.2 build
+> tsc --noEmit && vite build
+vite v6.4.5 building for production...
+✓ 521 modules transformed.
+dist/index.html                                       0.80 kB │ gzip:  0.36 kB
+dist/overlay.html                                     0.91 kB │ gzip:  0.40 kB
+dist/assets/SourceSans3-Italic.ttf-Bt9VkdQ3.woff2   138.00 kB
+dist/assets/SourceSans3-Upright.ttf-BsWL4Kly.woff2  170.19 kB
+dist/assets/CascadiaMono-95CNhH_0.woff2             210.48 kB
+dist/assets/globals-yTZYRc9I.css                     66.31 kB │ gzip: 11.74 kB
+dist/assets/timeRanges-BJgzkTNX.js                    0.29 kB │ gzip:  0.19 kB
+dist/assets/openExternal-CBgwELi8.js                  0.31 kB │ gzip:  0.23 kB
+dist/assets/NotFound-vI5JtqGz.js                      0.44 kB │ gzip:  0.32 kB
+dist/assets/format-Bh1pro9G.js                        0.69 kB │ gzip:  0.33 kB
+dist/assets/Panel-DHD0vDuT.js                         0.72 kB │ gzip:  0.47 kB
+dist/assets/timelineDraw-BI4P0Up2.js                  0.76 kB │ gzip:  0.44 kB
+dist/assets/EmptyState-CHJsmUHP.js                    0.78 kB │ gzip:  0.42 kB
+dist/assets/Field-BVWldYl2.js                         0.90 kB │ gzip:  0.51 kB
+dist/assets/FrameTile-ZoVa3K2n.js                     0.96 kB │ gzip:  0.54 kB
+dist/assets/TextInput-DbS_nG-z.js                     1.09 kB │ gzip:  0.52 kB
+dist/assets/evidenceLink-BCOl0l9W.js                  1.44 kB │ gzip:  0.67 kB
+dist/assets/PromptCardGrid-CoVshHdn.js                1.51 kB │ gzip:  0.78 kB
+dist/assets/FrameImage-BrirlVD7.js                    1.63 kB │ gzip:  0.85 kB
+dist/assets/useAsk-2BA4O7pm.js                        1.67 kB │ gzip:  0.84 kB
+dist/assets/ConnectionsPanel-DyXY2r3T.js              1.74 kB │ gzip:  0.83 kB
+dist/assets/Segmented-DsLfDH-H.js                     1.88 kB │ gzip:  0.91 kB
+dist/assets/AnswerStream-bhEm40-b.js                  2.33 kB │ gzip:  1.19 kB
+dist/assets/HotkeyField-BpPJG-h_.js                   2.61 kB │ gzip:  1.35 kB
+dist/assets/useAskConversation-B_zASL8p.js            3.54 kB │ gzip:  1.46 kB
+dist/assets/path-Z67kZG2m.js                          3.83 kB │ gzip:  0.96 kB
+dist/assets/InsightCard-BCb0g2IX.js                   4.52 kB │ gzip:  1.57 kB
+dist/assets/EntityChips-Cg0PjEhI.js                   4.72 kB │ gzip:  1.55 kB
+dist/assets/Dialog-C5bW5nRS.js                        5.71 kB │ gzip:  2.16 kB
+dist/assets/threadOverrides-oexvv4Eu.js               6.01 kB │ gzip:  2.23 kB
+dist/assets/Insights-DIzeAJjG.js                      7.01 kB │ gzip:  2.81 kB
+dist/assets/Work-D8wGTFi0.js                          7.58 kB │ gzip:  3.16 kB
+dist/assets/Session-BJLR59ky.js                       8.35 kB │ gzip:  2.93 kB
+dist/assets/Timeline-DDKzsMJ2.js                      8.35 kB │ gzip:  3.58 kB
+dist/assets/Moment-x1I_jGV5.js                        9.13 kB │ gzip:  3.40 kB
+dist/assets/Deck-BE1cQGVK.js                         11.16 kB │ gzip:  3.79 kB
+dist/assets/overlay-TmIW7Fer.js                      11.57 kB │ gzip:  3.92 kB
+dist/assets/Thread-COOOghfy.js                       12.85 kB │ gzip:  4.08 kB
+dist/assets/ReportView-CutCE-Uq.js                   20.77 kB │ gzip:  6.58 kB
+dist/assets/Ask-W1k69P60.js                          22.98 kB │ gzip:  7.51 kB
+dist/assets/query-CZ0gEZfc.js                        35.77 kB │ gzip: 10.58 kB
+dist/assets/Recall-CdJg-pyb.js                       36.46 kB │ gzip: 11.75 kB
+dist/assets/globals-BvgeE8ct.js                      38.03 kB │ gzip: 12.85 kB
+dist/assets/main-DhuD3BpI.js                         41.42 kB │ gzip: 12.58 kB
+dist/assets/router-BlutWn1T.js                       90.35 kB │ gzip: 30.67 kB
+dist/assets/index-B8QF8snN.js                       100.16 kB │ gzip: 28.00 kB
+dist/assets/react-vendor-LgzazqmD.js                143.35 kB │ gzip: 45.97 kB
+dist/assets/CitationTile-DgGotGqs.js                157.84 kB │ gzip: 47.99 kB
+✓ built in 2.04s
+BUILD_EXIT=0
+```
+
+```
+$ node scripts/stage-mcp.mjs
+[stage-mcp] up to date: C:\Users\nicol\Documents\GitHub\screensearch\src-tauri\binaries\screensearch-mcp-x86_64-pc-windows-msvc.exe
+STAGE_EXIT=0
+
+$ cargo fmt --all -- --check
+FMT_EXIT=0            (no output)
+
+$ cargo clippy --workspace --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.23s
+CLIPPY_EXIT=0
+
+$ cargo build --workspace
+   Compiling screensearch v0.4.2 (C:\Users\nicol\Documents\GitHub\screensearch\src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.10s
+RUSTBUILD_EXIT=0
+
+$ cargo test --workspace
+TEST_EXIT=0
+86        # lines matching "^test result: ok"
+0         # lines matching "^test result: FAILED|^failures:"
+1616      # summed "test result: ok. N passed"
+```
+
+```
+$ git diff --exit-code -- ui/src/bindings
+BINDINGS_DIFF_EXIT=0          (empty diff)
+$ git status --porcelain -- ui/src/bindings
+?? ui/src/bindings/SessionGraph.ts
+```
+
+The one untracked file is the new generated binding for this phase's additive read; it is a new
+file, not a modification, so the diff fence is satisfied — and it must be `git add`-ed by whoever
+commits.
+
+The kickoff's list stops at the bindings fence, but this phase edited two files under `ui/test/`, so
+the UI unit suite was run as well:
+
+```
+$ node npm-cli.js test
+> node --experimental-strip-types --test test/*.test.mjs
+✔ the fence covers all of ui/src except the generated, token-owning and barrel files
+✔ every fence rule and the inline-style scan catch a real violation
+✔ no source file escapes the token layer
+ℹ tests 153
+ℹ pass 153
+ℹ fail 0
+UITEST_EXIT=0
+```
+
+P9's tree ran 142; the eleven added tests are the P10 token-fence cases (the widened walk and the
+ESLint rule's own violations).
+
+**A note on a transient failure, stated rather than smoothed over.** The first full-suite run of
+this phase exited **101**, with the failure diagnostic cut off by a `head -60` in the capture; two
+subsequent complete runs — including the final one quoted above — exited 0 with zero failure lines.
+The 101 run is therefore unexplained but not reproducible, and this record does not claim it never
+happened.
+
+### The lint rule covers all of `ui/src` (fail, then pass)
+
+The kickoff asks for a run where a deliberately raw hex, a px font size and a magic spacing value
+each fail, then the clean run after the probe is reverted. `ui/src/routes/LintProbe.tsx` was created
+with one violation per line and deleted again; nothing was committed:
+
+```
+$ node node_modules/eslint/bin/eslint.js src/routes/LintProbe.tsx
+   6:17  error  arbitrary font sizes skip the 12px floor and the scale (arbitrary-font-size)               tokens/no-raw-token
+   6:17  error  arbitrary px values skip the density-aware spacing scale (arbitrary-px)                    tokens/no-raw-token
+   8:16  error  a raw hex colour belongs in the --p- primitive layer, not in a component (colour-literal)  tokens/no-raw-token
+   9:21  error  rgb()/rgba()/hsl()/hsla() bypass the semantic layer (colour-function)                      tokens/no-raw-token
+  10:9   error  an inline style with a numeric px value escapes the density scale (inline-style-number)    tokens/no-raw-token
+  11:9   error  an inline style with a numeric px value escapes the density scale (inline-style-number)    tokens/no-raw-token
+  12:9   error  an inline style with a numeric px value escapes the density scale (inline-style-number)    tokens/no-raw-token
+  13:22  error  rgb()/rgba()/hsl()/hsla() bypass the semantic layer (colour-function)                      tokens/no-raw-token
+
+✖ 8 problems (8 errors, 0 warnings)
+PROBE_EXIT=1
+
+$ rm ui/src/routes/LintProbe.tsx && node node_modules/eslint/bin/eslint.js src
+CLEAN_EXIT=0            (no output)
+```
+
+Eight failures across five of the seven rules from one file — and the clean run is silent, so the
+rule is live rather than merely configured. The same fence's unit half is proved by the suite's own
+cases ("every fence rule and the inline-style scan catch a real violation", below).
+
+### P10-specific checks
+
+```
+$ test ! -f ui/src/styles/tokens.compat.css
+exit=0
+
+$ grep -rn 'tokens.compat' ui/src ui/index.html
+exit=1 (1 = no match)
+
+$ grep -rnE -- '--(bg-base|bg-surface|line|ink|ink-muted|ink-faint|accent|accent-wash|scrim|glow-scan|danger|warn|ok|font-display|font-body|font-mono)\b' ui/src | wc -l
+27
+```
+
+**That last number is not zero, and the kickoff's own premise is why** (`06` #135): `--accent`,
+`--accent-wash` and `--font-mono` are **v2** names (`tokens.css:237-240`, `:293-296`, `:348-351`,
+`:403-406`, `:443`), `\b` matches at the `-` after a word character so `--accent` also catches
+`--accent-strong`/`--accent-line`, and the pattern's `--line`/`--ink` likewise collide with v2
+scales and with prose. The 27 hits were read line by line and are all v2 definitions, v2 uses or
+prose. The check that actually proves the shim is gone uses the 25 names the deleted shim defined:
+
+```
+$ grep -rnE -- '(--bg-base|--bg-overlay|--bg-surface|--danger|--ease-ui|--font-body|--font-display|--glow-scan|--ink|--ink-faint|--ink-muted|--line|--motion-base|--motion-fast|--motion-slow|--ok|--radius-chip|--radius-panel|--radius-ribbon|--scrim|--text-caption|--text-subtitle|--text-title|--tracking-eyebrow|--warn)\b' ui/src
+exit=1 (1 = no legacy name survives)
+
+$ grep -rn 'tokens.compat\|compat.css' ui docs | wc -l
+0
+```
+
+The list was not typed from memory: it is `git show HEAD:ui/src/styles/tokens.compat.css | grep -oE
+"^\s*--[a-z0-9-]+"` — exactly the 25 aliases the deleted file defined.
+
+```
+$ grep -rn 'ConnectionsPanel\|EntityChips' ui/src
+ui/src/components/intelligence/ConnectionsPanel.tsx:41:export interface ConnectionsPanelProps {
+ui/src/components/intelligence/ConnectionsPanel.tsx:59:export function ConnectionsPanel({
+ui/src/components/intelligence/ConnectionsPanel.tsx:65:}: ConnectionsPanelProps) {
+ui/src/components/intelligence/EntityChips.tsx:23:export interface EntityChipsProps {
+ui/src/components/intelligence/EntityChips.tsx:46:export function EntityChips({
+ui/src/components/intelligence/EntityChips.tsx:54:}: EntityChipsProps) {
+ui/src/components/intelligence/index.ts:7:export { EntityChips, type EntityChipItem, type EntityChipsProps } from "./EntityChips";
+ui/src/components/intelligence/index.ts:9:  ConnectionsPanel,
+ui/src/components/intelligence/index.ts:10:  type ConnectionsPanelProps,
+ui/src/components/intelligence/index.ts:12:} from "./ConnectionsPanel";
+ui/src/routes/Ask.tsx:54:  EntityChips,
+ui/src/routes/Ask.tsx:667:                <EntityChips
+ui/src/routes/Moment.tsx:8:// `EntityChips` / `ConnectionsPanel`; without a session neither panel renders.
+ui/src/routes/Moment.tsx:14:  ConnectionsPanel,
+ui/src/routes/Moment.tsx:15:  EntityChips,
+ui/src/routes/Moment.tsx:239:              <EntityChips
+ui/src/routes/Moment.tsx:254:          <ConnectionsPanel
+ui/src/routes/Session.tsx:6:// P9's `EntityChips` / `ConnectionsPanel` are placed from `components/intelligence`,
+ui/src/routes/Session.tsx:19:  ConnectionsPanel,
+ui/src/routes/Session.tsx:20:  EntityChips,
+ui/src/routes/Session.tsx:288:          <EntityChips
+ui/src/routes/Session.tsx:303:      <ConnectionsPanel
+ui/src/routes/Thread.tsx:33:  ConnectionsPanel,
+ui/src/routes/Thread.tsx:34:  EntityChips,
+ui/src/routes/Thread.tsx:621:        <EntityChips
+ui/src/routes/Thread.tsx:649:      <ConnectionsPanel
+
+$ cargo test -p capture privacy
+test privacy::tests::own_window_pid_matches_any_nonzero_own_process_window ... ok
+test privacy::tests::own_window_pid_rejects_foreign_process ... ok
+test privacy::tests::own_window_pid_rejects_unknown_foreground_pid ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+PRIVACY_EXIT=0
+
+$ grep -rn 'ScanlineTimeline\|Scanline' ui/src | wc -l
+0
+```
+
+The `Scanline` count is the information line the kickoff calls for, and it is **0**: the scan-head
+concept has no reference left in `ui/src`, matched against the `§1` pick that names no Scanline
+successor (`07` D6). `ConnectionsPanel`/`EntityChips` are defined only in
+`components/intelligence` and placed from four routes — `Session.tsx:288/303`,
+`Moment.tsx:239/254`, plus the two P9 routes.
+
+### Performance budgets (`UI_REFERENCE §8`)
+
+Measured from the built entry documents, not by hand-adding the table: the eager set is the
+`<script>` plus every `<link rel="modulepreload">` in `ui/dist/index.html` and `ui/dist/overlay.html`,
+and the sizes are Vite's own gzip column from the log above.
+
+|Budget|Limit|Measured|Verdict|
+|---|---|---|---|
+|Initial JS, main window|≤ 250 KB gzip|**112.88 KB** gzip — `main` 12.58 + `react-vendor` 45.97 + `query` 10.58 + `globals` 12.85 + `router` 30.67 + `openExternal` 0.23|45.2 % of budget|
+|Initial JS, Flow-overlay window|≤ 250 KB gzip|**75.43 KB** gzip — `overlay` 3.92 + `react-vendor` 45.97 + `query` 10.58 + `globals` 12.85 + `EmptyState` 0.42 + `useAsk` 0.84 + `FrameImage` 0.85|30.2 %, and it shares the vendor chunks with the main window|
+|Initial CSS, main window|—|11.74 KB gzip (`globals-yTZYRc9I.css`, 66.31 kB raw)|—|
+|Route split per page|required|Deck 3.79 · Recall 11.75 · Timeline 3.58 · Session 2.93 · Moment 3.40 · Ask 7.51 · Work 3.16 · Thread 4.08 · Insights 2.81 · NotFound 0.32 (a chunk each; none is in the eager set)|passes|
+|Search results render|< 100 ms after data|median **16.4 ms**, samples 16.0 / 16.4 / 339.0 ms (the 339 ms is the first keystroke of a cold cache)|median passes; the cold first sample is stated, not averaged away|
+|Interaction latency|< 100 ms|rail click → results visible: **median 27.9 ms**, samples 25.7 / 27.9 / 29.2 ms|passes|
+|No CLS on load|no shift on data arrival|Deck **CLS 0.0181** (3 shifts; a second run 0.0160), Recall **CLS 0.0014** (0 long tasks on either route)|both far inside the usual 0.1 "good" band; not zero, so reported as measured|
+|FrameImage lazy + async decode|required|`loading="lazy"` + `decoding="async"` on the `<img>` (`ui/src/components/domain/FrameImage.tsx:98-99`); the module is a 0.85 KB gzip chunk and is in both entries' preload sets|passes|
+
+Timing method: a PerformanceObserver pair installed before navigation records `layout-shift`
+(ignoring recent input) and `longtask`; FCP/LCP come from `performance.getEntriesByType("paint")`
+and the LCP observer; the interaction samples measure real `Input.dispatchMouseEvent` /
+`Input.insertText` to a painted result selector, three runs each. The three runs' full output,
+including every individual sample, is transcribed in `harness-data/p10/evidence/timing-app-channel.json`;
+a stale `timing.json` from an earlier static-build pass was deleted rather than left to be mistaken
+for this phase's numbers.
+
+### Overlay summon (`visible_ms` / `input_ready_ms`)
+
+Measured on two real summons with the app's registered global hotkey, from the app's own
+`overlay_perf` log target (`src-tauri/src/overlay.rs:60-72,350-368`):
+
+```
+2026-11-07T05:03:04.344962Z  INFO overlay_perf: overlay window shown visible_ms=24
+2026-11-07T05:06:04.770193Z  INFO overlay_perf: overlay window shown visible_ms=13
+2026-11-07T05:06:04.780639Z  INFO overlay_perf: overlay first paint acknowledged input_ready_ms=24
+2026-11-07T05:20:36.600539Z  INFO overlay_perf: overlay window shown visible_ms=21
+2026-11-07T05:20:36.610259Z  INFO overlay_perf: overlay first paint acknowledged input_ready_ms=32
+```
+
+The first summon has no `input_ready_ms` line: the overlay webview had been navigated away from its
+own entry by an earlier capture pass, so it never sent `overlay_shown_ack`. The second and third are
+clean pairs — **13 ms / 21 ms to shown, 24 ms / 32 ms to first paint acknowledged**. Every
+`Ctrl+Alt+Z` press was sent into the system input queue from a background window; the desktop tool
+reported the chord as "dropped by the Chromium renderer" and yet the global hotkey fired each time,
+which is the evidence that matters.
+
+**Overlay states and interactions** (driven over CDP against the overlay webview, which is
+`overlay.html`; the window is 640×460 and the cells are captured at that native size):
+
+|Item|Evidence|
+|---|---|
+|Five states|`overlay-{pine-light,pine-dark,ink-light,ink-dark}-640x460-dpr1.webp` — the empty-query strip ("Search Ask Jump back … Telegram until 16:42", a real resumption line); `overlay-search-populated-640x460-dpr1-pine-light.webp` — a real query typed into the live field, results rendered from captured OCR text; `overlay-ask-640x460-dpr1-pine-light.webp` — the Ask mode switch|
+|Hotkey → visible|`visible_ms=13` (clean pair), `21` (second summon)|
+|First-result time|median **16.3 ms** from keystroke to a painted result row, samples 16.2 / 16.3 / 694.1 ms — the 694 ms is the cold first keystroke, and the measure includes the overlay's fixed 250 ms debounce|
+|Ask switch|`?` on an empty query switched the field to Ask: the screen reads "Ask about what you've seen — Questions stream from captured screens and keep their source frames attached."|
+|Escape dismissal|`Escape` sent to the overlay input: the native window left the desktop window list (present before as `ScreenSearch Overlay` 640×460, absent after), i.e. `FlowOverlay.handleKeyDown` → `hide_overlay` → `overlay.hide()` really ran|
+|Blur dismissal|**not driven.** The handler is the native `WindowEvent::Focused(false)` arm (`src-tauri/src/lib.rs:1820-1826`); exercising it means taking the user's OS focus away from the overlay, which is a foreground action this session was not authorised to perform. The code path is unchanged from P7 and is named here rather than claimed.|
+|Self-exclude gate|`cargo test -p capture privacy` — `own_window_pid_matches_any_nonzero_own_process_window`, `own_window_pid_rejects_foreign_process`, `own_window_pid_rejects_unknown_foreground_pid`, 3 passed / 0 failed|
+
+Overlay theme cells and the populated/Ask cells are under `docs/screenshots/p10/overlay/`.
+
+### Evidence matrix
+
+Driver: `harness-data/p10/capture.mjs` (dependency-free CDP over `net`+`crypto`) and
+`harness-data/p10/matrix.mjs`, both git-ignored. Every cell is the **real Tauri/WebView2 window**
+driven over CDP — not a static build — with `Emulation.setDeviceMetricsOverride` for size/DPI, the
+app's four shipped `data-theme` ids, and the visible text captured alongside each frame so a cell
+can be checked without an eye. `shot` rejects a frame whose pixel dimensions or theme do not match
+what was asked for; `clickElement` refuses to click an element that is not the topmost element at
+its own centre.
+
+**Size/DPI matrix — 168 cells, 0 failures** (`matrix-failures.json` is `[]`): 7 screens (Deck,
+Recall search, Recall reports, Timeline, Session, Moment, Settings · Data) × 4 themes × 6
+configurations (1280×720 and 1920×1080 and 3440×1440, each at dpr 1 and 1.5). Committed under
+`docs/screenshots/p10/matrix/` (WebP q90, 12 MB for the whole phase's evidence). The DPI half is
+emulation, and the record says so: `deviceScaleFactor 1 / 1.5`, not Windows display scaling.
+
+**Per-screen state matrix — 35 cells, 26 captured, 9 named with their reason** — recorded cell by
+cell in `harness-data/p10/evidence/state-matrix.json`, with each row naming how the state was
+forced and each uncaptured row naming why. Four files that first looked like distinct states turned
+out to be byte-identical to another cell and were **deleted rather than counted**:
+
+|Cell first claimed|Identical to|Why there is no distinct render|
+|---|---|---|
+|Deck · partial|Deck · populated (`548002cb…`)|§4 partial is "capturing but no enrichment yet"; on the fixture the queue reads "0 pending 0 done 1264", so the arm renders nothing distinct|
+|Recall search · partial|Recall search · populated (`951b5e96…`)|§4 partial is "vectors still indexing"; the embedding provider loads within seconds and the banner never shows|
+|Session · partial|Session · populated (`8a99013f…`)|§4 partial is an *open* session or a generating summary; every session here is closed and summarised|
+|Session · empty|Session · populated (same hash)|§4 empty is "no exchanges captured", and this data has no exchanges at all — the populated screen *is* that arm|
+
+The nine uncaptured arms, all recorded with their reason: Deck partial (above), Recall search
+partial (above), Recall reports loading (the idle builder *is* §4's empty cell), Recall reports
+error (a failed generation was not produced — the weekly run went through its summarizing passes
+without surfacing the arm), Timeline partial ("thumbnails still resolving" is transient by
+definition, and the fixture ships no frame image files at all), Session empty and partial
+(above), Moment empty (§4 gives Moment `—`; a missing frame is the error cell), Settings · Data
+partial (retention "applying" would mean writing a retention value into the maintainer's own
+settings — not done).
+
+Reachable highlights, with the text that proves them: Deck `loading`/`error` ("Kernel offline …
+Can't reach the kernel"), Deck `empty` ("Waiting for the first capture"), Recall search `error`
+("Search failed … Try again"), Recall reports `partial` — a real generation in flight, captured at
+0 ms settle: "Generating… Cancel Summarizing 1 of 28 (1/28)", Recall reports populated-no-evidence
+("Report · today … No captured content in this time range"), Timeline `empty` ("No captures in this
+range … No sessions in this range"), Session populated (confidence 64.9 % + "Low confidence — this
+session's boundaries are approximate"), Moment `partial` ("queue vision for this frame"), Settings ·
+Data `empty` ("No reports yet. Choose dates to run a report or enable a daily or weekly schedule.")
+— which is **not** the string `§4:238` specifies ("Nothing saved yet"); the shipped arm and the second
+unlisted arm ("No reports for this filter.", `MemoryPanel.tsx:341`) are recorded in `06` #149 rather
+than equated with the contract.
+
+**Forced-state channel.** Loading and error arms use the app's own dev switch,
+`?__devState=loading|error&__devStateKey=<key>`, driven through CDP `Page.navigate` in the running
+webview — this is a correction to P7's note that the app window "cannot be navigated": it can, the
+badge renders, and every forced cell in the matrix carries its `DEV STATE: …` badge in frame. Empty
+arms use a **fresh schema**: the profile DB was moved aside, the app created a v15 database (0
+sessions, 0 frames), the empty cells were captured, and the original was restored.
+
+### One scroll context and no horizontal scrollbar (`§8`, `§9`)
+
+Probed on all eight route shapes at both 1280×720 dpr1 and 3440×1440 dpr1.5
+(`harness-data/p10/evidence/probe-*.json`):
+
+|Route|shell `main` scrolls|document scrolls|horizontal overflow|horizontal scroll contexts|nested vertical scrollers in `main`|
+|---|---|---|---|---|---|
+|`/` (Deck)|yes at 1280, no at 3440|no|no|0|0|
+|`/recall`|no|no|no|0|0|
+|`/timeline`|no|no|no|0|0|
+|`/timeline/session/218`|yes at both|no|no|0|0|
+|`/timeline/1260`|yes at 1280, no at 3440|no|no|0|0|
+|`/settings/data`|yes at both|no|no|0|0|
+|`/this-route-does-not-exist` (NotFound)|no|no|no|0|0|
+|`/timeline/session/999999` (error arm)|no|no|no|0|0|
+
+The document never scrolls and no route introduces a horizontal scrollbar at either extreme; where
+a route scrolls at all it is the shell's single `<main>`, with zero nested vertical scrollers inside
+it. An earlier probe expression also counted *decorative* overflow — elements whose content is wider
+than their clipped box, e.g. the shell's tooltip wrapper at 420 px inside 318 px with
+`overflow:visible` — which cannot scroll and produced a misleading "4–5 overflowing elements" per
+route. The record keeps that raw list in `horizontalOverflowElements` and reports the acceptance
+metric separately as `horizontalScrollContexts`, which is empty on every route at every size.
+
+### What this evidence does not cover
+
+- **Frame pixels.** Every thumbnail in every cell is the app's missing-media fallback, for two
+  different reasons that both need saying: the P4 fixture is a database with no image files beside it
+  (its `frames` rows exist and nothing renders), and the real profile's images were expired by the
+  app's own retention sweep (the documented "text kept" degradation). Layout, lane geometry, ribbon
+  heights, typography and colour are real; the images inside the thumbnails are absent on this host
+  in both cases.
+- **The resumption strips show the live desktop, not the database.** Two different sources feed the
+  cells and they are not equally synthetic. Every DB-driven value in the 168 matrix cells comes from
+  the **P4 fixture** — 218 sessions / 1260 frames of generated content whose titles are
+  `alex.morgan@northwind.example`, so no real history is in those pixels. But the Deck's "Where was
+  I? Jump back" card and the overlay's empty-query strip read the **live foreground window at capture
+  time**, so those cells carry whatever was actually on screen: a browser tab title in the matrix
+  cells ("Cost analysis - Microsoft Azure - Google Chrome — chrome until 14:20") and, in the four
+  late cells and the six overlay cells captured after the profile was restored, a real Telegram
+  contact name. Because the remote is public, the 202 WebP are **excluded from this PR** and stay
+  untracked under `docs/screenshots/p10/`; adding them is one `git add` after the set is pruned (or
+  the repository is private), and a rebuild will never remove them retrospectively.
+- **The report panel's error and retention-applying arms**, as itemised above.
+- **A report with written content**: needs the answer model to complete a generation over a range
+  that has evidence; only the no-evidence report is captured.
+
+### Profile database handling
+
+The evidence runs needed real data and then an empty database, so the profile DB was backed up,
+swapped, and restored — all recorded, all reversible:
+
+|Artifact|What it is|
+|---|---|
+|`harness-data/p10/evidence-db/screensearch.db` (sha256 `029674db0b72d6a356580b7e743ba0158f93183df0bb29ff9960e40a0e559fbb`, 218 sessions / 1260 frames)|the **synthetic P4 fixture**, copied from `harness-data/fixture/screensearch.db` (last written 2026-11-06T17:05, 0 `report_runs` rows) and given one seeded finished report run by `harness-data/p10/seed-report.mjs`. Titles are generated (`alex.morgan@northwind.example`), which is how this copy is distinguishable from the profile at a glance. It was live for the 168 matrix cells and the 05:58 state batch|
+|`harness-data/p10-backup/screensearch.db.orig` (32 329 728 B, sha256 `871e383afa01dc362937b46c1c5442b600c21c7f4cf9b19891b312d91439c525`)|the pre-P10 copy of the **real profile**, taken while the app was running (the WAL was not copied with it); `PRAGMA quick_check` **ok**, 220 sessions / 1400 frames. It was live again for the four cells captured after the restore (`recall-reports-partial` 06:09, `timeline-30day-range` 06:11, `deck-populated` pine-dark 06:11, `recall-reports-populated-no-evidence` 06:13) and the overlay pass|
+|`harness-data/p10-backup/screensearch.db.fixture-at-swap` (sha256 `d19e85923d15e75bc74230b008bdb7730a43a3e5c50e03413e1eff225c43e6a9`)|the fixture DB replaced by the empty one; its `-wal` was removed at the swap, so it is the checkpointed main file at that moment (218 sessions / 1260 frames + the one seeded report run)|
+|`harness-data/p10-backup/screensearch.db.empty-run`|the fresh v15 database the app created for the empty cells (0 sessions, 0 frames)|
+
+Restored at the end: `empty-pass.mjs restore` copied `.orig` over the live file and verified
+`identical: true`, then `PRAGMA quick_check` and `PRAGMA integrity_check` both returned **ok** with
+220 sessions / 1400 frames and 0 report rows — the profile is byte-for-byte its pre-P10 state, with
+no stray `-wal`/`-shm` beside it. Frames captured during this session remain on disk as files the
+restored database does not reference; the app's retention sweep prunes them.
+
+### CI on the pushed commit
+
+The local gate above was re-run by CI on the pushed tree, not assumed. **Every check passes on
+`d4621d6`** (`feat/0.4.5-p10-refont`, the last commit before this record paragraph):
+
+|Job|Result|Time|Run|
+|---|---|---|---|
+|`build & test (windows)` — `npm ci` → UI lint → UI build → stage MCP → rustfmt → clippy `-D warnings` → build → test → **verify ts-rs bindings are committed & current**|**pass**|16 m 38 s|[42349302133](https://github.com/nicolasestrem/screensearch/actions/runs/42349302133)|
+|`package & verify (x86_64-pc-windows-msvc)`|**pass**|2 m 35 s|[42349302145](https://github.com/nicolasestrem/screensearch/actions/runs/42349302145)|
+|`package & verify (x86_64-unknown-linux-gnu)`|**pass**|54 s|same run|
+|`package & verify (aarch64-apple-darwin)`|**pass**|59 s|same run|
+|CodeQL · `Analyze (rust)`|**pass**|6 m 3 s|[42349299956](https://github.com/nicolasestrem/screensearch/actions/runs/42349299956)|
+|CodeQL · `Analyze (javascript-typescript)`|**pass**|1 m 6 s|same run|
+|CodeQL · `Analyze (actions)`|**pass**|41 s|same run|
+
+Two consequences worth naming. First, the bindings leg is what makes committing
+`ui/src/bindings/SessionGraph.ts` load-bearing rather than incidental: CI re-runs the ts-rs export and
+fails on any diff, so the new `get_session_graph` type had to ship with the code that declares it
+(`06` #143's neighbourhood). Second, the deletion of `ui/src/styles/tokens.compat.css` is clean on a
+fresh checkout: nothing in `.github/workflows/*`, `ui/index.html`, `ui/overlay.html` or
+`vite.config.ts` names the file — it was imported by `globals.css` alone — and all three package jobs
+build from source.
+
+One superseded pair of runs (`518f261`) was cancelled by the push of `d4621d6`, which is GitHub's
+concurrency behaviour, not a failure.
+
+### Review-fix pass (PR [#166](https://github.com/nicolasestrem/screensearch/pull/166))
+
+Two P2 findings from the automated review, both verified in the source before any code moved.
+
+**1. A finished graph job left an open Session or Moment stale.** The session graph's key is
+`["sessions", "graph", id]`, but the graph-job branch of `useLiveEvents` invalidated only `work`,
+`insightList` and `entities`. Nothing else would have corrected it: the read has no polling and
+`app/providers.tsx` disables refetch-on-window-focus, so a screen mounted across `graph_extract` or
+`graph_cluster` kept missing entities, outdated connections and "still clustering" until it remounted.
+The fix is structural rather than a fourth hand-written call — one exported list beside the keys,
+`GRAPH_JOB_INVALIDATIONS`, that the handler loops over:
+
+```text
+ui/src/lib/ipc/queryKeys.ts       + sessionGraphPrefix: ["sessions", "graph"]
+                                  + GRAPH_JOB_INVALIDATIONS = [work, insightList, entities, sessionGraph]
+ui/src/lib/ipc/useLiveEvents.ts   for (const queryKey of GRAPH_JOB_INVALIDATIONS) qc.invalidateQueries({ queryKey })
+                                  − qc.invalidateQueries({ queryKey: queryKeys.entitiesPrefix })  (now a member)
+```
+
+Proof, in the order it was run — the test fails with the key removed and passes with it back:
+
+```text
+# ui/test/sessionGraphRefresh.test.mjs, `sessionGraphPrefix` deleted from the list
+✖ a completed graph job invalidates the session graph a Session or Moment is showing (0.8948ms)
+ℹ pass 2
+ℹ fail 1
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+# restored (`grep -c NEUTERED` → 0)
+✔ a completed graph job invalidates the session graph a Session or Moment is showing (0.4807ms)
+✔ the list still covers every family that was already refreshed (0.1171ms)
+✔ the debounced block invalidates that one list and nothing by hand (0.7894ms)
+ℹ pass 3
+ℹ fail 0
+```
+
+**2. A connection whose evidence came from a sibling session lost its words.** `ConnectionsPanel`
+maps `shared_entity_ids` through the caller's name record and falls back to `Entity <id>`. Session and
+Moment built that record from `graph.entities` — the session-scoped read — while the ids come from the
+`shared` subquery in `crates/store/src/graph.rs`, which joins `thread_sessions` on both sides. So a
+connection supported by another member session's entity rendered as a number: the one row whose
+evidence the panel exists to show. (The Thread page does not have this defect, and the asymmetry
+proves the diagnosis: `thread_detail.entities` aggregates every member session.)
+
+```text
+ui/src/lib/connectionNames.ts      new: unresolvedSharedEntityIds(connections, names) → number[]
+ui/src/routes/Session.tsx          useEntities(unresolvedSharedEntityIds(connected, sessionNames))
+ui/src/routes/Moment.tsx           same
+```
+
+The names are resolved through the read the app already has (`useEntities` → `get_entities`), the chips
+stay session-scoped, and no wire type moved.
+
+```text
+# ui/test/connectionNames.test.mjs, the `id in entityNames` test neutered to `false`
+✖ an entity a sibling session touched is reported as unresolved (1.6988ms)
+✖ the ids are unique and ordered, so one read covers every connection (0.1826ms)
+ℹ pass 2
+ℹ fail 2
+
+# restored (`grep -c NEUTERED` → 0)
+✔ an entity a sibling session touched is reported as unresolved (0.7622ms)
+✔ nothing is requested when the session already names every shared entity (0.0861ms)
+✔ the ids are unique and ordered, so one read covers every connection (0.0871ms)
+✔ no connections and no names ask for nothing (0.0648ms)
+ℹ pass 4
+ℹ fail 0
+```
+
+Full UI suite after both fixes: **160/160** (153 + 7 new), `eslint .` exit 0, build 2.00 s.
+
+### Delivery
+
+Committed on the maintainer's explicit instruction (2026-11-07), which supersedes the
+leave-uncommitted plan this phase started under. What the branch carries, in three groups:
+
+|Group|Paths|Note|
+|---|---|---|
+|Backend (additive read)|`crates/store/src/graph.rs`, `crates/store/src/lib.rs`, `crates/traits/src/{contracts,ipc}.rs`, `src-tauri/src/{graph,lib}.rs`, `ui/src/bindings/SessionGraph.ts`|+301/−4: the two store queries (`session_entities`, `session_thread`), the `SessionGraph` wire type, the `get_session_graph` command. Additive only — schema stays v15, no migration, no column|
+|UI refont|the seven owned routes, `ui/src/components/domain`, `ui/src/overlay`, `overlay-main.tsx`, the deleted `tokens.compat.css`, the two fences (`ui/eslint.config.js`, `ui/test/tokens.test.mjs`), `ui/tailwind.config.js`|the refont itself plus the two token fences; `SessionGraph.ts` is the regenerated binding the gate's `git diff --exit-code -- ui/src/bindings` leg requires to be committed|
+|Records|`05` (this section), `06` #135–#149, `07` (deferrals, grants, evidence-pass observations), `08`, `CHANGELOG.md`|822 insertions across those five files as of this record commit (781 at the code commit `78a8cee`) — a figure that moves with every doc fix, so it is dated rather than treated as a constant|
+
+**Held out on purpose: `docs/screenshots/p10/` (202 WebP, 12 MB).** The remote is public. The
+DB-driven content of those cells is the synthetic fixture, but the Deck's Jump-back card and the
+overlay's empty-query strip read the live foreground window and therefore carry a real contact name
+and real browsing titles. Publishing that is the maintainer's decision, not a by-product of "commit
+and push": the set stays untracked, `07` D7's owner flag says what to prune, and `git add
+docs/screenshots/p10/` is the one step that adds it once the set is pruned or the repository is
+made private. The matrix itself is not lost from the record — every cell's state, size, theme, DPI
+and channel is in `harness-data/p10/evidence/state-matrix.json` (git-ignored), and `matrix.mjs`
+regenerates the images from a running app.
+
+Open at hand-off: `06` #149 (the `§4:238` Settings · Data string the product does not render) is a
+copy decision for the maintainer, not a defect this phase introduced.
+
 ## 2026-11-06: P9 intelligence UI — build, ordered gate and the acceptance walk (branch `feat/0.4.5-p9-intelligence-ui`, from `main` `eb556d1`; **PR [#165](https://github.com/nicolasestrem/screensearch/pull/165) open, not merged** — committed and pushed on the maintainer's explicit instruction under 0.4.5 D18)
 
 Phase: `docs/kickoffs/P9.md`. Contradictions and rulings: `06` #106–#116. Decisions, grants and

@@ -30,7 +30,7 @@ export function ScheduleControl({
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-caption text-ink-faint font-body">
+      <p className="text-t-xs text-fg-tertiary">
         Vision tagging never runs in real time. On-demand tagging (from a
         moment) is always available — turn on a schedule to also tag untagged
         frames in the background.

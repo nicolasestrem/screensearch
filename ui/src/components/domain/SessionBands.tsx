@@ -1,7 +1,16 @@
-// SessionBands — an additive, kind-coded layer over the Scanline ribbon. The
-// measured pixel geometry (including the tokenized 32px hit target) drives both
-// deterministic collision packing and rendering, so CSS cannot create overlaps
-// the packer did not see. Rows stay in normal flow and expand the ribbon as needed.
+// SessionBands — an additive layer over the density ribbon (`UI_REFERENCE §3`/§4).
+// The measured pixel geometry (including the tokenized 32px hit target) drives both
+// deterministic collision packing and rendering, so CSS cannot create overlaps the
+// packer did not see. Rows stay in normal flow and expand the ribbon as needed.
+//
+// Exactly four lanes exist in every state (`FIXED_SESSION_LANES`): the initial
+// skeleton, loading, error, empty and populated all reserve the same four
+// token-height rows. Sessions that packing would place in lane 5+ never grow the
+// ribbon; they are counted into one neutral, keyboard-operable overflow control
+// that focuses the Timeline's existing range presets.
+//
+// Bands are session links, so they read as relationships: neutral surfaces,
+// neutral borders and the kind carried by the label — no second hue (`§1`).
 import {
   useEffect,
   useMemo,
@@ -45,12 +54,17 @@ const KIND_LABEL: Record<SessionKind, string> = {
   other: "Other",
 };
 
-const KIND_STYLE: Record<SessionKind, string> = {
-  focus: "border-ink-faint bg-overlay text-ink",
-  ai: "border-ok bg-surface text-ok",
-  meeting: "border-warn bg-surface text-warn",
-  other: "border-line bg-transparent text-ink-muted",
-};
+/** The one band surface: a neutral relationship, never a status hue (`§1`). */
+const BAND_STYLE = "border-line-subtle bg-surface-raised text-fg-primary";
+
+const FOCUS_RING =
+  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]";
+
+const CONTROL_STYLE = cn(
+  "pointer-events-auto min-h-hit-min rounded-sm border border-line-subtle px-3 text-t-xs",
+  "motion-safe:transition-colors duration-fast ease-standard",
+  FOCUS_RING,
+);
 
 function cssTokenPx(style: CSSStyleDeclaration, token: string): number {
   const value = Number.parseFloat(style.getPropertyValue(token));
@@ -116,11 +130,14 @@ export function SessionBands({
       <div ref={measureRef} className="relative mx-2 flex flex-col gap-1">
         <div className="flex h-hit-min items-center justify-end">
           {loading ? (
-            <Skeleton className="h-hit-min w-1/4 border border-line bg-overlay" />
+            <Skeleton className="h-hit-min w-1/4 border border-line-subtle" />
           ) : error ? (
             <button
               type="button"
-              className="pointer-events-auto min-h-hit-min rounded-chip border border-line bg-overlay px-3 font-body text-caption text-ink-muted hover:text-ink"
+              className={cn(
+                CONTROL_STYLE,
+                "bg-surface-raised text-fg-secondary hover:text-fg-primary",
+              )}
               onPointerDown={stopSliderPointer}
               onClick={(e) => {
                 e.stopPropagation();
@@ -133,7 +150,10 @@ export function SessionBands({
           ) : packed.overflowCount > 0 ? (
             <button
               type="button"
-              className="pointer-events-auto min-h-hit-min rounded-chip border border-line bg-transparent px-3 font-body text-caption text-ink-muted hover:bg-overlay hover:text-ink"
+              className={cn(
+                CONTROL_STYLE,
+                "bg-transparent text-fg-secondary hover:bg-surface-hover hover:text-fg-primary",
+              )}
               onPointerDown={stopSliderPointer}
               onClick={(e) => {
                 e.stopPropagation();
@@ -143,7 +163,7 @@ export function SessionBands({
               {packed.overflowCount} more sessions — narrow the range
             </button>
           ) : (
-            <span className="font-body text-caption text-ink-faint">
+            <span className="text-t-xs text-fg-tertiary">
               {packed.bands.length > 0
                 ? "Sessions"
                 : "No sessions in this range"}
@@ -162,7 +182,7 @@ export function SessionBands({
             ? Array.from({ length: FIXED_SESSION_LANES }, (_, lane) => (
                 <Skeleton
                   key={lane}
-                  className="h-hit-min border border-line bg-overlay"
+                  className="h-hit-min border border-line-subtle"
                   style={{
                     gridRow: lane + 1,
                     width: `${Math.max(20, 35 - lane * 5)}%`,
@@ -192,9 +212,10 @@ export function SessionBands({
                     onOpen(session.id);
                   }}
                   className={cn(
-                    "pointer-events-auto h-hit-min truncate rounded-chip border px-2 text-left font-display text-caption font-semibold uppercase tracking-eyebrow",
-                    "transition-colors duration-fast ease-ui hover:bg-overlay",
-                    KIND_STYLE[session.kind],
+                    "pointer-events-auto h-hit-min truncate rounded-sm border px-2 text-left text-t-xs font-medium",
+                    "motion-safe:transition-colors duration-fast ease-standard hover:bg-surface-hover",
+                    FOCUS_RING,
+                    BAND_STYLE,
                   )}
                   style={{
                     gridRow: lane + 1,

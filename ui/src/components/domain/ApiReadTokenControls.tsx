@@ -1,5 +1,6 @@
-// Independent credential controls, embedded in ApiPanel even when listener status
-// fails. Secret lifetime is confined to this mounted component, never Query state.
+// Independent credential controls, rendered in Settings · API by ApiCredentialRow
+// even when listener status fails. Secret lifetime is confined to this mounted
+// component, never Query state.
 import { useEffect, useId, useRef, useState } from "react";
 import type { ApiStatus } from "../../bindings/ApiStatus";
 import { useApiReadTokenAction, useApiReadTokenStatus } from "../../lib/ipc/apiReadToken";
@@ -103,25 +104,25 @@ export function ApiReadTokenControls({ apiStatus }: { apiStatus?: ApiStatus }) {
     : "API enabled but not listening — the credential does not establish connectivity.";
 
   return (
-    <section aria-labelledby={`${id}-title`} aria-describedby={`${id}-scope`} className="flex flex-col gap-3 border-t border-line pt-4"
+    <section aria-labelledby={`${id}-title`} aria-describedby={`${id}-scope`} className="flex flex-col gap-3 border-t border-line-subtle pt-4"
       onKeyDown={(event) => { if (event.key === "Escape" && secret) { hide(); event.stopPropagation(); } }}>
-      <h3 id={`${id}-title`} className="text-subtitle text-ink font-display">Read-only token</h3>
-      <p id={`${id}-scope`} className="text-caption text-ink-muted font-body">
+      <h3 id={`${id}-title`} className="text-t-h3 text-fg-primary">Read-only token</h3>
+      <p id={`${id}-scope`} className="text-t-xs text-fg-secondary">
         Give a memory agent access to captured raw and filtered history, stored images and saved reports.
         This token cannot Ask or generate answers/reports, change marks, capture now, retry reports or deliver content.
       </p>
-      <p className="text-caption text-warn font-body">
+      <p className="text-t-xs text-status-warn-fg">
         Plain HTTP is not encrypted: network observers may intercept tokens and history, including for explicitly configured remote wrapper clients.
         Keep the token private. Rotation and revocation affect subsequent requests, not guaranteed cancellation of already authorized streams.
       </p>
-      <p className="text-caption text-ink-muted font-body">{listener}</p>
+      <p className="text-t-xs text-fg-secondary">{listener}</p>
       <div aria-busy={status.isLoading} className="flex flex-col gap-2">
         <div className="min-h-hit-min flex items-center" role="status" aria-live="polite">
           {status.isLoading ? <><Skeleton className="h-6 w-40" /><span className="sr-only">Loading read-token availability…</span></>
-            : <span className="text-caption text-ink-muted">{unknown ? "Read-token availability unknown."
+            : <span className="text-t-xs text-fg-secondary">{unknown ? "Read-token availability unknown."
               : configured ? "Read token configured." : "No read token configured. Create one to give an agent read-only access."}</span>}
         </div>
-        <div id={`${id}-value`} className="min-h-hit-min min-w-0 rounded-chip border border-line bg-base px-3 py-2 font-mono text-data text-ink">
+        <div id={`${id}-value`} className="min-h-hit-min min-w-0 rounded-sm border border-line-subtle bg-surface-inset px-3 py-2 font-mono text-t-data text-fg-primary">
           {status.isLoading ? <Skeleton className="h-6 w-full" />
             : <code className="block min-h-6 break-all">{secret && configured ? secret : configured ? "Read token hidden" : unknown ? "Availability unknown" : "No read token"}</code>}
         </div>
@@ -133,14 +134,14 @@ export function ApiReadTokenControls({ apiStatus }: { apiStatus?: ApiStatus }) {
           <Button data-read-action="rotate" size="sm" variant="ghost" disabled={busy || !configured} onClick={() => run("rotate")}>Rotate read token</Button>
           <Button data-read-action="revoke" size="sm" variant="danger" disabled={busy || !configured} onClick={() => setConfirmingRevoke(true)}>Revoke read token</Button>
         </div>
-        <p className="text-caption text-ink-muted font-body">
+        <p className="text-t-xs text-fg-secondary">
           Create works only when absent. Rotate replaces the existing read token; update your clients afterward.
           Revoke removes only this credential. These actions never enable the API, change its address/port or replace the legacy token.
         </p>
-        <div className="min-h-hit-min text-caption font-body" role="status" aria-live="polite">
+        <div className="min-h-hit-min text-t-xs" role="status" aria-live="polite">
           {busy && lastAction ? progress[lastAction] : message}
         </div>
-        {(status.isError || error) && <div role="alert" className="flex flex-col gap-2 text-caption text-warn">
+        {(status.isError || error) && <div role="alert" className="flex flex-col gap-2 text-t-xs text-status-warn-fg">
           {status.isError && <div className="flex flex-wrap items-center gap-2">
             <span>Could not refresh read-token availability. Any previous status may be out of date.</span>
             <Button size="sm" variant="secondary" disabled={busy || status.isFetching} onClick={() => status.refetch()}>Retry read-token status</Button>

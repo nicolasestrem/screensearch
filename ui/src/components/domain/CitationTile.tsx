@@ -15,16 +15,16 @@ export interface CitationTileProps {
 export function CitationTile({ frameId, onOpenFrame }: CitationTileProps) {
   const { data } = useFrame(frameId);
   const className =
-    "flex w-32 shrink-0 flex-col gap-1 rounded-chip border border-line bg-surface p-1 text-left transition-colors duration-fast ease-ui hover:border-accent";
+    "flex w-32 shrink-0 flex-col gap-1 rounded-sm border border-line-subtle bg-surface-pane p-1 text-left transition-colors duration-fast ease-standard hover:border-accent";
   const body = (
     <>
       <FrameImage
         imagePath={data?.image_path ?? null}
         imagePurged={data?.image_purged ?? false}
         alt=""
-        className="aspect-video w-full rounded-chip object-cover bg-overlay"
+        className="aspect-video w-full rounded-sm object-cover bg-surface-raised"
       />
-      <span className="px-1 font-mono text-data text-ink-muted">
+      <span className="px-1 font-mono text-t-data text-fg-secondary">
         {data ? clockTime(data.captured_at) : `#${frameId}`}
       </span>
     </>

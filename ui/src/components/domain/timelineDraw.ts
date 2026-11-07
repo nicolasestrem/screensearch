@@ -1,8 +1,8 @@
-// Shared canvas draw for the Scanline Timeline and its thin minimap (UI_REFERENCE
+// Shared canvas draw for the density timeline and its thin minimap (UI_REFERENCE
 // §1/§5 — "Reused as a thin minimap strip"). Keeping the density ribbon in one draw
 // function guarantees the full timeline and the minimap read identically. The colors
-// are read from the live CSS custom properties since a <canvas> can't use Tailwind
-// classes.
+// are read from the live v2 semantic custom properties since a <canvas> can't use
+// Tailwind classes.
 import type { TimelineBucket } from "../../bindings/TimelineBucket";
 import type { TimeRange } from "../../bindings/TimeRange";
 
@@ -11,11 +11,11 @@ export interface RibbonColors {
   bar: string;
   /** Bar cap line (accent). */
   barTop: string;
-  /** Baseline / track (line). */
+  /** Baseline / track (border-subtle). */
   track: string;
 }
 
-/** Reads the Command Deck color tokens off an element's computed style. */
+/** Reads the v2 timeline color tokens off an element's computed style. */
 export function readRibbonColors(el: HTMLElement): RibbonColors {
   const cs = getComputedStyle(el);
   const root = getComputedStyle(document.documentElement);
@@ -26,7 +26,7 @@ export function readRibbonColors(el: HTMLElement): RibbonColors {
   return {
     bar: v("--accent-wash"),
     barTop: v("--accent"),
-    track: v("--line"),
+    track: v("--border-subtle"),
   };
 }
 

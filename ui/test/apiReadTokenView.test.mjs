@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { readFileSync } from "node:fs";
-import { URL } from "node:url";
 import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -77,10 +75,7 @@ test("error offers status retry; failed refresh keeps previously known controls"
   assert.doesNotMatch(button(stale, "Revoke read token"), / disabled=""/);
 });
 
-test("copy warns about scope, plain HTTP and admission-only revocation; embedding preserves legacy surface", () => {
+test("copy warns about scope, plain HTTP and admission-only revocation", () => {
   const html = render({ configured: true });
   for (const phrase of [/raw and filtered history/, /stored images and saved reports/, /cannot Ask/, /change marks/, /capture now/, /retry reports or deliver/, /Plain HTTP is not encrypted/, /subsequent requests/, /already authorized streams/, /never enable the API/]) assert.match(html, phrase);
-  const panel = readFileSync(new URL("../src/components/domain/ApiPanel.tsx", import.meta.url), "utf8");
-  assert.equal(panel.match(/<ApiReadTokenControls/g)?.length, 3, "read controls also exist during legacy status loading/error");
-  for (const preserved of [/useRegenerateApiToken/, /useSetApiConfig/, /copyToken/, /Bearer token/]) assert.match(panel, preserved);
 });

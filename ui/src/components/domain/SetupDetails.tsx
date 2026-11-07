@@ -31,12 +31,12 @@ function SetupRow({ step }: { step: SetupStep }) {
   return (
     <div className="flex flex-col gap-1">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="text-body text-ink font-body">{label}</span>
-        <span className="font-mono text-data text-ink-muted whitespace-nowrap">
+        <span className="text-t-body text-fg-primary">{label}</span>
+        <span className="font-mono text-t-data text-fg-secondary whitespace-nowrap">
           {bytes}
         </span>
       </div>
-      <span className="text-caption text-ink-muted font-body">
+      <span className="text-t-xs text-fg-secondary">
         {setupStageText(step)}
       </span>
 
@@ -47,10 +47,10 @@ function SetupRow({ step }: { step: SetupStep }) {
           aria-valuemax={100}
           aria-valuenow={pct}
           aria-label={`${label} setup progress`}
-          className="h-1.5 w-full overflow-hidden rounded-chip bg-overlay"
+          className="h-1.5 w-full overflow-hidden rounded-sm bg-surface-raised"
         >
           <div
-            className="h-full rounded-chip bg-accent transition-[width] duration-fast ease-ui"
+            className="h-full rounded-sm bg-accent transition-[width] duration-fast ease-standard motion-reduce:transition-none"
             style={{ width: `${pct}%` }}
           />
         </div>
@@ -61,14 +61,14 @@ function SetupRow({ step }: { step: SetupStep }) {
           role="progressbar"
           aria-busy="true"
           aria-label={`${label} setup progress (indeterminate)`}
-          className="h-1.5 w-full overflow-hidden rounded-chip bg-overlay"
+          className="h-1.5 w-full overflow-hidden rounded-sm bg-surface-raised"
         >
-          <div className="h-full w-1/3 animate-pulse rounded-chip bg-accent" />
+          <div className="h-full w-1/3 animate-pulse rounded-sm bg-accent motion-reduce:animate-none" />
         </div>
       ) : null}
 
       {step.phase === "done" && (
-        <span className="text-caption text-ok font-body">
+        <span className="text-t-xs text-status-ok-fg">
           {setupDoneText(step.operation)}
         </span>
       )}
@@ -76,25 +76,25 @@ function SetupRow({ step }: { step: SetupStep }) {
       {step.phase === "failed" && (
         <div
           role="alert"
-          className="flex flex-col gap-1 rounded-panel border border-danger bg-overlay px-3 py-2"
+          className="flex flex-col gap-1 rounded-md border border-status-danger-border bg-surface-raised px-3 py-2"
         >
-          <span className="text-caption text-danger font-body">
+          <span className="text-t-xs text-status-danger-fg">
             {label} didn’t finish.
           </span>
           {step.error && (
-            <span className="text-caption text-ink font-body">
+            <span className="text-t-xs text-fg-primary">
               {setupFailureCause(step.error)}
             </span>
           )}
-          <span className="text-caption text-ink-muted font-body">
+          <span className="text-t-xs text-fg-secondary">
             {setupFailureNextStep(step.operation)}
           </span>
           {step.error && (
-            <details className="text-caption text-ink-faint font-body">
-              <summary className="cursor-pointer select-none hover:text-ink-muted">
+            <details className="text-t-xs text-fg-tertiary">
+              <summary className="cursor-pointer select-none hover:text-fg-secondary">
                 Technical details
               </summary>
-              <pre className="mt-1 overflow-x-auto whitespace-pre font-mono text-data text-ink-faint">
+              <pre className="mt-1 overflow-x-auto whitespace-pre font-mono text-t-data text-fg-tertiary">
                 {step.error}
               </pre>
             </details>
@@ -123,19 +123,19 @@ export function SetupDetails() {
     return (
       <div
         role="alert"
-        className="flex flex-col gap-1 rounded-panel border border-danger bg-overlay px-3 py-2"
+        className="flex flex-col gap-1 rounded-md border border-status-danger-border bg-surface-raised px-3 py-2"
       >
-        <span className="text-caption text-danger font-body">
+        <span className="text-t-xs text-status-danger-fg">
           Couldn’t read the setup status. Nothing was lost — closing and reopening
           Settings retries.
         </span>
-        <span className="text-caption text-ink-muted font-body">
+        <span className="text-t-xs text-fg-secondary">
           {String(setup.error)}
         </span>
         <button
           type="button"
           onClick={() => setup.refetch()}
-          className="self-start text-caption font-body text-ink underline underline-offset-2 hover:text-ink-muted"
+          className="self-start text-t-xs text-fg-primary underline underline-offset-2 hover:text-fg-secondary"
         >
           Try again
         </button>

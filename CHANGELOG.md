@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed: every screen you own is drawn on one token set, and the old one is gone
+
+- **The v1 token shim is deleted, and its absence is enforced.** `tokens.compat.css` mapped 25
+  legacy names (`--bg-base`, `--ink-muted`, `--glow-scan`, `--radius-ribbon`, …) onto v2 tokens so
+  the old screens could keep compiling while they were rebuilt. Every screen P10 owns is now on v2
+  directly, the file is gone, and nothing in `ui/src` mentions any of its 25 names. Two fences keep
+  it that way: the token test walks all of `ui/src` (not just the routes) and a lint rule refuses a
+  raw token literal at the point it is written — no new dependency, and neither fence was loosened.
+- **Deck, Recall (search and reports), Timeline, Session, Moment, and Settings · Data were rebuilt
+  on those tokens**, with their five states intact. The timeline's scan-head and glow are replaced
+  by a density ribbon: four reserved lanes, ribbon heights that are the real capture counts, and a
+  hover card that shows the bucket instead of decorating it.
+- **Session and Moment now show what the session is about.** Both gained the entity chips and the
+  connections panel the Work and Thread screens already had, fed by one additive read
+  (`get_session_graph`) rather than by four screens querying four different ways; a session that was
+  never clustered shows an honest empty arm instead of an error.
+- **Five dead panels were deleted** (`ApiPanel`, `AppPanel`, `RetentionControl`, `InsightsBars`,
+  `CapturesTrend`) after a grep proved nothing imported them.
+- **Budgets improved rather than merely holding**: initial JavaScript is 112.9 KB gzip in the main
+  window and 75.4 KB in the overlay window (45 % and 30 % of the 250 KB budget), every route is its
+  own chunk, the rail click lands in 27.9 ms median, search results in 16.4 ms median, and the
+  overlay is on screen 13 ms after the hotkey with its first paint acknowledged at 24 ms.
+
 ### Added: Work, Thread and Ask screens, and Insights rewritten as claims you can check
 
 - **Your history now has a place to look for what is in flight.** `/work` lists the threads the
@@ -40,6 +63,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `specs/UI_REFERENCE.md §5` gains a "Composed components" table (`ConnectionsPanel`, `EntityChips`,
   `InsightCard`, `ScopeChips`, `EvidenceLink`), so the composed pieces P10 places in Session and
   Moment are inventoried beside the primitives without changing the primitive count.
+
+### Fixed: two things the P10 review found in the new panels
+
+- **A Session or Moment left open while the graph caught up stayed stale.** Clustering finishing in
+  the background refreshed Work, Thread and the insight list but not the session's own graph — and
+  nothing else would have corrected it, because that read has no polling and the app does not
+  refetch on window focus. The session graph is now part of the same refresh, so a screen that was
+  open across the clustering pass fills in instead of keeping its half-empty panels.
+- **A connection named its evidence `Entity 123` when that entity came from another session in the
+  thread.** The shared entity between two threads is often touched by a *sibling* session, which the
+  opened session's own entity list never contains; the panel then fell back to the bare id.
+  Connections now resolve those names, so the line that proves a connection reads
+  "Project Atlas · Sunrise" rather than two numbers.
 
 ### Fixed: two things the acceptance walk found in the new screens
 

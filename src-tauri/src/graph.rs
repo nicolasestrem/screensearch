@@ -27,9 +27,9 @@ use traits::{
     AskTurnStartError, AskTurnStarted, AskTurnStream, AskWindowOverride, AskWindowScope,
     EntityFilter, EntityListQuery, EntitySummary, EvidenceKind, InsightFilter, InsightKind,
     InsightListPage, InsightListQuery, MergeThreadsRequest, OverrideKind, OverrideReceipt,
-    RenameThreadRequest, SplitThreadRequest, ThreadFilter, ThreadListPage, ThreadListQuery,
-    ThreadOverrideDraft, ThreadOverrideKind, ThreadOverridePayload, ThreadPage, ThreadSummary,
-    TimeRange,
+    RenameThreadRequest, SessionGraph, SplitThreadRequest, ThreadFilter, ThreadListPage,
+    ThreadListQuery, ThreadOverrideDraft, ThreadOverrideKind, ThreadOverridePayload, ThreadPage,
+    ThreadSummary, TimeRange,
 };
 
 use crate::{next_ask_id, now_ms, relay_answer_deltas, AppState};
@@ -210,6 +210,44 @@ pub async fn get_thread_page(
         merged_into,
         connected,
         open_loops,
+        progress,
+    })
+}
+
+/// One session's work-graph context (`get_session_graph`, `03 §7h`): the entities the session
+/// touched, the thread it was clustered into, that thread's connections and the backfill
+/// progress the Thread page reports.
+///
+/// Every figure comes from the store read that owns it — nothing is recomputed here, so a
+/// session's entity chips, its thread's `active_ms`/`confidence` and the "partial" label are the
+/// same numbers the Session and Thread screens show. An unclustered session reports no thread
+/// and no connections rather than an error; the UI renders its empty state from that.
+#[tauri::command]
+pub async fn get_session_graph(
+    session_id: i64,
+    state: State<'_, AppState>,
+) -> Result<SessionGraph, String> {
+    let store = open_store(&state)?;
+    let entities = store
+        .session_entities(session_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let thread = store
+        .session_thread(session_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let connected = match &thread {
+        Some(thread) => store
+            .connected_threads(thread.id, THREAD_CONNECTIONS_LIMIT)
+            .await
+            .map_err(|e| e.to_string())?,
+        None => Vec::new(),
+    };
+    let progress = store.graph_progress().await.map_err(|e| e.to_string())?;
+    Ok(SessionGraph {
+        entities,
+        thread,
+        connected,
         progress,
     })
 }

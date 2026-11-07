@@ -92,11 +92,6 @@ export function FlowOverlay() {
   const activeHit = searchMatchesInput
     ? hits[Math.min(activeIndex, Math.max(hits.length - 1, 0))]
     : undefined;
-  const busy =
-    (mode === "search" &&
-      normalizedText.length > 0 &&
-      (searchWaitingForCommit || search.isFetching)) ||
-    ask.phase === "streaming";
 
   useEffect(() => {
     setActiveIndex(0);
@@ -222,58 +217,57 @@ export function FlowOverlay() {
 
   return (
     <div className="flex h-full items-start justify-center p-3">
-      <section className="w-full overflow-hidden rounded-panel border border-line bg-overlay shadow-scan">
-        <div
-          className={cn(
-            "h-1 bg-accent shadow-scan",
-            busy && "scanlines scanlines-drift",
-          )}
-          aria-hidden="true"
-        />
-        <div className="scanlines flex flex-col gap-3 p-3">
-          <div className="flex items-center gap-2">
-            <input
-              ref={inputRef}
-              value={text}
-              onChange={(e) => handleTextChange(e.currentTarget.value)}
-              onKeyDown={handleKeyDown}
-              role="combobox"
-              aria-label={mode === "search" ? "Flow search" : "Flow ask"}
-              aria-controls={LISTBOX_ID}
-              aria-expanded={mode === "search"}
-              aria-activedescendant={
-                mode === "search" && activeHit
-                  ? optionId(activeHit.frame_id)
-                  : undefined
-              }
-              autoFocus
-              placeholder={
-                mode === "search"
-                  ? "Search screen history"
-                  : "Ask about captured screens"
-              }
-              className="min-w-0 flex-1 rounded-chip border border-line bg-base px-3 min-h-hit-min text-body text-ink placeholder:text-ink-faint font-body transition-colors duration-fast ease-ui focus:border-accent"
-            />
-            <Button
-              variant={mode === "search" ? "primary" : "secondary"}
-              size="sm"
-              onClick={() => {
-                setMode("search");
-                ask.reset();
-              }}
-            >
-              Search
-            </Button>
-            <Button
-              variant={mode === "ask" ? "primary" : "secondary"}
-              size="sm"
-              onClick={() => setMode("ask")}
-            >
-              Ask
-            </Button>
-          </div>
+      <section className="flex h-full w-full flex-col overflow-hidden rounded-md border border-line-subtle bg-surface-raised shadow-panel">
+        <div className="flex shrink-0 items-center gap-2 border-b border-line-subtle bg-surface-chrome p-3">
+          <input
+            ref={inputRef}
+            value={text}
+            onChange={(e) => handleTextChange(e.currentTarget.value)}
+            onKeyDown={handleKeyDown}
+            role="combobox"
+            aria-label={mode === "search" ? "Flow search" : "Flow ask"}
+            aria-controls={LISTBOX_ID}
+            aria-expanded={mode === "search"}
+            aria-activedescendant={
+              mode === "search" && activeHit
+                ? optionId(activeHit.frame_id)
+                : undefined
+            }
+            autoFocus
+            placeholder={
+              mode === "search"
+                ? "Search screen history"
+                : "Ask about captured screens"
+            }
+            className={cn(
+              "min-w-0 flex-1 rounded-md border border-line-control bg-surface-inset px-3 min-h-hit-min",
+              "text-t-body text-fg-primary placeholder:text-fg-tertiary caret-accent",
+              "transition-colors duration-fast ease-standard motion-reduce:transition-none",
+              "hover:border-line-strong",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
+            )}
+          />
+          <Button
+            variant={mode === "search" ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => {
+              setMode("search");
+              ask.reset();
+            }}
+          >
+            Search
+          </Button>
+          <Button
+            variant={mode === "ask" ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => setMode("ask")}
+          >
+            Ask
+          </Button>
+        </div>
 
-          <div className="max-h-96 min-h-72 overflow-auto rounded-panel border border-line bg-base">
+        <div className="flex min-h-0 flex-1 flex-col p-3">
+          <div className="min-h-0 flex-1 overflow-auto rounded-md border border-line-subtle bg-surface-pane">
             {mode === "search" ? (
               <SearchOverlayBody
                 text={text}
@@ -342,9 +336,12 @@ function SearchOverlayBody({
   }
   if (isFetching && hits.length === 0) {
     return (
-      <div className="flex flex-col gap-2 p-3">
+      <div className="flex flex-col gap-2 p-2">
         {Array.from({ length: 4 }, (_, i) => (
-          <div key={i} className="flex items-center gap-3">
+          <div
+            key={i}
+            className="flex items-center gap-3 rounded-sm border border-line-subtle bg-surface-raised p-2"
+          >
             <Skeleton className="h-14 w-24 shrink-0" />
             <div className="flex flex-1 flex-col gap-2">
               <Skeleton className="h-5 w-full" />

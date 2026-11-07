@@ -1,6 +1,6 @@
-/* Global stylesheet: tokens -> compat shim -> Tailwind layers -> base element
- * styling. Imported once from main.tsx (and overlay-main.tsx, which shares the
- * same sheet so the overlay window cannot drift from the main window).
+/* Global stylesheet: tokens -> Tailwind layers -> base element styling.
+ * Imported once from main.tsx (and overlay-main.tsx, which shares the same
+ * sheet so the overlay window cannot drift from the main window).
  *
  * v2 identity (Logbook): a calm document surface. One sans family (Source Sans
  * 3) for every label, heading and paragraph, Cascadia Mono only for measured
@@ -12,7 +12,6 @@
  * <html data-density>. Nothing in this file may name a colour.
  */
 @import "./tokens.css";
-@import "./tokens.compat.css";
 
 @tailwind base;
 @tailwind components;
@@ -87,30 +86,6 @@
   }
   *::-webkit-scrollbar-track {
     background-color: transparent;
-  }
-}
-
-@layer components {
-  /* ---- v1 compatibility no-ops -------------------------------------------
-   * .eyebrow, .scanlines and .scanlines-drift are still referenced (24 files
-   * at the time of this rewrite, none of them owned by the styles slice), so
-   * they must exist. They are kept as neutral no-op styles: a plain label and
-   * an empty painted layer. Nothing is uppercase, tracked, tinted or animated
-   * any more, and removing them from the markup is a follow-up cleanup.
-   */
-  .eyebrow {
-    font-family: var(--font-text);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    letter-spacing: 0;
-    text-transform: none;
-    color: var(--text-secondary);
-  }
-
-  .scanlines,
-  .scanlines-drift {
-    background-image: none;
-    animation: none;
   }
 }
 

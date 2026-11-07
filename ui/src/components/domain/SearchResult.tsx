@@ -19,31 +19,31 @@ export interface SearchResultProps {
 
 export function SearchResult({ hit, onOpenFrame }: SearchResultProps) {
   const className =
-    "flex gap-3 rounded-panel border border-line bg-surface p-3 transition-colors duration-fast ease-ui hover:border-ink-faint";
+    "flex gap-3 rounded-md border border-line-subtle bg-surface-pane p-3 transition-colors duration-fast ease-standard hover:border-line-strong";
   const body = (
     <>
       <FrameImage
         imagePath={hit.image_path}
         imagePurged={hit.image_purged}
         alt=""
-        className="h-16 w-28 shrink-0 rounded-chip object-cover bg-overlay"
+        className="h-16 w-28 shrink-0 rounded-sm object-cover bg-surface-raised"
       />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <p className="line-clamp-2 text-body text-ink font-body">
+        <p className="line-clamp-2 text-t-body text-fg-primary">
           {hit.snippet ? (
             <HighlightedSnippet text={hit.snippet} />
           ) : (
-            <span className="text-ink-faint">No text recognized</span>
+            <span className="text-fg-tertiary">No text recognized</span>
           )}
         </p>
-        <div className="flex items-center gap-2 text-caption text-ink-faint">
-          <span className="font-mono text-data">
+        <div className="flex items-center gap-2 text-t-xs text-fg-tertiary">
+          <span className="font-mono text-t-data">
             {relativeTime(hit.captured_at)}
           </span>
           {hit.app_hint && (
             <>
               <span aria-hidden="true">·</span>
-              <span className="truncate font-body">{hit.app_hint}</span>
+              <span className="truncate">{hit.app_hint}</span>
             </>
           )}
         </div>

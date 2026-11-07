@@ -39,19 +39,19 @@ export function SetupIndicator() {
               : `Preparing local AI — open Settings · Models: ${summary.stepText ?? ""}`
           }
           className={cn(
-            "flex items-center gap-2 px-3 rounded-chip border",
-            "min-h-hit-min whitespace-nowrap font-mono text-data leading-none",
+            "flex items-center gap-2 px-3 rounded-sm border",
+            "min-h-hit-min whitespace-nowrap font-text text-t-sm leading-none",
             // Stable width per §8 — summarize text changes inside a reserved
             // minimum, the rail never reflows around it.
             "min-w-40 max-w-80 justify-center",
-            "transition-colors duration-fast ease-ui",
+            "transition-colors duration-fast ease-standard motion-reduce:transition-none",
             failed
-              ? "text-danger border-danger hover:text-ink"
-              : "text-accent border-accent hover:border-ink-faint",
+              ? "text-status-danger-fg border-status-danger-border hover:text-fg-primary"
+              : "text-accent border-accent hover:border-line-strong",
           )}
         >
           <span
-            className="w-2 h-2 rounded-full bg-current shrink-0"
+            className="w-2 h-2 rounded-pill bg-current shrink-0"
             aria-hidden="true"
           />
           {failed ? (
@@ -59,7 +59,7 @@ export function SetupIndicator() {
           ) : (
             <>
               <span>{summary.label}</span>
-              <span className="text-ink-muted min-w-0 truncate">{summary.stepText}</span>
+              <span className="text-fg-secondary min-w-0 truncate">{summary.stepText}</span>
             </>
           )}
           {!failed &&
@@ -72,9 +72,9 @@ export function SetupIndicator() {
                 aria-label="Setup progress"
                 className="w-10 shrink-0"
               >
-                <span className="block h-0.5 w-full overflow-hidden rounded-chip bg-overlay">
+                <span className="block h-0.5 w-full overflow-hidden rounded-sm bg-surface-raised">
                   <span
-                    className="block h-full rounded-chip bg-accent transition-[width] duration-fast ease-ui"
+                    className="block h-full rounded-sm bg-accent transition-[width] duration-fast ease-standard motion-reduce:transition-none"
                     style={{ width: `${summary.progress.value}%` }}
                   />
                 </span>
@@ -86,8 +86,8 @@ export function SetupIndicator() {
                 aria-label="Setup progress (indeterminate)"
                 className="w-10 shrink-0"
               >
-                <span className="block h-0.5 w-full overflow-hidden rounded-chip bg-overlay">
-                  <span className="block h-full w-1/3 animate-pulse rounded-chip bg-accent" />
+                <span className="block h-0.5 w-full overflow-hidden rounded-sm bg-surface-raised">
+                  <span className="block h-full w-1/3 animate-pulse rounded-sm bg-accent motion-reduce:animate-none" />
                 </span>
               </span>
             ))}

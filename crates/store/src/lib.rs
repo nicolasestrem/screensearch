@@ -772,6 +772,12 @@ impl Store for SqliteStore {
     async fn thread_merge_target(&self, thread_id: i64) -> Result<Option<i64>> {
         SqliteStore::thread_merge_target(self, thread_id).await
     }
+    async fn session_entities(&self, session_id: i64) -> Result<Vec<traits::EntitySummary>> {
+        SqliteStore::session_entities(self, session_id).await
+    }
+    async fn session_thread(&self, session_id: i64) -> Result<Option<traits::ThreadSummary>> {
+        SqliteStore::session_thread(self, session_id).await
+    }
     async fn insights_for_evidence(
         &self,
         kind: Option<traits::InsightKind>,

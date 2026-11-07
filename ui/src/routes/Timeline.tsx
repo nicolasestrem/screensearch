@@ -1,10 +1,16 @@
-// Timeline (/timeline) — the signature Scanline Timeline browser (UI_REFERENCE
-// §1/§4). A density ribbon over the selected window, scrubbed by pointer or
-// keyboard; Enter opens the moment nearest the scan-head (resolved server-side to a
-// real frame id, so it lands precisely — not on a sampled thumbnail). Range presets
-// scope the window (and the Recall search). All five states: loading skeleton,
-// empty ("No captures in this range"), error+retry, partial (thumbnails resolving),
-// populated. The scrub area never goes blank — empty windows show an invitation.
+// Timeline (/timeline) — the density timeline browser (UI_REFERENCE §1/§3/§4).
+// A canvas density ribbon over the selected window — every bar is the real capture
+// count of its bucket, never decoration — scrubbed by pointer or keyboard; Enter
+// opens the moment nearest the selection marker (resolved server-side to a real
+// frame id, so it lands precisely — not on a sampled thumbnail). Range presets scope
+// the window (and the Recall search). All five states: loading skeleton, empty ("No
+// captures in this range"), error+retry, partial (thumbnails resolving), populated.
+// The scrub area never goes blank — empty windows show an invitation.
+//
+// The session-band layer sits inside the ribbon component and reserves exactly four
+// lanes in all five states (`SessionBands`, `FIXED_SESSION_LANES`), so data arrival
+// never shifts the page. One scroll context: the shell's <main>; nothing here
+// scrolls and no strip overflows horizontally.
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
@@ -16,7 +22,7 @@ import {
   Panel,
   Skeleton,
 } from "../components/primitives";
-import { ScanlineTimeline, SessionBands } from "../components/domain";
+import { DensityTimeline, SessionBands } from "../components/domain";
 import * as cmd from "../lib/ipc/commands";
 import { useFrames, useSessions, useTimeline } from "../lib/ipc/queries";
 import { useUiStore } from "../state/uiStore";
@@ -34,6 +40,9 @@ const PRESETS = [
   { label: "30 days", days: 30 },
 ] as const;
 
+const FOCUS_RING =
+  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]";
+
 const clamp = (v: number, lo: number, hi: number) =>
   Math.min(Math.max(v, lo), hi);
 
@@ -46,7 +55,7 @@ export function Component() {
   const [days, setDays] = useState(1);
   const range = lastDaysRange(days);
 
-  // Scan-head position (unix ms). Initialised from a `?t=` deep link (e.g. the deck
+  // Selection position (unix ms). Initialised from a `?t=` deep link (e.g. the deck
   // minimap) or defaults to the most recent edge of the window.
   const [position, setPosition] = useState(() => {
     const t = Number(searchParams.get("t"));
@@ -111,7 +120,7 @@ export function Component() {
   const rangeControl = (
     <div
       ref={rangePresetRef}
-      className="flex gap-1"
+      className="flex flex-wrap gap-1"
       role="group"
       aria-label="Time range"
     >
@@ -122,11 +131,12 @@ export function Component() {
           aria-pressed={days === p.days}
           onClick={() => pickRange(p.days)}
           className={cn(
-            "inline-flex items-center rounded-chip px-3 min-h-hit-min font-display uppercase tracking-eyebrow text-caption font-semibold",
-            "transition-colors duration-fast ease-ui",
+            "inline-flex min-h-hit-min items-center rounded-sm px-3 text-t-xs font-medium",
+            "motion-safe:transition-colors duration-fast ease-standard",
+            FOCUS_RING,
             days === p.days
               ? "bg-accent-wash text-accent"
-              : "text-ink-muted hover:text-ink hover:bg-overlay",
+              : "text-fg-secondary hover:bg-surface-hover hover:text-fg-primary",
           )}
         >
           {p.label}
@@ -136,31 +146,36 @@ export function Component() {
   );
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-4 p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-col">
-          <span className="eyebrow">Timeline</span>
-          <span className="text-body text-ink-muted font-body">
+    <div className="mx-auto flex min-w-0 max-w-6xl flex-col gap-pane px-pane py-pane">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-t-h1 font-semibold text-fg-primary">Timeline</h1>
+          <p className="mt-1 text-t-sm text-fg-secondary">
             {absoluteDate(range.start)} — {absoluteDate(range.end - 1)}
-          </span>
+          </p>
         </div>
         {rangeControl}
-      </div>
+      </header>
 
-      <div ref={timelineMeasureRef}>
+      <div ref={timelineMeasureRef} className="min-w-0">
         <Panel
-          title="Scanline"
+          title="Capture density"
           flush
           action={
             hasData ? (
-              <Chip tone="accent">{absoluteTime(position)}</Chip>
+              <Chip tone="accent">
+                <span className="font-mono">{absoluteTime(position)}</span>
+              </Chip>
             ) : undefined
           }
         >
           {timeline.isLoading ? (
-            <div className="relative min-h-24 overflow-hidden rounded-none bg-base">
-              <Skeleton className="absolute inset-0 h-full w-full rounded-none" />
+            <div className="flex flex-col gap-2">
+              <div className="relative min-h-24 overflow-hidden rounded-none bg-surface-app">
+                <Skeleton className="absolute inset-0 h-full w-full rounded-none" />
+              </div>
               {sessionLayer(true)}
+              <Skeleton className="h-4 w-2/3" />
             </div>
           ) : timeline.isError ? (
             <div className="flex flex-col gap-2">
@@ -186,7 +201,7 @@ export function Component() {
             </div>
           ) : (
             <div className="flex flex-col gap-2">
-              <ScanlineTimeline
+              <DensityTimeline
                 buckets={buckets}
                 range={range}
                 position={position}
@@ -195,7 +210,7 @@ export function Component() {
                 thumbnails={thumbs.data ?? []}
                 sessionLayer={sessionLayer()}
               />
-              <p className="px-1 text-caption text-ink-faint font-body">
+              <p className="px-1 text-t-xs text-fg-tertiary">
                 Drag or use ← → to scrub (Shift for bigger steps, Home/End to
                 jump). Enter opens the moment.
                 {thumbs.isLoading ? " · Loading thumbnails…" : ""}

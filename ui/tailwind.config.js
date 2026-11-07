@@ -2,18 +2,17 @@ import typography from "@tailwindcss/typography";
 
 /** @type {import('tailwindcss').Config} */
 // Tailwind theme maps utilities onto the CSS custom properties in
-// src/styles/tokens.css (v2 semantics) and src/styles/tokens.compat.css (v1
-// names). Every key resolves to a custom property, so no component can name a
-// colour, size, radius, shadow, layer or duration that the design system does
-// not own.
+// src/styles/tokens.css (the v2 semantic, component and scale layers). Every
+// key resolves to a custom property, so no component can name a colour, size,
+// radius, shadow, layer or duration that the design system does not own.
 //
-// Two vocabularies live side by side:
-//   legacy keys (base, surface, overlay, line, ink, panel, chip, display,
-//   title, subtitle, caption, scan, ui, ...) are kept so the untouched
-//   components keep compiling; they point at the compat shim.
-//   v2 keys (surface.app, border set, fg.*, accent.*, action.*, status.*,
-//   mark.*, t-*, raised/overlay/toast, row/control/gap/pane) are the vocabulary
-//   new work must use.
+// One vocabulary: the v2 keys (surface.*, the border set, fg.*, accent.*,
+// action.*, status.*, mark.*, t-*, raised/panel/toast, row/control/gap/pane).
+// The v1 vocabulary the deleted compat shim used to resolve is gone, so a
+// legacy utility (bg-base, bare bg-surface, bg-overlay, bg-scrim, bare
+// border-line, text-ink*, text-danger, font-display, text-caption,
+// tracking-eyebrow, rounded-chip, ease-ui, shadow-scan) no longer compiles to
+// anything.
 //
 // Themes are switched by <html data-theme> (pine-light default, pine-dark,
 // ink-light, ink-dark), not by a media query, so `darkMode` is irrelevant.
@@ -25,10 +24,7 @@ export default {
       current: "currentColor",
       inherit: "inherit",
 
-      // ---- legacy v1 colour keys -> compat shim ----
-      base: "var(--bg-base)",
       surface: {
-        DEFAULT: "var(--bg-surface)",
         app: "var(--surface-app)",
         chrome: "var(--surface-chrome)",
         pane: "var(--surface-pane)",
@@ -37,21 +33,12 @@ export default {
         hover: "var(--surface-hover)",
         selected: "var(--surface-selected)",
         scrim: "var(--surface-scrim)",
-        overlay: "var(--bg-overlay)",
       },
-      overlay: "var(--bg-overlay)",
-      scrim: "var(--scrim)",
       line: {
-        DEFAULT: "var(--line)",
         subtle: "var(--border-subtle)",
         strong: "var(--border-strong)",
         control: "var(--border-control)",
         focus: "var(--border-focus)",
-      },
-      ink: {
-        DEFAULT: "var(--ink)",
-        muted: "var(--ink-muted)",
-        faint: "var(--ink-faint)",
       },
       accent: {
         DEFAULT: "var(--accent)",
@@ -59,11 +46,6 @@ export default {
         wash: "var(--accent-wash)",
         line: "var(--accent-line)",
       },
-      danger: "var(--danger)",
-      warn: "var(--warn)",
-      ok: "var(--ok)",
-
-      // ---- v2 colour keys ----
       fg: {
         primary: "var(--text-primary)",
         secondary: "var(--text-secondary)",
@@ -103,12 +85,9 @@ export default {
       focus: "var(--focus-ring)",
     },
     borderRadius: {
-      // legacy
-      none: "var(--radius-ribbon)",
-      chip: "var(--radius-sm)",
-      panel: "var(--radius-md)",
+      // Literal zero, not a token reference: `rounded-none` is a hard square.
+      none: "0",
       full: "var(--radius-pill)",
-      // v2
       sm: "var(--radius-sm)",
       md: "var(--radius-md)",
       lg: "var(--radius-lg)",
@@ -116,19 +95,10 @@ export default {
     },
     fontFamily: {
       text: "var(--font-text)",
-      display: "var(--font-display)",
-      body: "var(--font-body)",
       mono: "var(--font-mono)",
     },
     fontSize: {
-      // legacy v1 keys
-      display: ["var(--text-display)", { lineHeight: "var(--leading-tight)" }],
-      title: ["var(--text-title)", { lineHeight: "var(--leading-tight)" }],
-      subtitle: ["var(--text-subtitle)", { lineHeight: "var(--leading-tight)" }],
-      body: ["var(--text-body)", { lineHeight: "var(--leading-body)" }],
-      caption: ["var(--text-caption)", { lineHeight: "var(--leading-data)" }],
-      data: ["var(--text-data)", { lineHeight: "var(--leading-data)" }],
-      // v2 keys
+      // v2 type scale: every size is a step of the token scale, none is a literal.
       "t-xs": ["var(--text-xs)", { lineHeight: "var(--leading-data)" }],
       "t-sm": ["var(--text-sm)", { lineHeight: "var(--leading-data)" }],
       "t-data": ["var(--text-data)", { lineHeight: "var(--leading-data)" }],
@@ -145,8 +115,8 @@ export default {
       medium: "var(--weight-medium)",
       semibold: "var(--weight-semibold)",
     },
-    // Full token-backed scale: every Tailwind default key keeps its exact px
-    // value, so legacy layouts do not move when the tokens land.
+    // Full token-backed scale: every Tailwind default key keeps the px value it
+    // always had, so a utility is density-aware without moving a layout.
     spacing: {
       0: "var(--space-0)",
       px: "var(--space-px)",
@@ -194,7 +164,6 @@ export default {
     extend: {
       letterSpacing: {
         tight: "var(--tracking-tight)",
-        eyebrow: "var(--tracking-eyebrow)",
       },
       zIndex: {
         base: "var(--z-base)",
@@ -204,7 +173,6 @@ export default {
       },
       transitionTimingFunction: {
         standard: "var(--ease-standard)",
-        ui: "var(--ease-ui)",
       },
       transitionDuration: {
         fast: "var(--duration-fast)",
@@ -213,13 +181,11 @@ export default {
       },
       boxShadow: {
         raised: "var(--shadow-raised)",
-        // v1 named the shadow after the overlay colour, which makes Tailwind
-        // resolve .shadow-overlay as a shadow-COLOUR utility (shadowed):
-        // renamed to .shadow-panel, the v2 name, so an actual box-shadow ships.
+        // Named after the surface it lifts, not the overlay colour: Tailwind
+        // would read `.shadow-overlay` as a shadow-COLOUR utility and emit no
+        // shadow at all.
         panel: "var(--shadow-overlay)",
         toast: "var(--shadow-toast)",
-        // v1 scan-head halo: the shim maps --glow-scan to none.
-        scan: "var(--glow-scan)",
       },
       borderColor: {
         DEFAULT: "var(--border-subtle)",

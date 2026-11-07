@@ -18,11 +18,11 @@ export interface FrameReconstructionProps {
 
 /** Role → emphasis: content reads at full strength, chrome/system/background recede. */
 const ROLE_TONE: Record<TextSpan["role"], string> = {
-  content: "text-ink",
-  chrome: "text-ink-faint",
-  system: "text-ink-faint",
-  background: "text-ink-faint",
-  unknown: "text-ink-muted",
+  content: "text-fg-primary",
+  chrome: "text-fg-tertiary",
+  system: "text-fg-tertiary",
+  background: "text-fg-tertiary",
+  unknown: "text-fg-secondary",
 };
 
 export function FrameReconstruction({
@@ -36,7 +36,7 @@ export function FrameReconstruction({
   return (
     <div
       className={cn(
-        "relative w-full overflow-hidden rounded-panel border border-line bg-surface",
+        "relative w-full overflow-hidden rounded-md border border-line-subtle bg-surface-pane",
         className,
       )}
       style={{ aspectRatio: String(aspect), containerType: "size" }}
@@ -45,7 +45,7 @@ export function FrameReconstruction({
     >
       {spans.length === 0 ? (
         <div className="absolute inset-0 flex items-center justify-center p-4 text-center">
-          <span className="text-body text-ink-faint font-body">
+          <span className="text-t-body text-fg-tertiary">
             No recognized text to reconstruct for this frame.
           </span>
         </div>

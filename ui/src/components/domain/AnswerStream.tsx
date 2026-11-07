@@ -123,12 +123,12 @@ export function AnswerStream({
           onToggle={(e) =>
             setThinkingOpen((e.currentTarget as HTMLDetailsElement).open)
           }
-          className="rounded-panel border border-line bg-base"
+          className="rounded-md border border-line-subtle bg-surface-app"
         >
-          <summary className="cursor-pointer select-none px-3 py-2 text-caption text-ink-muted font-body">
+          <summary className="cursor-pointer select-none px-3 py-2 text-t-xs text-fg-secondary">
             Thinking
           </summary>
-          <pre className="whitespace-pre-wrap break-words px-3 pb-3 text-caption text-ink-faint font-mono">
+          <pre className="whitespace-pre-wrap break-words px-3 pb-3 text-t-xs text-fg-tertiary">
             {thinking}
           </pre>
         </details>
@@ -165,7 +165,7 @@ export function AnswerStream({
         </Markdown>
         {streaming && (
           <span
-            className="ml-0.5 inline-block h-4 w-2 animate-pulse bg-accent align-text-bottom"
+            className="ml-0.5 inline-block h-4 w-2 bg-accent align-text-bottom"
             aria-label="Answering…"
           />
         )}
@@ -173,7 +173,9 @@ export function AnswerStream({
 
       {citations.length > 0 && (
         <div className="flex flex-col gap-2">
-          <span className="eyebrow">Frames checked</span>
+          <span className="text-t-xs font-medium text-fg-secondary">
+            Frames checked
+          </span>
           {/* Wrap onto rows instead of a nested horizontal scroller (D9 — one scroll
               context; Windows draws a permanent scrollbar for overflow-x-auto). */}
           <div className="flex flex-wrap gap-2">

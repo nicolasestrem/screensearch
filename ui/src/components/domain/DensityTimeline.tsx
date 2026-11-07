@@ -1,13 +1,22 @@
-// ScanlineTimeline — the signature instrument (UI_REFERENCE §1/§7). A canvas
-// density ribbon (drawn by the shared drawDensityRibbon) under a sweeping
-// signal-orange scan-head, with a faint scanline texture and hover thumbnails. It
-// is a real slider: role="slider" with valuemin/max/now/text, full keyboard scrub
-// (Arrows step, Shift = coarse, Home/End jump, Enter opens), and pointer drag. The
-// scan-head and texture are DOM overlays (crisp accent + token glow); only the
-// density is canvas. devicePixelRatio-crisp; ambient drift is gated by
-// prefers-reduced-motion in globals.css.
+// DensityTimeline — the v2 timeline instrument (UI_REFERENCE §1/§4/§7). A canvas
+// density ribbon (drawn by the shared drawDensityRibbon) whose bar heights are the
+// real capture count of each bucket, plus a hover preview and a hairline selection
+// marker. The v1 signature skin is gone — no sweeping head, no texture overlay, no
+// glow, no ambient drift (§1: no glow, motion is state-only); what remains is the
+// measured ribbon and the affordances that act on it.
+//
+// It is a real slider: role="slider" with valuemin/max/now/text, full keyboard
+// scrub (Arrows step, Shift = coarse, Home/End jump, Enter opens), and pointer
+// drag. `aria-valuetext` carries the count of the bucket under the head, so
+// scrubbing reads "14:32 — 7 captures in 14:30–14:35" rather than a bare clock,
+// and a described-by summary names the window total and the busiest bucket: every
+// bar is reachable by name without mounting one node per bucket.
+//
+// devicePixelRatio-crisp. The session-band layer renders in normal flow beneath
+// the ribbon, so it can never overlap the bars it annotates.
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -21,12 +30,12 @@ import type { TimeRange } from "../../bindings/TimeRange";
 import type { FrameMeta } from "../../bindings/FrameMeta";
 import { FrameImage } from "./FrameImage";
 import { drawDensityRibbon, readRibbonColors } from "./timelineDraw";
-import { absoluteTime, clockTime } from "../../lib/time";
+import { absoluteDate, absoluteTime, clockTime } from "../../lib/time";
 
-export interface ScanlineTimelineProps {
+export interface DensityTimelineProps {
   buckets: TimelineBucket[];
   range: TimeRange;
-  /** The focused moment (unix ms); the scan-head sits here. Controlled. */
+  /** The focused moment (unix ms); the selection marker sits here. Controlled. */
   position: number;
   /** User moved the head (drag / click / keyboard step). */
   onScrub: (position: number) => void;
@@ -34,7 +43,7 @@ export interface ScanlineTimelineProps {
   onOpen: (position: number) => void;
   /** Frames for the hover thumbnail preview (nearest to the cursor). */
   thumbnails?: FrameMeta[];
-  /** Minimum ribbon height in CSS px. The normal-flow session layer can expand it. */
+  /** Ribbon height in CSS px; the session-band layer flows beneath it. */
   height?: number;
   /** Additive session-band layer. Kept outside the slider node so its native
    *  buttons do not become interactive descendants of an ARIA slider. */
@@ -43,6 +52,14 @@ export interface ScanlineTimelineProps {
 
 const clamp = (v: number, lo: number, hi: number) =>
   Math.min(Math.max(v, lo), hi);
+
+/** Half of the hover card's width (`w-28` = 112 px), so the preview stays inside the ribbon.
+ *  At 112 px wide the thumbnail is 63 px tall and the clock line 19 px, so the card is 90 px
+ *  inside a 96 px ribbon: it fits with 2 px to spare, and a wider card would be clipped. */
+const HOVER_CARD_HALF = 56;
+
+const countLabel = (count: number) =>
+  `${count} ${count === 1 ? "capture" : "captures"}`;
 
 function nearestThumbnailByTime(
   thumbnails: FrameMeta[],
@@ -72,7 +89,7 @@ function nearestThumbnailByTime(
   return time - before.captured_at <= after.captured_at - time ? before : after;
 }
 
-export function ScanlineTimeline({
+export function DensityTimeline({
   buckets,
   range,
   position,
@@ -81,11 +98,11 @@ export function ScanlineTimeline({
   thumbnails = [],
   height = 96,
   sessionLayer,
-}: ScanlineTimelineProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+}: DensityTimelineProps) {
   const sliderRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dragging = useRef(false);
+  const summaryId = useId();
   const [size, setSize] = useState({ w: 0, h: height });
   const [hover, setHover] = useState<{ x: number; time: number } | null>(null);
 
@@ -95,9 +112,9 @@ export function ScanlineTimeline({
     [thumbnails],
   );
 
-  // Track the container's pixel box so the canvas can be redrawn crisply on resize.
+  // Track the ribbon's pixel box so the canvas can be redrawn crisply on resize.
   useEffect(() => {
-    const el = containerRef.current;
+    const el = sliderRef.current;
     if (!el) return;
     const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
     measure();
@@ -109,8 +126,8 @@ export function ScanlineTimeline({
   // Draw the density ribbon whenever the data or the box changes.
   useEffect(() => {
     const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container || size.w === 0) return;
+    const slider = sliderRef.current;
+    if (!canvas || !slider || size.w === 0 || size.h === 0) return;
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(size.w * dpr);
     canvas.height = Math.round(size.h * dpr);
@@ -122,12 +139,12 @@ export function ScanlineTimeline({
       dpr,
       buckets,
       range,
-      colors: readRibbonColors(container),
+      colors: readRibbonColors(slider),
     });
   }, [size, buckets, range]);
 
   const xToTime = (clientX: number): number => {
-    const el = containerRef.current;
+    const el = sliderRef.current;
     if (!el || span === 0) return range.start;
     const rect = el.getBoundingClientRect();
     const frac = clamp((clientX - rect.left) / rect.width, 0, 1);
@@ -146,7 +163,7 @@ export function ScanlineTimeline({
     onScrub(xToTime(e.clientX));
   };
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const el = containerRef.current;
+    const el = sliderRef.current;
     if (el) {
       const rect = el.getBoundingClientRect();
       setHover({ x: e.clientX - rect.left, time: xToTime(e.clientX) });
@@ -202,12 +219,29 @@ export function ScanlineTimeline({
     ? nearestThumbnailByTime(sortedThumbnails, hover.time)
     : null;
 
+  // The bucket under the head: what `aria-valuetext` names, so each bar is
+  // announced with its own span and count while scrubbing.
+  const headBucket =
+    buckets.find((b) => position >= b.start && position < b.end) ?? null;
+  const valueText = headBucket
+    ? `${absoluteTime(position)} — ${countLabel(headBucket.count)} in ${clockTime(headBucket.start)}–${clockTime(headBucket.end)}`
+    : `${absoluteTime(position)} — no captures`;
+
+  const total = buckets.reduce((sum, b) => sum + b.count, 0);
+  const busiest = buckets.reduce<TimelineBucket | null>(
+    (max, b) => (max === null || b.count > max.count ? b : max),
+    null,
+  );
+  const summary =
+    total === 0 || busiest === null
+      ? `Capture density: no captures between ${absoluteDate(range.start)} and ${absoluteDate(range.end - 1)}.`
+      : `Capture density: ${countLabel(total)} between ${absoluteDate(range.start)} and ${absoluteDate(range.end - 1)}; busiest ${clockTime(busiest.start)}–${clockTime(busiest.end)} with ${countLabel(busiest.count)}.`;
+
   return (
-    <div
-      ref={containerRef}
-      className="relative w-full select-none overflow-hidden rounded-none bg-base"
-      style={{ minHeight: height }}
-    >
+    <div className="relative w-full select-none overflow-hidden rounded-none bg-surface-app">
+      <p id={summaryId} className="sr-only">
+        {summary}
+      </p>
       <div
         ref={sliderRef}
         role="slider"
@@ -216,7 +250,8 @@ export function ScanlineTimeline({
         aria-valuemin={range.start}
         aria-valuemax={range.end}
         aria-valuenow={clamp(position, range.start, range.end)}
-        aria-valuetext={absoluteTime(position)}
+        aria-valuetext={valueText}
+        aria-describedby={summaryId}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
@@ -226,24 +261,22 @@ export function ScanlineTimeline({
         }}
         onDoubleClick={(e) => onOpen(xToTime(e.clientX))}
         onKeyDown={onKeyDown}
-        className="absolute inset-0 cursor-crosshair outline-none"
+        className="relative w-full cursor-crosshair outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus"
+        style={{ height }}
       >
-        <canvas ref={canvasRef} className="block h-full w-full" />
-
-        {/* Faint scanline texture — the subject's native material; drift is disabled
-            under prefers-reduced-motion (globals.css). */}
-        <div
-          className="scanlines scanlines-drift pointer-events-none absolute inset-0"
-          aria-hidden="true"
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 block h-full w-full"
         />
 
-        {/* The sweeping signal-orange scan-head + its time read-out. */}
+        {/* Selection marker — one accent hairline at the focused moment (§1: the
+            accent is selection) with its clock read-out. No glow, no sweep. */}
         <div
-          className="pointer-events-none absolute bottom-0 top-0 w-0.5 bg-accent shadow-scan"
+          className="pointer-events-none absolute bottom-0 top-0 w-px bg-accent"
           style={{ left: `${positionPct * 100}%` }}
           aria-hidden="true"
         >
-          <span className="absolute -top-px left-1 whitespace-nowrap rounded-chip bg-overlay px-1 font-mono text-data text-accent">
+          <span className="absolute left-1 top-1 whitespace-nowrap rounded-sm bg-surface-raised px-1 font-mono text-t-data text-accent">
             {clockTime(position)}
           </span>
         </div>
@@ -251,16 +284,18 @@ export function ScanlineTimeline({
         {/* Hover thumbnail preview (nearest frame to the cursor). */}
         {hover && hoverFrame ? (
           <div
-            className="pointer-events-none absolute bottom-full z-rail mb-2 w-40 -translate-x-1/2"
-            style={{ left: clamp(hover.x, 80, Math.max(80, size.w - 80)) }}
+            className="pointer-events-none absolute top-1 z-rail w-28 -translate-x-1/2"
+            style={{
+              left: clamp(hover.x, HOVER_CARD_HALF, Math.max(HOVER_CARD_HALF, size.w - HOVER_CARD_HALF)),
+            }}
             aria-hidden="true"
           >
             <FrameImage
               imagePath={hoverFrame.image_path}
               alt=""
-              className="aspect-video w-full rounded-chip border border-line object-cover bg-overlay"
+              className="aspect-video w-full rounded-sm border border-line-subtle bg-surface-raised object-cover"
             />
-            <span className="mt-1 block text-center font-mono text-data text-ink-muted">
+            <span className="mt-1 block text-center font-mono text-t-data text-fg-secondary">
               {clockTime(hoverFrame.captured_at)}
             </span>
           </div>

@@ -17,7 +17,7 @@ export function JobQueueMeter({ stats }: JobQueueMeterProps) {
 
   if (total === 0) {
     return (
-      <p className="text-body text-ink-muted font-body">
+      <p className="text-t-body text-fg-secondary">
         No enrichment queued.
       </p>
     );
@@ -27,16 +27,16 @@ export function JobQueueMeter({ stats }: JobQueueMeterProps) {
   // styling token). The track and segment colors are tokens.
   const pct = (n: number) => `${(n / total) * 100}%`;
   const segments: Array<{ key: string; n: number; className: string }> = [
-    { key: "done", n: stats.done, className: "bg-ok" },
+    { key: "done", n: stats.done, className: "bg-status-ok-fg" },
     { key: "running", n: stats.running, className: "bg-accent" },
-    { key: "pending", n: stats.pending, className: "bg-ink-faint" },
-    { key: "failed", n: failed, className: "bg-danger" },
+    { key: "pending", n: stats.pending, className: "bg-fg-tertiary" },
+    { key: "failed", n: failed, className: "bg-status-danger-fg" },
   ];
 
   return (
     <div className="flex flex-col gap-3">
       <div
-        className="flex h-2 w-full overflow-hidden rounded-chip bg-overlay"
+        className="flex h-2 w-full overflow-hidden rounded-sm bg-surface-inset"
         role="img"
         aria-label={`Queue: ${stats.pending} pending, ${stats.running} running, ${stats.done} done, ${failed} failed`}
       >

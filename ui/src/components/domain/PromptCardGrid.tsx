@@ -50,19 +50,21 @@ const CARDS: Card[] = [
 export function PromptCardGrid({ onPick }: PromptCardGridProps) {
   return (
     <div className="flex flex-col gap-3">
-      <span className="eyebrow">Try a quick question</span>
+      <span className="text-t-xs font-medium text-fg-secondary">
+        Try a quick question
+      </span>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {CARDS.map((card) => (
           <button
             key={card.title}
             type="button"
             onClick={() => onPick(card.prompt)}
-            className="flex min-h-hit-min flex-col items-start gap-0.5 rounded-chip border border-line bg-surface px-3 py-2 text-left transition-colors duration-fast ease-ui hover:border-accent hover:bg-overlay"
+            className="flex min-h-hit-min flex-col items-start gap-0.5 rounded-sm border border-line-subtle bg-surface-pane px-3 py-2 text-left transition-colors duration-fast ease-standard hover:border-accent hover:bg-surface-hover"
           >
-            <span className="font-display text-body font-semibold text-ink">
+            <span className="text-t-body font-semibold text-fg-primary">
               {card.title}
             </span>
-            <span className="text-caption text-ink-muted font-body">
+            <span className="text-t-xs text-fg-secondary">
               {card.blurb}
             </span>
           </button>

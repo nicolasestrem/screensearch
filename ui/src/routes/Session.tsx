@@ -1,6 +1,10 @@
 // Session drill-in (/timeline/session/:id) — additive recall over persisted
 // sessions. Base detail and lazy title/summary start together: metadata paints as
-// soon as the inference-free read returns while intelligence fills in inline.
+// soon as the inference-free read returns while intelligence fills in inline. The
+// work-graph context (the entities this session touched, the thread it was
+// clustered into and that thread's connections) is one `get_session_graph` read;
+// P9's `EntityChips` / `ConnectionsPanel` are placed from `components/intelligence`,
+// never reimplemented here.
 import { useNavigate, useParams } from "react-router-dom";
 
 import {
@@ -11,8 +15,14 @@ import {
   Skeleton,
 } from "../components/primitives";
 import { FrameTile, ReportView } from "../components/domain";
+import {
+  ConnectionsPanel,
+  EntityChips,
+  type ConnectionsState,
+} from "../components/intelligence";
 import { IconArrowLeft, IconSparkle } from "../components/icons";
-import { useSession } from "../lib/ipc/queries";
+import { unresolvedSharedEntityIds } from "../lib/connectionNames";
+import { useEntities, useSession, useSessionGraph } from "../lib/ipc/queries";
 import { useSessionRecap } from "../lib/ipc/useSessionRecap";
 import { absoluteTime } from "../lib/time";
 import type { Session } from "../bindings/Session";
@@ -29,6 +39,12 @@ const ROLE_LABEL: Record<SessionArtifactRole, string> = {
   user: "You",
   agent: "Agent",
 };
+
+// One threshold for the whole app so "low confidence" cannot mean two things: the
+// Thread page's sessions list says so at the same value. A low-confidence session
+// keeps its numeric percentage and adds one plain line (`03 §7e`, D11) — never a
+// score, never a warning colour.
+const LOW_CONFIDENCE = 0.7;
 
 function SessionSkeleton() {
   return (
@@ -53,6 +69,20 @@ export function Component() {
   const base = useSession(sessionId, false);
   const summary = useSession(sessionId, true);
   const recap = useSessionRecap(sessionId);
+  // The session's work-graph context. Idle until the id is valid, so the invalid
+  // and gone branches below ask for nothing.
+  const graph = useSessionGraph(sessionId);
+  // A connection is supported by an entity two *threads* share, computed across every
+  // member session (`crates/store/src/graph.rs`), so the entity backing it often belongs
+  // to a sibling session and is absent from this session's own entities. Resolve those
+  // ids separately, or the panel prints "Entity 123" on the rows whose evidence matters.
+  const graphEntityNames: Record<number, string> = {};
+  for (const entity of graph.data?.entities ?? []) {
+    graphEntityNames[entity.id] = entity.canonical_name;
+  }
+  const relatedEntities = useEntities(
+    unresolvedSharedEntityIds(graph.data?.connected ?? [], graphEntityNames),
+  );
 
   if (sessionId == null) {
     return (
@@ -105,6 +135,26 @@ export function Component() {
     end: Math.max(session.started_at + 1, session.ended_at ?? Date.now()),
   };
 
+  const graphEntities = graph.data?.entities ?? [];
+  // The session's own names, plus the names of any entity a connection shares that this
+  // session never touched — the chips stay session-scoped, the connection keeps its proof.
+  const entityNames: Record<number, string> = { ...graphEntityNames };
+  for (const entity of relatedEntities.data ?? []) {
+    entityNames[entity.id] = entity.canonical_name;
+  }
+  // The panel's five states are a total function of that one read, the same
+  // expression the Thread page uses: `partial` outranks `empty` while clustering
+  // runs, because "no connections" is a claim the read cannot make yet.
+  const connectionsState: ConnectionsState = graph.isLoading
+    ? "loading"
+    : graph.isError || !graph.data
+      ? "error"
+      : graph.data.progress.running
+        ? "partial"
+        : graph.data.thread === null || graph.data.connected.length === 0
+          ? "empty"
+          : "populated";
+
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -124,7 +174,7 @@ export function Component() {
         action={<Chip tone="neutral">{KIND_LABEL[session.kind]}</Chip>}
       >
         <div className="flex flex-col gap-3">
-          <h1 className="break-words font-display text-title font-semibold text-ink">
+          <h1 className="break-words text-t-h1 font-semibold text-fg-primary">
             {sessionTitle(session)}
           </h1>
           <div className="flex flex-wrap gap-2">
@@ -134,15 +184,20 @@ export function Component() {
               Confidence {(session.confidence * 100).toFixed(1)}%
             </Chip>
           </div>
-          <p className="font-mono text-data text-ink-muted">
+          <p className="font-mono text-t-data text-fg-secondary">
             {absoluteTime(session.started_at)} —{" "}
             {session.ended_at
               ? absoluteTime(session.ended_at)
               : "still running"}
           </p>
           {isOpen ? (
-            <p className="text-body text-ink-muted font-body">
+            <p className="text-t-body text-fg-secondary">
               Still running — boundaries are not final.
+            </p>
+          ) : null}
+          {session.confidence < LOW_CONFIDENCE ? (
+            <p className="text-t-xs text-fg-tertiary">
+              Low confidence — this session's boundaries are approximate.
             </p>
           ) : null}
         </div>
@@ -150,12 +205,12 @@ export function Component() {
 
       <Panel title="Summary">
         {summaryText ? (
-          <p className="whitespace-pre-wrap break-words text-body text-ink font-body">
+          <p className="whitespace-pre-wrap break-words text-t-body text-fg-primary">
             {summaryText}
           </p>
         ) : needsSummary && summary.isError ? (
           <div className="flex flex-col items-start gap-3">
-            <p className="text-body text-ink-muted font-body">
+            <p className="text-t-body text-fg-secondary">
               Couldn't generate this session summary: {String(summary.error)}
             </p>
             <Button
@@ -190,7 +245,7 @@ export function Component() {
             ))}
           </div>
         ) : (
-          <p className="text-body text-ink-muted font-body">
+          <p className="text-t-body text-fg-secondary">
             No representative frames are available for this session.
           </p>
         )}
@@ -202,10 +257,10 @@ export function Component() {
             {detail.exchanges.map((exchange) => (
               <article
                 key={exchange.id}
-                className="flex flex-col gap-2 rounded-panel border border-line bg-overlay p-3"
+                className="flex flex-col gap-2 rounded-md border border-line-subtle bg-surface-inset p-3"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="eyebrow">
+                  <span className="text-t-xs font-medium text-fg-secondary">
                     {exchange.role ? ROLE_LABEL[exchange.role] : "Exchange"}
                   </span>
                   {exchange.frame_id ? (
@@ -222,25 +277,56 @@ export function Component() {
                     </Button>
                   ) : null}
                 </div>
-                <p className="whitespace-pre-wrap break-words text-body text-ink font-body">
+                <p className="whitespace-pre-wrap break-words text-t-body text-fg-primary">
                   {exchange.content}
                 </p>
               </article>
             ))}
           </div>
         ) : (
-          <p className="text-body text-ink-muted font-body">
+          <p className="text-t-body text-fg-secondary">
             No exchanges captured for this session.
           </p>
         )}
       </Panel>
+
+      <Panel title="Entities in this session">
+        {graph.isLoading ? (
+          // Reserves the chip row's height so the panel does not jump on arrival.
+          <Skeleton h="6" w="twoThirds" />
+        ) : graph.isError || !graph.data ? (
+          <p className="text-t-body text-fg-secondary">
+            Couldn't load this session's entities.
+          </p>
+        ) : (
+          <EntityChips
+            entities={graphEntities.map((entity) => ({
+              id: entity.id,
+              kind: entity.kind,
+              canonical_name: entity.canonical_name,
+            }))}
+            emptyLabel={
+              graph.data.progress.running
+                ? "None recorded yet — clustering is still running."
+                : "No entity was recorded for this session."
+            }
+          />
+        )}
+      </Panel>
+
+      <ConnectionsPanel
+        connections={graph.data?.connected ?? []}
+        entityNames={entityNames}
+        state={connectionsState}
+        onRetry={() => void graph.refetch()}
+      />
 
       <Panel title="Recap">
         {recap.isGenerating ? (
           <div className="flex flex-col gap-3" aria-live="polite">
             <Skeleton className="h-4 w-full" />
             <Skeleton className="h-4 w-2/3" />
-            <p className="font-mono text-data text-ink-muted">
+            <p className="font-mono text-t-data text-fg-secondary">
               {recap.progress
                 ? `${recap.progress.stage} · ${recap.progress.done}/${recap.progress.total}`
                 : "Preparing this session…"}
@@ -278,7 +364,7 @@ export function Component() {
           </div>
         ) : (
           <div className="flex flex-col items-start gap-3">
-            <p className="text-body text-ink-muted font-body">
+            <p className="text-t-body text-fg-secondary">
               Generate a coverage-first report over this session's captured frames.
             </p>
             <Button
