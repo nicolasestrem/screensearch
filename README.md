@@ -125,39 +125,27 @@ See the [Memory reports guide](docs/MEMORY.md) for setup, scheduling and recover
 
 ## Screenshots
 
-The **Command Deck** is six on-device screens over your screen history — Deck, Recall, Insights,
-Moment, Timeline, and Settings. Capture, storage and inference run on-device. The optional
-HTTP API exposes history to authenticated clients; see its [network boundary](docs/API.md).
+The **Logbook** interface: Deck, Ask, Work, Recall, Insights and Settings, in four themes (Pine and
+Ink, each light and dark). Capture, storage and inference run on-device. The optional HTTP API
+exposes history to authenticated clients; see its [network boundary](docs/API.md).
 
-![Deck — capture status, today's activity, where to jump back in](screenshots/deck.png)
+![Deck: capture status, today's activity, where was I, intentions](screenshots/deck.png)
 
-> **Deck** — the at-a-glance home: capture status, today's activity and top apps, where-was-I
-> resume, intentions (marks), and recent captures.
+> **Deck**: the at-a-glance home. Capture status, today's captures and top apps, the enrichment
+> queue, where you were before the last detour, and your open intentions (marks).
 
-![Timeline — a scanline of the day with session bands](screenshots/timeline.png)
+![Ask: questions about your own history, with cited answers](screenshots/ask.png)
 
-> **Timeline** — scrub a day / week / month of captures on a scanline, with **session bands**
-> (focus, meeting, and concurrent AI-tool sessions) layered over the density. `Enter` opens the
-> Moment.
+> **Ask**: questions about your own history. It plans the time window and scope first, cites the
+> sessions and moments it read, and keeps the conversation so a follow-up inherits its scope.
 
-![Recall — hybrid search over screen history with highlighted matches](screenshots/recall.png)
+![Settings v2 in the Pine dark theme](screenshots/settings.png)
 
-> **Recall** — hybrid text + semantic search over everything on screen; grounded **Ask** and
-> recall **Reports** share the screen. Matches are highlighted and link straight to the captured
-> frame.
+> **Settings**: eight categories, a search over every setting by name or key, and autosave with
+> undo on each row. Shown here in Pine dark.
 
-![Insights — capture density, top apps, and activity breakdown](screenshots/insights.png)
-
-> **Insights** — truthful aggregates over a range: captures over time, top foreground apps, and
-> the activity-type breakdown.
-
-![Moment — one captured frame with context, recognized text, and vision tags](screenshots/moment.png)
-
-> **Moment** — a single capture in full: the image, its session, recognized text, vision tags,
-> and the neighbouring captures.
-
-> **Note:** every screenshot above is rendered against **synthetic seed data** — invented frames,
-> sessions, and text with no personal content (see [`docs/SCREENSHOTS.md`](docs/SCREENSHOTS.md)).
+> **Note:** captured from a real install on the maintainer's machine. The only captured content
+> visible is app names and one small thumbnail on the Deck.
 
 ## What it does
 
@@ -273,7 +261,7 @@ docs/
   TESTING.md               test matrix and how to run the gated suites
   <version>.md             per-arc design + build records (0.2.0 … 0.4.5)
   audits/                  point-in-time PR audit evidence (local-only, git-ignored)
-screenshots/       Command-Deck UI screenshots used by this README
+screenshots/       Logbook UI screenshots used by this README
 crates/            18-crate Rust workspace (module crates depend on `traits` only):
   traits/          module contracts + shared domain/IPC/job types (no impls)
   kernel/          orchestrator: event bus, capture loop, worker pool, settings, resume heuristic
