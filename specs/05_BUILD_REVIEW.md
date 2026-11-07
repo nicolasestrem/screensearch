@@ -14,7 +14,7 @@ measured budget and review-fix pass included, is archived at
 Phase: three defects from hand-testing the installed 0.4.5 candidate (a spurious hotkey warning on
 every settings save, literal Markdown on `/ask`, misaligned Settings controls). Decisions are
 `07` QA2 D1-D4, root causes `07` QA2 F1-F3, the deliberately unfixed observations `07` QA2 U1-U3;
-the work record is `08`. PR #168 merged first.
+the work record is `08`. PR #168 merged first, and these fixes landed as PR #169 (`d98ad66`).
 
 **What was reviewed before the gate.** Each slice was inspected rather than accepted on report:
 `git diff` on `routes/Ask.tsx` shows only the two answer paragraphs plus comments replaced (the
@@ -85,6 +85,45 @@ the new layout puts both switches at the same x and gives both toggles the same 
 Every element clears AA in every theme; the tightest is a link at 5.32:1, and no token was
 changed. The harness sample had no `em` or fenced block, so those two elements are covered by the
 SSR assertion and the token table test rather than by this pixel run.
+
+**Release dry run and installed build.** `gh workflow run release.yml --ref main` on `d98ad66`
+(run 42374416657) finished green in 8m21s and produced `updater-bundle`: `ScreenSearch_0.4.5_x64-setup.exe`
+(15,900,172 bytes), its `.sig`, and `latest.json` (`version` 0.4.5, one `windows-x86_64` platform),
+downloaded to `C:\Users\nicol\screensearch-evidence\dryrun2`. No tag and no release were created.
+
+Installed over the previous per-user install with `/S` (installer exit code 0, no wipe: no NSIS
+hooks are configured and nothing touches `%APPDATA%\app.screensearchv2c.desktop`). Installed binary
+59,957,248 bytes, `FileVersion`/`ProductVersion` 0.4.5, uninstall entry `DisplayVersion` 0.4.5,
+launched as pid 33928.
+
+Log since launch (22 lines, `screensearch.log.2026-11-07`):
+
+````text
+store opened db=...\screensearch.db schema_version=15
+WARN screensearch_lib::overlay: global hotkey registration failed slot="marks.hotkey" chord=Ctrl+Alt+M
+ERROR lines since launch: 0
+````
+
+Data intact: `frames` 385, `sessions` 2, `marks` 0; newest frame `captured_at` 13:35 local, i.e.
+history from before the upgrade survived and the store opened at schema 15.
+
+Hotkey behaviour in the installed build: **Ctrl+Alt+Z works end to end** (the chord registered, and
+pressing it opened `ScreenSearch Overlay` at 640x460 and pressing it again hid it). **Ctrl+Alt+M
+could not be registered**, and the log proves the failure is external rather than this app's
+bookkeeping: the registration was attempted only because the plugin registry was empty, and the OS
+answered 1409. The same condition produced the reported toast in the old build, whose `init_*`
+cleared the stored chord and then retried it on every save. The shipped binary contains the
+humanized sentence (`another app is already using that shortcut`, `the shortcut could not be
+registered`, `still using the previous combination`) and no longer contains the old
+`HotKey unavailable` prefixes (`grep -ac` counts 1, 2, 1 and 0). Consequence for this machine: the
+mark chord stays unavailable until whichever other program holds Ctrl+Alt+M releases it, and
+ScreenSearch reports that once instead of on every save.
+
+**Capture observed, not investigated:** capture reported `capture started` and stored nothing
+between 13:35 and roughly 14:15 local, then resumed on its own; the count went from 385 at the check
+to 391 with the newest frame at the time of writing, `capture.interval_ms` is 3000, the diff gate is
+active and there are zero ERROR lines. No line of this change touches capture, and the store, schema
+and history were intact throughout; recorded here rather than investigated.
 
 ### 2026-11-07: v0.4.5 release QA: merged-tree gate, static release checks and the P4 harness (branch `chore/0.4.5-release`, from `main` `440d2e9`)
 
