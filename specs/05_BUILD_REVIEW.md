@@ -1,6 +1,6 @@
 # 05 — Build Review
 
-## 2026-11-07: P10 recall surfaces refont + v1 token shim removal — build, ordered gate and the evidence matrix (branch `feat/0.4.5-p10-refont`, from `main` `9112087`; **committed and pushed on the maintainer's explicit 2026-11-07 instruction, PR open and not merged** — the earlier leave-uncommitted plan under 0.4.5 D18 is superseded, and the 202 WebP evidence set is deliberately held out of that PR: see "Delivery")
+## 2026-11-07: P10 recall surfaces refont + v1 token shim removal — build, ordered gate and the evidence matrix (branch `feat/0.4.5-p10-refont`, from `main` `9112087`; **PR [#166](https://github.com/nicolasestrem/screensearch/pull/166) open, not merged**, committed and pushed on the maintainer's explicit 2026-11-07 instruction — the earlier leave-uncommitted plan under 0.4.5 D18 is superseded, and the 202 WebP evidence set is deliberately held out of that PR: see "Delivery")
 
 Phase: `docs/kickoffs/P10.md` — Wave C's last phase. Contradictions and rulings: `06` #135–#148.
 Decisions and grants: `07` (2026-11-07 P10 section, D1–D9). Interface contract the slices coded
