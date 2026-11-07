@@ -64,6 +64,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `InsightCard`, `ScopeChips`, `EvidenceLink`), so the composed pieces P10 places in Session and
   Moment are inventoried beside the primitives without changing the primitive count.
 
+### Fixed: two things the P10 review found in the new panels
+
+- **A Session or Moment left open while the graph caught up stayed stale.** Clustering finishing in
+  the background refreshed Work, Thread and the insight list but not the session's own graph — and
+  nothing else would have corrected it, because that read has no polling and the app does not
+  refetch on window focus. The session graph is now part of the same refresh, so a screen that was
+  open across the clustering pass fills in instead of keeping its half-empty panels.
+- **A connection named its evidence `Entity 123` when that entity came from another session in the
+  thread.** The shared entity between two threads is often touched by a *sibling* session, which the
+  opened session's own entity list never contains; the panel then fell back to the bare id.
+  Connections now resolve those names, so the line that proves a connection reads
+  "Project Atlas · Sunrise" rather than two numbers.
+
 ### Fixed: two things the acceptance walk found in the new screens
 
 - **Renaming a thread appended to its name instead of replacing it.** The inline field opened

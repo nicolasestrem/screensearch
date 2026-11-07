@@ -6,6 +6,17 @@ Phase: `docs/kickoffs/P10.md`. Build record, gate output, budgets and the eviden
 (2026-11-07 P10 section). Decisions and grants: `07` (P10 D1–D9). Contradiction rows `#135`–`#149`:
 `06`.
 
+**Review-fix pass.** Two P2 findings from the automated review on [#166](https://github.com/nicolasestrem/screensearch/pull/166),
+both verified in the source first (`06` #150, #151). A finished graph job never invalidated the session
+graph — its key sits under `sessions`, and the handler refreshed only `work`/`insightList`/`entities`,
+so a Session or Moment mounted across clustering stayed stale with nothing to correct it; the set is
+now one exported list beside the keys that the handler loops over, so a graph-backed read cannot be
+added without being refreshed. And a connection whose shared entity belonged to a *sibling* session
+rendered `Entity 123`, because `shared_entity_ids` is computed across the whole thread while the caller
+named only the opened session's entities; both routes now resolve the missing ids through the existing
+`get_entities` read, chips staying session-scoped and no wire type moved. Each fix has a test proven
+to fail without it (`sessionGraphRefresh.test.mjs` 1/3 → 3/3; `connectionNames.test.mjs` 2/4 → 4/4).
+
 **CI.** Every check passes on `d4621d6`: `build & test (windows)` (16 m 38 s, run
 [42349302133](https://github.com/nicolasestrem/screensearch/actions/runs/42349302133)) — the same
 ordered gate documented in `05`, including the "verify ts-rs bindings are committed & current" step

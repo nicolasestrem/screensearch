@@ -505,6 +505,41 @@ Proof, in the order it was run — the test fails with the key removed and passe
 ℹ fail 0
 ```
 
+**2. A connection whose evidence came from a sibling session lost its words.** `ConnectionsPanel`
+maps `shared_entity_ids` through the caller's name record and falls back to `Entity <id>`. Session and
+Moment built that record from `graph.entities` — the session-scoped read — while the ids come from the
+`shared` subquery in `crates/store/src/graph.rs`, which joins `thread_sessions` on both sides. So a
+connection supported by another member session's entity rendered as a number: the one row whose
+evidence the panel exists to show. (The Thread page does not have this defect, and the asymmetry
+proves the diagnosis: `thread_detail.entities` aggregates every member session.)
+
+```text
+ui/src/lib/connectionNames.ts      new: unresolvedSharedEntityIds(connections, names) → number[]
+ui/src/routes/Session.tsx          useEntities(unresolvedSharedEntityIds(connected, sessionNames))
+ui/src/routes/Moment.tsx           same
+```
+
+The names are resolved through the read the app already has (`useEntities` → `get_entities`), the chips
+stay session-scoped, and no wire type moved.
+
+```text
+# ui/test/connectionNames.test.mjs, the `id in entityNames` test neutered to `false`
+✖ an entity a sibling session touched is reported as unresolved (1.6988ms)
+✖ the ids are unique and ordered, so one read covers every connection (0.1826ms)
+ℹ pass 2
+ℹ fail 2
+
+# restored (`grep -c NEUTERED` → 0)
+✔ an entity a sibling session touched is reported as unresolved (0.7622ms)
+✔ nothing is requested when the session already names every shared entity (0.0861ms)
+✔ the ids are unique and ordered, so one read covers every connection (0.0871ms)
+✔ no connections and no names ask for nothing (0.0648ms)
+ℹ pass 4
+ℹ fail 0
+```
+
+Full UI suite after both fixes: **160/160** (153 + 7 new), `eslint .` exit 0, build 2.00 s.
+
 ### Delivery
 
 Committed on the maintainer's explicit instruction (2026-11-07), which supersedes the

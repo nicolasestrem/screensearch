@@ -21,7 +21,8 @@ import {
   type ConnectionsState,
 } from "../components/intelligence";
 import { IconArrowLeft, IconSparkle } from "../components/icons";
-import { useSession, useSessionGraph } from "../lib/ipc/queries";
+import { unresolvedSharedEntityIds } from "../lib/connectionNames";
+import { useEntities, useSession, useSessionGraph } from "../lib/ipc/queries";
 import { useSessionRecap } from "../lib/ipc/useSessionRecap";
 import { absoluteTime } from "../lib/time";
 import type { Session } from "../bindings/Session";
@@ -71,6 +72,17 @@ export function Component() {
   // The session's work-graph context. Idle until the id is valid, so the invalid
   // and gone branches below ask for nothing.
   const graph = useSessionGraph(sessionId);
+  // A connection is supported by an entity two *threads* share, computed across every
+  // member session (`crates/store/src/graph.rs`), so the entity backing it often belongs
+  // to a sibling session and is absent from this session's own entities. Resolve those
+  // ids separately, or the panel prints "Entity 123" on the rows whose evidence matters.
+  const graphEntityNames: Record<number, string> = {};
+  for (const entity of graph.data?.entities ?? []) {
+    graphEntityNames[entity.id] = entity.canonical_name;
+  }
+  const relatedEntities = useEntities(
+    unresolvedSharedEntityIds(graph.data?.connected ?? [], graphEntityNames),
+  );
 
   if (sessionId == null) {
     return (
@@ -124,8 +136,10 @@ export function Component() {
   };
 
   const graphEntities = graph.data?.entities ?? [];
-  const entityNames: Record<number, string> = {};
-  for (const entity of graphEntities) {
+  // The session's own names, plus the names of any entity a connection shares that this
+  // session never touched — the chips stay session-scoped, the connection keeps its proof.
+  const entityNames: Record<number, string> = { ...graphEntityNames };
+  for (const entity of relatedEntities.data ?? []) {
     entityNames[entity.id] = entity.canonical_name;
   }
   // The panel's five states are a total function of that one read, the same

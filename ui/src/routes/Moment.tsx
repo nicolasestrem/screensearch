@@ -20,7 +20,9 @@ import {
   IconChevronLeft,
   IconChevronRight,
 } from "../components/icons";
+import { unresolvedSharedEntityIds } from "../lib/connectionNames";
 import {
+  useEntities,
   useFrame,
   useFrameContext,
   useFrameSpans,
@@ -72,6 +74,15 @@ export function Component() {
   // connections). Idle while the frame read is in flight and when the frame has no
   // session at all: a sessionless moment renders neither panel, never a placeholder.
   const graph = useSessionGraph(detail.data?.session?.id ?? null);
+  // Same as Session: a connection's shared entity can belong to a sibling session in
+  // the thread, which this frame's session never touched — resolve those ids by name.
+  const graphEntityNames: Record<number, string> = {};
+  for (const entity of graph.data?.entities ?? []) {
+    graphEntityNames[entity.id] = entity.canonical_name;
+  }
+  const relatedEntities = useEntities(
+    unresolvedSharedEntityIds(graph.data?.connected ?? [], graphEntityNames),
+  );
 
   const queueVision = () => {
     if (frameId == null) return;
@@ -163,8 +174,8 @@ export function Component() {
   const context = sorted.filter((f) => f.frame_id !== frameId);
 
   const graphEntities = graph.data?.entities ?? [];
-  const entityNames: Record<number, string> = {};
-  for (const entity of graphEntities) {
+  const entityNames: Record<number, string> = { ...graphEntityNames };
+  for (const entity of relatedEntities.data ?? []) {
     entityNames[entity.id] = entity.canonical_name;
   }
   // Same total function of the one read as Session and the Thread page: `partial`
