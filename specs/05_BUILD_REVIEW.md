@@ -17,7 +17,7 @@ is a read over tables P5/P8 already wrote.
 |wire|`crates/traits/src/contracts.rs` (+17: the `SessionGraph` type), `crates/traits/src/ipc.rs` (+32: the `session_entities`/`session_thread` trait methods, default-bodied), `crates/store/src/graph.rs` (+205: the store impl and its alias fill), `crates/store/src/lib.rs` (+6), `src-tauri/src/graph.rs` (+44: the Tauri command), `src-tauri/src/lib.rs` (+1: its registration), regenerated `ui/src/bindings` including the new `SessionGraph.ts`|one additive read: `get_session_graph(session_id)` → `SessionGraph { entities, thread, connected, progress }` — 301 added lines, 4 removed across six Rust files, which is what makes it a read and not an engine change|
 |styles|`ui/src/styles/tokens.compat.css` (**deleted**), `ui/src/styles/{tokens,globals}.css` (shim imports removed), `ui/tailwind.config.js`|the v1 alias layer is gone; the Tailwind config now maps the few utilities the shim had been feeding onto v2 scales (`06` #136, `07` D2)|
 |lint|`ui/test/tokens.test.mjs`, `ui/eslint.config.js`|the token fence widened to a recursive walk of all of `ui/src` (comment-stripped, `bindings/**` and `styles/tokens.css` exempt, `index.ts` barrels out of scope) **and** an inline `tokens/no-raw-token` ESLint plugin with seven rules — no new dependency, neither rule weakened (`07` D3)|
-|screens|`ui/src/routes/{Deck,Recall,Timeline,Session,Moment}.tsx`|the five owned routes that carried v1 names rebuilt on v2 tokens; `Session` gains P9's `EntityChips`/`ConnectionsPanel` through the new read. `NotFound.tsx` and `RouteError.tsx` are owned but **unmodified**: they have no token reference at all (`grep -cE "text-t-|bg-surface|var\(--"` returns 0 on both), so there was nothing to convert — they are still probed for the scroll and shift rules|
+|screens|`ui/src/routes/{Deck,Recall,Timeline,Session,Moment}.tsx`|the five owned routes that carried v1 names rebuilt on v2 tokens; `Session` gains P9's `EntityChips`/`ConnectionsPanel` through the new read. `NotFound.tsx` and `RouteError.tsx` are owned but **unmodified**: they have no token reference at all (`grep -cE "text-t-\|bg-surface\|var\(--"` returns 0 on both), so there was nothing to convert — they are still probed for the scroll and shift rules|
 |refont detail|`ui/src/routes/Session.tsx:246`|the exchange cards inside the Exchanges `Panel` moved from `bg-surface-raised` to `bg-surface-inset`. v1 drew them `bg-overlay` on a `bg-surface` pane, i.e. one step **up**; v2's `Panel` primitive is itself `bg-surface-raised` (`primitives/Panel.tsx:49`), so a literal mapping of the old class erased the card boundary and left only its border. The recessed step keeps the card reading as *inside* the panel and matches how `ApiReadTokenControls`, `HotkeyField` and `JobQueueMeter` already use the same token. **Not visually exercised:** `session_artifacts` holds 0 rows in both databases here, so the Exchanges panel renders its empty arm and this branch never draws; the class is verified by `eslint`, `vite build` and the 153 UI tests, and the reader path by the existing Rust test `session_detail_samples_24_frames_and_returns_only_exchanges_without_inference`|
 |timeline|`ui/src/components/domain/ScanlineTimeline.tsx` → `DensityTimeline.tsx` (git mv, export renamed), `sessionBandLayout.ts`, `timelineDraw.ts`, `TimelineMinimap.tsx`, `SessionBands.tsx`|the density ribbon replaces the scan-head: four reserved lanes, ribbon heights are real `TimelineBucket.count` values, no glow/scan decoration|
 |panels|`ui/src/components/domain/*` — `ApiPanel`, `AppPanel`, `RetentionControl`, `InsightsBars`, `CapturesTrend` deleted; the rest retokened|five panels deleted after an importer grep came back empty; `Expander` and `icons.tsx` kept (unowned importers, `07` D7/D8)|
@@ -442,6 +442,32 @@ Restored at the end: `empty-pass.mjs restore` copied `.orig` over the live file 
 220 sessions / 1400 frames and 0 report rows — the profile is byte-for-byte its pre-P10 state, with
 no stray `-wal`/`-shm` beside it. Frames captured during this session remain on disk as files the
 restored database does not reference; the app's retention sweep prunes them.
+
+### CI on the pushed commit
+
+The local gate above was re-run by CI on the pushed tree, not assumed. **Every check passes on
+`d4621d6`** (`feat/0.4.5-p10-refont`, the last commit before this record paragraph):
+
+|Job|Result|Time|Run|
+|---|---|---|---|
+|`build & test (windows)` — `npm ci` → UI lint → UI build → stage MCP → rustfmt → clippy `-D warnings` → build → test → **verify ts-rs bindings are committed & current**|**pass**|16 m 38 s|[42349302133](https://github.com/nicolasestrem/screensearch/actions/runs/42349302133)|
+|`package & verify (x86_64-pc-windows-msvc)`|**pass**|2 m 35 s|[42349302145](https://github.com/nicolasestrem/screensearch/actions/runs/42349302145)|
+|`package & verify (x86_64-unknown-linux-gnu)`|**pass**|54 s|same run|
+|`package & verify (aarch64-apple-darwin)`|**pass**|59 s|same run|
+|CodeQL · `Analyze (rust)`|**pass**|6 m 3 s|[42349299956](https://github.com/nicolasestrem/screensearch/actions/runs/42349299956)|
+|CodeQL · `Analyze (javascript-typescript)`|**pass**|1 m 6 s|same run|
+|CodeQL · `Analyze (actions)`|**pass**|41 s|same run|
+
+Two consequences worth naming. First, the bindings leg is what makes committing
+`ui/src/bindings/SessionGraph.ts` load-bearing rather than incidental: CI re-runs the ts-rs export and
+fails on any diff, so the new `get_session_graph` type had to ship with the code that declares it
+(`06` #143's neighbourhood). Second, the deletion of `ui/src/styles/tokens.compat.css` is clean on a
+fresh checkout: nothing in `.github/workflows/*`, `ui/index.html`, `ui/overlay.html` or
+`vite.config.ts` names the file — it was imported by `globals.css` alone — and all three package jobs
+build from source.
+
+One superseded pair of runs (`518f261`) was cancelled by the push of `d4621d6`, which is GitHub's
+concurrency behaviour, not a failure.
 
 ### Delivery
 

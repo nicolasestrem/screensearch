@@ -6,6 +6,16 @@ Phase: `docs/kickoffs/P10.md`. Build record, gate output, budgets and the eviden
 (2026-11-07 P10 section). Decisions and grants: `07` (P10 D1–D9). Contradiction rows `#135`–`#149`:
 `06`.
 
+**CI.** Every check passes on `d4621d6`: `build & test (windows)` (16 m 38 s, run
+[42349302133](https://github.com/nicolasestrem/screensearch/actions/runs/42349302133)) — the same
+ordered gate documented in `05`, including the "verify ts-rs bindings are committed & current" step
+that makes the new `SessionGraph.ts` binding load-bearing — plus `package & verify` for
+windows-msvc (2 m 35 s), linux-gnu (54 s) and aarch64-darwin (59 s) in run
+[42349302145](https://github.com/nicolasestrem/screensearch/actions/runs/42349302145), and CodeQL
+rust/js-ts/actions in run
+[42349299956](https://github.com/nicolasestrem/screensearch/actions/runs/42349299956). The deletion of
+`tokens.compat.css` is clean on a fresh checkout: no workflow, HTML entry or Vite config names it.
+
 **Change.** The last phase of Wave C finishes the v2 token cutover. The v1 compatibility layer
 (`ui/src/styles/tokens.compat.css`, 25 aliases) is deleted and the five owned routes that still
 carried v1 names — Deck, Recall (search + reports), Timeline, Session, Moment — are rebuilt on the v2
