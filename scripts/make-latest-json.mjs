@@ -10,9 +10,9 @@
 //   node scripts/make-latest-json.mjs --tag vX.Y.Z [--bundle-dir DIR] [--url-base URL] [--out FILE] [--notes URL] [--expected-version X.Y.Z]
 //
 // Defaults: --bundle-dir target/release/bundle/nsis
-//           --url-base   https://github.com/nicolasestrem/screensearch-v2c/releases/download/<tag>/
+//           --url-base   https://github.com/nicolasestrem/screensearch/releases/download/<tag>/
 //           --out        <bundle-dir>/latest.json
-//           --notes      https://github.com/nicolasestrem/screensearch-v2c/releases/tag/<tag>
+//           --notes      https://github.com/nicolasestrem/screensearch/releases/tag/<tag>
 //
 // --expected-version is a TEST-ONLY override (the PR2 E2E runbook, docs/TESTING.md): the E2E
 // builds installers with a `tauri build --config` overlay that stamps a version WITHOUT editing
@@ -39,7 +39,7 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(scriptDir, "..");
-const REPO = "nicolasestrem/screensearch-v2c";
+const REPO = "nicolasestrem/screensearch";
 
 function parseArgs(argv) {
   const args = {};

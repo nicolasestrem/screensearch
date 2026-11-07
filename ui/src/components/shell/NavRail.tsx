@@ -27,7 +27,7 @@ import { UpdateIndicator } from "./UpdateIndicator";
 import { QuickActions } from "./QuickActions";
 
 /** The project's public repo — opened by the NavRail version link (0.3.1 D4, #57). */
-const REPO_URL = "https://github.com/nicolasestrem/screensearch-v2c";
+const REPO_URL = "https://github.com/nicolasestrem/screensearch";
 
 const ENTRY = cn(
   "flex min-h-row min-w-0 items-center gap-3 rounded-md border-l-2 px-3",
