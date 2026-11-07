@@ -1,9 +1,9 @@
 # 08 — AI Changelog
 
-## 2026-11-07: P10 recall surfaces refont + v1 token shim removal (branch `feat/0.4.5-p10-refont`, from `main` `9112087`; **left uncommitted on the branch for the maintainer's validation** — no commit, no push, per 0.4.5 D18 and the 2026-11-07 grant in `07` D1)
+## 2026-11-07: P10 recall surfaces refont + v1 token shim removal (branch `feat/0.4.5-p10-refont`, from `main` `9112087`; **[#166](https://github.com/nicolasestrem/screensearch/pull/166) open, not merged**, committed and pushed on the maintainer's explicit 2026-11-07 instruction; the 202 WebP evidence set is held out of the PR because the remote is public and the Jump-back strips carry live desktop text — no commit, no push, per 0.4.5 D18 and the 2026-11-07 grant in `07` D1)
 
 Phase: `docs/kickoffs/P10.md`. Build record, gate output, budgets and the evidence matrix: `05`
-(2026-11-07 P10 section). Decisions and grants: `07` (P10 D1–D9). Contradiction rows `#135`–`#148`:
+(2026-11-07 P10 section). Decisions and grants: `07` (P10 D1–D9). Contradiction rows `#135`–`#149`:
 `06`.
 
 **Change.** The last phase of Wave C finishes the v2 token cutover. The v1 compatibility layer

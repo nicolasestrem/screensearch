@@ -2,7 +2,7 @@
 
 ## 2026-11-07: P10 recall surfaces refont + v1 token shim removal — build, ordered gate and the evidence matrix (branch `feat/0.4.5-p10-refont`, from `main` `9112087`; **PR [#166](https://github.com/nicolasestrem/screensearch/pull/166) open, not merged**, committed and pushed on the maintainer's explicit 2026-11-07 instruction — the earlier leave-uncommitted plan under 0.4.5 D18 is superseded, and the 202 WebP evidence set is deliberately held out of that PR: see "Delivery")
 
-Phase: `docs/kickoffs/P10.md` — Wave C's last phase. Contradictions and rulings: `06` #135–#148.
+Phase: `docs/kickoffs/P10.md` — Wave C's last phase. Contradictions and rulings: `06` #135–#149.
 Decisions and grants: `07` (2026-11-07 P10 section, D1–D9). Interface contract the slices coded
 against: `local://p10-contract.md` (session-local notes, not part of the tree).
 
@@ -22,7 +22,7 @@ is a read over tables P5/P8 already wrote.
 |timeline|`ui/src/components/domain/ScanlineTimeline.tsx` → `DensityTimeline.tsx` (git mv, export renamed), `sessionBandLayout.ts`, `timelineDraw.ts`, `TimelineMinimap.tsx`, `SessionBands.tsx`|the density ribbon replaces the scan-head: four reserved lanes, ribbon heights are real `TimelineBucket.count` values, no glow/scan decoration|
 |panels|`ui/src/components/domain/*` — `ApiPanel`, `AppPanel`, `RetentionControl`, `InsightsBars`, `CapturesTrend` deleted; the rest retokened|five panels deleted after an importer grep came back empty; `Expander` and `icons.tsx` kept (unowned importers, `07` D7/D8)|
 |overlay|`ui/src/overlay/{FlowOverlay,MarkToast,OverlayResultRow,WhereWasIStrip}.tsx`|the separate Flow-overlay window on v2 tokens, five states intact; `overlay-main.tsx` and `overlay.html` needed no edit (they mount the component and carry no token)|
-|records|`specs/06` #135–#148, `specs/07` D1–D9, `specs/08`, `CHANGELOG.md`|the rulings above|
+|records|`specs/06` #135–#149, `specs/07` D1–D9, `specs/08`, `CHANGELOG.md`|the rulings above|
 
 ### Verification (raw, in kickoff order)
 

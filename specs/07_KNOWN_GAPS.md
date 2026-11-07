@@ -7,7 +7,7 @@ with P8 (`eb556d1`) and P7 (`5d15301`, `60c60d8`, `8e0883a`) already merged, so 
 `ui/src/components/intelligence/ConnectionsPanel.tsx` and `EntityChips.tsx` exist and the route set
 is final. Every decision below was given by the maintainer on 2026-11-07, in one batched round,
 before the slices that depend on it were written; the contradiction rows are
-`specs/06_PATCH_PLAN.md` #135–#148. Answers, verbatim in effect:
+`specs/06_PATCH_PLAN.md` #135–#149. Answers, verbatim in effect:
 
 **Maintainer decisions and grants (2026-11-07).**
 
@@ -120,6 +120,11 @@ before the slices that depend on it were written; the contradiction rows are
   *Consequence:* the acceptance evidence is the working tree plus the pasted command output, not a
   commit range; `git diff --exit-code -- ui/src/bindings` is read against `main` in the tree, and the
   commit, push and PR are the maintainer's steps.
+  **Superseded on 2026-11-07:** the maintainer instructed "document, commit, push, PR (no merge)", so
+  the agent made the commit and opened [#166](https://github.com/nicolasestrem/screensearch/pull/166)
+  without merging it. The D18 boundary that survives is the one that matters — no agent merge, and no
+  publication the maintainer has not seen: the screenshot set stayed out of the commit for exactly
+  that reason (`05` "Delivery").
 
 - **Grant scope actually used (disclosure).** The UI-test grant covered the dead-`ApiPanel` block in
   `ui/test/apiReadTokenView.test.mjs` and the message string in `ui/test/sessionBandLayout.test.mjs`.
