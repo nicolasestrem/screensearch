@@ -469,6 +469,42 @@ build from source.
 One superseded pair of runs (`518f261`) was cancelled by the push of `d4621d6`, which is GitHub's
 concurrency behaviour, not a failure.
 
+### Review-fix pass (PR [#166](https://github.com/nicolasestrem/screensearch/pull/166))
+
+Two P2 findings from the automated review, both verified in the source before any code moved.
+
+**1. A finished graph job left an open Session or Moment stale.** The session graph's key is
+`["sessions", "graph", id]`, but the graph-job branch of `useLiveEvents` invalidated only `work`,
+`insightList` and `entities`. Nothing else would have corrected it: the read has no polling and
+`app/providers.tsx` disables refetch-on-window-focus, so a screen mounted across `graph_extract` or
+`graph_cluster` kept missing entities, outdated connections and "still clustering" until it remounted.
+The fix is structural rather than a fourth hand-written call — one exported list beside the keys,
+`GRAPH_JOB_INVALIDATIONS`, that the handler loops over:
+
+```text
+ui/src/lib/ipc/queryKeys.ts       + sessionGraphPrefix: ["sessions", "graph"]
+                                  + GRAPH_JOB_INVALIDATIONS = [work, insightList, entities, sessionGraph]
+ui/src/lib/ipc/useLiveEvents.ts   for (const queryKey of GRAPH_JOB_INVALIDATIONS) qc.invalidateQueries({ queryKey })
+                                  − qc.invalidateQueries({ queryKey: queryKeys.entitiesPrefix })  (now a member)
+```
+
+Proof, in the order it was run — the test fails with the key removed and passes with it back:
+
+```text
+# ui/test/sessionGraphRefresh.test.mjs, `sessionGraphPrefix` deleted from the list
+✖ a completed graph job invalidates the session graph a Session or Moment is showing (0.8948ms)
+ℹ pass 2
+ℹ fail 1
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+# restored (`grep -c NEUTERED` → 0)
+✔ a completed graph job invalidates the session graph a Session or Moment is showing (0.4807ms)
+✔ the list still covers every family that was already refreshed (0.1171ms)
+✔ the debounced block invalidates that one list and nothing by hand (0.7894ms)
+ℹ pass 3
+ℹ fail 0
+```
+
 ### Delivery
 
 Committed on the maintainer's explicit instruction (2026-11-07), which supersedes the

@@ -43,6 +43,7 @@ export const queryKeys = {
     ["sessions", "recap", sessionId] as const,
   // The session's work-graph context (`03 §7h`), under the same `sessions` head so a
   // `sessionsPrefix` invalidation (capture/retention) refreshes it with its siblings.
+  sessionGraphPrefix: ["sessions", "graph"] as const,
   sessionGraph: (sessionId: number) =>
     ["sessions", "graph", sessionId] as const,
   // A frame's text spans (for the text+layout reconstruction of a degraded capture).
@@ -100,3 +101,22 @@ export const queryKeys = {
   // whole-snapshot `setup_changed` event; revision-guarded both write paths.
   setupStatus: ["setupStatus"] as const,
 };
+
+/**
+ * Every query family a finished graph or insight job can change (`03 §7h`, `§7j`), in
+ * one list so a graph-backed read cannot be added without landing in the invalidation.
+ *
+ * The live-event handler invalidates exactly this list, debounced, when a
+ * `GRAPH_JOB_KINDS` job completes. It lives beside the keys rather than in the handler
+ * because a key is what can go missing: the session graph sits under the `sessions`
+ * head, so the `work`/`insightList`/`entities` prefixes never covered it and a Session
+ * or Moment left open while the graph caught up kept rendering stale entities and
+ * "still clustering" — with no polling to save it and refetch-on-window-focus disabled
+ * in `app/providers.tsx`.
+ */
+export const GRAPH_JOB_INVALIDATIONS = [
+  queryKeys.workPrefix,
+  queryKeys.insightListPrefix,
+  queryKeys.entitiesPrefix,
+  queryKeys.sessionGraphPrefix,
+] as const;

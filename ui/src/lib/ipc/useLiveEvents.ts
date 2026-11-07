@@ -13,7 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import { listenTo } from "./events";
-import { queryKeys } from "./queryKeys";
+import { GRAPH_JOB_INVALIDATIONS, queryKeys } from "./queryKeys";
 import { toast as toastStore } from "../../state/toastStore";
 import type { Readiness } from "../../bindings/Readiness";
 import type { SetupStatus } from "../../bindings/SetupStatus";
@@ -92,23 +92,27 @@ export function useLiveEvents() {
         }
         // The work graph and the P8 insight rows change only when a graph/insight job finishes
         // (`03 §7h`, §7j), and those finish in bursts: one debounced invalidation covers the
-        // whole family — every window/limit variant of the Work list, every thread page and the
-        // insight list — instead of one refetch per job.
+        // whole family — every window/limit variant of the Work list, every thread page, the
+        // insight list, the entity catalogue and every session's graph context — instead of one
+        // refetch per job. The list lives in `queryKeys` (`GRAPH_JOB_INVALIDATIONS`) so a
+        // graph-backed read cannot be added without being refreshed here.
         if (GRAPH_JOB_KINDS.includes(completed.kind)) {
           clearTimeout(workTimer);
           workTimer = setTimeout(() => {
-            qc.invalidateQueries({ queryKey: queryKeys.workPrefix });
-            qc.invalidateQueries({ queryKey: queryKeys.insightListPrefix });
-            // Every member of this list now emits: the frame-bound ones when they changed data,
-            // and the frame-less passes (`graph_cluster`, `insight_generate`) on completion, so a
+            // Every member of this list emits: the frame-bound ones when they changed data, and
+            // the frame-less passes (`graph_cluster`, `insight_generate`) on completion, so a
             // merge override's regroup and an insight rewrite land here rather than waiting for a
             // remount. `graph_extract` is the one that creates entities, and the catalogue it
             // fills backs the Ask scope picker and Work's entity labels
             // (`entitiesPrefix` covers every `entityList(query)` key). A mounted catalogue has
             // no polling and the client disables refetch-on-window-focus, so without this a
             // session that opened Ask before the graph caught up keeps offering no entities
-            // until the query remounts.
-            qc.invalidateQueries({ queryKey: queryKeys.entitiesPrefix });
+            // until the query remounts. The session graph is the same argument one screen
+            // further in: a Session or Moment open across the clustering pass would keep its
+            // "still clustering" reading and its partial entity list forever.
+            for (const queryKey of GRAPH_JOB_INVALIDATIONS) {
+              qc.invalidateQueries({ queryKey });
+            }
           }, ENRICH_DEBOUNCE_MS);
         }
       }),
