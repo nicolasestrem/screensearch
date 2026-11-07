@@ -11,30 +11,59 @@ you, ScreenSearch exposes your screen history through an opt-in local **MCP serv
 ask grounded questions with cited frames, and, as of v0.4.0, reason over automatically segmented
 **work sessions** (`list_sessions`, `get_session`, `ask_session`). As of v0.4.2, agents can also
 page through history chronologically, check capture coverage and read saved daily/weekly
-reports (`list_frames`, `get_capture_coverage`, `list_reports`, `get_report`). Every answer is
-drawn from the local database. The MCP wrapper uses loopback by default and accepts an
-explicitly configured remote HTTP/HTTPS API root. The HTTP API defaults to `127.0.0.1`;
+reports (`list_frames`, `get_capture_coverage`, `list_reports`, `get_report`). As of v0.4.5 they
+can read the work graph and the derived insights as well (`list_threads`, `get_thread`,
+`find_connections`, `list_insights`); the wrapper ships **seventeen tools**, fourteen of them
+with `--read-only`. Every answer is drawn from the local database. The MCP wrapper uses
+loopback by default and accepts an explicitly configured remote HTTP/HTTPS API root. The
+HTTP API defaults to `127.0.0.1`;
 explicit network binding lets authenticated reachable devices read history. Plain HTTP exposes
 tokens/history to network observers. Inference stays on-device.
 
 Active source repository: [github.com/nicolasestrem/screensearch](https://github.com/nicolasestrem/screensearch).
 
-> **Status — v0.4.2 shipped (2026-10-19).** The full app is live: capture → OCR/UIA text →
+> **Status - v0.4.5 shipped (2026-11-07).** The full app is live: capture → OCR/UIA text →
 > deferred enrichment → **hybrid search**, a supervised out-of-process **llama.cpp inference
-> sidecar** (Job-Object-bound) for vision tagging and grounded streaming answers, the six-screen
-> **Command Deck** UI, a
-> global-hotkey **Flow overlay**, an opt-in **local HTTP API + MCP server**, **auto-update**,
+> sidecar** (Job-Object-bound) for vision tagging and grounded streaming answers, and a shell
+> whose rail is **Deck, Ask, Work, Recall, Insights, Settings** on one token set with four
+> themes - Pine and Ink, each in light and dark, each with a follow-the-system choice. **Work**,
+> **Thread** and **Ask** are their own routes (`/work`, `/work/:id`, `/ask`), and the app keeps
+> its global-hotkey **Flow overlay**, an opt-in **local HTTP API + MCP server**, **auto-update**
 > and a native **system tray**. Captured frames are grouped into **sessions** with a pure
-> on-device heuristic, and the latest releases turn history into daily and weekly **memory
-> reports** that agents can read. **Authenticode code-signing** is the one remaining packaging
-> follow-up — until then the NSIS installer is unsigned and SmartScreen warns ("More info →
-> Run anyway"). Full release history is in
+> on-device heuristic, sessions are clustered into **threads** by the work graph, and history
+> becomes daily and weekly **memory reports** that agents can read. **Authenticode
+> code-signing** is the one remaining packaging follow-up - until then the NSIS installer is
+> unsigned and SmartScreen warns ("More info →
+> Run anyway"). **v0.4.5 requires a fresh database**: there is no migration chain, and a database
+> at any other schema version is refused with a message that names the dev-only `ssv2c-rebuild`
+> tool. Full release history is in
 > [`CHANGELOG.md`](./CHANGELOG.md) / [`CHANGELOG-ARCHIVE.md`](./CHANGELOG-ARCHIVE.md); the
 > design lives in [`specs/`](./specs) and the as-built architecture in
-> [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md). A standalone, clean-slate project — it
+> [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md). A standalone, clean-slate project - it
 > shares no code or data with any prior version.
 
-## New in v0.4.2 — weekly memory and agent-readable history
+## New in v0.4.5 - work graph, Ask v2, insights and the Logbook design
+
+These additions shipped in v0.4.5 (2026-11-07) and reach you through auto-update: your saved
+sessions now cluster into threads you can open, ask about and check the evidence for, and the whole
+app is redrawn on one design system - but a 0.4.5 database is created fresh, so read **Before you
+install** below before you upgrade.
+
+| Feature | What you can do |
+|---|---|
+| **Work and threads** | `/work` lists the threads the clusterer derived from repositories, file paths, domains, documents, references and apps, ordered by **Last touched** or **Time spent** and filterable by entity. `/work/:id` opens one thread: its session timeline, the entities those sessions touched, the open loops it still holds (each with the evidence that raised it), the threads it connects to, and an Ask scoped to it. Rename, merge and split are written as overrides to `thread_overrides` and applied by the clusterer afterwards, so your edit keeps beating the automatic grouping. |
+| **Ask v2** | Ask plans the turn before it retrieves: calendar phrasing ("this morning", "last Tuesday", "the week before") becomes an explicit window in your local timezone, and an entity mention scopes retrieval through the work graph. Retrieval then narrows in one fixed order - threads, then sessions (ten at most), then frames - and every answer cites both the frames it read and the sessions they belong to. Conversations are saved, so a follow-up reuses the previous turn's window and scope, with a chip saying it inherited them. |
+| **Insights** | Five kinds of claim over a window: `thread_activity`, `open_loop`, `recurrence`, `semantic_neighbour`, `resumption`. Each is a typed row that renders without a model call and carries at least one evidence reference by construction; a row whose evidence has since gone is labeled **May be out of date** instead of being asserted as current, and a window still being computed says how many passes are left. Generation is one job under the idle gate and never runs on the capture path - a read never generates. |
+| **Logbook design and four themes** | Every screen is drawn on one token set under the **Logbook** identity: four themes - Pine and Ink, each in light and dark - with a follow-the-system choice for each, bundled local fonts (Source Sans 3, Cascadia Mono), and every screen rebuilt on the v2 primitives. The v1 token shim is deleted, and a token test plus a lint rule keep it gone. |
+| **Settings v2** | Eight categories (General, Capture, Privacy, Intelligence, Models, Data, Integrations, Advanced) over 26 settings with one row pattern. Every row saves on its own and offers Undo from a toast; there is no global Save button. Search matches a row's label, its dotted key, its field name and its help text. Destructive actions ask first and name the consequence. |
+| **Timeline, Session and Moment** | Rebuilt on v2. The timeline's scan-head is replaced by a density ribbon whose bar heights are the real capture counts, with four reserved lanes for session bands. Session and Moment show entity chips and a connections panel, fed by one additive read (`get_session_graph`); a session that was never clustered shows an empty arm rather than an error. |
+| **Performance** | Initial JavaScript is 112.9 KB gzip in the main window and 75.4 KB in the overlay window - 45% and 30% of the 250 KB budget - and every route is its own chunk, none of them in the eager set. |
+| **Before you install** | 0.4.5 needs a fresh database: there is no migration chain, and an older file is refused untouched with a message naming the dev-only `ssv2c-rebuild` tool, which carries a v13 history into the new v15 baseline read-only (its bytes and modification time are left unchanged). A fresh install starts from default settings. The HTTP API and MCP surfaces gained additive reads only: `GET /v1/threads`, `GET /v1/threads/{id}`, `GET /v1/entities`, `GET /v1/insights`, and the four MCP tools `list_threads`, `get_thread`, `find_connections`, `list_insights`. |
+
+See the [0.4.5 arc record](docs/0.4.5.md), the [HTTP API guide](docs/API.md) for the four graph
+and insight reads, and the [MCP guide](docs/MCP.md#tools) for the tool table.
+
+## Memory and agent reads (v0.4.2)
 
 Build cross-day memory on top of your saved daily reports, and let your own agents read it.
 These additions shipped in v0.4.2 and reach existing installs through auto-update. The first
@@ -160,9 +189,9 @@ HTTP API exposes history to authenticated clients; see its [network boundary](do
   Tauri window for quick Search/Ask without leaving your foreground app. `Esc` hides it; `Enter`
   opens the selected Moment in the main Command Deck. `Ctrl+Alt+M` marks the current moment.
 - **HTTP API + local MCP.** An opt-in HTTP API (off by default, bearer authenticated) with
-  configurable IPv4/IPv6 binding (loopback by default)
-  exposes search / ask / frames / marks / sessions, chronological frame pages, capture coverage,
-  saved reports and JSON export to reachable scripts and agents, with an optional independent
+  configurable IPv4/IPv6 binding (loopback by default) exposes search / ask / frames / marks /
+  sessions, chronological frame pages, capture coverage, saved reports, the work graph and the
+  derived insights, and JSON export to reachable scripts and agents, with an optional independent
   read-only token. Plain HTTP is not encrypted; enable only with appropriate network access
   restrictions. `screensearch-mcp.exe` — bundled in the installer — wraps it as a stdio **MCP
   server** for Claude Desktop / Claude Code, loopback by default or pointed at an explicit remote
@@ -187,7 +216,8 @@ HTTP API exposes history to authenticated clients; see its [network boundary](do
 
 Post-v1.0 arcs — attention-first text (0.2.x), surface reduction + flow recall + local API (0.3.0),
 the product shell (auto-update, tray, two-tier Settings — 0.3.2), the sessions reframe (0.4.0),
-memory reports + configurable API bind (0.4.1), and weekly memory + agent memory reads (0.4.2) —
+memory reports + configurable API bind (0.4.1), weekly memory + agent memory reads (0.4.2), and the
+work graph, Ask v2 and Logbook rebuild (0.4.5) —
 have all shipped. Each arc's detailed record lives in its `docs/<version>.md` and in
 [`CHANGELOG-ARCHIVE.md`](./CHANGELOG-ARCHIVE.md); point-in-time PR audits live as local-only
 artifacts under `docs/audits/` (git-ignored, not pushed).
@@ -203,8 +233,9 @@ artifacts under `docs/audits/` (git-ignored, not pushed).
   pressure throttle reduces background enrichment under load; capture/OCR/storage never pause.
 - **Text source:** foreground-window text via **UI Automation** with automatic fallback to native
   **WinRT OCR**, then an attention-first filter that keeps content over chrome.
-- **Data:** SQLite (WAL) + FTS5 + sqlite-vec (768-dim, cosine); forward-only migrations
-  (current schema version 13).
+- **Data:** SQLite (WAL) + FTS5 + sqlite-vec (768-dim, cosine); one baseline schema at version 15
+  with no migration chain (a database at any other version is refused; the dev-only
+  `ssv2c-rebuild` tool carries a v13 history into the new file).
 - **Embeddings:** **fastembed** (in-process ONNX) — EmbeddingGemma-300M text. **No Python in the
   runtime.**
 - **Inference:** a single supervised, model-agnostic **llama.cpp sidecar** (Vulkan GPU + CPU
@@ -240,10 +271,10 @@ docs/
   ARCHITECTURE.md          as-built system design + data flow
   API.md / MCP.md          local HTTP API + MCP server reference
   TESTING.md               test matrix and how to run the gated suites
-  <version>.md             per-arc design + build records (0.2.0 … 0.4.0)
+  <version>.md             per-arc design + build records (0.2.0 … 0.4.5)
   audits/                  point-in-time PR audit evidence (local-only, git-ignored)
 screenshots/       Command-Deck UI screenshots used by this README
-crates/            15-crate Rust workspace (module crates depend on `traits` only):
+crates/            18-crate Rust workspace (module crates depend on `traits` only):
   traits/          module contracts + shared domain/IPC/job types (no impls)
   kernel/          orchestrator: event bus, capture loop, worker pool, settings, resume heuristic
   store/           data spine: SQLite + sqlite-vec + FTS5, job queue, hybrid search
@@ -258,9 +289,12 @@ crates/            15-crate Rust workspace (module crates depend on `traits` onl
   api/             opt-in HTTP API + JSON export (axum, configurable IP bind + bearer token)
   mcp/             screensearch-mcp.exe — stdio MCP wrapper over the local API
   sessions/        pure heuristic session segmentation + tool recognition (no model calls)
+  graph/           work-graph engine: entity extraction, thread clustering, override precedence
   harness/         dev-only, read-only segmentation validation harness (not shipped in the app)
+  rebuild/         dev-only v13 to v15 rebuild tool (`ssv2c-rebuild`); not shipped
+  evalfixture/     dev-only eval fixture + local API host over seeded history; not shipped
 src-tauri/         Tauri 2 shell + composition root + command handlers + main()
-ui/                React 18 + TS + Vite — the full "Command Deck" (6 screens, typed IPC)
+ui/                React 18 + TS + Vite — the shell and its ten screens (typed IPC)
 specs/             spec-engineering pipeline (00 intake → 04 build prompt → 05–08 build/review)
                    + UI_REFERENCE.md   (frontend identity, tokens, screens, state matrix)
                    + MODEL_REGISTRY.md (exact HF repos / quants / mmproj per model tier)

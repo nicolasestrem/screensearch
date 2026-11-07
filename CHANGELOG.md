@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Detailed AI build records live in `specs/08_CHANGELOG_AI.md`; this file is the
 > human-facing summary.
 
-## [Unreleased]
+## [0.4.5] - 2026-11-07
 
 ### Changed: every screen you own is drawn on one token set, and the old one is gone
 
