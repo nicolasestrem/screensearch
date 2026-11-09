@@ -170,7 +170,7 @@ and it is valid.
 
 | # | finding | verdict | resolution |
 |---|---|---|---|
-| 1 | `crates/embeddings/src/lib.rs` — a cancelled `acquire()` drops the borrowed async `load_gate` while the blocking load carries on, so the next caller can start a second ONNX load beside the first and the first never publishes | valid, proved from the call shape | fix shape: the gate is owned by the load, and load, publication and stamp all happen under it; the fix is in the working tree, uncommitted, and its test fails with a neutered gate and passes as written (raw output below) |
+| 1 | `crates/embeddings/src/lib.rs` — a cancelled `acquire()` drops the borrowed async `load_gate` while the blocking load carries on, so the next caller can start a second ONNX load beside the first and the first never publishes | valid, proved from the call shape | fix shape: the gate is owned by the load, and load, publication and stamp all happen under it; the fix landed as `63e22f1`, with its test failing under a neutered gate and passing as written (raw output below) |
 
 Why it holds: `acquire()` took `load_gate.lock().await` in the caller's own future and then awaited
 `spawn_blocking(M::load)`. Dropping that future — a cancelled embed, a lost race, a shutting-down
@@ -242,8 +242,57 @@ bindings_diff EXIT=0
 ```
 
 The verified workspace aggregate is exactly `{"suites":86,"passed":1652,"failed":0,"ignored":17}`,
-`git diff --check` exits 0, and the focused and module results above hold on the final code. No commit
-exists yet, so no SHA is cited here. `06` #151 is resolved by this pass.
+`git diff --check` exits 0, and the focused and module results above hold on the final code. `06` #151
+is resolved by this pass, which landed as `63e22f1` ("fix: preserve embedding load ownership across
+cancellation").
+
+**Follow-up review, PR #175 head `63e22f1` (2026-11-09).** The automated re-review of that exact head
+`completed` with no findings — `code_review` at `63e22f1`, `has_any_findings=false`,
+`has_unresolved_findings=false`, reported through issue-comment summary `6752419125`. The only earlier
+bot inline, comment `4518433333`, stays resolved. No REST review was requested for a later head, so
+nothing here claims a bot review of any later commit.
+
+**Independent review of the `mem.rs` FFI boundary — scope: that boundary, not the PR.** A second,
+read-only review read only the Windows FFI in `crates/sysmon/src/mem.rs`: the two direct syscalls
+(`GlobalMemoryStatusEx` at `:108`, `GetPerformanceInfo` at `:118`), the
+`MEMORYSTATUSEX`/`PERFORMANCE_INFORMATION` structs they fill, and the arithmetic over the returned
+page counts. It found no defect — the struct sizes and layout match the Win32 definitions, the `BOOL`
+results are checked so a failed call yields an unmonitored reading rather than a fabricated percentage,
+and the page-count conversions to bytes are exact. That verdict covers that boundary only; it is not a
+clean bill for the rest of PR #175, which the automated review above covers. The same two APIs are the
+ones the contract surfaces describe — `crates/traits/src/ipc.rs:1117-1118` and
+`crates/traits/src/contracts.rs:1258` both name `GlobalMemoryStatusEx` and `GetPerformanceInfo` — so the
+boundary implements the documented reading rather than a private variant of it.
+
+**Test-comment correction (documentation only, no behaviour change).** The test
+`status_clamps_inconsistent_counter_snapshots` justified its deliberately inconsistent input by calling
+the two commit counters separate syscall snapshots whose split could leave the charge above the limit.
+They are not separate: `CommitTotal` and `CommitLimit` both come from the single `GetPerformanceInfo`
+call in `mem.rs`, so the rationale was wrong while the assertion it guards stayed right. The comment now
+says the input is normalized defensively over the `0..=100` contract and names the single-snapshot fact
+(`crates/sysmon/src/mem.rs:203-205`). No assertion, code path or threshold changed. No test was added
+for the wording: a comment carries no behaviour to fail without, so an assertion over source text would
+prove nothing about the product. The correction reaches nothing beyond that test — a grep of `specs/`
+for `relief_should_act` finds no match, so no spec sentence names that symbol and none needed
+correcting.
+
+**Unchanged behaviour re-checked: a failed load still frees the gate for a retry.** Moving the gate into
+the blocking closure changes nothing about failure, and the tree shows why: `crates/embeddings/src/lib.rs:359`
+takes the guard into the closure, `:360-362` load, publish and stamp, and the `?` on a failed `M::load`
+unwinds the closure so the guard drops with the work instead of parking the next caller; publication
+never happens, the mapped error reaches the caller, and a later call retries a fresh load. The
+neighbouring gate sites are unchanged — `evict` holds the gate across teardown (`:264`) and
+`take_evictable` decides and takes under the slot lock (`:283-285`). Parent-observed raw output on this
+tree: `failed_load_releases_the_gate_for_a_retry` `1 passed; 0 failed; 11 filtered out` and `sysmon`
+`mem::tests::host_reports_a_plausible_memory_reading` `1 passed; 0 failed; 17 filtered out`.
+
+**Gate.** The advisory gate (`artifact://471`, log `Temp/ss-pr175-advisory-gate.log`) reported
+`sysmon_module EXIT=0` with `test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+out` and doctests `0`, then `cargo_fmt`, `cargo_clippy`, `cargo_build`, `cargo_test`, `bindings_diff`
+and `diff_check`, each `EXIT=0`. The computed workspace aggregate is exactly
+`{"suites":86,"passed":1652,"failed":0,"ignored":17}`. The full UI gate stands as history and was not
+rerun — this pass changes no UI, Node or dependency file. The commit remains the parent's step, so no
+SHA is cited for this pass.
 
 ### 2026-11-09 — Your-Universe: Localtime (standalone deliverable, not product code)
 

@@ -182,8 +182,55 @@ The final run (`artifact://429`, tail `artifact://432`, log `Temp/ss-pr175-revie
 every step `EXIT=0` — `ui_ci`, `ui_lint`, `ui_build`, `stage_mcp`, `cargo_fmt`, `cargo_clippy`,
 `cargo_build`, `cargo_test`, `bindings_diff` — with the verified workspace aggregate exactly
 `{"suites":86,"passed":1652,"failed":0,"ignored":17}` and `git diff --check` exiting 0. `06` #151 is
-resolved as a review-fix pass on PR #175; no commit existed when this entry was written, so no SHA is
-cited.
+resolved as a review-fix pass on PR #175, landed as `63e22f1` (`fix: preserve embedding load ownership
+across cancellation`).
+
+### 2026-11-09 — PR #175 follow-up: clean re-review at `63e22f1`, `mem.rs` FFI boundary cleared, one test comment corrected
+
+**The re-review is clean at the exact head.** `63e22f1` carries the cancellation fix, and the automated
+review of that SHA `completed` with no findings: `code_review` at that commit,
+`has_any_findings=false`, `has_unresolved_findings=false`, delivered as issue-comment summary
+`6752419125`. The original inline finding on the holder head, comment `4518433333`, remains resolved.
+No REST review was requested for a later head, so this entry describes no bot review of any later
+commit.
+
+**A second, independent look at the `mem.rs` FFI boundary found nothing — within that scope only.** That
+review read just the Windows FFI in `crates/sysmon/src/mem.rs`: the two direct syscalls
+(`GlobalMemoryStatusEx` at `:108`, `GetPerformanceInfo` at `:118`), the
+`MEMORYSTATUSEX`/`PERFORMANCE_INFORMATION` structs they fill, the `BOOL` result handling and the
+page-count arithmetic. Struct sizes and layout match the Win32 definitions, a failed call returns an
+unmonitored reading instead of a fabricated percentage, and the conversions to bytes are exact. It is a
+verdict on that boundary, not on PR #175 as a whole.
+
+**One valid finding, in a comment rather than the code.** `status_clamps_inconsistent_counter_snapshots`
+justified its deliberately inconsistent input by saying the two commit counters are separate syscall
+snapshots, so a pagefile shrink between them could leave the charge above its limit. Both come from one
+`GetPerformanceInfo` call, so the explanation was wrong even though the assertion it guards is correct.
+The comment now states that the input is normalized defensively over the `0..=100` contract and names
+the single-snapshot fact (`crates/sysmon/src/mem.rs:203-205`). Assertions, code path and thresholds are
+untouched, and no test was written for the wording: with no behaviour behind it there is nothing an
+assertion could fail on, so adding one would only dress the change up as coverage. The correction stays
+inside that test: a grep of `specs/` for `relief_should_act` returns no match, so no spec sentence named
+that symbol and none needed correcting. Recorded as `06` #152.
+
+**The cancellation fix's failure path was re-checked and is unchanged.** The gate now lives inside the
+blocking closure, so the question is what happens when the load itself fails:
+`crates/embeddings/src/lib.rs:359` takes the guard into the closure, `:360-362` load, publish and stamp,
+and the `?` on a failed `M::load` unwinds the closure so the guard dies with the work — nothing is
+published, the error reaches the caller, and the next call retries a fresh load instead of parking
+behind a leaked guard. The neighbouring gate sites still hold: `evict` keeps the gate across teardown
+(`:264`) and `take_evictable` decides and takes under the slot lock (`:283-285`). Parent-observed raw
+output on this tree: `failed_load_releases_the_gate_for_a_retry` `1 passed; 0 failed; 11 filtered out`,
+and `sysmon` `mem::tests::host_reports_a_plausible_memory_reading` `1 passed; 0 failed; 17 filtered
+out`.
+
+**Gate.** The advisory gate (`artifact://471`, log `Temp/ss-pr175-advisory-gate.log`) returned
+`sysmon_module EXIT=0` on `test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`
+(doctests `0`), with `cargo_fmt`, `cargo_clippy`, `cargo_build`, `cargo_test`, `bindings_diff` and
+`diff_check` all `EXIT=0` and the computed workspace aggregate exactly
+`{"suites":86,"passed":1652,"failed":0,"ignored":17}`. The earlier full UI gate remains the record for
+the UI and was not rerun, because this pass changes no UI, Node or dependency file. The commit is the
+parent's step, so this pass cites no SHA.
 
 ### 2026-11-09 — Review pass round two on PR #173: payload fingerprint, two source fixes deferred
 

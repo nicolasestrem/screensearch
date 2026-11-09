@@ -20,10 +20,12 @@ would have throttled the app during its own work. These are baseline numbers, no
 this branch's build.
 
 - **The throttle now watches host memory, not just CPU/GPU.** A third arm reads whole-machine
-  physical usage and system commit charge every sample (two Windows calls, and both must succeed)
-  and feeds both into the same hysteresis machine. This is the case the CPU/GPU arms cannot see: a
-  machine that is out of RAM while ScreenSearch is idle — a large editor, another recorder, a wall
-  of browser tabs — where `vision_tag` claims are simply not happening and nothing throttles.
+  physical usage and system commit charge every sample (two Windows calls, and both must succeed —
+  the commit total and the limit it is compared against come from one `GetPerformanceInfo`
+  snapshot) and feeds both into the same hysteresis machine. This is the case the CPU/GPU arms
+  cannot see: a machine that is out of RAM while ScreenSearch is idle — a large editor, another
+  recorder, a wall of browser tabs — where `vision_tag` claims are simply not happening and
+  nothing throttles.
   Commit charge catches the other half: a process that has committed far more memory than it is
   actively using, before physical RAM actually runs out. Either reading at its enter threshold
   raises the level; both must cool below their exit thresholds before a level can drop. Defaults are

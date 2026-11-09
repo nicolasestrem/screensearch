@@ -200,9 +200,9 @@ mod tests {
 
     #[test]
     fn status_clamps_inconsistent_counter_snapshots() {
-        // The two syscalls are separate snapshots: a pagefile shrink or drain can land
-        // between them so the charge outruns the limit, and available physical can exceed
-        // the total on some hypervisors. Neither may escape 0..=100.
+        // Normalize deliberately inconsistent inputs defensively: commit above its limit,
+        // or available physical memory above total, must not escape the 0..=100 contract.
+        // Both commit counters come from the same GetPerformanceInfo call.
         let m = status_from(raw(16 * GIB, 32 * GIB, 11, 10, 1 << 30)).expect("counters");
         assert_eq!(m.used_pct, 0.0);
         assert_eq!(m.commit_pct, 100.0);
