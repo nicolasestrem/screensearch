@@ -81,6 +81,13 @@ narrative moved verbatim to `specs/archive/01_STATUS_HISTORY.md`. `04 §1` point
 the open work instead of the finished 0.4.5 phases; its rules are untouched.
 
 Deliberately not done: `02`, `03` and `UI_REFERENCE` got only pointer and contradiction fixes, no
-normative rewrites and no product decisions. Where a shipped behaviour differs from a spec sentence
+normative rewrites and no product decisions. That sentence was audited afterwards, hunk by hunk: 12
+hunks across the three files (4 each), each one either a forward pointer (the old `05`/`06`/`07`
+records now live in `specs/archive/`) or a statement contradicted by shipped code, checked against
+the tree: the rebuild tool never renames its source and keeps `*.v13.bak`
+(`crates/rebuild/src/lib.rs:28`, `crates/rebuild/src/main.rs:115`), the NavRail's Ask and Work
+entries and their routes exist (`ui/src/app/nav.ts:51-58`), and Settings v2 ships the search box
+(`ui/src/routes/settings/SettingsSearch.tsx`). `03`'s four hunks change six lines and replace six,
+none removing normative text. Where a shipped behaviour differs from a spec sentence
 (a settings-key count, a stale "deferred" label, the `03 §8` default table), the item is recorded as
 open work above instead of being silently rewritten.
