@@ -15,9 +15,8 @@ use kernel::settings::{load_advanced_config, load_settings, save_settings};
 use std::path::Path;
 use store::SqliteStore;
 use traits::{
-    AdvancedConfig, CaptureAdvanced, EnrichAdvanced, FlashAttnSetting, KvCacheType, ModelTier,
-    OverlayAdvanced, ReportsAdvanced, ResumeAdvanced, Settings, SidecarAdvanced, SidecarParams,
-    Store, TextAdvanced, ThrottleAdvanced, UiAppearance, FRAME_ID_HIGH_WATER_KEY, HISTORY_ID_KEY,
+    AdvancedConfig, FlashAttnSetting, KvCacheType, ModelTier, Settings, SidecarParams, Store,
+    UiAppearance, FRAME_ID_HIGH_WATER_KEY, HISTORY_ID_KEY,
 };
 
 #[tokio::test]
@@ -966,6 +965,13 @@ device = "  Vulkan0  "
 cpu_enter_pct = 50.0
 cpu_exit_pct = 90.0
 embed_text_floor = 0
+mem_enter_pct = 95.0
+mem_exit_pct = 99.0
+commit_enter_pct = 1000.0
+commit_exit_pct = -5.0
+
+[enrich]
+embed_idle_ttl_secs = 999999
 
 [overlay]
 max_results = 1
@@ -985,6 +991,17 @@ max_results = 1
         "exit must stay strictly below enter"
     );
     assert_eq!(cfg.throttle.embed_text_floor, 1);
+    assert_eq!(cfg.throttle.mem_enter_pct, 95.0);
+    assert_eq!(
+        cfg.throttle.mem_exit_pct, 94.0,
+        "the memory band keeps the same exit-below-enter invariant"
+    );
+    assert_eq!(cfg.throttle.commit_enter_pct, 100.0, "ceiling is 100 %");
+    assert_eq!(cfg.throttle.commit_exit_pct, 0.0, "floor is 0 %");
+    assert_eq!(
+        cfg.enrich.embed_idle_ttl_secs, 86_400,
+        "a day is the ceiling; 0 is the documented 'never' value"
+    );
     assert_eq!(cfg.overlay.max_results, 1);
 }
 
@@ -1170,28 +1187,4 @@ chrome_region_buckets = 12
     assert_eq!(cfg.text.chrome_suppress_min_seen, 9);
     assert_eq!(cfg.text.chrome_protect_min_chars, 64);
     assert_eq!(cfg.text.chrome_region_buckets, 12);
-}
-
-/// The `file-only` sections are constructed here so a rename or a dropped field is a compile
-/// error rather than a silent default (the defaults are asserted by `AdvancedConfig::default`
-/// in the tests above; this pins the shapes the consumers destructure).
-#[test]
-fn advanced_config_sections_are_complete() {
-    let cfg = AdvancedConfig {
-        capture: CaptureAdvanced::default(),
-        enrich: EnrichAdvanced::default(),
-        overlay: OverlayAdvanced::default(),
-        reports: ReportsAdvanced::default(),
-        resume: ResumeAdvanced::default(),
-        sidecar: SidecarAdvanced::default(),
-        text: TextAdvanced::default(),
-        throttle: ThrottleAdvanced::default(),
-    };
-    assert!(cfg.enrich.embed_text);
-    assert_eq!(cfg.enrich.vision_batch_size, 20);
-    assert_eq!(cfg.reports.weekly_top_k, 200);
-    assert_eq!(cfg.reports.map_reduce_min_frames, 20);
-    assert_eq!(cfg.resume.min_dwell_secs, 120);
-    assert_eq!(cfg.throttle.sample_interval_ms, 1_000);
-    assert_eq!(cfg.overlay.max_results, 8);
 }

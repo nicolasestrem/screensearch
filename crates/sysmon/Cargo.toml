@@ -13,12 +13,18 @@ traits.workspace = true
 tracing.workspace = true
 
 # Windows-only by design (04 guardrails). CPU busy% via GetSystemTimes
-# (sysinfoapi.h → SystemInformation, the same module capture/idle.rs uses) and GPU
-# utilization via PDH (\GPU Engine(*)\Utilization Percentage). PDH is the only
-# genuinely new feature module in the workspace.
+# (sysinfoapi.h → SystemInformation, the same module capture/idle.rs uses), GPU
+# utilization via PDH (\GPU Engine(*)\Utilization Percentage) and host memory via
+# GlobalMemoryStatusEx (SystemInformation) for physical usage plus
+# GetPerformanceInfo (ProcessStatus/PSAPI) for host-wide commit charge: the
+# MEMORYSTATUSEX page-file fields are process-scoped, so they cannot stand in for the
+# host's commit numbers. PDH is the only genuinely new feature module; ProcessStatus
+# supplies just GetPerformanceInfo.
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [
     "Win32_Foundation",
+    "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_System_Performance",
+    "Win32_System_ProcessStatus",
 ] }

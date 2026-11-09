@@ -5,6 +5,11 @@
  */
 export type EnrichAdvanced = { 
 /**
+ * `enrich.embed_idle_ttl_secs` - idle seconds before the in-process embedding model
+ * is unloaded to give its ~1.2 GiB back; `0` never unloads. Reload is on demand.
+ */
+embed_idle_ttl_secs: number, 
+/**
  * `enrich.embed_text` - text-embedding lane toggle.
  */
 embed_text: boolean, 

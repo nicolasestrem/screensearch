@@ -29,7 +29,7 @@ use traits::{
     UiResumeContext, VisionTarget,
 };
 
-use embeddings::FastEmbedProvider;
+use embeddings::{FastEmbedProvider, LazyEmbedder};
 use inference::{
     download::EngineProgress, AnswerSidecar, ModelSupervisor, SupervisorConfig, VisionSidecar,
 };
@@ -308,6 +308,7 @@ fn get_throttle_status(state: State<'_, AppState>) -> ThrottleStatus {
             level: 0,
             sample: None,
             gpu_monitored: false,
+            mem_monitored: false,
         },
     }
 }
@@ -1888,6 +1889,13 @@ pub(crate) async fn graceful_shutdown(app: &tauri::AppHandle) {
 /// first-run download; `embed_model` readiness reflects progress
 /// (Initializing → Ready / Unavailable / Disabled). Skips loading entirely when text
 /// embeddings are off.
+///
+/// The provider is a [`LazyEmbedder`] holder, not the bare model: the kernel and the store
+/// each hold a strong reference for the life of the process (`Kernel::attach_embedder` and
+/// `SqliteStore.embedder`), so the model could never be dropped. The holder loads eagerly here
+/// — a first search must not pay a cold start after `Ready` was already reported — and then
+/// unloads on its own after `enrich.embed_idle_ttl_secs` with no embed, which hands back the
+/// measured 1233 MiB private bytes an idle app was otherwise holding until exit.
 async fn init_embeddings(kernel: Arc<Kernel>, models_dir: PathBuf) {
     if !kernel.advanced_config().enrich.embed_text {
         kernel.set_embed_readiness(
@@ -1908,10 +1916,17 @@ async fn init_embeddings(kernel: Arc<Kernel>, models_dir: PathBuf) {
         total_bytes: None,
         error: None,
     });
-    match tokio::task::spawn_blocking(move || FastEmbedProvider::new(models_dir)).await {
-        Ok(Ok(provider)) => {
+    let idle_ttl = Duration::from_secs(u64::from(
+        kernel.advanced_config().enrich.embed_idle_ttl_secs,
+    ));
+    let embedder = Arc::new(LazyEmbedder::<FastEmbedProvider>::new(models_dir, idle_ttl));
+    match embedder.load_now().await {
+        Ok(()) => {
             tracing::info!("embedding model loaded; attaching to kernel");
-            kernel.attach_embedder(Arc::new(provider)).await;
+            // Armed after the model is resident: the sweep measures from the last load, so
+            // starting it earlier would only add a no-op pass.
+            embedder.spawn_idle_unloader();
+            kernel.attach_embedder(embedder).await;
             kernel.set_setup_step(SetupStep {
                 operation: SetupOperation::Embeddings,
                 phase: SetupPhase::Done,
@@ -1921,24 +1936,9 @@ async fn init_embeddings(kernel: Arc<Kernel>, models_dir: PathBuf) {
                 error: None,
             });
         }
-        Ok(Err(e)) => {
-            tracing::error!(error = %e, "embedding model load failed");
-            kernel.set_embed_readiness(ComponentStatus::Unavailable, Some(e.to_string()));
-            kernel.set_setup_step(SetupStep {
-                operation: SetupOperation::Embeddings,
-                phase: SetupPhase::Failed,
-                attempt: 1,
-                downloaded_bytes: None,
-                total_bytes: None,
-                error: Some(format!("{e:#}")),
-            });
-        }
         Err(e) => {
-            tracing::error!(error = %e, "embedding model load task panicked");
-            kernel.set_embed_readiness(
-                ComponentStatus::Unavailable,
-                Some("model load task panicked".to_string()),
-            );
+            tracing::error!(error = %e, "embedding model load failed");
+            kernel.set_embed_readiness(ComponentStatus::Unavailable, Some(format!("{e:#}")));
             kernel.set_setup_step(SetupStep {
                 operation: SetupOperation::Embeddings,
                 phase: SetupPhase::Failed,
@@ -2203,6 +2203,10 @@ async fn init_inference(
             Some(backfill),
         )
         .await;
+    // Level-2 memory relief (`03 §5/§6`): the supervisor is the only owner that can hand the
+    // model's VRAM and committed RAM back, and relief deliberately outranks the keep-warm it
+    // was just given — a drain must not hold 6-8 GiB on a machine that is out of memory.
+    kernel.set_pressure_relief(supervisor.clone() as Arc<dyn traits::PressureRelief>);
     kernel.set_sidecar_readiness(
         ComponentStatus::Ready,
         Some("ready (model downloads + spawns on first use)".to_string()),

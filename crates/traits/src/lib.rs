@@ -36,7 +36,7 @@ pub use advanced::*;
 pub use ask_ipc::*;
 pub use contracts::{
     AnswerProvider, BackfillControl, CaptureSource, EmbeddingProvider, OcrProvider, PressureProbe,
-    SessionSegmenter, Store, VisionProvider,
+    PressureRelief, SessionSegmenter, Store, VisionProvider,
 };
 pub use domain::*;
 pub use graph::*;

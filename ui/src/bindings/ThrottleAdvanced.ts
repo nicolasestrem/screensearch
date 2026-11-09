@@ -5,6 +5,16 @@
  */
 export type ThrottleAdvanced = { 
 /**
+ * `throttle.commit_enter_pct` - commit-charge usage % at which pressure counts
+ * toward raising a level.
+ */
+commit_enter_pct: number, 
+/**
+ * `throttle.commit_exit_pct` - commit-charge usage % below which pressure counts
+ * toward lowering.
+ */
+commit_exit_pct: number, 
+/**
  * `throttle.cpu_enter_pct` - CPU busy % at which pressure counts toward raising a level.
  */
 cpu_enter_pct: number, 
@@ -32,6 +42,14 @@ gpu_enter_pct: number,
  * `throttle.gpu_exit_pct` - GPU utilization % exit threshold.
  */
 gpu_exit_pct: number, 
+/**
+ * `throttle.mem_enter_pct` - physical-memory usage % enter threshold.
+ */
+mem_enter_pct: number, 
+/**
+ * `throttle.mem_exit_pct` - physical-memory usage % exit threshold.
+ */
+mem_exit_pct: number, 
 /**
  * `throttle.sample_interval_ms` - probe/sample cadence.
  */

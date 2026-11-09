@@ -9,6 +9,291 @@ measured budget and review-fix pass included, is archived at
 
 ## Current arc
 
+### 2026-11-09 — Off-arc: memory pressure arm, level-2 relief, lazy embedder (branch, not shipped)
+
+**Scope.** Branch `feat/memory-pressure-throttle`, built from a measurement pass against the
+installed 0.4.5 build. Off-arc, no phase: four gaps found by that measurement, of which three are
+implemented here and the fourth (`06` #23, the GPU arm's blindness) is measured and recorded with
+options only, by instruction. Capture, OCR and storage stay structurally outside the worker pool —
+they never throttle — and screenpipe was never touched.
+
+**Why, and what the baseline actually says.** Every number below is the **installed 0.4.5 baseline,
+measured before any change**, not this branch's footprint:
+
+| Reading (installed 0.4.5, before this branch) | Value |
+|---|---|
+| App private bytes, text embedding model resident | 1352 MiB |
+| App private bytes, `enrich.embed_text = false` | 119 MiB (delta 1233 MiB) |
+| Available physical RAM held while the sidecar was loaded | ~5.8 GB |
+| Commit charge held over the same window | ~8.4 GB |
+| VRAM held over the same window | ~6.8 GB |
+| GPU as PDH sums it, peak during vision inference | 37.6 % (`engtype_3d` max 25.5 %, `compute 0/1` 0 %) |
+| GPU as `nvidia-smi` reads it, same inference | 96 % |
+
+Two of those motivated the change. The shipped throttle's arms are CPU and GPU only, so a machine
+that is out of RAM while ScreenSearch is idle never throttles: no `vision_tag` claims are happening,
+and CPU/GPU stay quiet. And level 2 only paused lanes — it freed nothing, because the 6–8 GiB is
+held by the sidecar, not by the workers.
+
+The 119 MiB row is **not** an unload measurement. It is the same app with the embedder disabled, so
+the delta says what the model costs. A separate isolated harness with the real cached model now
+verifies the holder's own unload/reload lifecycle (next section); it does not project that 119 MiB
+onto the whole app, and the reload latency is still untimed.
+
+**What changed, by seam.**
+- `traits`: `PressureSample` gains `mem_used_pct`, `commit_pct`, `avail_phys_mb`,
+  `commit_charge_mb`, `commit_limit_mb` and `mem_monitored`; `ThrottleStatus` gains
+  `mem_monitored`; `PressureProbe` gains `mem_monitored()`; `PressureRelief::release_memory()` is the
+  new async relief contract. All re-exported, bindings regenerated.
+- `sysmon`: `mem.rs` reads physical usage from `GlobalMemoryStatusEx` (`ullTotalPhys`/`ullAvailPhys`)
+  and system commit from `GetPerformanceInfo` (`CommitTotal`/`CommitLimit` × `PageSize`) — two
+  syscalls, and both must succeed or the sample is `mem_monitored = false`. MiB fields floor.
+- `kernel`: the clock-injected `ThrottleMachine` gains the memory hysteresis (either reading hot at
+  its enter threshold; both must cool below their exit thresholds; an unmonitored sample leaves the
+  arm inactive) and the governor asks `io.relief` only on the transition into Sustained
+  (`should_relieve(prev, lvl)`), awaited inline so a level is not republished mid-release. The hook
+  is a late-bound `Arc<RwLock<Option<Arc<dyn PressureRelief>>>>`, so the kernel still depends only
+  on `traits` and the composition root stays the owner.
+- `inference`: one teardown path, `unload_reasoned(reason, skip_if_pinned)`, takes the request gate
+  first and consults the pin only after it, so a preload landing during relief cannot be killed;
+  it emits `Evicted`. Relief is rule A: `skip_if_pinned = true`, a pinned model survives and the
+  skip is logged. Manual Unload clears the pin and passes `false`.
+- `embeddings`: `LazyEmbedder` holder — allocates nothing until first use or eager `load_now`,
+  single-flight loads, metadata without loading, a 30 s sweep that evicts only when no embed still
+  holds the session (strong count 1 under the slot write); sweep and explicit unload return `false`
+  while one is active, the load gate spans teardown so a reload cannot overlap it and is held by the
+  load rather than by the awaiting caller (so a cancelled first embed cannot release the flight
+  before the model is published — see the PR #175 review pass below), a completing embed stamps
+  last-use before releasing its handle, teardown off the async worker thread.
+- `src-tauri`: `init_embeddings` builds `Arc<LazyEmbedder<FastEmbedProvider>>`, loads eagerly so a
+  first search after `Ready` is not cold, arms the unloader only after a successful load, and
+  attaches it; the composition root installs the supervisor as `dyn PressureRelief`.
+- Settings/UI: four memory thresholds and one idle TTL, all `file-only` and clamped, so the closed
+  26-key UI ceiling is untouched. The Settings · Advanced throttle readout shows `RAM 71% (8.3 GiB
+  available)` plus a Commit percentage from the same sample, reports available memory rather than
+  "free", says "not monitored" instead of 0 %, and its level-2 line says the app tries to free the AI
+  model's memory unless the user explicitly kept it loaded. The rail tooltip adds RAM and commit
+  percentages.
+
+**Narrow runtime evidence: the real-cached-model harness (PASS).** Run by the parent on 2026-11-09
+with `path` dependencies on this branch's `embeddings`, `sysmon` and `traits`, the repository
+lockfile, and the real fastembed cache copied to `Temp/ss-memory-proof/cache`. It did not launch the
+app and changed no real profile. Raw artifact: `artifact://288`. The branch's two ignored real-model
+tests later ran separately against a copied cache on the final holder code and passed 2/0
+(`artifact://325/314`), so the lifecycle is no longer covered only by this one-off harness.
+
+| Harness process private bytes | Value |
+|---|---|
+| Before the model was loaded | 7 MiB |
+| After `load_now` with the real model | 1228 MiB |
+| After the idle sweep evicted it (TTL 2 s) | 26 MiB |
+| After the next embed reloaded it | 1234 MiB |
+
+The real background sweep logged `loaded 21:17:46.376`, `unloaded 21:18:16.484` and `reloaded
+21:18:24.739` (UTC as recorded); an explicit `unload()` after 35 s returned `false` because the
+sweep — not that call — had already evicted the model, so nothing was resident to unload (no embed was
+in flight). The query before and after the cycle returned
+identical 768-dim vectors, `maxdiff 0`. The host sample at the same run read physical 69.08 %, commit
+57.48 %, available 9841 MiB, charge 30068 MiB, limit 52310 MiB.
+
+What it establishes: with a real model, the holder loads on demand, the real 30 s sweep evicts it
+after the TTL, the next embed reloads it, and embeddings are unchanged across the cycle. What it does
+not: the whole app's idle footprint (26 MiB is the harness process, and the 119 MiB figure came from a
+different configuration), reload latency (the unload→reloaded gap includes harness waiting, not a
+timed reload), level-2 relief, or any Tauri/IPC path.
+
+**UI proof, and what it does not prove.** The parent rendered the real `ThrottleReadout` component in
+a disposable Vite harness with an explicitly illustrative `QueryClient` fixture (not native
+telemetry), across the populated-L2, missing-GPU, missing-memory, before-first-sample, loading,
+error and off states, and inspected Chromium screenshots at 1000 px pine-light and 360 px ink-dark;
+then 360/1000 px × pine-light, pine-dark, ink-light, ink-dark reported `scrollWidth <= innerWidth`
+in all eight combinations with no browser errors. After the copy settled on the final plain-language
+wording, that wording was rendered and inspected at 360 px pine-dark: `scrollWidth` 360, no browser
+errors. The fixtures and the temporary server were removed afterwards. This is **browser component
+rendering evidence only** — it is not Tauri/WebView2 acceptance, not real telemetry, and not proof
+that a level-2 relief actually unloads a model or that the idle TTL returns memory.
+
+**Status: gate3 green on build and tests, with explicit caveats.** Gate history is kept because it is
+what the fixes came from: the first full gate had UI ci/lint/build, MCP-sidecar staging,
+`cargo fmt --check`, strict clippy and the workspace build green, then failed the full `cargo test` on
+the new Windows `idle_ttl_bounds_eviction` test (`Instant::checked_sub` rewind); the forward-only
+explicit-`Instant` clock and completion-handle race fixed it. Gate2 (`artifact://325/314`) then ran
+embeddings unit 8 passed / 2 ignored, both ignored real-model tests 2/0 on a copied cache against the
+final code, and `inference` 125, `no_orphan` 1, `reap` 3, kernel 228 unit + integration (throttle 3,
+settings 32) green, but stopped at `rebuild::settings::spec_table_parses_to_the_committed_sets` (left
+49, right 44) — an incidental hardcoded file-only count while the runtime policy already parses 49
+from `03`. The parent removed the obsolete `file_only_count` accessor (no production callers,
+grep-confirmed) and the 44 / deleted-9 assertions, keeping the closed UI budget as
+`ui_settings_respect_the_closed_ceiling` (`<= 26`). The narrow rebuild test passed 6/0 first in the
+final artifact, then gate3 (`artifact://327` full, `artifact://331` tail, log
+`C:/Users/nicol/AppData/Local/Temp/ss-memory-gate.log`) recorded:
+
+```text
+ui_ci EXIT=0
+ui_lint EXIT=0
+ui_build EXIT=0
+stage_mcp EXIT=0
+cargo_fmt EXIT=0
+cargo_clippy EXIT=0
+cargo_build EXIT=0
+cargo_test EXIT=0
+BINDINGS_REGEN_CHANGED=[]
+bindings_git_diff EXIT=1
+```
+
+The verified Node-parser aggregate over the full workspace (doctests counted as suites) was exactly
+`{"suites":86,"passed":1650,"failed":0,"ignored":17}`. `BINDINGS_REGEN_CHANGED=[]` means the four
+already-regenerated bindings hashed identically before and after `cargo_test`; the non-zero
+`bindings_git_diff` was gate3's expected pre-commit caveat — at that point the bindings were
+uncommitted and no commit was authorized — so gate3's record does not call the CI binding guard green.
+Since then the user authorized committing on the new branch `feat/system-memory-relief`, and all 31
+feature paths are staged with the generated bindings: `git diff --exit-code -- ui/src/bindings` now
+exits 0 with no output, and the staged diff check excluding generated TypeScript also exits 0. The
+guard is therefore satisfied by the staged tree, not pending; nothing here claims the commit has
+landed — the parent's commit is the next step.
+The two real-model tests (2/0 above) and the background-sweep harness (`artifact://288`) remain the
+narrower runtime evidence. This is build/test evidence, not a whole-app measurement: no
+changed-build idle footprint, timed reload, real level-2 relief or native Tauri acceptance is claimed.
+This documentation pass ran no build, test, lint, formatter or git command, did not run the app, and
+touched no real profile, model file or DB.
+
+**Open on this branch (recorded, not claimed as met).**
+- Whole-app live evidence: the changed build's idle private bytes, a timed reload, and one real
+  level-2 relief on a starved machine. The isolated harness covers only the holder lifecycle, and
+  the baseline table above cannot substitute.
+- `06` #23 GPU blindness: findings and three options only; no NVML probe, no counter change.
+- `06` #150 (0.4.5 launch panic): observed on the measurement pass's launch attempts and worked
+  around with a local relaunch harness (not product code); untouched here.
+
+**Review pass, PR #175 (2026-11-09).** One finding, on the head that carried the holder (`959b008`),
+and it is valid.
+
+| # | finding | verdict | resolution |
+|---|---|---|---|
+| 1 | `crates/embeddings/src/lib.rs` — a cancelled `acquire()` drops the borrowed async `load_gate` while the blocking load carries on, so the next caller can start a second ONNX load beside the first and the first never publishes | valid, proved from the call shape | fix shape: the gate is owned by the load, and load, publication and stamp all happen under it; the fix landed as `63e22f1`, with its test failing under a neutered gate and passing as written (raw output below) |
+
+Why it holds: `acquire()` took `load_gate.lock().await` in the caller's own future and then awaited
+`spawn_blocking(M::load)`. Dropping that future — a cancelled embed, a lost race, a shutting-down
+task — released the borrowed guard at once, while `spawn_blocking` does not stop with the caller that
+was awaiting it, so the load kept allocating with the gate free. The next embed then saw an empty
+slot, passed the sweep's strong-count test (nothing was resident to protect) and started a second
+`M::load`; the first load's model was dropped unpublished, so its allocation was made and released
+without ever serving an embed. The fix shape moves the flight guard into the work it protects: the
+gate is taken by value and moved into the blocking closure together with the slot and the idle clock,
+whose body opens with `let _gate = gate;` so the guard outlives the load and the publication it
+performs, and the waiting caller only awaits the join. The single-flight and teardown-spanning
+sentences elsewhere in this file and in `08` described the caller-owned arrangement and are amended
+above; they were true of the code they described, not a proof against cancellation.
+
+**Verification: the test discriminates — fail side and pass side both observed.** The gate3 result
+above, the two real-model tests and the sweep harness all drove load → idle → reload from live callers,
+so none of them exercised a cancelled first load and none can be cited for this fix. That path now has
+its own test, and the parent ran both directions of it.
+
+Fail side (`artifact://422`): with the fixed closure's `let _gate = gate;` temporarily replaced by
+`drop(gate); // NEUTERED…` — the gate released before the load finishes, which is the pre-fix
+behaviour — `cargo test -p embeddings cancelled_cold_load_publishes_one_session -- --exact
+tests::cancelled_cold_load_publishes_one_session --nocapture` failed at
+`crates/embeddings/src/lib.rs:697` on `assertion left == right failed: the published session is reused,
+not loaded`, left 2 / right 1, with `test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11
+filtered out`. Two loads where the test demands one is exactly the defect this row records, so the test
+detects it rather than merely compiling.
+
+Pass side (`artifact://424`), on the restored source:
+
+```text
+abf2c22859b23abf4ab95e0b4ccbb5f3a8e885b75c21427fc570d482f12589be  crates/embeddings/src/lib.rs
+test tests::cancelled_cold_load_publishes_one_session ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.02s
+```
+
+The same artifact carries the whole affected module: `test result: ok. 10 passed; 0 failed; 2 ignored; 0
+measured; 0 filtered out; finished in 0.04s`, its two ignored entries being the real-model tests, and
+doc-tests `0 passed; 0 failed; 0 ignored`. The hash in that block is the restoration of the proof
+snapshot — exactly the value intended before the mutation — so it identifies the file the pass side ran
+on, not the current working-tree file: `cargo fmt` reformatted the source after the proof, and the
+current file hashes differently. A grep for `NEUTERED` returned no matches at restoration, so the probe
+was removed rather than left behind. That artifact's lib-test build emitted one warning — `unused
+import: std::future::Future` at `crates/embeddings/src/lib.rs:411` — and the first full gate attempt
+rejected it (below).
+
+An earlier attempt at the test did not compile (`E0716`, a temporary dropped while borrowed); it was
+corrected by binding `inputs` before the timeout, and that compile failure is not counted as evidence
+for or against the fix.
+
+**Gate.** The first full attempt (`artifact://428`) ran the ignored real-model tests and passed —
+`test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 12.92s`,
+across two suites including doc-tests — and `ui_ci`, `ui_lint`, `ui_build`, `stage_mcp` and `cargo_fmt`
+each reported `EXIT=0`; `cargo_clippy` then reported `EXIT=101` on that unused import, with
+`-D unused-imports` implied by `-D warnings` and `STOPPED_AT=cargo_clippy`. Only the unused import was
+removed, no behaviour change. The final run (`artifact://429`, tail `artifact://432`, log
+`Temp/ss-pr175-review-gate.log`) reported:
+
+```text
+ui_ci EXIT=0
+ui_lint EXIT=0
+ui_build EXIT=0
+stage_mcp EXIT=0
+cargo_fmt EXIT=0
+cargo_clippy EXIT=0
+cargo_build EXIT=0
+cargo_test EXIT=0
+bindings_diff EXIT=0
+```
+
+The verified workspace aggregate is exactly `{"suites":86,"passed":1652,"failed":0,"ignored":17}`,
+`git diff --check` exits 0, and the focused and module results above hold on the final code. `06` #151
+is resolved by this pass, which landed as `63e22f1` ("fix: preserve embedding load ownership across
+cancellation").
+
+**Follow-up review, PR #175 head `63e22f1` (2026-11-09).** The automated re-review of that exact head
+`completed` with no findings — `code_review` at `63e22f1`, `has_any_findings=false`,
+`has_unresolved_findings=false`, reported through issue-comment summary `6752419125`. The only earlier
+bot inline, comment `4518433333`, stays resolved. No REST review was requested for a later head, so
+nothing here claims a bot review of any later commit.
+
+**Independent review of the `mem.rs` FFI boundary — scope: that boundary, not the PR.** A second,
+read-only review read only the Windows FFI in `crates/sysmon/src/mem.rs`: the two direct syscalls
+(`GlobalMemoryStatusEx` at `:108`, `GetPerformanceInfo` at `:118`), the
+`MEMORYSTATUSEX`/`PERFORMANCE_INFORMATION` structs they fill, and the arithmetic over the returned
+page counts. It found no defect — the struct sizes and layout match the Win32 definitions, the `BOOL`
+results are checked so a failed call yields an unmonitored reading rather than a fabricated percentage,
+and the page-count conversions to bytes are exact. That verdict covers that boundary only; it is not a
+clean bill for the rest of PR #175, which the automated review above covers. The same two APIs are the
+ones the contract surfaces describe — `crates/traits/src/ipc.rs:1117-1118` and
+`crates/traits/src/contracts.rs:1258` both name `GlobalMemoryStatusEx` and `GetPerformanceInfo` — so the
+boundary implements the documented reading rather than a private variant of it.
+
+**Test-comment correction (documentation only, no behaviour change).** The test
+`status_clamps_inconsistent_counter_snapshots` justified its deliberately inconsistent input by calling
+the two commit counters separate syscall snapshots whose split could leave the charge above the limit.
+They are not separate: `CommitTotal` and `CommitLimit` both come from the single `GetPerformanceInfo`
+call in `mem.rs`, so the rationale was wrong while the assertion it guards stayed right. The comment now
+says the input is normalized defensively over the `0..=100` contract and names the single-snapshot fact
+(`crates/sysmon/src/mem.rs:203-205`). No assertion, code path or threshold changed. No test was added
+for the wording: a comment carries no behaviour to fail without, so an assertion over source text would
+prove nothing about the product. The correction reaches nothing beyond that test — a grep of `specs/`
+for `relief_should_act` finds no match, so no spec sentence names that symbol and none needed
+correcting.
+
+**Unchanged behaviour re-checked: a failed load still frees the gate for a retry.** Moving the gate into
+the blocking closure changes nothing about failure, and the tree shows why: `crates/embeddings/src/lib.rs:359`
+takes the guard into the closure, `:360-362` load, publish and stamp, and the `?` on a failed `M::load`
+unwinds the closure so the guard drops with the work instead of parking the next caller; publication
+never happens, the mapped error reaches the caller, and a later call retries a fresh load. The
+neighbouring gate sites are unchanged — `evict` holds the gate across teardown (`:264`) and
+`take_evictable` decides and takes under the slot lock (`:283-285`). Parent-observed raw output on this
+tree: `failed_load_releases_the_gate_for_a_retry` `1 passed; 0 failed; 11 filtered out` and `sysmon`
+`mem::tests::host_reports_a_plausible_memory_reading` `1 passed; 0 failed; 17 filtered out`.
+
+**Gate.** The advisory gate (`artifact://471`, log `Temp/ss-pr175-advisory-gate.log`) reported
+`sysmon_module EXIT=0` with `test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+out` and doctests `0`, then `cargo_fmt`, `cargo_clippy`, `cargo_build`, `cargo_test`, `bindings_diff`
+and `diff_check`, each `EXIT=0`. The computed workspace aggregate is exactly
+`{"suites":86,"passed":1652,"failed":0,"ignored":17}`. The full UI gate stands as history and was not
+rerun — this pass changes no UI, Node or dependency file. The commit remains the parent's step, so no
+SHA is cited for this pass.
+
 ### 2026-11-09 — Your-Universe: Localtime (standalone deliverable, not product code)
 
 **Scope.** `Your-Universe/` holds "Localtime", a self-contained Three.js living hillside district

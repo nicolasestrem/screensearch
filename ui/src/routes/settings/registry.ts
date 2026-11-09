@@ -196,7 +196,7 @@ export const SETTING_DEFS: readonly SettingDef[] = [
   // Advanced
   { key: "throttle.enabled", category: "advanced", field: "throttle_enabled",
     label: "Back off under load",
-    effect: "Pauses vision tagging and image indexing while the CPU or GPU is busy." },
+    effect: "Pauses vision tagging under sustained CPU, GPU or memory pressure. At level 2, reduces text-embedding concurrency and tries to free the AI model's memory, unless you explicitly kept it loaded." },
 ];
 
 /**

@@ -4,8 +4,13 @@ import type { PressureSample } from "./PressureSample";
 /**
  * Current state of the enrichment throttle (`get_throttle_status` command + the
  * `throttle_changed` event, `03 §7`). `level` is `0` Normal / `1` High (heavy
- * enrichment paused) / `2` Sustained (text-embed concurrency floored). `sample` is
- * `None` until the first probe reading lands; `gpu_monitored` mirrors the probe so the
- * UI can show an honest "GPU not monitored" state even before a sample exists.
+ * enrichment paused) / `2` Sustained (text-embed concurrency floored and memory
+ * relief requested). `sample` is `None` until the first reading lands; the monitored
+ * flags report available resource arms even before a sample exists.
  */
-export type ThrottleStatus = { enabled: boolean, level: number, sample: PressureSample | null, gpu_monitored: boolean, };
+export type ThrottleStatus = { enabled: boolean, level: number, sample: PressureSample | null, gpu_monitored: boolean, 
+/**
+ * Mirrors [`PressureProbe::mem_monitored`]: `false` → the memory arm is absent and
+ * throttling reads CPU/GPU pressure only (the UI says so instead of printing 0 %).
+ */
+mem_monitored: boolean, };

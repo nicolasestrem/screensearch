@@ -1112,7 +1112,13 @@ pub struct MarkToast {
 /// enrichment throttle (`03 §5`) consumes this to decide whether to back enrichment off
 /// under sustained load. `gpu_pct` is `None` and `gpu_monitored` is `false` when Windows
 /// exposes no GPU performance counters — a truthful "GPU not monitored" state, not an
-/// error; the throttle then runs on CPU pressure alone (a weak-iGPU / VM machine).
+/// error; the remaining monitored resources still drive the throttle.
+///
+/// Host memory is the third arm: `GlobalMemoryStatusEx` reports physical usage and
+/// `GetPerformanceInfo` reports system commit, so another application can drive the
+/// throttle even when ScreenSearch itself is idle. Both are usage percentages with
+/// the same exit-below-enter hysteresis convention. `mem_monitored = false` means
+/// no complete memory reading is available.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 pub struct PressureSample {
@@ -1122,6 +1128,26 @@ pub struct PressureSample {
     pub gpu_pct: Option<f32>,
     /// Whether GPU monitoring is live; `false` → the UI shows "GPU not monitored".
     pub gpu_monitored: bool,
+    /// Physical-memory **usage** %, `0..=100`: `1 - available/total`. "Available" is what
+    /// `GlobalMemoryStatusEx` reports (standby is reusable, so this is not "free RAM").
+    /// `0.0` when `mem_monitored` is `false`.
+    pub mem_used_pct: f32,
+    /// System commit-charge usage %, `0..=100`: `CommitTotal / CommitLimit` from
+    /// `GetPerformanceInfo`. Counts committed pages even before they become resident;
+    /// reserving address space alone does not consume commit.
+    pub commit_pct: f32,
+    /// Available physical memory, MiB, including reusable standby pages.
+    #[ts(type = "number")]
+    pub avail_phys_mb: u64,
+    /// Current commit charge, MiB.
+    #[ts(type = "number")]
+    pub commit_charge_mb: u64,
+    /// Committed-memory limit, MiB — RAM plus the page file's commit allowance.
+    #[ts(type = "number")]
+    pub commit_limit_mb: u64,
+    /// Whether the memory reading is live; `false` → the throttle ignores the memory arm
+    /// and the UI shows "memory not monitored" (mirrors `gpu_monitored`).
+    pub mem_monitored: bool,
     /// When this sample was taken, unix epoch ms (the kernel clock unit, `03 §4`).
     #[ts(type = "number")]
     pub sampled_at: i64,
@@ -1129,9 +1155,9 @@ pub struct PressureSample {
 
 /// Current state of the enrichment throttle (`get_throttle_status` command + the
 /// `throttle_changed` event, `03 §7`). `level` is `0` Normal / `1` High (heavy
-/// enrichment paused) / `2` Sustained (text-embed concurrency floored). `sample` is
-/// `None` until the first probe reading lands; `gpu_monitored` mirrors the probe so the
-/// UI can show an honest "GPU not monitored" state even before a sample exists.
+/// enrichment paused) / `2` Sustained (text-embed concurrency floored and memory
+/// relief requested). `sample` is `None` until the first reading lands; the monitored
+/// flags report available resource arms even before a sample exists.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 pub struct ThrottleStatus {
@@ -1139,6 +1165,9 @@ pub struct ThrottleStatus {
     pub level: u8,
     pub sample: Option<PressureSample>,
     pub gpu_monitored: bool,
+    /// Mirrors [`PressureProbe::mem_monitored`]: `false` → the memory arm is absent and
+    /// throttling reads CPU/GPU pressure only (the UI says so instead of printing 0 %).
+    pub mem_monitored: bool,
 }
 
 /// State of the opt-in local HTTP API for the Settings panel (0.3.0 PR7; `03 §7c`,

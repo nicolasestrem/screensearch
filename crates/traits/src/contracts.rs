@@ -1235,20 +1235,42 @@ pub trait BackfillControl: Send + Sync {
     fn set_backfill_active(&self, active: bool);
 }
 
-/// Reads instantaneous system CPU/GPU pressure for the smart enrichment throttle
-/// (`03 §5/§8`). Windows-native impl in `sysmon` (`GetSystemTimes` + PDH GPU-Engine
-/// counters). The kernel forbids `unsafe`, so the composition root injects this as
-/// `dyn PressureProbe` — the same seam as [`BackfillControl`] and the capture
-/// `IdleSource`, keeping the kernel dependent only on `traits` (`03 §2`).
+/// Lets the kernel's level-2 memory relief free the resident inference model even while
+/// the idle backfill is asking for keep-warm (`03 §5/§6`). Keep-warm exists so a drain is
+/// not cold-started between batches; it is not a promise to hold VRAM while the machine is
+/// out of memory, so relief outranks it. Implemented by the inference supervisor and held
+/// by the kernel as `dyn PressureRelief`, so the kernel keeps depending only on `traits`
+/// (`03 §2`).
+///
+/// Async because releasing drains an in-flight request before killing the child — the same
+/// discipline as the manual unload, and the reason this is not a plain atomic flag like
+/// [`BackfillControl::set_backfill_active`].
+#[async_trait]
+pub trait PressureRelief: Send + Sync {
+    /// Frees the resident model's committed RAM and VRAM now. Returns `true` when a
+    /// resident process was actually released, `false` when nothing was resident or the
+    /// model is pinned by an explicit user load (`03 §6`).
+    async fn release_memory(&self) -> bool;
+}
+
+/// Reads instantaneous system CPU/GPU/memory pressure for the enrichment throttle
+/// (`03 §5/§8`). Windows-native impl in `sysmon` (`GetSystemTimes`, PDH GPU-Engine
+/// counters, `GlobalMemoryStatusEx`, `GetPerformanceInfo`). The kernel forbids `unsafe`,
+/// so the composition root injects this as `dyn PressureProbe`, like [`BackfillControl`]
+/// and the capture `IdleSource`, keeping the kernel dependent only on `traits` (`03 §2`).
 ///
 /// **Infallible by contract:** a failed or absent reading degrades to a truthful sample
 /// (best-effort CPU, `gpu_pct = None`, `gpu_monitored = false`), never an error —
 /// mirroring the sidecar flag probe's "degrade, don't fail" stance (`inference::flags`).
 /// So the throttle loop can sample on a hot path without error handling.
 pub trait PressureProbe: Send + Sync {
-    /// Samples CPU (always) and GPU (when monitored) at this instant.
+    /// Samples CPU (always), GPU (when monitored) and host memory (when monitored) at
+    /// this instant.
     fn sample(&self) -> PressureSample;
     /// Whether GPU monitoring is live — lets the UI show the honest "GPU not monitored"
     /// state without taking a full sample. Cheap.
     fn gpu_monitored(&self) -> bool;
+    /// Whether both host-memory readings are available. The native probe queries
+    /// physical memory and system commit without changing its CPU/GPU baselines.
+    fn mem_monitored(&self) -> bool;
 }

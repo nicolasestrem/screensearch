@@ -9,6 +9,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed: the enrichment throttle can see memory, and level 2 now releases the vision model
+
+**Baseline, measured on the installed 0.4.5 build before any change**, on the maintainer's box
+(RTX 5060 Ti 16 GB, 32 GB RAM, screenpipe capturing alongside): while the vision sidecar was
+loaded it held ~5.8 GB of available physical RAM, ~8.4 GB of commit charge and ~6.8 GB of VRAM, and
+the in-process embedding model held 1233 MiB of private bytes while completely idle. Neither was
+reachable by the shipped throttle, because back-to-back `vision_tag` batches pin CPU at 100 % and
+would have throttled the app during its own work. These are baseline numbers, not a measurement of
+this branch's build.
+
+- **The throttle now watches host memory, not just CPU/GPU.** A third arm reads whole-machine
+  physical usage and system commit charge every sample (two Windows calls, and both must succeed —
+  the commit total and the limit it is compared against come from one `GetPerformanceInfo`
+  snapshot) and feeds both into the same hysteresis machine. This is the case the CPU/GPU arms
+  cannot see: a machine that is out of RAM while ScreenSearch is idle — a large editor, another
+  recorder, a wall of browser tabs — where `vision_tag` claims are simply not happening and
+  nothing throttles.
+  Commit charge catches the other half: a process that has committed far more memory than it is
+  actively using, before physical RAM actually runs out. Either reading at its enter threshold
+  raises the level; both must cool below their exit thresholds before a level can drop. Defaults are
+  90 %/80 % for both. On this box that sits above the app's own measured vision peak (77 % physical,
+  67 % commit), so with these defaults it does not throttle itself during its own vision batches
+  here — but the arm is not promised to stay quiet on a host whose own workload crosses 90 %, which
+  is exactly why the thresholds are settings rather than fixed behaviour.
+- **Level 2 releases the vision model.** Pausing `vision_tag` frees no memory — the sidecar holds it.
+  On the transition into Sustained the governor now asks the supervisor to unload the resident
+  `llama-server` through the same gate-then-kill path as the manual Unload control, so a starved
+  machine is meant to get its VRAM and commitment back instead of only its workers paused. Relief
+  outranks the idle backfill's keep-warm (a drain exists to avoid cold starts, not to hold memory a
+  machine needs), never an explicit user preload: a pinned model stays and the skip is logged per
+  rule A. It is edge-triggered on entering the level, so a long starvation window cannot become a
+  kill/reload loop. The Settings copy says the app tries to free the AI model's memory unless the user
+  explicitly kept it loaded — a try can be skipped (kept loaded) or refused (nothing resident), so it
+  does not claim a release happened.
+- **The embedding model unloads after 15 idle minutes.** fastembed now lives behind a lazy holder that
+  loads on first embed (or eagerly at startup, so a first search is not cold), reports its dimension
+  and model name without loading, single-flights concurrent loads, and drops the ONNX session once
+  `enrich.embed_idle_ttl_secs` (default 900, `0` = never) has passed with no embed. A session an embed
+  still holds is never dropped mid-flight: the sweep and the manual unload return `false` and leave it
+  resident, and the load gate spans teardown so a reload cannot overlap it. That gate belongs to the
+  load, not to the search waiting for it: a load that is still running finishes and keeps its result
+  even when the search that started it was abandoned, so the next search reuses that model instead of
+  starting a second copy beside the first. The baseline above was 1352 MiB private with the embedder
+  resident and 119 MiB with embeddings disabled; the 119 MiB came from a different configuration. An
+  isolated harness with the real cached model verified the lifecycle narrowly: 7 MiB before load →
+  1228 MiB loaded → 26 MiB after the idle sweep (TTL 2 s) → 1234 MiB after reload, with an identical
+  768-dim query vector (max diff 0). That is the holder, not the whole app: it does not establish the
+  app's idle footprint, and the reload latency is still untimed.
+- **Settings · Advanced and the StatusRail show memory truthfully.** The throttle readout in
+  Settings · Advanced gains `RAM 71% (8.3 GiB available)` and a Commit percentage from the same
+  sample as the usage number, reports available memory rather than calling it "free", says "not
+  monitored" rather than printing 0 % when a reading is unavailable, and its level-2 line says the app
+  tries to free the AI model's memory unless the user explicitly kept it loaded. The rail tooltip
+  adds the RAM and commit percentages to its CPU/GPU line. All five new keys (four memory thresholds,
+  one idle TTL) are `file-only` in `advanced.toml`, so the closed 26-key UI ceiling is untouched.
+
+Status: implementation on `feat/memory-pressure-throttle`. The final ordered gate ran every build and
+test stage green — `ui_ci/lint/build`, the staged MCP sidecar, `cargo fmt`, clippy with `-D warnings`,
+`cargo build` and `cargo test` all exited 0, with the full workspace reporting 86 suites / 1650 passed
+/ 0 failed / 17 ignored and the four regenerated bindings unchanged across the test run. The app
+itself was not run for memory: the harness above covers only the embedder lifecycle, so no
+changed-build footprint, reload latency or native acceptance is claimed. At gate3 time the binding
+guard exited non-zero only because nothing was committed; the user has since authorized the commit on
+the new branch `feat/system-memory-relief`, with the generated bindings staged and
+`git diff --exit-code -- ui/src/bindings` now exiting 0 with no output, so the guard is satisfied by
+the staged tree — nothing is committed yet.
+
 ### Fixed: a settings save stops warning about hotkeys, Ask shows its answers as Markdown, Settings rows line up
 
 - **Saving any setting no longer re-registers an unchanged global hotkey, and no longer shows a
