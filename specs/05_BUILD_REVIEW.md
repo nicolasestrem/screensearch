@@ -131,4 +131,6 @@ Fixes are in `328f83a`'s successors on `feat/your-universe-localtime`; `index.ht
 since none of the three tools is part of the generated bundle. The regression gate is deliberately
 separate from `check.mjs`, which spawns nothing and stays a static check over `src/` and the bundle.
 The CodeQL analysis of the fix commit reports `results=0` for javascript-typescript, against 5 for
-the commit before it, so the alerts clear by the fix rather than by dismissal.
+the commit before it. The alerts are not dismissed and their `state` field is still null once that
+analysis has run, and `?state=open` lists none of them, so the evidence that they are resolved is the
+analysis result; the security page settles the alert state on the default-branch scan after merge.
