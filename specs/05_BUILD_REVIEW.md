@@ -230,11 +230,11 @@ in between records that a user model exists, which is what makes the ordering al
 |---|---|---|---|
 | 9 | `src/main.mjs:721` — the replaced world's shadow render target is never disposed | valid, proved | deferred to `07`; the disposal needs a light branch in `disposeGroup`, and `setShadowMapSize(0)` already releases the target |
 
-Finding 9 holds end to end: `world.mjs:10572` adds the sun to the group that `install()` disposes,
+Finding 9 holds end to end: `world.mjs` adds the sun to the group that `install()` disposes (`group.add(sun)`, line 10321 at this commit),
 `disposeGroup` traverses that group, and line 721 returns for every object without a material, which a
 `DirectionalLight` is, so `sun.shadow.map` survives the disposal of the only thing that referenced it.
 The map is the largest target the app allocates, so repeated imports in one session accumulate one per
 import, and the GPU allocation is released only when the page unloads. `setShadowMapSize(0)`
-(world.mjs:10604) already disposes the map and nulls it, which is why the fix needs no new mechanism.
+(line 10353 at this commit) already disposes the map and nulls it, which is why the fix needs no new mechanism.
 
 
