@@ -130,3 +130,5 @@ exactly what made the suffix attacks fall on the refused side before and after.
 Fixes are in `328f83a`'s successors on `feat/your-universe-localtime`; `index.html` is unaffected,
 since none of the three tools is part of the generated bundle. The regression gate is deliberately
 separate from `check.mjs`, which spawns nothing and stays a static check over `src/` and the bundle.
+The CodeQL analysis of the fix commit reports `results=0` for javascript-typescript, against 5 for
+the commit before it, so the alerts clear by the fix rather than by dismissal.
