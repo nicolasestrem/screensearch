@@ -57,3 +57,13 @@ page. So its cache name carries the payload's own digest, and `check-dom.mjs` fa
 disagree; run `stamp-sw.mjs` after `pack-assets.mjs`. Offline, a reload draws the identical frame it
 drew online, including the same draw calls and triangles, with `favicon.ico` the only failed
 request.
+
+It stores one key per document and one per asset, never one per URL you happened to open: the query
+string is not part of a key, because `tools/serve.mjs` serves the same bytes for every `?hour=`,
+`?post=` and `?cb=` variant. A first load ends with twelve entries: the shell, the sample, the
+manifest, six packs and three modules, 6.1 MB, and a later navigation rewrites that one shell entry
+instead of adding a copy: eight navigations left the count at twelve with `storage.estimate().usage`
+unchanged, where the per-URL key it replaces reached twenty-three entries in eleven navigations and
+1.15 MB per visit. Install writes only entries the cache does not already hold, and activation drops
+the query-keyed entries an older worker left behind.
+

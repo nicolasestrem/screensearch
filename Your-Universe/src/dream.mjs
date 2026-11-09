@@ -875,6 +875,11 @@ export function createDream(THREE, world, model, agents, rig, ui) {
   function buildCardTexts() {
     cardTexts.length = 0;
     if (!hasPair) return;
+    // A pair whose road is already taken has nothing to offer: the asphalt, the light strip and
+    // the market are the answer the owner already gave. Without this, a pair carrying two
+    // hypotheses would re-offer its second word after the first was taken, against a road that
+    // is already permanent.
+    if (roadMode === 2 && permKey === pairKey) return;
     const nameA = quarterName(pairA);
     const nameB = quarterName(pairB);
     for (let i = 0; i < pairWords.length && cardTexts.length < CARD_LIMIT; i++) {
@@ -1810,6 +1815,28 @@ export function createDream(THREE, world, model, agents, rig, ui) {
     layoutWorks();
     layoutMarket();
     buildCardTexts();
+    // A road taken in an earlier session is permanent from the first frame. `take()` shows the
+    // asphalt, the light strip and the market in the daylight scene at the moment of taking;
+    // without this the same road boots hidden and only reappears the next time the owner
+    // sleeps, which is not what the button promised. The check is the pair's own sentence,
+    // built exactly as `buildCardTexts` builds it, so a stored line from a different pair (or a
+    // different export's quarter names) never lights a road it does not belong to.
+    const takenA = quarterName(pairA);
+    const takenB = quarterName(pairB);
+    for (let i = 0; i < pairWords.length; i++) {
+      const takenLine = "The word '" + pairWords[i] + "' kept appearing in both " + takenA + ' and ' + takenB + '. Open a note that joins them?';
+      if (takenList.indexOf(takenLine) === -1) continue;
+      roadPermRibbon.geo.setDrawRange(0, RING);
+      roadPerm.visible = true;
+      roadProv.visible = false;
+      roadGhost.visible = false;
+      roadGlow.visible = false;
+      matGlow.opacity = 1;
+      roadMode = 2;
+      permKey = pairKey;
+      showMarket(true);
+      break;
+    }
   } else {
     // No usable pair: the dream can only darken and quiet the district.
     hasPair = false;
@@ -1836,6 +1863,7 @@ export function createDream(THREE, world, model, agents, rig, ui) {
     setDataModel: setDataModel,
     notifyGap: notifyGap,
     warm: warm,
+    clearCards: hideCards,
     get state() { return state; },
     // Read-only measurement hooks for the screenshot harness: the middle of the
     // provisional ribbon at road level, and the length of that ribbon. The getter

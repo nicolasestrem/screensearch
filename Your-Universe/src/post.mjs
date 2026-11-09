@@ -52,24 +52,24 @@
 // Grade: the composite warms the midtones in daylight (deep shade and highlights
 // keep their own colour, and saturation is restored so greens and greys stay
 // crisp), lifts the highlights a little warmer, lifts the midtones by a small
-// daylight exposure that black does not feel, grades shade and distance toward
-// violet-blue, adds a barely visible vignette, and lifts near-black pixels toward
-// a deep blue at night. Warm and cool therefore contrast in the same frame: the
-// town keeps the sun's warmth in its midtones and highlights while the shade of
-// its streets and the distance behind it carry the sky's cool. The cool grade is
-// a per-pixel mix keyed on luminance and on height in the frame, which the fixed
-// 40 degree pitch makes a stable depth proxy, with three keys and one target: the
-// global shade key (near-black), the distance key (upper frame) and the
-// lower-frame shade key, which widens the luminance range and weighs itself
-// toward the bottom of the frame so the street and the near hillside read cool
-// too. Its target is luma-constant, so the tonal structure and the edge contrast
-// are not disturbed. The day and night amounts come from the scene haze colour,
-// read once per frame. Every day term is multiplied by exactly zero at night, so
-// the night frame stays bit-identical. Night stays deep blue, never black: the
-// night floor is almost pure blue (1.0 against 0.05 red and 0.12 green), so the
-// darkest pixels cannot settle on the grey-green the ambient moon and haze leave
-// behind, and because blue carries little luminance the lift costs the night none
-// of its edge contrast.
+// daylight exposure that black does not feel, washes the shade and the distant
+// air toward a value-matched warm cream and gold, adds a barely visible vignette,
+// and lifts near-black pixels toward a deep blue at night. Warm and cool
+// therefore contrast in the same frame: the town keeps the sun's warmth in its
+// midtones and highlights while the sky's blue survives in the cleared upper air
+// and the deep blue night floor carries the dark. The warm washes are per-pixel
+// mixes. Two shade keys (the global near-black key and the lower-frame key, which
+// widens the luminance range and weighs itself toward the bottom of the frame)
+// share the near and far cream targets; the distance key is its own band and its
+// own golden target (see the constants below: it peaks over the horizon haze and
+// is gone by the top of the frame so the blue sky is never painted over). Every
+// target is value matched, so tonal structure and edge contrast are not
+// disturbed. Every day term is multiplied by exactly zero at night, so the night
+// frame stays bit-identical. Night stays deep blue, never black: the night floor
+// is almost pure blue (1.0 against 0.05 red and 0.12 green), so the darkest
+// pixels cannot settle on the grey-green the ambient moon and haze leave behind,
+// and because blue carries little luminance the lift costs the night none of its
+// edge contrast.
 //
 // A night white guard in the same pass closes the one hole the additive emitters
 // leave. Two near-neutral night sources over one pixel (the dream's unlit road
@@ -94,11 +94,11 @@
 // that is a depth proxy only at the district distance, where the rig frames the
 // whole bounds sphere and everything in the upper frame really is far away. At
 // the block and street tiers the camera stands close enough that the upper frame
-// holds geometry a couple of hundred metres off, and a full-strength key paints
-// that near city slate violet: a monochrome grey town. setDistanceGrade(k) scales
-// only the distance amount by k (0..1), so main can weight the key by the camera's
-// distance to its look-at. The height key and the luminance key inside the
-// distance term, and both shade keys, are untouched.
+// holds geometry a couple of hundred metres off, and a full-strength key would
+// paint that near city as distant air. setDistanceGrade(k) scales only the
+// distance amount by k (0..1), so main can weight the key by the camera's
+// distance to its look-at. The band, the bright exclusion inside it, and both
+// shade keys are untouched.
 //
 // setSize(w, h) takes CSS pixels, exactly like renderer.setSize(). The device
 // pixel ratio is read from the renderer, so a ratio change (browser zoom, monitor
@@ -172,21 +172,49 @@ export function createPost(THREE, renderer, scene, camera, opts) {
   // Shade and distance grade. Shade is the low-luminance end (surfaces lit by
   // sky ambient only). Distance is a screen-height key, which is only a depth
   // proxy at the district tier, and even there the far hills carry their own
-  // haze in the terrain's vertex colours and the scene fog. The key therefore
-  // starts in the top fifth of the frame and stays mild. Its daylight target is
-  // a warm value-matched haze, not the old violet: a violet target mixed with
+  // haze in the terrain's vertex colours and the scene fog. Its daylight target
+  // is a warm value-matched haze, not the old violet: a violet target mixed with
   // the warm sky was the smeared purple band over the distant hills. Night is
   // multiplied out by the day term, so its palette is untouched.
+  //
+  // Cycle 22: the distance leg is its own band and its own mix. A key that rose
+  // straight to the top edge was strongest exactly where the sky is bluest and
+  // weakest at the horizon, which is the one place golden-hour air is warm; the
+  // measured result was a neutral grey fringe band (saturation under the 0.12
+  // warm threshold) across rows 15 to 25 percent, and a sunlit warm share of
+  // 73.8 against cycle 20's 76.7. The key now peaks over the horizon band (rows
+  // 14 to 26 percent), has fallen away by row 5 percent so the blue top of the
+  // sky keeps its colour, and the target is a saturated golden veil rather than
+  // a near-grey one, so the veil raises the haze's saturation instead of
+  // washing it out. Both constants below the shade key are the shade legs' own
+  // targets and are untouched by this leg.
   const COOL_SHADE_LO = 0.006;
   const COOL_SHADE_HI = 0.034;
-  const COOL_DIST_LO = 0.80;
-  const COOL_DIST_HI = 1.0;
+  const COOL_DIST_LO = 0.62;
+  const COOL_DIST_HI = 0.76;
+  const COOL_DIST_TOP_LO = 0.86;
+  const COOL_DIST_TOP_HI = 0.96;
   const COOL_SHADE_AMOUNT = 0.9;
-  // A veil, not a coat: at full strength the old distance key replaced the far
-  // hills' own hue with the grade target, which is how the warm haze turned into
-  // a flat band. A third of that strength keeps the sky's blue and the ridge
-  // layers' own values visible through the warm air.
-  const COOL_DIST_AMOUNT = 0.18;
+  // The distance veil's strength, and the golden target it mixes to: linear
+  // multipliers on the pixel's own peak channel, so the veil is value matched
+  // and only hue and saturation move. 1 / 0.84 / 0.65 sits at hue about 33
+  // degrees with saturation about 0.19 encoded, inside the golden family and
+  // clear of the 0.12 warm threshold at every value the haze reaches.
+  const COOL_DIST_AMOUNT = 0.55;
+  const COOL_DIST_R = 1.0;
+  const COOL_DIST_G = 0.84;
+  const COOL_DIST_B = 0.65;
+  // The shade legs' own targets, warmed in the same measured pass: the value-matched near
+  // cream carries the shadowed walls and the lower frame, and the far cream the near-black
+  // end. Both were 1.010/0.945/0.835 and 0.995/0.975/0.880; the warmer targets lift the
+  // shadowed side of the frame by about 1.5 warm points without touching the sunlit side,
+  // which holds the warm-cool contrast the photograph needs.
+  const COOL_SHADE_R = 1.045;
+  const COOL_SHADE_G = 0.905;
+  const COOL_SHADE_B = 0.74;
+  const COOL_FAR_R = 1.0;
+  const COOL_FAR_G = 0.955;
+  const COOL_FAR_B = 0.83;
   // Lower-frame shade: the same warm veil, but on a wider luminance key and
   // weighted toward the bottom of the frame. The
   // global shade key above only reaches near-black, where the distance key does
@@ -209,8 +237,13 @@ export function createPost(THREE, renderer, scene, camera, opts) {
   const DAY_EXPOSURE = 0.06;
   const EXPOSURE_LO = 0.20;
   const EXPOSURE_HI = 0.34;
-  const EXPOSURE_TOP_LO = 0.80;
-  const EXPOSURE_TOP_HI = 0.98;
+  // Cycle 22: the gate used to close above an encoded midpoint of 0.80, but the frame's
+  // brightest warm surfaces (encoded midpoint about 0.65) were taking the full gain and
+  // were the ones sitting on the red ceiling: any-channel clipping read 1.438 percent
+  // against the brief's 1.2 percent line. Closing the gain above 0.66 leaves every
+  // midtone lift intact and stops the gain on the near-ceiling pixels only.
+  const EXPOSURE_TOP_LO = 0.66;
+  const EXPOSURE_TOP_HI = 0.86;
   const VIGNETTE = 0.09;
   // Post chain resolution knob.
   const MIN_SCALE = 0.5;
@@ -288,7 +321,12 @@ export function createPost(THREE, renderer, scene, camera, opts) {
     uniform float uShadeHi;
     uniform float uDistLo;
     uniform float uDistHi;
+    uniform float uDistTopLo;
+    uniform float uDistTopHi;
+    uniform vec3 uDistHaze;
     uniform float uShadeAmt;
+    uniform vec3 uNearHaze;
+    uniform vec3 uFarHaze;
     uniform float uDistAmt;
     uniform float uDownLo;
     uniform float uDownHi;
@@ -381,17 +419,17 @@ export function createPost(THREE, renderer, scene, camera, opts) {
       // uniform channel multiply leaves hue and saturation exactly as they are
       // and only the value moves.
 
-      // Warm shade and distance grade. Two keys drive one per-pixel mix. The
-      // shade key is low linear luminance, where the stone is lit only by sky
-      // ambient; the distance key is height in the frame, a stable depth proxy
-      // at the rig's fixed pitch, so the far hills and the sky sit in the upper
-      // frame. Bright pixels are excluded from the distance key, so the sun disc
-      // and sunlit stone keep their own colour. Both legs are warm and
-      // value-matched, and the distance leg is applied as a light veil, so the
-      // hills keep their own blue-to-cream layering instead of being replaced by
-      // one flat grade hue.
+      // Warm shade and distance grade. The shade legs (shadeKey, downKey) are
+      // low linear luminance, where the stone is lit only by sky ambient. The
+      // distance leg is its own band keyed on height in the frame: it peaks over
+      // the horizon haze (rows 14 to 26 percent), is gone by row 5 percent so
+      // the blue top of the sky keeps its colour, and excludes bright pixels so
+      // the sun disc and sunlit stone keep their own colour. It mixes to the
+      // saturated golden target below, which is what gives the far air its hue
+      // instead of the grey it had when the target was nearly neutral.
       float shadeKey = 1.0 - smoothstep( uShadeLo, uShadeHi, luma );
       float distKey = smoothstep( uDistLo, uDistHi, vUv.y )
+        * ( 1.0 - smoothstep( uDistTopLo, uDistTopHi, vUv.y ) )
         * ( 1.0 - smoothstep( 0.42, 0.95, luma ) );
       // The lower-frame key: a wider luminance key, faded in toward the bottom
       // of the frame. It only reaches shade (linear luma under about 0.05), so
@@ -401,7 +439,6 @@ export function createPost(THREE, renderer, scene, camera, opts) {
       float downMask = 1.0 - smoothstep( uDownFadeLo, uDownFadeHi, vUv.y );
       float coolShade = smoothstep( 0.30, 0.70, shadeKey );
       float coolDown = smoothstep( 0.25, 0.75, downKey ) * downMask;
-      float coolDist = smoothstep( 0.55, 0.92, distKey );
       float coolValue = max( max( c.r, c.g ), c.b );
       // Two warm, value-matched targets. The near leg is a light cream, the far
       // leg a pale warm haze; both carry most of the pixel's own value, so tonal
@@ -410,15 +447,24 @@ export function createPost(THREE, renderer, scene, camera, opts) {
       // the old rose-to-violet path was what dragged every far crest into
       // purple, and the night frame never sees either target because the whole
       // term is multiplied by the day weight.
-      vec3 nearHaze = coolValue * vec3( 1.010, 0.945, 0.835 );
-      vec3 farHaze = coolValue * vec3( 0.995, 0.975, 0.880 );
-      float coolMix = max( max( coolShade * uShadeAmt, coolDown * uDownAmt ), coolDist * uDistAmt ) * day;
+      vec3 nearHaze = coolValue * uNearHaze;
+      vec3 farHaze = coolValue * uFarHaze;
+      float coolMix = max( coolShade * uShadeAmt, coolDown * uDownAmt ) * day;
       // The near leg takes the first part of the ramp and the far leg the top,
       // so the shaded foreground and the top band both settle on a warm veil
       // instead of crossing a cold midpoint.
       float toNear = smoothstep( 0.10, 0.45, coolMix );
       float toFar = smoothstep( 0.35, 0.80, coolMix );
       c = mix( mix( c, nearHaze, toNear ), farHaze, toFar );
+
+      // Distance air: a golden veil on the same value-matched rule, with its own
+      // target and its own strength (uDistAmt, which setDistanceGrade scales and
+      // nothing else). Multiplied by day, so the night and dream frames are
+      // untouched, and by the same bright exclusion through distKey, so the sun
+      // disc and the sunlit crests keep their colour.
+      float distMix = smoothstep( 0.45, 0.85, distKey ) * uDistAmt * day;
+      float distValue = max( max( c.r, c.g ), c.b );
+      c = mix( c, distValue * uDistHaze, distMix );
 
       // Near-black floor, split in two so the daylight term is untouched. In
       // daylight a quarter strength of the old floor stays under the shadows and
@@ -466,8 +512,10 @@ export function createPost(THREE, renderer, scene, camera, opts) {
       // A small exposure lift, keyed on the encoded midpoint (max + min) / 2, the
       // same lightness the dark share is measured on. The gate opens at 0.20,
       // above the 0.18 dark threshold, so a pixel that reads as dark is
-      // bit-for-bit untouched, and it closes again in the last fifth of the
-      // range so highlights never clip. Scaling the encoded channels by one
+      // bit-for-bit untouched, and it closes from 0.66 so the brightest warm
+      // stone takes no gain and the near-ceiling values are never pushed over a
+      // channel (cycle 22: the close used to sit at 0.80 and left 1.438 percent
+      // of the day frame on the red ceiling). Scaling the encoded channels by one
       // factor moves value only: hue and saturation are exactly preserved, so no
       // surface leaves its colour family. Multiplied by day, so the night frame
       // is untouched.
@@ -583,7 +631,12 @@ export function createPost(THREE, renderer, scene, camera, opts) {
       uShadeHi: { value: COOL_SHADE_HI },
       uDistLo: { value: COOL_DIST_LO },
       uDistHi: { value: COOL_DIST_HI },
+      uDistTopLo: { value: COOL_DIST_TOP_LO },
+      uDistTopHi: { value: COOL_DIST_TOP_HI },
+      uDistHaze: { value: new THREE.Vector3(COOL_DIST_R, COOL_DIST_G, COOL_DIST_B) },
       uShadeAmt: { value: COOL_SHADE_AMOUNT },
+      uNearHaze: { value: new THREE.Vector3(COOL_SHADE_R, COOL_SHADE_G, COOL_SHADE_B) },
+      uFarHaze: { value: new THREE.Vector3(COOL_FAR_R, COOL_FAR_G, COOL_FAR_B) },
       uDistAmt: { value: COOL_DIST_AMOUNT },
       uDownLo: { value: COOL_DOWN_LO },
       uDownHi: { value: COOL_DOWN_HI },

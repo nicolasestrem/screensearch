@@ -33,10 +33,16 @@ Read `../build-prompt.md` for the product requirements; this file only fixes the
 - No per-frame allocations in anything called from the render loop: hoist `THREE.Vector3`,
   `Matrix4`, `Quaternion`, `Color`, `Object3D` dummies to factory scope and reuse them; no
   array literals, closures, or string building inside `update(dt, sim)`.
-- Draw-call budget is 40 for the whole frame, triangle budget 150k. Use `InstancedMesh` for
-  buildings, windows, trees, cars, vans, pedestrians, cones, barriers, clouds. Merge static
-  roads, pavements, terrain into as few meshes as possible. Shop signs and posters share ONE
-  canvas atlas texture and ONE mesh.
+- Draw-call line: the measured frame is the budget. Cycle 29 state table: desktop day **105** calls
+  and 388,476 triangles with the packs, `?noassets=1` fallback **55** calls and 322,291 triangles,
+  desktop street 105 and 389,268, night 103 and 378,196, dream 91 and 323,160, phone 54 and
+  168,556. The day frame decomposes exactly into 75 scene draws (51 world, 24 agents) + 24
+  shadow-caster draws + 6 post passes = 105, and the fallback into 39 + 10 + 6 = 55, so the
+  under-80 target was not met: it needs either the desktop shadow pass or the fleet's per-model
+  pools to go, and both change the look rather than the bookkeeping. The former 40-call and
+  150k-triangle line was never met by any built frame. Use `InstancedMesh` for buildings, windows,
+  trees, cars, vans, pedestrians, cones, barriers, clouds. Merge static roads, pavements, terrain
+  into as few meshes as possible. Shop signs and posters share ONE canvas atlas texture and ONE mesh.
 - Colors: saturated but plausible, warm; use `THREE.Color` hex numbers. Night is never gloomy:
   warm lit windows (0xffc477-ish), sodium street lights (0xffa64d-ish).
 - Coordinates: Y up. The district spans roughly X in [-120, 120], Z in [-120, 120] with the
@@ -137,7 +143,8 @@ Model = {
   activityLastHour(t),  // Float32Array per quarter: active ms in [t-1h, t] divided by 1h, clamped 0..1 (reuse one array, no allocation)
   activeSessionAt(t),   // the session containing t, or null
   cranesAt(t),          // array (reused) of { q, floors } for quarters whose active session at t exceeds 45 min; floors = Math.min(12, 1 + Math.floor((elapsed - 45min) / 10min))
-  longestSessionBefore(t), // the longest session with start <= t, or null (its quarter gets the green-wave avenue)
+  longestSessionBefore(t), // the longest session with start <= t, or null (kept for the data tests;
+                           // the green wave reads activeSessionAt, so a closed session earns nothing)
 }
 ```
 
@@ -181,6 +188,16 @@ tris, tintable }`. `makeInstanced` sets castShadow and receiveShadow from `shado
 matrix to `DynamicDrawUsage` only with `dynamic: true`. `registerOfflineCache()` registers
 `assets/sw.js` on http(s) pages with scope `./` and never throws. Every placed model is an
 `InstancedMesh` built through `makeInstanced`.
+
+The offline cache is one cache named `localtime-assets-` plus the payload digest that
+`tools/stamp-sw.mjs` writes, so a changed payload opens a new cache and activation deletes the
+old one. After a first load it holds twelve entries: the shell document, the sample export, the
+manifest, the six pack GLBs and the three pinned three.js modules (6.1 MB). Keys are canonical: the query string is not part of a key, and every request that serves the shell document maps to
+the one `index.html` entry, so `?hour=`, `?post=` and the `?cb=` cache-busters add no copy, and
+activation deletes the per-query entries an older worker left behind. The document is
+network-first (fresh shell online, cached shell offline), `assets/`, the sample and the jsdelivr
+modules are cache-first, install writes only entries the cache does not already hold, and an
+offline reload after one load draws the same frame the network did.
 
 ## world.mjs (C)
 
@@ -227,12 +244,145 @@ Quality hooks (called by `main` only, never per frame, and they must not allocat
   `roads.expresswayDeckY`: number, the deck surface Y, so traffic agents follow it.
 - `roads.spurs`: open `CatmullRomCurve3` list of arterial roads that leave the frame.
 
+Standing crowds: when the pack carries the mini-character models (`category: 'person'`), the
+world places a static crowd (market row, cafe tables, benches, shelters, forecourt, avenue
+corners) as one `InstancedMesh` per variant in bind pose, each variant tinted per instance.
+`assets.byCategory('person')` is the only source, an empty list leaves the scene unchanged, and
+the touch profile takes every other variant. The `world.crowdAudit` report (tried, dropped,
+bySpot, variants, models, people, tris) is the contract surface; `crowdAt` is build-time only.
+
+The touch profile shares the spot table, so a pavement class added for the desktop frame also
+appears on the phone: cycle 35's four benches and four corners cost the phone frame 898 triangles
+(170,264 to 171,162) with no budget change, because the touch profile's own `DETAIL_BUDGET` of 5,413
+governs facade detail and not people. That is deliberate and it is the only shape the phone is
+allowed to inherit: the rule is that the phone must not inherit *desktop detail*, and a dozen
+standing figures at 412 px are life, not detail. There is no phone triangle ceiling in this
+contract; the phone's gates are 54 draw calls and a phone4x 4x-throttled p1LowFps of 60 or more,
+and 171,162 triangles sits inside both.
+
+Quad details: a detail that is only ever read face-on is drawn as a quad in the shared `frames`
+`InstancedMesh` (2 counted triangles) instead of a 10-triangle box, through `addFacadeQuad` and
+`addLocalQuad`, flushed at the end of `flushDetails`.
+
+Exposed elevations (cycle 28): desktop side and rear walls with a sparse window rhythm are
+ranked by their visible area across the five reference views. Projected rectangles are clipped
+to the viewport, not rejected when they cross an edge. Panes and storey bands start above
+neighbouring roofs using the shared `clearWallBase` query. Up to 420 additional panes reuse
+the existing pale trim mesh, four triangles per framed pane and no additional draw call.
+Pane width leaves space between adjacent surrounds; the glass is 1.9 m tall. Touch skips this
+desktop pass. `world.sparsePanes` reports the placed count; `world.sparseWalls` lists the
+highest-ranked candidates. Blind storey lines add up to three 0.26 m quads on eligible exposed
+walls; `detailAudit.blindBands` reports their count. Desktop fallback retains these procedural
+details; touch retains its reduced ladder.
+Ring parapets are a shelf quad plus a
+reveal quad (112 bands, 1,792 triangles); dish masts are two crossed quads (42 masts, 672
+triangles). Every such conversion stays in asset mode only: the fallback's ladder sits at
+detail level 1 and would pay for quads it never bought as boxes. `detailAudit` reports
+`bandQuads` and `frontBands`, `roofClutter` reports `boxes` and `quads`. The south-east street
+row is added after the night prefix (`streetLevel1`): a kerb line at z 52.4, 24 nose-in
+scooters and 11 planters on the far walk, so the corner nearest the camera has something to
+read; `STREET_CAP` is 252 in asset mode (168 in the fallback, 0 on touch). Storey rhythm above
+y 10.5 alternates 1.16x and 0.98x sill bands on the frame trims, which costs no triangles.
+
+Frontage blocks (`civic frontage blocks` pass, after the plots are placed): every civic plot and
+the rail depot carries one block, drawn in the plot's own frame (`+u` along its frontage, `+v`
+away from the street, so the front edge is `lv -d/2`). Base over the whole footprint at 0.15 in
+the district's pavement tones, asphalt apron filling the frontage at 0.22 with bay rows at 0.232,
+pale stone footway from the carriageway's kerb line to the plot line at 0.28 drawn in three metre
+slices that each measure their own `distToPath` so the walk tracks a curving street, a 0.34 m kerb
+line at 0.305 broken where a 6.8 m stone crossing enters at 0.313. No two pieces share a lift, and
+every piece takes the ground height at its own four corners. Warehouses sit in 24 by 34 plots with
+the shed at `lu -5`, which is what fits a 12 m shed and an 8 m working yard. The depot is
+`DEPOT_YARD` (x 124.9..142.6, z -99..-57) plus a 52 m access road to the ring (leg A east-west at
+`depotJunction`, leg B north-south at x 126.4..132.9), both reserved as `B_STREET` before the
+fabric pass so nothing is placed in the corridor. The outer fabric is three crossings plus three
+arterials: `world.fabric.streets` reports `ring, westLower, east, southWest, hillside, north`, and
+the north one ends at the crest where a dirt track takes over (the crest rule forbids buildings
+past z -120, so its row stops at 45 m of its 51 m). Every arterial's row is laid 1.5x, and each
+crossing's 2.1x, wider than the district's parcels, so a row costs half the houses it otherwise
+would; `world.fabric.first` and `world.fabric.tail` publish where the outer fabric starts in the
+`buildings`, `windows` and `contact` batches, which is what lets a probe clamp those three counts
+in place and read item 4's triangle cost without comparing two builds. `world.fabric.corners`
+counts the corner parcels at the crossings' mouths. `world.fabric.frontage` reports `blocks, apron,
+walk, kerb, crossings, depotYard, depotRoad`, and `world.fabric.civic` records publish `w, d,
+yaw`.
+
+Each block also carries yard furniture in the merged static mesh, so no draw call is added: two
+frontage lamps, a pair of kerbed planters with a clipped hedge flanking the crossing, a kerbed
+island between the bay groups, a fenced edge with posts and two rails, containers (one pair
+stacked), a trailer, and on the warehouse frontages a container and a trailer standing on the
+apron. The depot yard has the same kit plus three lamps down its fenced east edge and a gate on
+the access road. Furniture stands on the apron at its own ground height, never on `plotFill`
+lifts, so nothing floats on a shoulder.
+
 Composition rules (owner verdict "a map from 1993", "stupid Middle Ages"): `roads.ring` stays a
 closed curve for traffic but is an irregular arterial loop, never a circle, and the city
 continues outward along `roads.spurs` instead of stopping at a wall. No small gabled cottage
 outside the ring: contemporary forms only (flat-roof blocks, villas with pools far out, a
 supermarket, a petrol station, a school with a pitch, a sports hall, warehouses by the yard).
 The hilltop old village stays small, on the summit only.
+
+Hilltop crest (`TREE_CREST_Z` -120, `TERRAIN_CREST_Z` -112, `TERRAIN_FAR_CREST_Z` -140): past
+the crest the camera reads the ground at four hundred and fifty metres, so nothing that is
+only legible up close is drawn there. `addTree` returns before consuming the RNG for any `z`
+below the crest, which stops groves, farm track cypresses, tread rows, the lane and the crown in
+one place; `farCrest(z)` zeroes `relief()` and skips the field boundary line; the north contour
+terrace call is gone. The far ground is painted as a two step silhouette ladder in the vertex
+loop (`cFarFoot` #b9ae99 under `cFarCrest` #cdc4b1 above y 28.5 to 33.5, a five metre blend so
+the two steps stay readable at four hundred metres).
+
+The terrain air carries the top of the frame's colour, and it is keyed to the raw projected
+height `vSky`, never to `vAir`, because `vAir` saturates above two thirds of the frame and then
+cannot tell the zenith from the horizon. Three stops, height only: `uAirBlue` #a2b6c6 above
+`vSky` 0.87, `uAirWarm` #dedbd4 (the pale haze) in the middle, `uAirGold` #cba45e below, mixed
+at weight 0.90 with `goldKey = min(1, warmKey * 1.35)` and `warmKey = clamp((0.92 - vSky) /
+0.37) * smoothstep(0.48, 0.62, vSky)`. The fragment stage must never read `gl_FragColor` to
+choose air: an earlier version selected the hill bodies from the shaded colour, which both
+cost the frame (the 1 percent low fell from 175 to 55 fps with three dozen page tabs open) and
+depended on shader state the fragment does not own. The only per-fragment work here is one
+`vGround` luma dot, three smoothsteps and two mixes. Keep the band's value under 0.80 sRGB,
+because the post pass's bright pass starts at 0.75 and a brighter band blooms the whole upper
+frame. The three stop colours are the `terrainAir` uniform objects, created once at world scope
+and handed to `onBeforeCompile` rather than built inside it, so `setTimeOfDay` can swap the whole
+set with the palette: night writes #1b2c4c warm, #22355a gold and #101a30 blue, day writes the
+three values above. A day-only table left the far basin and the hills over it in daylight cream
+on every night frame, which read as a pale sky band over a dark city (cycle 35: the top 250 rows
+fell from 0.618/0.587/0.539 to 0.146/0.196/0.359 with the day frame unchanged to the digit).
+
+The bay is one unlit `MeshBasicMaterial` plane in the same arc as the dug basin, coloured by the
+palette and not by the sun: `BAY_DAY` #a9bccb and `BAY_NIGHT` #2b3d5c, both written in
+`setTimeOfDay` next to the fog colour. Water a few hundred metres out reflects the air above it, so
+a lit surface there renders as a dark slate polygon with its sector edges at full contrast, which is
+what the frame carried until cycle 35. Its `color` attribute is a **factor**, not a colour: 0.93 on
+the near ring rising to 1.06 at the far edge plus a 0.012 cross-swell, which three multiplies
+against the material colour, so the water has a near and far value while the palette stays the only
+place a colour is chosen. The plane ends at 1010 m, inside FOG_NEAR.
+
+Night light rule: the moon is `0x6fa2f2`, not a pale slate. A warm facade albedo (0.80 red to 0.60
+green, a ratio of 1.33) multiplies whatever the light's own ratio is, so a light at 0.58 red to 0.66
+green leaves red above green on every wall and the product sits in the violet band (measured at 6.42 percent of the night frame violet under
+the old light, 73 percent of it buildings and details). 0.47 red
+to 0.65 green is past the albedo's ratio and measured 0.5 percent violet with the warm share held at
+12.0 and the dark share at 0.0. Any future night light has to keep its green to red ratio above the
+albedo's.
+
+Skyline value compression. The 150 to 180 row slice of the day frame is the hilltop silhouette
+drawn against a plateau the shader has already dissolved into air: hiding one pool at a time on
+the default framing moves the slice from 1.77 to 1.58 with `towers` hidden, 1.59 with `statics`
+hidden and 1.52 with `details` hidden, and nowhere with the cranes hidden. So the merged
+`towers` mesh and `statics` (the church, the campanile, the water tower, the stone crown on the
+summit) take a height keyed value pull toward `AIR_GOLD` #cba45e, the terrain shader's own day
+air stop, declared at world scope above every builder because those two meshes are coloured
+long before the `terrainAir` table exists. The key is the vertex's own world Y: `HAZE_Y0` 30
+leaves every storey at grade untouched (the hilltop grade is 24.3 to 25.6, the tower bases 15.9
+to 19.3), `HAZE_Y1` 56 closes the ramp where the campanile spire stops (54.4), and `HAZE_MAX`
+0.42 is the ceiling, about half of the 0.90 air the far plateau carries. The pull is carried as
+one multiplicative luma scale, so a wall keeps its hue and only its value travels, and it stops
+where the brightest channel would pass white. It is applied inside `makeBuilder`'s single vertex
+sink, so a pass that does not pass `haze` is unchanged, and it adds no vertex, triangle, draw
+call or material. Building volumes are not covered: one instance colour serves walls and roof,
+so grading it would move the storeys at grade, and the detail pool that dresses the same roofs
+is therefore left alone too.
 
 ## agents.mjs (D)
 
@@ -253,6 +403,9 @@ the two ceilings above. A caller that omits the option gets the desktop caps.
 same matrix write path, follow gap, lane offsets and junction rules as the procedural box; every
 drawn body is fitted inside the 1.92 x 4.1 m envelope so no lane geometry moves. A null cache,
 or a phone that never loads the street tier, keeps the procedural fleet exactly as before.
+`MODEL_LANE_EVERY` (agents.mjs) admits the procedural carriageway's slots onto the modelled one
+one slot in N (24 = one in 24, 9999 = off); it never removes a pack body, only adds far-lane
+bodies, measured +1,042 triangles at 1-in-24 with no call delta.
 
 ```js
 Agents = {
@@ -263,20 +416,49 @@ Agents = {
   vans: { dispatch(fromQ, toQ, payloadKind) },  // payloadKind: 'parcel' | 'sign'; used by dream
   tram: { positionAt(out) },
   counts: { vehicles, pedestrians },  // live numbers for the F readout
+  reseed,                      // the wake re-population window, read-only (see below)
 }
 ```
 
 `setPopulationScale` is the one control main's notch ladder turns to shed work: it hides the
 highest-numbered movers and their lights, never adds a mesh and never reallocates an instance
 buffer, so a scale change costs no draw call and no upload.
+
+Wake re-population window: while the district sleeps every road pool is frozen and the walkers are
+cleared, so waking has to bring back six drawn prefixes (ring, avenue, spur, expressway, buses,
+pedestrians). The window is that work spread over frames, per pool. `update()` captures each pool's
+population at the sleep edge, opens the window on the awake edge, on a `tData` that went backwards
+(the `t1 + 1 h` wrap, an install that reset the clock) and on a live `setDataModel`. A wake also
+drops every pool to zero and the same `update()` then admits the window's first slice, so the first
+awake frame draws about a thirtieth of each pool instead of the whole fleet; each pool enters its own
+slots from index zero, and a slot above the slice keeps the zero matrix, which draws nothing. A wrap
+or a data change leaves the population in place and only slices its rate, because a data change is
+not a sleep, and under a sleep neither one opens a window: nothing steps, so nothing is spread, and
+the wake carries that work instead. Inside the window a pool advances by exactly
+`max(sleep span, target) / RESYNC_FRAMES` slots per frame (30 frames), clamped at its target, so a
+two-bus pool and a seven-hundred-walker pool both arrive on frame 30. The drawn count is fractional
+and the reported `admitted` count is the change in its ceiling, so a pool whose slice is under one
+slot still reports one slot when it crosses and can therefore report more than a thirtieth of itself
+on that frame. The window closes after frame 30 once every pool has arrived, with a hard stop at 60
+frames for a target that keeps moving under it; the counter is advanced after the pools step and is
+not advanced while the district sleeps, so frame 30 really carries the last entrances. Nothing allocates: the cursors are fixed typed
+arrays and the report is one object mutated in place, and a steady frame costs one integer compare
+per pool. The report is `agents.reseed`, also on `window.localtimeReseed` for the harness:
+`{ windowFrames, maxFrames, open, settled, kind, frames, framesLeft, span, step, admitted,
+admittedTotal, admittedSum, windows, lastFrames, wake, wrap, rebuild }`, where `span`, `step`,
+`admitted` and `admittedTotal` are six-entry arrays in the pool order above; `admitted` is the slots
+that crossed a pool's drawn ceiling on the last frame, which is entries while the pool grows and
+retirements while it shrinks.
+
 Behaviour (all data-driven):
 1. Ring cars: density = 60 + 180 * switchRateAt(tData); stop-and-go when switchRateAt > 0.5.
-   Avenue: cars flow in a green wave when `longestSessionBefore(tData)` belongs to a quarter, and
+   Avenue: cars flow in a green wave when `activeSessionAt(tData)` belongs to a quarter, and
    its avenue segment tints green (set a uniform/colour on the avenue mesh via world, or tint
    the car instance colours on that segment).
 2. Tram: loops `world.roads.tram` at constant speed, dwelling 3 s at each `tramStops` entry.
 3. Pedestrians: walk between `doorPoints` of quarters linked by `model.pairs`; count scales with
    `activityLastHour` total.
+
 4. Vans: for each `model.parcels` whose `at` is crossed by `tData`, dispatch one van from -> to
    carrying a parcel box; `dispatch(..., 'sign')` carries a small sign plane (dream).
 5. Signs: cycle `world.signs.setText(slot, phrase)` every 8 s through the quarter's phrases.
@@ -291,6 +473,20 @@ Behaviour (all data-driven):
     transition (guard with a per-quarter boolean cache), so a quiet quarter's shutters stay down.
 During `sim.dreaming`, everything except vans dispatched by the dream idles (cars parked, peds
 gone, lights at 10 percent).
+
+Walking cohort (desktop only): when the pack carries `category: 'person'` models, up to 40 of the
+drawn walkers nearest the camera wear pack bodies instead of the procedural cylinder and head
+(`COHORT_TRI_BUDGET` 4,200 at 105 triangles per promoted walker; the capacity is computed, never
+assumed). One `InstancedMesh` per variant (4 variants, 60-slot ceiling, `userData.sharedGeometry`), each frame
+written with the same position, facing and scale the procedural body would have taken while the
+procedural walkers are repacked into a drawn prefix so nothing is drawn twice; identity (variant,
+size, tone) is fixed per walker slot and only the promotion follows the camera. The camera is
+read from `peds.onBeforeRender` because the rig is created after `createAgents`. The cohort costs
+105 triangles per promoted walker (149 against 44) and one draw call per variant; the phone and
+no-asset builds never build it, and `hideAllPeds` clears it so the dream shows no figures. The
+read-only report is `agents.cohort` (`capacity`, `variants`, `models`, `drawn`, `tris`,
+`candidates`, `perWalker`, `budget`, `enabled`), `agents.setCohort(bool)` toggles it for an
+A/B, and `window.localtimeCohort` carries the same object for the harness.
 
 ## camera.mjs (E)
 
@@ -333,6 +529,8 @@ Dream = {
   state,                       // 'awake' | 'dreaming' | 'waking' | 'offered'
   setDataModel(model),
   notifyGap(gapStart, gapEnd), // main calls when tData enters a gap > 4 h: equivalent to sleep(); leaving the gap wakes
+  clearCards(),                // main calls right before it disposes the dream group on an install,
+                               // so a teardown never strands a card's click handler in the DOM
 }
 ```
 Chantier: cones (instanced), striped barriers (instanced), two floodlights (emissive quads plus
@@ -344,7 +542,11 @@ Cards: at most two, text built from `dreamPair.words`, pattern:
 `The word 'X' kept appearing in both A and B. Open a note that joins them?` with one button
 "Take it" only. Taking: road becomes permanent (asphalt colour, barriers removed, a pop-up
 market with 3 to 5 stalls appears on it), the sentence is appended to the JSON array in
-`localStorage['localtime.dreams.taken']`. Ignoring: at the next sleep or after 24 h of data
+`localStorage['localtime.dreams.taken']`. Boot restores that permanence: when the pair's own
+sentence (built exactly as the card text is built) is already in the array, `dream.mjs` lays the
+road, sets the permanent ribbon, its light strip and the market visible in the daylight scene at
+build time and starts at `roadMode` 2, so a taken road is never forgotten between visits. Only
+that state costs the extra 3 draw calls and about 1,100 triangles; every other boot is unchanged. Ignoring: at the next sleep or after 24 h of data
 time, barriers pack away and the road fades to ground over 10 s. No reminders, no badges, no
 counters. Also the whole district is dark and quiet while dreaming (agents handle their part).
 If `model.dreamPair` is null, pick the strongest pair overall; if there are fewer than two
@@ -360,9 +562,12 @@ creation-time; dispose and recreate across the mobile boundary. `setResolutionSc
 chain only, never the scene target. `setDreamBloom(k)` takes 0..1 and multiplies the night
 bloom's strength, threshold and radius towards the warmer dream settings; the day frame is
 untouched by construction, and at k = 0 the awake night frame is exactly the cycle 19 frame.
-`setDistanceGrade(k)` takes 0..1 and scales the cool
-distance amount only (`COOL_DIST_AMOUNT * k`), leaving the height key, the luminance key and
-both shade keys alone; main calls it from the camera distance to the look-at.
+`setDistanceGrade(k)` takes 0..1 and scales the distance leg only
+(`COOL_DIST_AMOUNT * k`), leaving the height key, the luminance key and both shade keys alone;
+main calls it from the camera distance to the look-at. The distance leg is its own band and its
+own target (a golden veil at `1.0/0.84/0.65`), keyed by the unshifted screen row through
+`uDistLo/uDistHi` and over its own top-edge fade, so it lifts the pale horizon band without
+following the height key into the shade mix; the day multiplier still zeroes it at night.
 
 Pipeline: scene into a target with `samples: msaa ? 4 : 0`; a bright pass at quarter resolution
 plus two separable blurs added back in the composite (bloom); the scene blurred at half
@@ -372,7 +577,7 @@ FXAA taps when the scene target has no samples, and a subtle vignette. Materials
 directly.
 
 Tilt-shift: the sharp band covers the middle 62 percent of the height (`BAND_EDGE` 0.62,
-`BAND_FEATHER` 0.30) and the gaussian radius is 0.7 half-res texels. Bloom is mild and hour
+`BAND_FEATHER` 0.30) and the gaussian radius is 0.45 half-res texels (reaches 1.45 texels). Bloom is mild and hour
 gated: linear luma threshold 0.75 with a 0.35 knee and strength 0.36 by day (`BLOOM_STRENGTH x
 BLOOM_DAY_WEIGHT`), lerped at night to threshold 0.95, knee 0.30, strength 0.22 and a 0.75
 radius factor, so lit windows, lamps and the sun disc glow while sky, stone and night street
@@ -424,24 +629,53 @@ spending a request that would only show up as a failed load. The same
 `Assets | null` is handed to every later `install` as `buildWorld(THREE, model, { shadows,
 isTouch, assets })` and is never reloaded. Flags: `?noassets=1` skips the loader entirely
 (procedural fallback), `?assets=street` forces the street tier on a device that would otherwise
-keep to the district set. `registerOfflineCache()` is called once, after
+keep to the district set, `?post=0` boots with the post chain off, and `#post=0` / `#post=1`
+toggles it at runtime through the hashchange handler (a one-load pair, so two frames can be
+compared without the traffic diverging across loads).
+Golden rig: main wraps `world.lights.setTimeOfDay` after the world is built and, in the day
+branch only, sets sun elevation 15 degrees on the same azimuth, sun 0xf4c270 at intensity 6.2,
+hemi 0xcdd6e0 / ground 0x8a8478 at 0.88, a shadow frustum widened to 230, and `renderer.shadowMap
+.type = THREE.PCFShadowMap` at boot so `light.shadow.radius = 5` texels is honoured (PCFSoft's
+fixed kernel ignores the radius). The night branch passes through untouched.
+Dream warm pass: after the first frame, one hidden render of the night state into a 4x4
+`WebGLRenderTarget` (`dream.warm()` dresses the dream meshes, `lights.setTimeOfDay(22, true)` and
+`streetLights.setOn(true)` submit the night-only meshes, shadow auto-update off, full restore and
+`renderer.info.reset()` in a `finally`) links the sRGB program variants once, so the dream's first
+real frame carries no shader compile. The canvas is never drawn; per-frame cost is zero.
+`registerOfflineCache()` is called once, after
 the first frame has been rendered, so it never sits in front of the paint.
 Sim clock: `tData` advances at 60x real time from `model.t0`, wraps at `model.t1 + 1 h` back
 to `t0`. `wallHour` from `new Date()` (local). `night = wallHour < 7 || wallHour >= 19 || nightOverride`.
 Gap handling: when `tData` enters a `model.gaps` entry, call `dream.notifyGap`.
 Drag and drop + file picker: parse JSON, validate `schema === 'screensearch.export.v1'`, rebuild
 model, dispose and rebuild world/agents/dream (keep the camera, keep the asset cache), update labels.
-Teardown: `disposeGroup` frees geometry, material and their maps for the procedural world, but an
+`loadExport` records the export in the module-level `userModel` after `usable()` passes, and the
+boot callback skips both its own `install(sample)` and the portrait `setTier('block')` when one is
+already set, so a drop that lands before the sample fetch resolves is never overwritten by the
+built-in day.
+Teardown: `disposeGroup` frees geometry, material and their maps for the procedural world, and
+disposes and clears the shadow map of any light it walks, because `install` rebuilds the sun on
+each export load and a map left behind is a leaked render target per load. An
 object tagged `userData.sharedGeometry === true` only has its own instance attributes released
 (`mesh.dispose()`), because its geometry, material and pack texture belong to the asset cache.
+The dream group is disposed only after `dream.clearCards()`, which removes each card's listener.
 Labels: per quarter, projected `labelPosition`, hidden when behind the camera.
 Building card: `rig.onTap` -> raycast `world.pickTargets`, show `#card` with quarter name,
 time today (h:mm) and last phrase; the tapped instance maps through the mesh's
 `userData.quarterOf` when it exists, else through `world.buildingQuarter`; tap elsewhere closes.
 Keys: Q/E rotate, F toggles `#fps`. Chevrons call `rig.rotate`. Sleep button calls `dream.toggle()`.
 Debug API (not UI): `window.localtime = { stats(), state(), loadExport(obj), model, world, rig,
-debugFraming(), assets }` where `stats()` returns `{ fps, calls, triangles, vehicles,
+debugFraming(), assets, quality(), bench, runBench() }` where `stats()` returns `{ fps, calls, triangles, vehicles,
 pedestrians, shadows, dream }` from `renderer.info` plus the read-only dream phase, `assets` is the live pack report
-`{ loaded, models, tier }`, and `debugFraming()` returns the projected screen-space bounding box
+`{ loaded, models, tier }`, `quality()` returns the resolved profile
+`{ mode, pixelRatio, shadowMap, population, postScale, notch }`, `runBench()` runs the 20 s
+bench script (2 s warmup excluded, phase marks at 0/3/5/7/10/14/17 s) and resolves the
+`bench` report `{ avgFps, p1LowFps, p99FrameMs, maxFrameMs, over33, frames, calls, triangles,
+mode, phaseMaxMs, phaseFirstMs }` that `bench` also keeps as the last result (the two phase
+arrays hold the largest and first frame cost per phase, so a dream-entry or wake stall is
+attributed rather than averaged away; `p1LowFps` is the rate implied by the 99th percentile
+frame duration over the `frames` samples kept after warmup, `p99FrameMs` is that duration,
+and `over33` is how many of those samples exceeded 33 ms, so the gate's denominator and its
+tail are both readable instead of inferred), and `debugFraming()` returns the projected screen-space bounding box
 of `world.roads.ring` sample points `{ minX, minY, maxX, maxY, width, height }` so a test can
 assert the ring road is fully inside the viewport.

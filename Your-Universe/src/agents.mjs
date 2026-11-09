@@ -289,6 +289,183 @@ export function createAgents(THREE, world, model, opts) {
     return cur + (target - cur) * (k > 1 ? 1 : k);
   }
 
+  // ------------------------------------------------------- wake re-population
+  // The dream freezes every road pool and empties the walkers. The complaint is not the rate:
+  // the car pools keep the counts they had when the dream began, so the single frame that puts
+  // the fleet meshes back reveals the whole fleet at once, while the walkers come back at
+  // whatever rate one frame's dt allows. This window replaces both with a real slice of work.
+  // Every pool brings back its own population over RESYNC_FRAMES frames: on the waking frame the
+  // pools drop to zero and each frame after that admits one more `span / RESYNC_FRAMES` of it, in
+  // slot order, so a pool of two buses and a pool of seven hundred walkers both finish on frame
+  // thirty. A slot that has not entered yet keeps the zero matrix, so the first awake frame draws
+  // only the window's first slice (about a thirtieth of each pool) instead of the whole fleet. A
+  // backwards data clock or a live data stop opens the same window with only the rate sliced and
+  // the population left in place, because a data change is not a sleep; under a sleep neither one
+  // opens anything, since nothing steps to spread.
+  //
+  // Cost on a steady frame: one integer compare per pool. Nothing here allocates: the cursors are
+  // fixed arrays and the report is one object mutated in place.
+  const RESYNC_FRAMES = 30;
+  const RESYNC_MAX_FRAMES = RESYNC_FRAMES * 2;
+  const RESYNC_POOLS = 6;
+  const RESYNC_RING = 0;
+  const RESYNC_AVE = 1;
+  const RESYNC_SPUR = 2;
+  const RESYNC_EXP = 3;
+  const RESYNC_BUS = 4;
+  const RESYNC_PED = 5;
+  // Per pool: the population it has to bring back, the slots it may enter in one frame, the last
+  // target it asked for, the drawn count it reached, and the entrances this frame and this
+  // window. Fixed arrays, written in place, never rebuilt.
+  const resyncSpan = new Float32Array(RESYNC_POOLS);
+  const resyncStep = new Float32Array(RESYNC_POOLS);
+  const resyncTarget = new Float32Array(RESYNC_POOLS);
+  const resyncShown = new Float32Array(RESYNC_POOLS);
+  const resyncAdmit = new Int32Array(RESYNC_POOLS);
+  const resyncTotal = new Int32Array(RESYNC_POOLS);
+  let resyncOpen = false;
+  let resyncFrames = 0;
+
+  const reseedReport = {
+    windowFrames: RESYNC_FRAMES,
+    maxFrames: RESYNC_MAX_FRAMES,
+    open: false,        // a window is running
+    settled: true,      // and its negation, which reads better in a log
+    kind: 'none',       // what opened the last one
+    frames: 0,          // frames the running window has counted
+    framesLeft: 0,      // frames of its budget left, 0 when it has none
+    span: resyncSpan,   // population each pool has to bring back
+    step: resyncStep,   // slots per frame each pool is allowed
+    admitted: resyncAdmit,      // slots that crossed the drawn ceiling last frame, per pool
+    admittedTotal: resyncTotal, // and since the window opened (entries while growing)
+    admittedSum: 0,     // the same, summed over the six pools
+    windows: 0,
+    lastFrames: 0,      // frames the last completed window took
+    wake: 0,
+    wrap: 0,
+    rebuild: 0
+  };
+
+  function poolShownOf(p) {
+    if (p === RESYNC_RING) return ringShown;
+    if (p === RESYNC_AVE) return aveShown;
+    if (p === RESYNC_SPUR) return spurShown;
+    if (p === RESYNC_EXP) return expShown;
+    if (p === RESYNC_BUS) return busShown;
+    return pedShown;
+  }
+
+  // The population a sleep has to bring back, read at the sleep edge while every pool still
+  // draws what it drew awake. The walkers are captured before hideAllPeds zeroes them.
+  function captureResyncSpans() {
+    for (let p = 0; p < RESYNC_POOLS; p++) resyncSpan[p] = poolShownOf(p);
+  }
+
+  // Open the window. A wake also empties the pools, which is what keeps the first awake frame
+  // from revealing the fleet: each pool then steps from zero and hides its own tail on the way,
+  // so the entrances it reports are the slots it actually wrote this frame.
+  function beginResync(kind) {
+    // Nothing steps while the district dreams, so a data change under a sleep has no work to
+    // spread: the spans captured at the sleep edge stay authoritative and the wake edge opens the
+    // real window. Without this a rebuild under the dream would count thirty idle frames and
+    // overwrite the walker span with the zero that rebuild leaves behind.
+    if (kind !== 'wake' && dreamPrev) return;
+    reseedReport.windows += 1;
+    reseedReport.kind = kind;
+    if (kind === 'wake') reseedReport.wake += 1;
+    else if (kind === 'wrap') reseedReport.wrap += 1;
+    else reseedReport.rebuild += 1;
+    for (let p = 0; p < RESYNC_POOLS; p++) {
+      if (kind !== 'wake') resyncSpan[p] = poolShownOf(p);
+      resyncAdmit[p] = 0;
+      resyncTotal[p] = 0;
+      resyncTarget[p] = resyncSpan[p];
+      resyncShown[p] = kind === 'wake' ? 0 : resyncSpan[p];
+    }
+    if (kind === 'wake') {
+      ringShown = 0;
+      aveShown = 0;
+      spurShown = 0;
+      expShown = 0;
+      busShown = 0;
+      pedShown = 0;
+    }
+    resyncOpen = true;
+    resyncFrames = 0;
+    reseedReport.open = true;
+    reseedReport.settled = false;
+    reseedReport.frames = 0;
+    reseedReport.framesLeft = RESYNC_FRAMES;
+    reseedReport.admittedSum = 0;
+  }
+
+  // One pool's drawn count for this frame. Outside the window the pool keeps its own 3.2 per
+  // second ease, which is the cycle 26 ramp. Inside it the pool advances by its own slice,
+  // `max(span, target) / RESYNC_FRAMES` slots per frame, clamped at its target, so a two bus pool
+  // and a seven hundred walker pool both arrive on frame RESYNC_FRAMES. The drawn count is
+  // fractional; the entrance count reported is the change in its ceiling, so a pool whose slice is
+  // under one slot still reports one slot when it crosses, and can therefore report more than a
+  // thirtieth of its own population on that frame.
+  function rampSlots(p, cur, target, dt) {
+    resyncTarget[p] = target;
+    if (!resyncOpen) {
+      // The last window's `step` and `admitted` stay readable here: they describe the window that
+      // just ran, and the next window overwrites them when it opens.
+      return easeTo(cur, target, 3.2, dt);
+    }
+    const need = target > resyncSpan[p] ? target : resyncSpan[p];
+    const step = need > 0 ? need / RESYNC_FRAMES : 0;
+    resyncStep[p] = step;
+    let next = cur;
+    if (step > 0) {
+      if (cur < target) {
+        next = cur + step;
+        if (next > target) next = target;
+      } else if (cur > target) {
+        next = cur - step;
+        if (next < target) next = target;
+      }
+    }
+    const before = cur > 0 ? Math.ceil(cur) : 0;
+    const after = next > 0 ? Math.ceil(next) : 0;
+    const moved = after > before ? after - before : before - after;
+    resyncAdmit[p] = moved;
+    resyncTotal[p] += moved;
+    resyncShown[p] = next;
+    reseedReport.admittedSum += moved;
+    return next;
+  }
+
+  // Count the frame that has just stepped its pools and close the window once its budget is spent
+  // and every pool has arrived. The hard stop exists for a target that keeps moving under the
+  // window (congestion does): without it such a target could hold the window open forever.
+  function endResyncFrame() {
+    if (!resyncOpen) return;
+    resyncFrames += 1;
+    if (resyncFrames >= RESYNC_FRAMES) {
+      let arrived = true;
+      for (let p = 0; p < RESYNC_POOLS; p++) {
+        const left = resyncTarget[p] - resyncShown[p];
+        if (left > 1 || left < -1) {
+          arrived = false;
+          break;
+        }
+      }
+      if (arrived || resyncFrames >= RESYNC_MAX_FRAMES) {
+        resyncOpen = false;
+        reseedReport.open = false;
+        reseedReport.settled = true;
+        reseedReport.lastFrames = resyncFrames;
+        reseedReport.framesLeft = 0;
+      }
+    }
+    reseedReport.frames = resyncFrames;
+    if (resyncOpen) {
+      const left = RESYNC_FRAMES - resyncFrames;
+      reseedReport.framesLeft = left > 0 ? left : 0;
+    }
+  }
+
   // ---------------------------------------------------------------- scratch
   const UP = new THREE.Vector3(0, 1, 0);
   const sPos = new THREE.Vector3();
@@ -2889,6 +3066,308 @@ export function createAgents(THREE, world, model, opts) {
   let pedShown = 0;
   let pedDrawn = 0;
   let pedVisible = 0;
+  let pedHi = 0;
+
+  // ------------------------------------------------------- walking cohort
+  // The walking population is procedural: one six-sided cylinder and one icosahedron head, 44
+  // triangles, which is what lets seven hundred of them move at once. The pack mini characters
+  // that stand in the world's crowds are 149 triangles, so swapping the whole population would
+  // be a hundred and five more triangles for every walker. The cohort is the reading trade
+  // that buys the figures a street viewer actually sees: the nearest in-view walkers wear a
+  // pack body, and the rest keep the procedural one.
+  //
+  // The swap has to withdraw the procedural body, not just hide it. A zero-scale instance is
+  // still submitted, so renderer.info would count its 44 triangles and the swap would cost the
+  // pack body's 149 instead of the 105 difference. The pedestrian pool therefore repacks its
+  // live instances into the prefix it draws, exactly as the rider pool already does: a walker
+  // in the cohort simply occupies no procedural instance, `count` is the number of walkers that
+  // stayed procedural, and no instance is left behind. The mapping is rewritten every frame
+  // from the same per-slot state the walk used before, so no trip, speed, spawn or data rule
+  // changes; only the index a body is written at does. The phone profile builds no cohort mesh
+  // at all (its caps and its merged district kit leave no triangle room), so it takes the
+  // uncompacted path and its frames are the cycle 22 frames byte for byte.
+  //
+  // Capacity and cost. A pack body at 149 triangles minus the 44 the cylinder and head
+  // withdraw is 105, so 60 walkers would cost 6,300; the cycle 23 integration set the budget to
+  // 4,200 (40 walkers) because at 60 the bench's wake repopulation peak measured 400,400
+  // triangles, over the 400,000 hard gate, while the world's corner spend cannot shrink without
+  // losing the corners it bought. The build recomputes the
+  // capacity from the bodies it actually chose, so a pack whose cheapest character is heavier
+  // shrinks the cohort instead of overrunning the ceiling.
+  const COHORT_CAP = 60;
+  const COHORT_VARIANTS = 4;
+  const COHORT_TRI_BUDGET = 4200;
+  const PROC_PED_TRIS = 44;
+  // A selection tick every tenth of a second. The cohort is a rendering choice at street
+  // distance, so a walker that drifts a metre between ticks does not need to change body; the
+  // tick also keeps the instance repacking (and the colour writes that follow it) rare.
+  const COHORT_TICK = 0.1;
+  // Members keep a 1.35x distance advantage over newcomers, so a walker drifting past the
+  // boundary does not flicker between a pack body and a cylinder.
+  const COHORT_STICKY = 0.55;
+  const cohortMesh = [];
+  const cohortMeshTris = [];
+  const cohortNames = [];
+  const cohortColSlot = [];
+  const cohortCursor = new Int32Array(COHORT_VARIANTS);
+  const cohortSpanLo = new Int32Array(COHORT_VARIANTS);
+  const cohortSpanHi = new Int32Array(COHORT_VARIANTS);
+  const cohortColLo = new Int32Array(COHORT_VARIANTS);
+  const cohortColHi = new Int32Array(COHORT_VARIANTS);
+  const cohortIn = new Uint8Array(PED_CAP);
+  const cohortVariant = new Uint8Array(PED_CAP);
+  // The position a walker was last drawn at, so a selection tick ranks real places rather than
+  // stepping the walk a second time. `pedLit` is "drawn last frame", the only members a tick
+  // may rank.
+  const pedLastX = new Float32Array(PED_CAP);
+  const pedLastY = new Float32Array(PED_CAP);
+  const pedLastZ = new Float32Array(PED_CAP);
+  const pedLit = new Uint8Array(PED_CAP);
+  // Which slot's palette is sitting at instance i of the procedural pool. A walker keeps its
+  // clothes when the packing shifts: the colour is written again only where the binding
+  // changed, so a steady frame uploads no colour at all.
+  const pedColSlot = new Int32Array(PED_CAP);
+  pedColSlot.fill(-1);
+  // A body scale of 2.07 to 2.33, inside the 2.0 to 2.4 the world crowd already stands at, so
+  // a walking figure and a standing figure of the same kit are the same size; a per-slot tone
+  // keeps the pack palette from reading as one repeated livery.
+  const cohortScale = new Float32Array(PED_CAP);
+  const cohortTone = new Float32Array(PED_CAP);
+  for (let i = 0; i < PED_CAP; i += 1) {
+    cohortScale[i] = 2.2 * (0.94 + 0.12 * hash01(i * 613 + 17));
+    cohortTone[i] = 0.88 + 0.24 * hash01(i * 19 + 11);
+  }
+  const cohortTint = new THREE.Color();
+  // The view test and the ranking scratch, hoisted: a tick allocates nothing.
+  const cohortFrustum = new THREE.Frustum();
+  const cohortMatrix = new THREE.Matrix4();
+  const cohortPoint = new THREE.Vector3();
+  const cohortBestSlot = new Int32Array(COHORT_CAP);
+  const cohortBestScore = new Float32Array(COHORT_CAP);
+  let cohortN = 0;         // variant meshes built
+  let cohortCap = 0;       // walkers the triangle budget pays for
+  let cohortOn = false;    // the cohort is drawing (a debug toggle can turn it off)
+  let cohortDrawn = 0;     // pack instances submitted this frame
+  let cohortMembers = 0;   // walkers currently assigned to the cohort
+  let cohortClock = 0;
+  let cohortCam = null;
+  const cohortReport = {
+    capacity: 0,
+    variants: 0,
+    models: [],
+    drawn: 0,
+    tris: 0,
+    candidates: 0,
+    perWalker: 0,
+    budget: COHORT_TRI_BUDGET,
+    enabled: false,
+    // The measurement switch: setEnabled(false) restores the cycle 22 pedestrian rendering in
+    // place, so the cohort's own triangles and calls can be read as a difference on one frame
+    // instead of across two loads whose data clocks never agree.
+    setEnabled: setCohortEnabled
+  };
+
+  // The cohort needs the view, and main creates the rig after this factory and hands down no
+  // camera. The renderer already walks every drawn object, so the camera is taken from the
+  // documented per-object render hook instead of reaching into main's debug surface: one
+  // assignment, one reference read per tick, and a frame of lag nobody can see at 0.1 s.
+  function watchCohortCamera(mesh) {
+    mesh.onBeforeRender = function (renderer, scene, camera) {
+      if (camera) cohortCam = camera;
+    };
+  }
+
+  // Rank the drawn walkers the frame can see: inside the camera frustum, nearest first, with
+  // last tick's members keeping a distance advantage. The frustum is the honest definition of
+  // "the people you actually see" at street tier, where a walker behind the camera is nearer
+  // in metres than one at the frame's edge. Sorting is an insertion into a fixed 60 entry list,
+  // so the tick allocates nothing and a candidate farther than the last entry leaves in one
+  // compare.
+  function selectCohort(dt) {
+    if (!cohortOn || cohortCap <= 0) return;
+    const cam = cohortCam;
+    if (!cam || !cam.projectionMatrix || !cam.matrixWorldInverse) return;
+    cohortClock += dt;
+    if (cohortClock < COHORT_TICK && cohortMembers > 0) return;
+    cohortClock = 0;
+    cohortMatrix.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+    cohortFrustum.setFromProjectionMatrix(cohortMatrix);
+    const cx = cam.position.x;
+    const cy = cam.position.y;
+    const cz = cam.position.z;
+    let n = 0;
+    let cand = 0;
+    for (let i = 0; i < PED_CAP; i += 1) {
+      if (!pedLit[i]) continue;
+      cohortPoint.set(pedLastX[i], pedLastY[i] + 1.0, pedLastZ[i]);
+      if (!cohortFrustum.containsPoint(cohortPoint)) continue;
+      cand += 1;
+      const dx = pedLastX[i] - cx;
+      const dy = pedLastY[i] - cy;
+      const dz = pedLastZ[i] - cz;
+      let score = dx * dx + dy * dy + dz * dz;
+      if (cohortIn[i]) score *= COHORT_STICKY;
+      if (n >= cohortCap && score >= cohortBestScore[cohortCap - 1]) continue;
+      let p = n < cohortCap ? n : cohortCap - 1;
+      while (p > 0 && cohortBestScore[p - 1] > score) {
+        cohortBestScore[p] = cohortBestScore[p - 1];
+        cohortBestSlot[p] = cohortBestSlot[p - 1];
+        p -= 1;
+      }
+      cohortBestScore[p] = score;
+      cohortBestSlot[p] = i;
+      if (n < cohortCap) n += 1;
+    }
+    for (let i = 0; i < PED_CAP; i += 1) cohortIn[i] = 0;
+    for (let k = 0; k < n; k += 1) {
+      const slot = cohortBestSlot[k];
+      cohortIn[slot] = 1;
+      // The body, the scale and the tone are all a function of the walker's slot, so a figure
+      // keeps one character for as long as it walks: only the promotion between the cylinder
+      // and a pack body follows the ranking, never the body itself.
+      cohortVariant[slot] = slot % cohortN;
+    }
+    cohortMembers = n;
+    cohortReport.candidates = cand;
+  }
+
+  // One pack body, written at the next free instance of its variant. The body carries the
+  // procedural body's own transform (position, walking heading, spawn and fade scale), so a
+  // walker keeps its place whether it wears the cylinder or the character.
+  function writeCohort(i, x, y, z, angle, scale) {
+    const v = cohortVariant[i];
+    const mesh = cohortMesh[v];
+    if (!mesh) return;
+    const c = cohortCursor[v];
+    if (c >= COHORT_CAP) return;
+    cohortCursor[v] = c + 1;
+    const s = cohortScale[i] * scale;
+    writeMatrix(mesh, c, x, y, z, angle, s, s, s);
+    if (c < cohortSpanLo[v]) cohortSpanLo[v] = c;
+    if (c + 1 > cohortSpanHi[v]) cohortSpanHi[v] = c + 1;
+    if (cohortColSlot[v][c] !== i) {
+      cohortColSlot[v][c] = i;
+      const tone = cohortTone[i];
+      cohortTint.setRGB(tone, tone, tone);
+      mesh.setColorAt(c, cohortTint);
+      if (c < cohortColLo[v]) cohortColLo[v] = c;
+      if (c + 1 > cohortColHi[v]) cohortColHi[v] = c + 1;
+    }
+  }
+
+  function cohortBegin() {
+    for (let v = 0; v < cohortN; v += 1) {
+      cohortCursor[v] = 0;
+      cohortSpanLo[v] = COHORT_CAP;
+      cohortSpanHi[v] = 0;
+      cohortColLo[v] = COHORT_CAP;
+      cohortColHi[v] = 0;
+    }
+    cohortDrawn = 0;
+  }
+
+  function cohortEnd() {
+    let tris = 0;
+    for (let v = 0; v < cohortN; v += 1) {
+      const mesh = cohortMesh[v];
+      const n = cohortCursor[v];
+      cohortDrawn += n;
+      tris += n * cohortMeshTris[v];
+      mesh.count = n;
+      mesh.visible = n > 0;
+      if (cohortSpanHi[v] > cohortSpanLo[v]) dirtyMatrix(mesh, cohortSpanLo[v], cohortSpanHi[v]);
+      if (cohortColHi[v] > cohortColLo[v]) dirtyColour(mesh, cohortColLo[v], cohortColHi[v]);
+    }
+    cohortReport.drawn = cohortDrawn;
+    cohortReport.tris = tris;
+  }
+
+  // The build picks the cheapest characters the pack carries (149 triangles today, the number
+  // the cycle 22 budget booked) and sizes the cohort from the real per-walker cost. A pack
+  // whose cheapest body is heavier simply gets a smaller cohort; the ceiling is never raised.
+  function initCohort() {
+    if (!assets || MOBILE_CAPS) return;
+    const people = assets.byCategory('person') || [];
+    if (!people.length) return;
+    const order = [];
+    for (let i = 0; i < people.length; i += 1) {
+      const m = people[i];
+      if (!m || !m.geometry || !m.material || !(m.tris > 0)) continue;
+      order.push(i);
+    }
+    if (!order.length) return;
+    order.sort(function (a, b) {
+      const da = people[a].tris;
+      const db = people[b].tris;
+      return da === db ? a - b : da - db;
+    });
+    const take = Math.min(COHORT_VARIANTS, order.length);
+    const picks = [];
+    for (let k = 0; k < take; k += 1) picks.push(order[k]);
+    picks.sort(function (a, b) { return a - b; });
+    let sum = 0;
+    for (let k = 0; k < picks.length; k += 1) sum += people[picks[k]].tris;
+    const perWalker = sum / picks.length - PROC_PED_TRIS;
+    if (!(perWalker > 0)) return;
+    let cap = Math.floor(COHORT_TRI_BUDGET / perWalker);
+    if (cap > COHORT_CAP) cap = COHORT_CAP;
+    if (cap < 1) return;
+    for (let k = 0; k < picks.length; k += 1) {
+      const model = people[picks[k]];
+      const mesh = assets.makeInstanced(model, COHORT_CAP, {
+        shadows: false,
+        tintable: true,
+        dynamic: true
+      });
+      mesh.userData.sharedGeometry = true;
+      mesh.name = model.name;
+      mesh.count = 0;
+      mesh.visible = false;
+      for (let i = 0; i < COHORT_CAP; i += 1) hideAt(mesh, i);
+      makePool(mesh);
+      dirtyAllMatrix(mesh);
+      group.add(mesh);
+      cohortMesh.push(mesh);
+      cohortMeshTris.push(model.tris);
+      cohortNames.push(model.name);
+      cohortColSlot.push(new Int32Array(COHORT_CAP).fill(-1));
+    }
+    cohortN = cohortMesh.length;
+    if (cohortN === 0) return;
+    cohortCap = cap;
+    cohortOn = true;
+    cohortReport.capacity = cap;
+    cohortReport.variants = cohortN;
+    cohortReport.perWalker = Math.round(perWalker * 100) / 100;
+    cohortReport.enabled = true;
+    for (let k = 0; k < cohortN; k += 1) cohortReport.models.push(cohortNames[k]);
+    watchCohortCamera(peds);
+  }
+
+  // The debug toggle the measurement uses: off is exactly the cycle 22 pedestrian frame (the
+  // pool goes back to slot-indexed instances and no pack body is submitted), so the cohort's
+  // own cost can be read off one page by switching it in place.
+  function setCohortEnabled(on) {
+    if (cohortN <= 0) return;
+    const next = !!on;
+    if (next === cohortOn) return;
+    cohortOn = next;
+    cohortReport.enabled = cohortOn;
+    cohortReport.drawn = 0;
+    cohortReport.tris = 0;
+    if (!next) {
+      cohortReport.candidates = 0;
+      for (let v = 0; v < cohortN; v += 1) {
+        const mesh = cohortMesh[v];
+        mesh.count = 0;
+        mesh.visible = false;
+        cohortCursor[v] = 0;
+      }
+      for (let i = 0; i < PED_CAP; i += 1) cohortIn[i] = 0;
+      cohortMembers = 0;
+      cohortDrawn = 0;
+    }
+  }
 
   const plaza = world && world.marketSquare && world.marketSquare.center
     ? world.marketSquare
@@ -3209,24 +3688,32 @@ export function createAgents(THREE, world, model, opts) {
   // At the desktop district framing the camera is 213.06 m up (12 + 312.79 * sin 40) and the
   // top edge of the frame looks 17.5 degrees below horizontal (40 pitch minus the 22.5 degree
   // half field of view), so the top edge crosses height y at r = (213.06 - y) / tan 17.5, with
-  // r the horizontal distance from the camera. A plate at 118 m is therefore inside the frame
-  // out to r = 301 m, and one at 140 m out to 232 m: the near and middle deck enters the top
+  // r the horizontal distance from the camera. A plate at 132 m is therefore inside the frame
+  // out to r = 259 m, and one at 178 m out to 112 m: the near and middle deck enters the top
   // of the frame with room, instead of the whole deck sitting above a frame whose top edge is
-  // already below the camera. The band is thin (22 m) because these are high wisps, and the
-  // tallest roof the sample world can build is a 20 floor tower, a little under 90 m above sea
-  // level, so every plate stays about 28 m over the roofs.
-  const CLOUD_BASE_Y = 118;
-  const CLOUD_BAND_Y = 22;
-  // The plates a clear hour keeps are the first ones in the pool. The first two are the
-  // district wisp lane, over the near middle, drifting in a lane 80 m wide plus or minus 40 m:
-  // at 1600x900 that puts them at ndcY 0.56 to 0.83, 198 to 76 px down from the top edge, and
-  // ndcX under 0.3 for the whole lane, so a wisp is always in the top quarter of the district
-  // frame. The next two spare plates of the same lane join it as the cover thickens, and the
-  // two after are the block tier's own lane (below). The steady hour keeps two of each.
-  const CLOUD_WISP_N = 2;
-  const CLOUD_WISP_SPARE = 2;
+  // already below the camera. The band is 46 m deep so the deck has parallax and reaches both
+  // the upper sky and the band under it, and the tallest roof the sample world can build is a
+  // 20 floor tower, a little under 90 m above sea level, so every plate stays about 42 m over
+  // the roofs.
+  const CLOUD_BASE_Y = 132;
+  const CLOUD_BAND_Y = 46;
+  // Cycle 30 measured the deck against the frame instead of the prose: a steady hour kept four
+  // plates, and a two-frame difference over the day frame moved 0.00 percent of the sky, so the
+  // district was standing under empty air. The lane holds five now, the block tier's own lane
+  // three, and three spares wait for more cover, so a clear hour is eleven plates and a
+  // fragmented one still caps at the pool's 140. The deck also lifts from 118 m to 132 m and
+  // deepens to 46 m, which spreads the plates across rows 45 to 90 of a 1600x900 district frame;
+  // the same two-frame difference now moves 5.39 percent of that band across 312 columns, while
+  // rows 0 to 45 keep streaks 0.00 and the frame's mud reading is 1.26 percent against cycle 28's
+  // 1.45. A deck tuned lower (120 m base, 62 m band) measured as no cloud at all in the frame,
+  // because cloudBaseY is raised to the tallest quarter label plus six, so the plates were above
+  // the top edge; 132 m is the base that was measured to work, not a value chosen by eye. The
+  // plates are two triangles each and the whole deck is one instanced mesh, so a thicker deck
+  // costs matrix time, not a draw call.
+  const CLOUD_WISP_N = 5;
+  const CLOUD_WISP_SPARE = 3;
   const CLOUD_WISP_LANE = 40;
-  const CLOUD_BLOCK_N = 2;
+  const CLOUD_BLOCK_N = 3;
   const CLOUD_BLOCK_LANE = 30;
   const CLOUD_BLOCK_BAND = 3;
   const CLOUD_BLOCK_SPREAD = 3;
@@ -3358,6 +3845,15 @@ export function createAgents(THREE, world, model, opts) {
     for (let i = 0; i < slotN; i++) signCursor[i] = 0;
     signsDirty = true;
     signTimer = 0;
+  }
+
+  // A live export install calls this, never `rebuild` directly: the rebuild empties every
+  // overlay pool, so the refill that follows is a re-population and opens the window. The
+  // build-time call at the bottom of the factory keeps the plain rebuild, because the first
+  // frames of a page are the loading burst and slicing them would only delay the first look.
+  function setDataModelLive(next) {
+    rebuild(next);
+    beginResync('rebuild');
   }
 
   // --------------------------------------------------------------- tram step
@@ -3585,7 +4081,7 @@ export function createAgents(THREE, world, model, opts) {
     if (target > ringCap) target = ringCap;
     if (target > scaleCap) target = scaleCap;
     if (target < 4) target = 4;
-    ringShown = easeTo(ringShown, target, 3.2, dt);
+    ringShown = rampSlots(RESYNC_RING, ringShown, target, dt);
     const hi = ringShown < 0.02 ? 0 : Math.min(ringCap, Math.ceil(ringShown));
     const amp = clamp01((congestion - 0.5) / 0.5);
     const g = ringGrid;
@@ -3699,7 +4195,7 @@ export function createAgents(THREE, world, model, opts) {
     if (target > aveCap) target = aveCap;
     if (target > scaleCap) target = scaleCap;
     if (target < 2) target = 2;
-    aveShown = easeTo(aveShown, target, 3.2, dt);
+    aveShown = rampSlots(RESYNC_AVE, aveShown, target, dt);
     const hi = aveShown < 0.02 ? 0 : Math.min(aveCap, Math.ceil(aveShown));
     const speedMul = greenWave ? 1.28 : 1;
     const g = aveGrid;
@@ -3823,7 +4319,7 @@ export function createAgents(THREE, world, model, opts) {
     if (target > spurCap) target = spurCap;
     if (target > scaleCap) target = scaleCap;
     if (target < 2) target = 2;
-    spurShown = easeTo(spurShown, target, 3.2, dt);
+    spurShown = rampSlots(RESYNC_SPUR, spurShown, target, dt);
     const hi = spurShown < 0.02 ? 0 : Math.min(spurCap, Math.ceil(spurShown));
     const g = spurGrid;
     g.head.fill(-1, 0, g.totalBins);
@@ -3925,7 +4421,7 @@ export function createAgents(THREE, world, model, opts) {
     if (target > expCap) target = expCap;
     if (target > scaleCap) target = scaleCap;
     if (target < 4) target = 4;
-    expShown = easeTo(expShown, target, 3.2, dt);
+    expShown = rampSlots(RESYNC_EXP, expShown, target, dt);
 
     const fast = EXP_SPEED * (1 - 0.9 * clamp01((congestion - 0.25) / 0.75));
     const speed = fast < EXP_CRAWL ? EXP_CRAWL : fast;
@@ -4015,7 +4511,7 @@ export function createAgents(THREE, world, model, opts) {
     // The buses are a fixed service: the population scale either runs both or, on the
     // lowest notch, retires them with the same fade band as every other pool.
     const target = popScale < 0.32 ? 0 : BUS_COUNT;
-    busShown = easeTo(busShown, target, 3.2, dt);
+    busShown = rampSlots(RESYNC_BUS, busShown, target, dt);
     for (let i = 0; i < BUS_COUNT; i++) {
       const vis = visibility(busShown, i);
       if (vis <= 0.02) {
@@ -4369,7 +4865,7 @@ export function createAgents(THREE, world, model, opts) {
   // scale to the pool at the busiest hour. The population scale clamps the ceiling.
   function stepPeds(dt, act, dreaming) {
     if (dreaming) {
-      if (pedShown > 0.001) hideAllPeds();
+      if (pedShown > 0.001 || cohortDrawn > 0) hideAllPeds();
       return;
     }
     let target = PED_BASE;
@@ -4384,18 +4880,28 @@ export function createAgents(THREE, world, model, opts) {
     if (target > scaleCap) target = scaleCap;
     if (target > PED_CAP) target = PED_CAP;
     if (target < 0) target = 0;
-    pedShown = easeTo(pedShown, target, 3.2, dt);
+    pedShown = rampSlots(RESYNC_PED, pedShown, target, dt);
     if (pedShown < 0.02 && target === 0) pedShown = 0;
     const hi = pedShown < 0.02 ? 0 : Math.min(PED_CAP, Math.ceil(pedShown));
     const goCross = mod(clock, CROSS_PERIOD) < CROSS_GO;
+    selectCohort(dt);
+    if (cohortOn) cohortBegin();
     let any = false;
     let drawn = 0;
+    // The procedural pool submits a prefix, so the walkers that stayed procedural are packed
+    // into it from index zero upward and a cohort walker leaves no instance behind. With no
+    // cohort (the phone, a build without the pack) the index is the slot, which is the cycle 22
+    // mapping exactly, gaps included, so those frames do not move by one instance or one byte.
+    let proc = 0;
+    let colLo = PED_CAP;
+    let colHi = 0;
     for (let i = 0; i < hi; i++) {
       const vis = visibility(pedShown, i);
       if (vis <= 0.02) {
         if (pedOn[i]) {
           pedOn[i] = 0;
           pedGrow[i] = 0;
+          pedLit[i] = 0;
           hideAt(peds, i);
           hideAt(pedHeads, i);
           any = true;
@@ -4403,7 +4909,10 @@ export function createAgents(THREE, world, model, opts) {
         continue;
       }
       if (!pedOn[i]) {
-        if (!spawnPed(i)) continue;
+        if (!spawnPed(i)) {
+          pedLit[i] = 0;
+          continue;
+        }
         any = true;
       }
       const mode = pedMode[i];
@@ -4426,6 +4935,7 @@ export function createAgents(THREE, world, model, opts) {
           const nr = pickPedRoute();
           if (!nr) {
             pedOn[i] = 0;
+            pedLit[i] = 0;
             hideAt(peds, i);
             hideAt(pedHeads, i);
             any = true;
@@ -4468,6 +4978,7 @@ export function createAgents(THREE, world, model, opts) {
         const route = pedRoute[i];
         if (!route) {
           pedOn[i] = 0;
+          pedLit[i] = 0;
           hideAt(peds, i);
           hideAt(pedHeads, i);
           any = true;
@@ -4500,29 +5011,64 @@ export function createAgents(THREE, world, model, opts) {
       pedGrow[i] = g;
       const sc = g * vis;
       const bob = Math.sin(pedPhase[i] + clock * 5.5) * 0.05;
-      writeMatrix(peds, i, px, py + bob, pz, ang, sc, sc * (1 + bob * 0.3), sc);
-      writeMatrix(pedHeads, i, px, py + bob + PED_HEAD_Y * sc, pz, ang, sc, sc, sc);
+      // The last drawn place, for the next selection tick: ranking uses a place the frame has
+      // already shown, so a tick never has to step a walk twice.
+      pedLastX[i] = px;
+      pedLastY[i] = py;
+      pedLastZ[i] = pz;
+      pedLit[i] = 1;
+      if (cohortOn && cohortIn[i]) {
+        writeCohort(i, px, py + bob, pz, ang, sc);
+      } else {
+        const idx = cohortOn ? proc : i;
+        if (cohortOn) proc += 1;
+        writeMatrix(peds, idx, px, py + bob, pz, ang, sc, sc * (1 + bob * 0.3), sc);
+        writeMatrix(pedHeads, idx, px, py + bob + PED_HEAD_Y * sc, pz, ang, sc, sc, sc);
+        // Clothes follow the walker, not the instance: the palette is written again only where
+        // the repacking put a different slot at this index, so a steady frame uploads nothing.
+        if (pedColSlot[idx] !== i) {
+          pedColSlot[idx] = i;
+          peds.setColorAt(idx, pedPalette[i % pedPalette.length]);
+          pedHeads.setColorAt(idx, pedHeadPalette[(i * 3 + 1) % pedHeadPalette.length]);
+          if (idx < colLo) colLo = idx;
+          if (idx + 1 > colHi) colHi = idx + 1;
+        }
+      }
       drawn += 1;
       any = true;
     }
-    for (let j = hi; j < pedDrawn; j++) {
+    for (let j = hi; j < pedHi; j++) {
       pedOn[j] = 0;
       pedGrow[j] = 0;
+      pedLit[j] = 0;
       hideAt(peds, j);
       hideAt(pedHeads, j);
       any = true;
     }
-    const span = hi > pedDrawn ? hi : pedDrawn;
-    pedDrawn = hi;
+    // The uploaded range covers both the packed prefix and any slot hides above it, exactly the
+    // range the unpacked pool uploaded, so the phone's spans do not change.
+    const top = cohortOn ? proc : hi;
+    let span = top > pedHi ? top : pedHi;
+    if (pedDrawn > span) span = pedDrawn;
+    pedHi = hi;
+    pedDrawn = top;
     pedVisible = drawn;
     if (any) {
       dirtyMatrix(peds, 0, span);
       dirtyMatrix(pedHeads, 0, span);
     }
+    if (cohortOn) {
+      if (colHi > colLo) {
+        dirtyColour(peds, colLo, colHi);
+        dirtyColour(pedHeads, colLo, colHi);
+      }
+      cohortEnd();
+    }
   }
 
   function hideAllPeds() {
     for (let i = 0; i < PED_CAP; i++) {
+      if (pedLit[i]) pedLit[i] = 0;
       if (!pedOn[i]) continue;
       pedOn[i] = 0;
       pedGrow[i] = 0;
@@ -4531,9 +5077,26 @@ export function createAgents(THREE, world, model, opts) {
     }
     pedShown = 0;
     pedDrawn = 0;
+    pedHi = 0;
     pedVisible = 0;
     dirtyMatrix(peds, 0, PED_CAP);
     dirtyMatrix(pedHeads, 0, PED_CAP);
+    // The dream hides the walkers by submitting none of them; the cohort's bodies have to leave
+    // the frame the same way, or the pack figures would stand lit in a sleeping city.
+    for (let v = 0; v < cohortN; v += 1) {
+      const mesh = cohortMesh[v];
+      mesh.count = 0;
+      mesh.visible = false;
+      cohortCursor[v] = 0;
+    }
+    if (cohortN > 0) {
+      for (let i = 0; i < PED_CAP; i += 1) cohortIn[i] = 0;
+      cohortMembers = 0;
+      cohortDrawn = 0;
+      cohortClock = 0;
+      cohortReport.drawn = 0;
+      cohortReport.tris = 0;
+    }
   }
 
   // ------------------------------------------------------------- cloud steps
@@ -4611,8 +5174,8 @@ export function createAgents(THREE, world, model, opts) {
     const livePrev = cloudLive;
     let touched = 0;
     // A steady hour keeps the two narrow lanes (district wisps and the block tier's own lane),
-    // so the floor is 4; cover adds the rest of the pool at the old 126 per unit of
-    // fragmentation.
+    // so the floor is CLOUD_BLOCK_HI (eleven plates since cycle 30); cover adds the rest of the
+    // pool at 126 per unit of fragmentation, which still caps at CLOUD_CAP on a broken hour.
     let cloudFadeTarget = Math.round(CLOUD_BLOCK_HI + 126 * frag);
     if (cloudFadeTarget > CLOUD_CAP) cloudFadeTarget = CLOUD_CAP;
     if (cloudLive < cloudFadeTarget) {
@@ -4911,11 +5474,6 @@ export function createAgents(THREE, world, model, opts) {
     const v = modelRef.activityLastHour(t);
     return v && typeof v.length === 'number' ? v : null;
   }
-  function safeLongest(t) {
-    if (!modelRef || typeof modelRef.longestSessionBefore !== 'function') return null;
-    const v = modelRef.longestSessionBefore(t);
-    return v || null;
-  }
   function safeCranes(t) {
     if (!modelRef || typeof modelRef.cranesAt !== 'function') return null;
     const v = modelRef.cranesAt(t);
@@ -4942,10 +5500,18 @@ export function createAgents(THREE, world, model, opts) {
     if (Math.abs(popTarget - popScale) < 0.002) popScale = popTarget;
 
     // Dream edges: peds vanish on sleep and ramp back in after waking, and the parked
-    // fleet stops being drawn until the city wakes.
+    // fleet stops being drawn until the city wakes. Waking opens the re-population window, so
+    // the walkers and the cars that the dream emptied come back over RESYNC_FRAMES frames
+    // instead of at whatever rate one frame's dt happens to allow.
     if (dreaming !== dreamPrev) {
       dreamPrev = dreaming;
-      if (dreaming) hideAllPeds();
+      if (dreaming) {
+        // The population the sleep has to bring back, read before the walkers are hidden.
+        captureResyncSpans();
+        hideAllPeds();
+      } else {
+        beginResync('wake');
+      }
       applyDreamFleet(dreaming);
     }
 
@@ -4964,21 +5530,25 @@ export function createAgents(THREE, world, model, opts) {
     // cycle instead of a frozen one.
     stepSignals(typeof s.wallHour === 'number' ? s.wallHour : 12);
 
-    // Green wave comes from the longest session still open at tData, when it belongs
-    // to a real quarter (data.mjs reports q = -1 for unmatched apps).
-    const ls = safeLongest(tData);
-    const gw = !!ls && typeof ls.q === 'number' && ls.q >= 0;
+    // Green wave comes from the session open at tData, when it belongs to a real quarter
+    // (data.mjs reports q = -1 for unmatched apps). A session that has already closed earns
+    // nothing: the avenue flows while the focus is live, not for the rest of the day.
+    const active = modelRef && typeof modelRef.activeSessionAt === 'function' ? modelRef.activeSessionAt(tData) : null;
+    const gw = !!active && active.q >= 0;
     if (gw !== greenWave) {
       greenWave = gw;
       refreshCarColors();
     }
 
-    // Parcel schedule, driven by the data clock crossing each at value.
+    // Parcel schedule, driven by the data clock crossing each at value. A clock that went
+    // backwards is a discontinuity (the wrap at t1 + 1 h, or an install that reset it to t0), and
+    // it re-opens the window: the pools have been reading schedules the clock has left behind.
     if (!parcelInit) {
       parcelInit = true;
       resyncParcels(tData);
     } else if (tData < prevT) {
       resyncParcels(tData);
+      beginResync('wrap');
     }
     advanceParcels(tData, dreaming);
     prevT = tData;
@@ -4995,6 +5565,11 @@ export function createAgents(THREE, world, model, opts) {
       stepSigns(d);
     }
     stepPeds(d, act, dreaming);
+    // The window counts its frame here, after every pool has taken its slice, so the frame the
+    // budget names is a frame that really carried work: frame RESYNC_FRAMES admits the last
+    // slots, and only then can the window close. A sleep does not count: nothing steps under it,
+    // so an open window pauses and the next wake opens a fresh one.
+    if (!dreaming) endResyncFrame();
     stepVans(d, dreaming);
     stepFarm(d, dreaming);
     stepClouds(d, frag, dreaming, night);
@@ -5105,6 +5680,9 @@ export function createAgents(THREE, world, model, opts) {
     hideAt(pedHeads, i);
     peds.setColorAt(i, pedPalette[i % pedPalette.length]);
     pedHeads.setColorAt(i, pedHeadPalette[(i * 3 + 1) % pedHeadPalette.length]);
+    // The instance starts out carrying its own slot's palette, so the repacking below never
+    // rewrites a colour it did not have to.
+    pedColSlot[i] = i;
   }
   dirtyAllColour(peds);
   dirtyAllColour(pedHeads);
@@ -5115,7 +5693,7 @@ export function createAgents(THREE, world, model, opts) {
     // at the same indices, as before the block lane existed. The next CLOUD_BLOCK_N are the
     // block tier's own lane, then the CLOUD_WISP_SPARE plates that join the district lane as
     // cover thickens, and the rest of the pool owns the full field and the whole field's
-    // drift. A steady hour keeps two of each narrow lane (4 + 126 * frag reaches 4 at frag 0).
+    // drift. A steady hour keeps both narrow lanes whole (11 + 126 * frag reaches 11 at frag 0).
     const blockPlate = i >= CLOUD_WISP_N && i < CLOUD_BLOCK_HI;
     const wispPlate = i < CLOUD_WISP_N || (i >= CLOUD_BLOCK_HI && i < CLOUD_LANE_HI);
     if (wispPlate) {
@@ -5164,6 +5742,7 @@ export function createAgents(THREE, world, model, opts) {
 
   initVehicleKinds();
   initModelFleet();
+  initCohort();
   refreshCarColors();
   initVehicleLights();
   for (let i = 0; i < CAR_CAP; i++) {
@@ -5217,11 +5796,21 @@ export function createAgents(THREE, world, model, opts) {
   const api = {
     group: group,
     update: update,
-    setDataModel: rebuild,
+    setDataModel: setDataModelLive,
     setPopulationScale: setPopulationScale,
     vans: { dispatch: dispatchVan },
     tram: { positionAt: tramPositionAt },
     counts: counts,
+    // The walking cohort's read-only report: the capacity the triangle budget paid for, the
+    // variants it wears, and how many pack bodies the last frame actually submitted. The
+    // harness reads it instead of guessing at the scene graph; `setCohort(false)` gives the
+    // same page the cycle 22 pedestrian frame, so the cohort's own cost is measurable in place.
+    cohort: cohortReport,
+    setCohort: setCohortEnabled,
+    // The wake re-population window, read-only: the frames it has run, the frames left of its
+    // budget, what each pool has to bring back, the slots each pool may enter in one frame, and
+    // the slots that actually entered on the last frame and since the window opened.
+    reseed: reseedReport,
     // The junction deck reads itself back, as world.market does: the heights and windows of the
     // rule, the arcs it resolved, the cycle, and one live record per junction with the phase
     // each road is showing and how many cars crossed in the last thirty seconds. The harness
@@ -5259,6 +5848,14 @@ export function createAgents(THREE, world, model, opts) {
       }
     }
   };
+
+  // The page-level read hook the measurement uses: the drawn instance count cannot be read off
+  // a frame, and main's debug api does not carry the agents object. One object, mutated in
+  // place, so reading it allocates nothing and writing it is impossible by convention.
+  if (typeof window !== 'undefined' && window) window.localtimeCohort = cohortReport;
+  // The same read hook for the wake window: the harness reads the frames it ran and the slot cap
+  // from the page instead of inferring them from a frame time.
+  if (typeof window !== 'undefined' && window) window.localtimeReseed = reseedReport;
 
   rebuild(model);
   initFarm();

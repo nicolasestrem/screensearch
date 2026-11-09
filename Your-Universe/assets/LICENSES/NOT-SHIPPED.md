@@ -4,7 +4,7 @@
 
 ## Shipped
 
-`assets/manifest.json` and the five `assets/*.glb` packs are built by `tools/pack-assets.mjs` from
+`assets/manifest.json` and the six `assets/*.glb` packs are built by `tools/pack-assets.mjs` from
 these Kenney kits only:
 
 - kenney-city-kit-commercial
@@ -12,6 +12,7 @@ these Kenney kits only:
 - kenney-city-kit-roads
 - kenney-car-kit
 - kenney-nature-kit
+- kenney-mini-characters
 
 Every model in them is CC0 1.0 and the licence text for each is the matching `kenney-*.txt` in this
 folder.

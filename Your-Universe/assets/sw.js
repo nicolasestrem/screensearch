@@ -22,6 +22,29 @@ const GLTF_LOADER_URL = THREE_ADDONS_BASE + 'loaders/GLTFLoader.js';
 const MODULE_URLS = [THREE_CORE_URL, GLTF_LOADER_URL, THREE_ADDONS_BASE + 'utils/BufferGeometryUtils.js'];
 const JSDELIVR_THREE_PREFIX = '/npm/three@0.160.0/';
 
+// One key per document, whatever query string the page was opened with. tools/serve.mjs resolves a
+// path to one file and ignores the query, so ?hour=, ?post= and the ?cb= cache-busters the
+// measurement tooling appends are all the same bytes, and the page reads those parameters itself.
+// Keying each navigation by its own URL stored a fresh 1.15 MB copy of the shell per visit (23
+// entries after eleven navigations, and 270 on a day-long profile); the canonical key keeps the
+// shell at one entry and the whole cache at twelve. A changed payload does not need a new URL
+// either: CACHE_VERSION is stamped from the bytes and names the cache.
+// Cross-origin URLs are stored verbatim, because an opaque response may only be keyed by the
+// request that produced it.
+function canonicalKey(url) {
+  var parsed;
+  try {
+    parsed = new URL(url);
+  } catch (error) {
+    return url;
+  }
+  if (parsed.origin !== self.location.origin) return url;
+  if (parsed.pathname === ROOT_PATH || /\/index\.html$/.test(parsed.pathname)) return SHELL_URL;
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.href;
+}
+
 function precache(cache, url) {
   // A missing optional entry must not abort the whole install.
   return cache.add(new Request(url, { cache: 'reload' })).catch(function () {});
@@ -54,17 +77,16 @@ self.addEventListener('install', function (event) {
   event.waitUntil(
     (async function () {
       var cache = await caches.open(CACHE_NAME);
-      await precache(cache, SHELL_URL);
-      // The sample export is the district's opening data; without it an offline visit would
-      // synthesise a different day than the served one.
-      await precache(cache, SAMPLE_URL);
-      await precache(cache, MANIFEST_URL);
+      var urls = [SHELL_URL, SAMPLE_URL, MANIFEST_URL];
       var packUrls = await packUrlsFromManifest();
-      for (var i = 0; i < packUrls.length; i += 1) {
-        await precache(cache, packUrls[i]);
-      }
-      for (var k = 0; k < MODULE_URLS.length; k += 1) {
-        await precache(cache, MODULE_URLS[k]);
+      for (var i = 0; i < packUrls.length; i += 1) urls.push(packUrls[i]);
+      for (var k = 0; k < MODULE_URLS.length; k += 1) urls.push(MODULE_URLS[k]);
+      // An entry already in the cache is left alone. A worker-only update (a changed sw.js with the
+      // same payload, which keeps the same CACHE_NAME) then writes and downloads nothing, and a
+      // payload change still refills from scratch because it opens a cache that is empty.
+      for (var j = 0; j < urls.length; j += 1) {
+        if (await cache.match(urls[j])) continue;
+        await precache(cache, urls[j]);
       }
       await self.skipWaiting();
     })()
@@ -81,6 +103,14 @@ self.addEventListener('activate', function (event) {
           await caches.delete(name);
         }
       }
+      // Prune what an older worker stored under a navigation's own query string. No handler looks
+      // such an entry up any more (every lookup goes through canonicalKey), so it can only sit in
+      // the cache and cost storage; this clears the pile a returning visitor already has.
+      var cache = await caches.open(CACHE_NAME);
+      var requests = await cache.keys();
+      for (var j = 0; j < requests.length; j += 1) {
+        if (canonicalKey(requests[j].url) !== requests[j].url) await cache.delete(requests[j]);
+      }
       await self.clients.claim();
     })()
   );
@@ -88,16 +118,17 @@ self.addEventListener('activate', function (event) {
 
 async function cacheFirst(request) {
   var cache = await caches.open(CACHE_NAME);
-  var hit = await cache.match(request);
+  var key = canonicalKey(request.url);
+  var hit = await cache.match(key);
   if (hit) return hit;
   try {
     var response = await fetch(request);
     if (response && (response.ok || response.type === 'opaque')) {
-      cache.put(request, response.clone());
+      cache.put(key, response.clone());
     }
     return response;
   } catch (error) {
-    var fallback = await cache.match(request);
+    var fallback = await cache.match(key);
     if (fallback) return fallback;
     throw error;
   }
@@ -105,17 +136,17 @@ async function cacheFirst(request) {
 
 async function networkFirst(request) {
   var cache = await caches.open(CACHE_NAME);
+  var key = canonicalKey(request.url);
   try {
     var response = await fetch(request);
     if (response && response.ok) {
-      cache.put(request, response.clone());
+      cache.put(key, response.clone());
     }
     return response;
   } catch (error) {
-    var hit = await cache.match(request);
+    var hit = await cache.match(key);
+    if (!hit) hit = await cache.match(SHELL_URL);
     if (hit) return hit;
-    var shell = await cache.match(SHELL_URL);
-    if (shell) return shell;
     throw error;
   }
 }

@@ -61,6 +61,10 @@ export function buildWorld(THREE, model, opts) {
   // frame, and the numbers were settled against the 400k / 180k triangle gates with the 55 / 41
   // call baselines. A model mesh that ends with zero instances is never added to the group.
   const MODEL_LOT_MAX = isTouch ? 22 : 42;
+  // Villas on the outer slopes: the target picture asks for them, and two lots of one kit is what
+  // the draw-call budget can hold beside the crossings' rows (each pack villa lot is a bucket, and
+  // a bucket is two calls with the shadow pass).
+  const MODEL_VILLA_MAX = isTouch ? 0 : 2;
   // Model towers are parked this cycle. Their baked facade carries no lit-window grid, so at
   // night they lose both the art direction ("towers with lit floors") and the data-to-motion
   // rule that lights a window from the last hour of activity. The path below stays intact and
@@ -70,10 +74,9 @@ export function buildWorld(THREE, model, opts) {
   const MODEL_TREE_MAX = isTouch ? 46 : 150;
   const MODEL_CYPRESS_MAX = isTouch ? 6 : 14;
   const MODEL_PALM_MAX = isTouch ? 4 : 10;
-  const MODEL_LAMP_MAX = isTouch ? 0 : 48;
-  const MODEL_PARASOL_MAX = isTouch ? 0 : 15;
+  const MODEL_LAMP_MAX = isTouch ? 0 : 18;
+  const MODEL_PARASOL_MAX = isTouch ? 0 : 0;
   const MODEL_PROP_MAX = isTouch ? 0 : 26;
-  const MODEL_VILLA_MAX = isTouch ? 0 : 4;
 
   // The reduced mesh set is the phone's, and it follows the one capability decision every
   // fragment now shares: `opts.isTouch`, which main resolves once as (pointer: coarse) or
@@ -207,16 +210,64 @@ export function buildWorld(THREE, model, opts) {
   // by the street frontage so it stays honest on every device.
   const BUILDING_CAP = 540;
   const WINDOW_CAP = isTouch ? 3600 : 7800;
+  // The frame mesh's own cap, separate from the pane buffers: the mesh carries the window trim
+  // of every pane AND every detail that cycle 24 and 25 turned from a box into a quad, and the
+  // two writers share one cursor. Cycle 25's awning fringes (2 quads each) and balcony rails
+  // (2 each) come to about 4,500 instances on top of the trims, so 7,800 would have started
+  // dropping whichever writer ran last: the pane trims, which are the district's window grid.
+  // A cap nobody reaches is the honest fix; the buffer is 16 floats a quad either way and the
+  // drawn count is still what the passes write, so nothing pays for the room.
+  const FRAME_CAP = isTouch ? 3600 : 11200;
   const DETAIL_CAP = isTouch ? 5413 : 9000;   // plinths, shopfronts, awnings, street furniture
-  // The last few hundred flourishes are worth more than they cost in a frame that has to hold
-  // under four hundred thousand triangles with a dream on screen: the flush keeps the highest
-  // ranked props and drops the tail of the lowest rank instead of drawing all of them. The raised
-  // budget buys the rooftop clutter its boxes: 540 of them, 10800 triangles on the desktop day
-  // frame (a ten triangle box drawn twice, once into the shadow map and once into the colour
-  // pass), and nothing at all at night, where the level drops to 1 and rank 2 is never drawn.
-  // The market raised both caps by 213, its own count of rank 0 and rank 1 instances, so the
-  // rank 2 tail it displaced stays exactly as long and nothing on the roofs goes dark.
-  const DETAIL_BUDGET = isTouch ? 5413 : 6653;
+  // The budget is a floor for the structure and a ceiling for the flourishes, and the passes are
+  // sized against it rather than hoped at. On the desktop frame ranks 0 and 1 lay 1,559 and 2,359
+  // pieces of their own accord (they are shed by the ladder, never by the budget), so 3,068 of the
+  // 6,986 are left for rank 2 and the audit reports that remainder as rank2Room. Cycle 23 measured
+  // the pool at 6,912 pieces laid and 6,912 kept, nothing dropped, with every rank-2 pass inside
+  // its room: 2,994 pieces, which is the facade and roof passes of cycle 22, the roof plant raised
+  // by 241, the 112 ring frontage bands (below), four kerbside seat backs and the crown hedge.
+  // Every rank-2 box is ten triangles drawn twice on a desktop frame, once into the shadow map and
+  // once into the colour pass, and nothing at all at night, where the level drops to 1 and rank 2
+  // is never drawn.
+  //
+  // Cycle 23 raised the budget by exactly the two passes it added and paid for them out of geometry
+  // that was drawing the same paint twice over: the four bar window frame ring became one quad
+  // (8,214 triangles off the street frame, 0 at night because the frames are night-culled) and the
+  // ground-contact blob went from eight segments to six (728 off day, street and fallback). The
+  // bands are 1,120 of that back and the extra roof plant 2,410, so the desktop street frame is
+  // 5,412 lighter than cycle 22 and the night and dream frames are untouched.
+  //
+  // Cycle 24 took the other cheap half of the same argument: every one face box in this pool that
+  // is only ever read face on became a two triangle quad in the frames InstancedMesh, which already
+  // exists, is already night-culled and never writes the shadow map. The ring's parapet bands went
+  // from one box on the facade line to a shelf and a reveal quad (112 bands, 1,792 triangles), the
+  // dish masts from a two crossed box to two crossed quads (42 masts, 672) and the washing line from
+  // a box to a flat quad (24 racks, 432): 2,896 counted triangles off the street frame and zero off
+  // the night and dream frames. Two conversions were measured and put back: a dish plate in two
+  // quads blew the plate out on shadowed decks (max channel delta 0.737, 392 pixels over 40 at the
+  // r0 corner) and crossed quads for the washing line posts cost 0.10 of corner edge density at r2
+  // bottom left (6.05 to 5.95); the line's own quad was briefly reverted too, because it cost 0.06
+  // there (6.06 to 6.00) which is straight through the corner's 6.05 floor, and that 432 is back.
+  // The whole 2,896 freed went to the street tier's south east corner and to the district's storey
+  // rhythm, so the pool itself is unchanged in size: the boxes it holds are still ten triangles.
+  // Keep the least-visible rank-2 flourish tail below the day-frame triangle working line.
+  // Exposed window trim and compact crossing infill take priority over that decorative tail.
+  //
+  // The pavement classes of the standing crowd stopped being two people each: all four fountain
+  // benches are seated and four cross street corners are taken, which is six more figures at about
+  // 150 triangles each, 896 measured. The pool pays for them out of its own tail, but only just:
+  // a rank-2 box is ten triangles drawn twice, once into the colour pass and once into the shadow
+  // map, so one hundred fewer pieces is 2,000 triangles and buys the crowd with room to spare.
+  // The first attempt cut three hundred pieces, which spent 6,000 triangles of facade to buy 896
+  // of people; forty is the same idea priced honestly. Measured at 6300 the bench peak read
+  // 399,844, only 156 under the hard gate, which is not a margin worth trusting a random hour's
+  // traffic with; 6260 buys another 800 triangles of headroom for forty pieces of tail.
+  const DETAIL_BUDGET = isTouch ? 5413 : 6260;
+  // The ring frontage band pass (details section) is bounded here, with the pool it draws from.
+  // The ring belt holds 112 storeys above its ground bands, so 120 is the cap with a few to
+  // spare: a ring belt that grew past it would clip a band rather than overrun the pool, and the
+  // audit's frontBands count is where that shows.
+  const RING_BAND_MAX = 120;
   const GLASS_CAP = isTouch ? 900 : 1600;     // shop windows and shelter panels, unlit glass
   const SHOP_MAX = isTouch ? 70 : 150;        // shopfront storeys, so the detail budget holds
   // The cap pays for the hillside planting, not for a bigger district: every tree costs 24
@@ -224,16 +275,38 @@ export function buildWorld(THREE, model, opts) {
   // frame because the canopies cast into the shadow map. The near slopes, the terraces and the
   // farm tracks are planted before the distance is read, so the foreground always gets its rows.
   const TREE_CAP = isTouch ? 1280 : 2600;
-  // The air over the far country. Two warm stops, not one: the near crests keep a cream haze
-  // close to their own dry grass, and the outer shore steps up into a pale blue air so the
-  // silhouettes layer by distance. Neither is violet: a lilac haze under a warm sky was the
-  // purple mud the top of the frame opened with, and it is gone.
+  // The crest of the district's own hill, and the last place a tree may stand: north of it the
+  // ground is the plateau the frame reads as the hill band over the town, so a canopy out there
+  // is a streak in the haze rather than a tree. It is the district's north edge, which is also
+  // the line the hilltop village and its crown cypresses stand behind.
+  const TREE_CREST_Z = -120;
+  // The same crest for the ground itself, as a blend: TERRAIN_CREST_Z is where the district's own
+  // hill still paints everything it paints, TERRAIN_FAR_CREST_Z is where the silhouette takes
+  // over completely. Between them the two lerp, so the band has no seam at its lower edge. Past
+  // them the ground carries no relief, no parcel lines, no terraces, no retaining walls and no
+  // parcel paint: at the district tier that ground is four hundred and fifty metres out, one
+  // vertex is twenty metres wide, and every one of those details becomes a line in the haze.
+  const TERRAIN_CREST_Z = -112;
+  const TERRAIN_FAR_CREST_Z = -140;
+  // The air over the far country. The terrain's vertex colours carry a warm cream haze close to
+  // the district's own dry grass, then step the outer shore toward pale blue so the silhouettes
+  // layer by distance. Neither stop is violet: a lilac haze under a warm sky was the purple mud
+  // the top of the frame opened with, and it is gone. The shader reads its own warm pair (see
+  // the terrain air below) and never mixes the blue into the hills.
   const AIR_HUE = new THREE.Color(0xe6d3b0);
   const AIR_BLUE = new THREE.Color(0xc8cfd6);
+  // The air the far plateau sits in at the crest band, and the one number the skyline value
+  // compression pulls toward: the terrain shader's own day gold stop. At this camera pitch the
+  // district's crest reaches a projected height of 0.63, where that shader's warm key is 0.78
+  // and its gold key is already 1.0, so gold is the tone the hilltop silhouettes are drawn
+  // against. It is declared here, above every builder, because the statics mesh and the towers
+  // are coloured long before the terrain's uniform table exists; terrainAir.dayGold reads this
+  // same constant, so the compression and the aerial fade cannot drift apart.
+  const AIR_GOLD = 0xcba45e;
   const LAMP_CAP = isTouch ? 140 : 280;
   const HOUSE_CAP = isTouch ? 52 : 88;       // the stone crown on the summit only
   const CAR_CAP = isTouch ? 62 : 155;
-  const PARASOL_CAP = isTouch ? 12 : 26;
+  const PARASOL_CAP = isTouch ? 12 : 34;
   const CONTACT_CAP = BUILDING_CAP;          // one ground-contact blob per building
   const CROSS_CAP = 12;
 
@@ -300,8 +373,9 @@ export function buildWorld(THREE, model, opts) {
   // Night cull: meshes whose night frame contribution is below the tolerance the cycle gate
   // measures are switched off by lights.setTimeOfDay and back on at dawn. The measured share of
   // the 1600x900 night frame each one covers: window frame rings 0.28 percent, ground contact
-  // blobs 0.04, crane masts 0.06, the stone crown 0.005. Their triangle costs are 11576, 2454,
-  // 2366 and 12. The switch is a boolean write, so there is no allocation on the night edge.
+  // blobs 0.04, crane masts 0.06, the stone crown 0.005. Their triangle costs are 2738 (the
+  // frames are one quad a window since cycle 23; the old four bar ring cost 11576), 2454, 2366
+  // and 12. The switch is a boolean write, so there is no allocation on the night edge.
   const nightCull = [];
   // The touch frame has 412 device pixels across, so the far field of the district is below one
   // pixel there: the water, the elevated deck, the tower silhouettes, the lettered surfaces and
@@ -329,6 +403,70 @@ export function buildWorld(THREE, model, opts) {
   function smooth(a, b, x) {
     const t = clamp((x - a) / (b - a), 0, 1);
     return t * t * (3 - 2 * t);
+  }
+  // ------------------------------------------------------------------ skyline value compression
+  // The 150 to 180 row slice of the day frame has read 1.77 for seven cycles. Cycle 35
+  // attributed it by hiding one pool at a time on the default framing and re-probing the slice:
+  // nothing hidden 1.77, towers hidden 1.58, statics hidden 1.59, details hidden 1.52, cranes
+  // hidden 1.77. The band is not one construct: it is the hilltop silhouette spread over the
+  // tower cluster, the merged statics (the church, the campanile, the water tower) and the
+  // detail pool, drawn against a plateau the terrain shader has already dissolved into air.
+  // Deleting any one pool buys at most 0.25 and costs the picture part of the hilltop village it
+  // is built around, so the fix here is contrast, never geometry.
+  //
+  // The step the eye reads is measured too: in the committed day frame rows 150 to 180 hold 10.7
+  // percent of pixels with a mean channel value under 0.55, averaging 0.353, against a backdrop
+  // averaging 0.709. That 0.36 step is the edge the slice counts.
+  //
+  // The curve is keyed on world Y, because that is what the frame sees, and its anchors are the
+  // constructs themselves: the hilltop grade is 24.3 to 25.6, the tower bases are 15.9 to 19.3,
+  // the water tower vent is 46.1, the tallest crest block is 46.9, the campanile spire is 54.4
+  // and the tower crowns run 59 to 90. Nothing at or under 30 moves, which leaves every storey
+  // at grade untouched, and the ramp closes at 56, where the tallest thing that is not a tower
+  // stops: the towers take the whole mix above it, and the water tower and the campanile,
+  // whose spire is the last piece inside the ramp, take their share of it. The crest blocks are
+  // not graded here: a building is one instance colour for walls and roof, so lifting it would
+  // lift the storeys at grade with it, and the detail pool that dresses those roofs is left with
+  // them rather than pulled out from under the walls it sits on.
+  //
+  // The mix is carried as a value, not as a colour. A wall keeps its own hue and only its luma
+  // travels toward the air stop's, which keeps the hilltop ochre, salmon, pale stone and
+  // blue-grey curtain wall four separate families instead of one washed tone. The ceiling is
+  // 0.42, about half of the 0.90 air the far plateau itself carries. The scale stops where the
+  // brightest channel would pass white, so a pale stone shaft cannot bloom. Recolouring existing
+  // vertices adds no vertex, triangle, draw call or material, so the frame budget is untouched.
+  const HAZE_Y0 = 30;
+  const HAZE_Y1 = 56;
+  // The ceiling is set by a corner, not by the row slice. Measured on the day frame and on the
+  // four street rotations: 0.42 takes the row 150 slice from 1.77 to 1.69 but lifts the r2 top
+  // left corner's flat share from 46.4 to 49.7, over its 49.5 ceiling; 0.30 gives 1.71 and 49.0;
+  // 0.22 gives 1.72 and 48.3, which is the margin this ships with. The compression flattens the
+  // hilltop, so it lowers the row edge and raises corner flatness with the same lever.
+  // It also saturates: the slice's own floor is 1.58, what hiding the tower cluster outright
+  // reads, so no ceiling reaches the 1.6 target while the hilltop village is on the frame. That
+  // target predates the floor measurement; the number to watch is the distance to 1.58.
+  const HAZE_MAX = 0.22;
+  const hazeAir = new THREE.Color(AIR_GOLD);
+  const HAZE_AIR_LUMA = 0.2126 * hazeAir.r + 0.7152 * hazeAir.g + 0.0722 * hazeAir.b;
+  const hazeOut = new THREE.Color();
+  // The height key: 0 under HAZE_Y0, the ceiling above HAZE_Y1.
+  function hazeKey(y) {
+    return y <= HAZE_Y0 ? 0 : HAZE_MAX * smooth(HAZE_Y0, HAZE_Y1, y);
+  }
+  // Copy col into out and rescale it until its luma is w of the way to the air stop's. Scaling
+  // every channel by one factor moves the value and leaves the hue ratio alone, which is the
+  // whole difference between a haze and a wash. Never mutates col: the callers pass shared
+  // palette colours, and mutating one would compound down a whole pass.
+  function hazeValue(col, w, out) {
+    out.copy(col);
+    if (w <= 0) return out;
+    const L = 0.2126 * out.r + 0.7152 * out.g + 0.0722 * out.b;
+    if (L < 1e-4) return out;
+    let f = (L + (HAZE_AIR_LUMA - L) * w) / L;
+    const m = out.r > out.g ? (out.r > out.b ? out.r : out.b) : (out.g > out.b ? out.g : out.b);
+    if (m * f > 1) f = 1 / m;
+    out.multiplyScalar(f);
+    return out;
   }
   function mulberry(seed) {
     let a = seed >>> 0;
@@ -451,18 +589,11 @@ export function buildWorld(THREE, model, opts) {
         const u = Math.sqrt(dd2) / w;
         const dome = 0.5 * (1 + Math.cos(Math.PI * u));
         y += FAR_RIDGE_XZ[i + 3] * dome;
-        // The islands are the only ground in the top third of a portrait frame, and a smooth
-        // dome lit from one side is one gradient with nothing in it. A slow wave across each
-        // crest turns the flank into ribs: every rib has a face turned into the sun and a face
-        // turned away, and the crease between them is a line the eye can follow at a kilometre
-        // and a half. No triangles: the grid already has the vertices, this only moves them.
-        if (i >= FAR_RIDGES.length * 4) {
-          const ia = Math.atan2(FAR_RIDGE_XZ[i + 1], FAR_RIDGE_XZ[i]);
-          const ca = Math.cos(ia);
-          const sa = Math.sin(ia);
-          const q = (dx * sa - dz * ca) / w;
-          y += FAR_RIDGE_XZ[i + 3] * 0.26 * dome * dome * Math.sin(q * 7.1 + i * 0.7);
-        }
+        // The crests used to carry a slow wave across the flank, seven ribs per hill, added so a
+        // phone's portrait frame had a crease to follow on the islands. At the district tier the
+        // same wave is a run of vertical facets down a flank that is four hundred pixels wide,
+        // and the owner reads it as the hills being dirty. A hill is a dome: one silhouette, one
+        // soft gradient, no noise at all past the crest.
       }
     }
     return y * mask;
@@ -568,15 +699,33 @@ export function buildWorld(THREE, model, opts) {
   // tables all apply to them with no new code: a street is a curve in this list, and everything
   // that makes a street a street already reads the list.
   const SPUR_PTS = [
-    [[-92, 42], [-112, 38], [-136, 30], [-166, 20], [-208, 6], [-250, -4]],
-    [[96, 10], [112, 6], [130, -2], [158, -14], [204, -30], [248, -46]],
-    [[-40, -76], [-54, -94], [-64, -114], [-70, -140], [-78, -182], [-86, -228]],
+    // The south-west crossing. Cycle 28, owner item 4: the owner named two crossings, the east one
+    // to the rail yard and the south-west one toward the expressway, and only the east one existed.
+    // This is the third, and it is the west arterial's own line, turned down the valley: it leaves
+    // the ring's south-west arc and runs along the north flank of the elevated deck, out past the
+    // left edge, so the lower-left quadrant has a fronted street of its own instead of an edge at
+    // the viaduct. It holds thirty-two metres off the deck's centreline, which is what a fronted
+    // row on that side needs: a parcel's back is twenty and a quarter metres behind the kerb, and
+    // the deck's own corridor reaches eleven, so thirty-one is the working distance and the line
+    // keeps two metres of margin over it. It does not pass under the deck: a street that does loses
+    // its frontage for the deck's width, which would put empty bins in the middle of its row.
+    // It replaces the old west arterial rather than standing beside it, because the corridor
+    // between the deck and the lower-west arterial is fifty-eight metres at its widest and forty at
+    // its narrowest, and two fronted rows plus the deck's own corridor need ninety.
+    [[-72, 94], [-100, 64], [-130, 36], [-162, 24], [-200, 18], [-246, 12]],
+    // The east arterial now runs well past the frame's right edge. Cycle 28: the frontage row
+    // must leave the frame, not stop twelve pixels inside it, and a row can only be continuous
+    // to the edge if the carriageway it fronts is still there when the frame cuts it off.
+    [[96, 10], [112, 6], [130, -2], [158, -14], [204, -30], [248, -46], [292, -62], [330, -76]],
+    // The north arterial climbs to the crest and becomes a track there, so the district ends on
+    // a designed edge instead of a paved lane that gives up in the field at the top of the frame.
+    [[-40, -76], [-54, -94], [-62, -110], [-66, -120]],
     // The lower-west spill: parallel to the first arterial a street grid's depth down the slope,
     // out past the left edge of the district frame. It stands forty metres off the first one,
     // not twenty-four: the two avenues have to be far enough apart to hold a block between them,
     // and at twenty-four metres neither could carry a forty metre plot on its far side without
     // standing in the other's carriageway.
-    [[-96, 4], [-130, -8], [-170, -22], [-210, -34], [-250, -46], [-292, -58]],
+    [[-96, 4], [-130, -8], [-170, -22], [-210, -34], [-250, -46], [-292, -58], [-338, -70]],
     // The hillside spill: off the ring's north-west arc, climbing the slope and leaving the left
     // edge at about z -110. It runs well north of the two valley avenues, not beside them: three
     // parallel arterials twenty-eight metres apart left no room for a block between any two of
@@ -596,7 +745,7 @@ export function buildWorld(THREE, model, opts) {
   // its stone abutment near the west edge and on piers for the rest. It leaves the frame at both
   // ends; the tunnel portal is at the west one.
   const EX_PTS = [
-    [-152, 46], [-140, 58], [-126, 72], [-112, 86], [-98, 100], [-84, 114], [-72, 128], [-62, 142]
+    [-168, 60], [-140, 58], [-126, 72], [-112, 86], [-98, 100], [-84, 114], [-72, 128], [-62, 142]
   ];
   const exCtl = [];
   for (let i = 0; i < EX_PTS.length; i += 1) {
@@ -698,9 +847,11 @@ export function buildWorld(THREE, model, opts) {
 
   // ------------------------------------------------------------------ farm tracks
   // Dirt tracks on the hillside. Two leave the ring at the bottom of the frame and climb across
-  // the near slope to the switchback lane's hairpins, one leaves the east arterial and one the
-  // west arterial and climb the outer shoulders, where the frame's left and right edges are.
-  // They are sampled exactly like the roads and drawn by the same band builder, so a rut
+  // the near slope to the switchback lane's hairpins; the two outer ones start beyond the
+  // arterials' frontage rows, because a street with buildings on both sides cannot open a gap in
+  // its own wall for a track (cycle 28 moved their first thirty metres out to the block's back).
+  // The fifth continues the north arterial over the crest, where the paving stops and the town
+  // ends. They are sampled exactly like the roads and drawn by the same band builder, so a rut
   // follows the ground instead of floating over a hill, and their cells are flagged before the
   // terrain mesh is built so relief() leaves the corridor flat under them.
   const TRACK_HALF = 1.3;
@@ -709,10 +860,13 @@ export function buildWorld(THREE, model, opts) {
     [[-46, 104], [-43, 122], [-38, 138], [-33, 156], [-29, 170], [-24, 183]],
     // The middle near slope: the ring at (26, 104) out to the lane's hairpin at (-6, 192).
     [[26, 104], [20, 128], [14, 140], [4, 152], [-2, 168], [-6, 192]],
-    // The east shoulder: east arterial out across the outer belt, and up toward the crest.
-    [[118, 4], [128, 14], [141, 27], [154, 43], [166, 62], [176, 84], [184, 108], [188, 128]],
-    // The west shoulder: west arterial out under the ridge line, clear of the expressway.
-    [[-166, 26.5], [-172, 36], [-180, 50], [-188, 68], [-196, 88], [-201, 108]]
+    // The east shoulder: from the back of the east crossing's block out across the outer belt.
+    [[154, 43], [166, 62], [176, 84], [184, 108], [188, 128]],
+    // The west shoulder: from the back of the west crossing's block under the ridge line, clear
+    // of the expressway.
+    [[-180, 50], [-188, 68], [-196, 88], [-201, 108]],
+    // The crest lane: the north arterial's paving ends at (-66, -120) and the ruts go on.
+    [[-66, -120], [-70, -138], [-76, -156], [-84, -176], [-94, -204], [-104, -232]]
   ];
   const trackCurves = [];
   const trackPaths = [];
@@ -921,11 +1075,97 @@ export function buildWorld(THREE, model, opts) {
   markPath(ringPath, RING_HALF + RING_PAVE + 0.2, B_RING);
   markPath(avePath, AVE_PAVE_IN + AVE_PAVE + 0.1, B_AVE);
   markPath(tramPath, TRAM_BED + 0.3, B_TRAM);
-  markPath(railPath, 8.6, B_RAIL);
+
+  // The east crossing runs through the goods yard, so the yard keeps its four running lines
+  // either side of a paved apron at the crossing. The apron is why those two rows of blocks can
+  // stand: a frontage row cannot be built through a fifteen metre ballast strip, and the owner's
+  // item is a continuous street, so the yard's paved throat wins the ground between the ring and
+  // the yard's east end. `railApronZ` is the crossing's own station on the rail; the ballast, the
+  // rails and this corridor all stop there and start again on the far side.
+  let railCrossZ = 0;
+  {
+    const path = spurPaths[1];
+    let bd = Infinity;
+    for (let i = 0; i <= path.n; i += 1) {
+      const d = Math.abs(path.xs[i] - RAIL_X);
+      if (d < bd) {
+        bd = d;
+        railCrossZ = path.zs[i];
+      }
+    }
+  }
+  // Half the apron's length along the rail. The mark window reaches one corridor radius past it,
+  // because a marked disk still covers the ground eight metres away: without that margin the
+  // corridor's own mark leaked back into the apron's edge and the crossing's row could not stand
+  // on the first thirty metres of its own street.
+  const RAIL_APRON_HALF = 26;
+  for (let i = 0; i <= railPath.n; i += 1) {
+    if (Math.abs(railPath.zs[i] - railCrossZ) < RAIL_APRON_HALF + 8.6) continue;
+    markDisk(railPath.xs[i], railPath.zs[i], 8.6, B_RAIL);
+  }
   for (let i = 0; i < spurPaths.length; i += 1) markPath(spurPaths[i], SPUR_EDGE + 0.25, B_SPUR);
   markPath(exPath, EX_HALF + 1.8, B_VIA);
   markDisk(roundaboutCenter.x, roundaboutCenter.z, ROUND_R + 0.6, B_ROUND);
   rectScan(PLAZA_CX, PLAZA_CZ, 1, 0, PLAZA_W * 0.5 + 0.4, PLAZA_D * 0.5 + 0.4, 0, B_PLAZA);
+
+  // ------------------------------------------------------------------ depot yard and access
+  // The rail depot is the one structure in the district with no carriageway at its door: the
+  // nearest street is the ring, sixty metres west across the empty outer belt. Owner, 2026-11-09
+  // 14:00, item 3: a box on bare ground is the defect, so the depot gets a block instead of a
+  // clearing. Its yard and its access road claim their ground here, before any lot, terrace or
+  // tree can take it, which is what makes the corridor stay open for the forty metres of paving
+  // that the frontage pass lays along it.
+  //
+  // The junction is the ring's own outer pavement at the station nearest z -30: the access road
+  // starts at that pavement and runs east, then north into the yard, so the depot joins the
+  // carriageway network instead of sitting behind the rail.
+  const DEPOT_SHED_X = RAIL_X + 11.5;
+  const DEPOT_YARD = { x0: 124.9, x1: 142.6, z0: -99.0, z1: -57.0 };
+  const DEPOT_ROAD_HALF = 3.25;
+  const DEPOT_ROAD_X1 = 132.9;
+  const depotJunction = (function () {
+    let best = 0;
+    let bd = Infinity;
+    for (let i = 0; i <= ringPath.n; i += 1) {
+      const dx = ringPath.xs[i] - 101;
+      const dz = ringPath.zs[i] + 30;
+      const dd = dx * dx + dz * dz;
+      if (dd < bd) {
+        bd = dd;
+        best = i;
+      }
+    }
+    let ox = ringPath.xs[best];
+    let oz = ringPath.zs[best] - RING_CZ;
+    const l = Math.sqrt(ox * ox + oz * oz) || 1;
+    ox /= l;
+    oz /= l;
+    return {
+      x: ringPath.xs[best] + ox * RING_FRONT,
+      z: ringPath.zs[best] + oz * RING_FRONT,
+      kx: ringPath.xs[best] + ox * (RING_HALF + 0.34),
+      kz: ringPath.zs[best] + oz * (RING_HALF + 0.34),
+      ox: ox,
+      oz: oz,
+      tx: -oz,
+      tz: ox
+    };
+  })();
+  {
+    const y0 = (DEPOT_YARD.z0 + DEPOT_YARD.z1) * 0.5;
+    const yh = (DEPOT_YARD.z1 - DEPOT_YARD.z0) * 0.5 + 0.6;
+    rectScan((DEPOT_YARD.x0 + DEPOT_YARD.x1) * 0.5, y0, 1, 0,
+      (DEPOT_YARD.x1 - DEPOT_YARD.x0) * 0.5 + 0.6, yh, 0, B_STREET);
+    rectScan((DEPOT_YARD.x1 + 145.4) * 0.5, y0, 1, 0, (145.4 - DEPOT_YARD.x1) * 0.5 + 0.3, yh,
+      0, B_SIDEWALK);
+    // The two legs of the access road.
+    rectScan((depotJunction.x + DEPOT_ROAD_X1) * 0.5, depotJunction.z, 1, 0,
+      (DEPOT_ROAD_X1 - depotJunction.x) * 0.5 + 0.6, DEPOT_ROAD_HALF + 0.6, 0, B_STREET);
+    const legBZ0 = DEPOT_YARD.z1;
+    const legBZ1 = depotJunction.z - DEPOT_ROAD_HALF;
+    rectScan((DEPOT_ROAD_X1 - DEPOT_ROAD_HALF), (legBZ0 + legBZ1) * 0.5, 1, 0,
+      DEPOT_ROAD_HALF + 0.6, (legBZ1 - legBZ0) * 0.5 + 0.6, 0, B_STREET);
+  }
 
   // ------------------------------------------------------------------ outer fabric region
   // The buildable ground outside the ring. Until this cycle the outer belt had no region test at
@@ -944,8 +1184,10 @@ export function buildWorld(THREE, model, opts) {
   const OUTER_BELT_DEPTH = 32;      // ring pavement to the back of the outer belt
   const OUTER_BAND = 36;            // arterial centreline to the back of its blocks
   const FABRIC_CELL = 2;
-  const FABRIC_MIN = -300;
-  const FABRIC_N = 300;
+  // The mask has to reach the far end of every arterial: the two crossings run past three hundred
+  // metres from the middle of the district, and a row stops dead where the grid does.
+  const FABRIC_MIN = -352;
+  const FABRIC_N = 364;
   const fabricMask = new Uint8Array(FABRIC_N * FABRIC_N);
   function markFabricDisk(x, z, r) {
     const i0 = Math.max(0, Math.floor((x - r - FABRIC_MIN) / FABRIC_CELL));
@@ -1009,6 +1251,22 @@ export function buildWorld(THREE, model, opts) {
   // so a parcel can abut the ring pavement without being inside the inset interior.
   function inRingFrontage(x, z) {
     return ringSigned(x, z) < -7.0;
+  }
+
+  // ------------------------------------------------------------------ arterial frontage band
+  // Every arterial outside the ring now carries a continuous row of blocks on both kerbs, from
+  // the ring's outer pavement out past the frame edge. A civic plot, a villa or any other hand
+  // sited use therefore may not take the strip that row needs: an apron or a pitch dropped on
+  // the kerb line is the wall-with-a-gap that item 4 named, and a plot that stands clear of the
+  // strip still fronts the street across the row's rear, which is how a school or a filling
+  // station sits in a street wall. The band is the pavement edge out to a parcel's back.
+  const SPUR_ROW_BACK = SPUR_FRONT + 11.5;
+  function inSpurRow(x, z, pad) {
+    const reach = SPUR_ROW_BACK + (pad || 0);
+    for (let s = 0; s < spurPaths.length; s += 1) {
+      if (distToPath(spurPaths[s], x, z) < reach) return true;
+    }
+    return false;
   }
 
   // ------------------------------------------------------------------ quarter sites
@@ -1205,7 +1463,11 @@ export function buildWorld(THREE, model, opts) {
 
   // ------------------------------------------------------------------ geometry builder
   // Accumulates positions, normals and vertex colours, then emits one indexed geometry.
-  function makeBuilder() {
+  // `haze` opts the mesh into the skyline value compression above: every vertex is coloured by
+  // its own world height, so a shaft keeps its grade storey and loses contrast toward its crown
+  // through the same vertices it always had. Grading happens here, at the one place a merged
+  // mesh chooses a colour, so a pass that does not ask for it is byte for byte unchanged.
+  function makeBuilder(haze) {
     const P = [];
     const N = [];
     const C = [];
@@ -1213,7 +1475,12 @@ export function buildWorld(THREE, model, opts) {
     function vert(x, y, z, nx, ny, nz, col) {
       P.push(x, y, z);
       N.push(nx, ny, nz);
-      C.push(col.r, col.g, col.b);
+      if (haze) {
+        hazeValue(col, hazeKey(y), hazeOut);
+        C.push(hazeOut.r, hazeOut.g, hazeOut.b);
+      } else {
+        C.push(col.r, col.g, col.b);
+      }
       return P.length / 3 - 1;
     }
     function groundVert(x, z, lift, col) {
@@ -1580,11 +1847,12 @@ export function buildWorld(THREE, model, opts) {
     return kind === 3 && fabricLots >= fabricLimit;
   }
 
-  function fillPathRun(path, front, kind, from, to) {
+  function fillPathRun(path, front, kind, from, to, widthMul) {
     const len = (to - from + 1) * path.step;
     if (len < SLOT_MIN) return;
     if (fabricFull(kind)) return;
-    let n = Math.max(1, Math.round(len / parcelW));
+    const pw = parcelW * (widthMul || 1);
+    let n = Math.max(1, Math.round(len / pw));
     if (len / n > SLOT_MAX) n = Math.ceil(len / SLOT_MAX);
     for (let i = 0; i < n; i += 1) {
       if (fabricFull(kind)) break;
@@ -1614,6 +1882,7 @@ export function buildWorld(THREE, model, opts) {
         const tx2 = path.nz[im] * half * 0.5;
         const tz2 = -path.nx[im] * half * 0.5;
         for (let k = 0; k < 2; k += 1) {
+          if (fabricFull(kind)) break;
           const off = k === 0 ? -1 : 1;
           for (let j = 0; j < 2; j += 1) {
             const deep2 = (8.4 + parcelRnd() * 2.4) - j * 1.6;
@@ -1628,7 +1897,7 @@ export function buildWorld(THREE, model, opts) {
     }
   }
 
-  function fillPath(path, front, kind) {
+  function fillPath(path, front, kind, widthMul) {
     let runStart = -1;
     for (let i = 0; i <= path.n; i += 1) {
       const dx = pathDirX[i];
@@ -1644,11 +1913,11 @@ export function buildWorld(THREE, model, opts) {
       }
       if (free && runStart < 0) runStart = i;
       if (!free && runStart >= 0) {
-        fillPathRun(path, front, kind, runStart, i - 1);
+        fillPathRun(path, front, kind, runStart, i - 1, widthMul);
         runStart = -1;
       }
     }
-    if (runStart >= 0) fillPathRun(path, front, kind, runStart, path.n - 1);
+    if (runStart >= 0) fillPathRun(path, front, kind, runStart, path.n - 1, widthMul);
   }
 
   // Ring frontage: the inner face of the ring road, pointing at the middle of the ellipse.
@@ -1789,7 +2058,12 @@ export function buildWorld(THREE, model, opts) {
       }
     }
     const gap = 1.25;
-    const kerb = SPUR_EDGE + 0.95;
+    // An arterial that carries a frontage row owns the strip from its pavement to a parcel's
+    // back, so a civic plot on one stands behind that row: its front line is the row's rear
+    // edge, and the pitch or the forecourt it draws in front of itself starts there. The search
+    // still walks out along the street to find room, which is why `push` reaches further than a
+    // kerb-side plot ever needed.
+    const kerb = SPUR_ROW_BACK + 0.4;
     for (let k = 0; k <= 60; k += 1) {
       for (let side = -1; side <= 1; side += 2) {
         if (k === 0 && side > 0) continue;
@@ -1797,7 +2071,7 @@ export function buildWorld(THREE, model, opts) {
         const nx = path.nx[i] * side;
         const nz = path.nz[i] * side;
         const yaw = Math.atan2(nx, nz);
-        for (let push = 0; push <= 4; push += 1) {
+        for (let push = 0; push <= 24; push += 1) {
           const off = SPUR_FRONT + gap + d * 0.5 + push;
           const cx = path.xs[i] + nx * off;
           const cz = path.zs[i] + nz * off;
@@ -1924,12 +2198,16 @@ export function buildWorld(THREE, model, opts) {
     placeCivicOnSpur('sport', 44, 34, 0, -150, 12) ||
     placeCivicOnRing('sport', 44, 34, [[18, 104], [-30, 104], [60, 96]]) ||
     placeCivicNear('sport', -150, 12, 0, 44, 34);
-  const civicDockA = placeCivicOnRing('warehouse', 14, 30, [[52, 100], [30, 106]]) ||
-    placeCivicOnSpur('warehouse', 14, 30, 1, 150, -10) ||
-    placeCivicNear('warehouse', 52, 100, 0, 14, 30);
-  const civicDockB = placeCivicOnRing('warehouse', 14, 26, [[72, 94], [94, 70]]) ||
-    placeCivicOnSpur('warehouse', 14, 26, 1, 168, -16) ||
-    placeCivicNear('warehouse', 72, 94, 0, 14, 26);
+  // The two warehouses carry their yard in the plot now: a 12 m shed inside a 14 m plot left
+  // every loading bay outside the reservation, which is why the old apron hung five metres off
+  // the plot's own edge and stopped in mid-air. Thirty metres of plot holds the shed, a nine
+  // metre yard behind the doors, and the front and rear aprons that reach the kerb line.
+  const civicDockA = placeCivicOnRing('warehouse', 24, 34, [[52, 100], [30, 106]]) ||
+    placeCivicOnSpur('warehouse', 24, 34, 1, 150, -10) ||
+    placeCivicNear('warehouse', 52, 100, 0, 24, 34);
+  const civicDockB = placeCivicOnRing('warehouse', 24, 34, [[72, 94], [94, 70]]) ||
+    placeCivicOnSpur('warehouse', 24, 34, 1, 168, -16) ||
+    placeCivicNear('warehouse', 72, 94, 0, 24, 34);
 
   // Villas with pools, only on the far outer slopes, one per promontory plot.
   const VILLA_SPOTS = [
@@ -1952,6 +2230,10 @@ export function buildWorld(THREE, model, opts) {
         const cx = tx + Math.cos(ang) * rr;
         const cz = tz + Math.sin(ang) * rr;
         if (!reservePlot(cx, cz, yaw, 26, 24)) continue;
+        // A villa is a 26 m plot in a field, and an arterial's frontage row is a street wall: a
+        // villa dropped on the strip that row needs leaves a gap in it, so one is only sited
+        // clear of every arterial's row band.
+        if (inSpurRow(cx, cz, 13)) continue;
         villas.push({ x: cx, z: cz, yaw: yaw, pool: rnd() < 0.85 });
         break;
       }
@@ -1960,18 +2242,66 @@ export function buildWorld(THREE, model, opts) {
 
   // ------------------------------------------------------------------ outer fabric frontage
   // Outside the kidney the city does not stop, and it does not start in a field either. The ring
-  // is now built on both faces and every arterial on both flanks, with the same abutting-parcel
-  // fill the inner ring face and the boulevard use, so every outer block has kerb, pavement and
-  // a neighbour and its facade faces a street. No pitched roof out here: the only tile left in
-  // the district is the stone crown on the summit.
+  // is built on both faces and every arterial on both flanks, with the same abutting-parcel fill
+  // the inner ring face and the boulevard use, so every outer block has kerb, pavement and a
+  // neighbour and its facade faces a street. No pitched roof out here: the only tile left in the
+  // district is the stone crown on the summit.
   //
-  // Each street gets a share of the metered budget, in the order the district frame reads them:
-  // the ring's outer face first (it starts at the bottom of the frame and runs east), then the
-  // two new west arterials, then the east arterial, then the original west one. The northern
-  // arterial is left alone: the hilltop band above the ring is already built.
-  const FABRIC_LOT_MAX = isTouch ? 26 : 76;
-  const fabricAudit = { ring: 0, westLower: 0, hillside: 0, east: 0, west: 0, lots: 0 };
+  // Cycle 28 (owner item 4): two of those arterials are now *crossings*. The east one runs from
+  // the ring through the goods yard and out of the frame, and the lower-west one runs out of the
+  // frame past the expressway; each carries a continuous row on both kerbs from the ring's outer
+  // pavement to beyond the frame edge, so the district has no visible edge on either side. The
+  // budget is therefore shared out the other way round: the ring's outer face keeps a modest
+  // share (it is six hundred metres long and was taking twenty four lots), and the crossings get
+  // whatever their own kerbs need. Each side of a street draws its own limit, because one limit
+  // for both sides let the first kerb filled eat the whole share and left the second empty.
+  const FABRIC_LOT_MAX = isTouch ? 26 : 196;
+  const RING_FABRIC_LOTS = isTouch ? 6 : 8;
+  const fabricAudit = { ring: 0, westLower: 0, hillside: 0, east: 0, north: 0, southWest: 0, corners: 0, lots: 0, gaps: [] };
+  const fabricTail = { first: 0, buildings: 0, windows: 0, contact: 0 };
   {
+    // Corner blocks first. A crossing's mouth is a junction of two streets, so the ring's own row
+    // has to stop at the corner and turn into the crossing's row instead of running across the
+    // entry. One parcel on each side faces the ring with its flank on the crossing's pavement;
+    // the ring's fill below is then blocked by it and by the crossing's own corridor, and the
+    // crossing's row picks the wall up where the corner block ends. Placed before every other
+    // fill so nothing can take the corner first.
+    const CROSS_SPURS = [1, 3, 0];
+    const CROSS_NAMES = ['east', 'westLower', 'southWest'];
+    const CORNER_W = 9.4;
+    for (let ci = 0; ci < CROSS_SPURS.length; ci += 1) {
+      const path = spurPaths[CROSS_SPURS[ci]];
+      let ri = 0;
+      let bd = Infinity;
+      for (let i = 0; i <= ringPath.n; i += 1) {
+        const dx = ringPath.xs[i] - path.xs[0];
+        const dz = ringPath.zs[i] - path.zs[0];
+        const dd = dx * dx + dz * dz;
+        if (dd < bd) {
+          bd = dd;
+          ri = i;
+        }
+      }
+      ringOutward(ri, civicOut);
+      const ox = civicOut[0];
+      const oz = civicOut[1];
+      const fx = civicOut[2] + ox * RING_FRONT;
+      const fz = civicOut[3] + oz * RING_FRONT;
+      const tx = oz;
+      const tz = -ox;
+      for (let side = -1; side <= 1; side += 2) {
+        const off = (SPUR_EDGE + 0.5 + CORNER_W * 0.5) * side;
+        // The parcel's body grows away from the street it passes as its normal, so the normal
+        // here is the ring's inward direction: the corner stands on the outer belt with its
+        // flank on the crossing's pavement, which is the junction the owner asked for.
+        const corner = tryParcel(fx + tx * off, fz + tz * off, -ox, -oz, CORNER_W, 9.6, 2.3, 3);
+        if (corner) {
+          corner.street = CROSS_NAMES[ci];
+          fabricAudit.corners += 1;
+        }
+      }
+    }
+
     // The ring's outer face. pathDir is the outward direction, so fillPath places the facade on
     // the outer pavement and grows the body away from the road.
     for (let i = 0; i <= ringPath.n; i += 1) {
@@ -1979,33 +2309,183 @@ export function buildWorld(THREE, model, opts) {
       pathDirX[i] = civicOut[0];
       pathDirZ[i] = civicOut[1];
     }
-    fabricLimit = Math.min(FABRIC_LOT_MAX, isTouch ? 9 : 24);
+    fabricLimit = Math.min(FABRIC_LOT_MAX, fabricLots + RING_FABRIC_LOTS);
     let mark = blds.length;
     fillPath(ringPath, RING_FRONT, 3);
     for (let i = mark; i < blds.length; i += 1) blds[i].street = 'ring';
     fabricAudit.ring = fabricLots;
 
+    // The crossings first, and each of them gets the whole on-screen length: their shares are
+    // computed from their own kerb length rather than handed a fixed number of lots, and their
+    // parcels are laid wider than the district's (1.45x), because an outer arterial's blocks are
+    // fifteen metres of frontage, not seven, and the triangle gate pays for every one of them.
+    // Then the remaining three arterials, which keep their rows coherent to at least half their
+    // length. The north one leaves the shares early: its paving ends at the crest, so its row is
+    // short and its lots are few.
     const shares = [
-      { spur: 3, name: 'westLower', max: 15 },
-      { spur: 4, name: 'hillside', max: 13 },
-      { spur: 1, name: 'east', max: 13 },
-      { spur: 0, name: 'west', max: 13 }
+      { spur: 3, name: 'westLower', full: true },
+      { spur: 1, name: 'east', full: true },
+      { spur: 0, name: 'southWest', full: true },
+      { spur: 4, name: 'hillside', full: false },
+      { spur: 2, name: 'north', full: false }
     ];
+    // How many parcels one kerb of a street takes. A crossing carries its row from the ring to
+    // the frame edge, which is within a few metres of the paved end, and a wide outer block
+    // (2.1 parcels, ten metres of frontage here, because `parcelW` sits on its floor) halves the
+    // number of houses the frame pays for while the row stays unbroken, because neighbouring
+    // frontages abut either way. The other three arterials reach half their length and one
+    // parcel more, which is what keeps them from reading as truncated without costing the
+    // crossings a single lot.
+    const CROSS_REACH = 0.96;
+    const HALF_REACH = 0.5;
     for (let s = 0; s < shares.length && fabricLots < FABRIC_LOT_MAX; s += 1) {
       const path = spurPaths[shares[s].spur];
       if (!path) continue;
-      fabricLimit = Math.min(FABRIC_LOT_MAX, fabricLots + (isTouch ? shares[s].max * 0.45 | 0 : shares[s].max));
+      const wide = shares[s].full ? 2.1 : 1.5;
+      const reach = path.len * (shares[s].full ? CROSS_REACH : HALF_REACH);
+      const perSide = isTouch ? 5 : Math.ceil(reach / (parcelW * wide)) + 1;
       const before = fabricLots;
       mark = blds.length;
+      shares[s].first = mark;
       for (let side = -1; side <= 1; side += 2) {
         for (let i = 0; i <= path.n; i += 1) {
           pathDirX[i] = path.nx[i] * side;
           pathDirZ[i] = path.nz[i] * side;
         }
-        fillPath(path, SPUR_FRONT, 3);
+        fabricLimit = Math.min(FABRIC_LOT_MAX, fabricLots + perSide);
+        fillPath(path, SPUR_FRONT, 3, wide);
       }
       for (let i = mark; i < blds.length; i += 1) blds[i].street = shares[s].name;
+      shares[s].last = blds.length;
       fabricAudit[shares[s].name] = fabricLots - before;
+    }
+
+    // Gap close. The owner's criterion is a bin of the frontage table with a building on each
+    // side, and the two kerbs of a curved street do not phase-align: one side's parcels step
+    // past the other's and leave a ten metre window with a house on one side only. One parcel
+    // per deficient bin, sited from the bin's own centre, is what turns that column to zero. It
+    // runs after every share so the fills cannot take the ground first, and it is asked for by
+    // the audit rather than hoped at.
+    //
+    // Cycle 28 repair. Two things were wrong with the first version. The `have` table counted
+    // only the bins of the share that owns the street, so a lot the ring fill or the other kerb
+    // had already laid in that bin did not exist as far as this pass was concerned, and the bin
+    // was reported deficient while the frontage table (which counts every building within 26 m)
+    // called it served. It now counts every building in the city against the path, which is the
+    // measurement the owner reads. And one parcel per bin at the kerb line was the only remedy,
+    // so a bin whose kerb was blocked by a driveway apron, a lamp, a track mouth or a corridor
+    // stayed empty: the search now tries five along-offsets, two setbacks and three depths, and
+    // a parcel that stands back from the pavement is the smallest correction that resolves it
+    // without moving a street. A bin that still stays deficient is recorded with the occupancy
+    // bits under its front and under its body, so a gap is a named cause in the audit and not a
+    // hole somebody has to photograph.
+    if (!isTouch) {
+      const GAP_BIN = 10;
+      const GAP_BITS = [
+        ['ring', B_RING], ['avenue', B_AVE], ['roundabout', B_ROUND], ['plaza', B_PLAZA],
+        ['rail', B_RAIL], ['street', B_STREET], ['building', B_BUILD], ['tram', B_TRAM],
+        ['tree', B_TREE], ['prop', B_PROP], ['pavement', B_SIDEWALK], ['corridor', B_CORR],
+        ['village', B_OLD], ['house', B_HOUSE], ['spur', B_SPUR], ['expressway', B_VIA],
+        ['track', B_TRACK], ['cypress', B_CYPRESS]
+      ];
+      function gapReason(x, z) {
+        const f = flagsAt(x, z);
+        const names = [];
+        for (let i = 0; i < GAP_BITS.length; i += 1) {
+          if (f & GAP_BITS[i][1]) names.push(GAP_BITS[i][0]);
+        }
+        return names.length === 0 ? 'free' : names.join('+');
+      }
+      for (let s = 0; s < shares.length; s += 1) {
+        const path = spurPaths[shares[s].spur];
+        if (!path || shares[s].first === undefined) continue;
+        const wide = shares[s].full ? 2.1 : 1.5;
+        const bins = Math.floor(path.len / GAP_BIN) + 1;
+        const have = new Int32Array(bins * 2);
+        for (let bi = 0; bi < blds.length; bi += 1) {
+          const b = blds[bi];
+          let best = Infinity;
+          let bk = 0;
+          for (let i = 0; i <= path.n; i += 1) {
+            const dx = b.cx - path.xs[i];
+            const dz = b.cz - path.zs[i];
+            const d = dx * dx + dz * dz;
+            if (d < best) {
+              best = d;
+              bk = i;
+            }
+          }
+          if (best > 26 * 26) continue;
+          const k0 = Math.max(0, bk - 1);
+          const k1 = Math.min(path.n, bk + 1);
+          const tx = path.xs[k1] - path.xs[k0];
+          const tz = path.zs[k1] - path.zs[k0];
+          const cross = tx * (b.cz - path.zs[bk]) - tz * (b.cx - path.xs[bk]);
+          const bin = Math.min(bins - 1, Math.floor(bk * path.step / GAP_BIN));
+          have[bin * 2 + (cross >= 0 ? 0 : 1)] += 1;
+        }
+        for (let bin = 0; bin < bins; bin += 1) {
+          for (let side = 0; side < 2; side += 1) {
+            if (have[bin * 2 + side] > 0) continue;
+            const im = Math.max(0, Math.min(path.n - 1,
+              Math.round(((bin + 0.5) * GAP_BIN) / path.step)));
+            const sgn = side === 0 ? 1 : -1;
+            const ndx = -path.nx[im] * sgn;
+            const ndz = -path.nz[im] * sgn;
+            const tdx = path.nz[im];
+            const tdz = -path.nx[im];
+            const w = parcelW * wide * 0.9;
+            const fx0 = path.xs[im] + path.nx[im] * SPUR_FRONT * sgn;
+            const fz0 = path.zs[im] + path.nz[im] * SPUR_FRONT * sgn;
+            if (fabricLots >= FABRIC_LOT_MAX) {
+              fabricAudit.gaps.push({
+                street: shares[s].name, at: Math.round((bin + 0.5) * GAP_BIN),
+                side: side === 0 ? 'left' : 'right', front: 'lot cap', body: 'lot cap'
+              });
+              continue;
+            }
+            let done = false;
+            for (let k = 0; k < 5 && !done; k += 1) {
+              const along = (k - 2) * 3.4;
+              for (let st = 0; st < 2 && !done; st += 1) {
+                const setBack = st * 1.6;
+                const fx = fx0 + path.nx[im] * setBack * sgn + tdx * along;
+                const fz = fz0 + path.nz[im] * setBack * sgn + tdz * along;
+                for (let j = 0; j < 3 && !done; j += 1) {
+                  if (tryParcel(fx, fz, ndx, ndz, w, 9.4 - j * 1.7, 2.3, 3) ||
+                      (shares[s].full && tryParcel(fx, fz, ndx, ndz, SLOT_MIN,
+                        9.4 - j * 1.7, 2.3, 3))) {
+                    blds[blds.length - 1].street = shares[s].name;
+                    fabricLots += 1;
+                    fabricAudit[shares[s].name] += 1;
+                    done = true;
+                  }
+                }
+              }
+            }
+            if (!done) {
+              fabricAudit.gaps.push({
+                street: shares[s].name,
+                at: Math.round((bin + 0.5) * GAP_BIN),
+                side: side === 0 ? 'left' : 'right',
+                front: gapReason(fx0, fz0),
+                body: gapReason(fx0 - ndx * 4.7, fz0 - ndz * 4.7)
+              });
+            }
+          }
+        }
+      }
+    }
+    // The outer fabric is the tail of every per-building batch, because every parcel outside the
+    // ring is laid after the district's own. That is what lets a probe hide item 4 in place and
+    // read the frame's triangle cost of it, instead of comparing two builds whose whole parcel
+    // stream has shifted. `first` is the first outer parcel's index in `blds`.
+    fabricTail.first = blds.length;
+    for (let bi = 0; bi < blds.length; bi += 1) {
+      if (blds[bi].kind === 3) {
+        fabricTail.first = bi;
+        break;
+      }
     }
   }
 
@@ -2171,8 +2651,16 @@ export function buildWorld(THREE, model, opts) {
       b.color = GLASS[Math.floor(rnd() * GLASS.length)];
       b.shade = 0.94 + rnd() * 0.1;
     } else if (b.kind === 3) {
-      // Contemporary flat-roofed apartment blocks on the outer slopes: five to eight floors.
-      b.floors = 5 + Math.floor(rnd() * 4);
+      // Contemporary flat-roofed blocks on the outer slopes: three to five floors. Cycle 28's
+      // crossings put these in the near corner crops and against the sky at the frame's top edge,
+      // and five to eight floors read there as two flat screens; the shorter block is also worth
+      // a storey band and a window row per floor on the frame's most expensive row of houses.
+      b.floors = 3 + Math.floor(rnd() * 3);
+      // Cycle 28 repair: the top band's 150-180 row slice is the crest and the tallest outer
+      // blocks, and it read 2.02 against 1.49. Within sixty metres of the crest the outer row
+      // gives up one storey (2.7 m), which is the same articulation lever the crossings' corners
+      // needed: shorter wall, more sky per storey band, no change to the streets.
+      if (b.cz < -60) b.floors = Math.max(2, b.floors - 1);
       b.top = gMax + b.floors * 3.0 + 0.7;
       b.bottom = gMin - 1.2;
       const pick = rnd();
@@ -2210,10 +2698,10 @@ export function buildWorld(THREE, model, opts) {
   const MODEL_WHITE = new THREE.Color(0xffffff);
   const modelTintScratch = new THREE.Color();
   const modelLots = [];
-  const modelTowers = [];
   const modelVillas = [];
+  const modelTowers = [];
   const MODEL_APARTMENT_CORE = 4.6;      // the low-detail kits are 4 x 4 metres on the ground
-  const MODEL_CORE_VARIANTS = isTouch ? 3 : 5;
+  const MODEL_CORE_VARIANTS = isTouch ? 3 : 4;
 
   function packTint(out, hex, rnd, low, high) {
     out.setHex(hex);
@@ -2233,10 +2721,10 @@ export function buildWorld(THREE, model, opts) {
   }
 
   let coreSet = [];
+  let villaSet = [];
   let shopModel = null;
   let warehouseModel = null;
   let towerSet = [];
-  let villaSet = [];
   if (assets) {
     const apartmentAll = assets.byCategory('apartment') || [];
     const coreAll = [];
@@ -2256,13 +2744,12 @@ export function buildWorld(THREE, model, opts) {
     shopModel = shopList.length > 0 ? shopList[0] : null;
     const warehouseList = assets.byCategory('warehouse') || [];
     warehouseModel = warehouseList.length > 0 ? warehouseList[0] : null;
+    // One villa kit, not three: the villa pass below only ever fills two lots, and a second kit
+    // would buy a second draw call for nothing the frame can see.
+    const villaList = assets.byCategory('villa') || [];
+    if (villaList.length > 0) villaSet.push(villaList[0]);
     const towerList = assets.byCategory('tower') || [];
     for (let i = 0; i < towerList.length; i += 1) towerSet.push(towerList[i]);
-    const villaList = assets.byCategory('villa') || [];
-    for (let i = 0; i < villaList.length && villaSet.length < 3; i += 1) {
-      const m = villaList[(i * 2) % villaList.length];
-      if (villaSet.indexOf(m) < 0) villaSet.push(m);
-    }
   }
 
   // Towers first: they are the tallest statement and the easiest swap to judge in the frame.
@@ -2359,54 +2846,40 @@ export function buildWorld(THREE, model, opts) {
     }
   }
 
-  // Villas on the outer slopes: low houses among the blocks, not stretched apartment towers.
-  // This step is last because it is the most expensive per lot; street tier only, and only when
-  // the frame has the room left for it.
+
+
+  // Villas on the outer slopes: the two nearest outer lots on the near-slope side of the ring take
+  // a pack villa instead of a procedural block. They stand where the phone frame and the corner
+  // crops see them, which is what the target picture's "villas with pools" means, and two lots of
+  // one kit costs two draw calls rather than the eight the four-lot, three-kit pass cost.
   if (villaSet.length > 0 && MODEL_VILLA_MAX > 0) {
     const outer = [];
     for (let bi = 0; bi < blds.length; bi += 1) {
       const b = blds[bi];
       if (b.kind !== 3 || b.tower || b.model) continue;
       if (b.w < 8.6 || b.d < 6.2) continue;
-      const dx = b.cx;
-      const dz = b.cz - 4;
-      outer.push({ b: b, bi: bi, d: dx * dx + dz * dz });
+      if (b.cz > 40) continue;
+      outer.push({ b: b, bi: bi, d: b.cx * b.cx + (b.cz - 4) * (b.cz - 4) });
     }
     outer.sort(function (a, b) { return a.d - b.d || a.bi - b.bi; });
     for (let i = 0; i < outer.length && modelVillas.length < MODEL_VILLA_MAX; i += 1) {
       const b = outer[i].b;
-      const bi = outer[i].bi;
-      let chosen = null;
-      let chosenFit = null;
-      const fits = [];
-      for (let k = 0; k < villaSet.length; k += 1) {
-        const m = villaSet[k];
-        const fit = modelFit(m, b, 0.92);
-        if (!fit) continue;
-        if (fit.sy < 0.9) continue;
-        fits.push({ m: m, fit: fit });
-      }
-      if (fits.length > 0) {
-        const pickIndex = (hash2(bi * 43 + 11, 29) * fits.length) | 0;
-        chosen = fits[pickIndex].m;
-        chosenFit = fits[pickIndex].fit;
-      }
-      if (!chosen) continue;
+      const fit = modelFit(villaSet[0], b, 0.92);
+      if (!fit || fit.sy < 0.9) continue;
       b.model = true;
       b.modelDef = {
-        model: chosen,
-        sxz: chosenFit.sxz,
-        sy: clamp(chosenFit.sy, 1.0, 1.45),
-        yaw: 0.06 * (hash2(bi * 29 + 3, 13) - 0.5),
-        pitch: 0.008 * (hash2(bi * 31 + 5, 17) - 0.5),
-        tint: 0.88 + hash2(bi * 37 + 7, 19) * 0.16,
+        model: villaSet[0],
+        sxz: fit.sxz,
+        sy: clamp(fit.sy, 1.0, 1.45),
+        yaw: 0.06 * (hash2(outer[i].bi * 29 + 3, 13) - 0.5),
+        pitch: 0.008 * (hash2(outer[i].bi * 31 + 5, 17) - 0.5),
+        tint: 0.88 + hash2(outer[i].bi * 37 + 7, 19) * 0.16,
         y: b.gMin - 0.2,
         tower: false
       };
       modelVillas.push(b);
     }
   }
-
 
   {
     const plazaQuarter = (function () {
@@ -2884,7 +3357,10 @@ export function buildWorld(THREE, model, opts) {
     return Math.sqrt(best);
   }
 
-  const statics = makeBuilder();
+  // Haze on: this mesh carries the church, the campanile, the water tower and the stone crown
+  // on the summit, which are three of the four constructs the 150 to 180 band is made of. Every
+  // piece at grade is under the curve's first stop and keeps its colour exactly.
+  const statics = makeBuilder(true);
 
   const CIV_WALL = new THREE.Color(0xe7e2d6);
   const CIV_WALL2 = new THREE.Color(0xd7cfbe);
@@ -2915,7 +3391,10 @@ export function buildWorld(THREE, model, opts) {
   }
 
   // Rail depot: a low maintenance shed east of the running lines, with a photovoltaic roof and
-  // two roller doors onto the yard side.
+  // two roller doors onto the yard side. The doors face east, onto the depot's own yard apron:
+  // on the rail side there is only the ballast and the four running lines, so a door there opens
+  // onto the track bed. The yard, its kerbs, its marked bays and the access road that joins it to
+  // the ring are laid in the civic frontage pass, in the plot frame below.
   {
     const sx = RAIL_X + 11.5;
     const sz = -78;
@@ -2924,12 +3403,13 @@ export function buildWorld(THREE, model, opts) {
     const g = Math.min(gB, gF) - 0.6;
     const h = Math.max(gB, gF) - Math.min(gB, gF) + 7.2;
     statics.addGeometry(unitBox, composeMatrix(sx, g + h * 0.5, sz, 0, 12, h, 30), CIV_WALL2);
-    statics.addGeometry(unitBox, composeMatrix(sx - 6.15, g + 3.1, sz - 7, 0, 0.3, 5.2, 6.4), CIV_GLASS);
-    statics.addGeometry(unitBox, composeMatrix(sx - 6.15, g + 3.1, sz + 7, 0, 0.3, 5.2, 6.4), CIV_GLASS);
+    statics.addGeometry(unitBox, composeMatrix(sx + 6.05, g + 3.1, sz - 7, 0, 0.3, 5.2, 6.4), CIV_GLASS);
+    statics.addGeometry(unitBox, composeMatrix(sx + 6.05, g + 3.1, sz + 7, 0, 0.3, 5.2, 6.4), CIV_GLASS);
     statics.addGeometry(unitBox, composeMatrix(sx, g + h + 0.28, sz, 0, 12.5, 0.36, 30.5), CIV_ROOF);
     statics.addGeometry(unitBox, composeMatrix(sx + 0.5, g + h + 0.78, sz, 0, 10.4, 0.16, 27.4, -0.1), CIV_SOLAR);
     statics.addGeometry(unitBox, composeMatrix(sx, g + h + 2.1, sz - 11, 0, 5.2, 3.2, 5.2), CIV_WALL);
-    statics.addGeometry(unitBox, composeMatrix(sx - 6.6, g + 0.6, sz, 0, 1.6, 1.2, 26), WALL_CAP);
+    // The loading dock: a low platform along the door face, so a van backs onto it.
+    statics.addGeometry(unitBox, composeMatrix(sx + 6.6, g + 0.6, sz, 0, 1.6, 1.2, 26), WALL_CAP);
   }
 
   {
@@ -3080,12 +3560,15 @@ export function buildWorld(THREE, model, opts) {
       civicBox(r, -13, 0, g + 3.6, 12, 7.2, 12, CIV_WALL2);
       civicBox(r, 2, 1.2, g + 5.7, 5, 11.4, 5, CIV_WALL2);
       civicBox(r, 2, 1.2, g + 12.0, 5.6, 0.6, 5.6, CIV_ROOF);
-      civicBox(r, -13, -17, g + 1.1, 0.18, 2.2, 1.1, CIV_WALL);
-      civicBox(r, 13, -17, g + 1.1, 0.18, 2.2, 1.1, CIV_WALL);
+      // The gate the car park's crossing enters by, on the two outer stones of the kerb line.
+      civicBox(r, 7.9, -17.7, g + 1.3, 0.3, 2.6, 0.3, CIV_WALL);
+      civicBox(r, 14.5, -17.7, g + 1.3, 0.3, 2.6, 0.3, CIV_WALL);
     } else if (r.type === 'sport') {
-      civicBox(r, 0, 8, g + 6.6, 30, 13.2, 20, CIV_WALL2);
-      civicBox(r, 0, 8, g + 1.4, 30.4, 2.8, 20.4, CIV_GLASS);
-      civicBox(r, 0, 8, g + 13.5, 31, 0.7, 21, CIV_ROOF);
+      // Eighteen metres deep at lv +8, so the hall's back wall is on the plot's rear line and the
+      // sixteen metres in front of it are the car park and the forecourt.
+      civicBox(r, 0, 8, g + 6.6, 30, 13.2, 18, CIV_WALL2);
+      civicBox(r, 0, 8, g + 1.4, 30.4, 2.8, 18.4, CIV_GLASS);
+      civicBox(r, 0, 8, g + 13.5, 31, 0.7, 19, CIV_ROOF);
       civicBox(r, -6, 8, g + 13.9, 12, 0.18, 6, CIV_SOLAR);
       for (let k = 0; k < 3; k += 1) {
         const sh = 1.2 + k * 1.2;
@@ -3097,19 +3580,22 @@ export function buildWorld(THREE, model, opts) {
       }
       for (let k = 0; k < 4; k += 1) {
         const lu = (k & 1) ? 16 : -16;
-        const lv = (k & 2) ? 12 : -14;
+        const lv = (k & 2) ? 12 : -10.8;
         civicBox(r, lu, lv, g + 6, 0.4, 12, 0.4, CIV_STEEL);
         civicBox(r, lu, lv, g + 12.2, 2.6, 0.5, 0.9, CIV_ROOF);
       }
     } else if (r.type === 'warehouse') {
-      civicBox(r, 0, 0, g + 4.8, 12, 9.6, 26, CIV_WALL2);
-      civicBox(r, 0, 0, g + 9.75, 12.5, 0.5, 26.5, CIV_ROOF);
-      civicBox(r, 0.6, 0, g + 9.95, 10.4, 0.16, 22, CIV_SOLAR);
+      // The shed sits five metres west of the plot's centre line: a 12 m shed and an 8 m yard
+      // fit a 24 m plot, and the plot has to stay narrow enough to hold the ring's south
+      // frontage, where the owner put both warehouses.
+      civicBox(r, -5, 0, g + 4.8, 12, 9.6, 26, CIV_WALL2);
+      civicBox(r, -5, 0, g + 9.75, 12.5, 0.5, 26.5, CIV_ROOF);
+      civicBox(r, -4.4, 0, g + 9.95, 10.4, 0.16, 22, CIV_SOLAR);
       for (let k = -1; k <= 1; k += 1) {
-        civicBox(r, 6.15, k * 8, g + 2.6, 0.3, 5.0, 4.6, CIV_GLASS);
+        civicBox(r, 1.15, k * 8, g + 2.6, 0.3, 5.0, 4.6, CIV_GLASS);
       }
-      civicBox(r, 7.4, 0, g + 0.7, 3.0, 1.4, 22, WALL_CAP);
-      civicBox(r, -3.5, 12, g + 3.6, 6, 7.2, 6, CIV_WALL);
+      civicBox(r, 2.4, 0, g + 0.7, 3.0, 1.4, 22, WALL_CAP);
+      civicBox(r, -8.5, 12, g + 3.6, 6, 7.2, 6, CIV_WALL);
     }
   }
 
@@ -3300,7 +3786,13 @@ export function buildWorld(THREE, model, opts) {
       addContourTerrace(SIDE_LEVELS[i], -276, -118, -200, 260);
       addContourTerrace(SIDE_LEVELS[i], 118, 276, -200, 260);
     }
-    addContourTerrace(31, -190, 190, -250, -118);
+    // The north contour line, `addContourTerrace(31, -190, 190, -250, -118)`, is gone. Every
+    // metre of it is past the hilltop crest, where the frame reads the ground at four hundred and
+    // fifty metres and this 1.05 metre riser is a two pixel line drawn straight across the haze,
+    // broken into twenty six metre runs: the striped band the owner called out. It was also this
+    // call's walls that made the trees' terrace rows run out onto the far plateau. The near
+    // slope, the flanks and the southern contours keep every run they had, and because this call
+    // was the last one, the stone alternation of the walls in front of the camera is unchanged.
   }
 
   // ------------------------------------------------------------------ terrain mesh
@@ -3354,6 +3846,31 @@ export function buildWorld(THREE, model, opts) {
   // before it needs a surface. The hairpins are 22 to 26 metres apart in z, so they stay
   // separate bands at both tiers instead of fusing into one pale smear.
 
+  // The air over the far country is a shader dissolve, and these three stops are its colour.
+  // They live here rather than inside onBeforeCompile so setTimeOfDay can swap the whole stop
+  // set with the palette: a day-only table left the far basin and the hills above it in daylight
+  // cream on every night frame (cycle 35), which read as a pale sky band over a dark city.
+  const terrainAir = {
+    dayWarm: 0xdedbd4,
+    dayGold: 0xcba45e,
+    dayBlue: 0xa2b6c6,
+    nightWarm: 0x1b2c4c,
+    nightGold: 0x22355a,
+    nightBlue: 0x101a30,
+    // How much of the far ground the air is allowed to swallow. Day keeps the 0.90 the band was
+    // tuned at. Night drops to 0.62: the night ground carries only the moon and the far crests
+    // are navy already, so an 0.90 dissolve erased their silhouettes (cycle 35 measured the night
+    // whole-frame flat share at 51.8 against 49.0 before the palette swap, and the second row
+    // band's edge at 0.96 against 2.26). Keeping a third of the ground's own value puts the
+    // ridge steps back without letting a daylight tone through.
+    dayWeight: 0.90,
+    nightWeight: 0.62,
+    uAirWarm: { value: new THREE.Color(0xdedbd4) },
+    uAirGold: { value: new THREE.Color(0xcba45e) },
+    uAirBlue: { value: new THREE.Color(0xa2b6c6) },
+    uAirWeight: { value: 0.90 }
+  };
+
   const terrainMesh = (function () {
     const ax = axisCoords();
     const n = ax.length;
@@ -3382,12 +3899,28 @@ export function buildWorld(THREE, model, opts) {
     const cStraw = new THREE.Color(0xad9c76);      // the pale end of the same family
     const cOliveField = new THREE.Color(0x9c8b65); // a worked olive band, a few percent only
     const cSoil = new THREE.Color(0x957f59);
+    // Cycle 30: the plot palette. Every tone above is a shade of one ochre, so the countryside
+    // measured 88.9 percent of its saturated pixels inside a single 30 degree hue band on the
+    // right slope and 80.5 percent over the lower third: the "flat yellow sheet" the brief
+    // forbids, arrived at honestly by three cycles of holding the value spread calm. A worked
+    // hillside is not one hue; it is straw, grazed grass, olive and turned soil side by side.
+    // These four cover that set at the same value, so the quilt stays out (the value spread is
+    // within four percent, as before) while the hue spread does the work the eye reads first.
+    const cPlotStraw = new THREE.Color(0xb0a071);   // 45 degrees, the family the ground already had
+    const cPlotGrass = new THREE.Color(0x8fa25c);   // 76 degrees, grazed spring grass
+    const cPlotOlive = new THREE.Color(0x5f7a3a);   // 85 degrees, an olive grove's floor
+    const cPlotFallow = new THREE.Color(0xa89670);  // 41 degrees, turned earth resting
     // The ground the city stands on is its own family: packed earth and worn stone, not dry
     // grass under an urban veil. It is the largest single surface in the upper tenths (terrain
     // covers 51 percent of the third tenth, which measured 0.374 saturation against the 0.40
     // target), so it takes the strongest lift of the set.
     const cUrban = new THREE.Color(0xb29c64);
-    const cGrove = new THREE.Color(0x8c744b);
+    // An olive grove has to be green, or it is just a darker field: the old 0x8c744b sat at 38
+    // degrees like everything else, and the groves could not be told from the ground they stand
+    // on. 0x646f42 is the same value with the hue moved to 78 degrees, which is the one place in
+    // the frame where a cool green is allowed, and it is what makes the orchard rows read as
+    // dark clumps at district distance.
+    const cGrove = new THREE.Color(0x646f42);
     const cAir = AIR_HUE;
     const cAirBlue = AIR_BLUE;
     const cStone = new THREE.Color(0xaa976d);
@@ -3395,7 +3928,14 @@ export function buildWorld(THREE, model, opts) {
     const cLane = new THREE.Color(0xa6946c);
     const cDirt = new THREE.Color(0x89744d);
     const cShade = new THREE.Color(0x7f704f);
+    // The far silhouette ladder: the two soft steps the hill band above the district is painted
+    // with. They are deliberately close in hue and value (a step is a step, not a stripe) and
+    // they sit inside the same dry-grass family as the near ground, so the band does not become
+    // a second palette; the warm air, not the albedo, is what carries the light out there.
+    const cFarFoot = new THREE.Color(0xb9ae99);
+    const cFarCrest = new THREE.Color(0xcdc4b1);
     const c = new THREE.Color();
+    const cFar = new THREE.Color();
 
     // Squared distance from a point to one polyline, shared by the dirt tracks and the lane.
     function distSqToPath(x, z, pts) {
@@ -3429,16 +3969,33 @@ export function buildWorld(THREE, model, opts) {
       return 1 - smooth(1.4, 3.6, Math.sqrt(best));
     }
 
+    // Zero on the district's own hill, one on the far side of its crest. The ground past that
+    // crest is not countryside in the frame: from the district tier it covers the top fifth of
+    // the 1600 by 900 view at four hundred and fifty metres, where the belt grid is twenty
+    // metres wide and a terrace riser is a one pixel line. Every pass that paints detail out
+    // there paints a streak or a brown band into the air, so the far side of the crest is a
+    // silhouette and a silhouette only: no relief, no terraces, no parcels, no tracks, no grove
+    // soil, no shadow noise. The band is keyed on z, the one axis that separates the hill the
+    // camera looks up at from the plateau behind it, so the near slope, the flanks and the
+    // phone profile's own foreground keep every line they had.
+    function farCrest(z) {
+      return 1 - smooth(TERRAIN_FAR_CREST_Z, TERRAIN_CREST_Z, z);
+    }
+
     // A little vertical relief away from every road, pavement, pad and prop, so the ground is
     // never a plane. It fades to exactly zero within six metres of anything occupied, which is
-    // what keeps the roads and the building pads flat and the paving unbroken.
+    // what keeps the roads and the building pads flat and the paving unbroken. Past the hilltop
+    // crest it fades out as well: a twenty metre cell that moves by half a metre under a flat
+    // warm sky is a facet, and the top of the frame reads facets as dirt.
     function relief(x, z) {
+      const far = farCrest(z);
+      if (far >= 1) return 0;
       for (let i = 0; i < 8; i += 1) {
         const a = i * 0.785398;
         if (flagsAt(x + Math.cos(a) * 5.6, z + Math.sin(a) * 5.6) & B_SOLID) return 0;
       }
-      return Math.sin(x * 0.077 + Math.cos(z * 0.061) * 2.1) * Math.cos(z * 0.083 - x * 0.013) * 0.55 +
-        Math.sin(x * 0.19 + z * 0.17) * 0.12;
+      return (Math.sin(x * 0.077 + Math.cos(z * 0.061) * 2.1) * Math.cos(z * 0.083 - x * 0.013) * 0.55 +
+        Math.sin(x * 0.19 + z * 0.17) * 0.12) * (1 - far);
     }
 
     for (let j = 0; j < n; j += 1) {
@@ -3450,17 +4007,6 @@ export function buildWorld(THREE, model, opts) {
         pos[k + 1] = groundHeightAt(x, z) + relief(x, z);
         pos[k + 2] = z;
 
-        // One calm ground plane: dry golden grass with a slow drift toward straw and a hint of
-        // olive. The wavelengths are tens of metres, so a field reads as one coherent surface
-        // and the value stays inside four percent instead of jumping between patch colours.
-        const slowA = Math.sin(x * 0.0064 + z * 0.0041 + 0.7) *
-          Math.cos(z * 0.0053 - x * 0.0027 - 0.2);
-        const slowB = Math.sin(x * 0.0170 - z * 0.0130 + 1.9);
-        const rd = Math.sqrt(x * x + z * z);
-        c.copy(cDry);
-        c.lerp(cOliveField, 0.10 + 0.08 * slowA);
-        c.lerp(cStraw, 0.10 + 0.08 * slowB);
-        c.multiplyScalar(1 + 0.020 * slowA + 0.012 * slowB);
         // Parcel boundaries are still drawn, but on a coarser grid than the old 37 by 31 metre
         // cells, so the countryside carries a few tidy plot lines instead of a patchwork quilt.
         const fwx = x * 0.999 + z * 0.045;
@@ -3469,6 +4015,19 @@ export function buildWorld(THREE, model, opts) {
         const fj = Math.floor(fwz / 62);
         fieldId[j * n + i] = fi * 73 + fj;
         fieldW[j * n + i] = 1;
+
+        const slowA = Math.sin(x * 0.0064 + z * 0.0041 + 0.7) *
+          Math.cos(z * 0.0053 - x * 0.0027 - 0.2);
+        const slowB = Math.sin(x * 0.0170 - z * 0.0130 + 1.9);
+        const rd = Math.sqrt(x * x + z * z);
+
+        // One calm ground plane: dry golden grass with a slow drift toward straw and a hint of
+        // olive. The wavelengths are tens of metres, so a field reads as one coherent surface
+        // and the value stays inside four percent instead of jumping between patch colours.
+        c.copy(cDry);
+        c.lerp(cOliveField, 0.10 + 0.08 * slowA);
+        c.lerp(cStraw, 0.10 + 0.08 * slowB);
+        c.multiplyScalar(1 + 0.020 * slowA + 0.012 * slowB);
 
         const gx = districtHeight(x + 1, z) - districtHeight(x - 1, z);
         const gz = districtHeight(x, z + 1) - districtHeight(x, z - 1);
@@ -3573,6 +4132,51 @@ export function buildWorld(THREE, model, opts) {
 
         if (box0 > 130) c.lerp(cDirt, trackWeight(x, z) * 0.7);
 
+        // Cycle 30, the plot palette. Every tone above is a shade of one ochre, and the frame
+        // measured the consequence: 88.9 percent of the right slope's saturated pixels sat in a
+        // single 30 degree hue band, which is the flat yellow sheet the brief forbids. Two
+        // attempts failed before this one, and both failures are the reason this sits here and
+        // not at the base colour: a 0.46 lerp of 43 degrees toward 68 is still 54 degrees, so the
+        // histogram did not move; and painting the family as the base colour was then buried,
+        // because the terrace riser, the tread and the five-riser wall together repaint most of
+        // the band with stone at weights up to 0.9. So the hue is applied LAST, over the finished
+        // ground, and it is applied as a value-preserving tint: the plot colour is rescaled to the
+        // vertex's own luma before the mix, which means every riser, tread, track and grove line
+        // keeps its value step and only the hue family changes. Straw sits beside grazed grass
+        // beside olive beside fallow; the parcel id the boundary lines are keyed on chooses it, so
+        // the colour changes exactly where the painted field line already is.
+        if (rd > 96 && rd < 430) {
+          const pick = hash2(fi * 73 + fj, 11);
+          const plot = pick < 0.22 ? cPlotStraw : pick < 0.52 ? cPlotGrass
+            : pick < 0.82 ? cPlotOlive : cPlotFallow;
+          const pxi = fwx / 86 - fi;
+          const pzj = fwz / 62 - fj;
+          // Held to two metres inside the boundary, one grid vertex at district distance, so a
+          // plot edge reads as a worked field line and not a seam between two colours.
+          const inward = smooth(0, 2, Math.min(Math.min(pxi, 1 - pxi) * 86,
+            Math.min(pzj, 1 - pzj) * 62));
+          const w = 0.86 * inward * (1 - smooth(300, 430, rd));
+          if (w > 0) {
+            const v = c.r * 0.30 + c.g * 0.59 + c.b * 0.11;
+            const vp = plot.r * 0.30 + plot.g * 0.59 + plot.b * 0.11;
+            const k2 = vp > 1e-4 ? v / vp : 1;
+            c.setRGB(c.r + (plot.r * k2 - c.r) * w,
+              c.g + (plot.g * k2 - c.g) * w,
+              c.b + (plot.b * k2 - c.b) * w);
+          }
+        }
+
+        // The far side of the hilltop crest: two soft steps and nothing else. The ladder is
+        // keyed on the drawn ground's own height, so it follows the contours of the ridge as one
+        // calm gradient, and the step it does carry is placed on the crest line, which is the
+        // only edge out there the eye is meant to read. The lerp weight is the crest key, so the
+        // district's own hill (weight zero) keeps every line the passes above put in it.
+        const far = farCrest(z);
+        if (far > 0) {
+          cFar.copy(cFarFoot).lerp(cFarCrest, smooth(28.5, 33.5, pos[k + 1]));
+          c.lerp(cFar, far);
+        }
+
         col[k] = c.r;
         col[k + 1] = c.g;
         col[k + 2] = c.b;
@@ -3581,8 +4185,10 @@ export function buildWorld(THREE, model, opts) {
 
     // Field boundaries: one quiet line wherever two parcels meet. The line is a seven percent
     // step, not the old quarter, so the plots read as worked land without drawing a dark grid
-    // over the countryside.
+    // over the countryside. Past the hilltop crest there are no parcels to draw: the far ground
+    // is a silhouette, and a parcel line out there is a one pixel streak in the haze.
     for (let j = 0; j < n; j += 1) {
+      if (farCrest(ax[j]) > 0) continue;
       for (let i = 0; i < n; i += 1) {
         const id = fieldId[j * n + i];
         if (id === -999999 || fieldW[j * n + i] < 0.06) continue;
@@ -3620,37 +4226,58 @@ export function buildWorld(THREE, model, opts) {
     geo.setIndex(new THREE.BufferAttribute(idx, 1));
     geo.computeVertexNormals();
     geo.computeBoundingSphere();
-    // The far air: the lit ground alone cannot be blue under this warm sun, so the terrain in
-    // the top of the frame is dissolved into the sky's own air in the shader. The mix is keyed
-    // to the vertex's projected height, not its distance, because the near ridge also reaches
-    // the top of frame; it keeps a fraction of the lit colour plus the vertex colour's own
-    // value, which is what preserves the ridge silhouettes inside the haze.
+    // The far air: the lit ground alone cannot go pale under this warm sun, so the terrain in
+    // the top of the frame is dissolved into air in the shader. The mix is keyed to the vertex's
+    // projected height, not its distance, because the near ridge also reaches the top of frame;
+    // it keeps a fraction of the lit colour plus the vertex colour's own value, which is what
+    // preserves the ridge silhouettes inside the haze.
+    //
+    // The air runs three stops down the frame, keyed to the raw projected height `vSky` and not
+    // to `vAir`, because `vAir` saturates above two thirds of the frame and cannot tell the
+    // zenith from the horizon: pale blue overhead, cream where the haze band starts, warm gold
+    // at the hill silhouettes, then back to cream under the horizon so the district below the
+    // band keeps its own light. Carrying all of that as one warm cream is what turned the top
+    // fifth into a flat cream plate: the zenith lost its blue and rows 90 to 180 lost the two
+    // luma steps that read as depth. The blue is a dark grey blue, not a saturated sky blue, so
+    // the hazy blue-grey averages with the sunlit tan under it into the pale blue the frame had
+    // and does not reintroduce the neutral that measured as brown mud.
     const terrainMat = new THREE.MeshStandardMaterial({
       vertexColors: true,
       roughness: 1.0,
       metalness: 0.0
     });
     terrainMat.onBeforeCompile = function (shader) {
-      shader.uniforms.uAirWarm = { value: new THREE.Color(0xefe0c2) };
-      shader.uniforms.uAirBlue = { value: new THREE.Color(0xa9c4e0) };
-      shader.vertexShader = 'varying float vAir;\nvarying vec3 vGround;\n' +
+      // The air uniforms are held in terrainAir, not created per compile: setTimeOfDay writes
+      // through the same objects, so a night palette survives a recompile and a rebuilt world
+      // cannot end up with a program whose air colour nobody can reach (cycle 35: the far basin
+      // kept its daylight cream at night, because these three stops were constants).
+      shader.uniforms.uAirWarm = terrainAir.uAirWarm;
+      shader.uniforms.uAirGold = terrainAir.uAirGold;
+      shader.uniforms.uAirBlue = terrainAir.uAirBlue;
+      shader.uniforms.uAirWeight = terrainAir.uAirWeight;
+      shader.vertexShader = 'varying float vAir;\nvarying float vSky;\nvarying vec3 vGround;\n' +
         shader.vertexShader.replace(
           '#include <begin_vertex>',
           '#include <begin_vertex>\nvGround = color;'
         ).replace(
           '#include <project_vertex>',
-          '#include <project_vertex>\nvAir = smoothstep(0.05, 0.82, gl_Position.y / max(gl_Position.w, 1e-4));'
+          '#include <project_vertex>\nvSky = clamp(gl_Position.y / max(gl_Position.w, 1e-4), -1.0, 1.0);' +
+          '\nvAir = smoothstep(0.05, 0.82, vSky);'
         );
       const inject = [
-        'float airT = 0.72 * smoothstep(0.0, 0.85, vAir);',
-        'vec3 airCol = mix(uAirWarm, uAirBlue, smoothstep(0.55, 0.95, vAir));',
-        'airCol *= 0.88 + 0.14 * clamp(vAir, 0.0, 1.0);',
+        'float airT = uAirWeight * smoothstep(0.0, 0.85, vAir);',
         'float gL = dot(vGround, vec3(0.2126, 0.7152, 0.0722));',
+        'float warmKey = clamp((0.92 - vSky) / 0.37, 0.0, 1.0) * smoothstep(0.48, 0.62, vSky);',
+        'float goldKey = min(1.0, warmKey * 1.35);',
+        'float blueKey = smoothstep(0.82, 0.87, vSky);',
+        'vec3 airCol = mix(uAirWarm, uAirGold, goldKey);',
+        'airCol = mix(airCol, uAirBlue, blueKey);',
+        'airCol *= 0.88 + 0.14 * clamp(vAir, 0.0, 1.0);',
         'airCol *= 0.70 + 0.62 * clamp(gL, 0.0, 1.0);',
         'gl_FragColor.rgb = mix(gl_FragColor.rgb, airCol, airT);'
       ].join('\n');
-      shader.fragmentShader = 'varying float vAir;\nvarying vec3 vGround;\n' +
-        'uniform vec3 uAirWarm;\nuniform vec3 uAirBlue;\n' +
+      shader.fragmentShader = 'varying float vAir;\nvarying float vSky;\nvarying vec3 vGround;\n' +
+        'uniform vec3 uAirWarm;\nuniform vec3 uAirGold;\nuniform vec3 uAirBlue;\nuniform float uAirWeight;\n' +
         shader.fragmentShader.replace('#include <opaque_fragment>', '#include <opaque_fragment>\n' + inject);
     };
     // A unique key per material: a constant key lets a rebuilt world reuse the first material's
@@ -3694,19 +4321,26 @@ export function buildWorld(THREE, model, opts) {
   // ------------------------------------------------------------------ the bay
   // One flat plane for the water, the only draw call the distant relief adds: a ring sector in
   // the same arc the basin is dug in, at the water level, so its shore is wherever the ground
-  // crosses that level. It carries a slow tonal drift instead of one flat colour, and the fog
-  // does the rest, which is what keeps it background rather than a second sky. The blue stays a
-  // step deeper than the warm lilac haze, so the bay reads as cool water against sunlit hills
-  // instead of dissolving into the air with them.
+  // crosses that level. It is unlit on purpose. Water a few hundred metres out is a reflection
+  // of the air above it, not a sunlit surface: the old lit MeshStandard plane, a saturated
+  // 0x3a669b under a sun 25 degrees up, rendered as a dark slate polygon with its straight
+  // sector edges at full contrast, floating in the sky above the hazy terrain edge (cycle 35,
+  // measured by hiding the mesh: the two dark slabs at rows 43 to 149 of the day frame were
+  // this plane). Fog starts at 1100 m and the plane ends at 1010, so no fog ever touched it.
+  // The colour is now the palette's own: BAY_DAY, one step cooler than the air behind it
+  // (measured slab 171/187/198 against air 187/189/184 on the day frame, t1 of the live
+  // trial), and BAY_NIGHT at night, both written by setTimeOfDay next to the fog colour.
   const bayMesh = (function () {
     const SEG = 30;
     const RINGS = [252, 300, 360, 430, 520, 640, 800, 1010];
     const rings = RINGS.length;
     const pos = new Float32Array(SEG * rings * 3);
+    // The water's own gradient, as a factor that multiplies the palette colour: near water 0.93,
+    // far water 1.06, with a slow cross-swell on the near rings. Vertex colours multiply the
+    // material colour in three, so the palette write stays the only place a colour is chosen and
+    // this ramp survives both the day and the night swap. Cycle 36 measured the plane flat: one
+    // value across 760 metres of water, std inside the region 0.0.
     const col = new Float32Array(SEG * rings * 3);
-    const near = new THREE.Color(0x3a669b);
-    const far = new THREE.Color(0x6f8bc4);
-    const cc = new THREE.Color();
     const az0 = BAY_AZ - BAY_HALF;
     const az1 = BAY_AZ + BAY_HALF;
     for (let r = 0; r < rings; r += 1) {
@@ -3718,12 +4352,11 @@ export function buildWorld(THREE, model, opts) {
         pos[k] = Math.cos(a) * rad;
         pos[k + 1] = WATER_LEVEL;
         pos[k + 2] = Math.sin(a) * rad;
-        // A gentle cross-swell in the tone, so the water is not one flat bucket in the frame.
-        const swell = 0.5 + 0.5 * Math.sin(a * 17.0 + rad * 0.012);
-        cc.copy(near).lerp(far, dt * 0.55 + swell * 0.22);
-        col[k] = cc.r;
-        col[k + 1] = cc.g;
-        col[k + 2] = cc.b;
+        const swell = Math.sin(a * 11.0 + rad * 0.006) * 0.012;
+        const t = 0.93 + dt * 0.13 + swell;
+        col[k] = t;
+        col[k + 1] = t;
+        col[k + 2] = t;
       }
     }
     const idx = new Uint32Array((rings - 1) * (SEG - 1) * 6);
@@ -3744,13 +4377,8 @@ export function buildWorld(THREE, model, opts) {
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.setIndex(new THREE.BufferAttribute(idx, 1));
-    geo.computeVertexNormals();
     geo.computeBoundingSphere();
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 0.42,
-      metalness: 0.06
-    }));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xa9bccb, vertexColors: true }));
     mesh.name = 'bay';
     return mesh;
   })();
@@ -4845,9 +5473,96 @@ export function buildWorld(THREE, model, opts) {
       LIFT_STREET_PAVE, C_PLAZA_B);
   }
 
-  // ------------------------------------------------------------------ civic aprons
-  // Hardstanding, car parks and pitches for the civic plots, in the same plot frame as their
-  // buildings: local +X is the plot's width axis, local +Z is its depth axis.
+  // ------------------------------------------------------------------ civic frontage blocks
+  // Owner, 2026-11-09 14:00, item 3: "Nothing floats: the big isolated boxes at left, right and
+  // bottom centre (depot, warehouses, sheds) must sit in a real block with a street, a car park
+  // and kerbs, or be removed. Zero objects dropped on bare ground." Every civic plot, and the
+  // rail depot, now carries the same block, drawn in the plot's own frame (local +u along its
+  // frontage, local +v away from the street, so the front edge is lv -d/2):
+  //
+  //   base      the plot's whole footprint, paved at street lift in the district's own pavement
+  //             tones, so the yard behind and beside a building is hard ground, never bare hill.
+  //   apron     asphalt from the plot's front edge back to that building's front face, the full
+  //             plot width, with white bay rows: the car park or working apron that fills the
+  //             frontage. 0.22 m, one stone step above the street, as a kerbed park really is.
+  //   kerb      a 0.34 m stone line along the plot's front edge, broken where the crossing enters.
+  //   footway   pale stone from the carriageway's kerb line to the plot line, in three metre
+  //             slices whose outer edge is measured against the street at each slice, so the walk
+  //             follows a curving carriageway instead of running past it on a chord. Drawn two
+  //             three centimetres above the district's own pavement, so both kerb stones stay proud of it
+  //             and the frontage reads as kerbed from district tier instead of as tarmac to the
+  //             grass.
+  //   crossing  one 6.8 m stone ramp per frontage, from the carriageway's kerb line across the
+  //             footway and the walk into the plot, so the block joins the street instead of
+  //             turning its back on it.
+  //
+  // Every piece is a quad that takes the ground height at its own four corners, so none of it
+  // floats over the slope, and no two pieces are drawn at the same lift: 0.15 base, 0.22 apron,
+  // 0.232 bay lines, 0.28 footway, 0.305 kerb, 0.313 crossing.
+  const C_FRONT_APRON = C_APRON;
+  const C_FRONT_KERB = new THREE.Color(0xcbbfa4);
+  const C_FRONT_CROSS = C_KERB_STONE_B;
+  const C_FRONT_FLAG = new THREE.Color(0xb3ada0);
+  const FRONT_BASE = LIFT_STREET + 0.02;
+  const FRONT_APRON = LIFT_MARK;
+  const FRONT_BAY = FRONT_APRON + 0.012;
+  const FRONT_WALK = LIFT_PAVE + 0.03;
+  const FRONT_KERB = LIFT_KERB;
+  const FRONT_CROSS = LIFT_KERB + 0.008;
+  const FRONT_CELL = 5;
+  // Yard furniture. The block below the frontage is drawn as flat ground, and a working yard is
+  // never only ground: it is a fence line, containers, a trailer, lamps, a gate and a kerbed
+  // island between its bay groups. These are boxes in the merged static mesh, so they cost no
+  // draw call, and at district tier they are the vertical rhythm that separates a yard from a
+  // tarmac plate.
+  const C_YARD_STEEL = new THREE.Color(0x6f7375);
+  const C_YARD_RUST = new THREE.Color(0x8a4b2f);
+  const C_YARD_TEAL = new THREE.Color(0x2f6b6a);
+  const C_YARD_TRAILER = new THREE.Color(0xb9b3a5);
+  const frontAudit = {
+    blocks: 0, apron: 0, walk: 0, kerb: 0, crossings: 0, depotYard: 0, depotRoad: 0
+  };
+
+  // A cell grid rather than one big quad: the terrain leaves a few centimetres of curvature
+  // between its own vertices, and a twenty metre quad laid flat over it shows the ground through
+  // its middle on a shoulder. Same plot frame as the buildings, same corner convention.
+  function plotFill(r, lu0, lv0, lu1, lv1, lift, col, cellU, cellV) {
+    const c = Math.cos(r.yaw);
+    const s = Math.sin(r.yaw);
+    const cu = cellU || FRONT_CELL;
+    const cv = cellV || cu;
+    const nu = Math.max(1, Math.ceil(Math.abs(lu1 - lu0) / cu - 1e-6));
+    const nv = Math.max(1, Math.ceil(Math.abs(lv1 - lv0) / cv - 1e-6));
+    const du = (lu1 - lu0) / nu;
+    const dv = (lv1 - lv0) / nv;
+    const tinted = typeof col === 'function';
+    for (let j = 0; j < nv; j += 1) {
+      const b = lv0 + j * dv;
+      for (let i = 0; i < nu; i += 1) {
+        const a = lu0 + i * du;
+        const cc = tinted
+          ? col(r.x + (a + du * 0.5) * c + (b + dv * 0.5) * s,
+            r.z - (a + du * 0.5) * s + (b + dv * 0.5) * c)
+          : col;
+        plotQuad(r, a, b, a + du, b + dv, lift, cc);
+      }
+    }
+  }
+
+  // A kerb line: the district's two stone tones on a three metre beat, so the edge reads as cut
+  // stone rather than one pale ribbon.
+  function frontStone(x, z) {
+    return ((Math.round(x / 3.3) + Math.round(z / 3.3)) & 1) ? C_FRONT_KERB : C_KERB_STONE_B;
+  }
+
+  function plotLineU(r, lu0, lu1, lv, lift) {
+    plotQuad(r, lu0, lv - 0.07, lu1, lv + 0.07, lift, C_BAY);
+  }
+
+  function plotLineV(r, lu, lv0, lv1, lift) {
+    plotQuad(r, lu - 0.07, lv0, lu + 0.07, lv1, lift, C_BAY);
+  }
+
   function plotQuad(r, lu0, lv0, lu1, lv1, lift, col) {
     const c = Math.cos(r.yaw);
     const s = Math.sin(r.yaw);
@@ -4860,59 +5575,298 @@ export function buildWorld(THREE, model, opts) {
     );
   }
 
-  for (let i = 0; i < civic.length; i += 1) {
-    const r = civic[i];
-    const lift = 0.15;
-    if (r.type === 'mart') {
-      plotQuad(r, -21, -16.8, 21, -5.2, lift, C_APRON);
-      for (let k = 0; k < 13; k += 1) {
-        const lu = -19.2 + k * 3.2;
-        plotQuad(r, lu - 0.07, -15.8, lu + 0.07, -10.6, lift + 0.012, C_BAY);
-        plotQuad(r, lu - 0.07, -9.4, lu + 0.07, -5.4, lift + 0.012, C_BAY);
-      }
-      plotQuad(r, -3.4, -18.2, 3.4, -16.8, lift + 0.008, C_BAY);
-    } else if (r.type === 'fuel') {
-      plotQuad(r, -11.4, -12.4, 11.4, -1.6, lift, C_APRON);
-      for (let k = -1; k <= 1; k += 1) {
-        plotQuad(r, k * 4.4 - 1.9, -3.9, k * 4.4 + 1.9, -0.1, lift + 0.01, C_BAY);
-      }
-    } else if (r.type === 'school') {
-      for (let k = 0; k < 8; k += 1) {
-        plotQuad(r, -17, -20 + k * 2.25, 17, -20 + (k + 1) * 2.25, lift,
-          (k & 1) ? C_TURF : C_TURF_MOWN);
-      }
-      // Touchlines and a half-way line.
-      plotQuad(r, -17, -20, 17, -19.7, lift + 0.01, C_BAY);
-      plotQuad(r, -17, -2.3, 17, -2.0, lift + 0.01, C_BAY);
-      plotQuad(r, -17, -20, -16.7, -2.0, lift + 0.01, C_BAY);
-      plotQuad(r, 16.7, -20, 17, -2.0, lift + 0.01, C_BAY);
-      plotQuad(r, -0.15, -20, 0.15, -2.0, lift + 0.01, C_BAY);
-      // An apron along the school's entrance side.
-      plotQuad(r, -23, -2, 23, 2.4, lift, C_APRON);
-    } else if (r.type === 'sport') {
-      for (let k = 0; k < 9; k += 1) {
-        plotQuad(r, -14, -20 + k * 2.1, 14, -20 + (k + 1) * 2.1, lift,
-          (k & 1) ? C_TURF_MOWN : C_TURF);
-      }
-      plotQuad(r, -14, -20, 14, -19.7, lift + 0.01, C_BAY);
-      plotQuad(r, -14, -1.3, 14, -1.0, lift + 0.01, C_BAY);
-      plotQuad(r, -14, -20, -13.7, -1.0, lift + 0.01, C_BAY);
-      plotQuad(r, 13.7, -20, 14, -1.0, lift + 0.01, C_BAY);
-      plotQuad(r, -0.15, -20, 0.15, -1.0, lift + 0.01, C_BAY);
-    } else if (r.type === 'warehouse') {
-      plotQuad(r, 5.6, -13, 12, 13, lift, C_APRON);
-    }
+  // One yard box standing on the apron at plot point (lu, lv). `base` lifts it off the apron for
+  // a stacked container or a hanging rail.
+  function yardBox(r, lu, lv, w, h, d, col, base) {
+    const c = Math.cos(r.yaw);
+    const s = Math.sin(r.yaw);
+    const x = r.x + lu * c + lv * s;
+    const z = r.z - lu * s + lv * c;
+    const y = groundHeightAt(x, z) + FRONT_APRON + (base || 0) + h * 0.5;
+    statics.addGeometry(unitBox, composeMatrix(x, y, z, r.yaw, w, h, d), col);
   }
 
-  // Rail yard: ballast, sleepers and two rails per track.
-  band(railPath, -7.8, 7.8, 0.12, C_BALLAST, null);
+  // A fenced yard edge: posts on a fixed beat, two rails between them.
+  function yardFence(r, lu, lv0, lv1, posts) {
+    const n = Math.max(2, posts);
+    for (let k = 0; k < n; k += 1) {
+      yardBox(r, lu, lv0 + (lv1 - lv0) * (k / (n - 1)), 0.16, 1.35, 0.16, C_YARD_STEEL);
+    }
+    yardBox(r, lu, (lv0 + lv1) * 0.5, 0.09, 0.12, Math.abs(lv1 - lv0), C_YARD_STEEL, 0.55);
+    yardBox(r, lu, (lv0 + lv1) * 0.5, 0.09, 0.12, Math.abs(lv1 - lv0), C_YARD_STEEL, 1.05);
+  }
+
+  // A yard lamp: a mast with a head, so the yard reads as lit at night as well.
+  function yardLamp(r, lu, lv) {
+    yardBox(r, lu, lv, 0.22, 6.4, 0.22, C_YARD_STEEL);
+    yardBox(r, lu - 0.45, lv, 0.9, 0.3, 0.5, CIV_ROOF, 6.35);
+  }
+
+  for (let i = 0; i < civic.length; i += 1) {
+    const r = civic[i];
+    const w2 = r.w * 0.5;
+    const d2 = r.d * 0.5;
+    const front = -d2;
+    const path = r.via === 'ring' ? ringPath
+      : (r.via === 'near' ? null : spurPaths[+r.via.slice(4)]);
+    const walkSpan = r.via === 'ring' ? RING_PAVE : SPUR_PAVE;
+    const edge = r.via === 'ring' ? RING_HALF + RING_PAVE : SPUR_EDGE;
+    // How far the plot's front edge stands past the street's own pavement. The plot search
+    // guarantees at least half a metre; the walk fills exactly that strip at pavement lift.
+    const gapRaw = path
+      ? Math.max(0.4,
+        distToPath(path, r.x - d2 * Math.sin(r.yaw), r.z - d2 * Math.cos(r.yaw)) - edge)
+      : 0.4;
+    // A plot that stands behind an arterial's frontage row owns the ground from the row's back,
+    // not from the kerb: its own kerb line, crossing and walk stop at the row's rear edge, and
+    // the row's blocks stand on the strip between the two. Nothing changes for a plot that meets
+    // its kerb directly, which is every plot on the ring.
+    const behindRow = path && gapRaw > SPUR_ROW_BACK - edge + 0.4;
+    const gap = behindRow ? SPUR_ROW_BACK - edge : gapRaw;
+    plotFill(r, -w2, front, w2, d2, FRONT_BASE, paveAt, 6, 6);
+    // The footway, slice by slice along the frontage, so its outer edge tracks a curving carriage
+    // way. Each slice measures its own distance to the centreline and runs from the street's kerb
+    // line (inset half a metre, so the district's kerb stone keeps its edge) to the plot line.
+    let walkArea = 0;
+    if (path) {
+      const ca = Math.cos(r.yaw);
+      const sa = Math.sin(r.yaw);
+      const slices = Math.max(4, Math.round((w2 * 2) / 3));
+      const du = (w2 * 2) / slices;
+      for (let k = 0; k < slices; k += 1) {
+        const lu0 = -w2 + k * du;
+        const lu1 = lu0 + du;
+        const mu = (lu0 + lu1) * 0.5;
+        let g = Math.max(0.4,
+          distToPath(path, r.x + mu * ca + front * sa, r.z - mu * sa + front * ca) - edge);
+        if (behindRow) g = SPUR_ROW_BACK - edge;
+        const out = front - (g + walkSpan) + 0.5;
+        if (out > front - 0.5) continue;
+        plotQuad(r, lu0, out, lu1, front, FRONT_WALK, C_FRONT_FLAG);
+        walkArea += Math.abs(du * (front - out));
+      }
+    }
+    let crossU = 0;
+    if (r.type === 'mart') {
+      // A 33 x 20 supermarket at lv +5: its front face is lv -5, so the car park is the twelve
+      // metres between it and the kerb line, and the side service lanes reach the rear.
+      plotFill(r, -w2, front, w2, -5, FRONT_APRON, C_FRONT_APRON, 6, 4);
+      plotFill(r, -w2, -5, -16.5, 15, FRONT_APRON, C_FRONT_APRON, 4.5, 5);
+      plotFill(r, 16.5, -5, w2, 15, FRONT_APRON, C_FRONT_APRON, 4.5, 5);
+      plotFill(r, -w2, 15, w2, d2, FRONT_APRON, C_FRONT_APRON, 6, 2);
+      for (let k = 0; k < 13; k += 1) {
+        const lu = -19.2 + k * 3.2;
+        if (Math.abs(lu) < 4.8) continue;
+        plotLineV(r, lu, -16.2, -10.8, FRONT_BAY);
+        plotLineV(r, lu, -10.0, -5.4, FRONT_BAY);
+      }
+      crossU = 0;
+    } else if (r.type === 'fuel') {
+      // A forecourt is all hardstanding: the whole plot is asphalt, the shop stands on it at
+      // lv +3 to +9.25, the canopy over the pump lanes at lv -7 to +3, and three nose-in bays
+      // at the shop's end of the frontage.
+      plotFill(r, -w2, front, w2, d2, FRONT_APRON, C_FRONT_APRON, 6, 5);
+      for (let k = -1; k <= 1; k += 1) {
+        plotQuad(r, k * 4.4 - 1.9, -3.9, k * 4.4 + 1.9, -0.1, FRONT_BAY, C_BAY);
+      }
+      for (let k = 0; k < 4; k += 1) plotLineU(r, 6.6, 11.6, -9.2 + k * 2.6, FRONT_BAY);
+      plotLineV(r, 11.6, -9.2, -1.4, FRONT_BAY);
+      crossU = 0;
+    } else if (r.type === 'school') {
+      // Pitch on the west half of the frontage, car park on the east half, hall and annexe
+      // behind them: what a school frontage actually holds. The pitch stops at the annexe's own
+      // front face (lv -6.4), so the turf reaches the yard instead of the wall.
+      const pitchE = 0.6;
+      const pitchS = -17.4;
+      const pitchN = -6.4;
+      const band = (pitchN - pitchS) / 5;
+      for (let k = 0; k < 5; k += 1) {
+        plotFill(r, -w2, pitchS + k * band, pitchE, pitchS + (k + 1) * band, FRONT_APRON - 0.02,
+          (k & 1) ? C_TURF_MOWN : C_TURF, 4.4, band);
+      }
+      plotLineU(r, -w2, pitchE, pitchS + 0.12, FRONT_BAY);
+      plotLineU(r, -w2, pitchE, pitchN - 0.12, FRONT_BAY);
+      plotLineV(r, -w2 + 0.12, pitchS, pitchN, FRONT_BAY);
+      plotLineV(r, pitchE - 0.12, pitchS, pitchN, FRONT_BAY);
+      plotLineU(r, -w2, pitchE, (pitchS + pitchN) * 0.5, FRONT_BAY);
+      // Car park east of the pitch: two bay rows with the aisle between them.
+      plotFill(r, pitchE + 0.2, -17.4, w2, -5, FRONT_APRON, C_FRONT_APRON, 4.2, 4.2);
+      for (let k = 0; k < 7; k += 1) {
+        const lu = 1.6 + k * 2.6;
+        if (Math.abs(lu - 11.2) < 3.6) continue;
+        plotLineV(r, lu, -17.0, -12.4, FRONT_BAY);
+        plotLineV(r, lu, -10.6, -6.0, FRONT_BAY);
+      }
+      // The yard between the car park and the hall, its annexe and the stair tower.
+      plotFill(r, pitchE + 0.2, -5, w2, 1.0, FRONT_APRON, C_FRONT_APRON, 4.6, 3);
+      crossU = 11.2;
+    } else if (r.type === 'sport') {
+      // A sports hall's outdoor area is a paved forecourt and a marked car park, not a lawn:
+      // the apron is tarmac with bays on it, which is also what makes the plot read as a block
+      // from district tier instead of a box in a field.
+      plotFill(r, -w2, front, w2, -1.0, FRONT_APRON, C_FRONT_APRON, 6, 4);
+      for (let k = 0; k < 14; k += 1) {
+        const lu = -20.9 + k * 3.1;
+        if (Math.abs(lu) < 4.4) continue;
+        plotLineV(r, lu, -16.6, -11.8, FRONT_BAY);
+      }
+      plotLineU(r, -w2, -4.4, -11.8, FRONT_BAY);
+      plotLineU(r, 4.4, w2, -11.8, FRONT_BAY);
+      crossU = 0;
+    } else if (r.type === 'warehouse') {
+      // The shed is 12 x 26 at lu -5 inside a 24 x 34 plot: the eight metres east of it are the
+      // loading yard, and the front and rear aprons reach the plot lines, so the bays stand on
+      // the plot's own ground instead of hanging over the field outside it.
+      plotFill(r, 3.9, -13, w2, 13, FRONT_APRON, C_FRONT_APRON, 4.1, 4.4);
+      plotFill(r, -w2, front, w2, -13, FRONT_APRON, C_FRONT_APRON, 6, 4);
+      plotFill(r, -w2, 13, w2, d2, FRONT_APRON, C_FRONT_APRON, 6, 4);
+      for (let k = 0; k < 7; k += 1) plotLineU(r, 4.6, w2 - 0.4, -12.4 + k * 4.0, FRONT_BAY);
+      plotLineV(r, 4.6, -12.4, 11.6, FRONT_BAY);
+      // Yard furniture at the yard's own scale: kerbed island between the bay groups, fenced east
+      // edge with posts, three containers (two stacked), a trailer, three lamps and a gate.
+      yardBox(r, 8.0, 1.9, 6.6, 0.28, 0.55, C_KERB_STONE_B);
+      yardBox(r, 8.0, 1.9, 6.6, 0.06, 0.6, C_KERB_STONE, 0.28);
+      yardFence(r, w2 - 0.35, -12.6, 12.6, 11);
+      yardBox(r, 4.5, 6.2, 2.6, 2.6, 6.1, C_YARD_RUST);
+      yardBox(r, 4.5, 6.2, 2.6, 2.6, 6.1, C_YARD_TEAL, 2.6);
+      yardBox(r, 4.5, 12.0, 2.6, 2.6, 6.1, C_YARD_RUST);
+      yardBox(r, 8.6, -6.6, 2.5, 2.5, 8.0, C_YARD_TRAILER);
+      yardBox(r, 8.6, -11.2, 1.1, 1.0, 1.2, C_YARD_STEEL);
+      yardLamp(r, w2 - 1.1, -10.6);
+      yardLamp(r, w2 - 1.1, 0.6);
+      yardLamp(r, w2 - 1.1, 11.0);
+      yardBox(r, -11.4, -16.5, 0.5, 2.4, 0.5, C_YARD_STEEL);
+      yardBox(r, -4.6, -16.5, 0.5, 2.4, 0.5, C_YARD_STEEL);
+      yardBox(r, -8.6, -16.5, 0.18, 2.0, 5.6, C_YARD_TEAL);
+      crossU = -8;
+    }
+    // The kerb line, broken at the crossing, and the crossing itself. A plot standing behind the
+    // arterial's row gets neither: its kerb line and its crossing would be drawn under the row's
+    // blocks. Its lamps and planters stay, on its own forecourt behind the row.
+    if (path) {
+      const crossOut = front - Math.max(0.34, gap + walkSpan - 0.34);
+      if (!behindRow) {
+        if (crossU - 3.4 > -w2 + 0.3) {
+          plotFill(r, -w2, front, crossU - 3.4, front + 0.34, FRONT_KERB, frontStone, 3, 0.34);
+        }
+        if (crossU + 3.4 < w2 - 0.3) {
+          plotFill(r, crossU + 3.4, front, w2, front + 0.34, FRONT_KERB, frontStone, 3, 0.34);
+        }
+        plotFill(r, crossU - 3.4, crossOut, crossU + 3.4, front + 0.4, FRONT_CROSS,
+          C_FRONT_CROSS, 3.4, Math.max(0.8, (front + 0.4 - crossOut) * 0.5));
+        frontAudit.crossings += 1;
+      }
+      // Frontage furniture, on the plot's own apron so it stands in front of the tarmac from
+      // outside the plot: a lamp at each end and a pair of low kerbed planters flanking the
+      // crossing, which is what gives the frontage depth at district tier.
+      yardLamp(r, -w2 + 2.2, front + 2.2);
+      yardLamp(r, w2 - 2.2, front + 2.2);
+      for (let side = -1; side <= 1; side += 2) {
+        const u0 = crossU + side * 4.3;
+        const u1 = crossU + side * 7.3;
+        const a = Math.min(u0, u1);
+        const b = Math.max(u0, u1);
+        if (a <= -w2 + 0.6 || b >= w2 - 0.6) continue;
+        yardBox(r, (a + b) * 0.5, front + 1.4, b - a, 0.42, 1.6, C_KERB_STONE_B);
+        yardBox(r, (a + b) * 0.5, front + 1.4, b - a - 0.24, 0.34, 1.2, C_TURF_MOWN, 0.42);
+      }
+      if (r.type === 'warehouse') {
+        yardBox(r, -w2 + 4.2, front + 2.6, 6.1, 2.6, 2.6, C_YARD_RUST);
+        yardBox(r, w2 - 4.2, front + 2.6, 5.2, 2.5, 2.5, C_YARD_TRAILER);
+      }
+      frontAudit.crossings += 1;
+      frontAudit.walk += walkArea;
+      frontAudit.kerb += Math.max(0.2, Math.abs(w2 * 2 - 6.8));
+      frontAudit.apron += Math.abs(w2 * 2 * d2);
+    }
+    frontAudit.blocks += 1;
+  }
+
+  // ------------------------------------------------------------------ the depot's block
+  // The shed is unrotated, so its plot frame is the identity and the pieces below are world x/z.
+  // Yard, kerb line, marked bays, a footway along the yard's east edge, and the access road that
+  // joins the yard to the ring through a stone crossing over the ring's own pavement.
+  {
+    const depot = { x: 0, z: 0, yaw: 0 };
+    const Y = DEPOT_YARD;
+    const J = depotJunction;
+    plotFill(depot, Y.x0, Y.z0, Y.x1, Y.z1, FRONT_APRON, C_FRONT_APRON, 6, 6);
+    frontAudit.depotYard += (Y.x1 - Y.x0) * (Y.z1 - Y.z0);
+    // Vans back onto the dock between these lines, four bays deep at the door end of the yard.
+    for (let k = 0; k < 5; k += 1) plotLineU(depot, 137.0, 142.2, -92.0 + k * 5.0, FRONT_BAY);
+    plotLineV(depot, 137.0, -92.0, -72.0, FRONT_BAY);
+    // The yard's kerb line, open only where the access road and the ballast are.
+    plotFill(depot, Y.x1, Y.z0, Y.x1 + 0.34, Y.z1, FRONT_KERB, frontStone, 0.34, 3);
+    plotFill(depot, Y.x0, Y.z0 - 0.34, Y.x1 + 0.34, Y.z0, FRONT_KERB, frontStone, 3, 0.34);
+    plotFill(depot, Y.x0, Y.z1, 126.4, Y.z1 + 0.34, FRONT_KERB, frontStone, 3, 0.34);
+    plotFill(depot, DEPOT_ROAD_X1, Y.z1, Y.x1 + 0.34, Y.z1 + 0.34, FRONT_KERB, frontStone, 3, 0.34);
+    // A footway along the yard's east edge, with its own kerb, so the block has a walk as well.
+    plotFill(depot, Y.x1 + 0.34, Y.z0, 145.4, Y.z1, FRONT_WALK, C_FRONT_FLAG, 2.4, 3);
+    plotFill(depot, 145.4, Y.z0, 145.74, Y.z1, FRONT_KERB, frontStone, 0.34, 3);
+    // The access road: east from the ring's pavement, then north into the yard.
+    plotFill(depot, J.x - 0.3, J.z - DEPOT_ROAD_HALF, DEPOT_ROAD_X1, J.z + DEPOT_ROAD_HALF,
+      LIFT_ROAD, asphaltAt, 2.4, 2.2);
+    plotFill(depot, DEPOT_ROAD_X1 - DEPOT_ROAD_HALF * 2, J.z - DEPOT_ROAD_HALF, DEPOT_ROAD_X1,
+      Y.z1, LIFT_ROAD, asphaltAt, 2.4, 2.2);
+    frontAudit.depotRoad += (DEPOT_ROAD_X1 - J.x + 0.3) * DEPOT_ROAD_HALF * 2 +
+      DEPOT_ROAD_HALF * 2 * (J.z - DEPOT_ROAD_HALF - Y.z1);
+    // Kerbed on its three outer edges: south of the first leg, east of both, west of the second.
+    plotFill(depot, J.x + 0.4, J.z + DEPOT_ROAD_HALF - 0.34, DEPOT_ROAD_X1, J.z + DEPOT_ROAD_HALF,
+      FRONT_KERB, frontStone, 3, 0.34);
+    plotFill(depot, DEPOT_ROAD_X1 - 0.34, Y.z1, DEPOT_ROAD_X1, J.z + DEPOT_ROAD_HALF,
+      FRONT_KERB, frontStone, 0.34, 3);
+    plotFill(depot, DEPOT_ROAD_X1 - DEPOT_ROAD_HALF * 2, Y.z1,
+      DEPOT_ROAD_X1 - DEPOT_ROAD_HALF * 2 + 0.34, J.z - DEPOT_ROAD_HALF, FRONT_KERB, frontStone,
+      0.34, 3);
+    plotFill(depot, J.x + 0.4, J.z - DEPOT_ROAD_HALF, DEPOT_ROAD_X1 - DEPOT_ROAD_HALF * 2,
+      J.z - DEPOT_ROAD_HALF + 0.34, FRONT_KERB, frontStone, 3, 0.34);
+    // Yard furniture, the same kit as a civic block: a kerbed island between the two bay groups,
+    // a fenced east edge, four containers in two rows, two trailers, three lamps and a gate.
+    yardBox(depot, 139.2, -82.0, 6.6, 0.28, 0.55, C_KERB_STONE_B);
+    yardBox(depot, 139.2, -82.0, 6.6, 0.06, 0.6, C_KERB_STONE, 0.28);
+    yardFence(depot, 142.45, -98.6, -57.6, 16);
+    yardBox(depot, 140.6, -95.0, 2.6, 2.6, 6.1, C_YARD_RUST);
+    yardBox(depot, 140.6, -95.0, 2.6, 2.6, 6.1, C_YARD_TEAL, 2.6);
+    yardBox(depot, 140.6, -88.4, 2.6, 2.6, 6.1, C_YARD_RUST);
+    yardBox(depot, 136.7, -95.0, 2.6, 2.6, 6.1, C_YARD_TEAL);
+    yardBox(depot, 137.3, -63.6, 2.5, 2.5, 8.0, C_YARD_TRAILER);
+    yardBox(depot, 137.3, -72.6, 2.5, 2.5, 8.0, C_YARD_TRAILER);
+    yardBox(depot, 137.3, -77.8, 1.1, 1.0, 1.2, C_YARD_STEEL);
+    yardLamp(depot, 141.7, -96.0);
+    yardLamp(depot, 141.7, -78.0);
+    yardLamp(depot, 141.7, -60.0);
+    yardBox(depot, 126.2, -56.8, 0.55, 2.6, 0.55, C_YARD_STEEL);
+    yardBox(depot, 133.1, -56.8, 0.55, 2.6, 0.55, C_YARD_STEEL);
+    yardBox(depot, 128.4, -56.8, 0.18, 2.1, 5.6, C_YARD_TEAL);
+    // The crossing over the ring's pavement, drawn in the ring's own frame so it meets the kerb.
+    paving.flatQuad(
+      J.kx - J.tx * 3.4, J.kz - J.tz * 3.4,
+      J.kx + J.tx * 3.4, J.kz + J.tz * 3.4,
+      J.x + J.tx * 3.4, J.z + J.tz * 3.4,
+      J.x - J.tx * 3.4, J.z - J.tz * 3.4,
+      FRONT_CROSS, C_FRONT_CROSS
+    );
+    frontAudit.crossings += 1;
+  }
+
+
+  // Rail yard: ballast, sleepers and two rails per track. The four running lines stop at the
+  // crossing's paved apron and start again on its far side (`RAIL_APRON_HALF`): a street with a
+  // frontage row on both kerbs cannot pass a fifteen metre ballast strip, so the yard's ground at
+  // the crossing is its paved throat. The rails end at a buffer stop at each side, which is what
+  // a terminal road's end looks like from the district tier's camera.
+  const railApronNear = function (x, z) {
+    return Math.abs(z - railCrossZ) < RAIL_APRON_HALF;
+  };
+  band(railPath, -7.8, 7.8, 0.12, C_BALLAST, railApronNear);
   for (let t = 0; t < TRACK_OFFS.length; t += 1) {
     const off = TRACK_OFFS[t];
-    band(railPath, off - 0.82, off - 0.62, LIFT_RAIL, C_TRACK, null);
-    band(railPath, off + 0.62, off + 0.82, LIFT_RAIL, C_TRACK, null);
+    band(railPath, off - 0.82, off - 0.62, LIFT_RAIL, C_TRACK, railApronNear);
+    band(railPath, off + 0.62, off + 0.82, LIFT_RAIL, C_TRACK, railApronNear);
     for (let i = 1; i < railPath.n; i += 1) {
       const x = railPath.xs[i] + railPath.nx[i] * off;
       const z = railPath.zs[i] + railPath.nz[i] * off;
+      if (railApronNear(x, z)) continue;
       const tx = railPath.nz[i];
       const tz = -railPath.nx[i];
       const nx = railPath.nx[i];
@@ -4927,41 +5881,33 @@ export function buildWorld(THREE, model, opts) {
     }
   }
 
-  // Level crossing where the east arterial crosses the four running lines: paved over the
-  // rails, so the road reads as continuous and the rails stop under it.
+  // The goods apron where the east arterial crosses the yard. The four running lines end at its
+  // edges, so the yard's own ground here is paving rather than ballast, and the crossing's rows
+  // stand on it: this is the goods station's throat, and the street runs between its two blocks.
+  // The apron is laid on the yard's axis, wider than the ballast on both sides, and each rail end
+  // carries a buffer stop drawn as a face and a top so the line stops on purpose.
   {
-    const path = spurPaths[1];
-    let best = 0;
-    let bd = Infinity;
-    for (let i = 0; i <= path.n; i += 1) {
-      const d = Math.abs(path.xs[i] - RAIL_X);
-      if (d < bd) {
-        bd = d;
-        best = i;
+    const apron = { x: RAIL_X + 4.5, z: railCrossZ, yaw: 0 };
+    plotFill(apron, -23, -RAIL_APRON_HALF, 23, RAIL_APRON_HALF, 0.135, C_FRONT_APRON, 3, 3);
+    // A darker band across the apron where the road's own carriageway crosses it, so the road
+    // reads as a road through a yard rather than a yard that happens to be paved.
+    plotFill(apron, -23, -RAIL_APRON_HALF - 0.9, 23, -RAIL_APRON_HALF, 0.15, C_BAY, 6, 0.9);
+    plotFill(apron, -23, RAIL_APRON_HALF, 23, RAIL_APRON_HALF + 0.9, 0.15, C_BAY, 6, 0.9);
+    for (let t = 0; t < TRACK_OFFS.length; t += 1) {
+      const x = RAIL_X + TRACK_OFFS[t];
+      for (let s = -1; s <= 1; s += 2) {
+        const z = railCrossZ + s * (RAIL_APRON_HALF + 0.15);
+        paving.flatQuad(
+          x - 1.1, z, x + 1.1, z,
+          x + 1.1, z - s * 0.5, x - 1.1, z - s * 0.5,
+          LIFT_RAIL + 0.22, C_YARD_RUST
+        );
+        paving.flatQuad(
+          x - 1.1, z, x + 1.1, z,
+          x + 1.1, z + s * 0.5, x - 1.1, z + s * 0.5,
+          LIFT_RAIL + 0.24, C_YARD_STEEL
+        );
       }
-    }
-    const px = path.xs[best];
-    const pz = path.zs[best];
-    const nx = path.nx[best];
-    const nz = path.nz[best];
-    const tx = path.nz[best];
-    const tz = -path.nx[best];
-    paving.flatQuad(
-      px - tx * 11 - nx * SPUR_HALF, pz - tz * 11 - nz * SPUR_HALF,
-      px + tx * 11 - nx * SPUR_HALF, pz + tz * 11 - nz * SPUR_HALF,
-      px + tx * 11 + nx * SPUR_HALF, pz + tz * 11 + nz * SPUR_HALF,
-      px - tx * 11 + nx * SPUR_HALF, pz - tz * 11 + nz * SPUR_HALF,
-      LIFT_RAIL + 0.03, C_STREET
-    );
-    for (let s = -1; s <= 1; s += 2) {
-      const off = s * (SPUR_HALF - 0.7);
-      paving.flatQuad(
-        px - tx * 11 - nx * (off + 0.2), pz - tz * 11 - nz * (off + 0.2),
-        px + tx * 11 - nx * (off + 0.2), pz + tz * 11 - nz * (off + 0.2),
-        px + tx * 11 - nx * (off - 0.2), pz + tz * 11 - nz * (off - 0.2),
-        px - tx * 11 - nx * (off - 0.2), pz - tz * 11 - nz * (off - 0.2),
-        LIFT_RAIL + 0.045, C_TRACK_LINE
-      );
     }
   }
 
@@ -5274,6 +6220,7 @@ export function buildWorld(THREE, model, opts) {
     const b = blds[bi];
     // A model lot has no procedural box at all: its pack mesh is the volume, and the missing
     // instance is also what suppresses its windows, frames, shop band and detail dressing.
+    if (bi === fabricTail.first) fabricTail.buildings = buildingCursor;
     if (b.tower || b.model) continue;
     const h = b.top - b.bottom;
     dummy.position.set(b.cx, b.bottom + h * 0.5, b.cz);
@@ -5318,8 +6265,8 @@ export function buildWorld(THREE, model, opts) {
   const modelPickMeshes = [];
   const modelStats = {
     lots: modelLots.length,
-    towers: modelTowers.length,
     villas: modelVillas.length,
+    towers: modelTowers.length,
     towerLots: 0,
     instances: 0,
     tris: 0,
@@ -5386,8 +6333,8 @@ export function buildWorld(THREE, model, opts) {
   }
 
   buildModelBuckets(modelLots);
-  buildModelBuckets(modelTowers);
   buildModelBuckets(modelVillas);
+  buildModelBuckets(modelTowers);
 
   // ------------------------------------------------------------------ shop frontages
   // The avenue, the three arterials that leave the frame, and the core streets inside the
@@ -5417,9 +6364,11 @@ export function buildWorld(THREE, model, opts) {
 
   // ------------------------------------------------------------------ towers
   // Three or four office towers on the upper plateau, one merged curtain-wall mesh: a per-floor
-  // grid whose colour climbs from the shaded base to a warm reflection toward the sun near the
-  // crown, a darker spandrel at every floor line, a projecting core seam, a parapet, a plant
-  // room and a mast. Glass is rough-then-smooth metal, so it does not read as a blue box.
+  // glass strip whose colour climbs from the shaded base to a warm reflection toward the sun
+  // near the crown, a pale stone slab band 0.3 m proud at every floor line with its lit top
+  // return and dark soffit, a projecting core seam, a parapet, a plant room and a mast. Glass is
+  // rough-then-smooth metal, so it does not read as a blue box, and the band is the elevation
+  // line that keeps a floor of glass from reading as one plate at the street tier.
   const towerRecs = [];
   for (let bi = 0; bi < blds.length; bi += 1) {
     // A tower that took a pack model has its volume in the model mesh above. Only the remaining
@@ -5429,13 +6378,18 @@ export function buildWorld(THREE, model, opts) {
 
   const towerMesh = (function () {
     if (towerRecs.length === 0) return null;
-    const b = makeBuilder();
+    // Haze on: the cluster is the single biggest contributor to the 150 to 180 band (hiding it
+    // moves the slice 1.77 to 1.58). The per-floor glass gradient already runs bottom to top, so
+    // the key rides on top of it and pulls the shaded flanks up and the warm crowns down toward
+    // the same air, which is what closes the step at the silhouette.
+    const b = makeBuilder(true);
     const sunLen = Math.sqrt(SUN_DIR.x * SUN_DIR.x + SUN_DIR.z * SUN_DIR.z) || 1;
     const sx = SUN_DIR.x / sunLen;
     const sz = SUN_DIR.z / sunLen;
     const cBot = new THREE.Color();
     const cTop = new THREE.Color();
-    const cSpand = new THREE.Color();
+    const cBand = new THREE.Color();
+    const cBandTop = new THREE.Color();
     const cCap = new THREE.Color();
     const tint = new THREE.Color();
 
@@ -5461,6 +6415,11 @@ export function buildWorld(THREE, model, opts) {
       }
     }
 
+    // Vertical mullion fins per face. Each is a three-faced prism, six triangles, and it is the
+    // only always-drawn geometry this elevation adds: the night and dream tiers shed rank-2
+    // detail but never the towers, so this count is paid for inside the tower budget or not at
+    // all. Set to zero to test the band alone.
+    const TOWER_FINS = 4;
     for (let t = 0; t < towerRecs.length; t += 1) {
       const r = towerRecs[t];
       const hw = r.w * 0.5;
@@ -5505,19 +6464,65 @@ export function buildWorld(THREE, model, opts) {
           // the crown glass well under the 0.85 luminance line before post.
           cTop.copy(TOWER_SHADE).lerp(tint, 0.2)
             .lerp(TOWER_SUN, Math.min(0.76, warm + 0.12)).multiplyScalar(shadeF);
-          cSpand.copy(TOWER_SPANDREL).lerp(cBot, 0.28);
-          for (let c = 0; c < 3; c += 1) {
-            const t0 = c / 3;
-            const t1 = (c + 1) / 3;
-            const p0x = side.ax + (side.bx - side.ax) * t0;
-            const p0z = side.az + (side.bz - side.az) * t0;
-            const p1x = side.ax + (side.bx - side.ax) * t1;
-            const p1z = side.az + (side.bz - side.az) * t1;
-            face(p0x, glass0, p0z, p1x, glass0, p1z, p1x, glass1, p1z, p0x, glass1, p0z,
-              side.nx, 0, side.nz, cBot, cBot, cTop, cTop);
-          }
-          face(side.ax, fy0, side.az, side.bx, fy0, side.bz, side.bx, glass0, side.bz,
-            side.ax, glass0, side.az, side.nx, 0, side.nz, cSpand, cSpand, cSpand, cSpand);
+          // One glass quad per floor per side. The three identical columns this replaces split
+          // no colour and no normal, so they cost four triangles a floor and drew nothing; the
+          // four triangles they free pay for the band, so the elevation changed at the same count.
+          face(side.ax, glass0, side.az, side.bx, glass0, side.bz,
+            side.bx, glass1, side.bz, side.ax, glass1, side.az,
+            side.nx, 0, side.nz, cBot, cBot, cTop, cTop);
+          // The floor band, 0.3 m proud of the curtain wall: a bright shelf at the head of the
+          // band and a chamfer in the spandrel tone under it. The band has to read as a step and
+          // not as a pale plateau: a first pass put a light stone face here and it flattened the
+          // whole tower, r1's top-right corner going from 58.7 to 63.5 flat, because a twenty
+          // pixel bright field is a flat field of its own. So the shelf is bright and the face
+          // under it is dark, and the step between them is the floor line.
+          const ox = side.nx * 0.3;
+          const oz = side.nz * 0.3;
+          cBand.copy(TOWER_SPANDREL).lerp(cBot, 0.24).multiplyScalar(shadeF);
+          cBandTop.copy(TOWER_MULLION).lerp(TOWER_SUN, 0.22).multiplyScalar(shadeF);
+          // The shelf: the horizontal return at the head of the band, out to the proud edge.
+          face(side.ax, glass0, side.az, side.bx, glass0, side.bz,
+            side.bx + ox, glass0, side.bz + oz, side.ax + ox, glass0, side.az + oz,
+            0, 1, 0, cBandTop, cBandTop, cBandTop, cBandTop);
+          // The chamfer: one slanted face from the proud head down to the wall at the floor
+          // line. It closes the band from below, so there is no open slot to see up into, and
+          // it costs two triangles where a vertical face plus a soffit cost four. A soffit is a
+          // face no camera that looks down can see, but the night and dream tiers pay for every
+          // triangle the towers carry, so it had to go rather than be ignored.
+          const bh = glass0 - fy0;
+          const bn = 1 / Math.sqrt(bh * bh + 0.09);
+          face(side.ax + ox, glass0, side.az + oz, side.bx + ox, glass0, side.bz + oz,
+            side.bx, fy0, side.bz, side.ax, fy0, side.az,
+            side.nx * bh * bn, -0.3 * bn, side.nz * bh * bn,
+            cBand, cBand, cBand, cBand);
+        }
+        // Vertical mullion fins, four to a face. A floor band is one horizontal edge every 4 m;
+        // the boundary measure counts pixels on a step of 8% luma between neighbours, and a
+        // full-height fin's two side faces catch sun and shade, so each fin is two vertical
+        // lines the height of the tower. This is the elevation's vertical rhythm and the only
+        // place the corner gets vertical edges at the density a real mullion spacing gives.
+        cBand.copy(TOWER_MULLION).lerp(tint, 0.18).multiplyScalar(shadeF);
+        const fdx = side.bx - side.ax;
+        const fdz = side.bz - side.az;
+        const fl = Math.sqrt(fdx * fdx + fdz * fdz) || 1;
+        const tux = fdx / fl;
+        const tuz = fdz / fl;
+        for (let fi = 0; fi < TOWER_FINS; fi += 1) {
+          const t = 0.14 + fi * (TOWER_FINS > 1 ? 0.72 / (TOWER_FINS - 1) : 0);
+          const px = side.ax + fdx * t;
+          const pz = side.az + fdz * t;
+          const wi = 0.09;
+          const dp = 0.34;
+          const oux = px + tux * wi + side.nx * dp;
+          const ouz = pz + tuz * wi + side.nz * dp;
+          const ovx = px - tux * wi + side.nx * dp;
+          const ovz = pz - tuz * wi + side.nz * dp;
+          face(oux, y0, ouz, ovx, y0, ovz, ovx, y1, ovz, oux, y1, ouz,
+            side.nx, 0, side.nz, cBand, cBand, cBand, cBand);
+          face(px + tux * wi, y0, pz + tuz * wi, oux, y0, ouz, oux, y1, ouz,
+            px + tux * wi, y1, pz + tuz * wi, tux, 0, tuz, cBand, cBand, cBand, cBand);
+          face(px - tux * wi, y0, pz - tuz * wi, ovx, y0, ovz, ovx, y1, ovz,
+            px - tux * wi, y1, pz - tuz * wi, -tux, 0, -tuz, cBand, cBand, cBand, cBand);
         }
       }
       // Core seam on two opposite faces: a projecting vertical band, the expansion joint.
@@ -5601,10 +6606,13 @@ export function buildWorld(THREE, model, opts) {
   // is already drawn and costs no call.
   if (!NARROW_VIEW) {
     const contactGeo = (function () {
-      // Eight segments and one ring: eight triangles an instance. The blob is a soft dark gradient
-      // with no silhouette to speak of, so an octagon of vertices is all it takes, and the saving
-      // against a two ring disc is six thousand triangles across the city.
-      const SEG = 8;
+      // One ring and one triangle per segment: six triangles an instance. The blob is a soft dark
+      // gradient with no silhouette to speak of, so a hexagon of vertices is all it takes, and the
+      // saving against a two ring disc is six thousand triangles across the city. Cycle 23 took it
+      // from eight segments to six: the rim sits at alpha 0, so the polygon's own outline is never
+      // drawn, and the only difference is where the gradient reaches nothing (a hexagon's edge
+      // midpoints at 0.87 of the radius instead of an octagon's 0.92, at a fringe alpha below 0.02).
+      const SEG = 6;
       const RINGS = 1;
       const pos = [];
       const col = [];
@@ -5674,6 +6682,7 @@ export function buildWorld(THREE, model, opts) {
       const b = blds[bi];
       // Model lots have no procedural instance but they still need the same dark apron, or a
       // real building floats on the pavement while every procedural neighbour stays grounded.
+      if (bi === fabricTail.first) fabricTail.contact = contactCursor;
       if (b.instance === undefined && !b.tower && !b.model) continue;
       addContact(b.cx, b.cz, b.w, b.d, b.rotY);
     }
@@ -5692,48 +6701,44 @@ export function buildWorld(THREE, model, opts) {
   windows.frustumCulled = false;
   group.add(windows);
 
-  // A window frame rides its own instance: a rectangular ring of four bars around a one unit
-  // opening, pushed 7 cm proud of the pane, so every window reads as a recessed opening with a
-  // crisp trim line around it instead of a flat dark quad. One draw call for the whole city.
+  // A window frame rides its own instance: one quad 1.24 panes across, standing on the wall
+  // plane a few centimetres behind the pane, so its 12 percent border shows as a continuous trim
+  // round the opening instead of a flat dark quad. One draw call for the whole city.
   //
-  // At district tier on a phone each bar is 0.2 of a CSS pixel wide: 1447 rings measured
-  // against the district frame cover 2295 CSS px, 0.6 percent of it, for one of the phone's
-  // forty two draw calls. A narrow viewport therefore never builds the mesh: the instance
-  // buffer is not filled and no draw call exists. Tablet and desktop build it as before.
+  // It is one quad, not the four-bar ring cycle 22 drew. The ring spent eight triangles showing
+  // the same border, and its bars stood 7 cm proud of the pane with a strip of bare wall left
+  // visible between the bar's inner edge and the glass: at street tier the trim read as a
+  // detached surround rather than as the reveal it was meant to be. The quad keeps the trim
+  // touching the pane on all four sides, fills the corners, and costs two triangles: 8,214
+  // triangles bought back on the street frame (1,369 windows at six apiece) for the facade pass
+  // below.
+  //
+  // At district tier on a phone the trim is a fifth of a CSS pixel wide: 1,447 rings of the old
+  // four-bar geometry measured 2,295 CSS px against the district frame, 0.6 percent of it, for
+  // one of the phone's forty two draw calls. A narrow viewport therefore never builds the mesh:
+  // the instance buffer is not filled and no draw call exists. Tablet and desktop build it as
+  // before.
   let frames = null;
   let frameCursor = 0;
   if (!NARROW_VIEW) {
     const frameGeo = (function () {
-      const pos = new Float32Array(4 * 4 * 3);
-      const nor = new Float32Array(4 * 4 * 3);
-      const idx = new Uint16Array(4 * 6);
-      const OUT = 0.62;
-      const IN = 0.5;
-      const bars = [
-        [-OUT, -OUT, OUT, -IN],
-        [-OUT, IN, OUT, OUT],
-        [-OUT, -IN, -IN, IN],
-        [IN, -IN, OUT, IN]
-      ];
-      for (let b = 0; b < 4; b += 1) {
-        const x0 = bars[b][0];
-        const y0 = bars[b][1];
-        const x1 = bars[b][2];
-        const y1 = bars[b][3];
-        const v = b * 4;
-        pos[v * 3] = x0; pos[v * 3 + 1] = y0; pos[v * 3 + 2] = 0;
-        pos[v * 3 + 3] = x1; pos[v * 3 + 4] = y0; pos[v * 3 + 5] = 0;
-        pos[v * 3 + 6] = x1; pos[v * 3 + 7] = y1; pos[v * 3 + 8] = 0;
-        pos[v * 3 + 9] = x0; pos[v * 3 + 10] = y1; pos[v * 3 + 11] = 0;
-        for (let k = 0; k < 4; k += 1) {
-          nor[(v + k) * 3] = 0;
-          nor[(v + k) * 3 + 1] = 0;
-          nor[(v + k) * 3 + 2] = 1;
-        }
-        const o = b * 6;
-        idx[o] = v; idx[o + 1] = v + 1; idx[o + 2] = v + 2;
-        idx[o + 3] = v; idx[o + 4] = v + 2; idx[o + 5] = v + 3;
-      }
+      // Four corners, two triangles, one normal: a flat quad in the pane's own plane. 1.34 panes
+      // across, so 17 percent of the pane's own size stands as a painted surround on every side.
+      // Cycle 22's ring put its outer edge at 1.4 panes; a filled quad at that width would meet
+      // its neighbour's edge on the tower grid, where the bay spacing is exactly 1.4 panes and
+      // the union would read as one pale panel across the curtain wall. 1.34 leaves the closest
+      // pair of trims in the city, the towers' 17.5 m face, 0.22 m of wall between them.
+      const OUT = 0.67;
+      const pos = new Float32Array(12);
+      const nor = new Float32Array(12);
+      const idx = new Uint16Array(6);
+      pos[0] = -OUT; pos[1] = -OUT; pos[2] = 0;
+      pos[3] = OUT; pos[4] = -OUT; pos[5] = 0;
+      pos[6] = OUT; pos[7] = OUT; pos[8] = 0;
+      pos[9] = -OUT; pos[10] = OUT; pos[11] = 0;
+      for (let k = 0; k < 4; k += 1) nor[k * 3 + 2] = 1;
+      idx[0] = 0; idx[1] = 1; idx[2] = 2;
+      idx[3] = 0; idx[4] = 2; idx[5] = 3;
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
@@ -5742,11 +6747,47 @@ export function buildWorld(THREE, model, opts) {
       return geo;
     })();
     const frameMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.84, metalness: 0.02 });
-    frames = new THREE.InstancedMesh(frameGeo, frameMat, WINDOW_CAP);
+    frames = new THREE.InstancedMesh(frameGeo, frameMat, FRAME_CAP);
     frames.name = 'frames';
     frames.frustumCulled = false;
     group.add(frames);
     nightCull.push(frames);
+  }
+
+  // A moulding is a quad, not a volume. Every storey band and every other one-face detail this
+  // cycle converts writes into the frame mesh above, which already carries 2-triangle quads on
+  // building walls and is culled at night with the rank-2 flourishes. The frame geometry spans
+  // 1.34 units corner to corner (OUT = 0.67 in the builder), so a quad of w by h metres is a
+  // scale of w/1.34 by h/1.34: the numbers below are metres, never geometry units.
+  //
+  // rotX tips the quad flat, and the order has to be YXZ: the mesh's own box instances are
+  // composed with that order, and in XYZ order a top plate would tip its normal sideways instead
+  // of up. A flat quad gets +Y as its normal whatever rotY is, so one call covers a whole storey
+  // band's top face.
+  const FRAME_SPAN = 1.34;
+  let facadeQuads = 0;
+  function addFacadeQuad(x, y, z, rotY, rotX, w, h, col) {
+    if (!frames || frameCursor >= FRAME_CAP) return false;
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(rotX || 0, rotY, 0, 'YXZ');
+    dummy.scale.set(w / FRAME_SPAN, h / FRAME_SPAN, 1);
+    dummy.updateMatrix();
+    frames.setMatrixAt(frameCursor, dummy.matrix);
+    frames.setColorAt(frameCursor, col);
+    frameCursor += 1;
+    facadeQuads += 1;
+    return true;
+  }
+
+  // The same quad in a building's local frame: lu runs along the frontage, lv into the block,
+  // and rotYExtra turns it about the block's own yaw exactly as addLocal does for a box. Every
+  // converted detail below goes through one of these two calls, so the frame mesh has a single
+  // write path and the audit counts one number.
+  function addLocalQuad(b, lu, lv, y, rotYExtra, rotX, w, h, col) {
+    return addFacadeQuad(
+      b.cx + b.ux * lu + b.nx * lv, y, b.cz + b.uz * lu + b.nz * lv,
+      b.rotY + (rotYExtra || 0), rotX, w, h, col
+    );
   }
 
   // Shopfront glazing: unlit glass, so a shop window stays the brightest thing at street level
@@ -5788,12 +6829,28 @@ export function buildWorld(THREE, model, opts) {
   const windowsOfQuarter = [];
   for (let q = 0; q < qCount; q += 1) windowsOfQuarter.push([]);
   let windowCursor = 0;
+  // Panes this cycle's sparse-flank pass added, and the walls it spent them on, so the audit
+  // states both the count the corner cost and where it went.
+  let sparsePanes = 0;
+  let sparseWalls = [];
 
   // A lit pane is drawn hot: at district distance the pane is only a few pixels wide, so it has
   // to sit well above the night haze in the frame or the whole city reads as a dark plate with
   // a scatter of dots on it.
   const LIT_WARM = new THREE.Color(0xffd8a6);
-  const LIT_DIM = new THREE.Color(0x313946);
+  // Cycle 28 repair: the unlit pane is darker than it was. These panes are drawn as a basic
+  // material, so the colour is what the frame gets: 0x313946 measured a 0.13 luma step against
+  // a shaded stucco wall, below the gradient the corner metric counts, and 426 panes on the
+  // north frame's flank walls moved that crop by a fifth of a point. Glazing in shade is a dark
+  // slate anyway, and the darker value puts a real step on the wall in sun and in shade without
+  // touching a triangle, a call or a pane count.
+  const LIT_DIM = new THREE.Color(0x232a33);
+  // The second pane tone. Window rows used to draw every pane in LIT_DIM, so a shaded facade read
+  // as one unbroken plane: at street tier's corner crops the buildings held thirteen flat points
+  // of a failing tile, and taking the windows away made it worse by twenty two, which says the
+  // panes are the only high frequency the wall has. Two tones cost no geometry, no draw call and
+  // no triangles, and give the row the rhythm of sills and reveals it cannot afford in boxes.
+  const LIT_PALE = LIT_DIM.clone().multiplyScalar(1.55);
   const SHUTTER = new THREE.Color(0x76593f);
 
   // Every pane keeps its placement, because the night halo pass is built from the same numbers:
@@ -5809,12 +6866,23 @@ export function buildWorld(THREE, model, opts) {
 
   function addWindow(x, y, z, rotY, sw, sh, qi, frameCol) {
     if (windowCursor >= WINDOW_CAP) return;
-    dummy.position.set(x, y, z);
+    // The caller hands in the pane's plane (wall + 3 cm). The pane now stands 6 cm further out
+    // and the frame keeps that plane, so the trim sits between the wall and the glass and the
+    // pane covers the frame's middle: both offsets are the ones this facade already used, only
+    // swapped, so no new depth relationship enters the frame. Six, not the 7.5 the ring asked
+    // for: the pane has to stay clear of the plinth, which stands 0.13 proud at the foot of the
+    // same wall, and 4 cm of separation is the order that already holds between the wall and a
+    // pane at the far edge of the district. winX/winZ stay on the caller's plane because the
+    // night halo is written from them, 13 cm out, and it must stay in front of the glass.
+    const fx = Math.sin(rotY);
+    const fz = Math.cos(rotY);
+    dummy.position.set(x + fx * 0.06, y, z + fz * 0.06);
     dummy.rotation.set(0, rotY, 0);
     dummy.scale.set(sw, sh, 1);
     dummy.updateMatrix();
     windows.setMatrixAt(windowCursor, dummy.matrix);
-    windows.setColorAt(windowCursor, LIT_DIM);
+    windows.setColorAt(windowCursor,
+      hash2(Math.round(x * 5) + 8192, Math.round(z * 5) + 8192) < 0.36 ? LIT_PALE : LIT_DIM);
     winX[windowCursor] = x;
     winY[windowCursor] = y;
     winZ[windowCursor] = z;
@@ -5824,12 +6892,18 @@ export function buildWorld(THREE, model, opts) {
     winHue[windowCursor] = hash2(Math.round(x * 5) + 8192, Math.round(z * 5) + 8192);
     windowQuarter[windowCursor] = qi;
     if (qi >= 0) windowsOfQuarter[qi].push(windowCursor);
-    if (frames && frameCol && frameCursor < WINDOW_CAP) {
-      const fx = Math.sin(rotY);
-      const fz = Math.cos(rotY);
-      dummy.position.set(x + fx * 0.075, y, z + fz * 0.075);
+    if (frames && frameCol && frameCursor < FRAME_CAP) {
+      // Cycle 24: the district reads its windows as one mechanical grid because every storey
+      // carries the same trim. A storey rhythm costs nothing here: the trim is a two triangle
+      // quad already in the instance list, so alternating floors get a wider sill band and the
+      // grid breaks into floors without one triangle more. Ground floors keep the plain trim:
+      // they sit behind shopfronts and socles, and a wider band there only collides with the
+      // plinth. The measured cost is zero triangles and no draw call.
+      const storey = Math.round((y - 2.6) / 3.1);
+      const rhythm = y > 10.5 ? (storey % 2 === 0 ? 1.16 : 0.98) : 1;
+      dummy.position.set(x, y, z);
       dummy.rotation.set(0, rotY, 0);
-      dummy.scale.set(sw * 1.13, sh * 1.12, 1);
+      dummy.scale.set(sw * rhythm, sh * (rhythm > 1 ? 1.02 : 1), 1);
       dummy.updateMatrix();
       frames.setMatrixAt(frameCursor, dummy.matrix);
       frames.setColorAt(frameCursor, frameCol);
@@ -5890,6 +6964,7 @@ export function buildWorld(THREE, model, opts) {
   let modelWindowCount = 0;
   for (let bi = 0; bi < blds.length; bi += 1) {
     const b = blds[bi];
+    if (bi === fabricTail.first) fabricTail.windows = windowCursor;
     if (b.instance === undefined) continue;
     if (windowCursor >= WINDOW_CAP - 8) break;
     const outer = b.kind === 3;
@@ -5976,12 +7051,14 @@ export function buildWorld(THREE, model, opts) {
   //
   // The pane stands nine centimetres proud of the bounding box rather than using a polygon
   // offset: a real height offset cannot z-fight at any angle, and the pack models fill about
-  // ninety per cent of their footprint, so the panes sit just off the wall they belong to.
-  // No frame ring: the model already carries trim, and eight triangles a pane on four hundred
-  // panes is a real cost on a phone.
+  // ninety per cent of their footprint, so the panes sit just off the wall they belong to. The
+  // caller therefore hands in 3 cm, because addWindow adds the pane's own 6 cm to whatever plane
+  // it is given.
+  // No frame ring: the model already carries trim, and two triangles a pane on four hundred
+  // panes is still a cost no district-distance overlay earns.
   {
     const winStart = windowCursor;
-    const lists = [modelLots, modelVillas];
+    const lists = [modelLots];
     for (let li = 0; li < lists.length; li += 1) {
       const list = lists[li];
       for (let i = 0; i < list.length; i += 1) {
@@ -6009,8 +7086,8 @@ export function buildWorld(THREE, model, opts) {
           const rotY = Math.atan2(face.nx, face.nz);
           const ax = face.nz;
           const az = -face.nx;
-          const ox = b.cx + face.nx * (face.half + 0.09);
-          const oz = b.cz + face.nz * (face.half + 0.09);
+          const ox = b.cx + face.nx * (face.half + 0.03);
+          const oz = b.cz + face.nz * (face.half + 0.03);
           const nc = face.front ? clamp(Math.floor((face.wide - 0.6) / 3.9), 1, 3)
             : clamp(Math.floor((face.wide - 1.2) / 5.0), 1, 2);
           const spacing = face.wide / (nc + 0.4);
@@ -6033,6 +7110,150 @@ export function buildWorld(THREE, model, opts) {
       }
     }
     modelWindowCount = windowCursor - winStart;
+  }
+
+  // Shared by panes and storey bands: ignore the portion of a wall hidden by nearby roofs.
+  // -Infinity leaves a clear wall at its own parcel datum.
+  function clearWallBase(b, nx, nz, off, reach) {
+    if (!bldObb) return -Infinity;
+    let top = -Infinity;
+    for (let d = 1.0; d <= reach; d += 1.0) {
+      const px = b.cx + nx * (off + d);
+      const pz = b.cz + nz * (off + d);
+      for (let i = 0; i < bldObb.n; i += 1) {
+        if (blds[i] === b) continue;
+        const dx = px - bldObb.cx[i];
+        const dz = pz - bldObb.cz[i];
+        const span2 = bldObb.hw[i] + bldObb.hd[i];
+        if (dx * dx + dz * dz > span2 * span2) continue;
+        const lu = dx * bldObb.ux[i] + dz * bldObb.uz[i];
+        const lv = dx * bldObb.vx[i] + dz * bldObb.vz[i];
+        if (Math.abs(lu) > bldObb.hw[i] || Math.abs(lv) > bldObb.hd[i]) continue;
+        if (blds[i].top > top) top = blds[i].top;
+      }
+    }
+    return top;
+  }
+  // ------------------------------------------------------------------ sparse flank panes
+  // Furnish exposed side and rear elevations using their visible, viewport-clipped area.
+  // Panes start above neighbouring roofs and share the existing pale trim geometry, so a
+  // shaded elevation has readable window reveals rather than low-contrast flat dots.
+  // The fixed 420-pane budget bounds both pane and trim cost; touch keeps its reduced profile.
+  if (richDetail) {
+    const SPARSE_PANE_MAX = 420;
+    const sparse = [];
+    for (let bi = 0; bi < blds.length; bi += 1) {
+      const b = blds[bi];
+      if (b.instance === undefined || b.tower || b.kind === 3) continue;
+      for (let f = 1; f < 4; f += 1) {
+        // Both the furnished-but-thin flank and the windowless rear are served here: the rear is
+        // the face the north frame looks at, and a paned grid is the contrast that wall needs.
+        // The storey-line pass below then keeps only what this one left thin.
+        // "Furnished" means a pane on every storey. The old test asked for one pane per storey
+        // minus one, which the side faces pass satisfied with their two-bay, every-second-floor
+        // grid: the nine metre flank of the block the north frame's bottom corner is filled by
+        // measured six panes and was therefore considered finished, and forty two percent of that
+        // corner is that one flank. A face now has to carry a full storey column to be left alone.
+        const had = faceWindows[bi * 4 + f];
+        if (had >= b.floors) continue;
+        const nx = f === 1 ? b.ux : f === 2 ? -b.ux : -b.nx;
+        const nz = f === 1 ? b.uz : f === 2 ? -b.uz : -b.nz;
+        const half = f === 3 ? b.hv : b.hu;
+        const wide = f === 3 ? b.w : b.d;
+        // Four metres is the narrowest wall the bay grid still reads on: two panes of 1.35 m with
+        // the 0.4 m margins the spacing formula uses. The rear of a four metre plot is the wall a
+        // camera looking along the row sees most of, so excluding it excluded the frame.
+        if (wide < 3.4) continue;
+        const neighbour = bldObb ? clearWallBase(b, nx, nz, half, 7.5) : -Infinity;
+        const base = Math.max(b.gMax, neighbour);
+        if (b.top - base < 2.6) continue;
+        const wx = b.cx + nx * half;
+        const wz = b.cz + nz * half;
+        const tx = nz;
+        const tz = -nx;
+        const hw = wide * 0.5 - 0.4;
+        let bestPx = 0;
+        for (let v = 0; v < FRAME_VIEWS.length; v += 1) {
+          const view = FRAME_VIEWS[v];
+          // The eye has to be on the outer side of the wall. A rectangle facing away projects
+          // exactly as large as one facing the eye, which is how the first cut of this pass spent
+          // its whole budget on the sides no frame holds; the dot is the eye offset against the
+          // face normal, and half a metre keeps a grazing wall from counting as a view.
+          if (nx * (view.ex - wx) + nz * (view.ez - wz) <= 0.5) continue;
+          let x0 = Infinity;
+          let x1 = -Infinity;
+          let y0 = Infinity;
+          let y1 = -Infinity;
+          let ok = true;
+          for (let k = 0; k < 4 && ok; k += 1) {
+            const sx = k & 1 ? hw : -hw;
+            const sy = k & 2 ? b.top : base;
+            const px0 = wx + tx * sx - view.ex;
+            const py0 = sy - view.ey;
+            const pz0 = wz + tz * sx - view.ez;
+            const depth = px0 * view.fx + py0 * view.fy + pz0 * view.fz;
+            if (depth < 1) { ok = false; break; }
+            const u = (px0 * view.rx + py0 * view.ry + pz0 * view.rz) / (depth * TAN_H);
+            const vv = (px0 * view.ux + py0 * view.uy + pz0 * view.uz) / (depth * TAN_V);
+            if (u < x0) x0 = u;
+            if (u > x1) x1 = u;
+            if (vv < y0) y0 = vv;
+            if (vv > y1) y1 = vv;
+          }
+          if (!ok) continue;
+          // A partly clipped facade still fills the corner of the view. Rank its visible
+          // rectangle rather than discarding the whole wall when one edge leaves the frame.
+          x0 = Math.max(-1, x0);
+          x1 = Math.min(1, x1);
+          y0 = Math.max(-1, y0);
+          y1 = Math.min(1, y1);
+          if (x0 >= x1 || y0 >= y1) continue;
+          const px = (x1 - x0) * 960 * (y1 - y0) * 540;
+          if (px > bestPx) bestPx = px;
+        }
+        if (bestPx < 6500) continue;
+        sparse.push({ bi: bi, f: f, px: bestPx, nx: nx, nz: nz, half: half, wide: wide, x: wx, z: wz, base: base });
+      }
+    }
+    sparse.sort(function (a, b2) { return b2.px - a.px; });
+    let sparseAdded = 0;
+    for (let i = 0; i < sparse.length && sparseAdded < SPARSE_PANE_MAX; i += 1) {
+      const c = sparse[i];
+      const b = blds[c.bi];
+      frameTint.setHex(0xf8f3e8);
+      const rotY = Math.atan2(c.nx, c.nz);
+      const ax = c.nz;
+      const az = -c.nx;
+      const ox = b.cx + c.nx * (c.half + 0.03);
+      const oz = b.cz + c.nz * (c.half + 0.03);
+      const nc = clamp(Math.floor((c.wide - 1.2) / 3.4), 2, 3);
+      const spacing = c.wide / (nc + 0.4);
+      const paneW = Math.min(1.35, (spacing - 0.12) / FRAME_SPAN);
+      let took = 0;
+      for (let fl = 0; fl < b.floors && sparseAdded + took < SPARSE_PANE_MAX; fl += 1) {
+        const y = c.base + 1.2 + fl * 3.0;
+        if (y > b.top - 1.4) break;
+        for (let k = 0; k < nc && sparseAdded + took < SPARSE_PANE_MAX; k += 1) {
+          const t = (k - (nc - 1) * 0.5) * spacing;
+          addWindow(ox + ax * t, y, oz + az * t, rotY, paneW, 1.9, b.qi, frameTint);
+          took += 1;
+        }
+      }
+      faceWindows[c.bi * 4 + c.f] += took;
+      sparseAdded += took;
+      if (sparseAdded >= SPARSE_PANE_MAX) break;
+    }
+    sparsePanes = sparseAdded;
+    sparseWalls = sparse.slice(0, 24).map(function (c) {
+      return {
+        bi: c.bi,
+        face: c.f,
+        px: Math.round(c.px),
+        wide: Math.round(c.wide * 10) / 10,
+        x: Math.round(c.x * 10) / 10,
+        z: Math.round(c.z * 10) / 10
+      };
+    });
   }
 
   windows.count = windowCursor;
@@ -6638,9 +7859,35 @@ export function buildWorld(THREE, model, opts) {
   const dCol = new Float32Array(DETAIL_CAP * 3);
   const dRank = new Uint8Array(DETAIL_CAP);
   const dQuarter = new Int16Array(DETAIL_CAP);
+  // How large a piece stands in the best of the five frames, as apparent area over depth
+  // squared. The pool is over its budget every build, so the flourish rank is laid in this
+  // order instead of build order: the budget then drops the pieces no frame can see rather
+  // than whatever happened to be laid last. Rank 0 and 1 are never dropped and keep the
+  // build order the level ladder slices.
+  const dScore = new Float32Array(DETAIL_CAP);
   const detailLevelCount = new Int32Array(3);
   let detailCursor = 0;
   let shopCount = 0;
+  // The ring frontage band pass lays one moulding per storey of every kind-2 block. The counter
+  // is separate from the cursor so the audit can report the pass on its own.
+  let ringBands = 0;
+  // Boxes the awning and balcony passes of cycle 25 draw as frame quads instead, counted per
+  // piece, so the audit states how many boxes became two or four triangles and the triangle
+  // arithmetic is a number rather than a claim.
+  let fringeQuads = 0;
+  // The blind elevation pass below. Its budget is a quad count, not a building count, so the
+  // triangle cost of the pass is two per entry no matter which walls the ranking reaches.
+  //
+  // The tone is the shadowed reveal under a coping, not the pale shelf itself: the wall this
+  // line is drawn on faces away from the sun, so a pale line on it is a pale line on a pale wall
+  // and measures as nothing (the flat-share metric counts nine pixel windows of local gradient,
+  // and the first build's pale bands moved the north corner by 0.9 of a point in fifty three).
+  // The same hue at 62 percent is the line a storey break actually casts, and it holds its
+  // contrast on a shaded elevation as well as on a lit one.
+  const BLIND_BAND_MAX = 520;
+  const blindTone = new THREE.Color();
+  const blindBands = [];
+  let blindBandCount = 0;
 
   function addDetail(x, y, z, sx, sy, sz, rotY, col, qi, rotX, rank) {
     if (detailCursor >= DETAIL_CAP) return;
@@ -6656,6 +7903,30 @@ export function buildWorld(THREE, model, opts) {
     col.toArray(dCol, k * 3);
     dRank[k] = rank || 0;
     dQuarter[k] = qi;
+    {
+      // Silhouette area of the box, then the five eyes: only a frame the piece is in front of
+      // and inside counts, so a prop behind a camera cannot win the ranking by being close.
+      const ax = Math.abs(sx);
+      const ay = Math.abs(sy);
+      const az = Math.abs(sz);
+      const area = Math.max(ax * ay, ax * az, ay * az);
+      let best = 0;
+      for (let v = 0; v < FRAME_VIEWS.length; v += 1) {
+        const view = FRAME_VIEWS[v];
+        const px0 = x - view.ex;
+        const py0 = y - view.ey;
+        const pz0 = z - view.ez;
+        const depth = px0 * view.fx + py0 * view.fy + pz0 * view.fz;
+        if (depth < 2) continue;
+        const u = (px0 * view.rx + py0 * view.ry + pz0 * view.rz) / (depth * TAN_H);
+        if (u < -1.05 || u > 1.05) continue;
+        const vv = (px0 * view.ux + py0 * view.uy + pz0 * view.uz) / (depth * TAN_V);
+        if (vv < -1.05 || vv > 1.05) continue;
+        const score = area / (depth * depth);
+        if (score > best) best = score;
+      }
+      dScore[k] = best;
+    }
     detailCursor += 1;
   }
 
@@ -6670,7 +7941,11 @@ export function buildWorld(THREE, model, opts) {
   // The details pool reports what it holds after the flush: how many pieces were laid, how
   // many the budget kept, and how many of the rank-2 tail the cap dropped, so a fabric pass
   // that overfills the pool is a number in the audit and not a mystery in a screenshot.
-  const detailAudit = { cursor: 0, rank0: 0, rank1: 0, rank2: 0, budget: DETAIL_BUDGET, kept: 0, dropped: 0 };
+  const detailAudit = {
+    cursor: 0, rank0: 0, rank1: 0, rank2: 0, budget: DETAIL_BUDGET,
+    rank2Room: 0, kept: 0, dropped: 0, frontBands: 0, bandQuads: 0,
+    fringeQuads: 0, blindBands: 0
+  };
   function flushDetails() {
     const c0 = detailCursor;
     let n0 = 0;
@@ -6683,6 +7958,14 @@ export function buildWorld(THREE, model, opts) {
     detailAudit.rank0 = n0;
     detailAudit.rank1 = n1;
     detailAudit.rank2 = c0 - n0 - n1;
+    detailAudit.frontBands = ringBands;
+    detailAudit.bandQuads = facadeQuads;
+    detailAudit.fringeQuads = fringeQuads;
+    detailAudit.blindBands = blindBandCount;
+    // The rank-2 share of the budget is what the flourish passes may fill: ranks 0 and 1 are
+    // shed only by the ladder, never by the budget, so they come off the top. rank2 <= rank2Room
+    // is the invariant the pool has to hold; the passes below are sized against it, not hoped at.
+    detailAudit.rank2Room = DETAIL_BUDGET - n0 - n1;
     detailAudit.kept = Math.min(c0, DETAIL_BUDGET);
     detailAudit.dropped = Math.max(0, c0 - DETAIL_BUDGET);
     detailLevelCount[0] = n0;
@@ -6690,10 +7973,16 @@ export function buildWorld(THREE, model, opts) {
     // The tail of the lowest rank is what the budget drops: ranks are already in ascending
     // order here, so the kept set stays a prefix and setDetailLevel keeps working unchanged.
     detailLevelCount[2] = Math.min(c0, DETAIL_BUDGET);
+    // Rank 2 in visibility order, ranks 0 and 1 in build order (the level ladder slices the
+    // first n0 and n0 + n1 of the laid instances, so those two must keep their order).
+    const rankOrder = [[], [], []];
+    for (let i = 0; i < c0; i += 1) rankOrder[dRank[i] < 3 ? dRank[i] : 0].push(i);
+    rankOrder[2].sort(function (a, b2) { return dScore[b2] - dScore[a]; });
     let at = 0;
     for (let r = 0; r < 3; r += 1) {
-      for (let i = 0; i < c0; i += 1) {
-        if (dRank[i] !== r) continue;
+      const list = rankOrder[r];
+      for (let n = 0; n < list.length; n += 1) {
+        const i = list[n];
         if (at >= detailLevelCount[2]) break;
         euler.set(dRot[i * 2], dRot[i * 2 + 1], 0, 'YXZ');
         quat.setFromEuler(euler);
@@ -6712,6 +8001,17 @@ export function buildWorld(THREE, model, opts) {
     details.count = at;
     if (details.instanceColor) details.instanceColor.needsUpdate = true;
     details.instanceMatrix.needsUpdate = true;
+    // The frame mesh took the converted details as it went (the ring's parapet bands, the dish
+    // masts, the washing lines), after the window pass closed its own count, so the drawn count
+    // and both of its buffers are closed here with the rest of the pool. facadeQuads is the count
+    // of quads appended by addFacadeQuad and addLocalQuad; the frames the window pass laid are
+    // already inside frameCursor, which is why the flush is guarded by the quad counter and not by
+    // frameCursor.
+    if (frames && facadeQuads > 0) {
+      frames.count = frameCursor;
+      if (frames.instanceColor) frames.instanceColor.needsUpdate = true;
+      frames.instanceMatrix.needsUpdate = true;
+    }
   }
 
   // The detail layer at night runs one rank lower than the notch ladder asked for: the rank 2
@@ -7010,24 +8310,62 @@ export function buildWorld(THREE, model, opts) {
             (s & 1) ? awningCol : C_AWNING_CREAM, 0, 0.34, 1);
         }
         for (let s = 0; s < strips; s += 1) {
+          // A fringe on every strip is more fabric than a forty metre view reads, so about one
+          // strip in eleven keeps a plain edge instead: a hand-sewn valance after a season, and
+          // the ten triangles it saves pay for the extra pavement furniture the street pass
+          // needed at the bottom corners. The skip is a hash, so it is the same every frame.
+          if (hash2(bi * 31 + s * 7, 97) < 0.09) continue;
           const lu = -awnW * 0.5 + stripW * (s + 0.5);
-          addLocal(b, lu, hd + 0.48 + drop * 0.5, b.gMax + 2.52 - drop * 0.17, stripW - 0.02, 0.26, 0.06,
-            (s & 1) ? C_AWNING_CREAM : awningCol, 0, 0, 2);
+          const fringeCol = (s & 1) ? C_AWNING_CREAM : awningCol;
+          const fv = hd + 0.48 + drop * 0.5;
+          const fy = b.gMax + 2.52 - drop * 0.17;
+          // Cycle 25: the valance is two quads, not a box. The per-face test asks whether any
+          // face other than the read one is visible from the camera at its fixed 40 degree
+          // pitch in any of the three tiers, and for this piece the answer is that exactly two
+          // are: the outward face (0.26 by the strip width, the valance itself) and the top
+          // face (0.06 by the strip width), because the box stands 10 cm proud of the canopy's
+          // sloped surface at its lip and that 6 cm lip is the contrasting line the awning's
+          // leading edge reads by. The underside faces down and the camera never looks up
+          // (its eye sits at 88.4, 136.7 and 213.1 above the target, and the tallest tower top
+          // is 87.3, so nothing in the city is above the eye at any tier). The two ends are
+          // 0.06 by 0.26 and butt against the neighbouring strip 0.02 away, so they are
+          // occluded by the strip itself. Two boxes' worth of shadow pass is what the
+          // conversion gives up: the valance hangs under the canopy and the canopy's own box
+          // still casts the awning's shadow down the shopfront, so what is lost is a 0.26 m
+          // strip of shade already inside the canopy's shadow. The piece is rank 2, so the
+          // night frame (which drops rank 2 with the notch ladder, and culls the frame mesh
+          // outright) pays nothing either way; the fallback keeps the box because its ladder
+          // sits at detail level 1 and would be buying quads it never bought as boxes.
+          if (assets && frames && frameCursor + 2 <= FRAME_CAP) {
+            addLocalQuad(b, lu, fv + 0.03, fy, 0, 0, stripW - 0.02, 0.26, fringeCol);
+            addLocalQuad(b, lu, fv, fy + 0.13, 0, -Math.PI / 2, stripW - 0.02, 0.06, fringeCol);
+            fringeQuads += 1;
+          } else {
+            addLocal(b, lu, fv, fy, stripW - 0.02, 0.26, 0.06, fringeCol, 0, 0, 2);
+          }
         }
       }
     } else {
-      // Street front: a door in the quarter colour.
-      addLocal(b, -faceW * 0.3, lvFront + 0.04, b.gMax + 1.62, 1.35, 2.3, 0.14, doorCol, rotExtra, 0, 0);
+      // Street front: a door in the quarter colour. It stands 0.14 m proud of the wall plane,
+      // the same reveal the shop glazing uses: centred on lvFront the door sat 0.11 m inside
+      // the wall and every one of the 93 street doors drew no pixel. The 0.2 depth is the
+      // 0.14 of front face the pane now leaves it: a ground-floor pane stands 0.09 m off the
+      // wall and the door shares its bays, so the door's face has to clear the glass with room
+      // to spare, and the three centimetres more than the old 0.11 give it five.
+      addLocal(b, -faceW * 0.3, hd + 0.04, b.gMax + 1.62, 1.35, 2.3, 0.2, doorCol, rotExtra, 0, 0);
     }
 
-    // Balconies: bay-aligned on the frontage (and, on the outer slopes, on the back face too),
-    // riding the same window rhythm the facade draws above the ground band. Each bay of each
-    // residential floor can carry a slab and a rail; a per-floor, per-bay hash skips about a
-    // third of them so the rhythm stays irregular, and rank 2 puts them where the ladder and
-    // the night pass shed them like the other flourishes.
+    // Balconies: bay-aligned on the frontage, riding the same window rhythm the facade draws
+    // above the ground band. Each bay of each residential floor can carry a slab and a rail; a
+    // per-floor, per-bay hash skips about a tenth of them so the rhythm stays irregular without
+    // leaving a whole floor bare, and rank 2 puts them where the ladder and the night pass shed
+    // them like the other flourishes. The back face is blind by design (murals live there), so
+    // a balcony never mirrors onto it: the old mirrored branch reused the front offset and laid
+    // the same bays a second time, 476 coincident boxes that drew no pixel, plus 440 more that
+    // only looked like second bays because the reflection landed on the other bay's position.
     if (b.kind !== 2) {
-      const balOuter = b.kind === 3;
-      const balNc = balOuter ? 2 : clamp(Math.floor((b.w - 0.6) / 3.9), 1, 3);
+      const balOff = b.hv - 0.15;
+      const balNc = b.kind === 3 ? 2 : clamp(Math.floor((b.w - 0.6) / 3.9), 1, 3);
       const balSpacing = b.w / (balNc + 0.4);
       const balW = Math.min(balSpacing * 0.72, 2.7);
       for (let fl = 1; fl < b.floors; fl += 1) {
@@ -7035,23 +8373,203 @@ export function buildWorld(THREE, model, opts) {
         if (y > b.top - 1.6) break;
         for (let c = 0; c < balNc; c += 1) {
           const t = (c - (balNc - 1) * 0.5) * balSpacing;
-          if (hash2(bi * 17 + fl * 7 + c * 13, 21) > 0.62) continue;
-          addLocal(b, t, lvFront + 0.55, y, balW, 0.14, 0.95, parapetCol, rotExtra, 0, 2);
-          addLocal(b, t, lvFront + 0.96, y + 0.5, balW, 0.95, 0.09, parapetCol, rotExtra, 0, 2);
-          if (balOuter) {
-            addLocal(b, -t, lvFront + 0.55, y, balW, 0.14, 0.95, parapetCol, rotExtra, 0, 2);
-            addLocal(b, -t, lvFront + 0.96, y + 0.5, balW, 0.95, 0.09, parapetCol, rotExtra, 0, 2);
+          if (hash2(bi * 17 + fl * 7 + c * 13, 21) > 0.75) continue;
+          addLocal(b, t, balOff + 0.55, y, balW, 0.14, 0.95, parapetCol, rotExtra, 0, 2);
+          addLocal(b, t, balOff + 0.96, y + 0.5, balW, 0.95, 0.09, parapetCol, rotExtra, 0, 2);
+        }
+      }
+    }
+
+    // Ring frontage rhythm. The blocks that face the ring road are the flattest family in the
+    // frame: they are not avenue, spur or core lots, so no shop band reaches them, and the
+    // balcony pass above skips kind 2 by design, which left their facade as a socle, a window
+    // grid and a parapet with nothing between. They are also exactly what the bottom corners of
+    // the district frame look at, on the south pavements where the frame measures flattest. Each
+    // floor line now takes the pale coping shelf the shop bands already carry, one 0.16 m proud
+    // moulding per storey, so the frontage reads as storeys at district distance instead of as
+    // one plane of windows.
+    //
+    // Cycle 24 draws that moulding as the two quads a camera forty degrees above the horizontal
+    // can actually see, in the frame mesh, instead of a ten-triangle box in the detail pool: the
+    // top shelf (0.34 deep, the bright face that carries the line) and the outward reveal below
+    // it (0.16 tall). The box's two end faces are 0.16 by 0.34, face along the frontage, and a
+    // band runs the full width of a block, so they are the only faces dropped and they are
+    // sub-pixel at district distance. The conversion is measured, not assumed: a probe on one
+    // page put a detail box at 20 counted triangles (10 colour, 10 shadow) and a frame quad at
+    // 2, so the 112 bands cost 224 here against 2,240 as boxes, and the static street and
+    // district frames differ from the box build by nothing above the cross-load flicker floor.
+    //
+    // The frame mesh is night-culled, so the night and dream frames are untouched exactly as
+    // they were with the rank-2 box; the notch ladder no longer sheds these 224 quads at detail
+    // level 1, and that quarter of the old cost is the price of not adding a draw call.
+    if (richDetail && assets && b.kind === 2 && ringBands < RING_BAND_MAX && frames) {
+      const bandW = b.w + 0.1;
+      for (let fl = 1; fl < b.floors; fl += 1) {
+        if (ringBands >= RING_BAND_MAX) break;
+        const y = b.gMax + fl * 3.0 - 0.08;
+        if (y > b.top - 0.95) break;
+        if (frameCursor + 2 > FRAME_CAP) break;
+        // 0.34 deep on a centre 1 cm proud of the wall leaves 0.18 m standing out, the same
+        // reveal the shop string course has, and 0.1 wide on the frontage so the band reaches
+        // the block's own end.
+        addFacadeQuad(b.cx + b.nx * (hd + 0.01), y + 0.08, b.cz + b.nz * (hd + 0.01),
+          b.rotY, -Math.PI / 2, bandW, 0.34, parapetCol);
+        addFacadeQuad(b.cx + b.nx * (hd + 0.18), y, b.cz + b.nz * (hd + 0.18),
+          b.rotY, 0, bandW, 0.16, parapetCol);
+        ringBands += 1;
+      }
+    }
+
+    // ------------------------------------------------------------------ the blind elevation
+    // A block has four walls and the window pass only furnishes some of them: the street front
+    // always, an exposed flank where there is no party wall, and never the rear. The far side of
+    // the same rule is a district seen from behind: rotate the rig and the frame looks at the
+    // backs and the exposed flanks of the row, and those walls are a socle, a parapet and a
+    // plane of stucco between them, which is the flattest thing in any of the five frames.
+    //
+    // What the census of the north frame's bottom corners showed is that the wall carrying that
+    // flatness is usually not the rear of a wide block but the flank of a narrow one: the row's
+    // edge plots are four to five metres of frontage and nine to eleven of depth, six floors
+    // tall, so the plane the camera sees is a nine metre flank with one column of panes on it,
+    // and the corner measures fifty three percent flat with the whole city hidden and the
+    // details in place. The rear elevation rule alone therefore reached none of them: a four
+    // metre frontage left a two and a half metre span, under the threshold, and no flank was
+    // ever offered.
+    //
+    // Each windowless wall that a frame can actually see takes the same storey line the ring
+    // frontage and the shop band already draw: the pale coping shelf, two triangles, written
+    // into the frame mesh the pass above closes, so it costs no draw call, no detail-pool box,
+    // no window slot, and nothing at night, where that mesh is culled. A party wall is skipped
+    // (a building stands behind it, so the window pass skipped it for the same reason and no
+    // frame can see it), and a wall carrying a mural is skipped so the canvas stays clear. The
+    // line sits on the storey module, not at a fraction of the wall, so it reads as the floor
+    // it is between.
+    //
+    // The budget is a quad count and the ranking is the five frames the app can take, using the
+    // eyes and the projection the mural pass already reads, because a blank wall no rotation can
+    // see is two triangles spent on nothing. Walls are served broadest-first, one line each
+    // before any wall takes a second, so the pass reads as a rhythm on the elevations a frame
+    // holds instead of as a stripe on the ten biggest.
+
+  if (richDetail && frames && b.kind !== 2 && b.instance !== undefined) {
+      for (let f = 1; f < 4 && blindBands.length < 2600; f += 1) {
+        // Under-furnished, not only windowless. A flank whose grid is one bay every second
+        // storey carries two or three panes on a wall nine metres wide and seventeen tall, which
+        // is a wall with dots on it and no storey rhythm at all; that is the plane the north
+        // frame's bottom corners were measuring. A face furnished at one pane per storey or
+        // denser is left alone, which keeps the street fronts (and their shop bands) untouched.
+        if (faceWindows[bi * 4 + f] >= (b.floors > 3 ? b.floors - 1 : 2)) continue;
+        const fnx = f === 1 ? b.ux : f === 2 ? -b.ux : -b.nx;
+        const fnz = f === 1 ? b.uz : f === 2 ? -b.uz : -b.nz;
+        const halfOut = f === 3 ? b.hv : b.hu;
+        const across = f === 3 ? b.w : b.d;
+        const span = across - 1.8;
+        if (span < 3.6) continue;
+        // A party wall is not a wall to skip: it is the strip of wall that stands above its
+        // neighbour's roof, and in a row of narrow plots that strip is the plane a camera in the
+        // street actually sees. The tallest roof within 7.5 m of the plane sets the foot of the
+        // lines, so a wall whose neighbour reaches its own parapet is skipped by the room test
+        // below instead of by a flag test that cannot see height.
+        const neighbour = clearWallBase(b, fnx, fnz, halfOut, 7.5);
+        const base = isFinite(neighbour) ? Math.max(b.gMax + 2.7, neighbour + 1.2) : b.gMax + 2.7;
+        if (b.top - base < 4.2) continue;
+        let painted = false;
+        for (let k = 0; k < muralPicks.length; k += 1) {
+          const m = muralPicks[k];
+          if (m.bi === bi && Math.abs(m.nx - fnx) < 0.02 && Math.abs(m.nz - fnz) < 0.02) {
+            painted = true;
+            break;
           }
+        }
+        if (painted) continue;
+        const wx = b.cx + fnx * halfOut;
+        const wz = b.cz + fnz * halfOut;
+        const half = span * 0.5;
+        const tx = fnz;
+        const tz = -fnx;
+        let bestPx = 0;
+        for (let v = 0; v < MURAL_VIEWS.length; v += 1) {
+          const view = MURAL_VIEWS[v];
+          // Same test as the pane pass: the eye must be on the wall's outer side, or the line is
+          // drawn on a side no frame looks at.
+          if (fnx * (view.ex - wx) + fnz * (view.ez - wz) <= 0.5) continue;
+          let x0 = Infinity;
+          let x1 = -Infinity;
+          let y0 = Infinity;
+          let y1 = -Infinity;
+          let ok = true;
+          for (let k = 0; k < 4 && ok; k += 1) {
+            const sx = k & 1 ? half : -half;
+            const sy = k & 2 ? b.top : b.gMax;
+            ok = projectWall(view, wx + tx * sx, sy, wz + tz * sx);
+            if (!ok) break;
+            if (muralProj[0] < x0) x0 = muralProj[0];
+            if (muralProj[0] > x1) x1 = muralProj[0];
+            if (muralProj[1] < y0) y0 = muralProj[1];
+            if (muralProj[1] > y1) y1 = muralProj[1];
+          }
+          if (!ok) continue;
+          x0 = Math.max(-1, x0);
+          x1 = Math.min(1, x1);
+          y0 = Math.max(-1, y0);
+          y1 = Math.min(1, y1);
+          if (x0 >= x1 || y0 >= y1) continue;
+          const px = (x1 - x0) * FRAME_HALF_W * (y1 - y0) * FRAME_HALF_H;
+          if (px > bestPx) bestPx = px;
+        }
+        if (bestPx >= 900) {
+          blindBands.push({
+            bi: bi,
+            base: base,
+            px: bestPx,
+            span: span,
+            rotY: Math.atan2(fnx, fnz),
+            x: wx,
+            z: wz,
+            nx: fnx,
+            nz: fnz,
+            col: blindTone.copy(parapetCol).multiplyScalar(0.62).getHex()
+          });
         }
       }
     }
   }
 
+  if (blindBands.length > 0) {
+    blindBands.sort(function (a, b2) { return b2.px - a.px; });
+    // The storey module the window pass already uses: three metres per floor above the parcel
+    // datum, which is the line a coping sits on in every band this file draws.
+    const bandScratch = new THREE.Color();
+    for (let pass = 0; pass < 3 && blindBandCount < BLIND_BAND_MAX; pass += 1) {
+      for (let i = 0; i < blindBands.length && blindBandCount < BLIND_BAND_MAX; i += 1) {
+        const r = blindBands[i];
+        const b = blds[r.bi];
+        const base = r.base;
+        if (b.top - base < 3.0 * (pass + 2)) continue;
+        const share = pass === 0 ? 0.44 : pass === 1 ? 0.66 : 0.86;
+        const want = base + (b.top - base) * share;
+        const y = Math.round((want - base) / 3.0) * 3.0 + base - 0.08;
+        if (y < base + 0.6 || y > b.top - 1.2) continue;
+        bandScratch.setHex(r.col);
+        if (!addFacadeQuad(r.x + r.nx * 0.02, y, r.z + r.nz * 0.02, r.rotY, 0, r.span, 0.26, bandScratch)) {
+          break;
+        }
+        blindBandCount += 1;
+      }
+    }
+  }
+
   // ------------------------------------------------------------------ rooftop clutter
-  // Every flat roof now carries plant: condenser cases lined along the parapet, a water tank on
-  // the bigger decks and a dish on a quarter of them. All of it is the same instanced detail box
-  // the rest of the city's small pieces use, at rank 2, so the night pass and the notch ladder
-  // shed it exactly as they shed the other flourishes and the draw call never changes.
+  // Plant on the decks: a condenser battery along a parapet, a water tank and a dish on the
+  // bigger roofs, the stair housing and the washing line on the ones that have room. All of it is
+  // the same instanced detail box the rest of the city's small pieces use, at rank 2, so the night
+  // pass and the notch ladder shed it exactly as they shed the other flourishes and the draw call
+  // never changes. The programme is bounded at 420 boxes and shared by pass, not first come: see
+  // the share caps below. Cycle 23 raised the bound from 180 to 420 pieces and re-tuned the
+  // shares beside it: the extra decks were the only lever that moved the bottom corners of the
+  // street frame (r0 bottom right 50.6 flat to 50.4, r2 bottom left 5.94 edge to 6.05, both of
+  // which the window trim had cost), and the corner metric counts nine pixel windows of local
+  // gradient, so a deck that carries a case, a tank or a dish cures the windows around each edge.
   //
   // Placement is a rule, not a roll. A candidate must sit inside the roof slab (which is 8 cm
   // inside its own parapets), clear every piece already on the roof (the terrace, the tank, the
@@ -7059,6 +8577,14 @@ export function buildWorld(THREE, model, opts) {
   // already added. When nothing fits, the roof keeps what it has.
   const roofPlaced = [];
   const roofPre = new Int32Array(blds.length);
+  // Which rung the plant rides. Cycle 28 repair: these pieces are rank 1, not rank 2, because the
+  // pool's budget keeps rank 0 and rank 1 in full and truncates the rank-2 tail, and the tail is
+  // exactly where these passes write (they run last). The programme was therefore placed on 383
+  // decks and drawn by nothing: the detail mesh held 6,540 of 8,011 pieces and the roof clutter
+  // was inside the 1,471 that the budget dropped. The fix is a reallocation inside the same
+  // pool, not a new cost: 420 rank-2 flourishes yield to 420 rank-1 roof pieces, the drawn box
+  // count and the triangle count are unchanged, and the plant the corners were missing appears.
+  const ROOF_RANK = 1;
   const C_AC_CASE = new THREE.Color(0xc8c3b6);
   const C_AC_CASE_DARK = new THREE.Color(0xa9a69c);
   const C_AC_DARK = new THREE.Color(0x767b7e);
@@ -7072,6 +8598,10 @@ export function buildWorld(THREE, model, opts) {
   let roofDishes = 0;
   let roofBulkheads = 0;
   let roofRacks = 0;
+  // Pieces this pass draws as frame quads instead of detail boxes, so the audit can say how many
+  // of the box units became 2-triangle quads and the triangle arithmetic is a number, not a claim.
+  let roofQuads = 0;
+  let roofQuadUnits = 0;
 
   function roofFits(list, lu, lv, su, sv, inU, inV) {
     if (Math.abs(lu) + su * 0.5 > inU) return false;
@@ -7093,23 +8623,76 @@ export function buildWorld(THREE, model, opts) {
     // bulkheads and drying racks. The touch frame gets a reduced subset: the condenser banks
     // only, under a small box cap, because a 412 px frame still reads a case battery on a
     // bare deck but must not spend its triangle budget on it.
-    const ROOF_BOX_CAP = richDetail ? 540 : 110;
+    const ROOF_BOX_CAP = richDetail ? 420 : 110;
+    // One pass must not eat the cap. The condenser battery is the smallest piece and the one a
+    // deck reads as occupied without; the tank, the stair housing and the washing line are what
+    // make a deck read as a roof instead of a plinth, so each gets a floor share of the budget
+    // and the dish takes the remainder. Before this, 538 condenser banks filled the whole cap
+    // every frame and the tank, bulkhead, rack and dish programmes never placed a single piece.
+    // The shares ride the cap (cycle 23 raised all five together), so the mix on a deck is the
+    // same family of pieces at 420 boxes as it was at 180.
+    const roofAcMax = richDetail ? 140 : ROOF_BOX_CAP;
+    const roofTankMax = richDetail ? 250 : 0;
+    const roofDishMax = richDetail ? 320 : 0;
+    const roofBulkMax = richDetail ? 400 : 0;
     // The eye ranks the decks: the roofs that project largest take the extras first, so the
-    // tank and dish budget lands where a viewer can see it instead of on the far crown.
-    const roofOrder = [];
+    // tank and dish budget lands where a viewer can see it instead of on the far crown. The
+    // ranking runs inside each of the eight quarters and the quarters are then interleaved
+    // round-robin: one global ranking put every piece in the quarters nearest EYE and left the
+    // far decks bare, which is what the street corners in the east and north-east were looking
+    // at. Every quarter now gets its best decks before any quarter gets its second.
+    //
+    // Cycle 28 repair: the eye here was the district camera alone, and the condenser banks and
+    // the tank programme are capped at 140 and 250 pieces against a pool of some hundreds of
+    // decks, so the cap was spending the whole budget on the half of the city that camera is
+    // nearest to. The rig can take five views, four of them at street tier, and a deck fifty
+    // metres from a street eye projects ten times the area it does from the district eye two
+    // hundred and fifty metres away. A deck is therefore scored against every view the app can
+    // take, best frame wins, using the same eyes the mural pass and the blind elevation pass
+    // read: no piece moves off a deck that a frame shows, and the decks behind the district
+    // camera's own side stop being the only ones that ever get plant.
+    const ROOF_VIEWS = FRAME_VIEWS;
+    // The area a deck's parapet encloses, over the square of the eye distance, for the frame
+    // that shows it largest. The 4 * inU * inV product is the deck's own area in square metres
+    // with its two slabs of margin removed, as it was before this cycle; only the eye changed.
+    function roofScore(b, inU, inV) {
+      let best = 0;
+      for (let v = 0; v < ROOF_VIEWS.length; v += 1) {
+        const view = ROOF_VIEWS[v];
+        const dx = b.cx - view.ex;
+        const dy = b.top - view.ey;
+        const dz = b.cz - view.ez;
+        const s = (4 * inU * inV) / (dx * dx + dy * dy + dz * dz);
+        if (s > best) best = s;
+      }
+      return best;
+    }
+    const roofByQi = [];
+    for (let q = 0; q < 8; q += 1) roofByQi.push([]);
     for (let bi = 0; bi < blds.length; bi += 1) {
       const b = blds[bi];
       if (b.instance === undefined) continue;
       const inU = b.hu - 0.33;
       const inV = b.hv - 0.33;
       if (inU < 0.8 || inV < 0.75) continue;
-      const dx = b.cx - EYE_X;
-      const dy = b.top - EYE_Y;
-      const dz = b.cz - EYE_Z;
       roofPre[bi] = roofRects[bi] ? roofRects[bi].length : 0;
-      roofOrder.push({ bi: bi, score: (4 * inU * inV) / (dx * dx + dy * dy + dz * dz) });
+      const q = b.qi >= 0 && b.qi < 8 ? b.qi : 0;
+      roofByQi[q].push({ bi: bi, score: roofScore(b, inU, inV) });
     }
-    roofOrder.sort(function (a, b2) { return b2.score - a.score; });
+    for (let q = 0; q < 8; q += 1) {
+      roofByQi[q].sort(function (a, b2) { return b2.score - a.score; });
+    }
+    const roofOrder = [];
+    for (let r = 0; r < 512; r += 1) {
+      let moved = false;
+      for (let q = 0; q < 8; q += 1) {
+        if (r < roofByQi[q].length) {
+          roofOrder.push(roofByQi[q][r]);
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
 
     function roofListOf(bi) {
       let list = roofRects[bi];
@@ -7122,7 +8705,7 @@ export function buildWorld(THREE, model, opts) {
 
     // One condenser bank on every roof. A single case the length of two units is what a battery
     // of condensers reads as at this scale, and it leaves the deck free for the tank and the dish.
-    for (let o = 0; o < roofOrder.length && roofBoxes < ROOF_BOX_CAP; o += 1) {
+    for (let o = 0; o < roofOrder.length && roofBoxes < roofAcMax; o += 1) {
       const b = blds[roofOrder[o].bi];
       const bi = roofOrder[o].bi;
       const inU = b.hu - 0.33;
@@ -7140,7 +8723,7 @@ export function buildWorld(THREE, model, opts) {
         if (!roofFits(list, lu, lv, su, sv, inU, inV)) continue;
         const tone = roofRnd();
         const caseCol = tone < 0.34 ? C_AC_CASE_DARK : tone < 0.62 ? C_AC_CASE : C_AC_DARK;
-        addLocal(b, lu, lv, deck + 0.31, su, 0.62, sv, caseCol, 0, 0, 2);
+        addLocal(b, lu, lv, deck + 0.31, su, 0.62, sv, caseCol, 0, 0, ROOF_RANK);
         list.push(lu - su * 0.5 - 0.16, lu + su * 0.5 + 0.16,
           lv - sv * 0.5 - 0.16, lv + sv * 0.5 + 0.16);
         roofPlaced.push({ bi: bi, lu: lu, lv: lv, su: su, sv: sv, y: deck });
@@ -7153,7 +8736,7 @@ export function buildWorld(THREE, model, opts) {
     // Water tanks next, until three quarters of the box budget is spent: a body and a lid, so a
     // tank reads as a tank and not as a second condenser case. Desktop only: on the touch frame
     // the tank would cost real triangles the condensers already spent better.
-    for (let o = 0; richDetail && o < roofOrder.length && roofBoxes + 2 <= 480; o += 1) {
+    for (let o = 0; richDetail && o < roofOrder.length && roofBoxes + 2 <= roofTankMax; o += 1) {
       const b = blds[roofOrder[o].bi];
       const bi = roofOrder[o].bi;
       const inU = b.hu - 0.33;
@@ -7169,8 +8752,8 @@ export function buildWorld(THREE, model, opts) {
         const lv = (roofRnd() * 2 - 1) * Math.max(0, inV - sv * 0.5);
         if (!roofFits(list, lu, lv, su, sv, inU, inV)) continue;
         const skin = roofRnd() < 0.6 ? C_TANK_WHITE : C_TANK_GREY;
-        addLocal(b, lu, lv, deck + 0.75, su, 1.5, sv, skin, 0, 0, 2);
-        addLocal(b, lu, lv, deck + 1.53, su * 1.04, 0.09, sv * 1.04, C_TANK_GREY, 0, 0, 2);
+        addLocal(b, lu, lv, deck + 0.75, su, 1.5, sv, skin, 0, 0, ROOF_RANK);
+        addLocal(b, lu, lv, deck + 1.53, su * 1.04, 0.09, sv * 1.04, C_TANK_GREY, 0, 0, ROOF_RANK);
         list.push(lu - su * 0.5 - 0.16, lu + su * 0.5 + 0.16,
           lv - sv * 0.5 - 0.16, lv + sv * 0.5 + 0.16);
         roofPlaced.push({ bi: bi, lu: lu, lv: lv, su: su, sv: sv, y: deck });
@@ -7181,7 +8764,7 @@ export function buildWorld(THREE, model, opts) {
     }
 
     // A few dishes last, on the smallest share of the decks, tilted at the sky.
-    for (let o = 0; o < roofOrder.length && roofBoxes + 2 <= ROOF_BOX_CAP; o += 1) {
+    for (let o = 0; o < roofOrder.length && roofBoxes + 2 <= roofDishMax; o += 1) {
       const b = blds[roofOrder[o].bi];
       const bi = roofOrder[o].bi;
       const inU = b.hu - 0.33;
@@ -7195,8 +8778,26 @@ export function buildWorld(THREE, model, opts) {
         const lu = (roofRnd() * 2 - 1) * Math.max(0, inU - su * 0.5);
         const lv = (roofRnd() * 2 - 1) * Math.max(0, inV - sv * 0.5);
         if (!roofFits(list, lu, lv, su, sv, inU, inV)) continue;
-        addLocal(b, lu, lv, deck + 0.42, 0.09, 0.84, 0.09, C_DISH_ARM, 0, 0, 2);
-        addLocal(b, lu, lv - 0.12, deck + 1.02, su, 0.06, su, C_DISH, 0, -0.95, 2);
+        // The dish is a mast and a plate, and neither is a volume at any tier. The mast is a
+        // 9 cm post: two crossed quads reproduce the two sides a box ever showed, and the 9 cm
+        // cap it loses is under a pixel. The plate is a 95 cm disc 6 cm thick, so its top and
+        // its underside are the two faces the four rotations see, drawn as one quad each facing
+        // the way a box face faced; the 6 cm rim is half a pixel at district distance. Two boxes
+        // cost 40 counted triangles once the shadow pass is counted, these four quads cost 8.
+        // Measured invisible: the static street frames with the dishes converted differ from the
+        // box frames by no corner above 0.01 and by 1,682 pixels above 0.05 over the whole
+        // district frame, and r2 bottom left reads 6.05 with them either way.
+        if (assets) {
+          addLocalQuad(b, lu, lv, deck + 0.42, 0, 0, 0.09, 0.84, C_DISH_ARM);
+          addLocalQuad(b, lu, lv, deck + 0.42, Math.PI / 2, 0, 0.09, 0.84, C_DISH_ARM);
+        } else {
+          // The fallback draws the mast as the rank-2 box it always was: its ladder reaches
+          // level 1, so the box is shed there and the four triangle quad is not on its bill.
+          addLocal(b, lu, lv, deck + 0.42, 0.09, 0.84, 0.09, C_DISH_ARM, 0, 0, ROOF_RANK);
+        }
+        addLocal(b, lu, lv - 0.12, deck + 1.02, su, 0.06, su, C_DISH, 0, -0.95, ROOF_RANK);
+        roofQuadUnits += 1;
+        roofQuads += 2;
         list.push(lu - su * 0.5 - 0.16, lu + su * 0.5 + 0.16,
           lv - sv * 0.5 - 0.16, lv + sv * 0.5 + 0.16);
         roofPlaced.push({ bi: bi, lu: lu, lv: lv, su: su, sv: sv, y: deck });
@@ -7210,7 +8811,7 @@ export function buildWorld(THREE, model, opts) {
     // have room: a box with a lid reads as the stair housing a real deck must have, and two
     // posts with a line read as washing hung out to dry. Desktop only.
     if (richDetail) {
-      for (let o = 0; o < roofOrder.length && roofBoxes + 2 <= ROOF_BOX_CAP; o += 1) {
+      for (let o = 0; o < roofOrder.length && roofBoxes + 2 <= roofBulkMax; o += 1) {
         const b = blds[roofOrder[o].bi];
         const bi = roofOrder[o].bi;
         const inU = b.hu - 0.33;
@@ -7226,8 +8827,8 @@ export function buildWorld(THREE, model, opts) {
           const lu = (roofRnd() * 2 - 1) * Math.max(0, inU - su * 0.5);
           const lv = (roofRnd() * 2 - 1) * Math.max(0, inV - sv * 0.5);
           if (!roofFits(list, lu, lv, su, sv, inU, inV)) continue;
-          addLocal(b, lu, lv, deck + 0.62, su, 1.1, sv, C_BULKHEAD, 0, 0, 2);
-          addLocal(b, lu, lv, deck + 1.19, su * 1.1, 0.1, sv * 1.1, C_COPING, 0, 0, 2);
+          addLocal(b, lu, lv, deck + 0.62, su, 1.1, sv, C_BULKHEAD, 0, 0, ROOF_RANK);
+          addLocal(b, lu, lv, deck + 1.19, su * 1.1, 0.1, sv * 1.1, C_COPING, 0, 0, ROOF_RANK);
           list.push(lu - su * 0.5 - 0.16, lu + su * 0.5 + 0.16,
             lv - sv * 0.5 - 0.16, lv + sv * 0.5 + 0.16);
           roofPlaced.push({ bi: bi, lu: lu, lv: lv, su: su, sv: sv, y: deck });
@@ -7251,9 +8852,15 @@ export function buildWorld(THREE, model, opts) {
           const lu = (roofRnd() * 2 - 1) * Math.max(0, inU - su * 0.5);
           const lv = (roofRnd() * 2 - 1) * Math.max(0, inV - sv * 0.5);
           if (!roofFits(list, lu, lv, su, sv, inU, inV)) continue;
+          // The washing line stays three boxes. Converted to crossed quads and a flat line it
+          // cost 0.10 of edge density at the r2 bottom left corner (6.05 to 5.95), which is
+          // under the 0.15 noise band but straight through the 6.05 floor the corner has to
+          // hold, so the 1,200 triangles it would have freed are not on sale: the post's four
+          // faces draw two nearly coincident one pixel edges each and the quads draw one, and
+          // that corner is the frame's lowest edge region by a wide margin.
           addLocal(b, lu - su * 0.5 + 0.2, lv, deck + 0.44, 0.07, 0.85, 0.07, C_POST, 0, 0, 2);
           addLocal(b, lu + su * 0.5 - 0.2, lv, deck + 0.44, 0.07, 0.85, 0.07, C_POST, 0, 0, 2);
-          addLocal(b, lu, lv, deck + 0.86, su - 0.25, 0.04, 0.04, C_WOOD, 0, 0, 2);
+          addLocal(b, lu, lv, deck + 0.88, su - 0.25, 0.04, 0.05, C_WOOD, 0, 0, ROOF_RANK);
           list.push(lu - su * 0.5 - 0.16, lu + su * 0.5 + 0.16,
             lv - sv * 0.5 - 0.16, lv + sv * 0.5 + 0.16);
           roofPlaced.push({ bi: bi, lu: lu, lv: lv, su: su, sv: sv, y: deck });
@@ -7309,7 +8916,12 @@ export function buildWorld(THREE, model, opts) {
   }
   const roofClutter = {
     pieces: roofPlaced.length,
-    boxes: roofBoxes,
+    // `units` is the placement budget the shares were spent from (one per box, two for a tank or
+    // a dish, three for a rack), so the mix on a deck is comparable with cycle 23; `boxes` is the
+    // boxes the detail pool actually took and `quads` the frame quads drawn instead of them.
+    units: roofBoxes,
+    boxes: roofBoxes - roofQuadUnits,
+    quads: roofQuads,
     acUnits: roofAcs,
     tanks: roofTanks,
     dishes: roofDishes,
@@ -7321,6 +8933,7 @@ export function buildWorld(THREE, model, opts) {
     first: roofFirst,
     last: detailCursor
   };
+
 
   // ------------------------------------------------------------------ kerbside furniture
   // Bus shelters, litter bins and bollards along the pavements, all inside the one detail
@@ -7390,6 +9003,7 @@ export function buildWorld(THREE, model, opts) {
     shopGlass.instanceMatrix.needsUpdate = true;
   }
 
+
   // ------------------------------------------------------------------ street detail
   // The street tier is the close view, and cycle 19 measured what a quarter of its frame lands
   // on: blank wall and empty pavement, the worst corner flat through 62 percent of its 9x9
@@ -7400,21 +9014,25 @@ export function buildWorld(THREE, model, opts) {
   // so a whole category costs instances and never a draw call. The avenue's old details-pool
   // bins and bollards moved here wholesale: one system per role instead of two overlapping ones.
   //
-  // It is a pool of its own, not the shared details pool, for a measured reason: the details
-  // budget is already spent past its cap (the rank 2 cursor finished at 6653 of 6653 with rank 2
-  // truncated), so rank 2 props would either be invisible or would push out the roof clutter
-  // that is already drawn. A separate pool costs one draw call and lets the phone drop the whole
-  // set, which is how it stays inside its triangle budget; the phone does not draw it at all.
+  // It is a pool of its own, not the shared details pool, for a measured reason: the details pool
+  // sits close enough to its cap that a rank 2 pass added there would be truncated or would push
+  // out the roof clutter that is already drawn (cycle 24 audited it at 6,758 laid of 6,986 with
+  // 3,068 of rank2Room and nothing dropped). A separate pool costs one draw call, reuses the same
+  // unit box and material so nothing new is compiled, and lets the phone drop the whole set, which
+  // is how it stays inside its triangle budget; the phone does not draw it at all.
   // Level 2 draws everything, level 1 keeps the avenue prefix (the line the tier's four
   // rotations all frame), level 0 draws none, same prefix rule as the details pool.
   const streetAudit = { pieces: 0, boxes: 0, tried: 0, byKind: {} };
-  // The cap: 140 boxes at ten triangles each is 1,400 triangles, and the heaviest street roll
-  // the sim produced set the size. With the full 280-box draft the r1 street frame measured
-  // 391,220 triangles at 107 pedestrians, over the 390,000 working limit; 140 boxes returns
-  // about 1,400 of those and keeps the same frame near 389,8xx. The measured mix runs 140
-  // boxes, so the cap is a ceiling, not the run rate. Level 1 draws the avenue prefix plus the
-  // facade line, so the night frame carries the strongest line only.
-  const STREET_CAP = isTouch ? 0 : 140;
+  // The cap: 252 boxes at ten triangles each is 2,520 on a frame that has to hold under 388,000
+  // with the dream on screen. The boxes are colour only (castShadow false) and level 1 keeps only
+  // the prefix written before the night line below, so the night frame pays nothing for the tail.
+  // Cycle 22 raised it from 140 by 28 boxes out of the details reconciliation, because the grid
+  // loop runs north to south and used to be truncated before the south pavements. Cycle 24 raised
+  // it again by 84 (168 to 252) for a measured reason: the extra 91 boxes the grid loop adds when
+  // it is given the room moved r1 bottom left 49.7 to 48.9 and r3 bottom right 43.9 to 43.0 and
+  // left r0 bottom right at 50.4, so the tail is worth having, and the same 84 boxes spent on the
+  // corner itself (below) took r0 bottom right from 50.4 to 45.3. Both halves are in.
+  const STREET_CAP = isTouch ? 0 : (assets ? 252 : 168);
   let streetLevel1 = 0;
   const streetMesh = isTouch ? null : (function () {
     const mesh = new THREE.InstancedMesh(unitBox, detailMat, STREET_CAP);
@@ -7538,6 +9156,53 @@ export function buildWorld(THREE, model, opts) {
       }
     }
     streetLevel1 = sCount;                          // the prefix level 1 keeps at night
+
+    // Cycle 24: the south east corner. The r0 bottom right third is the one corner that measured
+    // above 50 flat in cycle 23 (50.4 with edge 6.51) while its three siblings measured 31.3, 15.5
+    // and 26.7, and it is the corner the district's south east blocks fill. A mesh ablation put
+    // its composition at 33 percent paving, 32 percent buildings, 16 percent details and 15
+    // percent bare terrain, and its sub-cell flats at 35/45/24 over 53/67/46 over 61/77/49: two
+    // thirds of the flatness sits in the bottom row, which is seven metres of open shadowed
+    // paving at luma 0.25 with nothing standing on it. The generic grid loop cannot reach that:
+    // given 91 more boxes it moved r1 bottom left 49.7 to 48.9 and r3 bottom right 43.9 to 43.0
+    // and left r0 bottom right at exactly 50.4, because it walks t from north to south and spends
+    // its tail on the far pavements. So this pass spends instances directly in the band: a kerb
+    // line along z 52.4, a row of scooters nose in at that kerb, and planters on the far walk. A
+    // raised joint grid across the same paving was measured first and moved the corner 50.4 to
+    // 47.2, but it only works floating 0.34 above the paving surface, where it reads as a grate,
+    // so the parked row is what stands in for it. Everything here is written after the night
+    // prefix below, so level 1 and the night frame are untouched.
+    if (assets) {
+      const C_SCOOT_BODY = new THREE.Color(0x9c4034);
+      const C_SCOOT_DARK = new THREE.Color(0x232529);
+      const C_KERB_PALE = new THREE.Color(0xb8b2a4);
+      function propScooter(x, z, rot, g) {
+        return addPiece(x, g + 0.5, z, 1.3, 0.28, 0.34, rot, C_SCOOT_BODY) &&
+          addPiece(x, g + 0.76, z, 0.5, 0.16, 0.28, rot, C_SCOOT_DARK);
+      }
+      function placeTarget(name, prop, x, z, rot) {
+        if (sCount + 2 > STREET_CAP) return false;
+        if (!diskFree(x, z, 0.62, B_BUILD | B_PROP | B_TRAM)) return false;
+        const g = groundHeightAt(x, z);
+        if (!prop(x, z, rot, g)) return false;
+        markDisk(x, z, 0.62, B_PROP);
+        streetAudit.pieces += 1;
+        streetAudit.byKind[name] = (streetAudit.byKind[name] || 0) + 1;
+        return true;
+      }
+      let tk = 0;
+      for (let x = 22; x <= 59; x += 2.8) {
+        const g = groundHeightAt(x + 1.4, 52.4);
+        if (addPiece(x + 1.4, g + 0.14, 52.4, 2.8, 0.26, 0.34, 0, C_KERB_PALE)) tk += 1;
+      }
+      for (let x = 23; x <= 58; x += 1.5) {
+        if (placeTarget('scooter', propScooter, x, 51.2 + (hash2(Math.round(x * 10), 5) - 0.5) * 0.4, Math.PI / 2)) tk += 1;
+      }
+      for (let x = 23.5; x <= 58; x += 3.4) {
+        if (placeTarget('planter', propPlanter, x, 47.4 + (hash2(Math.round(x * 10), 8) - 0.5) * 0.5, 0)) tk += 1;
+      }
+      streetAudit.corner = tk;
+    }
     // The grid pavements alternate vertical and horizontal streets at every step, so a cap
     // truncation thins both directions together instead of starving the second loop to zero.
     for (let t = -70; t <= 88; t += 5) {
@@ -7824,6 +9489,7 @@ export function buildWorld(THREE, model, opts) {
     marketAudit.nearestStall = Math.round(marketAudit.nearestStall * 100) / 100;
   }
 
+
   // ------------------------------------------------------------------ rail rolling stock
   // A regional train waiting on the outer track: a power car and three coaches in white livery
   // with a red waistband, plus a rake of container wagons on the inner road.
@@ -7864,7 +9530,7 @@ export function buildWorld(THREE, model, opts) {
     const plan = [
       [TRACK_OFFS[1], 46, containerA], [TRACK_OFFS[1], 58, containerB],
       [TRACK_OFFS[1], 70, containerC], [TRACK_OFFS[2], -60, containerB],
-      [TRACK_OFFS[2], -48, containerA], [TRACK_OFFS[0], 12, containerC],
+      [TRACK_OFFS[2], -48, containerA], [TRACK_OFFS[0], -26, containerC],
       [TRACK_OFFS[0], 24, containerB]
     ];
     for (let i = 0; i < plan.length; i += 1) {
@@ -7919,6 +9585,7 @@ export function buildWorld(THREE, model, opts) {
       }
     }
   }
+
 
   // ------------------------------------------------------------------ pack street props
   // Street tier only. A handful of real kerbside objects, placed on the occupancy grid like
@@ -8019,6 +9686,7 @@ export function buildWorld(THREE, model, opts) {
       group.add(entry.mesh);
     });
   }
+
 
   // ------------------------------------------------------------------ parked cars
   // Static, along the kerbs of the secondary streets and the ring, in the occupancy grid so
@@ -8139,6 +9807,10 @@ export function buildWorld(THREE, model, opts) {
   paintMesh.name = 'paint';
   group.add(paintMesh);
 
+  // Terrace stations, shared with the crowd pass far below: a terrace nobody sits at is a museum
+  // piece, and the crowd block cannot rediscover these coordinates after the fact.
+  const terraceStations = [];
+
   // ------------------------------------------------------------------ parasols
   // One instanced pole plus cone: the cafe terraces of the market square, and a few on the
   // avenue terraces. At 412 px the canopy is about two device pixels across, so the touch
@@ -8191,13 +9863,111 @@ export function buildWorld(THREE, model, opts) {
         }
       }
     }
-    if (placed === 0) {
+    // Cycle 32, Phase 3: the terraces were one frontage, fifteen umbrellas along the market's
+    // west cafe row. A terrace is a row of umbrellas beside a square, so this pass keeps the
+    // modelled umbrellas for that near row and adds a cheap procedural one on every free
+    // station around the plaza's other three edges. The procedural pole and cone is 28
+    // triangles against the models' 96 and 120, and the bill is paid by MODEL_LAMP_MAX going
+    // from 30 to 22: eight curved heads at 92 triangles each leave the set, and the district
+    // gains four more terrace frontages for a net loss of about 260 triangles.
+    const extraSpots = [];
+    if (placed < PARASOL_CAP) {
+      // With the model pool off the market row comes first: those fifteen stations are the cafe
+      // frontage the camera looks straight at, and they must never lose their umbrellas to an
+      // avenue station that happened to be scanned first.
+      for (let i = 0; i < spots.length && extraSpots.length < PARASOL_CAP; i += 1) {
+        extraSpots.push([spots[i][0], spots[i][1]]);
+      }
+      // A terrace row from the avenue path, the way the lamps are walked: one station every
+      // fourteen metres, alternating kerbs, standing on the pavement just outside the walk line.
+      // The plaza itself is not usable for this, and that is measured, not assumed: a grid over
+      // its own square returned zero free stations at 1.35 m, because the stalls, the fountain,
+      // the benches, the boards and the lamps already own every metre of it.
+      const want = Math.max(0, PARASOL_CAP - placed);
+      for (let i = 6; i < avePath.n - 6 && extraSpots.length < want * 3; i += 7) {
+        const side = ((i / 7) & 1) ? 1 : -1;
+        // The pavement sits inside the avenue's own mask (it is marked out to AVE_PAVE + 0.1), so
+        // the road bits cannot be part of the guard, exactly as on the spurs.
+        const off = side * (AVE_PAVE_IN + AVE_PAVE - 0.7);
+        const x = avePath.xs[i] + avePath.nx[i] * off;
+        const z = avePath.zs[i] + avePath.nz[i] * off;
+        if (inRoundabout(x, z, ROUND_R + 3)) continue;
+        if (flagsAt(x, z) & (B_TREE | B_BUILD | B_PROP)) continue;
+        if (!diskFree(x, z, 1.15, B_PROP | B_BUILD | B_TREE)) continue;
+        extraSpots.push([x, z]);
+      }
+    }
+    if (extraSpots.length > 0) {
       const parasolGeo = (function () {
         const b = makeBuilder();
         const white = new THREE.Color(0xffffff);
-        b.addGeometry(new THREE.CylinderGeometry(0.055, 0.065, 2.3, 6), composeMatrix(0, 1.15, 0, 0, 1, 1, 1), white);
-        b.addGeometry(new THREE.CylinderGeometry(0.1, 1.55, 0.6, 8, 1, true), composeMatrix(0, 2.5, 0, 0, 1, 1, 1), white);
-        return b.build();
+        // A two quad pole and an eight sided open cone: 28 triangles, the same silhouette as the
+        // old six sided pole at two thirds of the cost.
+        const pos = [];
+        function tri(ax, ay, az, bx, by, bz, cx2, cy2, cz2) {
+          pos.push(ax, ay, az, bx, by, bz, cx2, cy2, cz2);
+        }
+        const PW = 0.055;
+        for (let f = 0; f < 2; f += 1) {
+          const a = f * Math.PI * 0.5;
+          const ox = Math.cos(a) * PW;
+          const oz = Math.sin(a) * PW;
+          tri(ox, 0, oz, -ox, 2.3, -oz, ox, 2.3, oz);
+          tri(ox, 0, oz, -ox, 0, -oz, -ox, 2.3, -oz);
+        }
+        const RIMN = 8;
+        const R = 1.55;
+        for (let i = 0; i < RIMN; i += 1) {
+          const a0 = (i / RIMN) * Math.PI * 2;
+          const a1 = ((i + 1) / RIMN) * Math.PI * 2;
+          tri(Math.cos(a0) * R, 2.2, Math.sin(a0) * R, Math.cos(a1) * R, 2.2, Math.sin(a1) * R, 0, 2.5, 0);
+        }
+        // Cycle 33: the terrace unit is the umbrella plus what stands under it, built as one
+        // geometry so a whole terrace still costs one draw call. A table is an eight sided top
+        // (eight triangles) on a two quad pedestal and a two quad foot (six), and two chairs are a
+        // seat and a back each (four apiece): twenty six triangles of furniture under a twelve
+        // triangle canopy. Tables sit 0.55 m off the pole so nobody is eating round the mast.
+        function quad(ax, ay, az, bx, by, bz, cx2, cy2, cz2, dx2, dy2, dz2) {
+          tri(ax, ay, az, bx, by, bz, cx2, cy2, cz2);
+          tri(ax, ay, az, cx2, cy2, cz2, dx2, dy2, dz2);
+        }
+        const TR = 0.62;
+        const TY = 0.74;
+        for (let i = 0; i < 8; i += 1) {
+          const a0 = (i / 8) * Math.PI * 2;
+          const a1 = ((i + 1) / 8) * Math.PI * 2;
+          tri(0, TY, 0, Math.cos(a0) * TR, TY, Math.sin(a0) * TR, Math.cos(a1) * TR, TY, Math.sin(a1) * TR);
+        }
+        quad(-0.05, 0, 0.05, -0.05, TY, 0.05, 0.05, TY, -0.05, 0.05, 0, -0.05);
+        quad(-0.3, 0, 0.3, -0.3, 0.04, 0.3, 0.3, 0.04, -0.3, 0.3, 0, -0.3);
+        // A chair is a real quad, not two degenerate triangles: the seat spans half a metre across
+        // and back, and the back rises from its outer edge. The first attempt passed the same pair
+        // of corners twice, so both of its triangles had zero area and the chairs drew nothing at
+        // all while the geometry still counted their triangles.
+        for (let c = 0; c < 2; c += 1) {
+          const ang = 0.9 + c * 2.6;
+          const ux = Math.cos(ang);            // away from the table
+          const uz = Math.sin(ang);
+          const px2 = -uz * 0.22;              // across the seat
+          const pz2 = ux * 0.22;
+          const sx = ux * 0.86;               // near edge of the seat
+          const sz = uz * 0.86;
+          const ex = ux * 1.30;               // far edge
+          const ez = uz * 1.30;
+          quad(sx - px2, 0.45, sz - pz2, sx + px2, 0.45, sz + pz2,
+            ex + px2, 0.45, ez + pz2, ex - px2, 0.45, ez - pz2);
+          quad(ex - px2, 0.45, ez - pz2, ex + px2, 0.45, ez + pz2,
+            ex + px2, 0.92, ez + pz2, ex - px2, 0.92, ez - pz2);
+        }
+        const g = new THREE.BufferGeometry();
+        const colors = new Array(pos.length);
+        for (let i = 0; i < colors.length; i += 1) colors[i] = 1;
+        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        // The pool's material is vertex coloured and tints each instance through setColorAt, so an
+        // unflagged umbrella would draw black: white vertices keep the per instance tone.
+        g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        g.computeVertexNormals();
+        return g;
       })();
       const parasols = new THREE.InstancedMesh(
         parasolGeo,
@@ -8213,26 +9983,34 @@ export function buildWorld(THREE, model, opts) {
       const blue = new THREE.Color(0x3c6f9e);
       const ochre = new THREE.Color(0xe0a93a);
       const tones = [cream, red, blue, ochre, cream];
-      for (let i = 0; i < spots.length && placed < PARASOL_CAP; i += 1) {
-        const x = spots[i][0];
-        const z = spots[i][1];
+      // The pool has its own cursor. Sharing `placed` with the modelled pass wrote the first
+      // fifteen instances with an identity matrix, which stacks fifteen umbrellas at the world
+      // origin: measured as count 26 with 11 real stations, and visible as a clump in the sea.
+      let poolPlaced = 0;
+      for (let i = 0; i < extraSpots.length && poolPlaced < PARASOL_CAP; i += 1) {
+        const x = extraSpots[i][0];
+        const z = extraSpots[i][1];
         const y = groundHeightAt(x, z) + LIFT_PLAZA;
         dummy.position.set(x, y, z);
         dummy.rotation.set(0, (i * 0.7) % 3.14, 0);
         dummy.scale.set(1, 1, 1);
         dummy.updateMatrix();
-        parasols.setMatrixAt(placed, dummy.matrix);
-        parasols.setColorAt(placed, tones[i % tones.length]);
+        terraceStations.push({ x: x, z: z, y: y, rotY: (poolPlaced * 0.7) % 3.14 });
+        parasols.setMatrixAt(poolPlaced, dummy.matrix);
+        parasols.setColorAt(poolPlaced, tones[poolPlaced % tones.length]);
         markDisk(x, z, 1.1, B_PROP);
-        placed += 1;
+        poolPlaced += 1;
       }
-      parasols.count = placed;
+      parasols.count = poolPlaced;
+      placed += poolPlaced;
       if (parasols.instanceColor) parasols.instanceColor.needsUpdate = true;
       parasols.instanceMatrix.needsUpdate = true;
     }
-    // The last four umbrellas stand over the market's cafe tables; the rest are the avenue
-    // terraces. The touch profile builds no parasols at all, so its audit reports zero.
-    marketAudit.parasols = Math.max(0, placed - 11);
+    // Every terrace carries an umbrella over a table and two chairs. The market row is the
+    // fifteen stations the camera looks straight at; the rest are the avenue frontages. The touch
+    // profile builds no terraces at all, so its audit reports zero.
+    marketAudit.parasols = placed;
+    marketAudit.marketRow = Math.min(placed, spots.length);
   }
 
   // ------------------------------------------------------------------ trees
@@ -8380,6 +10158,16 @@ export function buildWorld(THREE, model, opts) {
     const entry = modelTreeEntries[kind];
     const isPalm = kind === T_PALM;
     const hero = !!(opts && opts.hero);
+    // No individual tree past the hilltop crest. The plateau behind that crest is four hundred
+    // and fifty metres out at the district tier, so a canopy there is eight to thirty pixels
+    // tall and two pixels wide: a dark vertical streak across a pale band, and the fact that the
+    // rows are regular is what made the owner read them as "streaked lines" rather than trees.
+    // The groves' own radius, the farm-track cypress pairs and the outer rows all reached that
+    // far without asking, so the test sits in the one funnel every planting pass goes through
+    // (avenue, ring, market, roundabout, groves, terraces, treads, tracks, lane, crown) instead
+    // of in each of them. The crest is the district's own north edge, so the hilltop village and
+    // its crown cypresses stand on the near side of it and are untouched.
+    if (z < TREE_CREST_Z) return false;
     if (isPalm) {
       if (!entry || entry.used >= entry.cap) return false;
     } else if (treeCursor >= TREE_CAP) {
@@ -8771,8 +10559,13 @@ export function buildWorld(THREE, model, opts) {
   const hillsideCypress = cypressPlanted - hillsideCypressStart;
   // No canopies beyond the district. The far groves this pass used to plant read as dark
   // speckle and long silhouette streaks across the top of the frame, the exact dirt the owner
-  // called out. The distant hills are now bare, soft silhouettes in haze; every tree left in
-  // the mesh stands on the near slopes, inside the ring and along the terraces.
+  // called out. The distant hills are bare, soft silhouettes in haze. This pass is still where
+  // that was first cut back to zero, but zero here was not enough on its own: the groves' own
+  // radius, the farm tracks' cypress pairs and the tread rows all planted past the hilltop
+  // crest, and eighty eight of those instances projected into the top fifth of the desktop
+  // frame. `addTree` now refuses any trunk beyond `TREE_CREST_Z`, so every tree left in the mesh
+  // stands on the near side of the crest, inside the ring and along the terraces, and this count
+  // stays zero for the audit.
   const farPlanted = 0;
   const laneStart = treeCursor;
   // A cypress row down the lane, alternating sides, three and a half metres off the track
@@ -8955,6 +10748,29 @@ export function buildWorld(THREE, model, opts) {
   for (let i = 0; i < lampSpots.length; i += 1) {
     const s = lampSpots[i];
     addLamp(s.x, s.z, s.tx, s.tz);
+  }
+  // Cycle 31, Phase 3: the five spurs carried no lamp at all. Phase 3 asks for street lamps along
+  // every road, and the spurs are 1,001 m of the 1,651 m of arterial this world draws, running to
+  // the frame edge on both sides of every crossing: after dark the crossings that cycle 28 built
+  // were the only lit roads leading out of the district. One lamp every 26 m, alternating kerbs, at
+  // SPUR_EDGE - 0.4 so the pole stands on the pavement. Thirty-eight lamps at 36 triangles each
+  // (20 post, 16 glow disc) is 1,368, and the bill is paid on the same page by MODEL_LAMP_MAX
+  // dropping from 48 to 30: the twelve model luminaires that fall back to the procedural post are
+  // the most expensive twelve objects in the set (60 and 92 triangles a head), so a district with
+  // fewer fancy heads and every road lit is cheaper than before, not dearer.
+  for (let s = 0; s < spurPaths.length; s += 1) {
+    const path = spurPaths[s];
+    let side = 1;
+    for (let i = 8; i < path.n - 4; i += 16) {
+      const off = side * (SPUR_EDGE - 0.4);
+      const x = path.xs[i] + path.nx[i] * off;
+      const z = path.zs[i] + path.nz[i] * off;
+      side = -side;
+      // The pavement sits inside the spur's own mask, so the guard is the same one addLamp uses
+      // for its own placement: trees, blocks and props, and nothing else.
+      if (flagsAt(x, z) & (B_TREE | B_BUILD | B_PROP)) continue;
+      addLamp(x, z, path.xs[i], path.zs[i]);
+    }
   }
   // The two plaza lamps stand off the central walk, on the diagonals of the fountain, so the
   // market's own walk from the avenue pavement to the water is never blocked by a pole.
@@ -9972,14 +11788,15 @@ export function buildWorld(THREE, model, opts) {
   // ------------------------------------------------------------------ standing crowds
   // The furniture tells you the street is used; people tell you it is inhabited. One pool of
   // pack mini characters stands at the spots a district viewer reads first: stall keepers and
-  // a few buyers on the market rows, the cafe tables, two fountain benches, the bus shelters,
-  // the church forecourt and two avenue corners. Every figure is an instanced character model
-  // standing on the same ground heights the furniture uses, facing the thing it stands beside,
-  // and every spot is guarded by the same occupancy rule the props used, so a figure can never
-  // clip a stall, a cart, a lamppost or a crossing. The meshes are separate from the tintable
-  // facade list, so the quarterly desaturation never repaints them, and they are not pickable:
-  // a tap on a person is a tap past them. They cast no shadow and carry no audit cost beyond
-  // their instance count, which the crowd audit reports.
+  // a few buyers on the market rows, the cafe tables, all four fountain benches, the bus
+  // shelters, the church forecourt, two avenue kerbs and four cross street corners. Every
+  // figure is an instanced character model standing on the same ground heights the furniture
+  // uses, facing the thing it stands beside, and every spot is guarded by the same occupancy
+  // rule the props used, so a figure can never clip a stall, a cart, a lamppost or a crossing.
+  // The meshes are separate from the tintable facade list, so the quarterly desaturation never
+  // repaints them, and they are not pickable: a tap on a person is a tap past them. They cast
+  // no shadow and carry no audit cost beyond their instance count, which the crowd audit
+  // reports.
   const CROWD_FACE = 0;
   const crowdAudit = {
     variants: 0,
@@ -9988,6 +11805,7 @@ export function buildWorld(THREE, model, opts) {
     tried: 0,
     dropped: 0,
     bySpot: { market: 0, cafe: 0, benches: 0, shelters: 0, forecourt: 0, corners: 0 },
+    terracesWithPeople: 0,
     models: []
   };
   {
@@ -10045,13 +11863,88 @@ export function buildWorld(THREE, model, opts) {
         }
       }
     }
-    // Fountain benches: one figure behind two of the four benches, facing the water.
+    // Terraces: one figure beside each of the nearest twelve terrace units this build actually
+    // placed, standing at the table and facing it, the way somebody deciding where to sit stands.
+    // Twelve and not thirty-two because a seated figure is about 150 triangles in this crowd pool
+    // and the bench has 2,398 to spend: the first twelve buy the plaza's own frontages, and the
+    // rest stay empty until a cheaper figure exists.
     {
-      const crowdAngles = [0.62, Math.PI + 0.62];
+      const seating = terraceStations.slice();
+      seating.sort(function (a, b) {
+        const da = Math.hypot(a.x - PLAZA_CX, a.z - PLAZA_CZ);
+        const db = Math.hypot(b.x - PLAZA_CX, b.z - PLAZA_CZ);
+        return da - db;
+      });
+      for (let i = 0; i < seating.length && crowdAudit.bySpot.cafe < 15; i += 1) {
+        const t = seating[i];
+        const a = hash2(i * 13 + 7, 71) * Math.PI * 2;
+        const ox = Math.cos(a) * 1.15;
+        const oz = Math.sin(a) * 1.15;
+        const before = crowdAudit.bySpot.cafe;
+        crowdAt(t.x + ox, t.z + oz, Math.atan2(-ox, -oz) + CROWD_FACE,
+          LIFT_PLAZA, 'cafe', 0.3);
+        if (crowdAudit.bySpot.cafe > before) crowdAudit.terracesWithPeople += 1;
+      }
+    }
+    // Fountain benches: one figure behind each of the four benches, facing the water. The angles
+    // are the bench pass's own four (a diagonal pair either side of the fountain, which is what
+    // leaves the plaza's east and west walks open), and the radius is the bench's 6.2 plus 0.7,
+    // so a figure stands just behind a seat instead of on it.
+    {
+      const crowdAngles = [0.62, -0.62, Math.PI - 0.62, Math.PI + 0.62];
       for (let i = 0; i < crowdAngles.length; i += 1) {
         const a = crowdAngles[i];
         crowdAt(PLAZA_CX + Math.cos(a) * 6.9, PLAZA_CZ + Math.sin(a) * 6.9,
           Math.atan2(-Math.cos(a), -Math.sin(a)) + CROWD_FACE, LIFT_PLAZA, 'benches', 0.35);
+      }
+    }
+    // Cross street corners: where the local grid's cross streets meet the avenue. No corner is
+    // typed in. The avenue's own claim (radius AVE_PAVE_IN + AVE_PAVE + 0.1) plus the street
+    // walk's clearance (STREET_EDGE + 0.55) is the distance at which a cross street's paving has
+    // to stop, so that kerb line on either side of the avenue is where the corner is; each cross
+    // street inside the avenue's own run is tried once, nearest the plaza first, on the side the
+    // hash picks, and the sample walks outward until the grid reports pavement that carries no
+    // carriageway bit. The pavement test is the whole filter (a cell has to be sidewalk and
+    // nothing else), so a corner whose paving was eaten by the plaza, a spur or a crossing is
+    // skipped rather than nudged, and four corners is the cap because each figure is about 150
+    // triangles. The figure faces along its cross street, away from the junction.
+    {
+      const cornerClear = function (x, z) {
+        const f = flagsAt(x, z);
+        return (f & B_SIDEWALK) !== 0 && (f & (B_ROADS | B_STREET)) === 0;
+      };
+      const cornerReach = AVE_PAVE_IN + AVE_PAVE + STREET_EDGE + 0.55;
+      const cornerLines = [];
+      for (let h = 0; h < H_LINES.length; h += 1) {
+        const cz = H_LINES[h];
+        if (cz > AVE_Z0 - 1 || cz < AVE_Z1 + 2) continue;
+        cornerLines.push({ z: cz, d: Math.abs(cz - PLAZA_CZ) });
+      }
+      cornerLines.sort(function (a, b) { return a.d - b.d; });
+      let cornerTaken = 0;
+      for (let c = 0; c < cornerLines.length && cornerTaken < 4; c += 1) {
+        const cz = cornerLines[c].z;
+        const cx = avenueX(cz);
+        const side = hash2(c * 7 + 3, 73) < 0.5 ? 1 : -1;
+        let cornerX = 0;
+        let cornerZ = 0;
+        let cornerOk = false;
+        for (let step = cornerReach; step <= cornerReach + 6 && !cornerOk; step += 1) {
+          const xTry = cx + side * step;
+          // Both sides of the cross street's centreline, so the figure lands on a kerb rather
+          // than in the middle of the crossing mouth.
+          for (let k = 1; k >= -1 && !cornerOk; k -= 2) {
+            const zTry = cz + k * (STREET_EDGE - 0.9);
+            if (!cornerClear(xTry, zTry)) continue;
+            cornerX = xTry;
+            cornerZ = zTry;
+            cornerOk = true;
+          }
+        }
+        if (!cornerOk) continue;
+        const before = crowdAudit.bySpot.corners;
+        crowdAt(cornerX, cornerZ, Math.atan2(-side, 0) + CROWD_FACE, 0, 'corners', 0.35);
+        if (crowdAudit.bySpot.corners > before) cornerTaken += 1;
       }
     }
     // Bus shelters: the same candidate loop the shelter pass ran, re-tested against the claim
@@ -10339,6 +12232,13 @@ export function buildWorld(THREE, model, opts) {
   const NIGHT_HAZE = new THREE.Color(0x1d3055);
   const NIGHT_GLOW = new THREE.Color(0x2a3a63);
   const NIGHT_FOG = new THREE.Color(0x1a2745);
+  // The bay is the air above it, one step cooler: an unlit plane cannot be shaded by the sun, so
+  // its colour has to come from the same palette the sky and the fog use, or the far water goes
+  // dark against a lit frame (cycle 35, the two slate slabs over the haze). Day is the t1 trial
+  // colour measured on the day frame; night is the night haze lifted a little, so the water still
+  // separates from the shore without ever reading as a black field.
+  const BAY_DAY = new THREE.Color(0xa9bccb);
+  const BAY_NIGHT = new THREE.Color(0x2b3d5c);
   // A few percent of warm light lifted into the lowest band of the dome, in the direction of
   // the town: the district's own sodium, seen on its own horizon.
   const NIGHT_CITY_GLOW = new THREE.Color(0xffa460).multiplyScalar(0.012);
@@ -10400,7 +12300,16 @@ export function buildWorld(THREE, model, opts) {
       const h = ((hour % 24) + 24) % 24;
       if (night) {
         sun.position.copy(MOON_DIR).multiplyScalar(SUN_DIST).add(SUN_TARGET);
-        sun.color.setHex(0x93a9dd);
+        // The moon's red is what makes a night city mauve. A warm facade albedo (cream 0.80 red,
+        // 0.60 green) multiplies the moon's own ratio, so a light at 0.58 red to 0.66 green leaves
+        // red above green on every wall and the product sits in the violet band: 0x93a9dd measured
+        // 6.42 percent of the night frame violet, split by hiding meshes into buildings 32 and
+        // details 41 percent of that area, with the grade adding the rest (2.72 percent with
+        // ?post=0). 0x6fa2f2 is 0.47 red to 0.65 green, past the albedo's own 1.33 ratio, and it
+        // measured 0.67 percent violet with warm 12.35 against 12.22, blue 85.39 against 85.00,
+        // dark under 10 percent still 0.0 and mean luma 0.26 against 0.26. Every lit window is
+        // emissive and keeps its own warmth.
+        sun.color.setHex(0x6fa2f2);
         sun.intensity = 0.68;
         hemi.color.setHex(0x1d2b4a);
         hemi.groundColor.setHex(0x141a2b);
@@ -10412,6 +12321,11 @@ export function buildWorld(THREE, model, opts) {
         skyUniforms.uSunDir.value.copy(MOON_DIR);
         skyUniforms.uCityGlow.value.copy(NIGHT_CITY_GLOW);
         fog.color.copy(NIGHT_FOG);
+        bayMesh.material.color.copy(BAY_NIGHT);
+        terrainAir.uAirWarm.value.setHex(terrainAir.nightWarm);
+        terrainAir.uAirGold.value.setHex(terrainAir.nightGold);
+        terrainAir.uAirBlue.value.setHex(terrainAir.nightBlue);
+        terrainAir.uAirWeight.value = terrainAir.nightWeight;
         setNightGlow(true);
       } else {
         // A touch warmer toward the evening hours, never a different direction.
@@ -10445,6 +12359,11 @@ export function buildWorld(THREE, model, opts) {
         skyUniforms.uSunDir.value.copy(SUN_DIR);
         skyUniforms.uCityGlow.value.setHex(0x000000);
         fog.color.copy(DAY_FOG);
+        bayMesh.material.color.copy(BAY_DAY);
+        terrainAir.uAirWarm.value.setHex(terrainAir.dayWarm);
+        terrainAir.uAirGold.value.setHex(terrainAir.dayGold);
+        terrainAir.uAirBlue.value.setHex(terrainAir.dayBlue);
+        terrainAir.uAirWeight.value = terrainAir.dayWeight;
         setNightGlow(false);
       }
       // What the night cannot resolve is drawn at dawn and dropped again at dusk: the window
@@ -11208,6 +13127,10 @@ export function buildWorld(THREE, model, opts) {
     windows: windows,
     windowQuarter: windowQuarter,
     windowCount: windowCursor,
+    // The panes the sparse-flank pass added this build, out of the pane budget it is allowed.
+    sparsePanes: sparsePanes,
+    // The walls the sparse-flank pass ranked highest, so the corner table has names behind it.
+    sparseWalls: sparseWalls,
     // How many of those panes were overlaid on a pack model this cycle, and how many pack lots
     // took one, so "the model lots light up now" is a number and not a claim about a picture.
     modelWindows: { panes: modelWindowCount, coreLots: modelLots.length, villas: modelVillas.length },
@@ -11278,8 +13201,16 @@ export function buildWorld(THREE, model, opts) {
         westLower: fabricAudit.westLower,
         hillside: fabricAudit.hillside,
         east: fabricAudit.east,
-        west: fabricAudit.west
+        north: fabricAudit.north,
+        southWest: fabricAudit.southWest
       },
+      corners: fabricAudit.corners,
+      first: fabricTail.first,
+      // Every (street, bin, kerb) the gap-close pass could not fill, with the occupancy bits the
+      // ground carried under its front and under its body. Empty is the state item 4 asks for;
+      // a row here names the mask that owns the hole instead of leaving it to a photograph.
+      gaps: fabricAudit.gaps,
+      tail: { buildings: fabricTail.buildings, windows: fabricTail.windows, contact: fabricTail.contact },
       beltDepth: OUTER_BELT_DEPTH,
       band: OUTER_BAND,
       cell: FABRIC_CELL,
@@ -11287,14 +13218,30 @@ export function buildWorld(THREE, model, opts) {
         return n + (v ? 1 : 0);
       }, 0),
       offStreet: civicOffStreet,
+      // One record per civic plot, with the plot frame the frontage block was drawn in, so a
+      // screenshot of a box on bare ground can be traced to one entry here.
       civic: civic.map(function (r) {
         return {
           type: r.type,
           via: r.via,
           x: Math.round(r.x * 10) / 10,
-          z: Math.round(r.z * 10) / 10
+          z: Math.round(r.z * 10) / 10,
+          w: r.w,
+          d: r.d,
+          yaw: Math.round(r.yaw * 100) / 100
         };
-      })
+      }),
+      // What the frontage pass actually laid: plots given a block, apron and walk square metres,
+      // kerb metres, vehicle crossings, and the depot's own yard and access road.
+      frontage: {
+        blocks: frontAudit.blocks,
+        apron: Math.round(frontAudit.apron),
+        walk: Math.round(frontAudit.walk),
+        kerb: Math.round(frontAudit.kerb),
+        crossings: frontAudit.crossings,
+        depotYard: Math.round(frontAudit.depotYard),
+        depotRoad: Math.round(frontAudit.depotRoad)
+      }
     },
     murals: {
       panels: muralPicks.length,

@@ -46,6 +46,10 @@ docs/audits/
 .playwright-mcp/
 m1m2-*.png
 m3m4-*.png
+# Per-cycle render captures are working scaffolding, regenerable from the build and too heavy to
+# keep in history. Documentation shots in this directory (ask.png, deck.png, settings.png) stay
+# tracked, so the pattern is scoped to iteration captures rather than the whole folder.
+screenshots/iter-*.png
 
 # Agent scratch (subagent-driven-development progress ledger — local only)
 .superpowers/

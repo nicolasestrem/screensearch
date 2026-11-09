@@ -348,6 +348,9 @@ function main() {
 
   // ---------------- state ----------------
   let model = null;
+  // The export the user loaded this session, or null while the city shows the built-in day.
+  // boot() reads it so a late sample fetch never replaces a drop that already landed.
+  let userModel = null;
   // The pack assets: one loader for the whole session, one Assets object reused by every
   // install (a dropped export never re-reads a pack), and a live report for the debug API.
   let assets = null;
@@ -403,6 +406,12 @@ function main() {
 
   // Benchmark state.
   const benchFrames = new Float64Array(BENCH_CAPACITY);
+  // Per phase peak and first sample. The bench's maxFrame hides WHERE the slow frame sat;
+  // these two arrays name it (phase 4 is the dream sleep, 5 the wake, 6 the return to the
+  // district), so a stall can be attributed inside one run instead of across several.
+  const benchPhaseMax = new Float64Array(BENCH_PHASE_AT.length);
+  const benchPhaseFirst = new Float64Array(BENCH_PHASE_AT.length);
+  let benchSinceSwitch = 0;
   let benchRunning = false;
   let benchStartAt = 0;
   let benchPhase = 0;
@@ -599,8 +608,13 @@ function main() {
     benchRunning = true;
     benchStartAt = 0;
     benchPhase = 0;
+    benchSinceSwitch = 0;
     benchCount = 0;
     benchSum = 0;
+    for (let i = 0; i < BENCH_PHASE_AT.length; i += 1) {
+      benchPhaseMax[i] = 0;
+      benchPhaseFirst[i] = 0;
+    }
     resetQualityWindow();
     headroomMs = 0;
     api.bench = null;
@@ -645,12 +659,20 @@ function main() {
     while (benchPhase < BENCH_PHASE_AT.length && elapsed >= BENCH_PHASE_AT[benchPhase]) {
       runBenchPhase(benchPhase);
       benchPhase += 1;
+      // The switch itself runs inside this frame; the frame that PAYS for the switch is the
+      // next one (its duration covers this frame's work), so the first sample after a switch
+      // is recorded separately from the phase peak.
+      benchSinceSwitch = 0;
     }
     if (elapsed >= BENCH_WARMUP_MS && benchCount < benchFrames.length) {
+      const phaseIdx = benchPhase < BENCH_PHASE_AT.length ? benchPhase : BENCH_PHASE_AT.length - 1;
+      if (frameMs > benchPhaseMax[phaseIdx]) benchPhaseMax[phaseIdx] = frameMs;
+      if (benchSinceSwitch === 1) benchPhaseFirst[phaseIdx] = frameMs;
       benchFrames[benchCount] = frameMs;
       benchCount += 1;
       benchSum += frameMs;
     }
+    benchSinceSwitch += 1;
     if (elapsed >= BENCH_TOTAL_MS) finishBench();
   }
 
@@ -664,8 +686,16 @@ function main() {
       maxFrameMs: 0,
       calls: info.calls,
       triangles: info.triangles,
-      mode: mode
+      mode: mode,
+      // Phase 4 is the dream sleep, 5 the wake (the cards land inside it at 16 s), 6 the
+      // return to the district. phaseFirst is the frame that paid for the switch.
+      phaseMaxMs: [],
+      phaseFirstMs: []
     };
+    for (let i = 0; i < BENCH_PHASE_AT.length; i += 1) {
+      result.phaseMaxMs.push(Math.round(benchPhaseMax[i] * 10) / 10);
+      result.phaseFirstMs.push(Math.round(benchPhaseFirst[i] * 10) / 10);
+    }
     if (count > 1) {
       const sorted = [];
       for (let i = 0; i < count; i += 1) sorted.push(benchFrames[i]);
@@ -680,6 +710,14 @@ function main() {
       result.avgFps = Math.round((1000 / mean) * 10) / 10;
       result.p1LowFps = Math.round((1000 / p99) * 10) / 10;
       result.maxFrameMs = Math.round(sorted[count - 1] * 10) / 10;
+      // The denominator and the count the 1 percent low is drawn from, and the frames a gate
+      // reads directly: a p99 of one vsync tick means nothing without knowing how many samples
+      // sit above it.
+      result.frames = count;
+      result.p99FrameMs = Math.round(p99 * 10) / 10;
+      result.over33 = sorted.filter(function (ms) {
+        return ms > 33;
+      }).length;
     }
     if (win.console && typeof win.console.log === 'function') {
       win.console.log('bench ' + JSON.stringify(result));
@@ -717,6 +755,12 @@ function main() {
       if (object.isInstancedMesh && typeof object.dispose === 'function') object.dispose();
       if (shared) return;
       if (object.geometry && typeof object.geometry.dispose === 'function') object.geometry.dispose();
+      // A shadow-casting light owns its depth target: install() rebuilds the sun on every
+      // export load, so a map left behind is a leaked render target per load.
+      if (object.isLight && object.shadow && object.shadow.map) {
+        object.shadow.map.dispose();
+        object.shadow.map = null;
+      }
       const material = object.material;
       if (!material) return;
       if (Array.isArray(material)) {
@@ -1156,15 +1200,53 @@ function main() {
     ensurePost();
   }
 
-  // The dream group is hidden until the first sleep, and renderer.compile only walks visible
-  // objects, so without this its programs linked in the frame that first showed the chantier:
-  // that first sleep measured 35.7 ms on the 4x throttled phone, against a 33 ms ceiling.
-  // dream.warm() shows the group for the length of the compile and restores it, which keeps
-  // that knowledge in dream.mjs; this side only owns the renderer.
+  // Cycle 22: the dream group is hidden until the first sleep, and the first sleep frame used
+  // to pay for three separate first uses: the dream's own programs, the buffer and texture
+  // uploads of its geometry, and the two world meshes the night pass switches on (the lamp
+  // glow and the night glow ribbon). renderer.compile() only links programs, and in r160 it
+  // links the canvas output variant, while the post chain's scene pass runs through a render
+  // target and therefore links the LinearSRGB variant; so the cycle 21 warm up left 48 to 78
+  // ms on the desktop first dream frame. This draws one hidden frame instead: the dream group
+  // dressed as the chantier shows it (dream.warm shows and restores its own meshes), the
+  // night pass on so the night only meshes are submitted, and the camera the district rig
+  // already framed. It renders into a 4x4 target, never the canvas, so nothing is visible;
+  // the light and street lamp state is put back before the next tick runs, and the shadow
+  // map from the first frame is reused rather than rebuilt. With the post chain off the
+  // canvas path compiles the sRGB variant, which compile() still covers, so both pipelines
+  // are warm whichever one the page booted with.
+  let warmTarget = null;
   function warmDream() {
-    if (!dream || !rig || typeof renderer.compile !== 'function') return;
+    if (!dream || !rig || !world) return;
     dream.warm(function () {
-      renderer.compile(scene, rig.camera);
+      const awakeHour = sim.wallHour;
+      const awakeNight = sim.night;
+      let drew = false;
+      try {
+        world.lights.setTimeOfDay(22, true);
+        world.streetLights.setOn(true);
+        if (!warmTarget) {
+          warmTarget = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: true, stencilBuffer: false });
+          warmTarget.texture.name = 'dream-warm';
+        }
+        const previousTarget = renderer.getRenderTarget();
+        const previousAuto = renderer.shadowMap.autoUpdate;
+        renderer.shadowMap.autoUpdate = false;
+        renderer.setRenderTarget(warmTarget);
+        renderer.render(scene, rig.camera);
+        renderer.setRenderTarget(previousTarget);
+        renderer.shadowMap.autoUpdate = previousAuto;
+        // The canvas path (post chain disabled) uses the sRGB output variant, which a render
+        // target render cannot reach: link it explicitly so that boot stays honest too.
+        if ((!post || !post.enabled) && typeof renderer.compile === 'function') {
+          renderer.compile(scene, rig.camera);
+        }
+        drew = true;
+      } finally {
+        world.lights.setTimeOfDay(awakeHour, awakeNight);
+        world.streetLights.setOn(awakeNight);
+        renderer.info.reset();
+      }
+      return drew;
     });
   }
 
@@ -1204,7 +1286,17 @@ function main() {
   const GOLDEN_SUN_DIST = 460;   // world.mjs SUN_DIST, the light rides the same orbit
   const GOLDEN_TARGET_Y = 10;    // world.mjs SUN_TARGET (0, 10, 0)
   const GOLDEN_FRUSTUM = 230;    // was 178: a 15 degree sun lengthens every shadow
-  const GOLDEN_SUN_COLOR = new THREE.Color(0xffbe70);
+  // Cycle 22: the key colour moves from 0xffbe70 to 0xf4c270, which is about 10 percent less
+  // red and 4 percent more green in linear light. The clipping the brief measures is the red
+  // channel only: 1.438 percent of the hour 17 frame sat at 1.0 there, against the 1.2 percent
+  // line, and the composite's warm grade was pushing near-ceiling values over. A bluer key
+  // would darken the gold; a paler gold keeps the frame's value (audit luma 0.438 to 0.440) and
+  // its peak-channel headroom at the same time, and the sunlit warm share does not fall (the
+  // median warm hue moves 33.0 to 35.6 degrees, further into the golden family). Measured on
+  // the assembled build over the live uniforms: any-channel clipping 1.510 to 1.131 percent at
+  // 1600x900, sunlit warm unchanged, and the top-of-frame blue share rises because the pale sky
+  // is no longer pushed toward the red ceiling.
+  const GOLDEN_SUN_COLOR = new THREE.Color(0xf4c270);
   const GOLDEN_HEMI_COLOR = new THREE.Color(0xcdd6e0);
   const GOLDEN_HEMI_GROUND = new THREE.Color(0x8a8478);
   const GOLDEN_SUN_INTENSITY = 6.2;
@@ -1255,6 +1347,7 @@ function main() {
   function install(nextModel) {
     disposeGroup(world ? world.group : null);
     disposeGroup(agents ? agents.group : null);
+    if (dream) dream.clearCards();
     disposeGroup(dream ? dream.group : null);
     world = null;
     agents = null;
@@ -1739,15 +1832,17 @@ function main() {
         // where the page happens to run.
         next = analyze(generateSimulatedDay(), SIM_DAY_TZ);
       }
-      install(next);
-      // A portrait phone opens at the block tier. The district framing is computed for the
-      // bounds sphere and a 412x915 aspect, so the city becomes a band about a third of the
-      // screen with the rest empty sky; block is one of the three legal tiers and fills the
-      // portrait frame. The default is applied once, here, and nowhere else: install has
-      // already framed the district and sampled the framing distance, and the resize path is
-      // left alone, so a user who zooms afterwards keeps the tier they chose.
-      if (profile.mode === 'mobile' && PORTRAIT_PHONE && PORTRAIT_PHONE.matches) {
-        rig.setTier('block', false);
+      if (!userModel) {
+        install(next);
+        // A portrait phone opens at the block tier. The district framing is computed for the
+        // bounds sphere and a 412x915 aspect, so the city becomes a band about a third of the
+        // screen with the rest empty sky; block is one of the three legal tiers and fills the
+        // portrait frame. The default is applied once, here, and nowhere else: install has
+        // already framed the district and sampled the framing distance, and the resize path is
+        // left alone, so a user who zooms afterwards keeps the tier they chose.
+        if (profile.mode === 'mobile' && PORTRAIT_PHONE && PORTRAIT_PHONE.matches) {
+          rig.setTier('block', false);
+        }
       }
       win.setInterval(declutterTimer, DECLUTTER_MS);
       renderer.setAnimationLoop(tick);
@@ -1852,6 +1947,7 @@ function main() {
     if (!usable(next)) {
       throw new Error('localtime: export has no usable frames');
     }
+    userModel = next;
     install(next);
     return {
       ok: true,

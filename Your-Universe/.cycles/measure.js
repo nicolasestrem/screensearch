@@ -4,6 +4,7 @@
 // Usage, in an eval cell after `%load ".cycles/measure.js"`:
 //   const t = await measureStates(8760, { shots: "iter-20" });
 //   const d = await benchState(8780, {});
+//   const r = await checkRules(8760);   // camera, dream boot restore and card rules, one call
 //
 // Everything goes through the page's real surface and its real controls:
 //   window.localtime.stats()  -> { fps, calls, triangles, vehicles, pedestrians, shadows, dream }
@@ -195,4 +196,199 @@ async function benchState(port, opts) {
   })()`);
   await tab.close();
   return json;
+}
+
+// Same-page A/B. The triangle count of one page moves by several thousand with the data clock
+// (the sun angle decides how many objects count as shadow casters), so a delta measured across
+// two loads is worth about +/-8k and will mislead: cycle 23's world worker reported a +4,000
+// frame change as a "measurement convention artefact" for exactly this reason. Any small delta
+// must be read on ONE page, with the change applied in place.
+//
+//   const ab = await abSamePage(8760, {
+//     url: "?hour=17",
+//     tier: "street",
+//     off: "window.localtimeCohort.setEnabled(false)",
+//     on: "window.localtimeCohort.setEnabled(true)"
+//   });
+//   -> { off: {calls, tris, ped}, on: {calls, tris, ped}, delta: {calls, tris} }
+//
+// `tier` is applied with rig.setTier(tier, true) before either read; `off` runs first, then a
+// settle, then `on`, then a settle, so the second read reflects a resting frame.
+async function abSamePage(port, opts) {
+  const o = opts || {};
+  const p = port || 8760;
+  const tab = await openState('ab-page', `http://127.0.0.1:${p}/index.html${o.url || '?hour=17&cb=ab'}`, {
+    width: o.width || 1600, height: o.height || 900, dpr: o.dpr || 1, touch: !!o.touch,
+  });
+  await waitSettled(tab, 24000);
+  await settle(4000);
+  if (o.tier) await setTier(tab, o.tier);
+  if (o.off) {
+    await tab.evaluate(`(() => { ${o.off}; return true; })()`);
+    await settle(o.settle || 1800);
+  }
+  const off = await statsOf(tab);
+  if (o.on) {
+    await tab.evaluate(`(() => { ${o.on}; return true; })()`);
+    await settle(o.settle || 1800);
+  }
+  const on = await statsOf(tab);
+  await tab.close();
+  return {
+    off: { calls: off.calls, tris: off.triangles, ped: off.pedestrians },
+    on: { calls: on.calls, tris: on.triangles, ped: on.pedestrians },
+    delta: { calls: on.calls - off.calls, tris: on.triangles - off.triangles },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// The owner-facing rules, checked in one call: `await checkRules(8760)`.
+//
+// These are the promises that are not allowed to drift with the world or the light, and each one
+// was verified by hand every cycle until this helper existed. It returns
+//   { camera: { pitch, snap, ratios, panClamped, pass }, dream: { bootTaken, bootFresh, noReoffer,
+//     pass }, cards: { max, allTakeIt, pass }, pass }
+// Every number is measured on the live build, never derived from source constants.
+async function checkRules(port) {
+  const p = port || 8760;
+  const base = `http://127.0.0.1:${p}/index.html`;
+  const out = { camera: {}, dream: {}, cards: {}, pass: false };
+
+  // 1. Camera: fixed 40 degree pitch, 90 degree snap, tier zooms 1 / 0.62 / 0.38, clamped pan.
+  const camRead = `(function () {
+    const rig = window.localtime.rig, cam = rig.camera, t = rig.lookAt;
+    const dx = cam.position.x - t.x, dy = cam.position.y - t.y, dz = cam.position.z - t.z;
+    return JSON.stringify({
+      pitch: Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)) * 180 / Math.PI,
+      yaw: Math.atan2(dx, dz) * 180 / Math.PI,
+      dist: Math.sqrt(dx * dx + dy * dy + dz * dz)
+    });
+  })()`;
+  const cam = await openState('rules-cam', `${base}?hour=17&cb=rc1`);
+  await waitSettled(cam, 24000);
+  await settle(4000);
+  const c0 = JSON.parse(await cam.evaluate(camRead));
+  await cam.evaluate(`(() => { window.localtime.rig.rotate(1); return true; })()`);
+  await settle(1500);
+  const c1 = JSON.parse(await cam.evaluate(camRead));
+  let dyaw = c1.yaw - c0.yaw;
+  if (dyaw < -180) dyaw += 360;
+  if (dyaw > 180) dyaw -= 360;
+  const dists = {};
+  for (const tier of ['street', 'block', 'district']) {
+    await setTier(cam, tier);
+    await settle(1400);
+    dists[tier] = JSON.parse(await cam.evaluate(camRead)).dist;
+  }
+  const drag = `(function () {
+    const cv = document.querySelector('canvas');
+    const r = cv.getBoundingClientRect();
+    const x0 = r.left + r.width / 2, y0 = r.top + r.height / 2;
+    const mk = function (type, x, y) {
+      return new PointerEvent(type, { clientX: x, clientY: y, bubbles: true, pointerId: 1,
+        pointerType: 'mouse', button: 0, buttons: type === 'pointerup' ? 0 : 1, isPrimary: true });
+    };
+    cv.dispatchEvent(mk('pointerdown', x0, y0));
+    cv.dispatchEvent(mk('pointermove', x0 + 30, y0 + 10));
+    cv.dispatchEvent(mk('pointermove', x0 + 9000, y0 + 9000));
+    cv.dispatchEvent(mk('pointerup', x0 + 9000, y0 + 9000));
+    const t = window.localtime.rig.lookAt, b = window.localtime.world.bounds;
+    return JSON.stringify({ x: t.x, z: t.z, minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ });
+  })()`;
+  const panned = JSON.parse(await cam.evaluate(drag));
+  await settle(400);
+  const pt = JSON.parse(await cam.evaluate(`(function () { const t = window.localtime.rig.lookAt; return JSON.stringify({ x: t.x, z: t.z }); })()`));
+  await cam.close();
+  out.camera = {
+    pitch: +c0.pitch.toFixed(3),
+    snap: +dyaw.toFixed(3),
+    ratios: [+(dists.block / dists.district).toFixed(3), +(dists.street / dists.district).toFixed(3)],
+    panClamped: pt.x >= panned.minX - 6 && pt.x <= panned.maxX + 6 && pt.z >= panned.minZ - 6 && pt.z <= panned.maxZ + 6,
+  };
+  out.camera.pass = Math.abs(out.camera.pitch - 40) < 0.01 && Math.abs(out.camera.snap - 90) < 0.01
+    && Math.abs(out.camera.ratios[0] - 0.62) < 0.002 && Math.abs(out.camera.ratios[1] - 0.38) < 0.002
+    && out.camera.panClamped;
+
+  // 2. Dream: a taken road is permanent from the first frame, and an empty store restores nothing.
+  const roadProbe = `(function () {
+    const L = window.localtime;
+    let d = null;
+    const sc = L.world.group.parent;
+    for (let i = 0; i < sc.children.length; i++) if (sc.children[i].name === 'dream') d = sc.children[i];
+    let perm = false;
+    if (d) d.traverse(function (o) { if (o.name === 'road-permanent' && o.visible) perm = true; });
+    return JSON.stringify({ permanentRoadVisible: perm });
+  })()`;
+  const dr = await openState('rules-dream', `${base}?hour=17&cb=rd1`);
+  await waitSettled(dr, 24000);
+  await settle(3500);
+  // The store keeps card sentences verbatim, so the first sentence a scripted dream offers is a
+  // valid store entry for this data set, and the boot matcher must rebuild it exactly.
+  await dr.evaluate(`(() => { window.__b = null; window.localtime.runBench().then(function (r) { window.__b = r; }); return true; })()`);
+  let firstCard = '';
+  for (let i = 0; i < 90 && !firstCard; i += 1) {
+    const txt = await dr.evaluate(`(function () { var c = document.querySelector('.dream-card p'); return c ? c.textContent : ''; })()`);
+    if (txt) firstCard = txt;
+    await settle(250);
+  }
+  await settle(2000);
+  await dr.close();
+  const fresh = await openState('rules-fresh', `${base}?hour=17&cb=rd2`);
+  await waitSettled(fresh, 24000);
+  await settle(3500);
+  const bootFresh = JSON.parse(await fresh.evaluate(roadProbe));
+  await fresh.close();
+  let bootTaken = { permanentRoadVisible: false };
+  let reoffered = true;
+  if (firstCard) {
+    const taken = await openState('rules-taken', `${base}?hour=17&cb=rd3`);
+    await taken.evaluate(`localStorage.setItem('localtime.dreams.taken', JSON.stringify([${JSON.stringify(firstCard)}])); true`);
+    await taken.goto(`${base}?hour=22&cb=rd4`);
+    await waitSettled(taken, 24000);
+    await settle(3500);
+    bootTaken = JSON.parse(await taken.evaluate(roadProbe));
+    await taken.evaluate(`(() => { window.__b = null; window.localtime.runBench().then(function (r) { window.__b = r; }); return true; })()`);
+    let seenCard = '';
+    for (let i = 0; i < 60 && !seenCard; i += 1) {
+      const txt = await taken.evaluate(`(function () { var c = document.querySelector('.dream-card p'); return c ? c.textContent : ''; })()`);
+      if (txt) seenCard = txt;
+      await settle(250);
+    }
+    reoffered = !!seenCard;
+    await taken.evaluate(`localStorage.removeItem('localtime.dreams.taken'); true`);
+    await taken.close();
+  }
+  out.dream = {
+    bootTaken: bootTaken.permanentRoadVisible,
+    bootFresh: bootFresh.permanentRoadVisible,
+    noReoffer: !reoffered,
+    pass: bootTaken.permanentRoadVisible === true && bootFresh.permanentRoadVisible === false && !reoffered,
+  };
+
+  // 3. Cards: at most two, and every card carries its own "Take it".
+  const cd = await openState('rules-cards', `${base}?hour=22&cb=rd5`);
+  await waitSettled(cd, 24000);
+  await settle(3500);
+  await cd.evaluate(`(() => { window.__b = null; window.localtime.runBench().then(function (r) { window.__b = r; }); return true; })()`);
+  let maxCards = 0;
+  let allTake = true;
+  for (let i = 0; i < 90; i += 1) {
+    const s = await cd.evaluate(`(function () {
+      var cards = document.querySelectorAll('.dream-card');
+      var ok = true;
+      cards.forEach(function (c) {
+        var b = c.querySelector('button');
+        if (!b || b.textContent !== 'Take it') ok = false;
+      });
+      return JSON.stringify({ n: cards.length, ok: ok });
+    })()`);
+    const j = JSON.parse(s);
+    if (j.n > maxCards) maxCards = j.n;
+    if (j.n > 0 && !j.ok) allTake = false;
+    await settle(250);
+  }
+  await cd.close();
+  out.cards = { max: maxCards, allTakeIt: allTake, pass: maxCards > 0 && maxCards <= 2 && allTake };
+  out.pass = out.camera.pass && out.dream.pass && out.cards.pass;
+  return out;
 }
