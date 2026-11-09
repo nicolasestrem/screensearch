@@ -654,7 +654,11 @@ by the baseline rule (0.4.5 D2): v14 is created whole, and this step survives on
   slot is taken under its write lock and the session's strong count must be 1, the slot itself — so
   neither the sweep nor an explicit unload can drop a session out from under a running embed (both
   return `false`), and a second session cannot load alongside it. The load gate spans teardown, so
-  a reload cannot overlap it. Once `enrich.embed_idle_ttl_secs` has passed with no embed (`0`
+  a reload cannot overlap it, and the load itself holds that gate rather than the caller waiting for
+  it: cancelling an embed that has not been handed a session yet cannot release the flight, so
+  `M::load`, the publication of the loaded session into the slot and the last-use stamp all complete
+  under the held gate, and the next embed reuses that published session instead of starting a second
+  load beside the first. Once `enrich.embed_idle_ttl_secs` has passed with no embed (`0`
   disables the sweep), the sweep releases the session; the next embed reloads. Session teardown runs
   off the async worker thread. This bounds the embedder's resident footprint when the app is idle;
   it changes no capture, OCR or worker contract.

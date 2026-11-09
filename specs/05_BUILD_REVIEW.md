@@ -61,8 +61,10 @@ onto the whole app, and the reload latency is still untimed.
 - `embeddings`: `LazyEmbedder` holder — allocates nothing until first use or eager `load_now`,
   single-flight loads, metadata without loading, a 30 s sweep that evicts only when no embed still
   holds the session (strong count 1 under the slot write); sweep and explicit unload return `false`
-  while one is active, the load gate spans teardown so a reload cannot overlap it, a completing
-  embed stamps last-use before releasing its handle, teardown off the async worker thread.
+  while one is active, the load gate spans teardown so a reload cannot overlap it and is held by the
+  load rather than by the awaiting caller (so a cancelled first embed cannot release the flight
+  before the model is published — see the PR #175 review pass below), a completing embed stamps
+  last-use before releasing its handle, teardown off the async worker thread.
 - `src-tauri`: `init_embeddings` builds `Arc<LazyEmbedder<FastEmbedProvider>>`, loads eagerly so a
   first search after `Ready` is not cold, arms the unloader only after a successful load, and
   attaches it; the composition root installs the supervisor as `dyn PressureRelief`.
@@ -162,6 +164,86 @@ touched no real profile, model file or DB.
 - `06` #23 GPU blindness: findings and three options only; no NVML probe, no counter change.
 - `06` #150 (0.4.5 launch panic): observed on the measurement pass's launch attempts and worked
   around with a local relaunch harness (not product code); untouched here.
+
+**Review pass, PR #175 (2026-11-09).** One finding, on the head that carried the holder (`959b008`),
+and it is valid.
+
+| # | finding | verdict | resolution |
+|---|---|---|---|
+| 1 | `crates/embeddings/src/lib.rs` — a cancelled `acquire()` drops the borrowed async `load_gate` while the blocking load carries on, so the next caller can start a second ONNX load beside the first and the first never publishes | valid, proved from the call shape | fix shape: the gate is owned by the load, and load, publication and stamp all happen under it; the fix is in the working tree, uncommitted, and its test fails with a neutered gate and passes as written (raw output below) |
+
+Why it holds: `acquire()` took `load_gate.lock().await` in the caller's own future and then awaited
+`spawn_blocking(M::load)`. Dropping that future — a cancelled embed, a lost race, a shutting-down
+task — released the borrowed guard at once, while `spawn_blocking` does not stop with the caller that
+was awaiting it, so the load kept allocating with the gate free. The next embed then saw an empty
+slot, passed the sweep's strong-count test (nothing was resident to protect) and started a second
+`M::load`; the first load's model was dropped unpublished, so its allocation was made and released
+without ever serving an embed. The fix shape moves the flight guard into the work it protects: the
+gate is taken by value and moved into the blocking closure together with the slot and the idle clock,
+whose body opens with `let _gate = gate;` so the guard outlives the load and the publication it
+performs, and the waiting caller only awaits the join. The single-flight and teardown-spanning
+sentences elsewhere in this file and in `08` described the caller-owned arrangement and are amended
+above; they were true of the code they described, not a proof against cancellation.
+
+**Verification: the test discriminates — fail side and pass side both observed.** The gate3 result
+above, the two real-model tests and the sweep harness all drove load → idle → reload from live callers,
+so none of them exercised a cancelled first load and none can be cited for this fix. That path now has
+its own test, and the parent ran both directions of it.
+
+Fail side (`artifact://422`): with the fixed closure's `let _gate = gate;` temporarily replaced by
+`drop(gate); // NEUTERED…` — the gate released before the load finishes, which is the pre-fix
+behaviour — `cargo test -p embeddings cancelled_cold_load_publishes_one_session -- --exact
+tests::cancelled_cold_load_publishes_one_session --nocapture` failed at
+`crates/embeddings/src/lib.rs:697` on `assertion left == right failed: the published session is reused,
+not loaded`, left 2 / right 1, with `test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11
+filtered out`. Two loads where the test demands one is exactly the defect this row records, so the test
+detects it rather than merely compiling.
+
+Pass side (`artifact://424`), on the restored source:
+
+```text
+abf2c22859b23abf4ab95e0b4ccbb5f3a8e885b75c21427fc570d482f12589be  crates/embeddings/src/lib.rs
+test tests::cancelled_cold_load_publishes_one_session ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.02s
+```
+
+The same artifact carries the whole affected module: `test result: ok. 10 passed; 0 failed; 2 ignored; 0
+measured; 0 filtered out; finished in 0.04s`, its two ignored entries being the real-model tests, and
+doc-tests `0 passed; 0 failed; 0 ignored`. The hash in that block is the restoration of the proof
+snapshot — exactly the value intended before the mutation — so it identifies the file the pass side ran
+on, not the current working-tree file: `cargo fmt` reformatted the source after the proof, and the
+current file hashes differently. A grep for `NEUTERED` returned no matches at restoration, so the probe
+was removed rather than left behind. That artifact's lib-test build emitted one warning — `unused
+import: std::future::Future` at `crates/embeddings/src/lib.rs:411` — and the first full gate attempt
+rejected it (below).
+
+An earlier attempt at the test did not compile (`E0716`, a temporary dropped while borrowed); it was
+corrected by binding `inputs` before the timeout, and that compile failure is not counted as evidence
+for or against the fix.
+
+**Gate.** The first full attempt (`artifact://428`) ran the ignored real-model tests and passed —
+`test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 12.92s`,
+across two suites including doc-tests — and `ui_ci`, `ui_lint`, `ui_build`, `stage_mcp` and `cargo_fmt`
+each reported `EXIT=0`; `cargo_clippy` then reported `EXIT=101` on that unused import, with
+`-D unused-imports` implied by `-D warnings` and `STOPPED_AT=cargo_clippy`. Only the unused import was
+removed, no behaviour change. The final run (`artifact://429`, tail `artifact://432`, log
+`Temp/ss-pr175-review-gate.log`) reported:
+
+```text
+ui_ci EXIT=0
+ui_lint EXIT=0
+ui_build EXIT=0
+stage_mcp EXIT=0
+cargo_fmt EXIT=0
+cargo_clippy EXIT=0
+cargo_build EXIT=0
+cargo_test EXIT=0
+bindings_diff EXIT=0
+```
+
+The verified workspace aggregate is exactly `{"suites":86,"passed":1652,"failed":0,"ignored":17}`,
+`git diff --check` exits 0, and the focused and module results above hold on the final code. No commit
+exists yet, so no SHA is cited here. `06` #151 is resolved by this pass.
 
 ### 2026-11-09 — Your-Universe: Localtime (standalone deliverable, not product code)
 

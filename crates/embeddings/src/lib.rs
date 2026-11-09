@@ -147,11 +147,13 @@ impl EmbeddingProvider for FastEmbedProvider {
 
 /// Idle-unloading holder for the text embedder (`03 §5`/`§6`, `03 §8`).
 ///
-/// [`new`](Self::new) allocates nothing: the model loads on the first
-/// [`embed_texts`](EmbeddingProvider::embed_texts) — single flight, so `N` concurrent callers
-/// cause exactly one load — or eagerly through [`load_now`](Self::load_now). Once `idle_ttl`
-/// passes with no embedding, [`spawn_idle_unloader`](Self::spawn_idle_unloader) releases the
-/// session and the next embed reloads it. `idle_ttl` of [`Duration::ZERO`] disables unloading.
+/// [`new`](Self::new) does not load the model: it allocates only the empty coordination state,
+/// so the session loads on the first [`embed_texts`](EmbeddingProvider::embed_texts) — single
+/// flight, so `N` concurrent callers cause exactly one load, and a caller cancelled mid-load
+/// still leaves that one session published — or eagerly through [`load_now`](Self::load_now).
+/// Once `idle_ttl` passes with no embedding, [`spawn_idle_unloader`](Self::spawn_idle_unloader)
+/// releases the session and the next embed reloads it. `idle_ttl` of [`Duration::ZERO`] disables
+/// unloading.
 ///
 /// Releases are as careful as loads: a sweep (or an explicit [`unload`](Self::unload)) only
 /// frees a session that no caller holds a clone of, so an embed that is still running — even one
@@ -161,13 +163,17 @@ pub struct LazyEmbedder<M: EmbedModel = FastEmbedProvider> {
     cache_dir: PathBuf,
     idle_ttl: Duration,
     /// Resident model, if any. Read only long enough to clone the [`Arc`]; a caller that holds
-    /// a clone is using the session, which every release path treats as "not evictable".
-    model: RwLock<Option<Arc<M>>>,
+    /// a clone is using the session, which every release path treats as "not evictable". The
+    /// outer [`Arc`] lets a blocking load publish without a caller future to hand it to.
+    model: Arc<RwLock<Option<Arc<M>>>>,
     /// Single-flight gate: whoever wins loads once, everyone else waits and then finds the
-    /// model resident (`03 §5` — a burst of embeds must not start parallel ONNX sessions).
-    load_gate: TokioMutex<()>,
+    /// model resident (`03 §5` — a burst of embeds must not start parallel ONNX sessions). The
+    /// winner moves the guard *into the blocking load*, so a cancelled caller cannot release
+    /// single flight while `M::load` is still allocating its ~1 GiB session.
+    load_gate: Arc<TokioMutex<()>>,
     /// When the model was last loaded or used; the idle sweep compares against `idle_ttl`.
-    last_used: Mutex<Instant>,
+    /// Shared for the same reason as the slot: the load stamps it where the load completes.
+    last_used: Arc<Mutex<Instant>>,
 }
 
 /// Recovers a guard from a poisoned lock. The slot and the idle clock hold plain data, so a
@@ -180,16 +186,17 @@ fn recover<T>(poisoned: PoisonError<T>) -> T {
 
 impl<M: EmbedModel> LazyEmbedder<M> {
     /// Creates the holder **without loading the model** — nothing is read from `cache_dir`
-    /// until the first embed or [`load_now`](Self::load_now). `idle_ttl` is how long a resident
+    /// until the first embed or [`load_now`](Self::load_now). Allocates only the shared
+    /// coordination state (empty slot, load gate, idle clock). `idle_ttl` is how long a resident
     /// model may sit unused before [`spawn_idle_unloader`](Self::spawn_idle_unloader) frees it;
     /// [`Duration::ZERO`] means never unload.
     pub fn new(cache_dir: PathBuf, idle_ttl: Duration) -> Self {
         Self {
             cache_dir,
             idle_ttl,
-            model: RwLock::new(None),
-            load_gate: TokioMutex::new(()),
-            last_used: Mutex::new(Instant::now()),
+            model: Arc::new(RwLock::new(None)),
+            load_gate: Arc::new(TokioMutex::new(())),
+            last_used: Arc::new(Mutex::new(Instant::now())),
         }
     }
 
@@ -323,26 +330,40 @@ impl<M: EmbedModel> LazyEmbedder<M> {
 
     /// Returns the resident model, loading it on first use. The load runs under the async
     /// gate, so concurrent callers serialize and only one `M::load` ever happens.
+    ///
+    /// The gate is *owned by the blocking load*, not borrowed from this future: the winner moves
+    /// the guard, the slot, and the idle clock into the [`spawn_blocking`] closure, which loads,
+    /// publishes, and stamps while it holds them. Dropping this future — a cancelled caller —
+    /// therefore cannot hand single flight to the next embedder while `M::load` is still
+    /// allocating; the caller stops waiting, the session still lands in the slot, and the next
+    /// caller reuses it instead of starting a second ~1 GiB ONNX session. A failed load releases
+    /// the gate the same way, so the next call retries.
+    ///
+    /// [`spawn_blocking`]: tokio::task::spawn_blocking
     async fn acquire(&self) -> Result<Arc<M>> {
         if let Some(model) = self.slot() {
             self.stamp_used();
             return Ok(model);
         }
 
-        let _gate = self.load_gate.lock().await;
+        let gate = Arc::clone(&self.load_gate).lock_owned().await;
         if let Some(model) = self.slot() {
             self.stamp_used();
             return Ok(model);
         }
 
+        let slot = Arc::clone(&self.model);
+        let last_used = Arc::clone(&self.last_used);
         let cache_dir = self.cache_dir.clone();
-        let model = tokio::task::spawn_blocking(move || M::load(cache_dir))
-            .await
-            .map_err(|e| anyhow!("embed model load task failed: {e}"))??;
-        let model = Arc::new(model);
-        *self.slot_mut() = Some(Arc::clone(&model));
-        self.stamp_used();
-        Ok(model)
+        tokio::task::spawn_blocking(move || {
+            let _gate = gate;
+            let model = Arc::new(M::load(cache_dir)?);
+            *slot.write().unwrap_or_else(recover) = Some(Arc::clone(&model));
+            *last_used.lock().unwrap_or_else(recover) = Instant::now();
+            Ok::<_, anyhow::Error>(model)
+        })
+        .await
+        .map_err(|e| anyhow!("embed model load task failed: {e}"))?
     }
 }
 
@@ -388,12 +409,15 @@ fn should_unload(loaded: bool, elapsed: Duration, ttl: Duration) -> bool {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::task::{Context, Waker};
 
     use super::*;
 
     /// Load/embed event log, keyed by the cache dir the test picked. `EmbedModel::load` is an
     /// associated function with no `self`, so the fake reports through this log; dirs are
-    /// unique per test, so tests running concurrently never read each other's counts.
+    /// unique per test, so tests running concurrently never read each other's counts. `LOADED`
+    /// records *attempts* — a failed or still-parked load counts too, so the single-flight
+    /// assertions see every `M::load` the holder starts.
     static LOADED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
     static EMBEDDED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
@@ -430,9 +454,59 @@ mod tests {
         (started_rx, release_tx)
     }
 
+    /// The same rendezvous for `load`: the cold-cancellation regression must hold a load inside
+    /// `M::load` while it drops the caller that started it. Bounded release, like [`EmbedStages`].
+    struct LoadStages {
+        started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    /// Arms the next `load` for its cache dir (consumed by that load, so a retry loads normally).
+    static LOAD_STAGES: Mutex<Vec<(PathBuf, Arc<LoadStages>)>> = Mutex::new(Vec::new());
+
+    /// Cache dirs whose next `load` must fail, so the load-error path (gate release) is testable.
+    static LOAD_FAILURES: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+    /// Arms the next load for `dir`: the returned receiver fires once the load is running, and
+    /// sending on the returned sender lets it finish.
+    fn block_next_load(
+        dir: &Path,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+    ) {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        LOAD_STAGES.lock().unwrap().push((
+            dir.to_path_buf(),
+            Arc::new(LoadStages {
+                started: Mutex::new(Some(started_tx)),
+                release: Mutex::new(release_rx),
+            }),
+        ));
+        (started_rx, release_tx)
+    }
+
+    /// Arms the next load for `dir` to return an error instead of a model.
+    fn fail_next_load(dir: &Path) {
+        LOAD_FAILURES.lock().unwrap().push(dir.to_path_buf());
+    }
+
+    /// Releases a parked load when it goes out of scope, so an assertion that fires before the
+    /// explicit release still unsticks the blocking thread instead of leaving the test binary to
+    /// wait out the park's timeout.
+    struct ReleaseOnDrop(std::sync::mpsc::Sender<()>);
+
+    impl Drop for ReleaseOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.send(());
+        }
+    }
+
     /// Test double: no ONNX, no network, no files. `load` sleeps briefly so concurrent callers
-    /// genuinely race for the single-flight gate; `embed` returns one small vector per input —
-    /// or, when [`block_next_embed`] armed it, parks inside the embed until released.
+    /// genuinely race for the single-flight gate, parks inside `load` when [`block_next_load`]
+    /// armed it, and fails when [`fail_next_load`] armed it. `embed` returns one small vector per
+    /// input — or, when [`block_next_embed`] armed it, parks inside the embed until released.
     struct FakeModel {
         dir: PathBuf,
         stages: Option<Arc<EmbedStages>>,
@@ -442,6 +516,33 @@ mod tests {
         fn load(cache_dir: PathBuf) -> Result<Self> {
             std::thread::sleep(Duration::from_millis(20));
             LOADED.lock().unwrap().push(cache_dir.clone());
+
+            let fails = {
+                let mut failures = LOAD_FAILURES.lock().unwrap();
+                let index = failures.iter().position(|dir| dir == &cache_dir);
+                index.map(|index| failures.remove(index)).is_some()
+            };
+            if fails {
+                return Err(anyhow!("staged load failure"));
+            }
+
+            let index = {
+                let staged = LOAD_STAGES.lock().unwrap();
+                staged.iter().position(|(dir, _)| dir == &cache_dir)
+            };
+            if let Some(index) = index {
+                let stages = LOAD_STAGES.lock().unwrap().remove(index).1;
+                let started = stages.started.lock().unwrap().take();
+                if let Some(started) = started {
+                    let _ = started.send(());
+                }
+                let _ = stages
+                    .release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(60));
+            }
+
             let index = {
                 let staged = STAGES.lock().unwrap();
                 staged.iter().position(|(dir, _)| dir == &cache_dir)
@@ -542,6 +643,101 @@ mod tests {
             "concurrent callers must share one load"
         );
         assert_eq!(embed_count(&dir), 8);
+        assert!(embedder.is_loaded());
+    }
+
+    /// A cancelled cold load must not release single flight. The blocking task owns the gate and
+    /// publishes the session it built, so the next caller reuses it instead of starting a second
+    /// ~1 GiB ONNX session beside the first one (`03 §5`, `03 §8`) — the shape that leaked memory
+    /// and left the next search on a session nobody else could see.
+    ///
+    /// One poll of the waiting caller separates the shapes without any clock: the broken one has
+    /// already submitted its extra blocking load by then, while the fixed one parks on the gate
+    /// the in-flight load still owns.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn cancelled_cold_load_publishes_one_session() {
+        let dir = unique_dir("cold-cancel");
+        let (started, release) = block_next_load(&dir);
+        // Released on drop as well, so a failing assertion above still unsticks the parked load.
+        let release = ReleaseOnDrop(release);
+        let embedder = Arc::new(LazyEmbedder::<FakeModel>::new(
+            dir.clone(),
+            Duration::from_secs(60),
+        ));
+
+        let first = tokio::spawn({
+            let embedder = Arc::clone(&embedder);
+            async move { embedder.embed_texts(&["first".to_string()]).await }
+        });
+        started.await.expect("the first load reached M::load");
+        assert_eq!(load_count(&dir), 1, "the first caller started the load");
+
+        // Cancel the winner while `M::load` is parked: it never returns the session itself.
+        first.abort();
+        match first.await {
+            Ok(_) => panic!("a cancelled caller must not return an embedding"),
+            Err(error) => assert!(error.is_cancelled(), "expected cancellation, got {error}"),
+        }
+
+        let inputs = ["second".to_string()];
+        let mut second = embedder.embed_texts(&inputs);
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(
+            second.as_mut().poll(&mut context).is_pending(),
+            "the next caller waits for the in-flight load instead of starting another"
+        );
+        assert_eq!(
+            load_count(&dir),
+            1,
+            "no second M::load while the first one runs"
+        );
+
+        // Let the parked load finish: it publishes the session, which the waiter then reuses.
+        drop(release);
+        let out = second.await.expect("the second caller embeds");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, vec!["second".len() as f32, 1.0]);
+        assert_eq!(
+            load_count(&dir),
+            1,
+            "the published session is reused, not loaded"
+        );
+        assert_eq!(embed_count(&dir), 1, "only the surviving caller embedded");
+        assert!(embedder.is_loaded());
+    }
+
+    /// A failed `M::load` releases the gate together with the blocking task that took it, so the
+    /// error reaches the caller and the next call retries a fresh load — no leaked guard to wait
+    /// on, no half-loaded holder. The timeout only bounds a deadlock; it asserts nothing about
+    /// timing.
+    #[tokio::test]
+    async fn failed_load_releases_the_gate_for_a_retry() {
+        let dir = unique_dir("load-failure");
+        fail_next_load(&dir);
+        let embedder = LazyEmbedder::<FakeModel>::new(dir.clone(), Duration::from_secs(60));
+
+        let error = embedder
+            .load_now()
+            .await
+            .expect_err("the staged load fails");
+        assert!(
+            error.to_string().contains("staged load failure"),
+            "the load error reaches the caller: {error:#}"
+        );
+        assert!(!embedder.is_loaded(), "a failed load publishes nothing");
+        assert_eq!(load_count(&dir), 1);
+
+        // A leaked gate would park this forever; the timeout only bounds that failure and is not
+        // a timing assertion.
+        let inputs = ["retry".to_string()];
+        let retry = tokio::time::timeout(Duration::from_secs(10), embedder.embed_texts(&inputs));
+        let out = retry
+            .await
+            .expect("the retry is not stuck behind a leaked gate")
+            .expect("the retry loads a fresh session");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, vec!["retry".len() as f32, 1.0]);
+        assert_eq!(load_count(&dir), 2, "the retry runs a fresh M::load");
         assert!(embedder.is_loaded());
     }
 

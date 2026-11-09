@@ -46,13 +46,15 @@ this branch's build.
   and model name without loading, single-flights concurrent loads, and drops the ONNX session once
   `enrich.embed_idle_ttl_secs` (default 900, `0` = never) has passed with no embed. A session an embed
   still holds is never dropped mid-flight: the sweep and the manual unload return `false` and leave it
-  resident, and the load gate spans teardown so a reload cannot overlap it. The baseline above
-  was 1352 MiB private with the embedder resident and 119 MiB with embeddings disabled; the 119 MiB
-  came from a different configuration. An isolated harness with the real cached model verified the
-  lifecycle narrowly: 7 MiB before load → 1228 MiB loaded → 26 MiB after the idle sweep (TTL 2 s) →
-  1234 MiB after reload, with an identical 768-dim query vector (max diff 0). That is the holder, not
-  the whole app: it does not establish the app's idle footprint, and the reload latency is still
-  untimed.
+  resident, and the load gate spans teardown so a reload cannot overlap it. That gate belongs to the
+  load, not to the search waiting for it: a load that is still running finishes and keeps its result
+  even when the search that started it was abandoned, so the next search reuses that model instead of
+  starting a second copy beside the first. The baseline above was 1352 MiB private with the embedder
+  resident and 119 MiB with embeddings disabled; the 119 MiB came from a different configuration. An
+  isolated harness with the real cached model verified the lifecycle narrowly: 7 MiB before load →
+  1228 MiB loaded → 26 MiB after the idle sweep (TTL 2 s) → 1234 MiB after reload, with an identical
+  768-dim query vector (max diff 0). That is the holder, not the whole app: it does not establish the
+  app's idle footprint, and the reload latency is still untimed.
 - **Settings · Advanced and the StatusRail show memory truthfully.** The throttle readout in
   Settings · Advanced gains `RAM 71% (8.3 GiB available)` and a Commit percentage from the same
   sample as the usage number, reports available memory rather than calling it "free", says "not
