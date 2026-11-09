@@ -246,3 +246,18 @@ measurements behind them are in `Your-Universe/ITERATIONS.md`.
   fix is two lines there or three here: add `clearCards: hideCards` to `dream.mjs`'s return object, then
   call `dream.clearCards()` in `install()` next to `disposeGroup(dream ? dream.group : null)` and before
   `dream = null`. Expiry: same trigger and same reason as the row above.
+- **The startup sample replaces an export imported during the asset wait** (PR #173 review, round
+  three). Owner: Your-Universe owner. Status: valid, proved from the committed call order, fix not
+  shipped. `main.mjs` starts with `wireInput(); boot();`, so a drop is handled while `boot()`'s own
+  `Promise.all([fetchSample(), loadAssets()])` is still waiting, up to the 8000 ms pack deadline.
+  `loadExport()` installs the user's district, and the callback then calls `install(next)` with the
+  sample regardless. Because `install()` begins by disposing the world, agent and dream groups and
+  nulling them, that second call does not overwrite a field: it throws away the district the user just
+  imported, and their history is gone without a message. The fix is a module-level
+  `let userModel = null`, set to `next` in `loadExport()` after `usable()` passes, then one guard in
+  the `boot()` callback around **both** the sample `install(next)` and the portrait-phone
+  `rig.setTier('block', false)`, which was chosen for the sample's framing and must not be applied over
+  the user's own district. The block after the guard (the declutter interval, the animation loop, the
+  cache registration and the bench timeout) must still run, so the guard wraps those two statements
+  rather than returning early. Expiry: same trigger as the two rows above, the loop's snapshot commit.
+

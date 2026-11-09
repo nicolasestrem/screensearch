@@ -198,7 +198,28 @@ array, and its `return` exposes `group`, `update`, `sleep`, `wake`, `toggle`, `s
 in `main.mjs` disposes three groups and drops the instance. The old cards therefore outlive the dream
 that owns their handlers.
 
-Why those two wait: `index.html` is generated from every `src/` fragment, and the owner loop's cycle 22
+Why these wait: `index.html` is generated from every `src/` fragment, and the owner loop's cycle 22
 has four `src/` files uncommitted (+475 lines) with `index.html` not yet regenerated. A `src/` fix
-could only be committed together with that unfinished work, so both land with the loop's snapshot
+could only be committed together with that unfinished work, so they land with the loop's snapshot
 commit and stay listed as open items until then.
+
+**Review pass, round three (PR #173, 2026-11-09).** One finding, on the head that carried the sample
+fix.
+
+| # | finding | verdict | resolution |
+|---|---|---|---|
+| 8 | `src/main.mjs:1742` — the startup sample replaces an export imported during the asset wait | valid, proved from the call order | deferred to `07`; the guard is a flag set by `loadExport` and read once in the boot callback |
+
+Finding 8 as the committed snapshot (`7d5efdc`) orders it:
+
+```text
+1891  wireInput();
+1892  boot();            -> Promise.all([fetchSample(), loadAssets()]).then(...)  up to 8000 ms
+1855    install(next);                        <- loadExport(), from a drop inside that window
+1742      install(next);                      <- the sample, unconditional
+```
+
+`install()` (line 1255) opens by disposing the world, agent and dream groups and nulling all three, so
+the later call does not overwrite a property: it discards the district the user just imported. Nothing
+in between records that a user model exists, which is what makes the ordering alone sufficient.
+
