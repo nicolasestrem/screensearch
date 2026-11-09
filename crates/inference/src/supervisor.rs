@@ -474,6 +474,12 @@ impl ModelSupervisor {
         // Pin: an explicit Load means "keep this resident" — don't idle-evict it until the
         // user unloads (otherwise the model the user just waited to download/load would be
         // evicted the moment the idle-TTL elapsed).
+        //
+        // Publish the pin **before dropping `_lease`**: the lease holds a request-gate permit,
+        // and `unload_reasoned` reads/clears the pin only after draining that gate. Holding the
+        // permit across this store is what makes the pin visible to a relief that wins the gate
+        // afterwards, so a preload that lands while relief is waiting is never killed
+        // (`03 §6` rule A).
         self.pinned.store(true, Ordering::SeqCst);
         Ok(())
     }
@@ -481,19 +487,52 @@ impl ModelSupervisor {
     /// Manually stops the resident sidecar, freeing its VRAM/RAM now — the "Unload" control.
     /// Drains the request gate first so a live request is never torn out, then kills the
     /// process and reports `Evicted` (the next request lazily respawns). No-op when nothing
-    /// is resident.
+    /// is resident. An explicit Unload also clears the "keep resident" pin, inside that same
+    /// gated section, so it cannot interleave with a concurrent preload's pin publication.
     pub async fn unload(&self) {
-        // Clear the manual pin first: an explicit unload overrides "keep resident".
-        self.pinned.store(false, Ordering::SeqCst);
-        let Ok(_permit) = self.gate.enter_for_model_switch().await else {
-            return;
-        };
-        let mut guard = self.state.lock().await;
-        if let Some(p) = guard.take() {
-            self.kill_and_confirm("manual unload", p.child).await;
-            self.emit(SidecarState::Evicted, Some(&p.spec));
+        if self.unload_reasoned("manual unload", false).await {
             tracing::info!("sidecar unloaded on request");
         }
+    }
+
+    /// Stops the resident sidecar for `reason`: drains the request gate so a live request is
+    /// never torn out, kills the child through the one teardown path, and reports `Evicted`.
+    /// Returns whether a process was actually resident and released, so a caller can tell a
+    /// real memory reclaim from a no-op on an empty supervisor.
+    ///
+    /// `skip_if_pinned` is the level-2 relief rule A (`03 §6`): an explicit user load outranks
+    /// relief. Both pin writers are decided **under the gate**, which is what makes that rule
+    /// linearizable instead of best-effort:
+    /// - a load publishes the pin while it still holds its lease permit ([`Self::preload`]), so
+    ///   once this call owns every permit the pin it reads can no longer be revoked by an
+    ///   in-flight load — a preload that lands while relief waits is guaranteed to be seen;
+    /// - a manual unload clears the pin here rather than before the gate. Clearing it earlier
+    ///   would let a concurrent preload publish the pin between the clear and the kill, leaving
+    ///   a still-pinned-but-not-resident supervisor whose stale pin suppresses every later
+    ///   relief and idle eviction.
+    async fn unload_reasoned(&self, reason: &str, skip_if_pinned: bool) -> bool {
+        let Ok(_permit) = self.gate.enter_for_model_switch().await else {
+            // The gate only closes if the supervisor is tearing down; a manual unload still
+            // means "not pinned", so a later relief is not blocked by a stale pin.
+            if !skip_if_pinned {
+                self.pinned.store(false, Ordering::SeqCst);
+            }
+            return false;
+        };
+        if skip_if_pinned && self.pinned.load(Ordering::SeqCst) {
+            tracing::info!("level-2 memory relief skipped: model pinned by an explicit load");
+            return false;
+        }
+        if !skip_if_pinned {
+            self.pinned.store(false, Ordering::SeqCst);
+        }
+        let mut guard = self.state.lock().await;
+        if let Some(p) = guard.take() {
+            self.kill_and_confirm(reason, p.child).await;
+            self.emit(SidecarState::Evicted, Some(&p.spec));
+            return true;
+        }
+        false
     }
 
     /// Spawns `llama-server` for `spec`, binds it to the job **before** resuming, then
@@ -675,6 +714,25 @@ pub fn resolve_recycle_ceiling(enabled: bool, rss_mb: u32) -> u64 {
 impl traits::BackfillControl for ModelSupervisor {
     fn set_backfill_active(&self, active: bool) {
         self.backfill_active.store(active, Ordering::SeqCst);
+    }
+}
+
+#[async_trait::async_trait]
+impl traits::PressureRelief for ModelSupervisor {
+    /// Frees the resident model for the kernel's level-2 memory relief (`03 §5/§6`). Relief
+    /// outranks the idle backfill's keep-warm — a drain must not hold RAM/VRAM while the
+    /// machine is out of memory — but never an explicit user pin: a model the user asked to
+    /// keep resident stays loaded and is reported as not released. `backfill_active` is
+    /// deliberately left untouched, so the scheduler's later re-arm only suppresses future
+    /// idle eviction and can never resurrect the model this call just released.
+    async fn release_memory(&self) -> bool {
+        // One path, one decision: `unload_reasoned` takes the request gate first and only then
+        // consults the pin, so a preload that lands while relief is waiting cannot be killed.
+        if !self.unload_reasoned("level-2 memory relief", true).await {
+            return false;
+        }
+        tracing::info!("sidecar released on level-2 memory relief");
+        true
     }
 }
 
@@ -891,6 +949,11 @@ fn free_port() -> Result<u16> {
 mod tests {
     use super::*;
     use crate::models::{ModelLane, ModelTier};
+    use std::future::Future;
+    use std::task::Context as TaskContext;
+    use traits::BackfillControl;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn spec(gguf: &str, mmproj: Option<&str>) -> ModelSpec {
         ModelSpec {
@@ -926,6 +989,93 @@ mod tests {
         args.windows(2)
             .find(|w| w[0] == flag)
             .map(|w| w[1].as_str())
+    }
+
+    /// A scratch directory unique to this test and process — never a fixed, globally shared
+    /// temp path. It is created lazily by the sidecar log open, so concurrent test runs cannot
+    /// collide.
+    fn unique_scratch_dir(tag: &str) -> PathBuf {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        std::env::temp_dir().join(format!(
+            "ssv2c-supervisor-{tag}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    /// Config for a supervisor whose `llama-server.exe` is only ever *recorded*, never
+    /// launched: every test below injects a resident stand-in child instead. The pidfile lives
+    /// in the scratch dir, so the startup reap is a no-op.
+    fn config_in(dir: &Path) -> SupervisorConfig {
+        SupervisorConfig {
+            binary: dir.join("llama-server.exe"),
+            reap_binaries: Vec::new(),
+            pidfile: dir.join("llama-server.pid"),
+            sidecar_log: Some(dir.join("llama-server.log")),
+            idle_ttl: Duration::from_secs(180),
+            health_timeout: Duration::from_secs(1),
+            caps: caps_full(),
+            recycle_ceiling_bytes: 0,
+        }
+    }
+
+    /// A stand-in for a resident sidecar: a real, harmless Windows child (`ping`, the same
+    /// fixture the `reap` integration test uses) spawned **suspended**, bound to the
+    /// supervisor's own Job Object, then resumed — the exact `spawn_for` discipline. No model
+    /// is loaded, nothing is downloaded, and no `llama-server` is launched; the point is a live
+    /// OS process the teardown path can really kill.
+    fn spawn_stand_in(supervisor: &ModelSupervisor, dir: &Path) -> process::SuspendedChild {
+        let program = std::env::var_os("SystemRoot")
+            .map(|root| PathBuf::from(root).join("System32").join("ping.exe"))
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows\System32\ping.exe"));
+        let log = dir.join("stand-in.log");
+        let args = ["-n", "120", "127.0.0.1"].map(String::from);
+        let child = process::spawn_suspended(&program, &args, Some(&log))
+            .expect("spawn the ping stand-in suspended");
+        if let Err(e) = supervisor.job.assign(child.process_handle()) {
+            // Never leave a suspended child behind, exactly like `spawn_for`.
+            child.kill();
+            panic!("bind the stand-in to the supervisor's job object: {e:#}");
+        }
+        child.resume().expect("resume the bound stand-in");
+        child
+    }
+
+    /// A supervisor with one resident stand-in sidecar, plus that sidecar's spec and pid.
+    /// Only the *fixture* is injected — the relief, unload and gate paths under test are the
+    /// production ones, operating on a real process bound to the real Job Object.
+    async fn resident_supervisor(
+        tag: &str,
+        client: SidecarClient,
+    ) -> (Arc<ModelSupervisor>, ModelSpec, u32, PathBuf) {
+        let dir = unique_scratch_dir(tag);
+        let supervisor = ModelSupervisor::new(config_in(&dir)).expect("build the supervisor");
+        let model = spec(r"C:\m\stand-in.gguf", None);
+        let child = spawn_stand_in(&supervisor, &dir);
+        let pid = child.pid();
+        *supervisor.state.lock().await = Some(SidecarProcess {
+            child,
+            client,
+            spec: model.clone(),
+        });
+        (supervisor, model, pid, dir)
+    }
+
+    /// Bounded safety net after the production teardown has already waited: a slow kernel
+    /// cannot flake the suite, but a process that really survived is a failure.
+    async fn assert_dead(pid: u32) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while process::pid_alive(pid) {
+            assert!(Instant::now() < deadline, "process {pid} survived teardown");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Test teardown: stop anything still resident (the pin test deliberately keeps its child
+    /// alive for its assertions), then remove the scratch dir.
+    async fn retire(supervisor: Arc<ModelSupervisor>, dir: PathBuf) {
+        supervisor.shutdown().await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -966,6 +1116,205 @@ mod tests {
         assert!(!should_evict(0, past, ttl, true));
         // Not idle long enough → don't evict.
         assert!(!should_evict(0, recent, ttl, false));
+    }
+
+    #[tokio::test]
+    async fn relief_releases_a_resident_model_even_under_keep_warm() {
+        // Level-2 contract (`03 §5/§6`) against a real OS process: relief outranks the
+        // backfill's keep-warm and the resident child (the RAM/VRAM stand-in) actually dies.
+        let client = SidecarClient::new("http://127.0.0.1:1");
+        let (supervisor, _, pid, dir) = resident_supervisor("relief-keepwarm", client).await;
+        supervisor.set_backfill_active(true);
+        let relief: Arc<dyn traits::PressureRelief> = supervisor.clone();
+
+        assert!(
+            relief.release_memory().await,
+            "relief must report releasing the resident child"
+        );
+        assert_dead(pid).await;
+        assert!(
+            supervisor.state.lock().await.is_none(),
+            "no sidecar may remain resident after relief"
+        );
+        assert!(!supervisor.pinned.load(Ordering::SeqCst));
+        assert!(
+            supervisor.backfill_active.load(Ordering::SeqCst),
+            "relief must not disarm the scheduler's keep-warm"
+        );
+
+        // Keep-warm only suppresses idle eviction; it cannot spawn. A later evictor pass on the
+        // released supervisor therefore leaves it empty ("cannot resurrect"), and a second
+        // relief reports a no-op without touching keep-warm.
+        supervisor.maybe_evict().await;
+        assert!(supervisor.state.lock().await.is_none());
+        assert!(
+            !relief.release_memory().await,
+            "nothing resident → level-2 relief reports no release"
+        );
+        assert!(supervisor.backfill_active.load(Ordering::SeqCst));
+
+        retire(supervisor, dir).await;
+    }
+
+    #[tokio::test]
+    async fn preload_pins_the_resident_model_and_relief_skips_it() {
+        // Rule A through the production `preload` path: the pin is published by `preload`
+        // itself while it still holds its request-gate permit, so relief — which had to drain
+        // that gate before reading the pin — observes it and leaves the child running.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/health"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let client = SidecarClient::new(server.uri());
+        let (supervisor, model, pid, dir) = resident_supervisor("preload-pin", client).await;
+
+        supervisor
+            .preload(model)
+            .await
+            .expect("preload reuses the healthy resident stand-in");
+        assert!(
+            supervisor.pinned.load(Ordering::SeqCst),
+            "an explicit load publishes the user's pin"
+        );
+
+        let relief: Arc<dyn traits::PressureRelief> = supervisor.clone();
+        assert!(
+            !relief.release_memory().await,
+            "an explicitly pinned model is never released by relief"
+        );
+        assert!(
+            process::pid_alive(pid),
+            "the pinned resident child must still be running"
+        );
+        assert!(
+            supervisor.state.lock().await.is_some(),
+            "the pinned model stays resident"
+        );
+        assert!(
+            supervisor.pinned.load(Ordering::SeqCst),
+            "relief never clears the pin: only an explicit unload does that"
+        );
+
+        retire(supervisor, dir).await;
+    }
+
+    #[tokio::test]
+    async fn manual_unload_releases_the_pinned_model_and_clears_the_pin() {
+        // The other half of rule A: the user's own Unload always means unload, so it clears the
+        // pin and kills the resident child that relief had to leave alone.
+        let client = SidecarClient::new("http://127.0.0.1:1");
+        let (supervisor, _, pid, dir) = resident_supervisor("manual-unload", client).await;
+        supervisor.pinned.store(true, Ordering::SeqCst);
+        let relief: Arc<dyn traits::PressureRelief> = supervisor.clone();
+        assert!(!relief.release_memory().await);
+        assert!(
+            process::pid_alive(pid),
+            "relief cannot free a user-pinned model"
+        );
+
+        supervisor.unload().await;
+        assert_dead(pid).await;
+        assert!(supervisor.state.lock().await.is_none());
+        assert!(
+            !supervisor.pinned.load(Ordering::SeqCst),
+            "an explicit unload clears the pin so later relief can act"
+        );
+        assert!(
+            !relief.release_memory().await,
+            "after Unload there is nothing left to release"
+        );
+
+        retire(supervisor, dir).await;
+    }
+
+    /// Deterministic regression for the pin/gate ordering: an unload that has not yet won the
+    /// exclusive gate must not have cleared the pin. Clearing it earlier let a concurrent
+    /// preload publish the pin between the clear and the kill, leaving a stale pin on a
+    /// supervisor with no resident model. The future is polled exactly once with a no-op waker,
+    /// so it runs to the gate's first await without depending on scheduler timing.
+    #[tokio::test]
+    async fn unload_clears_the_pin_only_after_it_owns_the_gate() {
+        let client = SidecarClient::new("http://127.0.0.1:1");
+        let (supervisor, _, pid, dir) = resident_supervisor("gate-order", client).await;
+        supervisor.pinned.store(true, Ordering::SeqCst);
+
+        // Stand-in for a preload that still owns its lease permit — the window in which
+        // `preload` publishes the pin.
+        let lease = supervisor
+            .gate
+            .enter()
+            .await
+            .expect("take one request permit");
+
+        let mut unload = Box::pin(supervisor.unload());
+        let waker = futures::task::noop_waker();
+        let mut cx = TaskContext::from_waker(&waker);
+        assert!(
+            unload.as_mut().poll(&mut cx).is_pending(),
+            "the manual unload must block on the exclusive gate"
+        );
+        assert!(
+            supervisor.pinned.load(Ordering::SeqCst),
+            "an unload that does not yet own the gate must not have cleared the pin"
+        );
+
+        // The concurrent preload publishes its pin and releases the lease; the unload then wins
+        // the gate and must serialise its clear against that publication.
+        drop(lease);
+        unload.await;
+
+        assert!(
+            !supervisor.pinned.load(Ordering::SeqCst),
+            "the unload that owned the gate clears the pin"
+        );
+        assert_dead(pid).await;
+        assert!(supervisor.state.lock().await.is_none());
+
+        retire(supervisor, dir).await;
+    }
+
+    /// Deterministic companion: relief makes no decision while a load still holds its lease,
+    /// and once the load publishes the pin under that lease, relief must observe it. This is
+    /// the guard against hoisting the pin read above the gate again.
+    #[tokio::test]
+    async fn relief_waits_for_a_loads_lease_before_deciding() {
+        let client = SidecarClient::new("http://127.0.0.1:1");
+        let (supervisor, _, pid, dir) = resident_supervisor("relief-lease", client).await;
+        let relief: Arc<dyn traits::PressureRelief> = supervisor.clone();
+
+        // A load's lease permit: `preload` publishes the pin before dropping exactly this.
+        let lease = supervisor
+            .gate
+            .enter()
+            .await
+            .expect("take one request permit");
+        let mut release = relief.release_memory();
+        let waker = futures::task::noop_waker();
+        let mut cx = TaskContext::from_waker(&waker);
+        assert!(
+            release.as_mut().poll(&mut cx).is_pending(),
+            "relief must wait for the load's lease"
+        );
+        assert!(
+            process::pid_alive(pid),
+            "relief must not kill while a load holds its lease"
+        );
+
+        // The load publishes its pin (as `preload` does) and then drops the lease.
+        supervisor.pinned.store(true, Ordering::SeqCst);
+        drop(lease);
+        assert!(
+            !release.await,
+            "relief must observe the pin the load published while it waited"
+        );
+        assert!(
+            process::pid_alive(pid),
+            "the pinned resident child survives relief"
+        );
+
+        retire(supervisor, dir).await;
     }
 
     #[tokio::test]

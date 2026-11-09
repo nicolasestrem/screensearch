@@ -36,10 +36,21 @@ impl PressureProbe for FakePressureProbe {
             cpu_pct: self.cpu_pct.load(Ordering::Relaxed) as f32,
             gpu_pct: None,
             gpu_monitored: false,
+            // Memory arm absent: this fake exercises the CPU-only path, and a test that
+            // wants memory pressure uses the unit tests in `kernel::throttle` instead.
+            mem_used_pct: 0.0,
+            commit_pct: 0.0,
+            avail_phys_mb: 0,
+            commit_charge_mb: 0,
+            commit_limit_mb: 0,
+            mem_monitored: false,
             sampled_at: now_ms(),
         }
     }
     fn gpu_monitored(&self) -> bool {
+        false
+    }
+    fn mem_monitored(&self) -> bool {
         false
     }
 }
@@ -381,4 +392,99 @@ async fn throttle_disabled_drains_everything() {
 
     kernel.stop_vision_scheduler().await;
     kernel.stop_workers().await;
+}
+
+/// Counts the times the governor asked for memory relief. Stands in for the inference
+/// supervisor, which cannot be exercised here without a real `llama-server`.
+struct CountingRelief {
+    calls: Arc<AtomicU32>,
+}
+
+#[async_trait]
+impl traits::PressureRelief for CountingRelief {
+    async fn release_memory(&self) -> bool {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        true
+    }
+}
+
+/// Polls `calls >= want` for up to 5 s.
+async fn wait_relief(calls: &Arc<AtomicU32>, want: u32) -> bool {
+    for _ in 0..100 {
+        if calls.load(Ordering::SeqCst) >= want {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    false
+}
+
+/// Level 2 is where the throttle stops merely pausing lanes and asks for the resident model's
+/// memory back. That request must be **edge-triggered**: once while the level is held (a long
+/// starvation window cannot become a kill/reload loop), and again only after a real recovery
+/// and a fresh escalation.
+#[tokio::test]
+async fn level_two_relief_fires_once_per_escalation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data_dir = tmp.path().to_path_buf();
+    let store: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().unwrap());
+    kernel::settings::save_settings(store.as_ref(), &throttle_settings(true))
+        .await
+        .unwrap();
+
+    let factory: CaptureFactory =
+        Arc::new(|_c, _rx| Ok(Box::new(NoCapture) as Box<dyn CaptureSource>));
+    let kernel = Kernel::new(
+        store.clone(),
+        Arc::new(NoOcr) as Arc<dyn OcrProvider>,
+        factory,
+        data_dir.join("frames"),
+        Readiness::default(),
+    );
+    kernel.set_advanced_config(throttle_advanced());
+
+    let calls = Arc::new(AtomicU32::new(0));
+    kernel.set_pressure_relief(Arc::new(CountingRelief {
+        calls: calls.clone(),
+    }));
+    let cpu = Arc::new(AtomicU32::new(99));
+    kernel.set_pressure_probe(Arc::new(FakePressureProbe {
+        cpu_pct: cpu.clone(),
+    }));
+    kernel.reconfigure_throttle().await;
+
+    assert!(
+        wait_level(&kernel, |l| l >= 2).await,
+        "throttle did not reach Sustained: {:?}",
+        kernel.throttle_status()
+    );
+    assert!(
+        wait_relief(&calls, 1).await,
+        "reaching level 2 did not ask for memory relief"
+    );
+    // Hold the level for several sample intervals: the request must not repeat.
+    tokio::time::sleep(Duration::from_millis(1_000)).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "relief must fire on entering level 2, not on every sample"
+    );
+
+    // Recover fully, then escalate again: that is a new emergency, so it asks again.
+    cpu.store(5, Ordering::Relaxed);
+    assert!(
+        wait_level(&kernel, |l| l == 0).await,
+        "throttle did not release after pressure recovered"
+    );
+    cpu.store(99, Ordering::Relaxed);
+    assert!(
+        wait_level(&kernel, |l| l >= 2).await,
+        "throttle did not escalate again after a new pressure event"
+    );
+    assert!(
+        wait_relief(&calls, 2).await,
+        "a second escalation must ask for relief again"
+    );
+
+    kernel.stop_throttle().await;
 }

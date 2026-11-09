@@ -88,6 +88,10 @@ export function StatusRail() {
                     throttling.sample.gpu_pct != null
                       ? `GPU ${Math.round(throttling.sample.gpu_pct)}%`
                       : "GPU not monitored"
+                  } · ${
+                    throttling.mem_monitored
+                      ? `RAM ${Math.round(throttling.sample.mem_used_pct)}% · Commit ${Math.round(throttling.sample.commit_pct)}%`
+                      : "RAM not monitored"
                   }`
                 : ""
             }`}

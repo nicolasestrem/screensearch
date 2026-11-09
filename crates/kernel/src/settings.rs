@@ -423,6 +423,7 @@ pub fn load_advanced_config_with_provenance(data_dir: &Path) -> AdvancedConfigLo
         uia_view_control_only => "uia_view_control_only",
     });
     let enrich = advanced_section!(table, dirty, from_file, "enrich", defaults.enrich.clone(), {
+        embed_idle_ttl_secs => "embed_idle_ttl_secs",
         embed_text => "embed_text",
         vision_batch_size => "vision_batch_size",
         vision_idle_enabled => "vision_idle_enabled",
@@ -455,6 +456,8 @@ pub fn load_advanced_config_with_provenance(data_dir: &Path) -> AdvancedConfigLo
         chrome_suppress_min_seen => "chrome_suppress_min_seen",
     });
     let throttle = advanced_section!(table, dirty, from_file, "throttle", defaults.throttle.clone(), {
+        commit_enter_pct => "commit_enter_pct",
+        commit_exit_pct => "commit_exit_pct",
         cpu_enter_pct => "cpu_enter_pct",
         cpu_exit_pct => "cpu_exit_pct",
         embed_text_floor => "embed_text_floor",
@@ -462,6 +465,8 @@ pub fn load_advanced_config_with_provenance(data_dir: &Path) -> AdvancedConfigLo
         exit_after_ms => "exit_after_ms",
         gpu_enter_pct => "gpu_enter_pct",
         gpu_exit_pct => "gpu_exit_pct",
+        mem_enter_pct => "mem_enter_pct",
+        mem_exit_pct => "mem_exit_pct",
         sample_interval_ms => "sample_interval_ms",
     });
 

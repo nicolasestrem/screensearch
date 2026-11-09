@@ -5,7 +5,13 @@
  * enrichment throttle (`03 §5`) consumes this to decide whether to back enrichment off
  * under sustained load. `gpu_pct` is `None` and `gpu_monitored` is `false` when Windows
  * exposes no GPU performance counters — a truthful "GPU not monitored" state, not an
- * error; the throttle then runs on CPU pressure alone (a weak-iGPU / VM machine).
+ * error; the remaining monitored resources still drive the throttle.
+ *
+ * Host memory is the third arm: `GlobalMemoryStatusEx` reports physical usage and
+ * `GetPerformanceInfo` reports system commit, so another application can drive the
+ * throttle even when ScreenSearch itself is idle. Both are usage percentages with
+ * the same exit-below-enter hysteresis convention. `mem_monitored = false` means
+ * no complete memory reading is available.
  */
 export type PressureSample = { 
 /**
@@ -20,6 +26,35 @@ gpu_pct: number | null,
  * Whether GPU monitoring is live; `false` → the UI shows "GPU not monitored".
  */
 gpu_monitored: boolean, 
+/**
+ * Physical-memory **usage** %, `0..=100`: `1 - available/total`. "Available" is what
+ * `GlobalMemoryStatusEx` reports (standby is reusable, so this is not "free RAM").
+ * `0.0` when `mem_monitored` is `false`.
+ */
+mem_used_pct: number, 
+/**
+ * System commit-charge usage %, `0..=100`: `CommitTotal / CommitLimit` from
+ * `GetPerformanceInfo`. Counts committed pages even before they become resident;
+ * reserving address space alone does not consume commit.
+ */
+commit_pct: number, 
+/**
+ * Available physical memory, MiB, including reusable standby pages.
+ */
+avail_phys_mb: number, 
+/**
+ * Current commit charge, MiB.
+ */
+commit_charge_mb: number, 
+/**
+ * Committed-memory limit, MiB — RAM plus the page file's commit allowance.
+ */
+commit_limit_mb: number, 
+/**
+ * Whether the memory reading is live; `false` → the throttle ignores the memory arm
+ * and the UI shows "memory not monitored" (mirrors `gpu_monitored`).
+ */
+mem_monitored: boolean, 
 /**
  * When this sample was taken, unix epoch ms (the kernel clock unit, `03 §4`).
  */

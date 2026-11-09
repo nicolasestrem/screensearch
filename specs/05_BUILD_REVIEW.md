@@ -9,6 +9,160 @@ measured budget and review-fix pass included, is archived at
 
 ## Current arc
 
+### 2026-11-09 — Off-arc: memory pressure arm, level-2 relief, lazy embedder (branch, not shipped)
+
+**Scope.** Branch `feat/memory-pressure-throttle`, built from a measurement pass against the
+installed 0.4.5 build. Off-arc, no phase: four gaps found by that measurement, of which three are
+implemented here and the fourth (`06` #23, the GPU arm's blindness) is measured and recorded with
+options only, by instruction. Capture, OCR and storage stay structurally outside the worker pool —
+they never throttle — and screenpipe was never touched.
+
+**Why, and what the baseline actually says.** Every number below is the **installed 0.4.5 baseline,
+measured before any change**, not this branch's footprint:
+
+| Reading (installed 0.4.5, before this branch) | Value |
+|---|---|
+| App private bytes, text embedding model resident | 1352 MiB |
+| App private bytes, `enrich.embed_text = false` | 119 MiB (delta 1233 MiB) |
+| Available physical RAM held while the sidecar was loaded | ~5.8 GB |
+| Commit charge held over the same window | ~8.4 GB |
+| VRAM held over the same window | ~6.8 GB |
+| GPU as PDH sums it, peak during vision inference | 37.6 % (`engtype_3d` max 25.5 %, `compute 0/1` 0 %) |
+| GPU as `nvidia-smi` reads it, same inference | 96 % |
+
+Two of those motivated the change. The shipped throttle's arms are CPU and GPU only, so a machine
+that is out of RAM while ScreenSearch is idle never throttles: no `vision_tag` claims are happening,
+and CPU/GPU stay quiet. And level 2 only paused lanes — it freed nothing, because the 6–8 GiB is
+held by the sidecar, not by the workers.
+
+The 119 MiB row is **not** an unload measurement. It is the same app with the embedder disabled, so
+the delta says what the model costs. A separate isolated harness with the real cached model now
+verifies the holder's own unload/reload lifecycle (next section); it does not project that 119 MiB
+onto the whole app, and the reload latency is still untimed.
+
+**What changed, by seam.**
+- `traits`: `PressureSample` gains `mem_used_pct`, `commit_pct`, `avail_phys_mb`,
+  `commit_charge_mb`, `commit_limit_mb` and `mem_monitored`; `ThrottleStatus` gains
+  `mem_monitored`; `PressureProbe` gains `mem_monitored()`; `PressureRelief::release_memory()` is the
+  new async relief contract. All re-exported, bindings regenerated.
+- `sysmon`: `mem.rs` reads physical usage from `GlobalMemoryStatusEx` (`ullTotalPhys`/`ullAvailPhys`)
+  and system commit from `GetPerformanceInfo` (`CommitTotal`/`CommitLimit` × `PageSize`) — two
+  syscalls, and both must succeed or the sample is `mem_monitored = false`. MiB fields floor.
+- `kernel`: the clock-injected `ThrottleMachine` gains the memory hysteresis (either reading hot at
+  its enter threshold; both must cool below their exit thresholds; an unmonitored sample leaves the
+  arm inactive) and the governor asks `io.relief` only on the transition into Sustained
+  (`should_relieve(prev, lvl)`), awaited inline so a level is not republished mid-release. The hook
+  is a late-bound `Arc<RwLock<Option<Arc<dyn PressureRelief>>>>`, so the kernel still depends only
+  on `traits` and the composition root stays the owner.
+- `inference`: one teardown path, `unload_reasoned(reason, skip_if_pinned)`, takes the request gate
+  first and consults the pin only after it, so a preload landing during relief cannot be killed;
+  it emits `Evicted`. Relief is rule A: `skip_if_pinned = true`, a pinned model survives and the
+  skip is logged. Manual Unload clears the pin and passes `false`.
+- `embeddings`: `LazyEmbedder` holder — allocates nothing until first use or eager `load_now`,
+  single-flight loads, metadata without loading, a 30 s sweep that evicts only when no embed still
+  holds the session (strong count 1 under the slot write); sweep and explicit unload return `false`
+  while one is active, the load gate spans teardown so a reload cannot overlap it, a completing
+  embed stamps last-use before releasing its handle, teardown off the async worker thread.
+- `src-tauri`: `init_embeddings` builds `Arc<LazyEmbedder<FastEmbedProvider>>`, loads eagerly so a
+  first search after `Ready` is not cold, arms the unloader only after a successful load, and
+  attaches it; the composition root installs the supervisor as `dyn PressureRelief`.
+- Settings/UI: four memory thresholds and one idle TTL, all `file-only` and clamped, so the closed
+  26-key UI ceiling is untouched. The Settings · Advanced throttle readout shows `RAM 71% (8.3 GiB
+  available)` plus a Commit percentage from the same sample, reports available memory rather than
+  "free", says "not monitored" instead of 0 %, and its level-2 line says the app tries to free the AI
+  model's memory unless the user explicitly kept it loaded. The rail tooltip adds RAM and commit
+  percentages.
+
+**Narrow runtime evidence: the real-cached-model harness (PASS).** Run by the parent on 2026-11-09
+with `path` dependencies on this branch's `embeddings`, `sysmon` and `traits`, the repository
+lockfile, and the real fastembed cache copied to `Temp/ss-memory-proof/cache`. It did not launch the
+app and changed no real profile. Raw artifact: `artifact://288`. The branch's two ignored real-model
+tests later ran separately against a copied cache on the final holder code and passed 2/0
+(`artifact://325/314`), so the lifecycle is no longer covered only by this one-off harness.
+
+| Harness process private bytes | Value |
+|---|---|
+| Before the model was loaded | 7 MiB |
+| After `load_now` with the real model | 1228 MiB |
+| After the idle sweep evicted it (TTL 2 s) | 26 MiB |
+| After the next embed reloaded it | 1234 MiB |
+
+The real background sweep logged `loaded 21:17:46.376`, `unloaded 21:18:16.484` and `reloaded
+21:18:24.739` (UTC as recorded); an explicit `unload()` after 35 s returned `false` because the
+sweep — not that call — had already evicted the model, so nothing was resident to unload (no embed was
+in flight). The query before and after the cycle returned
+identical 768-dim vectors, `maxdiff 0`. The host sample at the same run read physical 69.08 %, commit
+57.48 %, available 9841 MiB, charge 30068 MiB, limit 52310 MiB.
+
+What it establishes: with a real model, the holder loads on demand, the real 30 s sweep evicts it
+after the TTL, the next embed reloads it, and embeddings are unchanged across the cycle. What it does
+not: the whole app's idle footprint (26 MiB is the harness process, and the 119 MiB figure came from a
+different configuration), reload latency (the unload→reloaded gap includes harness waiting, not a
+timed reload), level-2 relief, or any Tauri/IPC path.
+
+**UI proof, and what it does not prove.** The parent rendered the real `ThrottleReadout` component in
+a disposable Vite harness with an explicitly illustrative `QueryClient` fixture (not native
+telemetry), across the populated-L2, missing-GPU, missing-memory, before-first-sample, loading,
+error and off states, and inspected Chromium screenshots at 1000 px pine-light and 360 px ink-dark;
+then 360/1000 px × pine-light, pine-dark, ink-light, ink-dark reported `scrollWidth <= innerWidth`
+in all eight combinations with no browser errors. After the copy settled on the final plain-language
+wording, that wording was rendered and inspected at 360 px pine-dark: `scrollWidth` 360, no browser
+errors. The fixtures and the temporary server were removed afterwards. This is **browser component
+rendering evidence only** — it is not Tauri/WebView2 acceptance, not real telemetry, and not proof
+that a level-2 relief actually unloads a model or that the idle TTL returns memory.
+
+**Status: gate3 green on build and tests, with explicit caveats.** Gate history is kept because it is
+what the fixes came from: the first full gate had UI ci/lint/build, MCP-sidecar staging,
+`cargo fmt --check`, strict clippy and the workspace build green, then failed the full `cargo test` on
+the new Windows `idle_ttl_bounds_eviction` test (`Instant::checked_sub` rewind); the forward-only
+explicit-`Instant` clock and completion-handle race fixed it. Gate2 (`artifact://325/314`) then ran
+embeddings unit 8 passed / 2 ignored, both ignored real-model tests 2/0 on a copied cache against the
+final code, and `inference` 125, `no_orphan` 1, `reap` 3, kernel 228 unit + integration (throttle 3,
+settings 32) green, but stopped at `rebuild::settings::spec_table_parses_to_the_committed_sets` (left
+49, right 44) — an incidental hardcoded file-only count while the runtime policy already parses 49
+from `03`. The parent removed the obsolete `file_only_count` accessor (no production callers,
+grep-confirmed) and the 44 / deleted-9 assertions, keeping the closed UI budget as
+`ui_settings_respect_the_closed_ceiling` (`<= 26`). The narrow rebuild test passed 6/0 first in the
+final artifact, then gate3 (`artifact://327` full, `artifact://331` tail, log
+`C:/Users/nicol/AppData/Local/Temp/ss-memory-gate.log`) recorded:
+
+```text
+ui_ci EXIT=0
+ui_lint EXIT=0
+ui_build EXIT=0
+stage_mcp EXIT=0
+cargo_fmt EXIT=0
+cargo_clippy EXIT=0
+cargo_build EXIT=0
+cargo_test EXIT=0
+BINDINGS_REGEN_CHANGED=[]
+bindings_git_diff EXIT=1
+```
+
+The verified Node-parser aggregate over the full workspace (doctests counted as suites) was exactly
+`{"suites":86,"passed":1650,"failed":0,"ignored":17}`. `BINDINGS_REGEN_CHANGED=[]` means the four
+already-regenerated bindings hashed identically before and after `cargo_test`; the non-zero
+`bindings_git_diff` was gate3's expected pre-commit caveat — at that point the bindings were
+uncommitted and no commit was authorized — so gate3's record does not call the CI binding guard green.
+Since then the user authorized committing on the new branch `feat/system-memory-relief`, and all 31
+feature paths are staged with the generated bindings: `git diff --exit-code -- ui/src/bindings` now
+exits 0 with no output, and the staged diff check excluding generated TypeScript also exits 0. The
+guard is therefore satisfied by the staged tree, not pending; nothing here claims the commit has
+landed — the parent's commit is the next step.
+The two real-model tests (2/0 above) and the background-sweep harness (`artifact://288`) remain the
+narrower runtime evidence. This is build/test evidence, not a whole-app measurement: no
+changed-build idle footprint, timed reload, real level-2 relief or native Tauri acceptance is claimed.
+This documentation pass ran no build, test, lint, formatter or git command, did not run the app, and
+touched no real profile, model file or DB.
+
+**Open on this branch (recorded, not claimed as met).**
+- Whole-app live evidence: the changed build's idle private bytes, a timed reload, and one real
+  level-2 relief on a starved machine. The isolated harness covers only the holder lifecycle, and
+  the baseline table above cannot substitute.
+- `06` #23 GPU blindness: findings and three options only; no NVML probe, no counter change.
+- `06` #150 (0.4.5 launch panic): observed on the measurement pass's launch attempts and worked
+  around with a local relaunch harness (not product code); untouched here.
+
 ### 2026-11-09 — Your-Universe: Localtime (standalone deliverable, not product code)
 
 **Scope.** `Your-Universe/` holds "Localtime", a self-contained Three.js living hillside district

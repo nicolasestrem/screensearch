@@ -596,20 +596,68 @@ by the baseline rule (0.4.5 D2): v14 is created whole, and this step survives on
   settings (§8). Embedding workers may run on a background trigger; vision workers honor the
   on-demand/timer/idle mode strictly.
 - **Smart enrichment throttle (0.2.1, opt-in, default OFF).** When `throttle.enabled` is on, the
-  pool reacts to *sustained* CPU/GPU pressure with graded backpressure: at level ≥ 1 (High) the
+  pool reacts to *sustained* CPU/GPU/memory pressure with graded backpressure: at level ≥ 1 (High) the
   claim-kind gate drops `vision_tag` from the claimable set (heavy enrichment
   pauses; 0.3.0 PR4 removed `embed_image`); at level 2 (Sustained) an in-flight gate additionally floors concurrent `embed_text` to
-  `throttle.embed_text_floor` (≥1). **Capture / OCR / storage never throttle** — they are
+  `throttle.embed_text_floor` (≥1), **and the resident inference model is released** (see below).
+  **Capture / OCR / storage never throttle** — they are
   structurally outside the worker pool. Pressure is read through a `PressureProbe` seam injected by
   the composition root (the kernel forbids `unsafe`, mirroring the `IdleSource` / `BackfillControl`
   seam); the Windows-native impl lives in the `sysmon` crate (CPU via `GetSystemTimes`, GPU via PDH
-  `\GPU Engine(*)\Utilization Percentage` English counters, summed across engines — vendor-neutral).
+  `\GPU Engine(*)\Utilization Percentage` English counters, summed across engines — vendor-neutral;
+  physical memory via `GlobalMemoryStatusEx`, system commit charge via `GetPerformanceInfo`
+  (`CommitTotal`/`CommitLimit` scaled by `PageSize`)).
+  Those GPU counters are vendor-neutral but not universal: on the maintainer's NVIDIA box the
+  bundled sidecar's Vulkan compute is filed under `engtype_3d` alone (25.5 % peak; 37.6 % summed
+  across engines) while `nvidia-smi` reads 96 %, so the GPU arm stays below `gpu_enter_pct` for that
+  workload. `06` #23 records the measurement and three options; nothing is implemented. For a
+  GPU-heavy workload that leaves host memory and CPU quiet, no arm fires — that is the limit `07`
+  records, and the memory arm does not pretend to be per-process accounting.
   When GPU counters are absent the probe latches a truthful **"GPU not monitored"** state and the
-  throttle runs CPU-only. A pure `ThrottleMachine` (clock-injected, no Win32) applies hysteresis
+  throttle runs on the remaining arms; the memory arm needs two syscalls per sample and both must
+  succeed, otherwise that sample reports `mem_monitored = false` (never a fabricated 0 %); the
+  reading is per sample, not latched.
+  **The memory arm exists because CPU/GPU pressure only sees a *busy* machine.** A machine can be out
+  of RAM while ScreenSearch is idle — a large editor, another recorder, several browsers, a scheduled
+  job — and that is the failure the user notices (the app cannot allocate). Both *physical usage*
+  (`1 − available/total`) and *system commit usage* (`committed/limit`) are watched: commit counts
+  pages a process has committed, not pages that are resident, so it moves for a process that has
+  committed far more than it is actively using — before physical RAM runs out. (Reserving address
+  space charges nothing and is not what this arm watches.) Both are expressed as **usage**
+  percentages so they share the CPU/GPU convention (`*_exit_pct` < `*_enter_pct`), and the byte
+  counts (`avail_phys_mb`, `commit_charge_mb`, `commit_limit_mb`) travel
+  in the sample so the UI can show "8.3 GiB available" (available, never "free") and a commit
+  percentage rather than a bare usage number. Either reading at its enter threshold raises the
+  level; **both** must fall below their exit thresholds before an exit dwell can lower it, because
+  they describe the same exhausted resource.
+  **Level-2 relief:** pausing `vision_tag` frees nothing — the 6–8 GiB is held by the sidecar, not by
+  the workers. So on the *transition into* level 2 (edge-triggered, never per tick) the governor calls
+  a `PressureRelief` hook (`dyn` over `traits`, implemented by the `ModelSupervisor`) that unloads the
+  resident `llama-server` exactly like the manual Unload control: drain the request gate, kill the
+  child, emit `Evicted`. **Relief outranks the backfill's keep-warm** — keep-warm exists so a drain is
+  not cold-started between batches, which is not a promise to hold VRAM while the machine is out of
+  memory — but **never an explicit user preload**: a model pinned by the user's own load stays
+  resident and relief logs the skip. Holding level 2 does not retry; a new escalation (a full exit
+  dwell and a fresh enter dwell) is the only way to ask again, so a long starvation window cannot
+  become a kill/reload loop.
+  A pure `ThrottleMachine` (clock-injected, no Win32) applies hysteresis
   (`*_exit_pct` < `*_enter_pct`) and dwell timers, stepping one level per dwell; a kernel governor
   loop samples the probe each `throttle.sample_interval_ms`, publishes the level into a shared
   `AtomicU8` the pool reads (no pool restart on level change), and broadcasts `throttle_changed`
   (§7). All thresholds are settings, never hardcoded (§8).
+- **The in-process text embedder is a lazy holder with an idle TTL.** `LazyEmbedder` allocates
+  nothing until the first `embed_texts` (single-flight, so `N` concurrent callers start exactly one
+  ONNX session) or an eager `load_now` at startup, so a first search after readiness reported
+  `Ready` does not pay a cold start. `dim()` and `text_model_name()` are metadata only and never
+  load the model. An embed holds the session for its whole run and stamps last-use as it finishes,
+  even when it fails. A sweep every 30 s evicts only when no embed still holds the session — the
+  slot is taken under its write lock and the session's strong count must be 1, the slot itself — so
+  neither the sweep nor an explicit unload can drop a session out from under a running embed (both
+  return `false`), and a second session cannot load alongside it. The load gate spans teardown, so
+  a reload cannot overlap it. Once `enrich.embed_idle_ttl_secs` has passed with no embed (`0`
+  disables the sweep), the sweep releases the session; the next embed reloads. Session teardown runs
+  off the async worker thread. This bounds the embedder's resident footprint when the app is idle;
+  it changes no capture, OCR or worker contract.
 
 ## 6. Inference sidecar — protocol & lifecycle (hard requirements)
 
@@ -627,7 +675,11 @@ stops and restarts with the new GGUF (vision needs `--mmproj`; answer does not).
    this app owns (tracked via a pidfile + a unique command-line sentinel arg); never kill an
    unrelated process.
 3. **Lazy spawn + idle evict.** Spawn on first request needing a model; stop after
-   `sidecar.idle_ttl_secs` of no requests (frees GPU/RAM — the footprint control).
+   `sidecar.idle_ttl_secs` of no requests (frees GPU/RAM — the footprint control). While the idle
+   backfill is draining, eviction is suppressed (keep-warm) — **except under level-2 memory relief**
+   (§5), which releases the model regardless: relief outranks keep-warm, because a keep-warm drain
+   must not hold the machine's memory hostage. An explicit user preload (`pinned`) is the one thing
+   that outranks relief; it is reported as a skipped release, never a silent unload.
 4. **Health + restart.** Poll `/health`; on hang/crash, restart and requeue the in-flight job.
 5. **mmproj same-family invariant.** Never pair a vision model with a mismatched projector.
 
@@ -683,11 +735,15 @@ nudge, badge, or score** is produced (D10/D11). `model_download` (payload `Model
 per-lane GGUF progress) and `setup_changed` (2026-10-20; payload the whole `SetupStatus`
 snapshot, `§7g`) drive the download/setup progress UI.
 
-**`ThrottleStatus` shape** (0.2.1, smart enrichment throttle): `{ enabled: bool, level: u8 (0=Normal
-/ 1=High / 2=Sustained), sample: Option<PressureSample>, gpu_monitored: bool }`, where
-`PressureSample = { cpu_pct: f32, gpu_pct: Option<f32>, gpu_monitored: bool, sampled_at: i64 }`.
+**`ThrottleStatus` shape** (0.2.1, smart enrichment throttle; memory fields added 2026-11-09):
+`{ enabled: bool, level: u8 (0=Normal / 1=High / 2=Sustained), sample: Option<PressureSample>,
+gpu_monitored: bool, mem_monitored: bool }`, where `PressureSample = { cpu_pct: f32,
+gpu_pct: Option<f32>, gpu_monitored: bool, mem_used_pct: f32, commit_pct: f32, avail_phys_mb: u64,
+commit_charge_mb: u64, commit_limit_mb: u64, mem_monitored: bool, sampled_at: i64 }`.
 `gpu_monitored=false` (and `gpu_pct=None`) is the truthful "GPU not monitored" state — the throttle
-then runs CPU-only.
+then runs on the remaining arms. `mem_monitored=false` is the same honest state for the memory arm:
+the percentages read `0.0` and the UI says "not monitored" rather than printing 0 %. Both flags
+mirror the probe so the UI can say so before the first sample exists.
 
 **`Readiness` shape** (defined 2026-06-21, was silent — see `07` gap #3): each of
 `capture | db | embed_model | sidecar` is a `ComponentReadiness { status, detail? }`, where
@@ -1685,10 +1741,10 @@ reader; the replaced evidence rows disappear with the old row. Windows are unix 
 
 ## 8. Configuration / settings (keys in `settings`)
 
-Every key below lives in the `settings` KV table; the `file-only` keys are additionally read from
-`advanced.toml` (app data dir, next to `screensearch.db`) at startup — one `[section]` per key prefix
-(`[capture]`, `[sidecar]`, …) with the suffix as the field name. Thresholds are settings, never
-hardcoded, per `§3b`/`§5` and the guardrail in `04 §4`.
+Every key below lives in the `settings` KV table; 48 of the 49 `file-only` rows are additionally
+read from `advanced.toml` (app data dir, next to `screensearch.db`) at startup — one `[section]` per
+key prefix (`[capture]`, `[sidecar]`, …) with the suffix as the field name. `app.tray_toast_done` is
+the exception — a settings-KV marker (Where `—`), not an `advanced.toml` key. Thresholds are settings, never hardcoded (`§3b`/`§5`, `04 §4`).
 
 **Settings v2 (0.4.5 D6, D9).** The Settings UI is a **closed set of 26 keys**, exactly the rows
 whose Disposition is `UI` below, and nothing else may be added to it; that ceiling is binding (0.4.5
@@ -1737,6 +1793,7 @@ Obsidian folder settings (`memory.*`, owned by those sections and not counted in
 | `capture.uia_suppress_during_input_ms` | `500` | file-only | advanced.toml | Clamp 0..=10000; `Timer` frames within this window of the last keyboard/mouse input skip UIA → OCR, `0` disables. The window always applies now that the `uia_run_on_interactive` bypass retired with the knob. |
 | `capture.uia_text_enabled` | `true` | file-only | advanced.toml | Default ON; OCR carries any failure/timeout/thin-yield; hot-applies per frame. |
 | `capture.uia_view_control_only` | `true` | file-only | advanced.toml | Default ON; control view collapses a Chromium page's per-text-run node explosion, off = raw view, far heavier. |
+| `enrich.embed_idle_ttl_secs` | `900` | file-only | advanced.toml | Clamp 0..=86400; idle seconds before the in-process fastembed model is released, reloading on the next embed. `0` = never unload. The holder loads on first embed (or eagerly at startup so a first search is not cold) and is swept every 30 s; `dim`/model-name metadata never load the model. 0.4.5 baseline: app private 1352 MiB with the model resident vs 119 MiB with `enrich.embed_text=false` (a different configuration). An isolated real-model harness verified the holder itself — 1228 MiB loaded → 26 MiB after the sweep → 1234 MiB reloaded, identical 768-dim vector — but the whole-app footprint and reload latency remain unmeasured. The default is minutes because a cold reload costs a visible pause. |
 | `enrich.embed_text` | `true` | file-only | advanced.toml | Text-embedding lane toggle. |
 | `enrich.image_embeddings` | `—` | deleted | — | Removed 0.3.0 PR4 together with the image lane; no live consumer. |
 | `enrich.vision_batch_size` | `20` | file-only | advanced.toml | Clamp 1..=500; max still-untagged frames a timer/idle tick enqueues. |
@@ -1774,14 +1831,18 @@ Obsidian folder settings (`memory.*`, owned by those sections and not counted in
 | `text.chrome_region_buckets` | `8` | file-only | advanced.toml | Grid resolution for `region_bucket`. |
 | `text.chrome_suppress_min_seen` | `12` | file-only | advanced.toml | Appearances before a signature is marked chrome. |
 | `text.include_chrome_default` | `false` | UI | Intelligence | Default search uses `content_text`; on = chrome text included. |
+| `throttle.commit_enter_pct` | `90.0` | file-only | advanced.toml | Clamp 1..=100; system commit usage% (`committed/limit` from `GetPerformanceInfo`) at which pressure begins. Catches a process that committed far more than it is actively using: committed pages charge whether or not they are resident, while plain reservation charges nothing. |
+| `throttle.commit_exit_pct` | `80.0` | file-only | advanced.toml | Clamp 0..=enter−1; hysteresis, must sit below `commit_enter_pct`. |
 | `throttle.cpu_enter_pct` | `85.0` | file-only | advanced.toml | Clamp 1..=100; busy% at which CPU pressure begins. |
 | `throttle.cpu_exit_pct` | `65.0` | file-only | advanced.toml | Clamp 0..=enter−1; hysteresis, must sit below `cpu_enter_pct`. |
 | `throttle.embed_text_floor` | `1` | file-only | advanced.toml | Clamp 1..=16; min concurrent `embed_text` workers at level 2. |
-| `throttle.enabled` | `false` | UI | Advanced | Master switch; throttle is opt-in and OFF by default. The eight threshold rows are `file-only`. |
+| `throttle.enabled` | `false` | UI | Advanced | Master switch; throttle is opt-in and OFF by default. The twelve threshold rows are `file-only`. |
 | `throttle.enter_after_ms` | `5000` | file-only | advanced.toml | Clamp 500..=120000; sustained-enter dwell before stepping up a level. |
 | `throttle.exit_after_ms` | `8000` | file-only | advanced.toml | Clamp 500..=300000; recovered-exit dwell before stepping down a level. |
 | `throttle.gpu_enter_pct` | `90.0` | file-only | advanced.toml | Clamp 1..=100; unused when GPU is unmonitored (`§5`). |
 | `throttle.gpu_exit_pct` | `70.0` | file-only | advanced.toml | Clamp 0..=enter−1; hysteresis, must sit below `gpu_enter_pct`. |
+| `throttle.mem_enter_pct` | `90.0` | file-only | advanced.toml | Clamp 1..=100; physical-memory usage% (`1 − available/total` from `GlobalMemoryStatusEx`) at which pressure begins. 90/80 sits above this app's own measured vision peak on the maintainer's box (77 % physical, 67 % commit), so the default does not throttle its own vision batches there; a host whose own workload does cross 90 % is throttled by design, which is why this is a file-only setting rather than a fixed promise. |
+| `throttle.mem_exit_pct` | `80.0` | file-only | advanced.toml | Clamp 0..=enter−1; hysteresis, must sit below `mem_enter_pct`. |
 | `throttle.sample_interval_ms` | `1000` | file-only | advanced.toml | Clamp 250..=10000; governor probe/sample cadence. |
 | `ui.appearance` | `pine-light` | UI | General | Enum `pine-light` / `pine-dark` / `pine-system` / `ink-light` / `ink-dark` / `ink-system`; `*-system` follows the OS light/dark preference within the chosen accent. Consumer: the shell theme applier (sets `data-theme` on the root element) plus Settings > General. P7 renders the select and resolves `*-system` through `prefers-color-scheme`; P3 adds it to the settings v2 registry and baseline (0.4.5 P2 pick, 2026-11-04; `UI_REFERENCE §1`/`§2`). |
 

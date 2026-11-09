@@ -57,6 +57,7 @@ impl AdvancedConfig {
         self.capture.uia_suppress_during_input_ms =
             clamp_u32(self.capture.uia_suppress_during_input_ms, 0, 10_000);
 
+        self.enrich.embed_idle_ttl_secs = clamp_u32(self.enrich.embed_idle_ttl_secs, 0, 86_400);
         self.enrich.vision_batch_size = clamp_u32(self.enrich.vision_batch_size, 1, 500);
         self.enrich.vision_idle_secs = clamp_u32(self.enrich.vision_idle_secs, 60, 86_400);
         self.enrich.worker_concurrency = clamp_u32(self.enrich.worker_concurrency, 1, 16);
@@ -99,6 +100,12 @@ impl AdvancedConfig {
 
         // Each exit threshold stays strictly below its enter threshold so the hysteresis
         // invariant holds even against a hand-edited file.
+        self.throttle.commit_enter_pct = clamp_f32(self.throttle.commit_enter_pct, 1.0, 100.0);
+        self.throttle.commit_exit_pct = clamp_f32(
+            self.throttle.commit_exit_pct,
+            0.0,
+            self.throttle.commit_enter_pct - 1.0,
+        );
         self.throttle.cpu_enter_pct = clamp_f32(self.throttle.cpu_enter_pct, 1.0, 100.0);
         self.throttle.cpu_exit_pct = clamp_f32(
             self.throttle.cpu_exit_pct,
@@ -110,6 +117,12 @@ impl AdvancedConfig {
             self.throttle.gpu_exit_pct,
             0.0,
             self.throttle.gpu_enter_pct - 1.0,
+        );
+        self.throttle.mem_enter_pct = clamp_f32(self.throttle.mem_enter_pct, 1.0, 100.0);
+        self.throttle.mem_exit_pct = clamp_f32(
+            self.throttle.mem_exit_pct,
+            0.0,
+            self.throttle.mem_enter_pct - 1.0,
         );
         self.throttle.enter_after_ms = clamp_u32(self.throttle.enter_after_ms, 500, 120_000);
         self.throttle.exit_after_ms = clamp_u32(self.throttle.exit_after_ms, 500, 300_000);
@@ -183,6 +196,9 @@ impl Default for CaptureAdvanced {
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 #[serde(default)]
 pub struct EnrichAdvanced {
+    /// `enrich.embed_idle_ttl_secs` - idle seconds before the in-process embedding model
+    /// is unloaded to give its ~1.2 GiB back; `0` never unloads. Reload is on demand.
+    pub embed_idle_ttl_secs: u32,
     /// `enrich.embed_text` - text-embedding lane toggle.
     pub embed_text: bool,
     /// `enrich.vision_batch_size` - frames a timer/idle tick enqueues.
@@ -198,6 +214,9 @@ pub struct EnrichAdvanced {
 impl Default for EnrichAdvanced {
     fn default() -> Self {
         Self {
+            // 15 minutes: long enough that an active session never pays the ~1.4 s reload,
+            // short enough that an app left running overnight is not holding the model.
+            embed_idle_ttl_secs: 900,
             embed_text: true,
             vision_batch_size: 20,
             vision_idle_enabled: false,
@@ -328,6 +347,12 @@ impl Default for TextAdvanced {
 #[ts(export, export_to = "../../../ui/src/bindings/")]
 #[serde(default)]
 pub struct ThrottleAdvanced {
+    /// `throttle.commit_enter_pct` - commit-charge usage % at which pressure counts
+    /// toward raising a level.
+    pub commit_enter_pct: f32,
+    /// `throttle.commit_exit_pct` - commit-charge usage % below which pressure counts
+    /// toward lowering.
+    pub commit_exit_pct: f32,
     /// `throttle.cpu_enter_pct` - CPU busy % at which pressure counts toward raising a level.
     pub cpu_enter_pct: f32,
     /// `throttle.cpu_exit_pct` - CPU busy % below which pressure counts toward lowering.
@@ -342,6 +367,10 @@ pub struct ThrottleAdvanced {
     pub gpu_enter_pct: f32,
     /// `throttle.gpu_exit_pct` - GPU utilization % exit threshold.
     pub gpu_exit_pct: f32,
+    /// `throttle.mem_enter_pct` - physical-memory usage % enter threshold.
+    pub mem_enter_pct: f32,
+    /// `throttle.mem_exit_pct` - physical-memory usage % exit threshold.
+    pub mem_exit_pct: f32,
     /// `throttle.sample_interval_ms` - probe/sample cadence.
     pub sample_interval_ms: u32,
 }
@@ -349,6 +378,10 @@ pub struct ThrottleAdvanced {
 impl Default for ThrottleAdvanced {
     fn default() -> Self {
         Self {
+            // Above the measured installed-build vision peak on the reference host
+            // (77 % physical, 67 % commit). Other machines can tune both bands.
+            commit_enter_pct: 90.0,
+            commit_exit_pct: 80.0,
             cpu_enter_pct: 85.0,
             cpu_exit_pct: 65.0,
             embed_text_floor: 1,
@@ -356,6 +389,8 @@ impl Default for ThrottleAdvanced {
             exit_after_ms: 8_000,
             gpu_enter_pct: 90.0,
             gpu_exit_pct: 70.0,
+            mem_enter_pct: 90.0,
+            mem_exit_pct: 80.0,
             sample_interval_ms: 1_000,
         }
     }

@@ -144,8 +144,8 @@ export function useAdvancedConfig() {
 }
 
 /**
- * Enrichment-throttle status: live CPU/GPU pressure, level, and whether the GPU is
- * monitored. Fetched once, then kept live by the `throttle_changed` event (see
+ * Enrichment-throttle status: live CPU/GPU/memory pressure, level, and which resources
+ * are monitored. Fetched once, then kept live by the `throttle_changed` event (see
  * useLiveEvents) which the governor emits each sample tick while enabled.
  */
 export function useThrottleStatus() {

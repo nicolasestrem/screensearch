@@ -23,7 +23,50 @@ that only Settings reaches. Promote any of them here when it enters an approved 
 
 ## Current arc
 
-Nothing yet: the 0.4.5 arc shipped and is archived.
+### 2026-11-09 — Off-arc: four gaps in the throttle and the sidecar lifecycle (in flight)
+
+Branch `feat/memory-pressure-throttle`, built from a measurement pass against the installed 0.4.5
+build (32 GiB RAM, RTX 5060 Ti, screenpipe capturing alongside). It is deliberately **not** an arc and
+adds no phase: the four gaps were found by that measurement and each one is a small, self-contained
+change inside existing seams.
+
+1. **Memory arm for the enrichment throttle** (`03 §5/§8`): physical usage (`GlobalMemoryStatusEx`)
+   and system commit charge (`GetPerformanceInfo`, `CommitTotal`/`CommitLimit` × `PageSize`), same
+   hysteresis and dwell model as CPU/GPU, four new `file-only` keys, so another application can
+   throttle enrichment while ScreenSearch itself is idle.
+2. **Level-2 relief** (`03 §5/§6`): entering Sustained now asks the supervisor to release the resident
+   `llama-server` through a `PressureRelief` hook, outranking the backfill's keep-warm and never an
+   explicit pin (a pinned model is left resident and the skip is logged).
+3. **Embedder idle-unload** (`03 §8`): the in-process fastembed model is dropped after
+   `enrich.embed_idle_ttl_secs` (default 900 s, `0` = never) with no embed and no embed in flight —
+   eviction is refused while a session is in use — and reloaded on demand; the fifth new `file-only`
+   key, behind a lazy holder that loads on first use.
+4. **`06` #23 GPU blindness**: re-measured and recorded with three fix options; no implementation.
+
+Recorded here because the measurement itself is the finding: CPU/GPU arms cannot see a machine that is
+out of RAM while this app is idle, and the shipped throttle's level 2 only paused lanes — it freed no
+memory at all, because the 6–8 GiB is held by the sidecar rather than by the workers. Status at the
+time of writing: the code is on the branch, and an isolated harness with the real cached model has
+verified the embedder's load → idle-unload → reload lifecycle (`05`); **no whole-app run has been
+measured for memory** — the installed-0.4.5 numbers in `05` are baseline, not the changed build's
+footprint — and the first ordered gate passed its build stages but failed its full test on the new
+Windows `idle_ttl_bounds_eviction` test. After the forward-only clock and completion-handle fixes,
+gate2's targeted and workspace suites passed (embeddings unit 8/2 ignored, both ignored real-model
+tests 2/0 on the final code; `inference` 125; `no_orphan` 1; `reap` 3; kernel 228 incl. throttle 3 and
+settings 32) but the full gate stopped at `rebuild::settings::spec_table_parses_to_the_committed_sets`
+(49 against an incidental hardcoded 44, now corrected in the test). The narrow rebuild test then
+passed 6/0, and gate3 (`artifact://327`/`331`) recorded EXIT=0 on every build and test step with the
+full workspace aggregate `{"suites":86,"passed":1650,"failed":0,"ignored":17}` and
+`BINDINGS_REGEN_CHANGED=[]`; its `bindings_git_diff` EXIT=1 was the pre-commit caveat (nothing
+committed, no commit authorized). Since then the user authorized committing on the new branch
+`feat/system-memory-relief`; all 31 feature paths are staged with the generated bindings, and
+`git diff --exit-code -- ui/src/bindings` now exits 0 with no output (the staged diff check excluding
+generated TypeScript also exits 0), so the guard is satisfied by the staged tree. Nothing is committed
+yet. No whole-app runtime footprint, reload latency, real level-2 relief or changed-build native
+acceptance is claimed. Left open by this change: `06` #23 (GPU arm), `06` #150
+(the 0.4.5 launch panic, unrelated and untouched), the whole-app idle-footprint and timed-reload
+measurement, one real level-2 relief on a starved machine, and the pinned rule in Maintainer
+decisions below, decided but reversible.
 
 ## Open, carried forward
 
@@ -48,9 +91,9 @@ Nothing yet: the 0.4.5 arc shipped and is archived.
   schedule coverage; a failed regeneration leaves the earlier result standing; BLOCKED is not
   recorded as missed; a missed record stays as history after a later success.
 - **Existing profile loses customised file-only values.** Owner: maintainer. Status: still undecided.
-  `advanced.toml` is the only source for the 44 file-only keys, and the loader reads the file only
-  (`crates/kernel/src/settings.rs:364-491`): either seed the file from the settings KV at first boot,
-  or accept the reset and say so in the release notes. Was due before Gate A, which never closed.
+  `advanced.toml` is the only source for 48 of the 49 file-only rows — `app.tray_toast_done` is a
+  settings-KV marker with no file row — and the loader reads only that file
+  (`crates/kernel/src/settings.rs:364-491`): seed it from the KV at first boot, or accept the reset and say so in the release notes; due before Gate A (never closed).
 - **`06` #32 rebuild carry set and #33 stale `03 §8` defaults.** Owner: maintainer. Status: both still
   open in `06_PATCH_PLAN.md`; the carry set ships in `crates/rebuild/src/lib.rs`, and the `03 §8` table
   still reads `storage.max_width` 1280 / `retention_days` "0 = keep" / `chrome_suppress_min_seen` 12
@@ -69,6 +112,40 @@ Nothing yet: the 0.4.5 arc shipped and is archived.
 - **Usage-signals reading procedure, no script.** Owner: maintainer. Status: the procedure stands as
   written (release-asset counts, traffic clones/views against a personal baseline); the optional
   `scripts/` helper was never built.
+- **Pinned model vs level-2 memory relief.** Owner: maintainer. Status: decided as rule A and
+  implemented on `feat/memory-pressure-throttle` (not shipped) — an explicit user preload
+  (`ModelSupervisor::preload` sets `pinned`) outranks level-2 relief: the model
+  stays resident and relief logs `level-2 memory relief skipped: model pinned by an explicit load`.
+  Rationale: a pin is the user saying "keep this loaded", and silently evicting it on an
+  already-stressed machine is the app overruling an explicit instruction. Alternatives, if the
+  maintainer disagrees: **(B)** relief outranks the pin too, so nothing survives a memory emergency;
+  **(C)** relief unloads at L2 and re-preloads on exit from L2, which pays the cold start twice;
+  **(D)** the pin expires after N idle minutes. Flipping to **B** is one argument — the relief call
+  site calls `unload_reasoned("level-2 memory relief", true)` in
+  `crates/inference/src/supervisor.rs`, so it passes `false` for `skip_if_pinned` (the manual Unload
+  path already passes `false` after clearing the pin) — plus its matrix test. The pin's other job,
+  suppressing idle-TTL eviction, is a separate check and is unaffected by the flip.
+- **`06` #23: the GPU arm is blind to the sidecar — options recorded, nothing implemented.** Owner:
+  maintainer. Status: re-measured 2026-11-09 on the installed build; the numbers are in `06` #23. Three
+  shapes: **(1) Optional runtime-loaded NVML probe.** `LoadLibrary("nvml.dll")` + `GetProcAddress` for
+  `nvmlInit_v2`/`nvmlDeviceGetHandleByIndex_v2`/`nvmlDeviceGetUtilizationRates`, falling back to the
+  PDH probe when the DLL or a symbol is absent (AMD/Intel machines, driver-less VMs). On this box
+  `nvml.dll` came with the installed NVIDIA driver and all three calls returned rc 0 without bundling
+  anything, so the shape works at least here. If it is built, load the DLL at runtime and do not copy
+  it into the installer — NVIDIA's redistribution terms are not evaluated here and would need their own
+  source before any bundling claim. Cost: a new `unsafe` module in `sysmon`, a device-selection rule
+  for multi-GPU machines, and the GPU percentage would then disagree with Task Manager's (which still
+  reads PDH). **(2) Per-`engtype` counter audit.** The
+  sidecar's Vulkan work is filed under `engtype_3d` alone (max 25.5 %) and `compute 0/1` read 0 % for
+  that process, so no `engtype` filter can recover it; the only variation left is taking per-engine
+  maxima instead of the sum, and 25.5 % still never reaches a 90 % enter threshold. Cheap but
+  ineffective. **(3) Accept the blindness and say so.** The memory arm reads whole-machine totals, so
+  any process that pushes host usage past the threshold fires it — including this app's own sidecar on
+  a machine with little headroom — but on this box the measured vision peak was 77 % physical / 67 %
+  commit, below the 90 % defaults, so it does not fire for this workload here. The uncovered case is a
+  GPU-heavy, low-host-memory workload (a game, an external renderer) that also stays under the memory
+  thresholds. Documenting that limit is the honest baseline; `03 §5` now records it, and
+  `gpu_monitored` still promises only that the counters were read, not that they see every workload.
 
 ### Acceptance gates not yet passed
 

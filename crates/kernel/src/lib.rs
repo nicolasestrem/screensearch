@@ -21,9 +21,9 @@ use traits::{
     AdvancedConfig, AnswerProvider, BackfillControl, CaptureConfig, CaptureNowReceiver,
     CaptureNowRequest, CaptureSource, ComponentReadiness, ComponentStatus, EmbeddingProvider,
     JobKind, ModelDownloadPhase, ModelDownloadStatus, ModelLane, NewJob, OcrProvider,
-    PressureProbe, Readiness, SessionSegmenter, SetupOperation, SetupPhase, SetupStatus, SetupStep,
-    SidecarState, SidecarStatus, Store, ThrottleStatus, Toast, ToastLevel, VisionProvider,
-    VisionTarget,
+    PressureProbe, PressureRelief, Readiness, SessionSegmenter, SetupOperation, SetupPhase,
+    SetupStatus, SetupStep, SidecarState, SidecarStatus, Store, ThrottleStatus, Toast, ToastLevel,
+    VisionProvider, VisionTarget,
 };
 
 pub mod ask;
@@ -762,6 +762,12 @@ pub struct Kernel {
     /// composition root (the kernel forbids `unsafe`). `None` if the platform probe
     /// couldn't be built — the throttle then stays off.
     pressure_probe: RwLock<Option<Arc<dyn PressureProbe>>>,
+    /// The level-2 memory-relief hook — the inference supervisor, so a machine that is out
+    /// of memory gets the resident model's VRAM/RAM back even while the idle backfill is
+    /// asking for keep-warm (`03 §5/§6`). Injected by the composition root beside the
+    /// `BackfillControl` attach; `None` when there is no sidecar to release (tests, or a
+    /// future embeddings-only setup), in which case level 2 pauses lanes and nothing more.
+    pressure_relief: Arc<RwLock<Option<Arc<dyn PressureRelief>>>>,
     /// Current throttle level (`0` Normal / `1` High / `2` Sustained), shared live with
     /// the worker pool so a level change reaches running workers without a pool restart.
     /// Stays `0` whenever the throttle is disabled.
@@ -872,6 +878,7 @@ impl Kernel {
             graph_cluster_progress: Arc::new(graph_cluster::ClusterProgress::new()),
             graph_idle: Arc::new(std::sync::RwLock::new(None)),
             pressure_probe: RwLock::new(None),
+            pressure_relief: Arc::new(RwLock::new(None)),
             throttle_level: Arc::new(AtomicU8::new(0)),
             // Min clamp; the real value is written from settings by `start_workers` and the
             // governor before it's ever consulted (only at level 2).
@@ -881,6 +888,7 @@ impl Kernel {
                 level: 0,
                 sample: None,
                 gpu_monitored: false,
+                mem_monitored: false,
             })),
             throttle: Mutex::new(None),
             pending_demand: Arc::new(std::sync::Mutex::new(None)),
@@ -1683,18 +1691,31 @@ impl Kernel {
     /// Injects the system-pressure probe for the enrichment throttle (`03 §5/§8`). The
     /// composition root builds it (the only `unsafe`, in `sysmon`) and calls this once at
     /// startup, then [`Kernel::reconfigure_throttle`] to honor the master-enable setting.
-    /// Seeds the cached status' `gpu_monitored` so the UI is truthful before the first
-    /// sample lands.
+    /// Seeds the cached status' `gpu_monitored`/`mem_monitored` so the UI is truthful
+    /// before the first sample lands.
     pub fn set_pressure_probe(&self, probe: Arc<dyn PressureProbe>) {
-        let monitored = probe.gpu_monitored();
+        let gpu = probe.gpu_monitored();
+        let mem = probe.mem_monitored();
         *self
             .pressure_probe
             .write()
             .expect("pressure probe lock poisoned") = Some(probe);
-        self.throttle_status
+        let mut st = self
+            .throttle_status
             .write()
-            .expect("throttle status lock poisoned")
-            .gpu_monitored = monitored;
+            .expect("throttle status lock poisoned");
+        st.gpu_monitored = gpu;
+        st.mem_monitored = mem;
+    }
+
+    /// Injects the level-2 memory-relief hook (`03 §5/§6`). Called by the composition root
+    /// once, right after it attaches inference, so a later level-2 escalation can free the
+    /// resident model. Idempotent: a second call replaces the hook.
+    pub fn set_pressure_relief(&self, relief: Arc<dyn PressureRelief>) {
+        *self
+            .pressure_relief
+            .write()
+            .expect("pressure relief lock poisoned") = Some(relief);
     }
 
     /// Starts or stops the throttle governor to match the `throttle.enabled` setting,
@@ -1720,10 +1741,13 @@ impl Kernel {
                     *guard = Some(throttle::spawn(
                         probe,
                         self.advanced_config().throttle,
-                        self.throttle_level.clone(),
-                        self.throttle_embed_text_floor.clone(),
-                        self.throttle_status.clone(),
-                        self.events.clone(),
+                        throttle::GovernorIo {
+                            level: self.throttle_level.clone(),
+                            embed_text_floor: self.throttle_embed_text_floor.clone(),
+                            status: self.throttle_status.clone(),
+                            events: self.events.clone(),
+                            relief: self.pressure_relief.clone(),
+                        },
                     ));
                     tracing::info!("enrichment throttle governor started");
                 }
