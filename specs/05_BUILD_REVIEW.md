@@ -9,182 +9,232 @@ measured budget and review-fix pass included, is archived at
 
 ## Current arc
 
-### 2026-11-07: v0.4.5 installed-build QA fixes (branch `fix/0.4.5-qa-bugs`, from `main` `9c6a2cb`)
+### 2026-11-09 — Your-Universe: Localtime (standalone deliverable, not product code)
 
-Phase: three defects from hand-testing the installed 0.4.5 candidate (a spurious hotkey warning on
-every settings save, literal Markdown on `/ask`, misaligned Settings controls). Decisions are
-`07` QA2 D1-D4, root causes `07` QA2 F1-F3, the deliberately unfixed observations `07` QA2 U1-U3;
-the work record is `08`. PR #168 merged first, and these fixes landed as PR #169 (`d98ad66`).
+**Scope.** `Your-Universe/` holds "Localtime", a self-contained Three.js living hillside district
+driven by ScreenSearch's export shape, built against the maintainer's brief in
+`Your-Universe/build-prompt.md` and then iterated against the owner's written verdicts in
+`Your-Universe/OWNER-NOTES.md`. The viewer watches a city that runs on its own: eight quarters
+sized by app time, traffic density following session-switch rate, cranes on 45-minute focus
+sessions, lit windows on the last hour of activity, and a night dream that builds one provisional
+road between two quarters that share words but never shared an hour, offering at most two
+"Take it" cards per waking. **No product surface is touched**: no crate, schema, IPC, UI or
+contract change; the app's Rust and React trees are untouched, so `05`/`06` product gates are
+not exercised by this work.
 
-**What was reviewed before the gate.** Each slice was inspected rather than accepted on report:
-`git diff` on `routes/Ask.tsx` shows only the two answer paragraphs plus comments replaced (the
-citations row, both notes, Retry and the reserved `min-h-24` slot are byte-identical), the settings
-fix is a class-string change plus one descriptor module with no primitive or category file touched,
-and `overlay.rs` keeps its handlers, status bookkeeping and toast channel while replacing the two
-registration paths with one `apply_hotkey` over an internal `HotkeyEnv` seam. The em-dash rule was
-checked on the whole diff: the only occurrences are two pre-existing comment lines that the diff
-*removes*.
+**Architecture.** `index.html` is generated, never hand-edited: `src/` holds one fragment per
+top-level factory (`generateSimulatedDay`, `analyzeExport`, `buildWorld`, `createAgents`,
+`createCameraRig`, `createDream`, `createPost`, `main`) plus `assets.mjs` for the model pipeline,
+bound by the interfaces in `src/CONTRACT.md`; `tools/assemble.mjs` emits the single file and
+validates it with `node --check`. Cycle 19 added the asset pipeline: `tools/fetch-assets.mjs` /
+`pack-assets.mjs` fetch and pack Kenney CC0 kits into `assets/*.glb` listed by
+`assets/manifest.json`, `tools/stamp-sw.mjs` keeps the `CACHE_VERSION` in `assets/sw.js` equal to
+the manifest digest, and `?noassets=1` falls back to the fully procedural build. The deliverable is
+`index.html` + `assets/`; glTF loading requires `node tools/serve.mjs` (no `file://`).
 
-**Field evidence for the hotkey defect** (gathered before any code changed): the toast carried no
-"; still using the previous combination" suffix, which only the "nothing registered" branch
-produces, so the stored chord was `None` when the save ran; an OS probe returned Win32 `1409` for
-both chords, which proves *a* process held each but cannot name it (Windows exposes no
-hotkey-owner API); and the rebuilt candidate then showed the mark registration attempted with its
-own registry empty and refused, while `Ctrl+Alt+Z` registered and worked, so `Ctrl+Alt+M` is held
-elsewhere.
+**Method.** 22 measured cycles are logged in `Your-Universe/ITERATIONS.md` (1,868 lines). The agent
+has no image input, so every art judgement there is a pixel measurement (palette shares, 3x3 region
+luminance/saturation/edge density, ten horizontal bands of edge density, speck counts) plus a
+verbatim owner verdict: the log is explicitly "a measurement, not a look". Per-cycle gates: desktop
+1600x900 and Pixel 6 412x915 (DPR 2.625, touch, 4x CPU throttling) draw-call and triangle lines,
+bench fps floors, zero console errors, no overlapping or off-viewport labels.
 
-**Pre-fix demonstration** (required proof that the new tests catch the defect). The guard inside
-`apply_hotkey` was temporarily reverted to the old raw-string comparison, `registered = None` on
-failure and raw error text in the warning; the seam means that reverted function *is* the pre-fix
-logic. Result: `4 passed; 5 failed`, including a verbatim reproduction of the field message
-(`key: KeyM, id: 589855`), a duplicate registration attempt, and three repeated toasts for one
-unchanged chord. The file was then restored and verified byte-identical
-(SHA-256 `7eadd0dd55fa0ef046f6b971a77c35fa304f26799045ff0ccc26d20cfe66246d` both ways;
-`grep -c PRE-FIX` returns 0).
+**Verification re-run on the tree this record describes** (raw output):
 
-**Ordered gate** (`CLAUDE.md` order: UI first, then the sidecar, then cargo), raw summary of
-`gate.log` (the full log is outside the repository at
-`C:\Users\nicol\screensearch-evidence\gate.log`):
+```text
+assemble: 23/23 verifications passed          (index.html byte-identical after reassemble)
+check: 38 checks, 38 passed, 0 failed         (36 before test-serve.mjs and cache-version.mjs joined)
+total: 100 checks, all PASS                   (check-dom)
+OK: the server answers a malformed escape with 400 and keeps serving   (test-serve)
+120 passed, 0 failed                          (smoke-data)
+OK: all six properties hold                   (check-sample)
+stamp-sw: CACHE_VERSION ma3977eae matches the precached payload (manifest, packs, sample)
+CHECK RESULT: PASS (87 models)                (check-assets)
+```
 
-````text
-ui_npm_ci      EXIT=0     ui_npm_lint  EXIT=0     ui_npm_test  EXIT=0  (172 tests, 172 pass, 0 fail)
-ui_npm_build   EXIT=0     stage_mcp    EXIT=0  (up to date)
-cargo_fmt      EXIT=0     cargo_clippy EXIT=0     cargo_build  EXIT=0   cargo_test EXIT=0
-cargo_test     EXIT=0  (86 test binaries: 1625 passed, 0 failed, 16 ignored)
-bindings_diff  EXIT=0  (git diff --exit-code -- ui/src/bindings prints nothing)
-OVERALL_FAIL=0
-````
+`index.html` is 1,027,378 bytes on disk (1,026,873 as the LF-normalized blob git stores) and
+reproduces byte-identically from `src/`; `assets/` is
+3,093,739 bytes of Kenney CC0 packs with their licence texts under `assets/LICENSES/`. Final
+measured state, assembled build (desktop 1600x900; hour 17 day, hour 3 night): day 101 calls /
+388,900 tris, night 99 / 346,840, dream 91 / 297,176, noassets 55 / 336,517, street 101 / 393,464,
+phone day 54 / 170,498, phone night 44 / 170,191, phone dream 36 / 159,211. Speck counts (isolated
+dark pixels, percent of frame): day 152 (0.0106), night 60, dream 29, noassets 156, phone day 1,
+phone night 0, phone dream 0.
 
-The UI suite grew from 160 to 172 tests (`answer-prose` 8, `settingRowColumns` 4; the five
-`contrast` tests are unchanged and now share their CSS parser and WCAG math through
-`test/lib/contrastTokens.mjs`). The Rust suite grew by the 9 new `overlay::tests`. `cargo clippy`
-prints only the pre-existing `failed to parse serde attribute` build-script noise from `ts-rs`,
-which is not a lint and does not affect the exit code.
+**Open items.** The fps bench gate did not pass in cycle 21, and the draw-call line is exceeded by the
+shipped build. Re-measured on the committed snapshot (`4c7fbea`, loop's fleet integration call on)
+over HTTP at 1600x900, hour 17, awake, `renderer.info` reports 101 calls with the asset fleet, 95
+with `?post=0` and 55 with `?noassets=1`, against a header line that still says under 80; triangles
+hold at 388,884 of 400,000. Both items, with numbers, attribution and the remaining questions, are
+recorded in `07` rather than claimed as met.
 
-**Real-browser measurement of the alignment fix** (throwaway Vite harness rendering the real
-`SettingRow`, the real `Toggle` and the real compiled stylesheet, measured in Chromium; the harness
-and its server were deleted afterwards):
+**Snapshot note.** The owner loop was still cycling when this record was written (it made its fleet
+integration call during the session, `MODEL_LANE_EVERY` 9999 to 24), so the numbers above describe
+commit `4c7fbea` and later cycles will arrive as follow-up commits rather than as silent rewrites of
+this entry.
 
-| Row | Hint | Switch left x (px) | Toggle root width (px) |
+**Also on this branch.** The 0.4.5 build-loop rotation and the carried-forward backlog re-verification
+described in `08` (2026-11-09) run alongside this record: shipped 0.4.5 entries moved into
+`specs/archive/*.v0.4.5.md`, the live logs restructured, and every older gap re-checked against the
+v0.4.5 tree (`9c45ae8`). The cleanup instruction that drove them is archived at
+`specs/archive/specs-cleanup-prompt.md`, and the `04 §1` arc pointer now points at the open work
+instead of the finished 0.4.5 phases.
+
+**Review pass, PR #173 (2026-11-09).** Six findings arrived on the PR: five CodeQL alerts against
+the two gate scripts and one Codex P2 against the server. Each was checked against the code and
+reproduced before anything was edited; nothing was changed to satisfy a claim that did not hold.
+
+| # | finding | verdict | resolution |
 |---|---|---|---|
-| new layout (short hint) | 42 chars | 368 | 384 |
-| new layout (long hint) | 146 chars | 368 | 384 |
-| old layout (short hint) | 42 chars | 224 | 240 |
-| old layout (long hint) | 146 chars | 705 | 721 |
+| 1 | `tools/serve.mjs:23` — a malformed escape terminates the server (P2) | valid, reproduced | decode moved inside the error boundary, 400 returned; `tools/test-serve.mjs` added as the regression gate |
+| 2 | `tools/check-dom.mjs:168` — regex does not match upper case `<SCRIPT>` | valid, and wider than reported | `i` flag on the script, link and import-map matches; the same blind spot covered `<LINK>` and the import-map parse |
+| 3 | `tools/check.mjs:50,54,55` — unescaped `.` before the host names | inaccurate: line 126 escaped every dot at construction | pattern rebuilt as plain prefix comparison, so no host string is re-parsed as a regular expression |
+| 4 | `tools/check.mjs:127` — the escaping does not escape backslashes | inaccurate: the inputs are a literal host list with no backslashes | removed together with #3 |
 
-The old layout moves the switch 481 px with the hint text, which is the reported defect exactly;
-the new layout puts both switches at the same x and gives both toggles the same 384 px column.
+Finding 1, fail-without on the committed server and pass-with on the fixed one:
 
-**Real-browser check of the rendered Markdown** (same harness, real `AnswerProse` inside
-`prose prose-deck`, theme switched on `:root[data-theme]`, WCAG contrast of the computed colours):
+```text
+$ node tools/test-serve.mjs          # unfixed
+FAIL  GET /%ZZ answers 400 instead of dropping the connection (got 0, ECONNRESET)
+FAIL  the server survives the malformed request (exit code 1)
+FAIL  GET /index.html still answers 200 afterwards (got 0)
+URIError: URI malformed
+    at decodeURIComponent (<anonymous>)
+    at Server.<anonymous> (file:///.../tools/serve.mjs:23:15)
+FAILED: 3 check(s) failed                                     EXIT=1
 
-| Theme | h2 / strong / li / ol li / inline code | link |
-|---|---|---|
-| pine-light | 15.15 | 5.76 |
-| pine-dark | 16.20 | 10.26 |
-| ink-light | 15.13 | 5.32 |
-| ink-dark | 16.08 | 8.97 |
+$ node tools/test-serve.mjs          # fixed
+PASS  GET /%ZZ answers 400 instead of dropping the connection (got 400)
+PASS  the server survives the malformed request (exit code null)
+PASS  GET /index.html still answers 200 afterwards (got 200)
+OK: the server answers a malformed escape with 400 and keeps serving   EXIT=0
+```
 
-Every element clears AA in every theme; the tightest is a link at 5.32:1, and no token was
-changed. The harness sample had no `em` or fenced block, so those two elements are covered by the
-SSR assertion and the token table test rather than by this pixel run.
+Finding 2, the same hand-edited `src/shell.html` carrying `<SCRIPT SRC="evil.js">` through both
+versions of the gate. The committed gate is green with an external script in the shell:
 
-**Release dry run and installed build.** `gh workflow run release.yml --ref main` on `d98ad66`
-(run 42374416657) finished green in 8m21s and produced `updater-bundle`: `ScreenSearch_0.4.5_x64-setup.exe`
-(15,900,172 bytes), its `.sig`, and `latest.json` (`version` 0.4.5, one `windows-x86_64` platform),
-downloaded to `C:\Users\nicol\screensearch-evidence\dryrun2`. No tag and no release were created.
+```text
+$ node <committed check-dom>          PASS  shell.html has exactly one script tag and it is the import map
+                                      PASS  shell.html has no external script element
+                                      total: 100 checks, all PASS            exit 0
+$ node tools/check-dom.mjs            FAIL  shell.html has exactly one script tag and it is the import map
+                                      FAIL  shell.html has no external script element
+                                      total: 100 checks, 2 FAIL              exit 1
+```
 
-Installed over the previous per-user install with `/S` (installer exit code 0, no wipe: no NSIS
-hooks are configured and nothing touches `%APPDATA%\app.screensearchv2c.desktop`). Installed binary
-59,957,248 bytes, `FileVersion`/`ProductVersion` 0.4.5, uninstall entry `DisplayVersion` 0.4.5,
-launched as pid 33928.
+Finding 3, old regular expression against the new prefix comparison over 23 URLs (allowed hosts with
+and without a trailing slash, template-expression forms, and adversarial `quaterniusXcom`,
+`quaternius.com.evil.example`, `drive.google.comX` and host-in-query forms): `EQUIVALENT: 23 samples,
+0 mismatches`, 13 allowed by both, 10 refused by both. The escaping the alert claimed was missing is
+exactly what made the suffix attacks fall on the refused side before and after.
 
-Log since launch (22 lines, `screensearch.log.2026-11-07`):
+Fixes are in `328f83a`'s successors on `feat/your-universe-localtime`; `index.html` is unaffected,
+since none of the three tools is part of the generated bundle. The regression gate is deliberately
+separate from `check.mjs`, which spawns nothing and stays a static check over `src/` and the bundle.
+The CodeQL analysis of the fix commit reports `results=0` for javascript-typescript, against 5 for
+the commit before it. The alerts are not dismissed and their `state` field is still null once that
+analysis has run, and `?state=open` lists none of them, so the evidence that they are resolved is the
+analysis result; the security page settles the alert state on the default-branch scan after merge.
 
-````text
-store opened db=...\screensearch.db schema_version=15
-WARN screensearch_lib::overlay: global hotkey registration failed slot="marks.hotkey" chord=Ctrl+Alt+M
-ERROR lines since launch: 0
-````
+**Review pass, round two (PR #173, 2026-11-09).** Three more findings landed on the head that carried
+the first fix, all inside the deliverable. One is fixed here; the other two are valid and recorded in
+`07` as unshipped, because both call for edits to `src/` while the owner loop is rewriting those files
+and `index.html` regenerates from all of `src/`.
 
-Data intact: `frames` 385, `sessions` 2, `marks` 0; newest frame `captured_at` 13:35 local, i.e.
-history from before the upgrade survived and the store opened at schema 15.
-
-Hotkey behaviour in the installed build: **Ctrl+Alt+Z works end to end** (the chord registered, and
-pressing it opened `ScreenSearch Overlay` at 640x460 and pressing it again hid it). **Ctrl+Alt+M
-could not be registered**, and the log proves the failure is external rather than this app's
-bookkeeping: the registration was attempted only because the plugin registry was empty, and the OS
-answered 1409. The same condition produced the reported toast in the old build, whose `init_*`
-cleared the stored chord and then retried it on every save. The shipped binary contains the
-humanized sentence (`another app is already using that shortcut`, `the shortcut could not be
-registered`, `still using the previous combination`) and no longer contains the old
-`HotKey unavailable` prefixes (`grep -ac` counts 1, 2, 1 and 0). Consequence for this machine: the
-mark chord stays unavailable until whichever other program holds Ctrl+Alt+M releases it, and
-ScreenSearch reports that once instead of on every save.
-
-**Capture observed, not investigated:** capture reported `capture started` and stored nothing
-between 13:35 and roughly 14:15 local, then resumed on its own; the count went from 385 at the check
-to 391 with the newest frame at the time of writing, `capture.interval_ms` is 3000, the diff gate is
-active and there are zero ERROR lines. No line of this change touches capture, and the store, schema
-and history were intact throughout; recorded here rather than investigated.
-
-### 2026-11-07: v0.4.5 release QA: merged-tree gate, static release checks and the P4 harness (branch `chore/0.4.5-release`, from `main` `440d2e9`)
-
-Phase: the maintainer's 0.4.5 release kickoff. Decisions taken without asking are `07` QA D1-D6 and
-QA F1; the raw logs and the harness report live outside the repository
-(`C:\Users\nicol\screensearch-evidence`). Every number below is a paste of that output, not a
-summary of intent.
-
-**Ordered gate on the merged tree** (`CLAUDE.md` order: UI first, then the sidecar, then cargo),
-before the version bump and docs:
-
-````text
-ui_npm_ci      EXIT=0 (3s)
-ui_npm_lint    EXIT=0 (3s)          # Rules-of-Hooks at error level
-ui_npm_test    EXIT=0 (2s)          # 160 tests, 160 pass, 0 fail
-ui_npm_build   EXIT=0 (6s)
-stage_mcp      EXIT=0 (26s)
-cargo_fmt      EXIT=0 (1s)
-cargo_clippy   EXIT=0 (76s)         # Finished `dev` profile, zero warnings
-cargo_build    EXIT=0 (87s)         # Finished `dev` profile
-cargo_test     EXIT=0 (196s)        # 86 result lines: 1616 passed, 0 failed, 16 ignored
-bindings_diff  EXIT=0               # `git diff --exit-code -- ui/src/bindings` prints nothing
-````
-
-The same UI half was re-run after the version bump: `npm ci` 0, `lint` 0, `test` 160/0, `build` 0,
-`stage-mcp` 0, and the staging step now reports `Compiling mcp v0.4.5`, which is the bump taking
-effect in a built artifact.
-
-**Static release checks.**
-
-| Check | Result |
-|---|---|
-| No v1 token names in `ui/src` | PASS: the 25 names the deleted `tokens.compat.css` mapped (`--bg-base`, `--bg-overlay`, `--bg-surface`, `--danger`, `--ease-ui`, `--font-body`, `--font-display`, `--glow-scan`, `--ink`, `--ink-faint`, `--ink-muted`, `--line`, `--motion-*`, `--ok`, `--radius-chip`, `--radius-panel`, `--radius-ribbon`, `--scrim`, `--text-caption`, `--text-subtitle`, `--text-title`, `--tracking-eyebrow`, `--warn`) match nowhere, and `ui/src/styles/tokens.compat.css` no longer exists. The kickoff's wider regex cannot be empty because it also names three live v2 tokens (`--accent`, `--accent-wash`, `--font-mono`); both raw outputs and the reason are in `07` QA D3. |
-| No `kitchen` in the production bundle | PASS: `grep -rni kitchen ui/dist` prints nothing; `ui/dist` is `assets`, `index.html`, `overlay.html`. |
-| No remote fonts | PASS: `grep -rniE 'url\(http|fonts\.googleapis|fonts\.gstatic' ui/src/styles` prints nothing; the four font files under `ui/src/styles/fonts` are bundled. |
-
-**P4 harness on the committed fixture and seed** (`crates/evalfixture gen`, then
-`serve --embed` with the real answer sidecar, then `harness eval --pairs 300 --seed
-6696384177732976644`). Generation reproduced the recorded content digest exactly:
-`digest=69dac6e6ae417c0a6bc25590948a4dde8a6e1d500f99bb177f80a6bc794b8ab9`, `frames=1260`,
-`sessions=218`, `embeddings=1260`; the answer sidecar loaded
-(`Ministral-3-3B-Reasoning-2512-Q4_K_M.gguf`) and the run finished `300/300` turns with zero
-failures in 345 s, using the already-installed models through junctions (no download: the models
-directory is byte-identical at 5,810,899,283 bytes and no file in it has today's mtime).
-
-| Metric | Target | Measured (overall) | Verdict |
+| # | finding | verdict | resolution |
 |---|---|---|---|
-| retrieval recall@10 (`GET /v1/search`) | >= 41.0% (>= 123/300) | 37.0% (111/300) | FAIL, exactly the frozen baseline |
-| known-fact answer rate (`/v1/ask`) | >= 71.3% (>= 214/300) | 65.7% (197/300) | FAIL, 1.0 pt over the 64.7% baseline |
-| citation validity | 100% (2400/2400) | 71.4% (1713/2400) | FAIL, 687 invalid ids, all "outside the pair window" |
-| entity recovery | >= 80.0% | 90.3% (159/176) | PASS |
-| latency p95 | <= 3485 ms | 2306 ms | PASS |
+| 5 | `tools/stamp-sw.mjs:27` — the offline-cache fingerprint ignores pack bytes | valid, reproduced | fingerprint extracted to `tools/cache-version.mjs`, hashing the manifest, every pack it names *and* the opening sample, which is the one other cache-first payload outside `assets/`; `stamp-sw` and `check-dom` share it |
+| 6 | `src/agents.mjs:4970` — the green wave stays on after its session ends | valid, measured | 472 of 892 sampled minutes wrong; the fix is `activeSessionAt(t)`; deferred to `07` |
+| 7 | `src/main.mjs:1261` — dream cards survive an export reload | valid, traced | `hideCards()` is not exposed by `dream.mjs`; the fix is to expose and call it; deferred to `07` |
 
-The three failures are explained rather than dismissed: this harness cannot exercise Ask v2 at all.
-`crates/evalfixture/src/serve.rs` states it in its own header ("Ask v2 turns are not served here: the
-host keeps `ApiHost::ask_turn`'s `Ok(None)`") and delegates Ask to
-`kernel::ask::ask_context`, the frame-level path kept for exactly this fixture. So the two Ask rows
-measure the legacy pipeline, and the `/v1/search` row is the one `06` #46 records that P6 does not
-bind to. The gap, its owner and what would close it are `07` QA F1. No code, test or threshold was
-changed to move these numbers.
+Finding 5, one flipped byte inside `assets/kenney-car-kit.glb` with the manifest untouched:
+
+```text
+$ node <committed stamp-sw> --check
+stamp-sw: CACHE_VERSION m730a18fd matches assets/manifest.json          exit 0    (blind)
+$ node tools/stamp-sw.mjs --check
+stamp-sw: CACHE_VERSION is mbe1267a6 but the payload fingerprints to mb477225d
+stamp-sw: run node tools/stamp-sw.mjs before serving or packing         exit 1    (seen)
+$ node tools/check-dom.mjs
+FAIL  assets/sw.js cache version matches the payload fingerprint (mbe1267a6 vs mb477225d)
+total: 100 checks, 1 FAIL                                              exit 1
+```
+
+Restoring the pack byte-exactly (`8420fb3b74af7684`) returns both gates to pass. `CACHE_VERSION` moves
+from `m730a18fd` to `mbe1267a6` because the fingerprint now covers the six pack GLBs as well as the
+manifest that names them, and the version therefore moves when only a texture, material, normal or
+interior vertex does.
+
+The same hole sat one route further out. `assets/sw.js` precaches `./sample-export.json` and routes it
+cache-first, so a regenerated sample with no pack change keeps the old version and opens a returning
+visitor on the previous day; the `cache: 'no-store'` on `main.mjs`'s own fetch cannot prevent that,
+because the worker answers before the network, and `tools/gen-sample.mjs` regenerates exactly that
+file. The fingerprint hashes it too, measured on one flipped byte inside it:
+
+```text
+$ node tools/stamp-sw.mjs --check     # fingerprint without the sample
+stamp-sw: CACHE_VERSION mbe1267a6 matches the manifest and pack payload         exit 0    (blind)
+$ node tools/stamp-sw.mjs --check     # fingerprint with it
+stamp-sw: CACHE_VERSION is mbe1267a6 but the payload fingerprints to mc209a38d
+stamp-sw: run node tools/stamp-sw.mjs before serving or packing                exit 1    (seen)
+```
+
+With the payload restored the stamp reads `ma3977eae`, and the sample's own digest is
+`729e75a3da016d00`.
+
+Finding 6, `longestSessionBefore(t)` measured against `activeSessionAt(t)` over the shipped sample
+(128 sessions, 892 sampled minutes):
+
+```text
+minutes sampled: 892 | minutes where the wave is wrong: 472 (52.9% of the day)
+examples (wave on, nothing open):
+  at 07:02 longest q=5 ended 07:01 active= false
+  at 07:07 longest q=5 ended 07:06 active= false
+```
+
+Finding 7 is structural: `dream.mjs` keeps the card nodes and their handlers in an internal `cards`
+array, and its `return` exposes `group`, `update`, `sleep`, `wake`, `toggle`, `setDataModel`,
+`notifyGap`, `warm` and two measurement getters, with no card teardown among them, while `install()`
+in `main.mjs` disposes three groups and drops the instance. The old cards therefore outlive the dream
+that owns their handlers.
+
+Why these wait: `index.html` is generated from every `src/` fragment, and the owner loop is mid-cycle in
+those files, measuring four `src/` files uncommitted (+502 lines) and writing into the tree every 25 to
+50 seconds when this pass checked. A `src/` fix
+could only be committed together with that unfinished work, so they land with the loop's snapshot
+commit and stay listed as open items until then.
+
+**Review pass, round three (PR #173, 2026-11-09).** One finding, on the head that carried the sample
+fix.
+
+| # | finding | verdict | resolution |
+|---|---|---|---|
+| 8 | `src/main.mjs:1742` — the startup sample replaces an export imported during the asset wait | valid, proved from the call order | deferred to `07`; the guard is a flag set by `loadExport` and read once in the boot callback |
+
+Finding 8 as the committed snapshot (`7d5efdc`) orders it:
+
+```text
+1891  wireInput();
+1892  boot();            -> Promise.all([fetchSample(), loadAssets()]).then(...)  up to 8000 ms
+1855    install(next);                        <- loadExport(), from a drop inside that window
+1742      install(next);                      <- the sample, unconditional
+```
+
+`install()` (line 1255) opens by disposing the world, agent and dream groups and nulling all three, so
+the later call does not overwrite a property: it discards the district the user just imported. Nothing
+in between records that a user model exists, which is what makes the ordering alone sufficient.
+
+**Review pass, round four (PR #173, 2026-11-09).** One finding, on the head that carried the record.
+
+| # | finding | verdict | resolution |
+|---|---|---|---|
+| 9 | `src/main.mjs:721` — the replaced world's shadow render target is never disposed | valid, proved | deferred to `07`; the disposal needs a light branch in `disposeGroup`, and `setShadowMapSize(0)` already releases the target |
+
+Finding 9 holds end to end: `world.mjs` adds the sun to the group that `install()` disposes (`group.add(sun)`, line 10321 at this commit),
+`disposeGroup` traverses that group, and line 721 returns for every object without a material, which a
+`DirectionalLight` is, so `sun.shadow.map` survives the disposal of the only thing that referenced it.
+The map is the largest target the app allocates, so repeated imports in one session accumulate one per
+import, and the GPU allocation is released only when the page unloads. `setShadowMapSize(0)`
+(line 10353 at this commit) already disposes the map and nulls it, which is why the fix needs no new mechanism.
+
 

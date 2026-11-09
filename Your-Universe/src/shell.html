@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#14100d">
+  <meta name="description" content="Localtime: a hillside city district that lives on its own, nourished by one person's recorded screen activity.">
+  <title>Localtime</title>
+
+  <!-- Assembler notes, see src/CONTRACT.md.
+       Two placeholders must be substituted when index.html is written:
+         1. the comment whose body is the single token LOCALTIME:CSS is replaced by
+            one inline style element containing the contents of src/style.css;
+         2. the comment whose body is the single token LOCALTIME:SCRIPT is replaced
+            by the module script element holding the concatenated fragment bundle.
+       This file also already contains the head, the import map and the complete
+       body, so it can be substituted in place and written out as index.html. -->
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <!-- LOCALTIME:CSS -->
+
+</head>
+<body>
+
+  <canvas id="view" aria-label="Localtime district"></canvas>
+
+  <div id="labels" aria-hidden="true"></div>
+
+  <button id="rot-left" class="chev" type="button" aria-label="Rotate left">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+  </button>
+
+  <button id="rot-right" class="chev" type="button" aria-label="Rotate right">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+  </button>
+
+  <div id="card" hidden>
+    <h3 class="card-title"></h3>
+    <p class="card-time"></p>
+    <p class="card-phrase"></p>
+  </div>
+
+  <div id="cards"></div>
+
+  <div id="drop" hidden>
+    <span>Drop a ScreenSearch export</span>
+  </div>
+
+  <input id="file" type="file" accept="application/json,.json" hidden>
+
+  <button id="open-file" type="button" aria-label="Load export">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+  </button>
+
+  <button id="sleep" type="button" aria-label="Sleep">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+  </button>
+
+  <div id="fps" hidden aria-hidden="true"></div>
+
+  <!-- LOCALTIME:SCRIPT -->
+
+</body>
+</html>

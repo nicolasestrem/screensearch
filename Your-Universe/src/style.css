@@ -1,0 +1,506 @@
+/* Localtime overlay styling. Owner: G, see src/CONTRACT.md "DOM contract".
+   Everything here floats above the WebGL canvas on #view: calm warm paper over a
+   lit hillside, no bars, no counters, no game chrome.
+   Rules: system-ui only, no external fonts, no images, no shader tricks that
+   need a network fetch. The quarter labels get their swatch colour from the
+   --q custom property that main sets per label. */
+
+:root {
+  --panel: rgba(38, 30, 24, 0.72);
+  --panel-solid: #2b221b;
+  --panel-soft: rgba(30, 24, 19, 0.42);
+  --edge: rgba(255, 238, 220, 0.14);
+  --edge-strong: rgba(255, 238, 220, 0.26);
+  --ink: #f7ede2;
+  --ink-dim: rgba(247, 237, 226, 0.72);
+  --accent: #e7b171;
+  --radius: 12px;
+  --shadow: 0 10px 30px rgba(18, 12, 8, 0.28);
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  /* The haze colour world paints on the horizon at this time of day, so the page
+     behind the canvas never flashes a different colour while the first frame
+     renders or during a resize. */
+  background: #f1d0a4;
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* The webgl canvas. touch-action none so the camera rig owns every gesture. */
+#view {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #f1d0a4;
+  touch-action: none;
+  outline: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Quarter labels. main creates one <div class="label"> per quarter inside
+   #labels and sets both its textContent and the --q colour. The swatch is the
+   ::before pseudo element. main pins the box to an even integer width and an
+   integer height and places it with translate(<x>px, <y>px), so the box origin
+   and its size are whole pixels at every viewport: half of an even width is an
+   integer, which is what keeps the label centred on its projected anchor.
+   --------------------------------------------------------------------------- */
+
+#labels {
+  position: fixed;
+  /* Fallback first, then the safe-area insets: a browser without env() keeps a full
+     viewport overlay instead of collapsing to zero size. */
+  inset: 0;
+  /* The overlay follows the safe area, so a label never lands under a notch, a rounded
+     corner or the home indicator. main subtracts this container's top-left corner from
+     every projected position, so the inset moves the overlay without skewing the maths. */
+  top: env(safe-area-inset-top, 0px);
+  right: env(safe-area-inset-right, 0px);
+  bottom: env(safe-area-inset-bottom, 0px);
+  left: env(safe-area-inset-left, 0px);
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 46vw;
+  padding: 2px 8px 2px 6px;
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--ink);
+  font-size: clamp(9.5px, 1.02vw, 12.5px);
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.085em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(20, 14, 10, 0.6);
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  will-change: transform;
+  transition: opacity 180ms var(--ease);
+}
+
+.label::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--q, var(--accent));
+  box-shadow: 0 0 0 1px rgba(22, 16, 11, 0.45);
+}
+
+/* ---------------------------------------------------------------------------
+   Round icon controls: the two rotation chevrons, the sleep button and the
+   folder button. 44px minimum target, translucent warm glass, no text.
+   --------------------------------------------------------------------------- */
+
+.chev,
+#sleep,
+#open-file {
+  position: fixed;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--edge);
+  border-radius: 50%;
+  /* A solid translucent panel with no filter of the scene behind it: blurring over the
+     canvas would resample the whole region on every frame the city moves. --panel already
+     carries the contrast on its own, so nothing here reads as weaker glass. */
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 160ms var(--ease), border-color 160ms var(--ease),
+    transform 160ms var(--ease);
+}
+
+.chev svg,
+#sleep svg,
+#open-file svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.chev:hover,
+#sleep:hover,
+#open-file:hover {
+  background: rgba(56, 44, 34, 0.86);
+  border-color: var(--edge-strong);
+}
+
+#sleep:active,
+#open-file:active {
+  transform: scale(0.96);
+}
+
+.chev:focus-visible,
+#sleep:focus-visible,
+#open-file:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* Every control sits 12 px inside the safe area: one margin rule for all four, so a
+   landscape notch and a portrait home indicator both leave a 12 px breathing gap.
+   Each rule keeps a plain 12 px fallback for a browser without env().
+
+   The two chevrons take their vertical centre from --chev-top, an integer pixel value that
+   main writes once per resize: 50% of an odd viewport height is a half pixel, so the old
+   top: 50% plus translateY(-50%) put the 48 px box at y 433.5 on a 412x915 phone. The
+   fallback keeps them near the middle if the variable is ever missing. */
+#rot-left {
+  left: 12px;
+  left: calc(env(safe-area-inset-left, 0px) + 12px);
+  top: calc(50% - 22px);
+  top: var(--chev-top, calc(50% - 22px));
+}
+
+#rot-right {
+  right: 12px;
+  right: calc(env(safe-area-inset-right, 0px) + 12px);
+  top: calc(50% - 22px);
+  top: var(--chev-top, calc(50% - 22px));
+}
+
+#rot-left:active {
+  transform: scale(0.96);
+}
+
+#rot-right:active {
+  transform: scale(0.96);
+}
+
+#sleep {
+  right: 12px;
+  right: calc(env(safe-area-inset-right, 0px) + 12px);
+  bottom: 12px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  color: var(--ink-dim);
+}
+
+#sleep:hover {
+  color: var(--ink);
+}
+
+#open-file {
+  left: 12px;
+  left: calc(env(safe-area-inset-left, 0px) + 12px);
+  bottom: 12px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  color: var(--ink-dim);
+}
+
+#open-file:hover {
+  color: var(--ink);
+}
+
+/* ---------------------------------------------------------------------------
+   Building card: quarter name, time today, last phrase read.
+   --------------------------------------------------------------------------- */
+
+#card {
+  position: fixed;
+  z-index: 10;
+  left: 0;
+  right: 0;
+  bottom: 96px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
+  margin-inline: auto;
+  width: min(320px, calc(100vw - 32px));
+  padding: 14px 16px 15px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  /* No filter of the scene behind the card. The panel token alone keeps the text off the
+     canvas: at 0.72 alpha the card reads as one calm plate whatever is painted under it. */
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  animation: rise 200ms var(--ease) both;
+}
+
+#card .card-title {
+  margin: 0 0 3px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.1em;
+}
+
+#card .card-time {
+  margin: 0 0 7px;
+  color: var(--ink-dim);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+#card .card-phrase {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  opacity: 0.94;
+}
+
+/* ---------------------------------------------------------------------------
+   Dream hypothesis cards. dream.mjs builds
+   <div class="dream-card"><p>...</p><button>Take it</button></div>
+   inside #cards, at most two per waking.
+   --------------------------------------------------------------------------- */
+
+#cards {
+  position: fixed;
+  z-index: 12;
+  left: 0;
+  right: 0;
+  bottom: 88px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+#cards:empty {
+  display: none;
+}
+
+.dream-card {
+  pointer-events: auto;
+  padding: 14px 15px 13px;
+  /* The dream cards land on the darkest version of the scene, with the lit chantier behind
+     them, so they take the solid panel: opaque enough to carry their text on their own and
+     to keep a firm edge against a bright road ribbon, with no filter re-sampling the canvas
+     on every frame. */
+  border: 1px solid rgba(255, 238, 220, 0.24);
+  border-radius: var(--radius);
+  background: var(--panel-solid);
+  box-shadow: 0 14px 36px rgba(6, 4, 3, 0.5);
+  animation: rise 240ms var(--ease) both;
+}
+
+.dream-card p {
+  margin: 0 0 11px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.dream-card button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 17px;
+  border: 1px solid rgba(255, 238, 220, 0.28);
+  border-radius: 999px;
+  background: rgba(231, 177, 113, 0.22);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 160ms var(--ease), border-color 160ms var(--ease);
+}
+
+.dream-card button:hover {
+  background: rgba(231, 177, 113, 0.27);
+  border-color: var(--edge-strong);
+}
+
+.dream-card button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* ---------------------------------------------------------------------------
+   Drag and drop overlay. Shown by main while a file is dragged over the page.
+   --------------------------------------------------------------------------- */
+
+#drop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  /* A plain scrim: no filter of the animating canvas behind it. */
+  background: rgba(20, 15, 11, 0.62);
+  color: var(--ink);
+  pointer-events: none;
+}
+
+#drop span {
+  display: block;
+  padding: 22px 30px;
+  border: 1px dashed rgba(247, 237, 226, 0.5);
+  border-radius: 14px;
+  background: var(--panel);
+  font-size: 13px;
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.14em;
+}
+
+/* ---------------------------------------------------------------------------
+   Debug readout, hidden until F is pressed. Monospace, small, out of the way.
+   --------------------------------------------------------------------------- */
+
+#fps {
+  position: fixed;
+  z-index: 20;
+  top: max(10px, env(safe-area-inset-top));
+  left: max(10px, env(safe-area-inset-left));
+  margin: 0;
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 238, 220, 0.1);
+  border-radius: 8px;
+  background: rgba(24, 19, 15, 0.6);
+  color: rgba(247, 237, 226, 0.86);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  white-space: pre-line;
+  pointer-events: none;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Portrait phone: 412x915 and friends. Opaque controls so a projected label can
+   never read through a button, smaller labels, full width cards.
+   --------------------------------------------------------------------------- */
+
+@media (max-width: 520px) and (orientation: portrait) {
+  body {
+    font-size: 13px;
+  }
+
+  .label {
+    max-width: 40vw;
+    padding: 2px 7px 2px 5px;
+    background: rgba(28, 22, 17, 0.55);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+  }
+
+  .label::before {
+    width: 6px;
+    height: 6px;
+  }
+
+  .chev,
+  #sleep,
+  #open-file {
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    min-height: 48px;
+    background: var(--panel-solid);
+  }
+
+  /* The labels stay in the clean band between the chevrons and above the two bottom
+     buttons. At 412 x 915 a chevron is 48 px wide at a 12 px inset, so 60 px each side
+     clears it, and 72 px at the bottom clears the sleep and folder buttons. Combined
+     with overflow hidden and main's 6 px edge margin, no label box can reach a control
+     at any camera angle. */
+  #labels {
+    left: 60px;
+    left: calc(env(safe-area-inset-left, 0px) + 60px);
+    right: 60px;
+    right: calc(env(safe-area-inset-right, 0px) + 60px);
+    bottom: 72px;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 72px);
+  }
+
+  #card {
+    bottom: 78px;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 78px);
+    width: calc(100vw - 24px);
+    max-width: none;
+  }
+
+  #cards {
+    bottom: 78px;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 78px);
+    width: calc(100vw - 24px);
+  }
+
+  #drop span {
+    padding: 18px 22px;
+    font-size: 12px;
+  }
+
+  #fps {
+    font-size: 10px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Reduced motion: keep the state changes, drop the movement.
+   --------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+  }
+}

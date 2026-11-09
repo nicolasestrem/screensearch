@@ -69,3 +69,5 @@ WATCHDOG.yml
 /.impeccable
 /docs/kickoffs
 /docs/screenshots/p10
+# Localtime working backup left at the repo root; Your-Universe/ carries the tracked history.
+/.lt-index-backup.html
