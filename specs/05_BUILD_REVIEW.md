@@ -198,8 +198,9 @@ array, and its `return` exposes `group`, `update`, `sleep`, `wake`, `toggle`, `s
 in `main.mjs` disposes three groups and drops the instance. The old cards therefore outlive the dream
 that owns their handlers.
 
-Why these wait: `index.html` is generated from every `src/` fragment, and the owner loop's cycle 22
-has four `src/` files uncommitted (+475 lines) with `index.html` not yet regenerated. A `src/` fix
+Why these wait: `index.html` is generated from every `src/` fragment, and the owner loop is mid-cycle in
+those files, measuring four `src/` files uncommitted (+502 lines) and writing into the tree every 25 to
+50 seconds when this pass checked. A `src/` fix
 could only be committed together with that unfinished work, so they land with the loop's snapshot
 commit and stay listed as open items until then.
 

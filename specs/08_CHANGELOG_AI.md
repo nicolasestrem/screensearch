@@ -11,7 +11,7 @@ the current arc.
 
 Three more findings landed on the head that carried the first fix. The cache fingerprint was wrong in
 a way that serves stale packs to returning visitors, and is fixed; the other two are valid defects in
-`src/` that cannot be committed while the owner loop's cycle 22 sits uncommitted in that tree.
+`src/` that cannot be committed while the owner loop is mid-cycle in that tree.
 
 `tools/stamp-sw.mjs` hashed `assets/manifest.json` alone and called that the payload fingerprint, but
 the manifest records paths, licences and metadata only: no digest of any pack, and a rebuild can change
@@ -31,7 +31,8 @@ answer congestion. `main.mjs`'s `install()` disposes the dream group but not its
 which `dream.mjs` keeps in an internal array with no teardown in its returned API, so cards bound to a
 discarded dream survive an export reload and the next waking exceeds the two-card limit. Both are
 recorded in `07` with their fixes; they land with the loop's snapshot, because `index.html` is generated
-from every `src/` fragment and four `src/` files are currently uncommitted (+475 lines).
+from every `src/` fragment and the loop writes into four of them continuously (measured at +502
+uncommitted lines, writing every 25 to 50 seconds, when this pass checked).
 
 `check` now counts 38 checks, since `tools/cache-version.mjs` joined its `node --check` sweep.
 
