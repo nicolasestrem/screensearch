@@ -1,0 +1,2219 @@
+{
+  "version": 1,
+  "packs": [
+    {
+      "id": "kenney-car-kit",
+      "file": "assets/kenney-car-kit.glb",
+      "licence": "CC0-1.0",
+      "source": "kenney.nl/assets/car-kit"
+    },
+    {
+      "id": "kenney-city-kit-commercial",
+      "file": "assets/kenney-city-kit-commercial.glb",
+      "licence": "CC0-1.0",
+      "source": "kenney.nl/assets/city-kit-commercial"
+    },
+    {
+      "id": "kenney-city-kit-roads",
+      "file": "assets/kenney-city-kit-roads.glb",
+      "licence": "CC0-1.0",
+      "source": "kenney.nl/assets/city-kit-roads"
+    },
+    {
+      "id": "kenney-city-kit-suburban",
+      "file": "assets/kenney-city-kit-suburban.glb",
+      "licence": "CC0-1.0",
+      "source": "kenney.nl/assets/city-kit-suburban"
+    },
+    {
+      "id": "kenney-nature-kit",
+      "file": "assets/kenney-nature-kit.glb",
+      "licence": "CC0-1.0",
+      "source": "kenney.nl/assets/nature-kit",
+      "vertexColors": true
+    },
+    {
+      "id": "kenney-mini-characters",
+      "file": "assets/kenney-mini-characters.glb",
+      "licence": "CC0-1.0",
+      "source": "kenney.nl/assets/mini-characters"
+    }
+  ],
+  "models": {
+    "sedan": {
+      "pack": "kenney-car-kit",
+      "category": "car",
+      "tier": "street",
+      "tris": 2032,
+      "bounds": {
+        "min": [
+          -1.0725,
+          0,
+          -1.8232
+        ],
+        "max": [
+          1.0725,
+          1.859,
+          1.8232
+        ]
+      },
+      "footprint": {
+        "w": 2.145,
+        "d": 3.6465,
+        "h": 1.859
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "suv": {
+      "pack": "kenney-car-kit",
+      "category": "car",
+      "tier": "street",
+      "tris": 2474,
+      "bounds": {
+        "min": [
+          -1.0725,
+          0,
+          -1.9305
+        ],
+        "max": [
+          1.0725,
+          1.859,
+          1.9305
+        ]
+      },
+      "footprint": {
+        "w": 2.145,
+        "d": 3.861,
+        "h": 1.859
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "hatchback-sports": {
+      "pack": "kenney-car-kit",
+      "category": "car",
+      "tier": "street",
+      "tris": 2088,
+      "bounds": {
+        "min": [
+          -0.9295,
+          0,
+          -2.0378
+        ],
+        "max": [
+          0.9295,
+          1.573,
+          2.0378
+        ]
+      },
+      "footprint": {
+        "w": 1.859,
+        "d": 4.0755,
+        "h": 1.573
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "taxi": {
+      "pack": "kenney-car-kit",
+      "category": "car",
+      "tier": "street",
+      "tris": 2072,
+      "bounds": {
+        "min": [
+          -1.0725,
+          0,
+          -1.9662
+        ],
+        "max": [
+          1.0725,
+          2.145,
+          1.9662
+        ]
+      },
+      "footprint": {
+        "w": 2.145,
+        "d": 3.9325,
+        "h": 2.145
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "van": {
+      "pack": "kenney-car-kit",
+      "category": "van",
+      "tier": "street",
+      "tris": 2082,
+      "bounds": {
+        "min": [
+          -1.0725,
+          0,
+          -1.9663
+        ],
+        "max": [
+          1.0725,
+          1.9305,
+          1.9663
+        ]
+      },
+      "footprint": {
+        "w": 2.145,
+        "d": 3.9325,
+        "h": 1.9305
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "delivery": {
+      "pack": "kenney-car-kit",
+      "category": "van",
+      "tier": "street",
+      "tris": 2476,
+      "bounds": {
+        "min": [
+          -1.0725,
+          0,
+          -2.3237
+        ],
+        "max": [
+          1.0725,
+          2.3595,
+          2.3237
+        ]
+      },
+      "footprint": {
+        "w": 2.145,
+        "d": 4.6475,
+        "h": 2.3595
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "truck": {
+      "pack": "kenney-car-kit",
+      "category": "truck",
+      "tier": "street",
+      "tris": 2082,
+      "bounds": {
+        "min": [
+          -1.0725,
+          0,
+          -2.1092
+        ],
+        "max": [
+          1.0725,
+          1.859,
+          2.1092
+        ]
+      },
+      "footprint": {
+        "w": 2.145,
+        "d": 4.2185,
+        "h": 1.859
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "sedan-low": {
+      "pack": "kenney-car-kit",
+      "category": "car",
+      "tier": "street",
+      "tris": 500,
+      "bounds": {
+        "min": [
+          -1.0035,
+          0,
+          -1.8232
+        ],
+        "max": [
+          1.0035,
+          1.8576,
+          1.8233
+        ]
+      },
+      "footprint": {
+        "w": 2.007,
+        "d": 3.6465,
+        "h": 1.8576
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "suv-low": {
+      "pack": "kenney-car-kit",
+      "category": "car",
+      "tier": "street",
+      "tris": 500,
+      "bounds": {
+        "min": [
+          -1.0043,
+          0,
+          -1.9366
+        ],
+        "max": [
+          1.0043,
+          1.8585,
+          1.9366
+        ]
+      },
+      "footprint": {
+        "w": 2.0086,
+        "d": 3.8732,
+        "h": 1.8585
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "hatchback-sports-low": {
+      "pack": "kenney-car-kit",
+      "category": "car",
+      "tier": "street",
+      "tris": 500,
+      "bounds": {
+        "min": [
+          -0.9459,
+          0,
+          -2.0377
+        ],
+        "max": [
+          0.9459,
+          1.5716,
+          2.0378
+        ]
+      },
+      "footprint": {
+        "w": 1.8918,
+        "d": 4.0755,
+        "h": 1.5716
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "taxi-low": {
+      "pack": "kenney-car-kit",
+      "category": "car",
+      "tier": "street",
+      "tris": 498,
+      "bounds": {
+        "min": [
+          -1.0035,
+          0,
+          -1.9662
+        ],
+        "max": [
+          1.0035,
+          2.1522,
+          1.9663
+        ]
+      },
+      "footprint": {
+        "w": 2.007,
+        "d": 3.9325,
+        "h": 2.1522
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "van-low": {
+      "pack": "kenney-car-kit",
+      "category": "van",
+      "tier": "street",
+      "tris": 500,
+      "bounds": {
+        "min": [
+          -1.0042,
+          0,
+          -1.9662
+        ],
+        "max": [
+          1.0042,
+          1.9291,
+          1.9663
+        ]
+      },
+      "footprint": {
+        "w": 2.0085,
+        "d": 3.9325,
+        "h": 1.9291
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "delivery-low": {
+      "pack": "kenney-car-kit",
+      "category": "van",
+      "tier": "street",
+      "tris": 500,
+      "bounds": {
+        "min": [
+          -1.0725,
+          0,
+          -2.3237
+        ],
+        "max": [
+          1.0725,
+          2.3184,
+          2.3238
+        ]
+      },
+      "footprint": {
+        "w": 2.145,
+        "d": 4.6475,
+        "h": 2.3184
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "truck-low": {
+      "pack": "kenney-car-kit",
+      "category": "truck",
+      "tier": "street",
+      "tris": 500,
+      "bounds": {
+        "min": [
+          -1.0035,
+          0,
+          -2.1093
+        ],
+        "max": [
+          1.0035,
+          1.8576,
+          2.1093
+        ]
+      },
+      "footprint": {
+        "w": 2.007,
+        "d": 4.2185,
+        "h": 1.8576
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-a": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 188,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          16,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 16
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-b": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 200,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          17.8,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 17.8
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-c": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 142,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          18,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 18
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-d": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 106,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          14,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 14
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-e": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 96,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          14.4,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 14.4
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-f": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 88,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          16,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 16
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-g": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 200,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          16,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 16
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-h": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 378,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          16.8,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 16.8
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-i": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 152,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          14.2,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 14.2
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-j": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 188,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          14,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 14
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-k": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 86,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          12.4,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 12.4
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-l": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 150,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          14.8,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 14.8
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-m": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 188,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          15.8,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 15.8
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-n": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "district",
+      "tris": 62,
+      "bounds": {
+        "min": [
+          -2,
+          0,
+          -2
+        ],
+        "max": [
+          2,
+          5.6,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 4,
+        "d": 4,
+        "h": 5.6
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-wide-a": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "shop",
+      "tier": "district",
+      "tris": 156,
+      "bounds": {
+        "min": [
+          -4,
+          0,
+          -2
+        ],
+        "max": [
+          4,
+          8.8,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 8,
+        "d": 4,
+        "h": 8.8
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "low-detail-building-wide-b": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "warehouse",
+      "tier": "district",
+      "tris": 246,
+      "bounds": {
+        "min": [
+          -4,
+          0,
+          -2
+        ],
+        "max": [
+          4,
+          9.2,
+          2
+        ]
+      },
+      "footprint": {
+        "w": 8,
+        "d": 4,
+        "h": 9.2
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-skyscraper-a": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "tower",
+      "tier": "district",
+      "tris": 1292,
+      "bounds": {
+        "min": [
+          -5.44,
+          0,
+          -5.44
+        ],
+        "max": [
+          5.44,
+          23.04,
+          5.44
+        ]
+      },
+      "footprint": {
+        "w": 10.88,
+        "d": 10.88,
+        "h": 23.04
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-skyscraper-b": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "tower",
+      "tier": "district",
+      "tris": 1592,
+      "bounds": {
+        "min": [
+          -5.44,
+          0,
+          -5.44
+        ],
+        "max": [
+          5.44,
+          35.84,
+          5.44
+        ]
+      },
+      "footprint": {
+        "w": 10.88,
+        "d": 10.88,
+        "h": 35.84
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-skyscraper-c": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "tower",
+      "tier": "district",
+      "tris": 1704,
+      "bounds": {
+        "min": [
+          -5.12,
+          0,
+          -5.5516
+        ],
+        "max": [
+          5.12,
+          32.64,
+          5.5516
+        ]
+      },
+      "footprint": {
+        "w": 10.24,
+        "d": 11.1031,
+        "h": 32.64
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-skyscraper-d": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "tower",
+      "tier": "district",
+      "tris": 1892,
+      "bounds": {
+        "min": [
+          -5.12,
+          0,
+          -5.5516
+        ],
+        "max": [
+          5.12,
+          43.76,
+          5.5516
+        ]
+      },
+      "footprint": {
+        "w": 10.24,
+        "d": 11.1031,
+        "h": 43.76
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-skyscraper-e": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "tower",
+      "tier": "district",
+      "tris": 1156,
+      "bounds": {
+        "min": [
+          -5.18,
+          0,
+          -4.968
+        ],
+        "max": [
+          5.18,
+          32.64,
+          4.968
+        ]
+      },
+      "footprint": {
+        "w": 10.36,
+        "d": 9.936,
+        "h": 32.64
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-a": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "street",
+      "tris": 1252,
+      "bounds": {
+        "min": [
+          -3.5344,
+          0,
+          -3.76
+        ],
+        "max": [
+          3.5344,
+          10.344,
+          3.76
+        ]
+      },
+      "footprint": {
+        "w": 7.0687,
+        "d": 7.52,
+        "h": 10.344
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-b": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "street",
+      "tris": 1276,
+      "bounds": {
+        "min": [
+          -3.88,
+          0,
+          -3.76
+        ],
+        "max": [
+          3.88,
+          10.344,
+          3.76
+        ]
+      },
+      "footprint": {
+        "w": 7.76,
+        "d": 7.52,
+        "h": 10.344
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-c": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "street",
+      "tris": 1195,
+      "bounds": {
+        "min": [
+          -3.5344,
+          0,
+          -4.36
+        ],
+        "max": [
+          3.5344,
+          7.144,
+          4.36
+        ]
+      },
+      "footprint": {
+        "w": 7.0687,
+        "d": 8.72,
+        "h": 7.144
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-d": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "street",
+      "tris": 1100,
+      "bounds": {
+        "min": [
+          -3.36,
+          0,
+          -3.6
+        ],
+        "max": [
+          3.36,
+          10.344,
+          3.6
+        ]
+      },
+      "footprint": {
+        "w": 6.72,
+        "d": 7.2,
+        "h": 10.344
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-e": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "street",
+      "tris": 1509,
+      "bounds": {
+        "min": [
+          -6.56,
+          0,
+          -4.0316
+        ],
+        "max": [
+          6.56,
+          7.144,
+          4.0316
+        ]
+      },
+      "footprint": {
+        "w": 13.12,
+        "d": 8.0631,
+        "h": 7.144
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-h": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "apartment",
+      "tier": "street",
+      "tris": 1512,
+      "bounds": {
+        "min": [
+          -3.5344,
+          0,
+          -4.0316
+        ],
+        "max": [
+          3.5344,
+          10.344,
+          4.0316
+        ]
+      },
+      "footprint": {
+        "w": 7.0687,
+        "d": 8.0631,
+        "h": 10.344
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "detail-parasol-a": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "parasol",
+      "tier": "street",
+      "tris": 96,
+      "bounds": {
+        "min": [
+          -1.3856,
+          0,
+          -1.6
+        ],
+        "max": [
+          1.3856,
+          3.6,
+          1.6
+        ]
+      },
+      "footprint": {
+        "w": 2.7713,
+        "d": 3.2,
+        "h": 3.6
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "detail-parasol-b": {
+      "pack": "kenney-city-kit-commercial",
+      "category": "parasol",
+      "tier": "street",
+      "tris": 120,
+      "bounds": {
+        "min": [
+          -1.3856,
+          0,
+          -1.6
+        ],
+        "max": [
+          1.3856,
+          3.6,
+          1.6
+        ]
+      },
+      "footprint": {
+        "w": 2.7713,
+        "d": 3.2,
+        "h": 3.6
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "light-curved": {
+      "pack": "kenney-city-kit-roads",
+      "category": "lamp",
+      "tier": "street",
+      "tris": 92,
+      "bounds": {
+        "min": [
+          -0.175,
+          0,
+          -0.7875
+        ],
+        "max": [
+          0.175,
+          4.725,
+          0.7875
+        ]
+      },
+      "footprint": {
+        "w": 0.35,
+        "d": 1.575,
+        "h": 4.725
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "light-square": {
+      "pack": "kenney-city-kit-roads",
+      "category": "lamp",
+      "tier": "street",
+      "tris": 60,
+      "bounds": {
+        "min": [
+          -0.175,
+          0,
+          -0.8313
+        ],
+        "max": [
+          0.175,
+          4.2,
+          0.8313
+        ]
+      },
+      "footprint": {
+        "w": 0.35,
+        "d": 1.6625,
+        "h": 4.2
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "traffic-light": {
+      "pack": "kenney-city-kit-roads",
+      "category": "signal",
+      "tier": "street",
+      "tris": 212,
+      "bounds": {
+        "min": [
+          -0.4116,
+          0,
+          -0.315
+        ],
+        "max": [
+          0.4116,
+          3.605,
+          0.315
+        ]
+      },
+      "footprint": {
+        "w": 0.8232,
+        "d": 0.63,
+        "h": 3.605
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "dumpster": {
+      "pack": "kenney-city-kit-roads",
+      "category": "prop",
+      "tier": "street",
+      "tris": 234,
+      "bounds": {
+        "min": [
+          -0.9625,
+          0,
+          -1.295
+        ],
+        "max": [
+          0.9625,
+          1.4661,
+          1.295
+        ]
+      },
+      "footprint": {
+        "w": 1.925,
+        "d": 2.59,
+        "h": 1.4661
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "construction-barrier": {
+      "pack": "kenney-city-kit-roads",
+      "category": "prop",
+      "tier": "street",
+      "tris": 60,
+      "bounds": {
+        "min": [
+          -0.4742,
+          0,
+          -0.7875
+        ],
+        "max": [
+          0.4742,
+          0.91,
+          0.7875
+        ]
+      },
+      "footprint": {
+        "w": 0.9485,
+        "d": 1.575,
+        "h": 0.91
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "construction-cone": {
+      "pack": "kenney-city-kit-roads",
+      "category": "prop",
+      "tier": "street",
+      "tris": 66,
+      "bounds": {
+        "min": [
+          -0.2625,
+          0,
+          -0.2625
+        ],
+        "max": [
+          0.2625,
+          0.6563,
+          0.2625
+        ]
+      },
+      "footprint": {
+        "w": 0.525,
+        "d": 0.525,
+        "h": 0.6563
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "construction-fence": {
+      "pack": "kenney-city-kit-roads",
+      "category": "prop",
+      "tier": "street",
+      "tris": 136,
+      "bounds": {
+        "min": [
+          -0.2625,
+          0,
+          -1.3125
+        ],
+        "max": [
+          0.2625,
+          1.2512,
+          1.3125
+        ]
+      },
+      "footprint": {
+        "w": 0.525,
+        "d": 2.625,
+        "h": 1.2512
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "electricity-pole-single": {
+      "pack": "kenney-city-kit-roads",
+      "category": "prop",
+      "tier": "street",
+      "tris": 176,
+      "bounds": {
+        "min": [
+          -0.2768,
+          0,
+          -0.7498
+        ],
+        "max": [
+          0.2768,
+          3.675,
+          0.7498
+        ]
+      },
+      "footprint": {
+        "w": 0.5536,
+        "d": 1.4996,
+        "h": 3.675
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "building-type-a": {
+      "pack": "kenney-city-kit-suburban",
+      "category": "villa",
+      "tier": "street",
+      "tris": 1174,
+      "bounds": {
+        "min": [
+          -5.2,
+          0,
+          -4.1126
+        ],
+        "max": [
+          5.2,
+          6.6683,
+          4.1126
+        ]
+      },
+      "footprint": {
+        "w": 10.4,
+        "d": 8.2251,
+        "h": 6.6683
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-type-c": {
+      "pack": "kenney-city-kit-suburban",
+      "category": "villa",
+      "tier": "street",
+      "tris": 1196,
+      "bounds": {
+        "min": [
+          -5.1455,
+          0,
+          -4.1126
+        ],
+        "max": [
+          5.1455,
+          8.2683,
+          4.1126
+        ]
+      },
+      "footprint": {
+        "w": 10.291,
+        "d": 8.2251,
+        "h": 8.2683
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-type-g": {
+      "pack": "kenney-city-kit-suburban",
+      "category": "villa",
+      "tier": "street",
+      "tris": 1067,
+      "bounds": {
+        "min": [
+          -5.8,
+          0,
+          -4.712
+        ],
+        "max": [
+          5.8,
+          6.1457,
+          4.712
+        ]
+      },
+      "footprint": {
+        "w": 11.6,
+        "d": 9.424,
+        "h": 6.1457
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-type-j": {
+      "pack": "kenney-city-kit-suburban",
+      "category": "villa",
+      "tier": "street",
+      "tris": 1210,
+      "bounds": {
+        "min": [
+          -5.48,
+          0,
+          -3.664
+        ],
+        "max": [
+          5.48,
+          8.3,
+          3.664
+        ]
+      },
+      "footprint": {
+        "w": 10.96,
+        "d": 7.328,
+        "h": 8.3
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-type-n": {
+      "pack": "kenney-city-kit-suburban",
+      "category": "villa",
+      "tier": "street",
+      "tris": 1612,
+      "bounds": {
+        "min": [
+          -7.1371,
+          0,
+          -5.5116
+        ],
+        "max": [
+          7.1371,
+          9.1,
+          5.5116
+        ]
+      },
+      "footprint": {
+        "w": 14.2742,
+        "d": 11.0231,
+        "h": 9.1
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "building-type-s": {
+      "pack": "kenney-city-kit-suburban",
+      "category": "villa",
+      "tier": "street",
+      "tris": 1212,
+      "bounds": {
+        "min": [
+          -5.6241,
+          0,
+          -4.3455
+        ],
+        "max": [
+          5.6241,
+          9.1,
+          4.3455
+        ]
+      },
+      "footprint": {
+        "w": 11.2482,
+        "d": 8.691,
+        "h": 9.1
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "planter": {
+      "pack": "kenney-city-kit-suburban",
+      "category": "prop",
+      "tier": "street",
+      "tris": 204,
+      "bounds": {
+        "min": [
+          -0.8,
+          0,
+          -0.6
+        ],
+        "max": [
+          0.8,
+          0.7084,
+          0.6
+        ]
+      },
+      "footprint": {
+        "w": 1.6,
+        "d": 1.2,
+        "h": 0.7084
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "tree-large": {
+      "pack": "kenney-city-kit-suburban",
+      "category": "tree-plane",
+      "tier": "district",
+      "tris": 42,
+      "bounds": {
+        "min": [
+          -0.8418,
+          0,
+          -0.972
+        ],
+        "max": [
+          0.8418,
+          6.136,
+          0.972
+        ]
+      },
+      "footprint": {
+        "w": 1.6836,
+        "d": 1.944,
+        "h": 6.136
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "tree-small": {
+      "pack": "kenney-city-kit-suburban",
+      "category": "tree-olive",
+      "tier": "district",
+      "tris": 42,
+      "bounds": {
+        "min": [
+          -0.8418,
+          0,
+          -0.972
+        ],
+        "max": [
+          0.8418,
+          4.536,
+          0.972
+        ]
+      },
+      "footprint": {
+        "w": 1.6836,
+        "d": 1.944,
+        "h": 4.536
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "tree-pine-default-a": {
+      "pack": "kenney-nature-kit",
+      "category": "tree-cypress",
+      "tier": "district",
+      "tris": 230,
+      "bounds": {
+        "min": [
+          -1.3299,
+          0,
+          -1.3299
+        ],
+        "max": [
+          1.3299,
+          7.7292,
+          1.3299
+        ]
+      },
+      "footprint": {
+        "w": 2.6598,
+        "d": 2.6598,
+        "h": 7.7292
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "tree-pine-default-b": {
+      "pack": "kenney-nature-kit",
+      "category": "tree-cypress",
+      "tier": "district",
+      "tris": 246,
+      "bounds": {
+        "min": [
+          -1.3299,
+          0,
+          -1.3299
+        ],
+        "max": [
+          1.3299,
+          7.7287,
+          1.3299
+        ]
+      },
+      "footprint": {
+        "w": 2.6598,
+        "d": 2.6598,
+        "h": 7.7287
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "tree-palm": {
+      "pack": "kenney-nature-kit",
+      "category": "tree-palm",
+      "tier": "district",
+      "tris": 186,
+      "bounds": {
+        "min": [
+          -2.3387,
+          0,
+          -2.5319
+        ],
+        "max": [
+          2.3387,
+          7.573,
+          2.5319
+        ]
+      },
+      "footprint": {
+        "w": 4.6774,
+        "d": 5.0638,
+        "h": 7.573
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "tree-palm-tall": {
+      "pack": "kenney-nature-kit",
+      "category": "tree-palm",
+      "tier": "district",
+      "tris": 190,
+      "bounds": {
+        "min": [
+          -2.5858,
+          0,
+          -2.5858
+        ],
+        "max": [
+          2.5858,
+          6.7783,
+          2.5858
+        ]
+      },
+      "footprint": {
+        "w": 5.1716,
+        "d": 5.1716,
+        "h": 6.7783
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "tree-default": {
+      "pack": "kenney-nature-kit",
+      "category": "tree-plane",
+      "tier": "district",
+      "tris": 114,
+      "bounds": {
+        "min": [
+          -1.8875,
+          0,
+          -1.6346
+        ],
+        "max": [
+          1.8875,
+          8.5394,
+          1.6346
+        ]
+      },
+      "footprint": {
+        "w": 3.775,
+        "d": 3.2692,
+        "h": 8.5394
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "tree-oak": {
+      "pack": "kenney-nature-kit",
+      "category": "tree-olive",
+      "tier": "district",
+      "tris": 196,
+      "bounds": {
+        "min": [
+          -1.6014,
+          0,
+          -1.8491
+        ],
+        "max": [
+          1.6014,
+          6.1312,
+          1.8491
+        ]
+      },
+      "footprint": {
+        "w": 3.2028,
+        "d": 3.6982,
+        "h": 6.1312
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "plant-bush": {
+      "pack": "kenney-nature-kit",
+      "category": "prop",
+      "tier": "street",
+      "tris": 32,
+      "bounds": {
+        "min": [
+          -0.99,
+          0,
+          -0.99
+        ],
+        "max": [
+          0.99,
+          1.2222,
+          0.99
+        ]
+      },
+      "footprint": {
+        "w": 1.98,
+        "d": 1.98,
+        "h": 1.2222
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "plant-bush-detailed": {
+      "pack": "kenney-nature-kit",
+      "category": "prop",
+      "tier": "street",
+      "tris": 104,
+      "bounds": {
+        "min": [
+          -1.5064,
+          0,
+          -1.5064
+        ],
+        "max": [
+          1.5064,
+          1.8021,
+          1.5064
+        ]
+      },
+      "footprint": {
+        "w": 3.0127,
+        "d": 3.0127,
+        "h": 1.8021
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "plant-bush-large": {
+      "pack": "kenney-nature-kit",
+      "category": "prop",
+      "tier": "street",
+      "tris": 60,
+      "bounds": {
+        "min": [
+          -0.9358,
+          0,
+          -0.8392
+        ],
+        "max": [
+          0.9358,
+          1.2147,
+          0.8392
+        ]
+      },
+      "footprint": {
+        "w": 1.8715,
+        "d": 1.6784,
+        "h": 1.2147
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "plant-bush-small": {
+      "pack": "kenney-nature-kit",
+      "category": "prop",
+      "tier": "street",
+      "tris": 16,
+      "bounds": {
+        "min": [
+          -0.9574,
+          0,
+          -0.8409
+        ],
+        "max": [
+          0.9574,
+          1.0365,
+          0.8409
+        ]
+      },
+      "footprint": {
+        "w": 1.9149,
+        "d": 1.6817,
+        "h": 1.0365
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "flower-red-a": {
+      "pack": "kenney-nature-kit",
+      "category": "prop",
+      "tier": "street",
+      "tris": 76,
+      "bounds": {
+        "min": [
+          -0.3977,
+          0,
+          -0.4526
+        ],
+        "max": [
+          0.3977,
+          1.4625,
+          0.4526
+        ]
+      },
+      "footprint": {
+        "w": 0.7955,
+        "d": 0.9053,
+        "h": 1.4625
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "flower-purple-a": {
+      "pack": "kenney-nature-kit",
+      "category": "prop",
+      "tier": "street",
+      "tris": 76,
+      "bounds": {
+        "min": [
+          -0.3977,
+          0,
+          -0.4526
+        ],
+        "max": [
+          0.3977,
+          1.2125,
+          0.4526
+        ]
+      },
+      "footprint": {
+        "w": 0.7955,
+        "d": 0.9053,
+        "h": 1.2125
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "flower-yellow-a": {
+      "pack": "kenney-nature-kit",
+      "category": "prop",
+      "tier": "street",
+      "tris": 76,
+      "bounds": {
+        "min": [
+          -0.3977,
+          0,
+          -0.4526
+        ],
+        "max": [
+          0.3977,
+          0.9625,
+          0.4526
+        ]
+      },
+      "footprint": {
+        "w": 0.7955,
+        "d": 0.9053,
+        "h": 0.9625
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "flower-bed": {
+      "pack": "kenney-nature-kit",
+      "category": "prop",
+      "tier": "street",
+      "tris": 268,
+      "bounds": {
+        "min": [
+          -0.8372,
+          0,
+          -1.8683
+        ],
+        "max": [
+          0.8372,
+          1.3687,
+          1.8683
+        ]
+      },
+      "footprint": {
+        "w": 1.6743,
+        "d": 3.7366,
+        "h": 1.3687
+      },
+      "tintable": false,
+      "parts": []
+    },
+    "character-female-a": {
+      "pack": "kenney-mini-characters",
+      "category": "person",
+      "tier": "district",
+      "tris": 150,
+      "bounds": {
+        "min": [
+          -0.524,
+          0,
+          -0.2482
+        ],
+        "max": [
+          0.524,
+          0.7785,
+          0.2482
+        ]
+      },
+      "footprint": {
+        "w": 1.048,
+        "d": 0.4964,
+        "h": 0.7785
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "character-female-b": {
+      "pack": "kenney-mini-characters",
+      "category": "person",
+      "tier": "district",
+      "tris": 149,
+      "bounds": {
+        "min": [
+          -0.3853,
+          0,
+          -0.1868
+        ],
+        "max": [
+          0.3853,
+          0.7122,
+          0.1868
+        ]
+      },
+      "footprint": {
+        "w": 0.7707,
+        "d": 0.3737,
+        "h": 0.7122
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "character-female-c": {
+      "pack": "kenney-mini-characters",
+      "category": "person",
+      "tier": "district",
+      "tris": 150,
+      "bounds": {
+        "min": [
+          -0.3872,
+          0,
+          -0.2522
+        ],
+        "max": [
+          0.3872,
+          0.7843,
+          0.2522
+        ]
+      },
+      "footprint": {
+        "w": 0.7743,
+        "d": 0.5043,
+        "h": 0.7843
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "character-female-d": {
+      "pack": "kenney-mini-characters",
+      "category": "person",
+      "tier": "district",
+      "tris": 150,
+      "bounds": {
+        "min": [
+          -0.3853,
+          0,
+          -0.2575
+        ],
+        "max": [
+          0.3853,
+          0.738,
+          0.2575
+        ]
+      },
+      "footprint": {
+        "w": 0.7707,
+        "d": 0.515,
+        "h": 0.738
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "character-female-e": {
+      "pack": "kenney-mini-characters",
+      "category": "person",
+      "tier": "district",
+      "tris": 150,
+      "bounds": {
+        "min": [
+          -0.3853,
+          0,
+          -0.2586
+        ],
+        "max": [
+          0.3853,
+          0.6925,
+          0.2586
+        ]
+      },
+      "footprint": {
+        "w": 0.7707,
+        "d": 0.5171,
+        "h": 0.6925
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "character-female-f": {
+      "pack": "kenney-mini-characters",
+      "category": "person",
+      "tier": "district",
+      "tris": 150,
+      "bounds": {
+        "min": [
+          -0.3854,
+          0,
+          -0.2312
+        ],
+        "max": [
+          0.3854,
+          0.677,
+          0.2312
+        ]
+      },
+      "footprint": {
+        "w": 0.7707,
+        "d": 0.4625,
+        "h": 0.677
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "character-male-a": {
+      "pack": "kenney-mini-characters",
+      "category": "person",
+      "tier": "district",
+      "tris": 149,
+      "bounds": {
+        "min": [
+          -0.239,
+          0,
+          -0.1679
+        ],
+        "max": [
+          0.239,
+          0.6712,
+          0.1679
+        ]
+      },
+      "footprint": {
+        "w": 0.4779,
+        "d": 0.3359,
+        "h": 0.6712
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "character-male-b": {
+      "pack": "kenney-mini-characters",
+      "category": "person",
+      "tier": "district",
+      "tris": 149,
+      "bounds": {
+        "min": [
+          -0.3853,
+          0,
+          -0.206
+        ],
+        "max": [
+          0.3853,
+          0.6617,
+          0.206
+        ]
+      },
+      "footprint": {
+        "w": 0.7707,
+        "d": 0.412,
+        "h": 0.6617
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "character-male-c": {
+      "pack": "kenney-mini-characters",
+      "category": "person",
+      "tier": "district",
+      "tris": 149,
+      "bounds": {
+        "min": [
+          -0.3872,
+          0,
+          -0.2126
+        ],
+        "max": [
+          0.3872,
+          0.7878,
+          0.2126
+        ]
+      },
+      "footprint": {
+        "w": 0.7743,
+        "d": 0.4252,
+        "h": 0.7878
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "character-male-d": {
+      "pack": "kenney-mini-characters",
+      "category": "person",
+      "tier": "district",
+      "tris": 149,
+      "bounds": {
+        "min": [
+          -0.3853,
+          0,
+          -0.1678
+        ],
+        "max": [
+          0.3853,
+          0.6729,
+          0.1678
+        ]
+      },
+      "footprint": {
+        "w": 0.7707,
+        "d": 0.3356,
+        "h": 0.6729
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "character-male-e": {
+      "pack": "kenney-mini-characters",
+      "category": "person",
+      "tier": "district",
+      "tris": 150,
+      "bounds": {
+        "min": [
+          -0.3944,
+          0,
+          -0.1688
+        ],
+        "max": [
+          0.3944,
+          0.6514,
+          0.1688
+        ]
+      },
+      "footprint": {
+        "w": 0.7888,
+        "d": 0.3376,
+        "h": 0.6514
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "character-male-f": {
+      "pack": "kenney-mini-characters",
+      "category": "person",
+      "tier": "district",
+      "tris": 149,
+      "bounds": {
+        "min": [
+          -0.3853,
+          0,
+          -0.1679
+        ],
+        "max": [
+          0.3853,
+          0.6729,
+          0.1679
+        ]
+      },
+      "footprint": {
+        "w": 0.7707,
+        "d": 0.3359,
+        "h": 0.6729
+      },
+      "tintable": true,
+      "parts": []
+    },
+    "character-male-g": {
+      "pack": "kenney-mini-characters",
+      "category": "person",
+      "tier": "district",
+      "tris": 150,
+      "bounds": {
+        "min": [
+          -0.3944,
+          0,
+          -0.1812
+        ],
+        "max": [
+          0.3944,
+          0.6315,
+          0.1812
+        ]
+      },
+      "footprint": {
+        "w": 0.7888,
+        "d": 0.3623,
+        "h": 0.6315
+      },
+      "tintable": true,
+      "parts": []
+    }
+  }
+}

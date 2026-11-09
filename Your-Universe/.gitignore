@@ -1,0 +1,47 @@
+# Working captures, scratch and downloads stay local; the deliverable does not need them.
+*.jsonl
+*.err
+node_modules/
+.cache/
+.sigblock_old.txt
+harness.html
+
+# Per-cycle snapshots and bulk captures (~117 MB). The probe scripts and notes they are cited
+# from stay tracked so every measurement in ITERATIONS.md remains reproducible.
+.cycles/*
+!.cycles/*.mjs
+!.cycles/*.js
+!.cycles/*.py
+!.cycles/*.md
+
+# Screenshots: only the deliverable frames and the gallery copies are tracked. The baseline,
+# tuning (t1..t9), diagnostic and per-cycle series are working evidence and stay local; their
+# measurements are quoted in ITERATIONS.md.
+screenshots/*
+!screenshots/assets/
+!screenshots/iter-21-day.png
+!screenshots/iter-21-day-nopost.png
+!screenshots/iter-21-night-awake.png
+!screenshots/iter-21-dream.png
+!screenshots/iter-21-noassets.png
+!screenshots/iter-21-street-r0.png
+!screenshots/iter-21-street-r1.png
+!screenshots/iter-21-street-r2.png
+!screenshots/iter-21-street-r3.png
+!screenshots/iter-21-final-day.png
+!screenshots/iter-21-final-day-nopost.png
+!screenshots/iter-21-final-dream.png
+!screenshots/iter-21-pixel6-pday.png
+!screenshots/iter-21-pixel6-pday-full.png
+!screenshots/iter-21-pixel6-pnight.png
+!screenshots/iter-21-pixel6-pnight-full.png
+!screenshots/iter-21-pixel6-pdream.png
+!screenshots/iter-21-pixel6-pdream-full.png
+!screenshots/desktop-day.png
+!screenshots/desktop-night-awake.png
+!screenshots/desktop-night-dream.png
+!screenshots/desktop-street.png
+!screenshots/final-1080p-day.png
+!screenshots/final-1080p-night.png
+!screenshots/pixel6-day.png
+.cycles/three160.js

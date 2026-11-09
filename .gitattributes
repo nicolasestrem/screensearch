@@ -26,3 +26,6 @@
 *.gguf     binary
 *.onnx     binary
 *.safetensors binary
+# Your-Universe ships packed glTF binary (Kenney CC0 kits); never normalize or diff them.
+*.glb      binary
+*.gltf     binary
