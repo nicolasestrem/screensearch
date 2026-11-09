@@ -1463,3 +1463,249 @@ patterns. The static production UI does not execute this Node pipeline, and
 `npm audit --omit=dev` is clean. Do not force a Tailwind 4 migration just to
 silence propagation. Reassess before accepting untrusted build patterns.
 CodeQL alert 2 was dismissed with the FFI contract evidence recorded in `specs/archive/05_BUILD_REVIEW.v0.4.2.md`.
+
+
+<!-- Moved from the live log on 2026-11-09: post-release v0.4.5 QA entries, archived on release per CLAUDE.md. -->
+
+## 2026-11-07: v0.4.5 release QA: decisions taken without asking (owner: maintainer for review)
+
+The release-QA pass ran on `chore/0.4.5-release` from `origin/main` `440d2e9` under the maintainer's
+kickoff, which replaced stop-at-ambiguity with "decide, record it here, continue". Every decision
+below is recorded with the evidence that forced it. Evidence artifacts live outside the repository
+(`C:\Users\nicol\screensearch-evidence`), so the numbers are restated here.
+
+- **QA D1: schema 14 in the kickoff versus schema 15 in the tree.** *Question:* the kickoff's
+  release-state text says "schema 14", but `crates/store/src/schema.rs` declares
+  `LATEST_SCHEMA_VERSION: i32 = 15` (P9 added `ask_turns.citations` and `ask_turns.scope_thread_id`),
+  the baseline test asserts 15, and `open_existing` refuses any other version untouched. *Decision:*
+  document and verify **15**. Writing 14 would have asserted a version the app refuses to open, and
+  forcing the constant back to 14 would have dropped the P9 columns. *Consequence:* `01 §8` states
+  schema 15; the runtime check is "log says `store opened` with `schema_version=15`". A stale "v14"
+  remains only inside archived build-loop text, which is verbatim history and stays as written.
+- **QA D2: merge authority.** *Conflict:* `CLAUDE.md` says merges are maintainer-only and must never
+  be inferred from a kickoff file, a PROMPTS/override file or "D18 waived". *Decision:* this session's
+  kickoff is a live instruction from the maintainer in the session that explicitly authorizes
+  `gh pr merge --squash` once `gh pr checks` is green, so it is treated as the approval that rule
+  requires for `chore/0.4.5-release` only. Nothing is committed to `main`, no force-push is used, no
+  tag is created and no release is published. If that reading is wrong, the failure mode is an
+  unmerged PR, not a change to `main`.
+- **QA D3: the mandated token grep is broader than the tokens it means to forbid.** The kickoff's
+  grep lists 15 names, but three of them (`--accent`, `--accent-wash`, `--font-mono`) are **v2
+  semantic tokens** defined in `ui/src/styles/tokens.css` and used legitimately, so the literal
+  command can never print nothing. *Decision:* report both raw results: the literal command (with its
+  non-empty output) and the intent-preserving command over exactly the 25 names the deleted
+  `ui/src/styles/tokens.compat.css` mapped, which prints nothing. The 25-name list is not weakened: it
+  is the shim's own definition set, extracted from `git show e459185^:ui/src/styles/tokens.compat.css`.
+- **QA D4: archive-on-release happens now, before the tag.** `04 §7` triggers archiving on the
+  version tag, which this pass does not create. *Decision:* perform it in the release PR so the
+  shipped arc is preserved while it is verifiable: `specs/archive/{05,06,07,08}_*.v0.4.5.md` are
+  byte-identical copies (SHA-256 recorded) and the live logs keep only what is still open (`07`) or
+  invite new entries (`05`, `06`, `08`). If the maintainer delays the tag, nothing is lost.
+- **QA D5: no em dash in authoring versus 52 pre-existing ones in `README.md`.** *Decision:* the
+  rule governs text this pass writes. Existing prose and the `## Screenshots` block (owned elsewhere)
+  keep their glyphs, and the diff proves no line this pass wrote contains one.
+- **QA D6: the P4 harness comparison.** The thresholds bind a run at the committed seed against the
+  committed fixture (`specs/05` "P5/P6 thresholds (fixture)"); this pass reproduces the fixture and
+  the pair set rather than inventing a real-history baseline, and records pass/fail per metric with
+  the report's own numbers.
+
+**Open finding from this pass.**
+
+- **QA F1: the P4 harness cannot measure the two Ask rows of the frozen threshold table (owner:
+  maintainer; blocks nothing in 0.4.5, blocks the P6 acceptance record).** *Observation:*
+  `crates/evalfixture/src/serve.rs` states in its own header that "Ask v2 turns are not served
+  here: the host keeps `ApiHost::ask_turn`'s `Ok(None)`" and delegates `/v1/ask` to
+  `kernel::ask::ask_context`, the frame-level path kept for this fixture. The frozen table (archived
+  `05`, "P5/P6 thresholds (fixture)") names known-fact answer rate and citation validity as P6
+  targets, so those two rows measure the legacy pipeline by construction. Measured at the committed
+  seed: known-fact 65.7% (197/300) against a 64.7% baseline, citation validity 71.4% (1713/2400)
+  against 71.4%, and `/v1/search` retrieval recall@10 37.0% (111/300) against 41.0%, the row `06`
+  #46 records that P6 does not bind to. *Consequence:* 0.4.5 ships with three quality rows below
+  their frozen targets and **no regression against the baseline**; entity recovery 90.3% (159/176)
+  and p95 2306 ms pass. *What would close it:* either serving Ask v2 from the fixture (a dev-only
+  change that re-baselines the frozen numbers, so it needs the maintainer's decision and must not
+  ride a release-QA branch) or the maintainer's live-database acceptance run that P6 always
+  required. No code, test or threshold was edited to move these numbers.
+
+## 2026-11-07: v0.4.5 installed-build QA fixes (branch `fix/0.4.5-qa-bugs`)
+
+Owner: maintainer for review. The installed 0.4.5 build was exercised by hand after the release
+candidate dry run and produced three defects. The kickoff replaces stop-at-ambiguity with "decide,
+record it here, continue", so each decision taken without asking is recorded with the evidence that
+forced it. This pass does not tag and does not publish a release; the candidate is the same version
+(0.4.5) rebuilt from `main` after this branch merges.
+
+- **QA2 D1: merge authority.** *Conflict:* `CLAUDE.md` forbids merging on the strength of a kickoff
+  file, an untracked override file, "D18 waived" or green CI. *Decision:* the instruction this pass
+  acts on is a live maintainer message in this session that names the PRs, the merge command and the
+  order (PR #168 first, then one PR for the three fixes), so it is the explicit approval that rule
+  requires, for those PRs only. `main` receives a squashed merge through GitHub, never a direct
+  commit and never a force-push; no tag is created and no release is published.
+- **QA2 D2: no version bump.** *Question:* the fixes ship in a rebuilt installer, so does the version
+  move? *Decision:* no. `0.4.5` was never tagged (the release workflow was validated with
+  `workflow_dispatch`), the candidate is the same product version with three QA fixes, and bumping
+  would invalidate the release notes, the tag-versus-version guard and the updater's version
+  comparison for a build that changes no version story. `CHANGELOG.md` records the fixes under
+  `[Unreleased]`.
+- **QA2 D3: an unchanged hotkey is not re-registered, and the failed-registration warning narrows.**
+  *Conflict:* `03 §8` requires a failed hotkey registration to be a visible Settings warning plus a
+  toast, never silent, and the shipped build satisfied that by retrying the registration on every
+  settings save. That retry is what produced the false warning: the chord was already held by this
+  process, so the retry could only fail, and the failure cleared the stored chord, which made every
+  later save repeat the same false alarm. *Decision:* an unchanged chord is never re-registered; the
+  stored chord is kept and the status stays OK. A registration that previously failed may be retried
+  at most silently (no toast) while its chord is unchanged, and the Settings status keeps reporting
+  that failure honestly. The visible warning and toast still fire for a chord the user actually
+  changed and that genuinely cannot be registered. `03 §8` states the rule next to the hotkey table.
+- **QA2 D4: where the evidence lives.** Reproductions, probe output, gate output and the installed
+  build check are recorded here and in `05` (its "Release dry run and installed build" block), with
+  the artifacts outside the repository under
+  `C:\Users\nicol\screensearch-evidence` (the hotkey probe script and the dry-run download
+  directory), because the repository holds no binaries or logs.
+
+**Root causes found by this pass.**
+
+- **QA2 F1: the hotkey warning (fixed).** `src-tauri/src/overlay.rs` had two separate registration
+  paths. `init_*` had no idempotency guard and, on any registration failure, overwrote the stored
+  chord with `None`. A failure can come from a chord this process already holds or from another
+  program holding it, and the old init path could not tell those apart. From then on the
+  settings-save path (`reregister_*`) saw "nothing registered", so every save retried the same
+  doomed registration, failed again, and toasted. Its early-return guard also compared raw strings,
+  so a spelling variant of the same chord (`ctrl+alt+m`, `Alt+Ctrl+M`) slipped past it. Evidence:
+  the toast carried no "; still using the previous combination" suffix, which only that
+  "nothing registered" branch produces, so the stored chord was `None` when the save ran; an OS
+  probe returned Win32 `1409` for both chords, which proves *a* process held each but cannot name it
+  (Windows exposes no hotkey-owner API); and the rebuilt candidate settled the question, attempting
+  the mark registration with its own registry empty and being refused while `Ctrl+Alt+Z` registered
+  and worked, so `Ctrl+Alt+M` is held by another program (`QA2 E1`) and was never ours. Pre-fix unit
+  output reproduced the field text verbatim, including `key: KeyM, id: 589855`.
+- **QA2 F2: Ask v2 printed Markdown literally (fixed).** `ui/src/routes/Ask.tsx` rendered the answer
+  as `<p className="whitespace-pre-wrap">`, a deliberate P10 shortcut recorded in its own header
+  comment (the route could not reuse `AnswerStream`, which is bound to the legacy single-turn
+  citation view model). The markdown setup now lives in one shared module and both answer surfaces
+  render through it; `AnswerStream` keeps its own container and behavior.
+- **QA2 F3: Settings controls moved with the copy (fixed).** `SettingRow`'s control slot was a
+  content-sized flex item. `Toggle` lays out as `flex items-start justify-between`, which inside a
+  shrink-to-fit box has no slack, so the switch landed right after the hint text. The slot is now a
+  fixed column (`md:w-96`, the `--space-96` token, `max-w-full` so a narrow cell clamps it).
+
+**Observed this pass and deliberately not fixed (owner: maintainer).**
+
+- **QA2 U1: `ReportView` keeps its own Markdown setup.** `ui/src/components/domain/ReportView.tsx`
+  imports `react-markdown` + `remark-gfm` with its own `a`/`img` overrides, so the app now has two
+  configurations of the same library. Folding it into the shared `AnswerProse` renderer needs an
+  `img` override added there; out of this fix's scope and safe as-is (both use the `prose-deck`
+  tokens).
+- **QA2 U2: a stacked settings row renders its `children` above its control.** In the
+  `labelInControl` variant the `children` cell has no `order`, while the control and status cells are
+  `order-1`/`order-2`, so a "Windows refused the launch-at-login change" notice or the Capture hotkey
+  conflict note appears above the control. Pre-existing, unrelated to the reported misalignment, and
+  fixed by one `order-3` on that cell if the maintainer wants it.
+- **QA2 U3: the `CategoryState` loading skeleton uses the old split.** Its placeholder row still
+  places `md:col-span-5 md:justify-self-end`, so the skeleton's block does not match the new fixed
+  control column. Cosmetic, loading-only, and in a file this fix did not own.
+
+**Environment findings from the installed build (not repository defects).**
+
+- **QA2 E1: another program on this machine owns `Ctrl+Alt+M` (owner: whoever runs the machine).**
+  On the rebuilt candidate the mark chord is refused by the OS (Win32 1409) at startup and the
+  overlay chord `Ctrl+Alt+Z` registers and works (pressing it opened and hid `ScreenSearch Overlay`
+  at 640x460). The refusal is external, not stale bookkeeping: the new code attempts a registration
+  only when this process's own registry is empty, and it was. This condition is what produced the
+  original report, so the fix changes the app's behaviour (one humanized warning, no toast on every
+  save, an honest Settings status) but cannot make a chord another program holds available. Marks
+  therefore cannot be exercised on this machine until that program releases the chord or the user
+  picks a different combination, which the reregister path handles.
+- **QA2 E2: capture paused for a while and resumed by itself on 2026-11-07.** No frame was stored
+  between 13:35 and roughly 14:15 local, before or after the upgrade, while the log reported
+  `capture started`, `capture.interval_ms` is 3000 and there were zero ERROR lines; the count then
+  climbed from 385 to 391 with the newest frame current. Nothing in this change touches capture, and
+  the existing history was intact throughout. Recorded, not investigated, because it is unrelated to
+  the three reported defects.
+
+## 2026-11-09: Carried-forward items closed in the post-0.4.5 specs cleanup
+
+The live `07` carried-forward sections (2026-11-03, 2026-10-19, 2026-10-15, maintenance 2026-09-09,
+npm advisory) were checked against the v0.4.5 tree (`9c45ae8`) and the git history. Their full text at
+release time is already preserved verbatim above (lines 1069-1469), so each closed item is listed
+here by its archived line with a one-line verdict and evidence. Items still open moved to the single
+"Open, carried forward" section of the live `07`.
+
+**From "2026-11-03 — Carried into the 0.4.5 arc" (line 1069):**
+
+- Audio / transcription / meetings out (line 1075) — **superseded**: normative in `02 §7`
+  (`specs/02_STRATEGIC_PLAN.md:434-437`) and the `02 §5d` supersession note.
+- Insights "no contract" gap closed (line 1084) — **superseded**: `03 §7j` is contract (five kinds,
+  evidence rule, triggers, typed payload).
+- Single-user consequences, 0.4.5 D1 (line 1087) — **superseded**: recorded in `01 §8` and `03 §8`
+  (retired-key rewrite-once) and `03 §4` (refuse-other-version baseline, now v15).
+- Details decided at P1 (a)–(e) (line 1091) — **superseded**: each clause is normative in `03 §7h.4`,
+  `§7j.5`, `§8` and `UI_REFERENCE §3`; code `crates/kernel/src/settings.rs:341-363,488-491`.
+- Two settings keys lacked a `03 §8` row (line 1102) — **resolved**: `03 §8` `api.token` row shares
+  with `api.read_token` (0.4.5 D6); `sidecar.device` file-only row present.
+- P1 self-test residue, P8 payload shape (line 1114) — **resolved**: `InsightPayload` variants in
+  `crates/traits/src/ipc.rs:1262-1305`, fixture test per kind in `crates/kernel/src/insights.rs`.
+- Kickoff gap, P6/P9 `src-tauri` command glue (line 1119) — **resolved**: P6 PR #160 `6d906a7`, P9
+  PR #165 `9112087`; commands registered at `src-tauri/src/lib.rs:1786-1801`.
+- Kickoff gap, `ask_turns` has no per-stage count columns (line 1123) — **resolved**: counts ride the
+  terminal SSE `done` event as the stop condition required; `ask_turns` gained only `citations`.
+- Kickoff gap, P8 threshold values (line 1126) — **resolved**: `RECURRENCE_GAP_MS`,
+  `RESUMPTION_GAP_MS`, `NEIGHBOUR_MIN_SIMILARITY` at `crates/kernel/src/insights.rs:53,59,66`.
+- Kickoff gap, P9 connected threads / time spent / `entity`+`mark` routes (line 1128) — **resolved**:
+  `ThreadDetail.connected` (`crates/traits/src/graph_ipc.rs:102`); `EvidenceLink` targets fixed in
+  `UI_REFERENCE §5`.
+- P3 outcome, `api.*` hot-apply and `overlay.max_results` projection (line 1142) — **resolved**:
+  `apply_api_config` (`src-tauri/src/local_api.rs:469-479`, called on save `src-tauri/src/lib.rs:1310`).
+- P3 built the read-only Advanced projection early (line 1145) — **resolved**: `get_advanced_config`
+  read-only (`src-tauri/src/lib.rs:1207-1211`), rendered by P7 `ui/src/routes/settings/Advanced.tsx`.
+- P2 direction pick and its follow-ups: `ui.appearance` in registry/baseline, P7 select, interim
+  `pine-light` default (lines 1182-1197) — **resolved**: PR #153 `0dfa2f5`; `General.tsx:75-98`,
+  `ui/src/app/theme.ts`, four themes in `ui/src/styles/tokens.css`. The density sub-item (line 1198)
+  stays open in the live file.
+
+**From "2026-10-19 — Carried forward from the 0.4.2 arc" (line 1247):**
+
+- F3 native Windows interactive acceptance (line 1253) — **resolved**: accepted on maintainer report
+  2026-10-19 (`specs/archive/06_PATCH_PLAN.v0.4.5.md:120-123`). The G6 live Telegram send it names
+  stays open in the live file.
+- Agent reading: weekly PARTIAL banner names sampling when retention caused the gap (line 1277) —
+  **superseded**: `weekly_partial_banner` names deleted evidence separately
+  (`src-tauri/src/memory.rs:1151-1175`, test at `:3552-3553`); landing commit not identified.
+
+**From "2026-10-15 — Memory/API execution gates" (line 1293):**
+
+- Windows credential read CodeQL alert (line 1302) — **resolved**: dismissed as a false positive
+  2026-10-15 (`specs/archive/05_BUILD_REVIEW.v0.4.2.md:1057-1066`).
+- Schema 11 → 12 and 12 → 13 forward-only, no pre-migration backup (lines 1311-1314) —
+  **superseded**: 0.4.5 D2 baseline, no migration chain, non-v15 databases refuse to open
+  (`crates/store/src/schema.rs:3-19`, `crates/store/src/lib.rs:115-183`).
+- Table #121 setup visibility decisions (line 1322) — **resolved**: PR #146 merge `65462f5`; follow-ups
+  #94 and #123 stay open.
+- Table #122 stale "no download-progress %" (line 1323) — **superseded**: `03 §7g`; engine byte
+  progress ships (`crates/inference/src/download.rs`, `EngineProgress`).
+- Table #75 audio capture / transcription (line 1331) — **superseded**: maintainer ruling 2026-11-03,
+  `02 §7`.
+- Table #78 marks in Recall reports (line 1334) — **superseded**: unresolved marks render as
+  `open_loop` lines in the window-report insights block (`crates/kernel/src/reports.rs:1739-1753`,
+  `crates/kernel/src/insights.rs:396-427`). A first-class marks section was not built; reopen only if
+  that was the intent.
+- Table #103 Settings search box (line 1341) — **resolved**: P7 PR #161,
+  `ui/src/routes/settings/SettingsSearch.tsx`.
+- Table #104 token-level visual refresh (line 1342) — **superseded**: the 0.4.5 design system v2 and
+  P10 refont (PR #166 `e459185`); v1 identity in `specs/archive/UI_REFERENCE_v1_identity.md`.
+- Table #120 update-available UX (line 1352) — **superseded**: P7 `/settings` lands on General, which
+  carries the update section (`ui/src/routes/settings/index.tsx`, `AppUpdates.tsx`); the
+  higher-visibility direction was declined (GitHub issue #108 closed NOT_PLANNED 2026-10-15).
+- First-run model download (line 1365) — **resolved**: auto-download in `crates/inference`; progress
+  per `03 §7g` (`download.rs` `EngineProgress`, `ui/src/bindings/ModelDownloadStatus.ts`).
+- Updater signing keypair (line 1378) — **resolved**: pubkey in `src-tauri/tauri.conf.json`,
+  `.github/workflows/release.yml` signs and requires the `.sig`; tags v0.3.2 through v0.4.5.
+- Pre-migration DB backup (line 1399) — **superseded**: 0.4.5 D2 (no migration chain); `*.v13.bak`
+  is kept by `ssv2c-rebuild`.
+
+**From "Maintenance follow-ups — 2026-09-09" (line 1437):**
+
+- Regression coverage boundary, "two Node tests" (line 1446) — **superseded**: `ui/test/` now holds
+  26 `*.test.mjs` files. CI still runs only UI lint + build, not these tests.
+- Verification remains local (line 1450) — **superseded**: v0.4.5 shipped through CI and the signed
+  `release.yml` pipeline; the caveat described the 2026-09-09 cleanup run only.

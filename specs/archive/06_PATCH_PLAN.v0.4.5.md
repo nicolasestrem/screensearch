@@ -262,3 +262,42 @@ raised before code was written; the maintainer answered each in one batched deci
 | 90 | P7 review round 2 of PR #162 (codex P2) | **The catch-up effect could discard a draft on a failed save.** `useSetSettings` is optimistic, so `intervalMs` moves to the new value before persistence; the effect I added compared the draft against it and cleared the draft while the write was in flight, so a failure rolled the value back to 60 with the draft gone although the error said it was kept. | `ui/src/routes/settings/Intelligence.tsx` | **Resolved.** The value-comparison effect is gone: a draft is retired only by its own commit's settlement, by a new edit, or by a reset, which now clears the draft and its explanation explicitly (the case the effect existed for). Native, verified after this row was first written (the claim ran ahead of the probe): with the interval at 90 min and a 120-min draft on screen (`store=5400000`, `field="120"`), the interval row's Reset ends at `store=3600000 field="60"` and a later blur leaves it there — the draft cannot mask or re-commit over the reset. Nuance: with a pointer click the input blurs first, so the draft is committed as one transient write before the reset lands (final state is still the default); `invoke`/keyboard activation reaches the row without that write. The failure path cannot be forced on a self-contained local store, so the rest of the mechanism is the absence of any other clear. | resolved (follow-up PR #162) |
 | 91 | P7 review round 2 of PR #162 (codex P2) | **A toggle-only save erased the range explanation.** `setScheduleNote(rangeNote())` was immediately followed by `commitSchedule(patch)`, whose unconditional `setScheduleNote(null)` cancelled it in the same React batch — so toggling with an out-of-range draft saved the toggle and left the drafted number with no reason, and turning the timer off also hides the editor. | `ui/src/routes/settings/Intelligence.tsx` | **Resolved.** The range explanation is its own state: a patch carrying a valid interval supersedes it, a toggle-only patch leaves it alone, typing back into range clears it, Escape and reset clear it. Row error is `rangeError ?? schedule.error`. Native fail-without/pass-with in `05`. | resolved (follow-up PR #162) |
 | 92 | P7 review round 3 of PR #162 (codex P2) | **A failed toggle restored a draft the user had since discarded.** The toggle cleared its draft up front and put it back on failure, so a reset (or a newer edit) during the write was overwritten by the older failure and the stale number could be submitted again. | `ui/src/routes/settings/Intelligence.tsx` | **Resolved.** The toggle no longer clears-then-restores: the draft stays until the save resolves, and success retires only the draft that save carried (`issued` match), so a reset or newer edit is untouched and there is nothing to resurrect. Native: typed 45, toggled off → `enabled=false interval=2700000`; re-enabled → field reads 45 from the store, no stale draft. | resolved (follow-up PR #162) |
+
+## Audit record: post-0.4.5 specs cleanup (2026-11-09)
+
+The live `06_PATCH_PLAN.md` "Still open from earlier arcs" table was audited against the tree at
+`9c45ae8` (#172) and git history; **no row then in the live table qualified for this
+section**. The single carried-forward row (#23, PDH `\GPU Engine(*)\Utilization Percentage` blind
+to the sidecar's Vulkan compute) is still open and stays in the live file: the PDH probe is
+unchanged (`crates/sysmon/src/gpu.rs:99`;
+`crates/sysmon` has no commits since 0.2.1 #46 `acb7d9c`, and no NVML appears anywhere in history),
+the sidecar still ships the Windows x64 **Vulkan** llama.cpp build
+(`crates/inference/src/download.rs:4`, fallback asset at `:136`), and the throttle's GPU arm is
+still consumed (`crates/kernel/src/throttle.rs:89`), so both the premise and the recorded fix plan
+(NVML-based probe or per-`engtype` counter audit, future arc) stand as written.
+
+A second pass audited the rows archived **above** that carry a non-closed status — #15, #29, #30,
+#32, #33, #42, #100, #116 and #149 (`open`) plus #64, #96, #112, #115, #137, #138 and #143
+(`deferred`) — against the tree at `9c45ae8` (#172) and PRs #150-#172. Fourteen of the sixteen still
+hold the status they were archived with and are now carried in the live "Still open from earlier
+arcs" table. Two were superseded by a later row and do not go live:
+
+- **#100 — superseded by #30.** The row was never independent: its own Status reads "open (#30,
+  restated)". Both name the same gap — `03 §4` still carries no `report_runs` DDL (the table appears
+  only in prose, `specs/03_MASTER_PRODUCTION_SPEC.md:2187`, never as a `CREATE TABLE`) — so carrying
+  both would count one documentation gap twice. #30 stays live with the full ten-difference list and
+  the `crates/store/tests/p3_schema_parity.rs` guard. #100's added content (the committed tree is the
+  schema of record, `04 §1`, and P8 reads `report_runs` only through existing store APIs) is a reading
+  of #30's gap, not a second gap, so it needs no separate row.
+- **#112 — superseded by #143.** #112 deferred the `get_insights` cutover to "P10 (rewrite Deck's line
+  off a different read) or a later `fix/` branch"; #143 is P10's own record of the same cutover and
+  replaces that ownership with the constraint that blocked it inside the phase (`crates/` is not P10's,
+  with a matching stop condition) and with the final owner (next backend phase). The command is still
+  live (`src-tauri/src/lib.rs:1175`, `:1738`; `ui/src/lib/ipc/commands.ts:215`;
+  `ui/src/routes/Deck.tsx:72`), so #143 carries the open work in the live table.
+
+No other row was resolved: nothing in PRs #150-#172 closes #30's `03 §4` documentation pass, #42's
+`jobs.kind` prose, #29's density sentence, #149's Settings · Data copy, #32's carry-set confirmation
+or #33's three defaults, and the deferred items (#64, #96, #115, #137, #138, #143) were each kept
+alive by their own phase with no later change — verified at `9c45ae8` against the files each row
+names, recorded in the live table's Status cells.

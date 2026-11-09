@@ -369,7 +369,7 @@ Approval covers implementation; merge and release each need separate authorizati
 
 ## 5k. Post-1.0 arc — 0.4.5 (work intelligence + design system v2)
 
-The 0.4.x line is shipped through v0.4.2, and **0.4.5 (P9)** is the next arc — two problems, one arc.
+The 0.4.x line shipped through v0.4.2, and **0.4.5 (P9) shipped** (`v0.4.5`, 2026-11-07) — two problems, one arc.
 This section states only the strategic *what/why*; phase order, per-phase acceptance and file
 ownership live in `docs/0.4.5.md`, and the normative contracts are `03 §4`/`§7h`/`§7i`/`§7j`/`§8`
 and `UI_REFERENCE`. **One user makes an arc this size affordable:** the single-user fact (0.4.5 D1)
@@ -406,7 +406,7 @@ P1 ──► Wave A: P2 · P3 · P4 ──► Wave B: P5 · P6 · P7 ──► W
 ```
 
 - **Pointer and out-of-scope.** Phase order, acceptance per phase and the file-ownership rule are
-  `docs/0.4.5.md`; the contracts are `03 §4` (baseline v14), `§7h` (work graph), `§7i` (Ask v2),
+  `docs/0.4.5.md`; the contracts are `03 §4` (baseline v15), `§7h` (work graph), `§7i` (Ask v2),
   `§7j` (insights) and `§8` (settings v2), with `UI_REFERENCE` for identity, tokens, IA and
   components. **Out:** audio / meetings (0.4.5 D14) and people as entities. **Commits:** 0.4.5 D18
   — no agent commit or push before the maintainer validates the content and names
@@ -438,7 +438,7 @@ priority"; the `session_artifacts.kind='transcript'` extension point stays reser
 **No telemetry — a permanent product commitment (D15-of-0.4.0).** The app never phones home beyond
 the existing signed-updater manifest fetch (`03 §11b`). "Is anyone else using this?" is answered by
 **passive repo-side signals** (GitHub release-asset `download_count`, Insights → Traffic, stars/
-issues), never by in-app instrumentation — the reading procedure lives in `07`'s manual steps.
+issues), never by in-app instrumentation — the reading procedure is the `Usage-signals reading procedure` entry in `07`'s `Open, carried forward` list.
 
 ## 8. Status
 - **License decided: MIT.** No open strategic questions.
@@ -457,9 +457,10 @@ issues), never by in-app instrumentation — the reading procedure lives in `07`
   **v0.4.1 shipped** (2026-10-15): the opt-in network API (`§5e`) and durable memory reports with
   local schedules and the Telegram digest (`§5f`/`§5g`; schema 11 → 12). **v0.4.2 shipped**
   (2026-10-19): the external-agent memory API (`§5h`, `03 §7f`) and F3 deeper memory G1–G6
-  (`§5i`, `03 §8e`; schema 12 → 13). Open native acceptance gates for both increments are tracked
-  in `05`. **Next arc (2026-11-03): 0.4.5** — work intelligence + design system v2 (`§5k`,
-  `docs/0.4.5.md`).
+  (`§5i`, `03 §8e`; schema 12 → 13). Open native acceptance gates for both increments were tracked
+  in `05` (records in `specs/archive/05_BUILD_REVIEW.v0.4.5.md`; the separate-machine check stays open
+  in `07`'s `Open, carried forward` list). **Shipped: 0.4.5** (`v0.4.5`, 2026-11-07) — work
+  intelligence + design system v2 (`§5k`, `docs/0.4.5.md`).
 
 ---
 

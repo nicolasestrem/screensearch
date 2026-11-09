@@ -199,9 +199,9 @@ Single file `screensearch.db`. **Baseline rule (0.4.5 D2):** this section holds 
 the current `schema_version = 15`; the app creates a fresh DB from it and ships **no migration
 chain**. A schema change edits this baseline and bumps `schema_version`; there are no populated-DB
 migration tests. A DB whose `schema_version` is not 15 refuses to open with a message naming the
-rebuild tool (`crates/rebuild`'s `ssv2c-rebuild`); that dev-only tool reads the old DB **read-only**
-and writes a fresh v15 file, and the old file is renamed `*.v14.bak` only after the maintainer
-confirms the new one opens — a clean start instead of a rebuild is the maintainer's Gate A choice,
+rebuild tool (`crates/rebuild`'s `ssv2c-rebuild`); that dev-only tool reads the old v13 DB **read-only**
+and writes a fresh v15 file; keeping the source as `*.v13.bak` is a maintainer step after the new
+file is confirmed to open — a clean start instead of a rebuild is the maintainer's Gate A choice,
 never automatic (0.4.5 D3). The shipped app never migrates history; the 0.2.x–0.4.2 forward-only
 chain is history, not the rule (0.4.5 D2).
 
@@ -2506,7 +2506,7 @@ updater. Each is demonstrated, never asserted:
 - **Gate A → v0.4.3:** the design direction is recorded in `UI_REFERENCE §1`; the rebuild tool was
   used for real (P3's run, counts pasted); the app runs on v14 for **at least 3 working days without
   a blocker**; P4's baseline numbers are frozen as the P5/P6 thresholds; the F3 native interactive
-  acceptance is performed (closes that `05` gate). Ships the pending `main` increments (#145, setup
+  acceptance is performed (closes that `05` gate — recorded at `specs/archive/05_BUILD_REVIEW.v0.4.5.md`). Ships the pending `main` increments (#145, setup
   visibility).
 - **Gate B → v0.4.4:** the P5/P6 thresholds are met on the P4 automatic set (report pasted); Settings
   v2 is in daily use; the external-agent Settings UI is verified natively.
@@ -2525,7 +2525,7 @@ updater. Each is demonstrated, never asserted:
    hex, px font sizes or non-token spacing in `ui/src/components/primitives`; existing screens still
    render through `tokens.compat.css` (screenshots attached to the PR); full verification suite green.
    *Status (2026-11-04):* met and merged to `main` as `7e73e30` for four themes. Raw
-   output for every item is in `05`; the enforced checks are `ui/test/contrast.test.mjs` and
+   output for every item is in `specs/archive/05_BUILD_REVIEW.v0.4.5.md`; the enforced checks are `ui/test/contrast.test.mjs` and
    `ui/test/tokens.test.mjs`, each demonstrated failing once before passing. Two evidence gaps stay
    explicit: populated screenshots need the Tauri app with a seeded DB (`docs/SCREENSHOTS.md`), so
    the PR carries the `/kitchen` gallery in all four themes instead, and one detector finding
@@ -2552,7 +2552,7 @@ updater. Each is demonstrated, never asserted:
    settings search finds every setting by label and by key; a keyboard-only pass through all
    categories; the state matrix (loading / empty / error / partial / populated) holds per category;
    screenshots in all four themes (`UI_REFERENCE §1`); the external-agent read-credential UI
-   verified natively (closes that `05` gate).
+   verified natively (closes that `05` gate — recorded at `specs/archive/05_BUILD_REVIEW.v0.4.5.md`).
 8. **P8 — insights + connections engine, agent surface.** Each insight type has a fixture test and a
    real-DB sample pasted; no insight row exists without evidence (insert-time rejection, its test, and
    the zero-row sweep, `§7j`); the 0.4.5 API routes are covered by integration tests behind read

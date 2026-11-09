@@ -72,11 +72,13 @@ contract commits separate and independently reviewed before implementing their b
 the durable state and installed-only model path before scheduling or destination side effects.
 Native acceptance and pilot evidence remain open until observed; no fake success receipts.
 
-**Current arc status (2026-10-19):** the 0.4.2 arc — external-agent memory API (`§1b`) and F3
-deeper memory (`§1c`) — is released as v0.4.2 (2026-10-19); open native acceptance is tracked in
-`05`. **The next arc is 0.4.5** (2026-11-03; pointer below and `02 §5k`), and nothing is defined
-past it — stop and ask before starting any other arc work (`§5`). The per-increment pointers below
-stay valid for follow-up work on those areas.
+**Current arc status (2026-11-09):** the 0.4.5 arc (P9 — work intelligence + design system v2,
+`02 §5k`) is released as **v0.4.5** (2026-11-07) and archived — do not restart its phases; the
+per-phase work pointer that used to sit here is preserved in `specs/archive/01_STATUS_HISTORY.md`.
+`07_KNOWN_GAPS.md` records no current arc. Open work lives in the `Open, carried forward` list of
+`07_KNOWN_GAPS.md`, the open rows of `06_PATCH_PLAN.md` and the entries in `TODO.md`. **Nothing is
+defined past 0.4.5** — no next arc is approved yet, so stop and ask before starting any other arc
+work (`§5`). The per-increment pointers below stay valid for follow-up work on those areas.
 
 **For deeper memory (F3, approved 2026-10-17; shipped in v0.4.2):** also read `02 §5i` and the normative `03 §8e`
 (weekly synthesis + project note), plus `03 §8b`/`§8c`/`§8d` where `§8e` extends them and
@@ -88,31 +90,17 @@ promotion — no auto-edits of identity/knowledge pages, no nags/scores; weekly 
 scheduled and default-off; the weekly Telegram digest lands only as G6 under the `03 §8d`
 exception. The **specs are the contract**; `docs/deeper-memory-f3-plan.md` is context.
 
-**For 0.4.5 work (P9 — the work-intelligence + design-system-v2 arc, approved 2026-11-03):** also
-read `docs/0.4.5.md` (phase order, per-phase acceptance, file ownership), `02 §5k`, and the
-normative `03 §4`/`§7h`/`§7i`/`§7j`/`§8` with `UI_REFERENCE` (identity, tokens, IA, components).
-The P2 design system is merged to `main` (`7e73e30`): read the
+**For 0.4.5 follow-up work:** the arc (P9 — work intelligence + design system v2, approved
+2026-11-03) is released as **v0.4.5** (2026-11-07); every phase is merged and the arc is archived
+(`specs/archive/`, `CHANGELOG-ARCHIVE.md`), so do not restart any phase. The normative contracts
+for these areas remain `03 §4`/`§7h`/`§7i`/`§7j`/`§8` with `UI_REFERENCE` (identity, tokens, IA,
+components), and `docs/0.4.5.md` / `02 §5k` carry the phase order and acceptance records; the old
+per-phase pointer is preserved in `specs/archive/01_STATUS_HISTORY.md`. Read the design-system
 identity from `UI_REFERENCE` §1/§2 and the shipped primitives from
-`ui/src/components/primitives/` with `ui/src/styles/tokens.css`, do not re-derive either. Every
+`ui/src/components/primitives/` with `ui/src/styles/tokens.css`, do not re-derive either: every
 theme is one of `pine-light` (default), `pine-dark`, `ink-light`, `ink-dark` via `data-theme`, and
-the `ui.appearance` setting selects between them (`03 §8`). The P3 baseline + settings v2 work is
-merged to `main` as `0dfa2f5` (PR #153); the committed tree is the code of record for schema,
-settings and the rebuild tool, and `docs/kickoffs/P3-READY.md` is its hand-off. P4 (the
-fixture-backed automatic evaluation and the frozen P5/P6 thresholds) is merged as `aceca58` (PR
-#155), and P5 (the work graph engine) is merged as `722f29e` (PR #157); read its acceptance
-evidence and recorded decisions in `05`/`06` #37-#42/`07` before starting P7 work. P6 (Ask v2) is
-merged ([#160](https://github.com/nicolasestrem/screensearch/pull/160)), as are P7 (shell + Settings
-v2, [#161](https://github.com/nicolasestrem/screensearch/pull/161)) and its follow-ups (#159, #162,
-#163): read P6's build record,
-the fourteen maintainer decisions/grants and the eight contradiction rows in `05`/`07`/`06` #46-#53
-before touching the ask path, the `session_vectors` lane or `Kernel::ask_turn`. Its acceptance
-numbers are the maintainer's live-DB run and are not yet recorded.
-
-P8 (insights + agent surface) is implemented on `feat/0.4.5-p8-insights-agent` and open as
-[#164](https://github.com/nicolasestrem/screensearch/pull/164) (committed on the maintainer's
-instruction, not merged): the five insight kinds, the `insight_generate` job kind, the four
-`history.read` routes and the four MCP tools — read `05` (2026-11-06) and `06` #93–#101 first. P9
-(the intelligence UI) has not started: `/ask` and `/work` do not exist yet.
+the `ui.appearance` setting selects between them (`03 §8`). Current state and open work: `01 §8`,
+the `Open, carried forward` list of `07_KNOWN_GAPS.md`, `06_PATCH_PLAN.md` and `TODO.md`.
 
 Three hard arc constraints, all decided: **baseline schema instead of a migration chain** — `03 §4`
 holds the full DDL at v14, a schema change edits it and bumps the version, there are no populated-DB
