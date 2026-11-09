@@ -9,9 +9,9 @@ the current arc.
 
 ### 2026-11-09 — Review pass on PR #173: server robustness and gate case-sensitivity
 
-The bot review of #173 raised six findings; five were real defects in the deliverable's tooling and
-one claim did not survive checking. Both kinds are recorded in `05` with the raw fail-without and
-pass-with output.
+The bot review of #173 raised six findings: two were real defects in the deliverable's tooling, and
+four were inaccurate as written, though the `check.mjs` one still prompted a hardening. Both kinds
+are recorded in `05` with the raw fail-without and pass-with output.
 
 `tools/serve.mjs` decoded the request path outside its error boundary, so one malformed escape
 (`GET /%ZZ`) rejected the async handler, escaped unhandled and exited on `URIError: URI malformed`
