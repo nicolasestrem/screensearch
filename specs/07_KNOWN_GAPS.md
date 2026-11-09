@@ -260,4 +260,19 @@ measurements behind them are in `Your-Universe/ITERATIONS.md`.
   the user's own district. The block after the guard (the declutter interval, the animation loop, the
   cache registration and the bench timeout) must still run, so the guard wraps those two statements
   rather than returning early. Expiry: same trigger as the two rows above, the loop's snapshot commit.
+- **The replaced world's shadow render target is never disposed** (PR #173 review, round four). Owner:
+  Your-Universe owner. Status: valid, proved from ownership, fix not shipped. `world.mjs` adds the sun
+  to the group `install()` disposes (`group.add(sun)`), and `disposeGroup` traverses that group, but it
+  returns for any object with no material, and a `DirectionalLight` has none: `sun.shadow.map` survives
+  the only thing that referenced it, and removing the light from the scene does not release the GPU
+  allocation. Importing another export therefore costs one shadow target on desktop with shadows on,
+  accumulating per import until the page unloads. Two shapes, both already available: a light branch in
+  `disposeGroup` (`if (object.isLight && object.shadow && object.shadow.map) { object.shadow.map.dispose();
+  object.shadow.map = null; }`) placed before the material return, which also covers any other light
+  that ever carries a map, or one call in `install()` before `disposeGroup(world ? world.group : null)`
+  through `world.lights.setShadowMapSize(0)`, which already disposes and nulls the map
+  (world.mjs:10604). Prefer the first: it keeps the rule that a disposed group releases everything it
+  owns, instead of requiring each caller to remember the lights. Expiry: same trigger as the three rows
+  above, the loop's snapshot commit.
+
 

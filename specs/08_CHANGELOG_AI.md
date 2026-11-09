@@ -48,6 +48,16 @@ both the sample `install` and the portrait tier that was chosen for the sample's
 declutter interval, animation loop, cache registration and bench timeout to run either way. It ships
 with the loop's snapshot for the same reason as its two predecessors.
 
+### 2026-11-09 — Review pass round four on PR #173: the shadow target leak, deferred
+
+The re-review of the record head raised one finding, and it is valid. `world.mjs` adds the sun to the
+group `install()` disposes, and `disposeGroup` traverses it, but its traversal returns for any object
+without a material, which a `DirectionalLight` is, so `sun.shadow.map` outlives the disposal and its GPU
+allocation is released only when the page unloads. Each import of another export on a desktop with
+shadows on costs one shadow target, the largest the app allocates. Recorded in `07` with both available
+shapes and a preference for the light branch in `disposeGroup`, which keeps the rule that a disposed
+group releases everything it owns. It ships with the loop's snapshot, like the other three.
+
 ### 2026-11-09 — Review pass on PR #173: server robustness and gate case-sensitivity
 
 The bot review of #173 raised six findings: two were real defects in the deliverable's tooling, and

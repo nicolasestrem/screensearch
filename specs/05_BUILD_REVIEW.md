@@ -224,3 +224,17 @@ Finding 8 as the committed snapshot (`7d5efdc`) orders it:
 the later call does not overwrite a property: it discards the district the user just imported. Nothing
 in between records that a user model exists, which is what makes the ordering alone sufficient.
 
+**Review pass, round four (PR #173, 2026-11-09).** One finding, on the head that carried the record.
+
+| # | finding | verdict | resolution |
+|---|---|---|---|
+| 9 | `src/main.mjs:721` — the replaced world's shadow render target is never disposed | valid, proved | deferred to `07`; the disposal needs a light branch in `disposeGroup`, and `setShadowMapSize(0)` already releases the target |
+
+Finding 9 holds end to end: `world.mjs:10572` adds the sun to the group that `install()` disposes,
+`disposeGroup` traverses that group, and line 721 returns for every object without a material, which a
+`DirectionalLight` is, so `sun.shadow.map` survives the disposal of the only thing that referenced it.
+The map is the largest target the app allocates, so repeated imports in one session accumulate one per
+import, and the GPU allocation is released only when the page unloads. `setShadowMapSize(0)`
+(world.mjs:10604) already disposes the map and nulls it, which is why the fix needs no new mechanism.
+
+
