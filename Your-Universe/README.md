@@ -46,7 +46,7 @@ node tools/check-dom.mjs    # markup and stylesheet assertions
 node tools/check-pixels.mjs # rendered-frame assertions
 node tools/check-sample.mjs # export parsing
 node tools/smoke-data.mjs   # data logic
-node tools/stamp-sw.mjs     # assets/sw.js cache version <- sha256 of the manifest and every pack payload
+node tools/stamp-sw.mjs     # assets/sw.js cache version <- sha256 of the manifest, the pack payloads, the sample
 node tools/stamp-sw.mjs --check  # fails when a rebuilt pack would serve behind a stale cache
 node tools/test-serve.mjs   # the static server answers a malformed escape with 400 and keeps serving
 ```

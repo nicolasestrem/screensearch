@@ -48,7 +48,7 @@ total: 100 checks, all PASS                   (check-dom)
 OK: the server answers a malformed escape with 400 and keeps serving   (test-serve)
 120 passed, 0 failed                          (smoke-data)
 OK: all six properties hold                   (check-sample)
-stamp-sw: CACHE_VERSION mbe1267a6 matches the manifest and pack payload
+stamp-sw: CACHE_VERSION ma3977eae matches the precached payload (manifest, packs, sample)
 CHECK RESULT: PASS (87 models)                (check-assets)
 ```
 
@@ -143,7 +143,7 @@ and `index.html` regenerates from all of `src/`.
 
 | # | finding | verdict | resolution |
 |---|---|---|---|
-| 5 | `tools/stamp-sw.mjs:27` — the offline-cache fingerprint ignores pack bytes | valid, reproduced | fingerprint extracted to `tools/cache-version.mjs`, hashing the manifest *and* every pack it names; `stamp-sw` and `check-dom` share it |
+| 5 | `tools/stamp-sw.mjs:27` — the offline-cache fingerprint ignores pack bytes | valid, reproduced | fingerprint extracted to `tools/cache-version.mjs`, hashing the manifest, every pack it names *and* the opening sample, which is the one other cache-first payload outside `assets/`; `stamp-sw` and `check-dom` share it |
 | 6 | `src/agents.mjs:4970` — the green wave stays on after its session ends | valid, measured | 472 of 892 sampled minutes wrong; the fix is `activeSessionAt(t)`; deferred to `07` |
 | 7 | `src/main.mjs:1261` — dream cards survive an export reload | valid, traced | `hideCards()` is not exposed by `dream.mjs`; the fix is to expose and call it; deferred to `07` |
 
@@ -164,6 +164,23 @@ Restoring the pack byte-exactly (`8420fb3b74af7684`) returns both gates to pass.
 from `m730a18fd` to `mbe1267a6` because the fingerprint now covers the six pack GLBs as well as the
 manifest that names them, and the version therefore moves when only a texture, material, normal or
 interior vertex does.
+
+The same hole sat one route further out. `assets/sw.js` precaches `./sample-export.json` and routes it
+cache-first, so a regenerated sample with no pack change keeps the old version and opens a returning
+visitor on the previous day; the `cache: 'no-store'` on `main.mjs`'s own fetch cannot prevent that,
+because the worker answers before the network, and `tools/gen-sample.mjs` regenerates exactly that
+file. The fingerprint hashes it too, measured on one flipped byte inside it:
+
+```text
+$ node tools/stamp-sw.mjs --check     # fingerprint without the sample
+stamp-sw: CACHE_VERSION mbe1267a6 matches the manifest and pack payload         exit 0    (blind)
+$ node tools/stamp-sw.mjs --check     # fingerprint with it
+stamp-sw: CACHE_VERSION is mbe1267a6 but the payload fingerprints to mc209a38d
+stamp-sw: run node tools/stamp-sw.mjs before serving or packing                exit 1    (seen)
+```
+
+With the payload restored the stamp reads `ma3977eae`, and the sample's own digest is
+`729e75a3da016d00`.
 
 Finding 6, `longestSessionBefore(t)` measured against `activeSessionAt(t)` over the shipped sample
 (128 sessions, 892 sampled minutes):

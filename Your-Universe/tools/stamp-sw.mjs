@@ -38,7 +38,7 @@ if (!match) {
 const have = match[1];
 
 if (have === want) {
-  console.log(`stamp-sw: CACHE_VERSION ${have} matches the manifest and pack payload`);
+  console.log(`stamp-sw: CACHE_VERSION ${have} matches the precached payload (manifest, packs, sample)`);
 } else if (check) {
   console.error(`stamp-sw: CACHE_VERSION is ${have} but the payload fingerprints to ${want}`);
   console.error('stamp-sw: run node tools/stamp-sw.mjs before serving or packing');
