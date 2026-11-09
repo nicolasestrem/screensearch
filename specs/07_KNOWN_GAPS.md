@@ -220,8 +220,9 @@ measurements behind them are in `Your-Universe/ITERATIONS.md`.
   95 with `?post=0` and 55 with `?noassets=1`. No cycle restated the call budget, so the header and the
   measurement disagree until one of them is corrected.
 - **Triangle peak.** Owner: Your-Universe owner. Status: bench-time peaks of 393k-398k triangles were
-  measured against the 390k line (the final re-measure holds 387,622 of 400,000, so the shipped
-  assembly is under the 400k cap while the recorded peaks were not).
+  measured against the 390k line (the committed snapshot `4c7fbea`, with the modelled fleet on,
+  re-measures 388,884 of 400,000, so the shipped assembly is under the 400k cap while the recorded
+  peaks were not).
 - **Violet dream watch item.** Owner: Your-Universe owner. Status: the dream night sky sits at 5.5-5.6
   percent of frame against the watch target; recorded, not tuned.
 - **No human visual pass.** Owner: maintainer. Status: the build has only ever been judged by pixel

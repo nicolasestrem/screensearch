@@ -46,6 +46,10 @@ and bulk captures (the probe scripts and notes they are cited from, including `g
 tracked), and the baseline, tuning, diagnostic and per-cycle screenshot series (their numbers are
 quoted in `ITERATIONS.md`). The commit is 98 files, 35.0 MB.
 
+The owner loop was still cycling while this entry was written, so its fleet integration call landed
+separately as `4c7fbea` (`MODEL_LANE_EVERY` 9999 to 24, re-measured at 388,884 triangles and 101
+calls); later cycles will follow as more commits rather than as rewrites of this entry.
+
 Open and recorded in `07` rather than claimed as met: the fps bench gate (a recurring 1.0-1.1 s
 tail frame; p1Low regressed 169.5 to 41.7 with the crowd and asset pass), the draw-call line
 disagreement (header says under 80, cycle-21 table measures 101, no cycle restated the call budget),

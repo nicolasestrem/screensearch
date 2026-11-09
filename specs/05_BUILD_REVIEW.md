@@ -61,11 +61,16 @@ dark pixels, percent of frame): day 152 (0.0106), night 60, dream 29, noassets 1
 phone night 0, phone dream 0.
 
 **Open items.** The fps bench gate did not pass in cycle 21, and the draw-call line is exceeded by the
-shipped build. Re-measured on the committed tree over HTTP at 1600x900, hour 17, awake,
-`renderer.info` reports 101 calls with the asset fleet, 95 with `?post=0` and 55 with `?noassets=1`,
-against a header line that still says under 80 (triangles hold at 387,622 of 400,000). Both items,
-with numbers, attribution and the remaining questions, are recorded in `07` rather than claimed as
-met.
+shipped build. Re-measured on the committed snapshot (`4c7fbea`, loop's fleet integration call on)
+over HTTP at 1600x900, hour 17, awake, `renderer.info` reports 101 calls with the asset fleet, 95
+with `?post=0` and 55 with `?noassets=1`, against a header line that still says under 80; triangles
+hold at 388,884 of 400,000. Both items, with numbers, attribution and the remaining questions, are
+recorded in `07` rather than claimed as met.
+
+**Snapshot note.** The owner loop was still cycling when this record was written (it made its fleet
+integration call during the session, `MODEL_LANE_EVERY` 9999 to 24), so the numbers above describe
+commit `4c7fbea` and later cycles will arrive as follow-up commits rather than as silent rewrites of
+this entry.
 
 **Also on this branch.** The 0.4.5 build-loop rotation and the carried-forward backlog re-verification
 described in `08` (2026-11-09) run alongside this record: shipped 0.4.5 entries moved into
