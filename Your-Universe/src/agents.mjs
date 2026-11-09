@@ -2210,9 +2210,10 @@ export function createAgents(THREE, world, model, opts) {
   // carriageway joins it one slot in MODEL_LANE_EVERY (its slot ids are all even, so the
   // modulo only ever admits far-lane slots, never a second pack slot). Measured on the
   // day frame: +10 modelled bodies at about 500 triangles each against the 390,000 line.
-  // PENDING: StreetDetail's 9 November world growth put the no-partway base at 388,642,
-  // so this is disabled pending Main's call; set 9999 = off.
-  const MODEL_LANE_EVERY = 9999;
+  // Main's integration call, 9 November: the no-partway base measured 387,710 day /
+  // 388,018 street on the assembled cycle 21 tree, so 24 fits both (388,752 / 389,060)
+  // with the bench repopulation peak at 397,892 against the 400,000 hard gate. 9999 = off.
+  const MODEL_LANE_EVERY = 24;
   const modelList = [];
   const modelMeshes = [];
   const modelDefs = [];
