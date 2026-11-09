@@ -1,4 +1,4 @@
-// Stamp the service worker's cache version with a hash of the shipped asset manifest.
+// Stamp the service worker's cache version with a hash of the shipped payload.
 //
 // The worker serves everything under assets/ cache-first, which is what makes the second visit
 // instant and the offline visit possible, but it also means a changed pack is invisible to anyone
@@ -7,8 +7,8 @@
 //
 // assets/manifest.json names every model, and the packs' own bytes carry the geometry and texture
 // detail the manifest cannot see, so the fingerprint covers both. This writes it into assets/sw.js
-// as `localtime-v<version>`; run it after pack-assets.mjs and before serving. Idempotent: a second
-// run changes nothing.
+// as `const CACHE_VERSION = 'm<8 hex>'`; run it after pack-assets.mjs and before serving. Idempotent:
+// a second run changes nothing.
 //
 //   node tools/stamp-sw.mjs           stamp
 //   node tools/stamp-sw.mjs --check   exit 1 if the file is stale (used by check-dom.mjs)
