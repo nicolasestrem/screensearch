@@ -7,6 +7,31 @@ the current arc.
 
 ## Current arc
 
+### 2026-11-09 — Review pass on PR #173: server robustness and gate case-sensitivity
+
+The bot review of #173 raised six findings; five were real defects in the deliverable's tooling and
+one claim did not survive checking. Both kinds are recorded in `05` with the raw fail-without and
+pass-with output.
+
+`tools/serve.mjs` decoded the request path outside its error boundary, so one malformed escape
+(`GET /%ZZ`) rejected the async handler, escaped unhandled and exited on `URIError: URI malformed`
+while the client received `ECONNRESET`. The decode now sits inside a boundary that answers 400, and
+`tools/test-serve.mjs` is the gate that keeps it honest: it fails with `exit code 1` on the old
+server and passes on the new one, then re-requests `/index.html` to prove the process survived.
+
+`tools/check-dom.mjs` matched `<script`, `<link` and the import map case-sensitively, so a hand-edited
+`src/shell.html` carrying `<SCRIPT SRC="evil.js">` passed the whole gate: `total: 100 checks, all
+PASS`, exit 0. HTML tag and attribute names are case-insensitive, so every one of those matches now
+carries `i`, and the same file fails the gate with two checks.
+
+`tools/check.mjs` built its CC0 host allowance as `new RegExp('^https://' + host...)` and escaped the
+dots at construction. CodeQL reported the dots as unescaped, which was inaccurate, but the shape is
+what invited the reading: the allowance is now a plain prefix comparison, verified equivalent over 23
+URLs including the adversarial host-suffix forms, so no hostname is ever re-parsed as a pattern.
+
+`check` consequently counts 37 checks rather than 36, since its `node --check` sweep picks up the new
+gate script. `index.html` is untouched: none of these files is part of the generated bundle.
+
 ### 2026-11-09 — Specs rotation for the next arc
 
 The shipped 0.4.5 build-loop history moved into `specs/archive/`: `05_BUILD_REVIEW.v0.4.5.md`,

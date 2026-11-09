@@ -120,17 +120,20 @@ function isLoopbackHost(host) {
   return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
 }
 
-// Template literals that append a path expression to an origin defeat full URL parsing, so
-// the allowance matches the literal text: the host must be followed by a path slash, the
-// start of a template expression, or the end of the match.
-const CC0_SOURCE_PATTERNS = CC0_SOURCE_HOSTS.map(function (host) {
-  return new RegExp('^https:\\/\\/' + host.replace(/\./g, '\\.') + '(?:\\/|\\$|$)');
+// Template literals that append a path expression to an origin defeat full URL parsing, so the
+// allowance matches the literal text: the host must be followed by a path slash, the start of a
+// template expression, or the end of the match. Plain prefixes rather than a regular expression
+// built out of the host strings, so a hostname is never re-parsed as a pattern.
+const CC0_SOURCE_PREFIXES = CC0_SOURCE_HOSTS.map(function (host) {
+  return SCHEME_SECURE + host;
 });
 
 function isCc0SourceUrl(url) {
-  if (url.indexOf(SCHEME_SECURE) !== 0) return false;
-  for (let i = 0; i < CC0_SOURCE_PATTERNS.length; i += 1) {
-    if (CC0_SOURCE_PATTERNS[i].test(url)) return true;
+  for (let i = 0; i < CC0_SOURCE_PREFIXES.length; i += 1) {
+    const prefix = CC0_SOURCE_PREFIXES[i];
+    if (url.indexOf(prefix) !== 0) continue;
+    const next = url.charAt(prefix.length);
+    if (next === '' || next === '/' || next === '$') return true;
   }
   return false;
 }

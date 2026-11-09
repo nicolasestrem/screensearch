@@ -165,16 +165,18 @@ if (post === null || css === null || shell === null) {
 
   check(countOf(shell, EM_DASH) === 0, 'shell.html has no em dash character');
 
-  const scriptTags = shell.match(/<script\b[^>]*>/g) || [];
+  // HTML tag and attribute names are case-insensitive, so every tag match here carries the i
+  // flag: a hand-edited <SCRIPT SRC=...> or <LINK ...> must fail the gate like the lowercase form.
+  const scriptTags = shell.match(/<script\b[^>]*>/gi) || [];
   check(
-    scriptTags.length === 1 && /type="importmap"/.test(scriptTags[0]),
+    scriptTags.length === 1 && /type="importmap"/i.test(scriptTags[0]),
     'shell.html has exactly one script tag and it is the import map'
   );
   check(
-    (shell.match(/<script\b[^>]*\ssrc=/g) || []).length === 0,
+    (shell.match(/<script\b[^>]*\ssrc=/gi) || []).length === 0,
     'shell.html has no external script element'
   );
-  check((shell.match(/<link\b[^>]*>/g) || []).length === 0, 'shell.html has no link element (no external stylesheet or font)');
+  check((shell.match(/<link\b[^>]*>/gi) || []).length === 0, 'shell.html has no link element (no external stylesheet or font)');
 
   const urls = shell.match(/https?:\/\/[^\s"'<>]+/g) || [];
   const allowedUrls = (urls.length === 1 && urls[0] === THREE_URL) || (urls.length === 2 && urls[0] === THREE_URL && urls[1] === THREE_ADDONS_URL);
@@ -182,7 +184,7 @@ if (post === null || css === null || shell === null) {
     allowedUrls,
     'shell.html mentions only the pinned three module and its pinned addon directory (' + urls.length + ' URL(s): ' + urls.join(', ') + ')'
   );
-  const importMapMatch = shell.match(/<script[^>]*type="importmap"[^>]*>([\s\S]*?)<\/script>/);
+  const importMapMatch = shell.match(/<script[^>]*type="importmap"[^>]*>([\s\S]*?)<\/script>/i);
   let importMapOk = false;
   let importMapNote = 'no import map script found';
   if (importMapMatch) {

@@ -43,7 +43,7 @@ bench fps floors, zero console errors, no overlapping or off-viewport labels.
 
 ```text
 assemble: 23/23 verifications passed          (index.html byte-identical after reassemble)
-check: 36 checks, 36 passed, 0 failed
+check: 37 checks, 37 passed, 0 failed         (36 before tools/test-serve.mjs joined the sweep)
 total: 100 checks, all PASS                   (check-dom)
 120 passed, 0 failed                          (smoke-data)
 OK: all six properties hold                   (check-sample)
@@ -78,3 +78,55 @@ described in `08` (2026-11-09) run alongside this record: shipped 0.4.5 entries 
 v0.4.5 tree (`9c45ae8`). The cleanup instruction that drove them is archived at
 `specs/archive/specs-cleanup-prompt.md`, and the `04 §1` arc pointer now points at the open work
 instead of the finished 0.4.5 phases.
+
+**Review pass, PR #173 (2026-11-09).** Six findings arrived on the PR: five CodeQL alerts against
+the two gate scripts and one Codex P2 against the server. Each was checked against the code and
+reproduced before anything was edited; nothing was changed to satisfy a claim that did not hold.
+
+| # | finding | verdict | resolution |
+|---|---|---|---|
+| 1 | `tools/serve.mjs:23` — a malformed escape terminates the server (P2) | valid, reproduced | decode moved inside the error boundary, 400 returned; `tools/test-serve.mjs` added as the regression gate |
+| 2 | `tools/check-dom.mjs:168` — regex does not match upper case `<SCRIPT>` | valid, and wider than reported | `i` flag on the script, link and import-map matches; the same blind spot covered `<LINK>` and the import-map parse |
+| 3 | `tools/check.mjs:50,54,55` — unescaped `.` before the host names | inaccurate: line 126 escaped every dot at construction | pattern rebuilt as plain prefix comparison, so no host string is re-parsed as a regular expression |
+| 4 | `tools/check.mjs:127` — the escaping does not escape backslashes | inaccurate: the inputs are a literal host list with no backslashes | removed together with #3 |
+
+Finding 1, fail-without on the committed server and pass-with on the fixed one:
+
+```text
+$ node tools/test-serve.mjs          # unfixed
+FAIL  GET /%ZZ answers 400 instead of dropping the connection (got 0, ECONNRESET)
+FAIL  the server survives the malformed request (exit code 1)
+FAIL  GET /index.html still answers 200 afterwards (got 0)
+URIError: URI malformed
+    at decodeURIComponent (<anonymous>)
+    at Server.<anonymous> (file:///.../tools/serve.mjs:23:15)
+FAILED: 3 check(s) failed                                     EXIT=1
+
+$ node tools/test-serve.mjs          # fixed
+PASS  GET /%ZZ answers 400 instead of dropping the connection (got 400)
+PASS  the server survives the malformed request (exit code null)
+PASS  GET /index.html still answers 200 afterwards (got 200)
+OK: the server answers a malformed escape with 400 and keeps serving   EXIT=0
+```
+
+Finding 2, the same hand-edited `src/shell.html` carrying `<SCRIPT SRC="evil.js">` through both
+versions of the gate. The committed gate is green with an external script in the shell:
+
+```text
+$ node <committed check-dom>          PASS  shell.html has exactly one script tag and it is the import map
+                                      PASS  shell.html has no external script element
+                                      total: 100 checks, all PASS            exit 0
+$ node tools/check-dom.mjs            FAIL  shell.html has exactly one script tag and it is the import map
+                                      FAIL  shell.html has no external script element
+                                      total: 100 checks, 2 FAIL              exit 1
+```
+
+Finding 3, old regular expression against the new prefix comparison over 23 URLs (allowed hosts with
+and without a trailing slash, template-expression forms, and adversarial `quaterniusXcom`,
+`quaternius.com.evil.example`, `drive.google.comX` and host-in-query forms): `EQUIVALENT: 23 samples,
+0 mismatches`, 13 allowed by both, 10 refused by both. The escaping the alert claimed was missing is
+exactly what made the suffix attacks fall on the refused side before and after.
+
+Fixes are in `328f83a`'s successors on `feat/your-universe-localtime`; `index.html` is unaffected,
+since none of the three tools is part of the generated bundle. The regression gate is deliberately
+separate from `check.mjs`, which spawns nothing and stays a static check over `src/` and the bundle.

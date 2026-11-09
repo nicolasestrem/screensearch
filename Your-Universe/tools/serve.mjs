@@ -19,8 +19,17 @@ const types = {
 };
 
 const server = createServer(async (req, res) => {
-  const url = new URL(req.url ?? '/', 'http://localhost');
-  const rel = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
+  // A malformed escape such as /%ZZ makes decodeURIComponent throw. Outside this boundary the
+  // rejection escapes the async handler, nothing settles the response, and the process exits on
+  // the unhandled rejection, so one bad request would stop the server for everyone.
+  let rel;
+  try {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    rel = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
+  } catch {
+    res.writeHead(400, { 'content-type': 'text/plain' }).end('bad request');
+    return;
+  }
   const file = join(root, normalize(rel).replace(/^([/\\])+/, ''));
   if (rel === '/favicon.ico') {
     // index.html is a single file with no icon link on purpose, so the browser always asks for
