@@ -5,7 +5,7 @@
 'use strict';
 
 const CACHE_PREFIX = 'localtime-assets-';
-const CACHE_VERSION = 'm730a18fd';
+const CACHE_VERSION = 'mbe1267a6';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
 const SCOPE = self.registration.scope;
 const SHELL_URL = new URL('./index.html', SCOPE).href;

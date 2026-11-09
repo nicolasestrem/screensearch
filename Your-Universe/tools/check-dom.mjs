@@ -14,6 +14,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { CACHE_VERSION_LINE, computeCacheVersion } from './cache-version.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -362,15 +363,15 @@ if (post === null || css === null || shell === null) {
 
   // -------------------------------------------------------------------------
   // The shipped payload and the service worker must agree, or a returning visitor keeps a stale
-  // pack from the cache forever. tools/stamp-sw.mjs writes the hash; this makes forgetting loud.
+  // pack from the cache forever. tools/stamp-sw.mjs writes the version and both sides compute it
+  // through tools/cache-version.mjs, so this fails if either the manifest or any pack byte moves
+  // without restamping.
 
-  const { createHash } = await import('node:crypto');
-  const manifestBytes = readFileSync(join(ROOT, 'assets', 'manifest.json'));
-  const wantVersion = 'm' + createHash('sha256').update(manifestBytes).digest('hex').slice(0, 8);
+  const wantVersion = await computeCacheVersion(ROOT);
   const swText = readFileSync(join(ROOT, 'assets', 'sw.js'), 'utf8');
-  const swVersion = (swText.match(/^const CACHE_VERSION = '([^']*)';$/m) || [])[1];
+  const swVersion = (swText.match(CACHE_VERSION_LINE) || [])[1];
   check(swVersion === wantVersion,
-    'assets/sw.js cache version matches the manifest digest (' + swVersion + ' vs ' + wantVersion +
+    'assets/sw.js cache version matches the payload fingerprint (' + swVersion + ' vs ' + wantVersion +
     '; run node tools/stamp-sw.mjs)');
 
   // -------------------------------------------------------------------------

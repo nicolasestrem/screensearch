@@ -7,6 +7,32 @@ the current arc.
 
 ## Current arc
 
+### 2026-11-09 — Review pass round two on PR #173: payload fingerprint, two source fixes deferred
+
+Three more findings landed on the head that carried the first fix. The cache fingerprint was wrong in
+a way that serves stale packs to returning visitors, and is fixed; the other two are valid defects in
+`src/` that cannot be committed while the owner loop's cycle 22 sits uncommitted in that tree.
+
+`tools/stamp-sw.mjs` hashed `assets/manifest.json` alone and called that the payload fingerprint, but
+the manifest records paths, licences and metadata only: no digest of any pack, and a rebuild can change
+textures, materials, normals or interior vertices without moving the triangle counts and bounds it does
+record. One flipped byte inside `kenney-car-kit.glb` left the committed stamp reporting "matches" with
+exit 0. The fingerprint now lives in `tools/cache-version.mjs`, hashes the manifest and every pack it
+names in path order, and is shared by `stamp-sw` and `check-dom` so the two cannot drift apart; the same
+flipped byte now fails both with `mbe1267a6 vs mb477225d`. `CACHE_VERSION` moves from `m730a18fd` to
+`mbe1267a6`.
+
+`agents.mjs` gates the green wave on `longestSessionBefore(t)`, which returns the longest session that
+started by `t` rather than the one open at `t`: over the shipped sample the wave is on with nothing open
+for 472 of 892 sampled minutes (52.9 percent), holding the 1.28 avenue multiplier that is meant to
+answer congestion. `main.mjs`'s `install()` disposes the dream group but not its `.dream-card` nodes,
+which `dream.mjs` keeps in an internal array with no teardown in its returned API, so cards bound to a
+discarded dream survive an export reload and the next waking exceeds the two-card limit. Both are
+recorded in `07` with their fixes; they land with the loop's snapshot, because `index.html` is generated
+from every `src/` fragment and four `src/` files are currently uncommitted (+475 lines).
+
+`check` now counts 38 checks, since `tools/cache-version.mjs` joined its `node --check` sweep.
+
 ### 2026-11-09 — Review pass on PR #173: server robustness and gate case-sensitivity
 
 The bot review of #173 raised six findings: two were real defects in the deliverable's tooling, and

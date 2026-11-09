@@ -43,11 +43,12 @@ bench fps floors, zero console errors, no overlapping or off-viewport labels.
 
 ```text
 assemble: 23/23 verifications passed          (index.html byte-identical after reassemble)
-check: 37 checks, 37 passed, 0 failed         (36 before tools/test-serve.mjs joined the sweep)
+check: 38 checks, 38 passed, 0 failed         (36 before test-serve.mjs and cache-version.mjs joined)
 total: 100 checks, all PASS                   (check-dom)
+OK: the server answers a malformed escape with 400 and keeps serving   (test-serve)
 120 passed, 0 failed                          (smoke-data)
 OK: all six properties hold                   (check-sample)
-stamp-sw: CACHE_VERSION m730a18fd matches assets/manifest.json
+stamp-sw: CACHE_VERSION mbe1267a6 matches the manifest and pack payload
 CHECK RESULT: PASS (87 models)                (check-assets)
 ```
 
@@ -134,3 +135,53 @@ The CodeQL analysis of the fix commit reports `results=0` for javascript-typescr
 the commit before it. The alerts are not dismissed and their `state` field is still null once that
 analysis has run, and `?state=open` lists none of them, so the evidence that they are resolved is the
 analysis result; the security page settles the alert state on the default-branch scan after merge.
+
+**Review pass, round two (PR #173, 2026-11-09).** Three more findings landed on the head that carried
+the first fix, all inside the deliverable. One is fixed here; the other two are valid and recorded in
+`07` as unshipped, because both call for edits to `src/` while the owner loop is rewriting those files
+and `index.html` regenerates from all of `src/`.
+
+| # | finding | verdict | resolution |
+|---|---|---|---|
+| 5 | `tools/stamp-sw.mjs:27` — the offline-cache fingerprint ignores pack bytes | valid, reproduced | fingerprint extracted to `tools/cache-version.mjs`, hashing the manifest *and* every pack it names; `stamp-sw` and `check-dom` share it |
+| 6 | `src/agents.mjs:4970` — the green wave stays on after its session ends | valid, measured | 472 of 892 sampled minutes wrong; the fix is `activeSessionAt(t)`; deferred to `07` |
+| 7 | `src/main.mjs:1261` — dream cards survive an export reload | valid, traced | `hideCards()` is not exposed by `dream.mjs`; the fix is to expose and call it; deferred to `07` |
+
+Finding 5, one flipped byte inside `assets/kenney-car-kit.glb` with the manifest untouched:
+
+```text
+$ node <committed stamp-sw> --check
+stamp-sw: CACHE_VERSION m730a18fd matches assets/manifest.json          exit 0    (blind)
+$ node tools/stamp-sw.mjs --check
+stamp-sw: CACHE_VERSION is mbe1267a6 but the payload fingerprints to mb477225d
+stamp-sw: run node tools/stamp-sw.mjs before serving or packing         exit 1    (seen)
+$ node tools/check-dom.mjs
+FAIL  assets/sw.js cache version matches the payload fingerprint (mbe1267a6 vs mb477225d)
+total: 100 checks, 1 FAIL                                              exit 1
+```
+
+Restoring the pack byte-exactly (`8420fb3b74af7684`) returns both gates to pass. `CACHE_VERSION` moves
+from `m730a18fd` to `mbe1267a6` because the fingerprint now covers the six pack GLBs as well as the
+manifest that names them, and the version therefore moves when only a texture, material, normal or
+interior vertex does.
+
+Finding 6, `longestSessionBefore(t)` measured against `activeSessionAt(t)` over the shipped sample
+(128 sessions, 892 sampled minutes):
+
+```text
+minutes sampled: 892 | minutes where the wave is wrong: 472 (52.9% of the day)
+examples (wave on, nothing open):
+  at 07:02 longest q=5 ended 07:01 active= false
+  at 07:07 longest q=5 ended 07:06 active= false
+```
+
+Finding 7 is structural: `dream.mjs` keeps the card nodes and their handlers in an internal `cards`
+array, and its `return` exposes `group`, `update`, `sleep`, `wake`, `toggle`, `setDataModel`,
+`notifyGap`, `warm` and two measurement getters, with no card teardown among them, while `install()`
+in `main.mjs` disposes three groups and drops the instance. The old cards therefore outlive the dream
+that owns their handlers.
+
+Why those two wait: `index.html` is generated from every `src/` fragment, and the owner loop's cycle 22
+has four `src/` files uncommitted (+475 lines) with `index.html` not yet regenerated. A `src/` fix
+could only be committed together with that unfinished work, so both land with the loop's snapshot
+commit and stay listed as open items until then.

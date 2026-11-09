@@ -227,3 +227,18 @@ measurements behind them are in `Your-Universe/ITERATIONS.md`.
   percent of frame against the watch target; recorded, not tuned.
 - **No human visual pass.** Owner: maintainer. Status: the build has only ever been judged by pixel
   measurement plus written verdicts; nobody has looked at the final frames on a real display.
+- **Green wave stays on after its session ends** (PR #173 review). Owner: Your-Universe owner.
+  Status: valid, fix not yet shipped. `agents.mjs` gates the wave on `longestSessionBefore(t)`, which
+  returns the longest session that *started* by `t` rather than the one open at `t`; over the shipped
+  sample that leaves the wave on and the 1.28 avenue multiplier engaged for 472 of 892 sampled minutes
+  (52.9 percent) with no session open, against a comment that says "still open at tData". The fix is
+  to gate on `activeSessionAt(t)`, which `data.mjs` already exposes. Held back because the owner loop
+  is rewriting `agents.mjs` and `index.html` regenerates from all of `src/`, so this cannot be
+  committed apart from that snapshot.
+- **Dream cards survive an export reload** (PR #173 review). Owner: Your-Universe owner. Status: valid,
+  fix not yet shipped. `dream.mjs` owns the `.dream-card` nodes and their click handlers in an internal
+  `cards` array, and `hideCards()` is not part of the returned API, so `install()` in `main.mjs` can
+  only dispose the Three.js group: loading another export while hypotheses are showing leaves the old
+  cards in `#cards`, bound to the discarded dream, and the next waking exceeds the two-card limit. The
+  fix is to expose `clearCards` from `dream.mjs` and call it in `install()`. Held back for the same
+  reason as the row above.

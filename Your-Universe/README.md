@@ -26,9 +26,16 @@ Ring-road cars and stop-and-go: how often you switched. Green avenue flow: your 
 The moon button (bottom right) fast-forwards to night: a crew lays a provisional road between two quarters that share words but never shared an hour. Waking glides there and offers at most two hypotheses built from those words. "Take it" makes the road permanent.
 
 ## The models
-Kenney CC0 kits: city commercial, city suburban, city roads, car kit and nature kit, merged by `tools/pack-assets.mjs` into one GLB per kit with one shared palette material. `node tools/fetch-assets.mjs` re-downloads the original packs into `.cache/packs` (not shipped), `--only <id>` for one of them; `node tools/pack-assets.mjs` rebuilds `assets/` from them; `node tools/check-assets.mjs` verifies size, licences, node names and triangle counts.
+Kenney CC0 kits: city commercial, city suburban, city roads, car kit, nature kit and mini
+characters, merged by `tools/pack-assets.mjs` into one GLB per kit with one shared palette
+material. `node tools/fetch-assets.mjs` re-downloads the original packs into `.cache/packs` (not
+shipped), `--only <id>` for one of them; `node tools/pack-assets.mjs` rebuilds `assets/` from
+them; `node tools/check-assets.mjs` verifies size, licences, node names and triangle counts.
 
-The staged `kenney-mini-characters` kit is fetched but not yet packed, so `assets/` carries a licence for it and no geometry; `assets/LICENSES/NOT-SHIPPED.md` says exactly what ships and why the Quaternius packs do not.
+The humans are the `kenney-mini-characters` kit, decimated to about 150 triangles per figure.
+They stand at the market, the cafe, the benches, the shelters and two avenue corners, and the
+walkers nearest the camera wear the same bodies while they move: no skinning, the pose is the
+bind pose and the motion is the path, which is what keeps 700 pedestrians affordable.
 
 ## Checks
 ```
@@ -39,8 +46,9 @@ node tools/check-dom.mjs    # markup and stylesheet assertions
 node tools/check-pixels.mjs # rendered-frame assertions
 node tools/check-sample.mjs # export parsing
 node tools/smoke-data.mjs   # data logic
-node tools/stamp-sw.mjs     # assets/sw.js cache version <- sha256 of assets/manifest.json
+node tools/stamp-sw.mjs     # assets/sw.js cache version <- sha256 of the manifest and every pack payload
 node tools/stamp-sw.mjs --check  # fails when a rebuilt pack would serve behind a stale cache
+node tools/test-serve.mjs   # the static server answers a malformed escape with 400 and keeps serving
 ```
 
 The service worker serves `assets/` cache-first, which is what makes the second visit instant and an
