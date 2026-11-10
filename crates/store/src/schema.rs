@@ -222,7 +222,7 @@ END;
 -- durable job queue (the heart of enrich-deferred), see `§5`
 CREATE TABLE jobs (
   id           INTEGER PRIMARY KEY,
-  kind         TEXT NOT NULL,               -- 'embed_text' | 'vision_tag'; no CHECK (07 #82)
+  kind         TEXT NOT NULL,               -- 'embed_text' | 'vision_tag' | 'graph_extract' | 'graph_normalize' | 'graph_cluster' | 'graph_backfill' | 'session_embed' | 'insight_generate' (the `JobKind` variants, crates/traits/src/jobs.rs); no CHECK (07 #82)
   frame_id     INTEGER REFERENCES frames(id) ON DELETE CASCADE,
   state        TEXT NOT NULL DEFAULT 'pending', -- pending|running|done|failed|dead
   priority     INTEGER NOT NULL DEFAULT 0,  -- higher first

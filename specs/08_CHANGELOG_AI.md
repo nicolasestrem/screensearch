@@ -476,3 +476,12 @@ scope panel at `routes/Ask.tsx:46,593-707`, and the dev gallery plus its specime
 `Kitchen.tsx:39` imports). `ui/src/components/icons` is imported by 27 files across the primitives,
 the shell, the overlays and seven routes. Neither deletion condition holds, so no component, icon or
 route was touched. Rows 137 and 138 record the evidence and the corrected premise for 137.
+
+### 2026-11-10: `06` #42 stale `jobs.kind` comment corrected, comment only
+
+`crates/store/src/schema.rs:225` and `specs/03_MASTER_PRODUCTION_SPEC.md:382` described `jobs.kind`
+as holding only `embed_text` and `vision_tag`. `JobKind` has eight variants
+(`crates/traits/src/jobs.rs:16-36`), so both comments now list all eight and name that type as the
+source of truth, keeping the existing no-value-CHECK notes and `07` #82. No SQL, column, constraint,
+index, default, Rust type or test changed; the store parity pair still passes
+(`cargo test -p store --test p3_schema_parity`, 2 passed, 0 failed).

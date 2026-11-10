@@ -379,7 +379,7 @@ CREATE INDEX idx_artifacts_frame ON session_artifacts(frame_id);
 -- durable job queue (the heart of enrich-deferred) — see §5
 CREATE TABLE jobs (
   id           INTEGER PRIMARY KEY,
-  kind         TEXT NOT NULL,               -- 'embed_text' | 'vision_tag' (0.3.0 PR4 removed 'embed_image'). No CHECK — matches schema.rs; a value CHECK is optional hardening tracked in 07 #82.
+  kind         TEXT NOT NULL,               -- 'embed_text' | 'vision_tag' | 'graph_extract' | 'graph_normalize' | 'graph_cluster' | 'graph_backfill' | 'session_embed' | 'insight_generate' (0.3.0 PR4 removed 'embed_image'; the eight values are exactly the `JobKind` variants, crates/traits/src/jobs.rs). No CHECK — matches schema.rs; a value CHECK is optional hardening tracked in 07 #82.
   frame_id     INTEGER REFERENCES frames(id) ON DELETE CASCADE,
   state        TEXT NOT NULL DEFAULT 'pending', -- pending|running|done|failed|dead
   priority     INTEGER NOT NULL DEFAULT 0,  -- higher first

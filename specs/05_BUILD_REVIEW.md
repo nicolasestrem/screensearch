@@ -962,3 +962,40 @@ carry the live importer lists. Row 137's premise is corrected rather than repeat
 "nothing else imports `Expander`" was true when P7 removed the single-file `Settings.tsx`, and P9's
 Ask scope panel brought it back. No test or gate applies: no source, test, lint or dependency file
 changed.
+
+### 2026-11-10: Off-arc, 0.4.6 item 7, stale `jobs.kind` comment (`06` #42)
+
+**Scope.** Comment-only documentation fix. The DDL prose in two places listed only two of the eight
+`JobKind` tokens, which misleads anyone reading the schema or the spec.
+
+**What changed.**
+
+- `crates/store/src/schema.rs:225` and `specs/03_MASTER_PRODUCTION_SPEC.md:382` now list all eight
+  tokens: `embed_text`, `vision_tag`, `graph_extract`, `graph_normalize`, `graph_cluster`,
+  `graph_backfill`, `session_embed`, `insight_generate`, and say they are exactly the `JobKind`
+  variants in `crates/traits/src/jobs.rs`. Both keep their existing notes (no value `CHECK`; the
+  optional hardening stays `07` #82; `0.3.0 PR4` removed `embed_image`).
+- No SQL token changed, no column, constraint, index, default or Rust type changed. The comment is
+  inside the DDL string, so the schema itself is byte-identical after comment stripping.
+
+**Verification.**
+
+```text
+$ cargo test -p store --test p3_schema_parity
+running 2 tests
+test baseline_holds_every_spec_section_4_declaration_and_the_documented_extras ... ok
+test a_fresh_store_materialises_exactly_the_baseline_ddl ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+```
+
+The parity guard compares `schema.rs` against `03 §4` with comments stripped, so this pair is the
+evidence that the two copies still agree after the edit.
+
+**Source of truth.** `crates/traits/src/jobs.rs:16-36` defines exactly eight variants:
+`EmbedText`, `VisionTag`, `GraphExtract`, `GraphNormalize`, `GraphCluster`, `GraphBackfill`,
+`SessionEmbed`, `InsightGenerate`. No other stale copy exists: the shorthand in
+`crates/traits/src/jobs.rs:7` (`'graph_*'`) is accurate rather than exhaustive.
+
+**Limitations.** Nothing here proves runtime enqueue behaviour; it is a documentation accuracy fix
+for a schema comment.
