@@ -138,9 +138,11 @@ for self-contained contracts and source-inspected inventory.
   (`package.json`, `ui/package.json`, the workspace `Cargo.toml` that `src-tauri/Cargo.toml` inherits
   through `version.workspace = true`, the two npm lock roots, `Cargo.lock` and
   `src-tauri/tauri.conf.json`)
-  and `docs/release-notes/v0.4.6.md` exists, all on branch `fix/0.4.6-stabilisation`, which is open
-  as **PR #177** against `main`. That pull request is **not merged, and the branch is not tagged or
-  released**, so **v0.4.5 stays the latest release** until the maintainer merges and tags. Only dev launches were exercised: 20 consecutive isolated cold launches passed
+  and `docs/release-notes/v0.4.6.md` exists, all on branch `fix/0.4.6-stabilisation`, whose code
+  commits `main` already carries and whose documentation commits travel in **PR #177**. No tag has been
+  cut and no GitHub release exists, so **v0.4.5 remains the latest release** until the maintainer tags
+  one. At tag time this bullet and the release-state bullet above move to
+  `specs/archive/01_STATUS_HISTORY.md`, per the archive-on-release rule. Only dev launches were exercised: 20 consecutive isolated cold launches passed
   with no panic, while the same control under the pre-fix ordering also passed 8 of 8, so the
   regression test rather than the launch series carries the discrimination; no release binary was
   launched and no updater download or install was tested.

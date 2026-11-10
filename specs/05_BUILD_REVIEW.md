@@ -526,10 +526,11 @@ import, and the GPU allocation is released only when the page unloads. `setShado
 
 ### 2026-11-10: Off-arc, 0.4.6 stabilisation run, index
 
-Nine queue items ran on branch `fix/0.4.6-stabilisation`, cut from `origin/main` at `93a7219`, and
-landed as commits on branch `fix/0.4.6-stabilisation`, open as PR #177 against `main`. That PR is not
-merged, and nothing was tagged or released: the commits were pushed while this record was being
-written, so the hashes below are the authoritative reference, not the branch tip.
+Nine queue items ran on branch `fix/0.4.6-stabilisation`, cut from `origin/main` at `93a7219`. By the
+time this index was written `main` already pointed at `085a81c`, the twelfth commit of that branch, and
+the two documentation commits that follow it (this index among them) are in PR #177. The per-item
+hashes below are therefore the reference, because later documentation commits move the tip. Nothing has
+been tagged and no GitHub release exists.
 
 | item | subject | outcome | commit |
 |---|---|---|---|
