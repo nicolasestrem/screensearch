@@ -524,6 +524,38 @@ import, and the GPU allocation is released only when the page unloads. `setShado
 
 
 
+### 2026-11-10: Off-arc, 0.4.6 stabilisation run, index
+
+Nine queue items ran on branch `fix/0.4.6-stabilisation`, cut from `origin/main` at `93a7219`, and
+landed as local commits on the branch, of which the documentation pass that added this index is the
+last. Nothing was tagged and no GitHub release was cut, so 0.4.6 reached the remote branch only after
+this record was written.
+
+| item | subject | outcome | commit |
+|---|---|---|---|
+| 1 | launch panic, `06` #150 | fixed and verified | `ca2d7ed` |
+| 2 | Ask turn with no first delta, `06` #116 | blocked on a maintainer decision | `9afb7b2` |
+| 3 | a settings save refreshes the throttle readout, TODO-4 | implemented and verified | `d193624` |
+| 4 | settings defaults over IPC, TODO-6 | implemented and verified | `57bbdae` |
+| 5 | `get_insights` removal assessed, `06` #143 | recorded, no code change | `a9ba52d` |
+| 6 | `Expander` and the v1 icon set, `06` #137, #138 | recorded, no code change | `070a07d` |
+| 7 | stale `jobs.kind` comment, `06` #42 | fixed and verified | `06e0f3f` |
+| 8 | monitor hot-unplug, `07` #91 | blocked on a maintainer decision | `2a00469` |
+| 9 | version bump and release documentation | implemented and verified | `3eb680c` |
+
+Items 2 and 8 are blocked on a maintainer decision, and the question each one asks lives in
+`specs/07_KNOWN_GAPS.md`: `06` #116 for item 2 and `07` #91 for item 8.
+
+Read each item section below as a self-contained record: its scope, the failing-first and passing raw
+blocks where code changed, and its own full ordered gate output, so any item can be checked without
+reading the others. The gate environment belongs to that record too: the Rust chain needs
+`CARGO_TARGET_DIR` outside `Documents`, and the UI chain needs the CI-pinned Node 22 (portable
+v22.23.4). `specs/07` carries that host finding, including the two-way copy experiment behind it.
+
+The limits are stated where they fall: items 5 and 6 changed nothing because the deletion conditions
+were false, the launch proof rests on the failing-first regression plus 20 clean cold dev launches,
+and no release-binary launch and no updater download or install was tested.
+
 ### 2026-11-10: Off-arc, 0.4.6 item 1, launch panic (#150)
 
 **Scope.** `06` #150: the shipped 0.4.5 build panics on launch most attempts before the window is

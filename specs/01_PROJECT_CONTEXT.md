@@ -83,10 +83,10 @@ plan and spec build on a fixed base:
 - **Single user (0.4.5 D1):** no forward-compat shims, no retired-key tolerance, no
   multi-environment validation.
 - **Baseline schema, not a migration chain (0.4.5 D2):** `03 §4` holds the full DDL at
-  `schema_version = 14`; a schema change edits the baseline and bumps the version. No
+  `schema_version = 15`; a schema change edits the baseline and bumps the version. No
   populated-DB migration tests. The 0.2.x–0.4.2 forward-only migrations are history, not the rule.
 - **History is carried, not migrated (0.4.5 D3):** the dev-only `ssv2c-rebuild` tool copies a v13
-  DB into v14 read-only; the old file is kept as `*.v13.bak`.
+  DB into the current baseline read-only; the old file is kept as `*.v13.bak`.
 - **Local-only (0.4.5 D15):** no new network destination; inference stays on the local sidecar;
   fonts and icons ship as bundled files.
 
@@ -133,6 +133,38 @@ for self-contained contracts and source-inspected inventory.
   standalone MCP wrapper archives are not published. Code-signing is the lone packaging follow-up
   (`03 §11b`). The app is a Rust workspace of **18 module crates** plus `src-tauri` (the Tauri
   composition root) and a React/TS UI.
+
+- **0.4.6 in the tree, not released (2026-11-10):** every version declaration reads `0.4.6`
+  (`package.json`, `ui/package.json`, the workspace `Cargo.toml` that `src-tauri/Cargo.toml` inherits
+  through `version.workspace = true`, the two npm lock roots, `Cargo.lock` and
+  `src-tauri/tauri.conf.json`)
+  and `docs/release-notes/v0.4.6.md` exists, all on branch `fix/0.4.6-stabilisation`. That branch is
+  **not tagged, not released and not merged**, so **v0.4.5 stays the latest release** until it is
+  merged and tagged. Only dev launches were exercised: 20 consecutive isolated cold launches passed
+  with no panic, while the same control under the pre-fix ordering also passed 8 of 8, so the
+  regression test rather than the launch series carries the discrimination; no release binary was
+  launched and no updater download or install was tested.
+
+- **What 0.4.6 changes:** the 0.4.5 launch panic (`state() called before manage()` for
+  `screensearch_lib::update::UpdaterState`) is fixed by registering the updater state on the Tauri
+  builder through `manage_pre_window_state`, before any window exists, with regression test
+  `src-tauri/tests/launch_order.rs`; a settings save now invalidates `throttleStatus` through
+  `SETTINGS_SAVE_INVALIDATIONS` (`ui/src/lib/ipc/queryKeys.ts`), with the `enabled` prop removed from
+  `ThrottleReadout`; the app serves `Settings::default()` over IPC as `get_settings_defaults`
+  (`settings_defaults` module in `src-tauri/src/lib.rs`), with contract tests
+  `src-tauri/tests/settings_defaults_contract.rs` and `ui/test/settingsDefaultsContract.mjs`; and the
+  `jobs.kind` comment lists all eight `JobKind` tokens (`crates/store/src/schema.rs` and the `03 §4`
+  DDL comment). The release also carries the **memory-pressure relief** merged from `main` before
+  this branch; that work shipped with its own records and gate, and this branch's gate covers only
+  its own items.
+
+- **0.4.6 does not close:** `06` #116 (no turn bound for an Ask turn whose provider never answers)
+  and `07` #91 (no topology-change behaviour for a monitor unplug), both blocked on maintainer
+  decisions and recorded in `07_KNOWN_GAPS.md`.
+
+- **0.4.6 changes no persisted format or reach:** schema stays **15** with no migration, the closed
+  26-key Settings set of `03 §8` gains no key (`get_settings_defaults` answers the 25 rows that
+  store a value plus the `api.token` action), and there is no new network destination (0.4.5 D15).
 
 - **Arcs shipped** (full history: `CHANGELOG-ARCHIVE.md`, `specs/archive/`): **v0.4.5**
   (2026-11-07) — work intelligence + design system v2, P1–P10 on `main` as PRs #150–#166

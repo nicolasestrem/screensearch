@@ -84,28 +84,53 @@ state (counts refreshed from the store, not optimistic).
 
 ## TODO-4 — `throttleStatus` is not invalidated by a settings save (deferred from P7, 0.4.5)
 
-**Status:** OPEN, found during P7's native acceptance. `useSetSettings.onSettled`
-(`ui/src/lib/ipc/mutations.ts`) invalidates `settings`, `hotkeyStatus` and `apiStatus` only, so any
-surface built on `useThrottleStatus()` keeps showing pre-save state until the next `throttle_changed`
-event.
+**Status:** CLOSED in the 0.4.6 stabilisation run (branch `fix/0.4.6-stabilisation`). Found during
+P7's native acceptance: `useSetSettings.onSettled` (`ui/src/lib/ipc/mutations.ts`) invalidated
+`settings`, `hotkeyStatus` and `apiStatus` only, so any surface built on `useThrottleStatus()` kept
+showing pre-save state until the next `throttle_changed` event. The shared invalidation list now
+carries `throttleStatus`, so no consumer needs a local workaround.
 
 ### The suggestion
 Add `throttleStatus` to that invalidation list (and audit the rest of the map the same way: a key
 whose writes affect another query's payload needs that query invalidated, otherwise the UI shows a
 stale projection of a value the user just changed).
 
-### Why it's deferred (the trade-offs)
-- **`ui/src/lib/ipc` is not P7's write set.** P7 worked around it inside its own surface: the Advanced
-  throttle readout now takes its on/off line from the **saved** setting (`<ThrottleReadout
-  enabled={throttle.value === true} />`) and shows an honest intermediate line ("Turning on — waiting
-  for the first pressure sample.") while the probe lags, instead of printing "Throttle is off" after
-  the switch was turned on.
-- **The workaround is correct but local:** any future readout built on `useThrottleStatus` inherits the
-  same staleness, so the fix belongs in the shared invalidation map, not in each consumer.
+### Why it was deferred (the trade-offs)
+- **`ui/src/lib/ipc` was not P7's write set.** P7 worked around it inside its own surface: the
+  Advanced throttle readout took its on/off line from the **saved** setting via an `enabled` prop
+  (`<ThrottleReadout enabled={throttle.value === true} />`) and showed an honest intermediate line
+  ("Turning on, waiting for the first pressure sample.") while the probe lagged, instead of printing
+  "Throttle is off" after the switch was turned on. **This prop-based workaround text is history, not
+  current behaviour:** `ThrottleReadout` (`ui/src/routes/settings/ThrottleReadout.tsx`) now takes no
+  props and reads `useThrottleStatus()` alone.
+- **The workaround was correct but local:** any future readout built on `useThrottleStatus` inherited
+  the same staleness, so the fix belonged in the shared invalidation map, not in each consumer.
+
+### What shipped (0.4.6 stabilisation run)
+- **One list, one caller:** `SETTINGS_SAVE_INVALIDATIONS` (`ui/src/lib/ipc/queryKeys.ts`) holds
+  `settings`, `hotkeyStatus`, `apiStatus` and `throttleStatus`, and `useSetSettings.onSettled` runs
+  that list through `invalidateAfterSettingsSave` (`ui/src/lib/ipc/mutations.ts`). The list is the
+  single place a settings save reconciles caches, so a new settable setting adds its key there once
+  instead of at each readout.
+- **Workaround removed:** `ThrottleReadout` no longer takes the `enabled` prop and its call site
+  (`Advanced.tsx`) passes none; the readout takes its on/off line from `useSettings()` and its
+  numbers from `useThrottleStatus()`, which now refetches on every save.
+- **Audit outcome (the entry's other half):** of the twelve query families the settings pages read,
+  only those four change on a save. The three causes are hotkey re-registration
+  (`hotkeyStatus`), `apply_api_config` starting, stopping or rebinding the listener (`apiStatus`),
+  and `reconfigure_throttle` starting or stopping the governor (`throttleStatus`), all reached from
+  `set_settings`; `settings` itself is the written payload. The remaining eight are untouched:
+  `readiness` is patched by the `readiness_changed` event rather than by a save, and the rest are
+  hardware, history, read-only or credential reads that a settings write cannot change. No extra key
+  was added, so the set stays exact rather than defensive.
+- **Regression test:** `ui/test/settingsSaveInvalidations.test.mjs` asserts the invalidation set
+  names every family a save mutates. Run against the old three-key set it fails with
+  `throttleStatus is missing`, so the defect cannot silently return.
 
 ### If ever implemented
-- Invalidate `throttleStatus` from `onSettled` and drop the `enabled` prop from `ThrottleReadout`;
-  add a test that asserts the invalidation set covers every query keyed on a settable setting.
+Closed as above. The remaining rule stands for future work: a key whose writes affect another
+query's payload must be added to `SETTINGS_SAVE_INVALIDATIONS` and covered by the test, never patched
+at the consumer.
 
 ---
 
