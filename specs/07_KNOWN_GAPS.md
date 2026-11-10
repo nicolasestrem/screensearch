@@ -207,6 +207,46 @@ decisions below, decided but reversible.
   out of scope for 0.4.5 by maintainer decision; no display-topology handling exists (no
   `WM_DISPLAYCHANGE` handling in `crates/capture`); sessions make the stall visible but silent data
   loss remains possible (`UI_REFERENCE.md:234`).
+- **`06` #116 An Ask turn whose provider never answers stays open indefinitely.** Owner: P6 (the
+  `06` patch-plan row; this is not the session-model `#116` listed under `#112 / #116 / #117`).
+  Status: open, and **blocked on a spec decision** as of 2026-11-10 (`0.4.6` stabilisation run,
+  item 2). The surviving non-terminal path was confirmed from the source at this base; no code
+  changed, because closing it needs a bound the specs do not give.
+  - **Confirmed at this base.** `answer_provider()` returns `Some` whenever the slot is filled
+    (`crates/kernel/src/lib.rs:1351`, `:1364-1366`), `crates/kernel/src/ask.rs:136-139` only rejects
+    `None`, the turn is persisted before generation (`ask.rs:202-215`), and the forwarder's whole
+    wait is a two-arm `select!` on the consumer's closure and `prx.recv()`
+    (`crates/kernel/src/ask.rs:466-476`) with no elapsed-time arm; its only timeout is the 250 ms
+    cancel grace (`crates/kernel/src/ask.rs:636`). With no answer weights,
+    `AnswerSidecar::ensure_spec` enters the first-use download
+    (`crates/inference/src/answer.rs:94-113` then `crates/inference/src/download.rs:773-782`),
+    whose total time is unbounded (only a 180 s no-bytes stall and the 15 s/30 s fetch timeouts
+    bound it), so no delta and no terminal event reach the turn. The 30 s connect and 30 s
+    per-chunk idle timeouts apply only after the streaming request starts
+    (`crates/inference/src/client.rs:32-33`, `:305-326`). The UI phase changes only on
+    `done`/`error`, so it stays `streaming` (`ui/src/lib/ipc/useAskConversation.ts:111-119`).
+  - **Already correct and reusable.** A provider task `Err` becomes an `error` delta; a provider
+    `Error` delta is forwarded and nothing is persisted; `Stop` produces the documented failed
+    state plus the persisted NULL row. `docs/API.md` (terminal `error`, 503 with no answer model),
+    `03 §7i.4` (answer NULL on failure) and `UI_REFERENCE.md:229` (a failed turn keeps the question
+    with a retry) agree with each other, so this is not a `06` contradiction: the gap is the
+    missing bound. One latent path is worth fixing with the same change: a provider that returns
+    `Ok` after zero deltas makes the forwarder synthesize `Citations` + `Done` and persist an empty
+    answer (`crates/kernel/src/ask.rs:543-616`). It is unreachable today because the only
+    production provider always sends a terminal delta first, and a new deadline arm must not make
+    "no delta" mean success.
+  - **`06` #116 question (blocks implementation).** When a turn's provider produces no delta, what
+    bound makes the turn terminal? `03 §7i` defines no turn deadline, and `§7c` says the 30 s
+    header deadline is not a body deadline, so long Ask responses can stay open by design.
+    (a) May an Ask start the first-use answer-model download, or must it fail before the turn with
+    `no_answer_model` / a terminal `error` delta until "Load answer model" has run?
+    (b) If a first-delta (first-token) deadline is required, what is its value?
+    (c) Does it start at turn creation, therefore covering a legitimate multi-GB model download, or
+    only once the model is resident?
+    `03 §8` requires thresholds to be settings and never hardcoded, and the Settings key set is a
+    closed 26-key ceiling, so a new threshold also needs a disposition (`file-only` in
+    `advanced.toml`) or a key-set amendment. Answer (a) to (c) and name the threshold's home, then
+    the forwarder's third `select!` arm (or the pre-turn failure) can be implemented and tested.
 - **e2e capture test fails on `main`.** Owner: agent. Status: `src-tauri/tests/e2e_capture.rs` is
   `#[ignore]`d, and on a real desktop it fails at `assert_eq!(frame.raw_text, frame.content_text)`
   (`:108-113`); it fails identically on unmodified `main`. Decide whether the chrome filter makes the

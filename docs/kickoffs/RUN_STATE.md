@@ -8,7 +8,7 @@ Branch: `fix/0.4.6-stabilisation`, created from `origin/main` at `93a7219`. Loca
 | Item | Status | Last commit | Notes |
 |---|---|---|---|
 | 1 `06` #150 launch panic (`UpdaterState` ordering) | in progress: live proof and Node 22 gate | 209ede8 (to be amended with evidence) | Regression fails with the production panic, then passes. Initial gate green (1653 passed); 20 cold dev launches are running. |
-| 2 `06` #116 Ask turn whose provider never answers | pending records; specification blocker identified | none yet | Read-only scout found no turn bound in the specs. |
+| 2 `06` #116 Ask turn whose provider never answers | blocked (records committed) | see item 2 commit | No turn bound exists in `03 §7i`, and `§8` forbids a hardcoded threshold with a closed 26-key UI set. Failing fast would change documented first-use downloads. Question filed in `07` under `06` #116. |
 | 3 `TODO-4` `throttleStatus` invalidation | pending | none yet | |
 | 4 `TODO-6` settings defaults over IPC | pending | none yet | |
 | 5 `06` #143 `get_insights` removal (only if no importer) | pending | none yet | |

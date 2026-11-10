@@ -433,3 +433,29 @@ because this host denies temp-dir creation to test executables built under the r
 20 consecutive isolated cold dev launches, zero panics and zero early exits, including ten seconds
 of post-readiness observation per launch. The pre-fix dev control also passed 8/8, so the live dev
 series does not discriminate by itself; the failing-first regression does. Full raw output is in `05`.
+
+### 2026-11-10 - `06` #116 recorded as blocked on a spec decision (no code change)
+
+The 0.4.6 stabilisation run, item 2, verified from source that an Ask turn still has no terminal
+path when its provider never produces a delta: `forward_turn` waits only on consumer closure and
+`prx.recv()` (`crates/kernel/src/ask.rs:466-476`), its sole timeout is the 250 ms cancel grace
+(`:636`), and with no answer weights `AnswerSidecar::ensure_spec` enters the unbounded first-use
+download (`crates/inference/src/answer.rs:94-113`) before any delta exists. The client's 30 s
+connect and idle timeouts apply only after the streaming request starts
+(`crates/inference/src/client.rs:32-33`, `:305-326`), so nothing bounds the turn.
+
+No code was changed. `03 §7i` defines no turn deadline, `03 §8` forbids a hardcoded threshold and
+the Settings UI key set is a closed 26-key ceiling, and failing fast on absent weights would change
+documented first-use download behavior (`docs/ARCHITECTURE.md:384-388`). The required product
+decision is recorded instead.
+
+Changed (documentation only):
+
+- `specs/06_PATCH_PLAN.md` row 116: status extended with the 2026-11-10 blocked decision, the
+  confirmed non-terminal path and pointers to the question.
+- `specs/07_KNOWN_GAPS.md`: new `06` #116 record (explicitly not the session-model `#116`), with the
+  confirmed code anchors, the reusable terminal paths, the latent zero-delta success path, and the
+  blocking question (download during Ask, deadline value, clock start, threshold disposition).
+
+No tests, build, lint or gate were run because no code changed. No runtime reproduction or model
+use is claimed.

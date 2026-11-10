@@ -802,3 +802,113 @@ does. No installed-release launch test or updater download/install is claimed.
 [2026-11-10T11:22:57.816Z] run 20/20 OK 16.1s reason=capture started
 {"label":"fixed-dev-20","attempted":20,"successes":20,"panics":0,"earlyExits":0,"firstFailure":-1}
 ```
+
+### 2026-11-10 - 0.4.6 stabilisation, item 2: `06` #116 Ask turn with no first delta (blocked, no code change)
+
+**Why this item stopped.** The row asks for a way to make an Ask turn terminal when its provider
+never produces a delta. The specs define the turn record and its failure semantics but no time
+bound, and the only number-free alternative (fail before the turn when the answer weights are
+absent) contradicts documented first-use download behavior. That is a product decision, so the item
+records the blocker and stops rather than inventing a threshold (`04 §5`).
+
+**Scope and evidence discipline.** Verification here was read-only source and spec reading. No app
+was launched, no model was loaded or downloaded, no profile or database was touched, and no runtime
+reproduction of the stall is claimed (the last live observation is the one already recorded in
+`05`). No test or gate was run, because no code changed. No git command was run.
+
+**What is confirmed at this base (code read, line numbers checked).**
+
+- The provider slot is filled unconditionally at startup, and the accessor returns `Some` whenever
+  it is filled: `crates/kernel/src/lib.rs:1351` (attach), `:1364-1366` (`answer_provider`).
+  `ask_turn` rejects only `None` with `NoAnswerModel`
+  (`crates/kernel/src/ask.rs:136-139`), before any thread or turn exists.
+- The turn is persisted with a NULL answer before generation (`crates/kernel/src/ask.rs:202-215`),
+  and `forward_turn` is spawned before the stream handle is returned (`ask.rs:383-400`).
+- `forward_turn`'s whole bounded wait is a two-arm `select!`: consumer closed, or `prx.recv()`
+  (`crates/kernel/src/ask.rs:466-476`). There is no elapsed-time arm. The only `timeout` in the
+  file is the 250 ms cancel grace (`ask.rs:529`, constant at `:636`), which cannot rescue a provider
+  that never yields a delta.
+- With no installed answer weights, `AnswerSidecar::ensure_spec` calls `downloader.ensure`
+  (`crates/inference/src/answer.rs:94-113`), which downloads (`crates/inference/src/download.rs:773-782`)
+  when files are absent. Total download time is unbounded; the stall watchdog only bounds a period
+  with no new bytes (180 s, `download.rs:42`), and the transfer carries its own 15 s connect/API and
+  30 s read timeouts.
+- The client's 30 s stream connect and 30 s per-chunk idle timeouts
+  (`crates/inference/src/client.rs:32-33`, `:305-326`) apply only after the streaming request
+  starts, so they cannot bound model acquisition or supervisor wait.
+- The UI phase moves only on `done` or `error`, so a channel that closes with no delta leaves the
+  reducer at `"streaming"` (`ui/src/lib/ipc/useAskConversation.ts:111-119`, state at `:18-19`).
+- Latent, currently unreachable path: if a provider returned `Ok` after zero deltas, `forward_turn`
+  would fall through to synthesizing `Citations` + `Done` and persist an empty string as the answer
+  (`crates/kernel/src/ask.rs:543-616`). Today's only production provider always emits a terminal
+  delta first, so this path is not observed; a first-delta implementation must not treat "no delta"
+  as success.
+
+**Decisive spec sentences (verbatim, trimmed where marked).**
+
+`03 §7i.4` (`specs/03_MASTER_PRODUCTION_SPEC.md:1674-1677`):
+
+> `ask_threads` / `ask_turns` persist conversations (`§4`). Each turn stores its question, its
+> answer (NULL while streaming and on failure), the resolved `[window_start, window_end)` and
+> `resolved_entities` as a JSON array of entity ids.
+
+`03 §7c` connection bounds (`specs/03_MASTER_PRODUCTION_SPEC.md:834-837`):
+
+> This is not a response/body deadline: long Ask SSE and export responses must remain usable. These
+> are fixed implementation constants, not new settings.
+
+`03 §8` (`specs/03_MASTER_PRODUCTION_SPEC.md:1751`, `:1752-1754`):
+
+> Thresholds are settings, never hardcoded
+
+> The Settings UI is a **closed set of 26 keys**, exactly the rows whose Disposition is `UI` below,
+> and nothing else may be added to it; that ceiling is binding
+
+`docs/API.md` (`:421-427`, `:485-497`):
+
+> `{"type":"error","message":"…"}` may replace the terminal `done`. A keep-alive comment is sent
+> every 15 s. **Disconnecting the client cancels generation** ... Returns **503** if no answer model
+> is loaded.
+
+> Each turn is persisted before generation starts and answers are stored when generation completes
+
+> answer | The final answer text; **`null` while the turn is streaming and when it fails**.
+
+`specs/UI_REFERENCE.md:229`:
+
+> sidecar unavailable → "answer model not loaded; load it?"; a failed turn keeps the question in the
+> thread with a retry, never a lost turn
+
+`docs/ARCHITECTURE.md:384-388`, reason the number-free alternative is a product change:
+
+> everything downloads on first use
+
+**Verdict.** Not a `06` contradiction. The API (terminal `error`, 503 with no model), `§7i.4`
+(NULL on failure) and `UI_REFERENCE` (failed turn keeps the question with a retry) agree with each
+other and with the shipped terminal-error paths. What is missing is a bound, so the question is a
+`07` gap:
+
+1. May Ask start the first-use answer-model download, or must it fail before the turn until the
+   model is explicitly loaded?
+2. If a first-delta deadline is required, what value?
+3. Does the clock start at turn creation (covering a legitimate multi-GB download) or at model
+   readiness?
+4. Where does the threshold live, given `03 §8`'s "settings, never hardcoded" rule and the closed
+   26-key Settings ceiling (`file-only` in `advanced.toml` is the likely home, but that is the
+   maintainer's call)?
+
+The question is appended to `specs/07_KNOWN_GAPS.md` under `06` #116, which is explicitly
+disambiguated from the session-model `#116` there. If the answer is "no download during Ask" then
+the change is a pre-turn failure reusing `NoAnswerModel`/503 and the existing UI block; if it is a
+deadline, the change is a third `select!` arm in `forward_turn` that emits the existing `error`
+delta, plus a settings row or a documented constant. Either shape also closes the zero-delta
+success path above.
+
+**Records updated by this item.** `specs/06_PATCH_PLAN.md` row 116 status only (blocked, confirmed
+path, question location), and the `06` #116 record with the question in `specs/07_KNOWN_GAPS.md`.
+No code file changed.
+
+**Limitations.** No runtime reproduction was attempted, so "the stall still reproduces live" is not
+claimed; the row's existing 2026-11-09 note that the live stall was not re-observed still stands.
+Line numbers are as of this checkout. No build, lint, test or gate was run, and none would be
+meaningful for a records-only change.
