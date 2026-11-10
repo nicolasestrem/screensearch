@@ -523,3 +523,282 @@ import, and the GPU allocation is released only when the page unloads. `setShado
 (line 10353 at this commit) already disposes the map and nulls it, which is why the fix needs no new mechanism.
 
 
+
+### 2026-11-10: Off-arc, 0.4.6 item 1, launch panic (#150)
+
+**Scope.** `06` #150: the shipped 0.4.5 build panics on launch most attempts before the window is
+usable (`state() called before manage() for screensearch_lib::update::UpdaterState`, process exit
+`3221226505`). Only the row's first fix shape is implemented: register `UpdaterState` on the
+`tauri::Builder` so it exists before any window or WebView, with exactly one registration site. The
+row's second shape (calling `try_state` so the command tolerates an absent state) was not taken;
+`get_update_status` already takes an `AppHandle`, so that shape was a lookup change inside
+`current_status`, not a command-signature change. No retry loop was added, and no unrelated refactor
+rides along.
+
+**Why the ordering is the whole bug.** `tauri-2.11.3/src/app.rs:2521-2532` (`fn setup`) creates
+every config-declared window first (`WebviewWindowBuilder::from_config(...).build()` in a loop over
+`config().app.windows`) and only then calls the user setup closure, which is where
+`app.manage(update::UpdaterState::default())` lived (`src-tauri/src/lib.rs:1438` at base). Both
+`main` and `overlay` therefore exist, and their WebViews load, while the closure is still doing
+blocking launch work. The updater path then reaches `Manager::state`: `get_update_status` takes an
+`AppHandle` (`src-tauri/src/update.rs:199`) and its `current_status` helper calls
+`app.state::<UpdaterState>()` (`update.rs:72`), which panics on an unmanaged type. A command that
+declares `State<'_, T>` instead returns an invoke error when the type is missing, because
+`CommandArg for State` uses `state_ref().try_get()` (`tauri-2.11.3/src/state.rs:60-68`).
+
+**What changed.**
+- `src-tauri/src/lib.rs`: new `pub fn manage_pre_window_state<R: tauri::Runtime>(builder) ->
+  Builder<R>` that calls `builder.manage(update::UpdaterState::default())`. `run()` starts from
+  `manage_pre_window_state(tauri::Builder::default())`, so the value is inserted at builder
+  construction (`Builder::manage` stores it immediately, `tauri-2.11.3/src/app.rs:1943-1954`),
+  before `build()` and before any window. The setup-closure
+  `app.manage(update::UpdaterState::default())` is gone; one `UpdaterState::default` occurrence
+  remains in the crate. The release-only launch-check `spawn` stays where it was, with its comment
+  now naming the builder registration as the state's owner.
+- `src-tauri/src/lib.rs`: `#[doc(hidden)] pub use update::UpdaterState;` so the regression test can
+  perform the same `app.state::<UpdaterState>()` lookup `current_status` performs (`update.rs:72`).
+  Both `pub` items carry doc comments stating that they exist as the test seam and the single
+  registration site, not as API.
+- `src-tauri/tests/launch_order.rs`: the regression test. It calls the same
+  `manage_pre_window_state` that `run()` applies, builds a `tauri::test` mock app from
+  `mock_context(noop_assets())` (which declares no window), asserts `webview_windows().is_empty()`,
+  and then calls `app.state::<UpdaterState>()`, the same lookup that panicked in production.
+  It lives in `tests/` rather than the lib unit tests because the test-target resource link args
+  apply to integration test targets only (see the manifest note below).
+- `src-tauri/Cargo.toml`: `[dev-dependencies] tauri = { version = "2", features = ["test"] }`.
+  Dev-only; the workspace resolver is "2", so the feature cannot reach a shipped build.
+- `src-tauri/build.rs`: `*-tests` link args only, so the mock-runtime test executable can load.
+
+**Failing first.** The shipped ordering was restored by hand (registration back inside the setup
+closure, the new seam left as a pass-through), then:
+
+```text
+$ cargo test -p screensearch --test launch_order
+   Compiling screensearch v0.4.5 (C:\Users\nicol\Documents\GitHub\screensearch\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 51.95s
+     Running tests\launch_order.rs (target\debug\deps\launch_order-5e2ef30499b21bd5.exe)
+
+running 1 test
+test updater_state_is_managed_before_any_webview_exists ... FAILED
+
+failures:
+
+---- updater_state_is_managed_before_any_webview_exists stdout ----
+
+thread 'updater_state_is_managed_before_any_webview_exists' (31808) panicked at C:\Users\nicol\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.11.3\src\lib.rs:734:7:
+state() called before manage() for screensearch_lib::update::UpdaterState
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    updater_state_is_managed_before_any_webview_exists
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p screensearch --test launch_order`
+```
+
+That is the production failure verbatim: the same message, the same `tauri-2.11.3/src/lib.rs:734`
+panic site, reproduced by the test without launching the app.
+
+**After the fix** (builder registration restored, single site):
+
+```text
+$ cargo test -p screensearch --test launch_order
+   Compiling screensearch v0.4.5 (C:\Users\nicol\Documents\GitHub\screensearch\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 54.17s
+     Running tests\launch_order.rs (target\debug\deps\launch_order-5e2ef30499b21bd5.exe)
+
+running 1 test
+test updater_state_is_managed_before_any_webview_exists ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+```
+
+Raw logs: `C:/Users/nicol/screensearch-evidence/0.4.6/item1-failing-first.log`,
+`item1-passing.log`, `item1-gate.log`.
+
+**Gate.** Run from the repository root with the item command
+(`GATE_LOG=C:/Users/nicol/screensearch-evidence/0.4.6/item1-gate.log source
+C:/Users/nicol/screensearch-evidence/0.4.6/gate.sh`). It stopped at `cargo_test`:
+
+```text
+node v26.12.1
+ / cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+ui_ci EXIT=0
+ui_lint EXIT=0
+ui_test EXIT=0
+ui_build EXIT=0
+stage_mcp EXIT=0
+cargo_fmt EXIT=0
+cargo_clippy EXIT=0
+cargo_build EXIT=0
+cargo_test EXIT=101
+STOPPED_AT=cargo_test
+CARGO_TEST_AGGREGATE={"suites":3,"passed":88,"failed":2,"ignored":1}
+UI_NODE_TEST_SUMMARY=["ℹ tests 172","ℹ suites 0","ℹ pass 172","ℹ fail 0","ℹ cancelled 0","ℹ skipped 0","ℹ todo 0"]
+```
+
+The two failures are in `crates/api/tests/http_api.rs`, both `tempfile::tempdir()` creations on
+transient `%TEMP%` paths, and they reproduce when that target runs alone:
+
+```text
+$ cargo test -p api --test http_api
+---- export_to_file_writes_valid_json_without_a_server stdout ----
+
+thread 'export_to_file_writes_valid_json_without_a_server' (22336) panicked at crates\api\tests\http_api.rs:814:35:
+called `Result::unwrap()` on an `Err` value: Custom { kind: PermissionDenied, error: PathError { path: "C:\\Users\\nicol\\AppData\\Local\\Temp\\.tmpajEuSN", err: Os { code: 5, kind: PermissionDenied, message: "Access is denied." } } }
+
+---- reads_never_write_insights stdout ----
+
+thread 'reads_never_write_insights' (17720) panicked at crates\api\tests\http_api.rs:1996:35:
+called `Result::unwrap()` on an `Err` value: Custom { kind: PermissionDenied, error: PathError { path: "C:\\Users\\nicol\\AppData\\Local\\Temp\\.tmpWfISsm", err: Os { code: 5, kind: PermissionDenied, message: "Access is denied." } } }
+
+test result: FAILED. 56 passed; 2 failed; 1 ignored; 0 measured; 0 filtered out; finished in 30.09s
+```
+
+The lead's host investigation the same day established that this is **not** transient and not caused
+by this change: it is location-dependent on this host. The pristine `origin/main` copy of the same
+test binary passes from `C:\Users\nicol\screensearch-evidence\...` (58 passed, 0 failed); an identical
+binary (same name and size, and the copies were swapped both ways) fails when executed from
+`Documents\GitHub\screensearch\target\debug\deps` and passes once moved out, and the reverse copy
+fails in the repository target. Pointing `%TEMP%` at a fresh writable directory did not change the
+outcome, so the failure follows the executable's location, not the temp path. Defender's Controlled
+Folder Access and every ASR rule are off, `C:\Users\nicol\Documents` is not a reparse point, and only
+Windows Defender is registered. The cause was not identified further; the gate below was therefore
+run with `CARGO_TARGET_DIR` outside `Documents`, and the finding is recorded in `07` as a host note.
+Neither the tests nor any timeout was edited.
+
+GATE (lead). Final run, native PowerShell runner with the checksum-verified portable Node 22 on
+`PATH` and as the invoked interpreter, and `CARGO_TARGET_DIR` outside `Documents`:
+
+```text
+$ powershell -NoProfile -File .../gate.ps1 -Log .../item1-native-node22-gate.log
+node v22.23.4 / cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+node_environment EXIT=0
+ui_ci EXIT=0
+ui_lint EXIT=0
+ui_build EXIT=0
+ui_test EXIT=0
+stage_mcp EXIT=0
+cargo_fmt EXIT=0
+cargo_clippy EXIT=0
+cargo_build EXIT=0
+cargo_test EXIT=0
+GATE_STEPS_ALL_ZERO=1
+CARGO_TEST_AGGREGATE={"suites":87,"passed":1653,"failed":0,"ignored":17}
+```
+
+`node_environment` is a probe asserting both the invoked interpreter and a child `node` it spawns
+report `v22.23.4` (`EXPLICIT_NODE=v22.23.4`, `CHILD_NODE=v22.23.4`); it would exit non-zero
+otherwise. UI node tests in the same log: `# tests 172`, `# pass 172`, `# fail 0`. An earlier run of
+the same chain passed identically but reported `node v26.12.1` (the host default), so it is not
+cited as Node 22 evidence. Full logs: `item1-native-node22-gate.log` and, for the earlier run,
+`item1-gate-final.log`.
+
+Binding guard, run after the workspace test step regenerates bindings: `git diff --exit-code -- ui/src/bindings`
+reported `BINDINGS_DIFF_EXIT=0` with an empty `git status --short ui/src/bindings`.
+
+**Consistency audit (report only, not fixed).** Every mount-time command of both config-declared
+windows declares `State<'_, AppState>`, which is managed late inside the same setup closure
+(`src-tauri/src/lib.rs:1668`, after `create_dir_all`, `init_tracing`, the advanced-config file
+load, `open_store`, the blocking settings load, hotkey registration and the autostart reconcile).
+They share the late-registration ordering with `UpdaterState`, but not its failure mode: a missing
+`State<'_, T>` makes `CommandArg for State` return an invoke error
+(`tauri-2.11.3/src/state.rs:60-68`), so those commands fail temporarily rather than panicking. The
+panic belongs to explicit `Manager::state` lookups, which is what `current_status` performs. Only
+three state types appear in command signatures: `AppState` (76 parameters), `OverlayState` (2), and
+a doc mention of `T`. The table is inventory of what can be reached on mount and when it is
+registered, not evidence of a panic defect.
+
+| window | mount-time command | handler | state | managed at |
+|---|---|---|---|---|
+| main | `get_readiness` (`StatusRail.tsx:45`, `ReadinessBanner.tsx:28`, `Deck.tsx:64`) | `src-tauri/src/lib.rs:269` | `AppState` | `lib.rs:1668` |
+| main | `get_job_stats` (`StatusRail.tsx:46`, `Deck.tsx:65`) | `lib.rs:291` | `AppState` | `lib.rs:1668` |
+| main | `get_storage_stats` (`StatusRail.tsx:47`) | `lib.rs:318` | `AppState` | `lib.rs:1668` |
+| main | `get_throttle_status` (`StatusRail.tsx:49`) | `lib.rs:303` | `AppState` | `lib.rs:1668` |
+| main | `get_setup_status` (`StatusRail.tsx:81` via `SetupIndicator.tsx:22`) | `lib.rs:281` | `AppState` | `lib.rs:1668` |
+| main | `get_update_status` (`NavRail.tsx:150` via `UpdateIndicator.tsx:32`) | `src-tauri/src/update.rs:199` | `UpdaterState` | fixed: builder (`lib.rs:1396`) |
+| main | `get_settings` (`app/theme.ts:37` via `AppShell.tsx:26`) | `lib.rs:1194` | `AppState` | `lib.rs:1668` |
+| main | `get_frames`, `get_insights`, `get_timeline` (`Deck.tsx:71-73`) | `lib.rs:1114`, `:1176`, `:1094` | `AppState` | `lib.rs:1668` |
+| main | `list_marks` (`IntentionsStrip.tsx:25`, rendered by `Deck.tsx:267`) | `lib.rs:542` | `AppState` | `lib.rs:1668` |
+| overlay | `get_settings` (`FlowOverlay.tsx:47`) | `lib.rs:1194` | `AppState` | `lib.rs:1668` |
+| overlay | `get_advanced_config` (`FlowOverlay.tsx:53`) | `lib.rs:1209` | `AppState` | `lib.rs:1668` |
+| overlay | `where_was_i` (`FlowOverlay.tsx:90`, enabled for the empty-query strip) | `lib.rs:505` | `AppState` | `lib.rs:1668` |
+| overlay | `search` (`FlowOverlay.tsx:82`, once the advanced config resolves) | `lib.rs:443` | `AppState` | `lib.rs:1668` |
+
+Other state registered inside the same closure: `OverlayState` at `lib.rs:1461`, after
+`open_store`. `overlay_shown_ack` (`src-tauri/src/overlay.rs:114`, called from
+`ui/src/overlay/FlowOverlay.tsx:127` on the `overlay_shown` event) and `get_hotkey_status`
+(`overlay.rs:104`, Settings page) declare `State<'_, OverlayState>`, so an early call returns an
+invoke error, not a panic. Explicit `app.state::<OverlayState>()` lookups do panic by construction;
+the call sites are the hotkey registration and summon helpers (`overlay.rs:164,173,182,504,597`),
+not a WebView mount command. `get_sidecar_status` and the NavRail version are not IPC commands
+against managed state: the former is an event-sourced cache
+(`queries.ts:96-105`), the latter uses Tauri's `getVersion` (`ui/src/lib/useAppVersion.ts`). All of
+these are recorded here for the maintainer; only `UpdaterState` was fixed in this item.
+
+**Test-target manifest note (why the test is an integration test).** `tauri::test`'s mock
+`Builder` construction reaches the tray/menu code, whose static imports include
+`TaskDialogIndirect`, a Common Controls v6-only export. A cargo test executable gets no v6
+application manifest, so it aborted at load before any test ran:
+
+```text
+$ cargo test -p screensearch --lib updater_state_is_registered_on_the_builder_before_any_window
+     Running unittests src\lib.rs (target\debug\deps\screensearch_lib-3b6b8f19e6c357b4.exe)
+error: test failed, to rerun pass `-p screensearch --lib`
+
+Caused by:
+  process didn't exit successfully: `...\screensearch_lib-3b6b8f19e6c357b4.exe ...` (exit code: 0xc0000139, STATUS_ENTRYPOINT_NOT_FOUND)
+```
+
+`cargo:rustc-link-arg-tests` is not applied to the lib unit-test target (verified: the rustc link
+line for that target carried no `/MANIFEST` argument), which is why the test moved to
+`src-tauri/tests/launch_order.rs`; integration test targets do receive those args. Two mechanisms
+were tried for the manifest: `/MANIFEST:EMBED` plus `/MANIFESTINPUT:<absolute path>` with a
+checked-in `test-common-controls.manifest` linked and ran correctly (used for the failing-first and
+passing runs above), while adding embedded double quotes around the path broke `mt.exe`
+(`c1010070` "Failed to load and parse the manifest" with a mangled `\\?\C:\C:\...manifest"` path
+and `LNK1327`). The tree handed to the lead carries the path-free variant instead:
+`/MANIFEST:EMBED` plus an inline `/MANIFESTDEPENDENCY:` naming Microsoft.Windows.Common-Controls
+6.0.0.0, which removes the path-quoting question entirely; the lead observed
+`cargo test -p screensearch --test launch_order` pass with that variant (1 passed, 0 failed,
+finished 0.00s). Production binaries are untouched either way: the args are `*-tests` only and
+`tauri-build` still owns the shipped resource.
+
+**Live proof completed.** Twenty consecutive isolated cold dev launches passed, with no panic and
+no early exit. Each run required a newly appended `capture started` log line, then ten seconds of
+survival, with stdout, stderr and the newly appended application log checked for panic messages.
+Only the launched process tree was stopped between runs. The external config changed both
+`identifier` and `productName`; the isolated `advanced.toml` disabled text embeddings and idle vision.
+The corrected profile instructions now live in `docs/DEV_STATE_OVERRIDE.md`.
+
+The pre-fix dev control also passed eight consecutive launches. Therefore the dev-launch series
+does not by itself distinguish old from fixed code; the regression's exact failing-first panic
+does. No installed-release launch test or updater download/install is claimed.
+
+#### Item 1: raw consecutive cold-launch log
+
+```text
+[2026-11-10T11:14:08.668Z] run 1/20 OK 117.4s reason=capture started
+[2026-11-10T11:15:01.809Z] run 2/20 OK 49.4s reason=capture started
+[2026-11-10T11:15:22.215Z] run 3/20 OK 16.1s reason=capture started
+[2026-11-10T11:15:42.124Z] run 4/20 OK 16.2s reason=capture started
+[2026-11-10T11:16:06.007Z] run 5/20 OK 18.4s reason=capture started
+[2026-11-10T11:16:29.244Z] run 6/20 OK 19.8s reason=capture started
+[2026-11-10T11:17:25.563Z] run 7/20 OK 52.4s reason=capture started
+[2026-11-10T11:17:52.211Z] run 8/20 OK 21.9s reason=capture started
+[2026-11-10T11:18:13.515Z] run 9/20 OK 17.2s reason=capture started
+[2026-11-10T11:18:33.863Z] run 10/20 OK 16.7s reason=capture started
+[2026-11-10T11:19:58.553Z] run 11/20 OK 80.7s reason=capture started
+[2026-11-10T11:20:19.226Z] run 12/20 OK 16.7s reason=capture started
+[2026-11-10T11:20:39.551Z] run 13/20 OK 16.6s reason=capture started
+[2026-11-10T11:20:59.389Z] run 14/20 OK 16.2s reason=capture started
+[2026-11-10T11:21:19.607Z] run 15/20 OK 16.7s reason=capture started
+[2026-11-10T11:21:39.194Z] run 16/20 OK 16.1s reason=capture started
+[2026-11-10T11:21:58.978Z] run 17/20 OK 16.1s reason=capture started
+[2026-11-10T11:22:18.618Z] run 18/20 OK 16.1s reason=capture started
+[2026-11-10T11:22:38.291Z] run 19/20 OK 16.1s reason=capture started
+[2026-11-10T11:22:57.816Z] run 20/20 OK 16.1s reason=capture started
+{"label":"fixed-dev-20","attempted":20,"successes":20,"panics":0,"earlyExits":0,"firstFailure":-1}
+```

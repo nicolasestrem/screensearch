@@ -95,3 +95,30 @@ grep -r "__devState" dist/assets/*.js
 
 If that prints any line, the dead-code elimination did not run — check that the
 guards are literal `import.meta.env.DEV` checks (not aliased through a variable).
+
+## Isolated startup checks (0.4.6 stabilisation)
+
+The route-state override above does **not** isolate persistent data. A plain `npm run dev`
+uses the installed app's profile. For startup checks, create an external Tauri config overlay:
+
+```json
+{
+  "identifier": "app.screensearchv2c.devlaunch",
+  "productName": "ScreenSearch DevLaunch"
+}
+```
+
+Both fields are required: `identifier` separates Roaming data, local WebView2 data and the
+single-instance lock; `productName` separates the Windows autostart Run value. Without the
+second field, a fresh profile's startup reconciliation can delete the installed `ScreenSearch`
+Run value. Before the first launch, create only the isolated profile's `advanced.toml` with
+`[enrich]`, `embed_text = false` and `vision_idle_enabled = false`, so startup does not load models.
+
+```powershell
+Remove-Item Env:HF_HOME -ErrorAction SilentlyContinue
+Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
+npm run dev -- --config C:/chosen/devlaunch.overlay.json
+```
+
+Never open the installed database to check isolation. Observe the isolated log path and stop
+only the process tree the check started, not all processes named `screensearch`.

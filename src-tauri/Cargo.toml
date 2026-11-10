@@ -18,6 +18,10 @@ tauri-build = { version = "2", features = [] }
 [dev-dependencies]
 tempfile = "3"
 rusqlite.workspace = true
+# `test` unlocks `tauri::test` (`mock_builder` / `mock_context` / `noop_assets`) for the
+# launch-order regression test in `lib.rs` (`06` #150). It is a dev-dependency only, so the
+# feature never reaches a shipped build (workspace resolver = "2").
+tauri = { version = "2", features = ["test"] }
 
 [dependencies]
 # `tray-icon` unlocks the native Tauri tray + menu APIs (0.3.2 PR3, #56/#57 — `03 §7d`);

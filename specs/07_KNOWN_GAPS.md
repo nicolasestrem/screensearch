@@ -191,6 +191,18 @@ decisions below, decided but reversible.
 
 ### Engineering hardening and known defects
 
+- **Host gate environment: the default target's API tests cannot create temporary directories
+  (2026-11-10).** Owner: maintainer (host). `crates/api/tests/http_api.rs:814,1996` reproducibly
+  fail with `PermissionDenied` (Win32 code 5) under
+  `C:/Users/nicol/Documents/GitHub/screensearch/target`. The same tests pass from the external
+  control tree (58 passed, 0 failed). Copying each executable both ways reproduces the difference:
+  the executable in the repository target fails, its copy outside that target passes, independent
+  of working directory or a fresh `TEMP` directory. The binaries themselves have different build
+  hashes; the two-way copy experiment, not equal file sizes, establishes the location effect.
+  The cause is unknown. No test, timeout, assertion or host security setting was changed.
+  **Verified workaround:** set
+  `CARGO_TARGET_DIR=C:/Users/nicol/screensearch-evidence/0.4.6/target`.
+  The full workspace gate then passes. This is environment evidence, not a product fix.
 - **#91 Monitor hot-unplug mid-session stalls capture silently.** Owner: agent. Status: still open and
   out of scope for 0.4.5 by maintainer decision; no display-topology handling exists (no
   `WM_DISPLAYCHANGE` handling in `crates/capture`); sessions make the stall visible but silent data

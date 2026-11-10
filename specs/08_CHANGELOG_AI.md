@@ -392,3 +392,44 @@ entries and their routes exist (`ui/src/app/nav.ts:51-58`), and Settings v2 ship
 none removing normative text. Where a shipped behaviour differs from a spec sentence
 (a settings-key count, a stale "deferred" label, the `03 §8` default table), the item is recorded as
 open work above instead of being silently rewritten.
+
+### 2026-11-10: Off-arc, 0.4.6 item 1, updater state registered on the builder (#150)
+
+Fixes the launch panic recorded in `06` #150: `get_update_status` fired from the main window's
+mount (`queries.ts`, `useUpdateStatus`) while `app.manage(update::UpdaterState::default())` had not
+run yet. `get_update_status` takes an `AppHandle` (`src-tauri/src/update.rs:199`), and its
+`current_status` helper calls `app.state::<UpdaterState>()` (`update.rs:72`), which is
+`Manager::state` and panics on an unmanaged type instead of reporting a missing state. The root of
+that panic is an ordering one: Tauri creates the config-declared `main` and `overlay` windows
+inside its own setup before the app's setup closure (`tauri-2.11.3/src/app.rs:2521-2532`), so both
+windows and their WebViews exist while that closure is still doing launch work.
+
+`UpdaterState` is now registered on the `tauri::Builder` through the single seam
+`manage_pre_window_state` (`src-tauri/src/lib.rs:1393`), which `run()` applies before `build()`;
+the setup-closure registration is removed, leaving exactly one registration site. The row's second
+shape (calling `try_state` so an absent state is tolerated) was not taken; the handler already took
+`AppHandle`, so that shape was a lookup change inside `current_status`. No retry loop was added.
+`UpdaterState` is re-exported (`#[doc(hidden)]`) and the seam is `pub` so the regression test
+drives the real function; both carry doc comments saying they are a test seam and the single
+registration site.
+
+`src-tauri/tests/launch_order.rs` builds a `tauri::test` mock app from that same function, asserts
+no WebView exists, then performs the same `app.state::<UpdaterState>()` lookup `current_status`
+performs. With the shipped ordering it fails with the production panic verbatim
+(`state() called before manage() for screensearch_lib::update::UpdaterState` at
+`tauri-2.11.3/src/lib.rs:734`); with the fix it passes. The test is an integration test because
+`cargo:rustc-link-arg-tests` does not reach lib unit-test targets, and the mock runtime needs the
+Common Controls v6 application manifest that `tauri-build` only emits for `[[bin]]` targets; the
+`*-tests` link args in `src-tauri/build.rs` supply it without touching shipped binaries. The
+`tauri` `test` feature is a dev-dependency only.
+
+Verification: focused failing-first and passing raw output in `05` (2026-11-10). The full gate
+(`ui_ci`, `ui_lint`, `ui_build`, `ui_test`, `stage_mcp`, `cargo_fmt`, `cargo_clippy`, `cargo_build`,
+`cargo_test`) reported `EXIT=0` on every step under the CI-pinned Node 22 (portable v22.23.4, probed
+for both the invoked interpreter and a spawned child), with 1653 workspace tests passed, 172 UI node
+tests passed and the binding guard clean. It ran with `CARGO_TARGET_DIR` pointed outside `Documents`,
+because this host denies temp-dir creation to test executables built under the repository's own
+`target` directory; that environment finding is recorded in `07` and is unrelated to this change. The live proof is now complete:
+20 consecutive isolated cold dev launches, zero panics and zero early exits, including ten seconds
+of post-readiness observation per launch. The pre-fix dev control also passed 8/8, so the live dev
+series does not discriminate by itself; the failing-first regression does. Full raw output is in `05`.

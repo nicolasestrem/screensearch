@@ -1372,9 +1372,39 @@ async fn set_settings(
     Ok(())
 }
 
+/// Registers the state the updater reads before the app's `setup` hook has run.
+///
+/// Tauri creates the config-declared windows inside its own setup, immediately **before**
+/// this crate's setup closure runs (`tauri-2.11.3/src/app.rs:2521-2532` `fn setup`: the
+/// `WebviewWindowBuilder::from_config` loop precedes `(setup)(app)`): both windows and
+/// their WebViews exist while the closure is still doing blocking launch work (log dirs,
+/// settings load, store open, capture start). `get_update_status` takes an `AppHandle`
+/// (`src/update.rs:199`), and its `current_status` helper calls
+/// `app.state::<UpdaterState>()` (`src/update.rs:72`), which is `Manager::state` and panics
+/// when the type is unmanaged. This state is therefore registered on the `Builder`, which
+/// inserts it at construction time, before `build()` and before any window (`06` #150). A
+/// command that declares `State<'_, T>` instead does not panic when the type is missing:
+/// `CommandArg for State` returns an invoke error via `state_ref().try_get()`
+/// (`tauri-2.11.3/src/state.rs:60-68`).
+///
+/// This is the single registration site for [`UpdaterState`]; the setup closure must not
+/// register it again (`Builder::manage` also asserts on a duplicate). `pub` so the
+/// launch-order integration test drives this exact function.
+pub fn manage_pre_window_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    // Auto-update state (0.3.2 PR2, #69). A plain value with no I/O, so builder time is
+    // safe; `get_update_status` reads it from the very first WebView mount.
+    builder.manage(update::UpdaterState::default())
+}
+
+/// The state [`manage_pre_window_state`] registers. Re-exported so the launch-order
+/// integration test can perform the same `app.state::<UpdaterState>()` lookup that
+/// `current_status` performs for `get_update_status` (`src/update.rs:72`).
+#[doc(hidden)]
+pub use update::UpdaterState;
+
 /// Application entry point (called from `main.rs`).
 pub fn run() {
-    tauri::Builder::default()
+    manage_pre_window_state(tauri::Builder::default())
         // MUST be the first plugin. Users double-click or relaunch when nothing seems to be
         // happening; without this a second instance runs against the *same* app-data dir and
         // races the first — corrupting the SQLite DB and colliding on hf-hub's per-model cache
@@ -1429,13 +1459,15 @@ pub fn run() {
 
             let (store, db_readiness) = open_store(&db_path);
             app.manage(overlay::OverlayState::default());
-            // Auto-update state (0.3.2 PR2, #69). Check on launch in **release builds
-            // only** — a debug build (`npm run dev`) skips the check so development
-            // never hits the live GitHub-Releases endpoint on every start. The manual
-            // "Check for updates" command works in every build. Pull-based + quiet (D1):
-            // a found update downloads in the background and installs only on a
+            // Auto-update launch check (0.3.2 PR2, #69). The state it reads is registered on
+            // the builder by `manage_pre_window_state`, not here: both config windows and
+            // their WebViews already exist when this hook runs, so a mount-time
+            // `get_update_status` must never find it unmanaged (`06` #150). Check on launch
+            // in **release builds only** — a debug build (`npm run dev`) skips the check so
+            // development never hits the live GitHub-Releases endpoint on every start. The
+            // manual "Check for updates" command works in every build. Pull-based + quiet
+            // (D1): a found update downloads in the background and installs only on a
             // user-initiated restart.
-            app.manage(update::UpdaterState::default());
             if !cfg!(debug_assertions) {
                 tauri::async_runtime::spawn(update::launch_check(app.handle().clone()));
             }

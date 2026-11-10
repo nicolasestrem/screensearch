@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed: updater startup race
+
+- Register updater state before creating any webview, preventing the 0.4.5 launch panic when the
+  mounted UI reads update status before the setup hook finishes. No retry loop was added.
+
 ### Changed: the enrichment throttle can see memory, and level 2 now releases the vision model
 
 **Baseline, measured on the installed 0.4.5 build before any change**, on the maintainer's box

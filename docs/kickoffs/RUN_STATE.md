@@ -2,13 +2,13 @@
 
 Run: off-arc stabilisation toward v0.4.6 (unattended). Not an arc, not a phase.
 Started: 2026-11-10
-Last updated: 2026-11-10 (before item 1)
+Last updated: 2026-11-10 (item 1 live proof running)
 Branch: `fix/0.4.6-stabilisation`, created from `origin/main` at `93a7219`. Local commits only.
 
 | Item | Status | Last commit | Notes |
 |---|---|---|---|
-| 1 `06` #150 launch panic (`UpdaterState` ordering) | in progress | none yet | Decides whether v0.4.6 exists. |
-| 2 `06` #116 Ask turn whose provider never answers | pending | none yet | |
+| 1 `06` #150 launch panic (`UpdaterState` ordering) | in progress: live proof and Node 22 gate | 209ede8 (to be amended with evidence) | Regression fails with the production panic, then passes. Initial gate green (1653 passed); 20 cold dev launches are running. |
+| 2 `06` #116 Ask turn whose provider never answers | pending records; specification blocker identified | none yet | Read-only scout found no turn bound in the specs. |
 | 3 `TODO-4` `throttleStatus` invalidation | pending | none yet | |
 | 4 `TODO-6` settings defaults over IPC | pending | none yet | |
 | 5 `06` #143 `get_insights` removal (only if no importer) | pending | none yet | |
@@ -24,5 +24,8 @@ database, a model file, a token, a secret or the installed app's profile. No em 
 
 Resume rule: read this table and continue at the first item that is not `done` or `blocked`.
 
-Environment note: this machine has Node v26.12.1 only (CI pins Node 22); Rust is 1.95.0. Gate logs
-live outside the repository under `C:/Users/nicol/screensearch-evidence/0.4.6/`.
+Environment: Rust 1.95.0; the host default is Node v26.12.1. A checksum-verified portable
+Node v22.23.4 is now available at
+`C:/Users/nicol/screensearch-evidence/0.4.6/node22/node-v22.23.4-win-x64/`.
+Final gates use that Node 22 with its npm 10 and an external `CARGO_TARGET_DIR`.
+Logs live outside the repository under `C:/Users/nicol/screensearch-evidence/0.4.6/`.
