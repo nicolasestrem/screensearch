@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Register updater state before creating any webview, preventing the 0.4.5 launch panic when the
   mounted UI reads update status before the setup hook finishes. No retry loop was added.
 
+### Fixed: reset markers read the app's own defaults
+
+- **A settings row's "changed" marker and its reset now use the defaults the app itself reports.**
+  The interface compared against its own copy of the defaults, which could silently drift from the
+  app. It now reads the app's defaults over the local bridge and keeps the old copy only as a
+  placeholder while that answer is in flight. A build-time test compares the app's answer against
+  every row's declared default, so a changed default can no longer pass unnoticed.
+
 ### Fixed: the throttle readout catches up when a setting is saved
 
 - **Turning the enrichment throttle on or off updates its readout immediately.** Saving any setting

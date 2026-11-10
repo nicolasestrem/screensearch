@@ -9,8 +9,10 @@
 
 ## TODO-6 — Settings defaults for the reset-to-default marker via IPC (deferred from P7, 0.4.5)
 
-**Status:** OPEN. Deferred from P7 (`ui/src/routes/settings/`) because no defaults source exists
-over IPC.
+**Status:** CLOSED in the 0.4.6 stabilisation run. `get_settings_defaults` returns the
+same `Settings::default()` the store falls back to; the reset marker and reset payloads read it
+through `useSettingsDefaults()`, and `SETTINGS_DEFAULTS` remains only as the in-flight fallback.
+A contract test pipes the real Rust defaults into the UI registry, so a divergence fails by name.
 
 ### The suggestion
 `get_settings` returns values; nothing returns the as-built defaults. P7's per-row reset marker and
@@ -30,10 +32,26 @@ mirror entirely and make the marker authoritative.
 - **Nothing blocks on it:** reset writes a value and the autosave path already proves the write, so
   the marker is a UI convenience, not a data path.
 
-### If ever implemented
-- Return defaults from the same place that owns `Default for Settings` (no second table), keep
-  `SETTINGS_DEFAULTS` as the fallback while the query is in flight, and add a test that compares the
-  IPC payload's default for every one of the 26 UI keys against the registry's `default` field.
+### What shipped (0.4.6 stabilisation run)
+- **One source:** `settings_defaults::get_settings_defaults` (`src-tauri/src/lib.rs`) returns
+  `Settings::default()` and is registered in the `invoke_handler`. It reads no store and holds no
+  literal, so `Default for Settings` stays the only defaults table; `load_settings` falls back to
+  the same value.
+- **Typed read:** `getSettingsDefaults` (`ui/src/lib/ipc/commands.ts`), the `settingsDefaults` key
+  (`queryKeys.ts`), and `useSettingsDefaults()` (`queries.ts`) with `staleTime: Infinity` and no
+  window-focus refetch, because defaults never change at runtime. The key is deliberately absent
+  from every invalidation set.
+- **Every reset consumer migrated:** `useSettingField`'s `defaultValue` (and therefore `changed`
+  and `reset`) and `Intelligence`'s combined timer rows (both changed markers and both reset
+  payloads). An audit found exactly those two importers of `SETTINGS_DEFAULTS`; both now read the
+  query's data when loaded and fall back to the constant only while it is in flight.
+- **Contract test:** `src-tauri/tests/settings_defaults_contract.rs` calls the command function,
+  serializes the real defaults, and pipes them to `ui/test/settingsDefaultsContract.mjs`, which
+  imports the real `registry.ts` through `ui/test/ui-loader.mjs`. It asserts exact type-aware
+  equality for all 25 mapped fields, exact two-way field coverage, and that `api.token` is the sole
+  `field: null` action with no Settings value. A missing `node` fails the test with a clear message
+  instead of skipping. Mutation-checked by changing `storage.max_width`: the failure named
+  `storage.max_width` and the restored value passed.
 
 ---
 

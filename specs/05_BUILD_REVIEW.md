@@ -1100,3 +1100,95 @@ are recorded in `specs/07_KNOWN_GAPS.md` under `#91`.
 **No code, no test, no gate.** Nothing in `crates/capture`, the test tree or the specs' normative
 text changed, so a gate would measure only code an earlier item already measured. No runtime
 reproduction is claimed: the stall was not re-triggered on this host and no display was unplugged.
+
+### 2026-11-10: Off-arc, 0.4.6 item 4, settings defaults over IPC (TODO-6)
+
+**Scope.** `get_settings` returned values but nothing returned the as-built defaults, so the Settings
+reset marker and its "changed" flag compared against `SETTINGS_DEFAULTS`, a 26-entry UI mirror of
+`Default for Settings` with no test tying the two together. This item adds the missing IPC read,
+migrates every reset/default consumer and adds a contract test fed by the real Rust values.
+
+**What changed.**
+
+- `src-tauri/src/lib.rs`: `settings_defaults::get_settings_defaults` returns `Settings::default()`,
+  the same value `kernel::settings::load_settings` falls back to for a missing key, and is registered
+  in `invoke_handler`. It lives in its own module because a crate-root `pub` Tauri command collides
+  with its own generated wrapper macro (E0255), and the contract test needs a callable `pub fn`.
+- `ui/src/lib/ipc/commands.ts`, `queries.ts`, `queryKeys.ts`: `getSettingsDefaults()` and
+  `useSettingsDefaults()` with `staleTime: Infinity` and no window-focus refetch. The key is
+  deliberately in no invalidation set: the value cannot change while the app runs.
+- `ui/src/routes/settings/useSettingField.ts`: `defaultValue` reads the query first and falls back to
+  `SETTINGS_DEFAULTS[field]` only while it is undefined. `changed` and `reset` already consume
+  `defaultValue`, so they migrate with it, which covers every single-field row including the Capture
+  hotkey rows.
+- `ui/src/routes/settings/Intelligence.tsx`: the two combined timer rows take both `changed` markers
+  and both reset payloads from the loaded defaults, falling back only in flight.
+- `ui/src/routes/settings/registry.ts`: documentation only; `SETTINGS_DEFAULTS` is now described as
+  the in-flight fallback. No value changed, and no new defaults table exists.
+- `src-tauri/tests/settings_defaults_contract.rs` plus `ui/test/settingsDefaultsContract.mjs`: the
+  contract test. It calls the real command function, serializes the real payload and pipes it to a
+  Node helper that imports the real registry through the existing `ui/test/ui-loader.mjs`. The helper
+  asserts exact type-aware equality for every one of the 25 mapped fields, two-way field coverage,
+  the closed 26-key registry, and that `api.token` is the only `field: null` action with no credential
+  key in the payload. It is not named `*.test.mjs` because it reads stdin, so the UI suite does not
+  collect it. `node` missing is a failure with a clear message, never a skip.
+
+**Failing first**, written before the command existed:
+
+```text
+error[E0425]: cannot find function `get_settings_defaults` in crate `screensearch_lib`
+  --> src-tauri\tests\settings_defaults_contract.rs:28:38
+   |
+28 |     let defaults = screensearch_lib::get_settings_defaults();
+   |                                      ^^^^^^^^^^^^^^^^^^^^^ not found in `screensearch_lib`
+
+error: could not compile `screensearch` (test "settings_defaults_contract") due to 1 previous error
+```
+
+**Mutation check**, which is what proves the comparison uses real Rust values rather than a JS copy.
+`storage_max_width` was temporarily set to `1920` in `crates/traits/src/ipc.rs`:
+
+```text
+AssertionError [ERR_ASSERTION]: storage.max_width (storage_max_width) default differs: Rust 1920, registry 0
+
+1920 !== 0
+...
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+Restored to `0` and rerun: `1 passed; 0 failed`. The message names the key and both values.
+
+**Affected suites** (executor-run, portable Node v22.23.4 and the external target directory):
+contract test passes; `cargo test -p screensearch` 177 lib tests plus `config_guard`, `launch_order`
+and the contract test pass (`e2e` ignored by design); `npm --prefix ui test` 174 passed, 0 failed;
+UI typecheck, lint and build `EXIT=0`; `cargo fmt --check` and `cargo clippy -p screensearch
+--all-targets -- -D warnings` `EXIT=0`.
+
+**Limitations.** The contract test needs `node` on `PATH`, which the repository gate and CI both
+provide; without it the test fails rather than skipping. No live native/WebView2 pass shows a real
+Settings row's marker and reset against the running backend, so that stays a maintainer check in
+`docs/kickoffs/MORNING.md`.
+
+GATE (lead). Full ordered chain, native PowerShell runner, portable Node v22.23.4, external target:
+
+```text
+$ powershell -NoProfile -File .../gate.ps1 -Log .../item4-gate.log
+node v22.23.4 / cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+node_environment EXIT=0
+ui_ci EXIT=0
+ui_lint EXIT=0
+ui_build EXIT=0
+ui_test EXIT=0
+stage_mcp EXIT=0
+cargo_fmt EXIT=0
+cargo_clippy EXIT=0
+cargo_build EXIT=0
+cargo_test EXIT=0
+GATE_STEPS_ALL_ZERO=1
+CARGO_TEST_AGGREGATE={"suites":88,"passed":1654,"failed":0,"ignored":17}
+```
+
+The suite count rises from 87 to 88 and the pass count from 1653 to 1654 because of the new
+`settings_defaults_contract` target. UI node tests: `# tests 174`, `# pass 174`, `# fail 0`.
+Binding guard: `git diff --exit-code -- ui/src/bindings` clean (the command returns the existing
+`Settings` type, so no binding is regenerated).

@@ -10,7 +10,7 @@ import type { Settings } from "../../bindings/Settings";
 import { pushActionToast } from "../../components/shell/actionToast";
 import { useSetModelTier, useSetSettings } from "../../lib/ipc/mutations";
 import { queryKeys } from "../../lib/ipc/queryKeys";
-import { useSettings } from "../../lib/ipc/queries";
+import { useSettings, useSettingsDefaults } from "../../lib/ipc/queries";
 import {
   clearPendingFailure,
   clearPendingField,
@@ -117,6 +117,7 @@ export function useSettingField<F extends SettingsField>(
   const def = settingDef(key);
   const field = def.field as SettingsField;
   const settings = useSettings();
+  const defaults = useSettingsDefaults();
   const qc = useQueryClient();
   const setSettings = useSetSettings();
   const setTier = useSetModelTier();
@@ -144,7 +145,11 @@ export function useSettingField<F extends SettingsField>(
       : (sharedFailure as { value: Settings[F]; message: string });
 
   const savedValue = settings.data?.[field] as Settings[F] | undefined;
-  const defaultValue = SETTINGS_DEFAULTS[field] as Settings[F];
+  // `get_settings_defaults` owns the baseline (the same `Settings::default()` the store
+  // falls back to); the mirrored table only covers the in-flight window, where it keeps
+  // today's behaviour.
+  const defaultValue = (defaults.data?.[field] ??
+    SETTINGS_DEFAULTS[field]) as Settings[F];
   const lane: ModelLane | null =
     field === "models_answer_tier"
       ? "answer"

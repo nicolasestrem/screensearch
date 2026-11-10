@@ -130,6 +130,23 @@ export function useSettings() {
 }
 
 /**
+ * As-built settings defaults (`get_settings_defaults`, TODO-6). The backend owns the
+ * values (`Settings::default`, the store's own fallback), and they never change at
+ * runtime: a long stale time plus no focus refetch means one read serves every reset
+ * marker and reset payload. Consumers keep `SETTINGS_DEFAULTS` only as the fallback
+ * while this query is in flight.
+ */
+export function useSettingsDefaults() {
+  const q = useQuery({
+    queryKey: queryKeys.settingsDefaults,
+    queryFn: cmd.getSettingsDefaults,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
+  return useMaybeOverride(q, queryKeys.settingsDefaults);
+}
+
+/**
  * Read-only `file-only` settings projection (`03 §8`, 0.4.5 D6): the effective
  * `AdvancedConfig`, the `advanced.toml` path, and which keys came from the file.
  * Read once per app run - the file is loaded at startup - so it never refetches.

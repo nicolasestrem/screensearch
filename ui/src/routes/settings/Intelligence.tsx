@@ -7,7 +7,7 @@ import { useState } from "react";
 import type { Settings } from "../../bindings/Settings";
 import { ScheduleControl } from "../../components/domain";
 import { Chip, Toggle } from "../../components/primitives";
-import { useSettings, useTextFilterStats } from "../../lib/ipc/queries";
+import { useSettings, useSettingsDefaults, useTextFilterStats } from "../../lib/ipc/queries";
 import { CategoryState } from "./CategoryState";
 import { categoryFrameState, failureMessage } from "./frameState";
 import { NumberFieldRow } from "./NumberFieldRow";
@@ -24,6 +24,11 @@ const MS_PER_MINUTE = 60_000;
 
 export function IntelligenceCategory() {
   const settings = useSettings();
+  const defaultsQuery = useSettingsDefaults();
+  // The combined schedule's changed markers and reset payloads read the backend's
+  // as-built defaults (`get_settings_defaults`); the mirrored table only covers the
+  // in-flight window, where it keeps today's behaviour.
+  const defaults = defaultsQuery.data ?? SETTINGS_DEFAULTS;
   const stats = useTextFilterStats();
   const thinking = useSettingField<"answer_thinking">("answer.thinking");
   const chrome = useSettingField<"text_include_chrome_default">(
@@ -188,12 +193,12 @@ export function IntelligenceCategory() {
       <SettingRow
         settingKey={TIMER_KEY}
         labelInControl
-        changed={timerEnabled !== SETTINGS_DEFAULTS.enrich_vision_timer_enabled}
+        changed={timerEnabled !== defaults.enrich_vision_timer_enabled}
         onReset={() => {
           setIntervalDraft(null);
           setRangeError(null);
           schedule.commitPatch(
-            { enrich_vision_timer_enabled: SETTINGS_DEFAULTS.enrich_vision_timer_enabled },
+            { enrich_vision_timer_enabled: defaults.enrich_vision_timer_enabled },
             timerDef.label,
           );
         }}
@@ -234,7 +239,7 @@ export function IntelligenceCategory() {
       */}
       <SettingRow
         settingKey={INTERVAL_KEY}
-        changed={intervalMs !== SETTINGS_DEFAULTS.enrich_vision_timer_interval_ms}
+        changed={intervalMs !== defaults.enrich_vision_timer_interval_ms}
         onReset={() => {
           // The reset is a deliberate discard of the drafted number, so the draft and its
           // explanation retire with it — no effect watching the value, which cannot tell a
@@ -242,7 +247,7 @@ export function IntelligenceCategory() {
           setIntervalDraft(null);
           setRangeError(null);
           schedule.commitPatch(
-            { enrich_vision_timer_interval_ms: SETTINGS_DEFAULTS.enrich_vision_timer_interval_ms },
+            { enrich_vision_timer_interval_ms: defaults.enrich_vision_timer_interval_ms },
             intervalDef.label,
           );
         }}

@@ -514,3 +514,25 @@ for a topology change: no hot-plug, unplug, re-enumeration, restart or per-monit
 With no prescribed behaviour there is nothing a reproduction seam could assert, so no code, test or
 gate changed. The blocking question, the reproduction seam and the exact spec lines are recorded in
 `specs/07_KNOWN_GAPS.md` under `#91`. No runtime reproduction is claimed.
+### 2026-11-10: Off-arc, 0.4.6 item 4, settings defaults come from the app (TODO-6)
+
+The Settings reset marker compared against `SETTINGS_DEFAULTS`, a UI mirror of `Default for
+Settings` with no test tying the two together. `settings_defaults::get_settings_defaults`
+(`src-tauri/src/lib.rs`) now serves `Settings::default()` itself, the same value the store falls
+back to for a missing key, so there is one source of truth. It sits in its own module because a
+crate-root `pub` Tauri command collides with its generated wrapper macro (E0255) and the contract
+test needs a callable `pub fn`.
+
+`useSettingsDefaults()` caches the read with `staleTime: Infinity` and no window-focus refetch; its
+key is in no invalidation set because the value cannot change while the app runs. `useSettingField`'s
+`defaultValue` and the two combined timer rows in `IntelligenceCategory` read the loaded defaults and
+fall back to `SETTINGS_DEFAULTS` only while the query is undefined, so no consumer reads the mirror
+once the answer has arrived. No default value changed and no second table was added.
+
+`src-tauri/tests/settings_defaults_contract.rs` calls the real command function, serializes the real
+payload and pipes it to `ui/test/settingsDefaultsContract.mjs`, which imports the real registry
+through `ui/test/ui-loader.mjs` and asserts exact type-aware equality for the 25 mapped fields,
+two-way coverage, the closed 26-key set, and `api.token` as the only `field: null` action with no
+credential in the payload. It failed first on the missing command, and a deliberate
+`storage_max_width = 1920` made it fail with `storage.max_width ... Rust 1920, registry 0` before the
+value was restored. Full gate green (88 suites, 1654 passed; 174 UI node tests).

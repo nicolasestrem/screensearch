@@ -200,8 +200,11 @@ export const SETTING_DEFS: readonly SettingDef[] = [
 ];
 
 /**
- * Defaults mirrored from the as-built Rust `impl Default for Settings`
- * (`crates/traits/src/ipc.rs:632`), which wins over the `03 §8` table.
+ * In-flight fallback for the as-built defaults. `get_settings_defaults` over IPC is the
+ * authoritative read (`useSettingsDefaults`), and this table is consumed only while that
+ * query has no data. Mirrored from the as-built Rust `impl Default for Settings`
+ * (`crates/traits/src/ipc.rs:633`), which wins over the `03 §8` table; the contract test
+ * (`src-tauri/tests/settings_defaults_contract.rs`) fails if the two diverge.
  */
 export const SETTINGS_DEFAULTS: Settings = {
   app_run_at_startup: false,

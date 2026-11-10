@@ -19,6 +19,9 @@ export const queryKeys = {
   throttleStatus: ["throttleStatus"] as const,
   hotkeyStatus: ["hotkeyStatus"] as const,
   settings: ["settings"] as const,
+  // `get_settings_defaults`: the as-built `Settings::default()`. Never changes at
+  // runtime, so it is read once and stays out of every invalidation set.
+  settingsDefaults: ["settingsDefaults"] as const,
   advancedConfig: ["advancedConfig"] as const,
   textFilterStats: ["textFilterStats"] as const,
   // `*Prefix` keys match every variant of a family for bulk invalidation (e.g.

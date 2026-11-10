@@ -1188,6 +1188,23 @@ async fn get_insights(
         .map_err(|e| e.to_string())
 }
 
+/// Settings-defaults IPC (TODO-6, 0.4.6). Its own module so the command function can be
+/// `pub` for the `tests/` contract check: a public Tauri command exports its generated
+/// wrapper macro at the crate root, which collides with the macro's local definition at
+/// crate-root scope (E0255), while inside a module the two namespaces stay separate.
+pub mod settings_defaults {
+    use traits::Settings;
+
+    /// The as-built defaults every settings write is compared against. One source of
+    /// truth: [`Settings::default`], the same value `kernel::settings::load_settings`
+    /// falls back to for a missing key. The UI keeps its registry table only as the
+    /// in-flight fallback while this read lands.
+    #[tauri::command]
+    pub fn get_settings_defaults() -> Settings {
+        Settings::default()
+    }
+}
+
 /// Read the persisted user settings (`get_settings`, `03 §7/§8`). Missing keys fall
 /// back to defaults (a fresh DB returns [`Settings::default`]).
 #[tauri::command]
@@ -1770,6 +1787,7 @@ pub fn run() {
             get_frame_context,
             get_insights,
             get_settings,
+            settings_defaults::get_settings_defaults,
             set_settings,
             get_advanced_config,
             get_text_filter_stats,

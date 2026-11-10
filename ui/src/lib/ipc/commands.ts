@@ -218,6 +218,12 @@ export const getInsights = (
 export const getSettings = (): Promise<Settings> =>
   invoke<Settings>("get_settings");
 
+/** As-built defaults (`get_settings_defaults`, TODO-6): the exact `Settings::default()`
+ *  the store falls back to. Constant for the life of the process, so the reset marker
+ *  reads the backend's values instead of the UI's mirrored fallback. */
+export const getSettingsDefaults = (): Promise<Settings> =>
+  invoke<Settings>("get_settings_defaults");
+
 /** Persist user settings; tiers hot-apply, the rest on restart / next capture. */
 export const setSettings = (settings: Settings): Promise<void> =>
   invoke<void>("set_settings", { settings });
