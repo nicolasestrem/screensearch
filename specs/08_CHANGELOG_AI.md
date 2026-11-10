@@ -459,3 +459,11 @@ Changed (documentation only):
 
 No tests, build, lint or gate were run because no code changed. No runtime reproduction or model
 use is claimed.
+
+### 2026-11-10: `06` #143 recorded as unremovable, no code change
+
+The 0.4.6 queue allowed the `get_insights` removal only when no importer exists. It has one:
+`getInsights` (`ui/src/lib/ipc/commands.ts:211-215`) is wrapped by `useInsights`
+(`ui/src/lib/ipc/queries.ts:303-311`) and read by `routes/Deck.tsx:29,72`. The `insights_summary`
+aggregate and its two store tests keep that consumer, so nothing was deleted and no schema or
+contract changed. Row 143 records the evidence; the ownership dispute it names is unchanged.

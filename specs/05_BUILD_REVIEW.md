@@ -912,3 +912,27 @@ No code file changed.
 claimed; the row's existing 2026-11-09 note that the live stall was not re-observed still stands.
 Line numbers are as of this checkout. No build, lint, test or gate was run, and none would be
 meaningful for a records-only change.
+
+### 2026-11-10: Off-arc, 0.4.6 item 5, `get_insights` removal assessed (`06` #143)
+
+**Scope.** The queue asked for the `get_insights` removal only if nothing imports it, and forbade the
+removal when importers exist. No code changed.
+
+**Verified at this base** (`grep` over `ui/src`, `src-tauri/src`, `crates`):
+
+```text
+ui/src/lib/ipc/commands.ts:211  export const getInsights = (
+ui/src/lib/ipc/commands.ts:215    invoke<InsightsSummary>("get_insights", { range, bucketCount });
+ui/src/lib/ipc/queries.ts:303   export function useInsights(
+ui/src/lib/ipc/queries.ts:311     queryFn: () => cmd.getInsights(range, bucketCount),
+ui/src/routes/Deck.tsx:29         useInsights,
+ui/src/routes/Deck.tsx:72         const insights = useInsights(today, TODAY_BUCKETS);
+```
+
+So the command has exactly one live consumer chain and it ends in a mounted route. The
+`insights_summary` aggregate, the `InsightsSummary` contract and its two store tests keep their
+consumer. Removing them would break the Deck's enrichment line, which is production UI.
+
+**Decision.** Recorded, not removed. `specs/06_PATCH_PLAN.md` row 143 now carries this evidence and
+stays open for whoever owns the Tauri command, the contract, the store aggregate and the two store
+tests together. No test or gate applies: no source, test, lint or dependency file changed.
