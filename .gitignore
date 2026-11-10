@@ -71,3 +71,8 @@ WATCHDOG.yml
 /docs/screenshots/p10
 # Localtime working backup left at the repo root; Your-Universe/ carries the tracked history.
 /.lt-index-backup.html
+
+# Localtime/Your-Universe iteration captures do not belong in ScreenSearch's README
+# screenshots dir. Commit b4f36dd ("ss") put iter-28-*.png here; no README/doc
+# references them, and the commit sits in main's history right before the #175 merge.
+/screenshots/iter-*.png
