@@ -2,7 +2,7 @@
 
 Run: off-arc stabilisation toward v0.4.6 (unattended). Not an arc, not a phase.
 Started: 2026-11-10
-Last updated: 2026-11-10 (item 1 live proof running)
+Last updated: 2026-11-10 (run complete)
 Branch: `fix/0.4.6-stabilisation`, created from `origin/main` at `93a7219`. Local commits only.
 
 | Item | Status | Last commit | Notes |
@@ -16,7 +16,7 @@ Branch: `fix/0.4.6-stabilisation`, created from `origin/main` at `93a7219`. Loca
 | 7 `06` #42 stale `jobs.kind` comment in `03 §4` | code changed, gate pending | pending commit | Comment-only: both copies now list all eight `JobKind` tokens; parity test passes. |
 | 8 `07` #91 monitor hot-unplug stalls capture | blocked (records written, no code change) | pending commit | No spec sentence on a topology change; `UI_REFERENCE.md:234` asks only for honest degradation. Question and seam recorded. |
 | 9 Release preparation for v0.4.6 | done (bump + notes + gate) | pending commit | Seven declaration sites, CHANGELOG renamed to [0.4.6], release notes written. No tag, release or push. |
-| 10 `docs/kickoffs/MORNING.md` | pending | none yet | Last commit of the run. |
+| 10 `docs/kickoffs/MORNING.md` | done | this commit | Statuses, hashes, both open questions, live checks, push command. |
 
 Rules in force: no merge, no push, no pull request, no commit to `main`, no review trigger. One
 commit per item, staged by path by the lead only; subagents never run git. Nothing touches a real

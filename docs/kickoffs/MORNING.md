@@ -1,132 +1,125 @@
-# Morning report, 0.4.5 wave A night run
+# Good morning: 0.4.6 stabilisation run
 
-Local commits only: nothing was pushed, no PR was opened, nothing was merged. One exception from
-before the rules took effect: PR #150 (P1) is open from an earlier turn.
+Unattended run, 2026-11-10, branch `fix/0.4.6-stabilisation` from `origin/main` at `93a7219`.
+Local commits only: nothing was pushed, merged, tagged, released, or opened as a pull request, and
+`main` is untouched. Nine queue items are complete or recorded; two of them are blocked on a product
+decision and say so.
 
-## Tasks
+## Queue, one line each
 
-| Task | Status | Branch | Commit |
+| # | Item | Status | Commit |
 |---|---|---|---|
-| 1 P1 specs contract | done | `feat/0.4.5-p1-specs-contract` | 3446d9b |
-| 2 P1 self-test | done | `feat/0.4.5-p1-specs-contract` | 83e281a |
-| 3 P2 design directions | done, stopped at the checkpoint | `feat/0.4.5-p2-design-directions` | cdf20ba |
-| 4 Phase kickoff files P2 to P10 | done | `feat/0.4.5-p1-specs-contract` | dad1eb2 |
-| 5 P3 baseline schema and settings v2 | done, maintainer run open | `feat/0.4.5-p3-baseline-schema` | 48a9705 |
-| 6 P4 evaluation harness | done, baseline run open | `feat/0.4.5-p4-auto-eval` | c437297 |
+| run | Run state opened | done | `c62ddad` |
+| 1 | `06` #150 launch panic (`UpdaterState` ordering) | **fixed and verified** | `ca2d7ed` |
+| 2 | `06` #116 Ask turn whose provider never answers | **blocked** on a spec decision, no code | `9afb7b2` |
+| 3 | `TODO-4` `throttleStatus` invalidation | **fixed and verified** | `d193624` |
+| 4 | `TODO-6` settings defaults over IPC | **implemented and verified** | `57bbdae` |
+| 5 | `06` #143 `get_insights` removal | done, **no code change** (importer exists) | `a9ba52d` |
+| 6 | `06` #137 / #138 `Expander` and v1 icons | done, **no code change** (importers exist) | `070a07d` |
+| 7 | `06` #42 stale `jobs.kind` comment | done, comment only | `06e0f3f` |
+| 8 | `07` #91 monitor hot-unplug | **blocked** on a spec decision, no code | `2a00469` |
+| 9 | v0.4.6 version bump and release notes | done, gate green at 0.4.6 | `3eb680c` |
+| 10 | This file | done | the commit that adds it |
 
-Full suite on the P4 tip, which contains every P3 change: `npm ci`, `npm run lint`, `npm run
-build`, `npm test`, `stage-mcp`, `cargo fmt --check`, and `clippy`, `build` and `test` on the whole
-workspace with `--locked`, all exit 0: **1241 tests passed, 0 failed**, 88 UI tests. The P3 branch
-was also verified on its own. Raw output: `specs/05_BUILD_REVIEW.md`, 2026-11-04 QA entry.
+## What actually changed in the product
 
-## QA pass (2026-11-04): what it found
+1. **The launch crash.** `UpdaterState` is registered on the Tauri builder through the single seam
+   `manage_pre_window_state`, before any window or webview exists. The setup-closure registration is
+   gone. `src-tauri/tests/launch_order.rs` reproduces the production panic on the old ordering and
+   passes on the new one.
+2. **Settings > Advanced.** A settings save now invalidates `throttleStatus` through a shared
+   `SETTINGS_SAVE_INVALIDATIONS` list, and `ThrottleReadout` no longer takes a local `enabled` prop.
+3. **Settings reset markers.** `get_settings_defaults` serves `Settings::default()` over IPC; the
+   reset marker and its "changed" flag read it, with the old `SETTINGS_DEFAULTS` table demoted to an
+   in-flight fallback. A contract test compares the real Rust payload against every registry row.
+4. **Documentation.** The `jobs.kind` comment lists all eight job kinds in both copies.
 
-An independent review plus per-branch testing found real defects in my overnight work. All are
-fixed, each with a test confirmed to fail on the old code:
+## Proof, briefly
 
-- **P3 would not have merged.** Its `Cargo.lock` carried P4's dependencies, so the locked MCP
-  build failed on P3 alone. It only passed on the combined tree.
-- **Blocker: a Settings save could switch the HTTP API off.** Enabling the API in the panel and
-  then saving any other setting wrote the stale "disabled" value back and stopped the listener.
-- **The rebuild would have re-segmented your history,** because it dropped the session backfill
-  checkpoint and four other internal markers. It now carries them, and a test fails if a future
-  marker is added without being classified.
-- **A failed first run would have bricked the app,** leaving an empty file the app refused forever.
-- **Four P4 metrics did not match the definitions the report prints.** They are fixed before they
-  freeze as Gate A thresholds.
+- Item 1: the regression fails with `state() called before manage() for
+  screensearch_lib::update::UpdaterState` at `tauri-2.11.3/src/lib.rs:734` before the fix and passes
+  after. Twenty consecutive cold launches of an isolated dev profile came up with zero panics and
+  zero early exits, each observed ten seconds past readiness. The pre-fix dev control also passed
+  8/8, so the live series does not discriminate on its own; the failing-first regression does. No
+  release-binary launch test and no updater download/install is claimed.
+- Item 3: the new UI test fails on the old three-key set with `throttleStatus is missing`; the lead
+  reproduced that independently by deleting the key.
+- Item 4: the contract test failed first on the missing command, and a deliberate
+  `storage_max_width = 1920` failed it with `storage.max_width ... Rust 1920, registry 0`.
+- Every item that changed code ran the full ordered chain (`ui_ci`, `ui_lint`, `ui_build`,
+  `ui_test`, `stage_mcp`, `cargo_fmt`, `cargo_clippy`, `cargo_build`, `cargo_test`) under Node
+  v22.23.4 with every step `EXIT=0`; item 1's final run reported 87 suites / 1653 passed and items 4
+  and 9 reported 88 suites / 1654 passed, with 174 UI node tests.
+- Records: `specs/05_BUILD_REVIEW.md` has one section per item with the raw blocks, `specs/06` row
+  statuses are current, `specs/07` carries both blocked questions, `specs/08` and `CHANGELOG.md` are
+  updated, and `specs/TODO.md` marks TODO-6 closed.
 
-**One check only you can do** (I cannot run the app: it would open your real profile): in
-Settings · Integrations, turn the HTTP API on, then change any other setting and save. The API
-must stay listening. The logic behind that fix now has its own regression test
-(`ui/test/settingsDraft.test.mjs`); your check confirms it end to end in the real app.
+## Questions that need your answer before those two items can move
 
-## The three design directions
+Both are recorded in `specs/07_KNOWN_GAPS.md`; neither has code behind it.
 
-Open all three side by side:
+1. **`06` #116, an Ask turn whose provider never answers.** `03 §7i` defines no turn deadline, `§7c`
+   says the 30 s header deadline is not a body deadline, and `§8` forbids hardcoded thresholds plus
+   caps the Settings UI at 26 keys. With no answer weights, the turn enters the unbounded first-use
+   download before any delta exists. (a) May an Ask start that download, or must it fail before the
+   turn until the model is loaded? (b) If a first-delta deadline is required, what value? (c) Does
+   the clock start at turn creation (covering a legitimate multi-GB download) or at model readiness?
+   And where does the threshold live, given the closed key set?
+2. **`07` #91, a monitor unplugged mid-session.** `03` prescribes nothing for a topology change, and
+   `UI_REFERENCE.md:234` asks only that an unplugged monitor "degrades honestly". What should happen:
+   restart capture, drop the monitor from the session, surface a state, or hold silently? A test seam
+   needs that answer before anything can be written.
 
+## Environment facts this run hit
+
+- Gate runs need `CARGO_TARGET_DIR` outside `Documents` on this machine. Test executables built under
+  the repository's own `target` cannot create temporary directories (Windows code 5), which fails
+  `crates/api` reproducibly; the same tests pass from an external target. Full evidence is in
+  `specs/07`. No test or timeout was changed.
+- CI pins Node 22 and this host defaults to Node 26, so a checksum-verified portable Node v22.23.4
+  lives at `C:/Users/nicol/screensearch-evidence/0.4.6/node22/node-v22.23.4-win-x64/` and every final
+  gate ran under it, with a probe asserting both the invoked interpreter and a spawned child report
+  `v22.23.4`.
+
+## Your live checks (nothing here was forced by me)
+
+1. **Launch the installed 0.4.6 build about ten times and confirm no panic.** The crash was
+   intermittent, so volume matters:
+
+   ```powershell
+   $exe = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run").ScreenSearch
+   1..10 | ForEach-Object {
+     Start-Process $exe; Start-Sleep -Seconds 12
+     Get-Process screensearch -ErrorAction SilentlyContinue | Stop-Process -Force
+   }
+   $log = Get-ChildItem "$env:APPDATA\app.screensearchv2c.desktop\logs\screensearch.log.*" |
+     Sort-Object LastWriteTime | Select-Object -Last 1
+   Select-String -Path $log.FullName -Pattern "state\(\) called before manage", "panicked at"
+   ```
+
+   No output from the last line means no panic was logged.
+2. **Settings > Advanced: flip the enrichment throttle.** Save, and watch the readout switch to the
+   off line at once and return to the measured line (or the honest "waiting for the first pressure
+   sample") when you turn it back on.
+3. **Settings: change a row, then reset it.** The "changed" marker should appear and clear, and the
+   value should return to the default the app reports. This is the first release where the marker
+   comes from the app rather than the interface's own copy.
+4. **Confirm the version reads 0.4.6** in the app's about/status surface.
+
+## Pushing
+
+Nothing is pushed. To publish the branch and open the pull request:
+
+```powershell
+cd C:\Users\nicol\Documents\GitHub\screensearch
+git push -u origin fix/0.4.6-stabilisation
+gh pr create --base main --head fix/0.4.6-stabilisation --title "0.4.6 stabilisation" --body "Fixes the 0.4.5 launch panic (06 #150) and lands the throttle invalidation (TODO-4), IPC settings defaults (TODO-6) and the jobs.kind doc fix. Two items are blocked on spec decisions and are recorded in specs/07, not implemented: 06 #116 and 07 #91. Local gate: full ordered chain green under Node 22, 88 suites / 1654 tests. No tag or release."
 ```
-start docs\kickoffs\P2-directions\compare.html
+
+Do not merge it until you have read `specs/05` and decided the two questions above. Re-running the
+gate yourself:
+
+```powershell
+cd C:\Users\nicol\Documents\GitHub\screensearch
+powershell -NoProfile -File C:\Users\nicol\screensearch-evidence\0.4.6\gate.ps1 -Log C:\Users\nicol\screensearch-evidence\0.4.6\gate-manual.log
 ```
-
-Or one full screen: `start docs\kickoffs\P2-directions\direction-a.html` (also `b`, `c`).
-
-- **A, Command Deck refined.** The v1 console kept and refined: warm graphite, one signal orange,
-  hairline discipline, new type scale and density system, light theme added.
-- **B, Paper Ledger.** Screen history as a working paper: light-led, serif display voice, printed
-  tables, footnote citations, no cards.
-- **C, Signal Console.** An instrument panel: dense, cool slate, cyan for action and violet only for
-  relationships, monospace measurements, context rail on every screen.
-
-Each is one self-contained HTML file, system fonts, no network request, two themes, the same five
-screens. Pick one or name a merge; the choice goes into `specs/UI_REFERENCE.md` §1 (0.4.5 D4).
-
-## P1 self-test final question list
-
-`docs/kickoffs/P1-selftest.md`. Four questions in round 1: one answered by your P1 decision, one
-fixed in `03 §7h.5` (merge override semantics), two logged as phase-level choices (P6 candidate
-budgets, P8 per-kind payload shape). Round 2: zero new unanswered questions.
-
-## Questions logged tonight
-
-In `specs/07_KNOWN_GAPS.md`:
-
-1. An existing profile loses customised file-only values, because `advanced.toml` is now the single
-   source. One-time import, or accept the reset and put it in the release notes?
-2. P3 outcome notes: the rebuild carry set, the three stale defaults, and the hot-apply change for
-   `api.*`.
-3. P4 metric conventions to confirm at Gate A (involvement on title and URL only, NULL session end
-   as open, nearest-rank percentiles, `app` not a reference kind).
-4. Earlier P1 residue: P6 stage budgets and the P8 payload shape.
-
-In `specs/06_PATCH_PLAN.md`:
-
-- **#29** Density is a Settings choice with no settings key (P2/P7 blocker).
-- **#30** `03 §4` does not describe ten as-built details of the v13 baseline (documentation gap,
-  code is correct).
-- **#31** Rebuild tool home: spec said `crates/harness`, built as `crates/rebuild`, spec updated.
-  Resolved.
-- **#32** Rebuild carry set wider than the kickoff list: `text_spans`, `vision_analysis`,
-  `tags`/`frame_tags`, `report_deliveries`.
-- **#33** Three `03 §8` defaults disagree with the as-built code (`storage.max_width`,
-  `storage.retention_days`, `text.chrome_suppress_min_seen`).
-
-## Maintainer actions at Gate A, in order
-
-1. Read the three directions: `start docs\kickoffs\P2-directions\compare.html`.
-2. Push and open the PRs yourself, in this order (P4 already contains the P3 commit):
-
-```
-git push -u origin feat/0.4.5-p2-design-directions
-git push -u origin feat/0.4.5-p3-baseline-schema
-git push -u origin feat/0.4.5-p4-auto-eval
-```
-
-3. Merge P1 (#150) if the spec changes are still to your liking, then P1's follow-up commits
-   (`83e281a`, `dad1eb2`) are already on that branch.
-4. Pick a direction and write it into `specs/UI_REFERENCE.md` §1.
-5. Run the P4 baseline against your real history, with the app running:
-
-```
-cargo run -p harness --bin harness -- eval --db "%APPDATA%\app.screensearchv2c.desktop\screensearch.db" --api http://127.0.0.1:43210 --out harness-data/eval-baseline
-```
-
-6. Run the rebuild sequence in `docs/kickoffs/P3.md`, section "The maintainer run": copy the profile,
-   `--counts`, rebuild into a new file, compare, park the original, boot, open the twenty sampled
-   frames, and only then the `*.v13.bak` rename.
-7. Answer the open questions above, which unblock P7 (density) and confirm the rebuild carry set.
-8. Dogfood v14 for three working days, then tag v0.4.3.
-
-## Deliberately not done
-
-- No push, no PR, no merge, no branch delete.
-- The rebuild tool was never run against a real or copied real database, and the twenty frame spot
-  check was not performed: those are yours (the tool's only agent evidence is the synthetic fixture
-  test). Same for the P4 baseline report, which needs your database and a running app.
-- No token file, Tailwind config, primitive component or app route: P2 stops at the direction
-  checkpoint by design.
-- `Settings.tsx` was trimmed by 40 controls so the app builds after the settings cut. P7 rebuilds
-  that page by category; the `file-only` values are not yet displayed anywhere, though the read-only
-  `get_advanced_config` projection they will use exists.
-- Nothing from P5 onward was started.
-- I did not correct the three stale `03 §8` defaults, the ten `03 §4` omissions, or the density key:
-  each is a contract change and needs your call.
