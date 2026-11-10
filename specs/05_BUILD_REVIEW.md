@@ -999,3 +999,82 @@ evidence that the two copies still agree after the edit.
 
 **Limitations.** Nothing here proves runtime enqueue behaviour; it is a documentation accuracy fix
 for a schema comment.
+
+### 2026-11-10: Off-arc, 0.4.6 item 3, a settings save refreshes the throttle readout (TODO-4)
+
+**Scope.** `specs/TODO.md` TODO-4 recorded that `useSetSettings.onSettled` invalidated `settings`,
+`hotkeyStatus` and `apiStatus` only, so `useThrottleStatus()` kept its pre-save payload until the
+next `throttle_changed` tick. P7 compensated at the call site with
+`<ThrottleReadout enabled={throttle.value === true} />`. This item fixes the seam and removes the
+compensation.
+
+**What changed.**
+
+- `ui/src/lib/ipc/queryKeys.ts`: new `SETTINGS_SAVE_INVALIDATIONS` beside `GRAPH_JOB_INVALIDATIONS`,
+  holding `settings`, `hotkeyStatus`, `apiStatus`, `throttleStatus`.
+- `ui/src/lib/ipc/mutations.ts`: `invalidateAfterSettingsSave` loops the list and
+  `useSetSettings.onSettled` calls it; the three inline invalidations are gone.
+- `ui/src/routes/settings/ThrottleReadout.tsx`: the `enabled` prop is gone. The master switch comes
+  from `useSettings()` (optimistic, refetched after a save) and the measurements from
+  `useThrottleStatus()`. The setting is still read because `get_throttle_status` reports
+  `enabled: false` both when the throttle is off and before the governor's first sample, so the
+  status alone cannot tell the off line from the honest intermediate.
+- `ui/src/routes/settings/Advanced.tsx:122`: `<ThrottleReadout />`.
+- `ui/test/settingsSaveInvalidations.test.mjs`: the regression.
+
+**Dependency audit behind the four-key set.** Settings categories read `settings`, `advancedConfig`,
+`hotkeyStatus`, `monitors`, `readiness`, `storageStats`, `updateStatus`, `apiStatus`,
+`textFilterStats`, `setupStatus`, `sidecarStatus` and `throttleStatus`. Only four change on a write:
+`settings` (the write), `hotkeyStatus` (every save re-registers the shell hotkeys,
+`src-tauri/src/lib.rs:1286-1292`), `apiStatus` (`apply_api_config` when `api.*` changes, `:1309-1329`)
+and `throttleStatus` (`reconfigure_throttle` on every save, `:1357-1360`). `readiness` is patched by
+`readiness_changed`; `advancedConfig` is the read-only file projection; `monitors`, `storageStats` and
+`textFilterStats` are hardware or history reads; `apiReadTokenStatus` moves only through credential
+commands; the rest are event or updater state. Nothing was added that nothing reads.
+
+**Failing first.** The lead reproduced this independently of the executor, by deleting the
+`throttleStatus` entry from the shared list and re-running the new file alone:
+
+```text
+$ node --test test/settingsSaveInvalidations.test.mjs     # throttleStatus removed from the list
+  error: 'settings save invalidates settings, hotkeyStatus, apiStatus; throttleStatus is missing'
+# tests 2
+# pass 0
+# fail 2
+
+$ node --test test/settingsSaveInvalidations.test.mjs     # restored
+# tests 2
+# pass 2
+# fail 0
+```
+
+**Known limitation.** This is cache-level evidence: the tests prove the invalidation set the mutation
+runs, not that a mounted Settings > Advanced row repaints after a real save. That remains a live
+UI check for the maintainer, listed in `docs/kickoffs/MORNING.md`.
+
+**Affected-suite output** (portable Node v22.23.4, executor-run): `ui` typecheck, lint and build all
+`EXIT=0`; `npm --prefix ui test` `# tests 174`, `# pass 174`, `# fail 0`. The full ordered gate is
+below.
+
+GATE (lead). Full ordered chain, native PowerShell runner, portable Node v22.23.4 and the external
+`CARGO_TARGET_DIR`:
+
+```text
+$ powershell -NoProfile -File .../gate.ps1 -Log .../item3-gate.log
+node v22.23.4 / cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+node_environment EXIT=0
+ui_ci EXIT=0
+ui_lint EXIT=0
+ui_build EXIT=0
+ui_test EXIT=0
+stage_mcp EXIT=0
+cargo_fmt EXIT=0
+cargo_clippy EXIT=0
+cargo_build EXIT=0
+cargo_test EXIT=0
+GATE_STEPS_ALL_ZERO=1
+CARGO_TEST_AGGREGATE={"suites":87,"passed":1653,"failed":0,"ignored":17}
+```
+
+UI node tests in that log: `# tests 174`, `# pass 174`, `# fail 0` (172 before this item's two cases).
+Binding guard after the workspace run: `git diff --exit-code -- ui/src/bindings` clean.

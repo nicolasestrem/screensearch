@@ -119,7 +119,7 @@ export function AdvancedCategory() {
           />
         }
       >
-        <ThrottleReadout enabled={throttle.value === true} />
+        <ThrottleReadout />
       </SettingRow>
 
       <SettingSection

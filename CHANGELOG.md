@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Register updater state before creating any webview, preventing the 0.4.5 launch panic when the
   mounted UI reads update status before the setup hook finishes. No retry loop was added.
 
+### Fixed: the throttle readout catches up when a setting is saved
+
+- **Turning the enrichment throttle on or off updates its readout immediately.** Saving any setting
+  refreshed the settings, hotkey and API status but not the throttle status, so Settings > Advanced
+  could keep showing the pre-save throttle state until the next pressure sample. A save now refreshes
+  the throttle status too, and the readout takes its on/off line from the saved switch, so turning it
+  off shows the off line at once and turning it on keeps the honest "waiting for the first pressure
+  sample" state until a measurement exists.
+
 ### Changed: the enrichment throttle can see memory, and level 2 now releases the vision model
 
 **Baseline, measured on the installed 0.4.5 build before any change**, on the maintainer's box

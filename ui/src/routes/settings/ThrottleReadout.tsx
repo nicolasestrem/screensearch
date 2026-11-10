@@ -7,22 +7,27 @@
 // the readout's height, an unavailable probe says so and offers Retry, the off case
 // collapses to one line, and the populated case is the measured readout.
 //
-// The off line follows the SAVED setting, not the probe: `get_throttle_status` is
-// only re-read on mount and on `throttle_changed`, and a settings save does not
-// invalidate it (`lib/ipc` is not this phase's file), so trusting the snapshot for
-// "on/off" would contradict the switch the user just flipped. The measured numbers
-// still come from the probe; when the probe has not caught up yet the row says so
-// instead of printing a stale "off".
+// The on/off line follows the SETTING and the measured line follows the probe, both
+// read here: `useSettings` owns the master switch (optimistic, refetched after a write)
+// and `useThrottleStatus` owns the pressure snapshot. A settings save invalidates the
+// throttle status too (`SETTINGS_SAVE_INVALIDATIONS`), so the probe no longer keeps its
+// pre-save value; the setting is still what tells an off throttle apart from one whose
+// governor has not produced its first sample yet. Both report `enabled: false`.
 import { Button, Skeleton } from "../../components/primitives";
-import { useThrottleStatus } from "../../lib/ipc/queries";
+import { useSettings, useThrottleStatus } from "../../lib/ipc/queries";
 
 /** `ThrottleStatus.level`: 0 Normal · 1 High · 2 Sustained. */
 const LEVEL_LABEL = ["Normal", "High", "Sustained"] as const;
 
-export function ThrottleReadout({ enabled }: { enabled: boolean }) {
+export function ThrottleReadout() {
+  const settings = useSettings();
   const status = useThrottleStatus();
 
-  if (!enabled) {
+  // The Advanced row already gates its own loading/error panel on this query; keep a
+  // readout-sized placeholder if this component is ever mounted ahead of it.
+  if (settings.data === undefined) return <Skeleton w="half" h="control" />;
+
+  if (!settings.data.throttle_enabled) {
     return (
       <p className="min-w-0 text-t-sm text-fg-secondary">
         Throttle is off — enrichment always runs at full speed.

@@ -120,3 +120,30 @@ export const GRAPH_JOB_INVALIDATIONS = [
   queryKeys.entitiesPrefix,
   queryKeys.sessionGraphPrefix,
 ] as const;
+
+/**
+ * Every query family a completed settings save can change, in one list so a
+ * settings-derived read cannot be added without landing in the save invalidation.
+ *
+ * `set_settings` writes the whole `Settings` struct and hot-applies the typed keys
+ * (`src-tauri/src/lib.rs`): it re-registers the shell hotkeys, widens or narrows the
+ * local API, and starts or stops the throttle governor. Each of those owns a query of
+ * its own, and none is covered by the `settings` key. The throttle was the one that
+ * went missing: a readout built on `useThrottleStatus()` kept its pre-save state until
+ * the next governor tick, which forced a local "use the saved setting" workaround at
+ * the call site. A key belongs here when a setting write changes the payload its query
+ * reads; families fed by hardware or by an event only stay out.
+ */
+export const SETTINGS_SAVE_INVALIDATIONS = [
+  queryKeys.settings,
+  queryKeys.hotkeyStatus,
+  // `api_*` are typed settings: a save that changes them starts, stops or rebinds
+  // the listener (`set_settings` hot-applies through `apply_api_config`), so the API
+  // panel's status must refresh too.
+  queryKeys.apiStatus,
+  // `throttle.enabled`: the save starts or stops the governor, so the readout's on/off
+  // line and level must refetch. Without this key the cached status kept the pre-save
+  // value until the next governor tick, which forced a local "use the saved setting"
+  // prop at the readout call site.
+  queryKeys.throttleStatus,
+] as const;

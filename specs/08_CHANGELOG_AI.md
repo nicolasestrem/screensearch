@@ -485,3 +485,23 @@ as holding only `embed_text` and `vision_tag`. `JobKind` has eight variants
 source of truth, keeping the existing no-value-CHECK notes and `07` #82. No SQL, column, constraint,
 index, default, Rust type or test changed; the store parity pair still passes
 (`cargo test -p store --test p3_schema_parity`, 2 passed, 0 failed).
+### 2026-11-10: Off-arc, 0.4.6 item 3, settings save invalidates the throttle status (TODO-4)
+
+`useSetSettings.onSettled` invalidated `settings`, `hotkeyStatus` and `apiStatus`, so a readout
+built on `useThrottleStatus()` kept its pre-save state until the next `throttle_changed` tick, and
+P7 had worked around it at the call site with `<ThrottleReadout enabled={throttle.value === true} />`.
+The three inline invalidations moved into `SETTINGS_SAVE_INVALIDATIONS` beside
+`GRAPH_JOB_INVALIDATIONS` (`ui/src/lib/ipc/queryKeys.ts`) and the mutation consumes them through
+`invalidateAfterSettingsSave` (`ui/src/lib/ipc/mutations.ts`); `throttleStatus` is the fourth key.
+
+Only four of the twelve families the settings pages read change on a write: `settings` itself,
+`hotkeyStatus` (every save re-registers the shell hotkeys), `apiStatus` (`apply_api_config`) and
+`throttleStatus` (`reconfigure_throttle`). `readiness` is patched by `readiness_changed`, and the
+rest are hardware, history, read-only or credential-command reads.
+
+`ThrottleReadout` no longer takes a prop: it reads the switch from `useSettings()` and the numbers
+from `useThrottleStatus()`, because `get_throttle_status` reports `enabled: false` both when off and
+before the governor's first sample. Loading, probe-error, off, turning-on and populated states are
+unchanged. `ui/test/settingsSaveInvalidations.test.mjs` fails on a three-key set with
+`settings save invalidates settings, hotkeyStatus, apiStatus; throttleStatus is missing` and passes
+at four. Full gate green under Node v22.23.4 (1653 workspace tests, 174 UI node tests).

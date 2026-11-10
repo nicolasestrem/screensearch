@@ -5,7 +5,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import * as cmd from "./commands";
-import { queryKeys } from "./queryKeys";
+import { queryKeys, SETTINGS_SAVE_INVALIDATIONS } from "./queryKeys";
 import type { CaptureControl } from "../../bindings/CaptureControl";
 import type { VisionTarget } from "../../bindings/VisionTarget";
 import type { Settings } from "../../bindings/Settings";
@@ -54,6 +54,20 @@ export function useCancelVision() {
 }
 
 /**
+ * Reconcile the query cache after a settings write. Exported so the regression drives
+ * the same loop the mutation runs without a React renderer; every family comes from
+ * {@link SETTINGS_SAVE_INVALIDATIONS}, so a write that starts affecting another query
+ * adds one key there instead of one `invalidateQueries` call here.
+ */
+export function invalidateAfterSettingsSave(
+  invalidate: (queryKey: (typeof SETTINGS_SAVE_INVALIDATIONS)[number]) => void,
+): void {
+  for (const queryKey of SETTINGS_SAVE_INVALIDATIONS) {
+    invalidate(queryKey);
+  }
+}
+
+/**
  * Persist settings. Optimistic: the cache is set to the submitted value up front
  * and reconciled with a refetch afterwards (UI_REFERENCE §4 Settings row).
  */
@@ -71,12 +85,9 @@ export function useSetSettings() {
       if (ctx?.previous) qc.setQueryData(queryKeys.settings, ctx.previous);
     },
     onSettled: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.settings });
-      qc.invalidateQueries({ queryKey: queryKeys.hotkeyStatus });
-      // `api_*` are typed settings: a save that changes them starts, stops or rebinds
-      // the listener (`set_settings` hot-applies through `apply_api_config`), so the API
-      // panel's status must refresh too.
-      qc.invalidateQueries({ queryKey: queryKeys.apiStatus });
+      invalidateAfterSettingsSave((queryKey) => {
+        qc.invalidateQueries({ queryKey });
+      });
     },
   });
 }
