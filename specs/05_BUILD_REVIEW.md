@@ -1192,3 +1192,42 @@ The suite count rises from 87 to 88 and the pass count from 1653 to 1654 because
 `settings_defaults_contract` target. UI node tests: `# tests 174`, `# pass 174`, `# fail 0`.
 Binding guard: `git diff --exit-code -- ui/src/bindings` clean (the command returns the existing
 `Settings` type, so no binding is regenerated).
+
+### 2026-11-10: Off-arc, 0.4.6 item 9, version bump and release documentation
+
+**Scope.** Item 1 is verified, so the release metadata moves. No tag, no GitHub release, no push.
+
+**What changed.** The seven declaration sites move together exactly as `bc0d7f3` did for 0.4.5:
+`Cargo.toml`, `Cargo.lock` (19 workspace crates), `package.json`, `package-lock.json`,
+`ui/package.json`, `ui/package-lock.json` and `src-tauri/tauri.conf.json`. `Cargo.lock` was
+regenerated with `cargo metadata` rather than edited by hand, and the diff is the same shape as the
+previous bump (7 files, 27 insertions, 27 deletions). `CHANGELOG.md`'s `[Unreleased]` section is now
+`[0.4.6] - 2026-11-10` with a fresh empty `[Unreleased]` above it, matching the 0.4.5 convention.
+`docs/release-notes/v0.4.6.md` is new.
+
+**Release notes scope.** They lead with the launch fix, then the throttle readout and the settings
+defaults, then the schema comment, and they name one thing this branch did not do: 0.4.6 also carries
+the memory-pressure relief that merged into `main` before this branch, which has its own records and
+gate. The notes do not claim that work was verified here.
+
+```text
+$ powershell -NoProfile -File .../gate.ps1 -Log .../item9-gate.log
+node v22.23.4 / cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+node_environment EXIT=0
+ui_ci EXIT=0
+ui_lint EXIT=0
+ui_build EXIT=0
+ui_test EXIT=0
+stage_mcp EXIT=0
+cargo_fmt EXIT=0
+cargo_clippy EXIT=0
+cargo_build EXIT=0
+cargo_test EXIT=0
+GATE_STEPS_ALL_ZERO=1
+CARGO_TEST_AGGREGATE={"suites":88,"passed":1654,"failed":0,"ignored":17}
+```
+
+UI node tests: `# tests 174`, `# pass 174`, `# fail 0`. Binding guard clean.
+
+**Not done, by instruction.** No tag, no `gh release create`, no push, no PR. The push command is in
+`docs/kickoffs/MORNING.md` for the maintainer.

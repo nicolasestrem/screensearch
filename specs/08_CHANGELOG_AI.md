@@ -536,3 +536,14 @@ two-way coverage, the closed 26-key set, and `api.token` as the only `field: nul
 credential in the payload. It failed first on the missing command, and a deliberate
 `storage_max_width = 1920` made it fail with `storage.max_width ... Rust 1920, registry 0` before the
 value was restored. Full gate green (88 suites, 1654 passed; 174 UI node tests).
+
+### 2026-11-10: Off-arc, 0.4.6 item 9, version 0.4.6 and release documentation
+
+Every version declaration moves to 0.4.6 together (workspace `Cargo.toml`, `Cargo.lock` with its 19
+workspace crates, both `package.json` files, both npm lock roots, `src-tauri/tauri.conf.json`),
+matching the 0.4.5 bump's file set and diff shape. `CHANGELOG.md`'s `[Unreleased]` becomes
+`[0.4.6] - 2026-11-10` with an empty `[Unreleased]` above it, and `docs/release-notes/v0.4.6.md`
+carries the release body. The notes state the launch fix, the throttle readout and the settings
+defaults, and they name the memory-pressure relief that 0.4.6 also carries without claiming this
+branch verified it. Full gate green at the bumped version (88 suites, 1654 passed; 174 UI node
+tests). No tag, release, or push was made.

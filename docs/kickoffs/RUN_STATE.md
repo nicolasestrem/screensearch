@@ -15,7 +15,7 @@ Branch: `fix/0.4.6-stabilisation`, created from `origin/main` at `93a7219`. Loca
 | 6 `06` #137 and #138 `Expander` and the v1 icon set | done (no code change; importers live) | pending commit | `Expander` has 4 references; `components/icons` has 27 importing files. |
 | 7 `06` #42 stale `jobs.kind` comment in `03 §4` | code changed, gate pending | pending commit | Comment-only: both copies now list all eight `JobKind` tokens; parity test passes. |
 | 8 `07` #91 monitor hot-unplug stalls capture | blocked (records written, no code change) | pending commit | No spec sentence on a topology change; `UI_REFERENCE.md:234` asks only for honest degradation. Question and seam recorded. |
-| 9 Release preparation for v0.4.6 | pending | none yet | Only if item 1 is done and verified. |
+| 9 Release preparation for v0.4.6 | done (bump + notes + gate) | pending commit | Seven declaration sites, CHANGELOG renamed to [0.4.6], release notes written. No tag, release or push. |
 | 10 `docs/kickoffs/MORNING.md` | pending | none yet | Last commit of the run. |
 
 Rules in force: no merge, no push, no pull request, no commit to `main`, no review trigger. One

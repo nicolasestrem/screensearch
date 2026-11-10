@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-11-10
+
 ### Fixed: updater startup race
 
 - Register updater state before creating any webview, preventing the 0.4.5 launch panic when the
