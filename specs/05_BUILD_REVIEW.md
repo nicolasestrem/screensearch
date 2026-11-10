@@ -527,9 +527,9 @@ import, and the GPU allocation is released only when the page unloads. `setShado
 ### 2026-11-10: Off-arc, 0.4.6 stabilisation run, index
 
 Nine queue items ran on branch `fix/0.4.6-stabilisation`, cut from `origin/main` at `93a7219`, and
-landed as local commits on the branch, of which the documentation pass that added this index is the
-last. Nothing was tagged and no GitHub release was cut, so 0.4.6 reached the remote branch only after
-this record was written.
+landed as commits on branch `fix/0.4.6-stabilisation`, open as PR #177 against `main`. That PR is not
+merged, and nothing was tagged or released: the commits were pushed while this record was being
+written, so the hashes below are the authoritative reference, not the branch tip.
 
 | item | subject | outcome | commit |
 |---|---|---|---|
