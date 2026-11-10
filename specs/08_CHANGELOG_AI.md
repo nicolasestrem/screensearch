@@ -467,3 +467,12 @@ The 0.4.6 queue allowed the `get_insights` removal only when no importer exists.
 (`ui/src/lib/ipc/queries.ts:303-311`) and read by `routes/Deck.tsx:29,72`. The `insights_summary`
 aggregate and its two store tests keep that consumer, so nothing was deleted and no schema or
 contract changed. Row 143 records the evidence; the ownership dispute it names is unchanged.
+
+### 2026-11-10: `06` #137 and #138 recorded as unremovable, no code change
+
+`Expander` has four live references (`ui/src/components/primitives/index.ts:13` re-export, the Ask
+scope panel at `routes/Ask.tsx:46,593-707`, and the dev gallery plus its specimens at
+`routes/Kitchen.tsx:20,306-322` and `routes/KitchenPrimitives.tsx:24,152-179,232-239`, which
+`Kitchen.tsx:39` imports). `ui/src/components/icons` is imported by 27 files across the primitives,
+the shell, the overlays and seven routes. Neither deletion condition holds, so no component, icon or
+route was touched. Rows 137 and 138 record the evidence and the corrected premise for 137.

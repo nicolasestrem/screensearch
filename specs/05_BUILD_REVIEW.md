@@ -936,3 +936,29 @@ consumer. Removing them would break the Deck's enrichment line, which is product
 **Decision.** Recorded, not removed. `specs/06_PATCH_PLAN.md` row 143 now carries this evidence and
 stays open for whoever owns the Tauri command, the contract, the store aggregate and the two store
 tests together. No test or gate applies: no source, test, lint or dependency file changed.
+
+### 2026-11-10: Off-arc, 0.4.6 item 6, `Expander` and the v1 icon set (`06` #137, #138)
+
+**Scope.** The queue allowed both deletions only when nothing imports them. No code changed.
+
+**Verified at this base.**
+
+```text
+ui/src/components/primitives/index.ts:13  export { Expander, type ExpanderProps, ... } from "./Expander";
+ui/src/routes/Ask.tsx:46,593-707           Expander (scope panel)
+ui/src/routes/Kitchen.tsx:20,306-322       Expander (dev gallery)
+ui/src/routes/KitchenPrimitives.tsx:24,152-179,232-239  Expander (gallery specimens)
+ui/src/routes/Kitchen.tsx:39               import { KitchenGallery } from "./KitchenPrimitives";
+ui/src/app/router.tsx:84-86               the only dev route is /kitchen
+```
+
+`ui/src/components/icons` is imported by 27 files: 15 primitives, `app/nav.ts:24`, the shell files the
+row names, four overlay files (`FlowOverlay.tsx:16`, `MarkToast.tsx:14`, `OverlayAsk.tsx:4`,
+`WhereWasIStrip.tsx:10`) and seven routes (`Deck`, `Insights`, `Moment`, `Recall`, `Session`,
+`Thread`, `Work`). The v2 glyph set is a different module, `ui/src/components/primitives/icons/`.
+
+**Decision.** Both deletions are recorded as unsafe and `specs/06_PATCH_PLAN.md` rows 137 and 138 now
+carry the live importer lists. Row 137's premise is corrected rather than repeated: the kickoff's
+"nothing else imports `Expander`" was true when P7 removed the single-file `Settings.tsx`, and P9's
+Ask scope panel brought it back. No test or gate applies: no source, test, lint or dependency file
+changed.
