@@ -1078,3 +1078,25 @@ CARGO_TEST_AGGREGATE={"suites":87,"passed":1653,"failed":0,"ignored":17}
 
 UI node tests in that log: `# tests 174`, `# pass 174`, `# fail 0` (172 before this item's two cases).
 Binding guard after the workspace run: `git diff --exit-code -- ui/src/bindings` clean.
+
+### 2026-11-10: Off-arc, 0.4.6 item 8, monitor hot-unplug (`07` #91, blocked, no code change)
+
+**Scope.** The queue asked for this row to be reproduced in a test seam and closed. Reading the row,
+the `03` capture sections and the cited `UI_REFERENCE.md:234` cell shows the specs prescribe no
+behaviour for a topology change, so the item records the blocker rather than inventing one.
+
+**What the specs do and do not say.** `03` has no sentence on hot-plug, unplug, re-enumeration,
+capture restart or a monitor-level capture state. Its nearest sentences are the `CaptureSource` shape
+(`03:64-71`), "one frame per monitor" for `capture_now` (`:787-791`), `capture.monitors` (`:1791`),
+the corrupt-frame skip (`:2462`) and the multi-monitor v1.0 definition-of-done line (`:2468`).
+`UI_REFERENCE.md:234` requires only that an unplugged monitor "degrades honestly", and the same cell
+records that `#91` stays out of scope.
+
+**Why no seam was written.** A reproduction seam needs a defined expected behaviour to assert
+(restart capture, drop the monitor, surface a state, or hold silently). The specs give none of those,
+and `04 §5` forbids inventing a threshold or a product rule. The question and the reproduction seam
+are recorded in `specs/07_KNOWN_GAPS.md` under `#91`.
+
+**No code, no test, no gate.** Nothing in `crates/capture`, the test tree or the specs' normative
+text changed, so a gate would measure only code an earlier item already measured. No runtime
+reproduction is claimed: the stall was not re-triggered on this host and no display was unplugged.

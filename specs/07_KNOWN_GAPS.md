@@ -207,6 +207,48 @@ decisions below, decided but reversible.
   out of scope for 0.4.5 by maintainer decision; no display-topology handling exists (no
   `WM_DISPLAYCHANGE` handling in `crates/capture`); sessions make the stall visible but silent data
   loss remains possible (`UI_REFERENCE.md:234`).
+  - **2026-11-10 (0.4.6 stabilisation run, item 8): blocked on spec silence, no code change.** The
+    0.4.6 queue asked for this row to be reproduced in a test seam and closed. Reading the row, the
+    `03` capture sections and the cited `UI_REFERENCE.md:234` line shows the specs prescribe no
+    behaviour for a topology change: `03` has no sentence on hot-plug, unplug, re-enumeration, capture
+    restart or a monitor-level capture state. Its nearest sentences are the `CaptureSource` shape
+    (`:64-71`), "one frame per monitor" for `capture_now` (`:787-791`), `capture.monitors`
+    (`:1791`), the corrupt-frame skip (`:2462`) and the multi-monitor v1.0 DoD line (`:2468`).
+    `UI_REFERENCE.md:234` requires only "an unplugged monitor degrades honestly" and states in the
+    same cell that `#91` stays out of scope. Implementing a trigger, recovery policy or status flip
+    here would invent a product decision, so the item stops and asks.
+  - **#91 question (blocks implementation).** Which behaviour is required when the display topology
+    changes mid-session? Each of the following is currently unspecified and must be decided before
+    code:
+    1. **Trigger.** Is a change detected by `WM_DISPLAYCHANGE`/`WM_DEVICECHANGE` on a message-only
+       window in `crates/capture`, by the WGC `GraphicsCaptureItem.Closed` event per monitor, or by
+       both? (A frame-timeout watchdog is not admissible: `03 §7f.2` says absent frames cannot prove
+       inactivity, and limits interruption records to observed start/stop and worker errors.)
+    2. **Capture action.** On a change, must the worker re-enumerate and recreate sessions for the
+       surviving monitors, stop the loop and let the kernel restart it, or only report and leave
+       recovery to the user's manual STOP/START (today's two-click path)?
+    3. **Status.** Which `ComponentStatus` must `readiness.capture` hold while the topology is
+       unresolved (`error`, or `unavailable` as for "no capturable monitor"), and must `/v1/health`
+       stop reporting `capturing:true` (it currently reflects handle presence only,
+       `crates/kernel/src/lib.rs:958-961`)?
+    4. **UI state.** `UI_REFERENCE.md:234` requires only "degrades honestly": is that a StatusRail
+       chip plus tray error glyph plus a toast naming the missing display, or something else, and does
+       the Settings · Capture "Paused" line (`ui/src/routes/settings/Capture.tsx:243`) participate?
+    5. **Re-indexing.** `monitor_index` is OS enumeration order (`crates/capture/src/monitors.rs:69`)
+       and is persisted in `frames.monitor_index`; `capture.monitors` stores indices. After
+       re-enumeration, does a saved index follow the physical display, or stay positional (today's
+       behaviour, which can silently capture a different display)?
+    6. **Replug.** Does capture resume automatically when the display returns, or does recovery stay a
+       user action?
+    The answer belongs in `03` as the normative sentence this row lacks; then `#91` can be un-deferred.
+  - **Reproduction seam (identified, not committed).** A `FakeCapture` whose `next_frame()` never
+    yields reproduces the *user-visible* stall through the existing kernel factory seam
+    (`crates/kernel/src/lib.rs:661-664`, tests at `crates/kernel/tests/pipeline.rs:28-58`): readiness
+    stays `Ready` and `is_capturing()` stays true while nothing is stored. It cannot verify a fix, and
+    a committed test asserting the stall would encode the very behaviour no spec authorises, so this
+    run left it as the reproduction recipe. The capture-crate cause has no seam at all:
+    `monitors::enumerate()` is called directly from `crates/capture/src/wgc.rs:108`, and
+    `MonitorState::new` needs a real `HMONITOR` (`:155`).
 - **`06` #116 An Ask turn whose provider never answers stays open indefinitely.** Owner: P6 (the
   `06` patch-plan row; this is not the session-model `#116` listed under `#112 / #116 / #117`).
   Status: open, and **blocked on a spec decision** as of 2026-11-10 (`0.4.6` stabilisation run,

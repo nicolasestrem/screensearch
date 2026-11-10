@@ -505,3 +505,12 @@ before the governor's first sample. Loading, probe-error, off, turning-on and po
 unchanged. `ui/test/settingsSaveInvalidations.test.mjs` fails on a three-key set with
 `settings save invalidates settings, hotkeyStatus, apiStatus; throttleStatus is missing` and passes
 at four. Full gate green under Node v22.23.4 (1653 workspace tests, 174 UI node tests).
+
+### 2026-11-10: `07` #91 monitor hot-unplug recorded as blocked on a spec decision, no code change
+
+The row asks for capture to recover when a monitor disappears mid-session. `03` defines no behaviour
+for a topology change: no hot-plug, unplug, re-enumeration, restart or per-monitor capture state, and
+`UI_REFERENCE.md:234` asks only for honest degradation while stating that the row stays out of scope.
+With no prescribed behaviour there is nothing a reproduction seam could assert, so no code, test or
+gate changed. The blocking question, the reproduction seam and the exact spec lines are recorded in
+`specs/07_KNOWN_GAPS.md` under `#91`. No runtime reproduction is claimed.

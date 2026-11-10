@@ -14,7 +14,7 @@ Branch: `fix/0.4.6-stabilisation`, created from `origin/main` at `93a7219`. Loca
 | 5 `06` #143 `get_insights` removal (only if no importer) | done (no code change; importer found) | pending commit | `commands.ts:211-215` to `queries.ts:303-311` to `Deck.tsx:29,72`. Removal would break the Deck. |
 | 6 `06` #137 and #138 `Expander` and the v1 icon set | done (no code change; importers live) | pending commit | `Expander` has 4 references; `components/icons` has 27 importing files. |
 | 7 `06` #42 stale `jobs.kind` comment in `03 §4` | code changed, gate pending | pending commit | Comment-only: both copies now list all eight `JobKind` tokens; parity test passes. |
-| 8 `07` #91 monitor hot-unplug stalls capture | pending | none yet | |
+| 8 `07` #91 monitor hot-unplug stalls capture | blocked (records written, no code change) | pending commit | No spec sentence on a topology change; `UI_REFERENCE.md:234` asks only for honest degradation. Question and seam recorded. |
 | 9 Release preparation for v0.4.6 | pending | none yet | Only if item 1 is done and verified. |
 | 10 `docs/kickoffs/MORNING.md` | pending | none yet | Last commit of the run. |
 
