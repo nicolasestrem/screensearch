@@ -448,3 +448,25 @@ measurements behind them are in `Your-Universe/ITERATIONS.md`.
   above, the loop's snapshot commit.
 
 
+- **City track: no dreaming** (2026-11-14). Owner: Your-Universe owner; design decisions: maintainer.
+  Status: the dream is a core feature of the brief, modelled on OpenClaw's dreaming, and the city
+  track (Blender, Unity, Unreal, Godot, all outside this repository) implements none of it: no night
+  consolidation, no hypotheses at waking, no diary. Localtime's `dream.mjs` is the only version and
+  has no phases, ranking or diary. The requirement and the open design points are in `05` under
+  2026-11-14. Blocked on the city reading the ScreenSearch export.
+- **City track: repository districts missing** (2026-11-14). Owner: Your-Universe owner. Status: the
+  Blender city has no per-repository district and the ten `tower_repo_*` assets are rejected (office
+  look); the feature exists only in the frozen procedural cities, with hard-coded commit counts.
+- **City track: street-level assets** (2026-11-14). Owner: Your-Universe owner. Status: the Unity
+  street view uses box walkers and primitive vehicles next to kit facades; kit people and vehicles
+  exist as FBX in `youruniverse-assets` but are not wired in.
+- **City track: no physical device run** (2026-11-14). Owner: maintainer. Status: only the x86_64
+  emulator has drawn the scene; fps on a real arm64 phone is unknown, and shadows were cut to one
+  cascade for the city to load.
+- **City track: no ScreenSearch data** (2026-11-14). Owner: Your-Universe owner. Status: nothing in
+  the city track reads the ScreenSearch export.
+- **City track: Unreal and Godot frozen** (2026-11-14). Owner: maintainer. Status: 261 commits across
+  two engines with no port of the Blender city; keep or drop is undecided.
+- **City track: city edge, portrait framing, day cycle** (2026-11-14). Owner: Your-Universe owner.
+  Status: the city is surrounded by a plain meadow, close to the owner's "nothing rural" rule; the
+  Blender city scene has no portrait framing and no day and night cycle.

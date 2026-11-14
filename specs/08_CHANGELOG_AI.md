@@ -547,3 +547,32 @@ carries the release body. The notes state the launch fix, the throttle readout a
 defaults, and they name the memory-pressure relief that 0.4.6 also carries without claiming this
 branch verified it. Full gate green at the bumped version (88 suites, 1654 passed; 174 UI node
 tests). No tag, release, or push was made.
+
+### 2026-11-14: Your-Universe: city track (Blender kit, Unity Android build) recorded, dreaming restated
+
+A second Your-Universe track ran from 10 to 14 Nov, separate from "Localtime": a low-poly European
+city seen from the sky with a touch dive to street level, Android first. It lives in four private
+repositories, not in this one: `youruniverse-assets` (Blender kit and city, 126 commits),
+`youruniverse-unity` (89), `youruniverse-unreal` (123) and `youruniverse-godot` (138). This touches no
+product code: no crate, schema, IPC or UI change. This entry, the `05` review and the `07` rows are
+the whole change; nothing was built or run in this repository.
+
+Delivered there: a scripted Blender 5.3 kit (21 families, about 112 assets, LOD0/1/2 in GLB and FBX),
+a scripted city (`scripts/claude_blocks.py`: perimeter blocks, canal, river with quays, park, market
+square) exported as one FBX (104 MB, 3 materials, about 2.74M triangles at LOD0 in total), and a
+Unity 6.3 URP scene that loads it with the dive camera, traffic and tram, built as an arm64 APK
+(77 MB) and an x86_64 emulator APK.
+
+Direction changes: three engines were built in parallel on 11 and 12 Nov from a bought asset pack and
+engine primitives; the owner judged all three ugly on 12 Nov; the engines were frozen and the work
+moved to Blender-authored assets; on 14 Nov Unity alone resumed, loading the Blender city. Unreal and
+Godot remain frozen.
+
+Dreaming, restated because the city track dropped it: the owner's brief makes the dream a core
+feature, inspired by OpenClaw's dreaming concept (`https://docs.openclaw.ai/concepts/dreaming`).
+Localtime carries a first version (`Your-Universe/src/dream.mjs`); the city track has none. The
+requirement and its open design points are written once in `05` under this date, and the gap is a row
+in `07`.
+
+Not done, recorded in `07`: dreaming, repo districts in the new city, kit people and vehicles in
+Unity, any run on a physical phone, any link to the ScreenSearch export.
