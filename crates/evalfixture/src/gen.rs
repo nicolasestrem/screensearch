@@ -29,11 +29,12 @@ pub use world::{world_entities, WorldEntities};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
+use chrono::{Datelike, NaiveDate, Weekday};
 use embeddings::FastEmbedProvider;
 use store::SqliteStore;
 use traits::{
     CaptureTrigger, ChunkSource, EmbeddingProvider, EvidenceWindow, FrameContinuation,
-    FrameEvidence, FrameFilters, FramePageRequest, NewFrame, NewSession, Session, SessionFilter,
+    FrameFilters, FramePageRequest, NewFrame, NewSession, Session, SessionFilter,
     FRAME_PAGE_MAX_LIMIT,
 };
 
@@ -43,11 +44,21 @@ use plan::Plan;
 use prng::{subseed, SplitMix64};
 use screens::{clock, Renderer, Sticky};
 
-/// Fixture size bounds: at most a year of weeks, and few enough frames per week that the day
-/// planner (which compresses spacing for dense fixtures) still ends every day before 19:00.
-const MAX_WEEKS: u32 = 52;
+/// Fixture size bounds. The week/density limits are generous enough for a multi-year history;
+/// the total-frame ceiling is the real safety rail: at the measured ~4 ms and ~9 KB per frame,
+/// two million frames is already roughly three hours and eighteen gigabytes, so a larger run is
+/// not a test fixture. The day planner (which compresses spacing for dense fixtures) still
+/// ends every day before 19:00 at the density limit.
+const MAX_WEEKS: u32 = 1040;
 const MIN_FRAMES_PER_WEEK: usize = 2;
-const MAX_FRAMES_PER_WEEK: usize = 10_000;
+const MAX_FRAMES_PER_WEEK: usize = 50_000;
+const MAX_TOTAL_FRAMES: u64 = 2_000_000;
+
+/// Embedding every frame is the default only while the fixture stays at this size. A larger
+/// run must choose `--no-embeddings` or an explicit `--embed-frames` bound: embedding is a
+/// model call per frame, so an unbounded default would turn a fixture run into an hours-long
+/// job nobody asked for.
+const EMBED_ALL_LIMIT: u64 = 20_000;
 
 /// Display size of every synthetic capture (single 1080p monitor).
 const FRAME_WIDTH: u32 = 1920;
@@ -55,39 +66,60 @@ const FRAME_HEIGHT: u32 = 1080;
 
 const USAGE: &str = "\
 USAGE:
-  ssv2c-evalfixture gen --out <dir> [--seed <n>] [--weeks <n>] [--frames-per-week <n>] [--no-embeddings]
+  ssv2c-evalfixture gen --out <dir> [--seed <n>] [--start <YYYY-MM-DD>] [--weeks <n>]
+                        [--frames-per-week <n>] [--no-embeddings | --embed-frames <n>]
 
 OPTIONS:
   --out <dir>              Fixture directory (required). The database is <dir>/screensearch.db;
                            it must not exist yet (a rerun never appends to an old fixture).
   --seed <n>               PRNG seed, decimal or 0x-prefixed hex (default 0x5cee55ee41520004).
-  --weeks <n>              Working weeks to synthesize, 1..=52 (default 6).
-  --frames-per-week <n>    Frames per week, 2..=10000 (default 210).
+  --start <YYYY-MM-DD>     First working day; must be a Monday (default 2026-09-07).
+  --weeks <n>              Working weeks to synthesize, 1..=1040 (default 6).
+  --frames-per-week <n>    Frames per week, 2..=50000 (default 210). One fixture may hold at
+                           most 2000000 frames in total.
   --no-embeddings          Skip text embeddings: no model is loaded or downloaded, and the
-                           summary reports embeddings=0. By default every frame's content
-                           text is embedded with the product's fastembed model, cached under
+                           summary reports embeddings=0.
+  --embed-frames <n>       Embed only the first n frames (1..=the run's frame count) instead
+                           of every frame. The default embeds every frame only up to 20000
+                           frames; a larger run must choose --no-embeddings or a bound. Text
+                           embeddings use the product's fastembed model, cached under
                            <dir>/models/fastembed (downloaded on first use).
 ";
+
+/// The first working day a run uses when `--start` is absent (Monday 2026-09-07).
+pub fn default_start() -> NaiveDate {
+    plan::default_start()
+}
 
 /// Parsed `gen` arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenOptions {
     pub out_dir: PathBuf,
     pub seed: u64,
+    pub start: NaiveDate,
     pub weeks: u32,
     pub frames_per_week: usize,
     pub embeddings: bool,
+    /// Embed only the first `n` frames; `None` embeds every frame (when embeddings are on).
+    pub embed_frames: Option<usize>,
 }
 
 impl GenOptions {
+    /// The exact number of frames this run will write (`weeks` × `frames_per_week`).
+    pub fn total_frames(&self) -> u64 {
+        u64::from(self.weeks) * self.frames_per_week as u64
+    }
+
     /// Parses the arguments after `gen`. Unknown flags and missing or malformed values are
     /// errors naming the flag, followed by the usage text.
     pub fn parse(args: &[String]) -> Result<Self> {
         let mut out_dir: Option<PathBuf> = None;
         let mut seed = DEFAULT_SEED;
+        let mut start = default_start();
         let mut weeks = DEFAULT_WEEKS;
         let mut frames_per_week = DEFAULT_FRAMES_PER_WEEK;
         let mut embeddings = true;
+        let mut embed_frames: Option<usize> = None;
 
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
@@ -99,21 +131,27 @@ impl GenOptions {
             match arg.as_str() {
                 "--out" => out_dir = Some(PathBuf::from(value("--out")?)),
                 "--seed" => seed = parse_seed(&value("--seed")?)?,
+                "--start" => start = parse_start(&value("--start")?)?,
                 "--weeks" => weeks = parse_number("--weeks", &value("--weeks")?)?,
                 "--frames-per-week" => {
                     frames_per_week =
                         parse_number("--frames-per-week", &value("--frames-per-week")?)?
                 }
                 "--no-embeddings" => embeddings = false,
+                "--embed-frames" => {
+                    embed_frames = Some(parse_number("--embed-frames", &value("--embed-frames")?)?)
+                }
                 other => bail!("unknown flag `{other}`\n\n{USAGE}"),
             }
         }
         let opts = Self {
             out_dir: out_dir.ok_or_else(|| anyhow!("`--out <dir>` is required\n\n{USAGE}"))?,
             seed,
+            start,
             weeks,
             frames_per_week,
             embeddings,
+            embed_frames,
         };
         opts.validate()?;
         Ok(opts)
@@ -131,6 +169,39 @@ impl GenOptions {
              (a session needs two frames), got {}\n\n{USAGE}",
             self.frames_per_week
         );
+        let total = self.total_frames();
+        ensure!(
+            total <= MAX_TOTAL_FRAMES,
+            "`--weeks` x `--frames-per-week` would generate {total} frames, above the \
+             {MAX_TOTAL_FRAMES}-frame ceiling for one fixture; shorten the span or lower the \
+             density, or split it into several fixtures\n\n{USAGE}"
+        );
+        ensure!(
+            self.start.weekday() == Weekday::Mon,
+            "`--start` must be a Monday (the fixture lays out five working days per week), got \
+             {} ({})\n\n{USAGE}",
+            self.start,
+            self.start.weekday()
+        );
+        if !self.embeddings && self.embed_frames.is_some() {
+            bail!(
+                "`--embed-frames` cannot be combined with `--no-embeddings`: choose one\n\n{USAGE}"
+            );
+        }
+        if let Some(n) = self.embed_frames {
+            ensure!(
+                (1..=total as usize).contains(&n),
+                "`--embed-frames` must be within 1..={total} for this run, got {n}\n\n{USAGE}"
+            );
+        }
+        if self.embeddings && self.embed_frames.is_none() {
+            ensure!(
+                total <= EMBED_ALL_LIMIT,
+                "this run generates {total} frames; embedding every frame is limited to \
+                 {EMBED_ALL_LIMIT} by default. Pass `--no-embeddings`, or `--embed-frames <n>` \
+                 to embed a bounded prefix\n\n{USAGE}"
+            );
+        }
         Ok(())
     }
 }
@@ -147,6 +218,11 @@ fn parse_seed(raw: &str) -> Result<u64> {
     parsed.map_err(|_| anyhow!("`--seed` expects a decimal or 0x-hex u64, got `{raw}`\n\n{USAGE}"))
 }
 
+fn parse_start(raw: &str) -> Result<NaiveDate> {
+    NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+        .map_err(|_| anyhow!("`--start` expects an ISO date (YYYY-MM-DD), got `{raw}`\n\n{USAGE}"))
+}
+
 fn parse_number<T: std::str::FromStr>(flag: &str, raw: &str) -> Result<T> {
     raw.parse::<T>()
         .map_err(|_| anyhow!("`{flag}` expects a non-negative integer, got `{raw}`\n\n{USAGE}"))
@@ -157,6 +233,8 @@ fn parse_number<T: std::str::FromStr>(flag: &str, raw: &str) -> Result<T> {
 pub struct GenManifest {
     pub db: PathBuf,
     pub seed: u64,
+    /// First working day of the synthetic timeline.
+    pub start: NaiveDate,
     pub weeks: u32,
     pub frames: u64,
     pub sessions: u64,
@@ -166,12 +244,14 @@ pub struct GenManifest {
 }
 
 impl GenManifest {
-    /// The stable printed summary: `seed=`, `weeks=`, `frames=`, `sessions=`, `embeddings=`,
-    /// `digest=`, `db=`, one per line, in that order (the path with forward slashes).
+    /// The stable printed summary: `seed=`, `start=`, `weeks=`, `frames=`, `sessions=`,
+    /// `embeddings=`, `digest=`, `db=`, one per line, in that order (the path with forward
+    /// slashes).
     pub fn summary(&self) -> String {
         format!(
-            "seed=0x{:016x}\nweeks={}\nframes={}\nsessions={}\nembeddings={}\ndigest={}\ndb={}\n",
+            "seed=0x{:016x}\nstart={}\nweeks={}\nframes={}\nsessions={}\nembeddings={}\ndigest={}\ndb={}\n",
             self.seed,
+            self.start,
             self.weeks,
             self.frames,
             self.sessions,
@@ -224,7 +304,7 @@ pub fn generate(opts: &GenOptions) -> Result<GenManifest> {
             None
         };
 
-    let plan = plan::plan(opts.seed, opts.weeks, opts.frames_per_week)?;
+    let plan = plan::plan(opts.seed, opts.weeks, opts.frames_per_week, opts.start)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -281,7 +361,8 @@ async fn write_fixture(
 ) -> Result<GenManifest> {
     let store = SqliteStore::open_path(db).with_context(|| format!("creating {}", slash(db)))?;
     let mut renderer = Renderer::new(opts.seed);
-    let mut planned_frames = 0usize;
+    let total_frames = opts.total_frames() as usize;
+    let mut written = 0usize;
 
     for session in &plan.sessions {
         let session_id = store
@@ -296,7 +377,8 @@ async fn write_fixture(
                 // History weeks old: the segmenter's freeze rule would have frozen it.
                 frozen: true,
             })
-            .await?;
+            .await
+            .with_context(|| format!("inserting session starting at {}", session.started_at))?;
         let mut sticky = Sticky::default();
         let mut frame_ids = Vec::with_capacity(session.frames.len());
         let mut previous_app = None;
@@ -324,22 +406,37 @@ async fn write_fixture(
                     browser_url: screen.url.clone(),
                     capture_trigger: Some(trigger),
                 })
-                .await?;
+                .await
+                .with_context(|| format!("inserting frame {} of session {session_id}", frame.at))?;
             store
                 .insert_ocr_filtered(frame_id, laid.ocr, laid.ctx)
-                .await?;
+                .await
+                .with_context(|| format!("inserting text for frame {frame_id}"))?;
             frame_ids.push(frame_id);
+            written += 1;
+            if written.is_multiple_of(10_000) {
+                eprintln!("wrote {written}/{total_frames} frames");
+            }
         }
         let assigned = store
             .assign_frames_session(&frame_ids, Some(session_id))
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "assigning {} frames to session {session_id}",
+                    frame_ids.len()
+                )
+            })?;
         ensure!(
             assigned == frame_ids.len() as u64,
             "session {session_id}: assigned {assigned} of {} frames",
             frame_ids.len()
         );
-        planned_frames += frame_ids.len();
     }
+    ensure!(
+        written == total_frames,
+        "wrote {written} frames, the plan expected {total_frames}"
+    );
 
     // Only the token: the API's other defaults (`retrieval.default_top_k`, the answer
     // thinking toggle) are applied by the settings loader when the key is absent.
@@ -347,41 +444,60 @@ async fn write_fixture(
         .set_setting(API_TOKEN_SETTING, &api_token(opts.seed))
         .await?;
 
-    let frames = read_frames(&store).await?;
+    let embed_limit = if opts.embeddings {
+        opts.embed_frames.unwrap_or(total_frames)
+    } else {
+        0
+    };
+    let (frames, digest, embedded) = finish_fixture(&store, embedder, embed_limit).await?;
     let sessions = read_sessions(&store).await?;
     ensure!(
-        frames.len() == planned_frames && sessions.len() == plan.sessions.len(),
-        "read back {} frames / {} sessions, wrote {planned_frames} / {}",
-        frames.len(),
+        frames == total_frames as u64 && sessions.len() == plan.sessions.len(),
+        "read back {frames} frames / {} sessions, wrote {total_frames} / {}",
         sessions.len(),
         plan.sessions.len()
     );
-    let digest = digest(&frames, &sessions);
-
-    let embedded = match embedder {
-        Some(provider) => embed_frames(&store, provider, &frames).await?,
-        None => 0,
-    };
 
     Ok(GenManifest {
         db: db.to_path_buf(),
         seed: opts.seed,
+        start: opts.start,
         weeks: opts.weeks,
-        frames: frames.len() as u64,
+        frames,
         sessions: sessions.len() as u64,
         embeddings: embedded,
         digest,
     })
 }
 
-/// Every stored frame through the production history read (`frame_page`), ascending id.
-async fn read_frames(store: &SqliteStore) -> Result<Vec<FrameEvidence>> {
+/// Reads the fixture back page by page: hashes every stored frame and session with the digest
+/// algorithm, and embeds up to `embed_limit` non-empty frames. Returns
+/// `(frames, digest, embeddings)`.
+///
+/// Streaming bounds the memory by one page, so a multi-million-frame fixture does not hold its
+/// own content text in RAM. `frame_page` returns frames in `(captured_at, id)` order and the
+/// fixture writes them chronologically, so that is also ascending id — the order the digest's
+/// previous read-all implementation sorted into. Any other order is a bug, not a reshuffle:
+/// the digest would silently change, so the loop refuses it.
+async fn finish_fixture(
+    store: &SqliteStore,
+    embedder: Option<&FastEmbedProvider>,
+    embed_limit: usize,
+) -> Result<(u64, String, u64)> {
+    let model = embedder.map(|provider| provider.text_model_name().to_string());
+    if let Some(model) = &model {
+        eprintln!("embedding up to {embed_limit} frames with {model}");
+    }
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"evalfixture-digest v1\n");
     let window = EvidenceWindow {
         from: 0,
         to: i64::MAX,
     };
     let mut continuation: Option<FrameContinuation> = None;
-    let mut frames: Vec<FrameEvidence> = Vec::new();
+    let mut frames = 0u64;
+    let mut embedded = 0u64;
+    let mut last_id = 0i64;
     loop {
         let page = store
             .frame_page(FramePageRequest {
@@ -392,7 +508,59 @@ async fn read_frames(store: &SqliteStore) -> Result<Vec<FrameEvidence>> {
             })
             .await
             .context("reading back the fixture frames")?;
-        frames.extend(page.items);
+        for frame in &page.items {
+            ensure!(
+                frame.frame_id > last_id,
+                "frame {} follows {last_id}: the fixture's frame ids must ascend across pages",
+                frame.frame_id
+            );
+            last_id = frame.frame_id;
+            record(
+                &mut hasher,
+                &[
+                    "frame".to_string(),
+                    frame.frame_id.to_string(),
+                    frame.captured_at.to_string(),
+                    field(frame.app_hint.as_deref()),
+                    field(frame.window_title.as_deref()),
+                    field(frame.browser_url.as_deref()),
+                    field(frame.content_text.as_deref()),
+                    field(frame.session_id.map(|id| id.to_string()).as_deref()),
+                ],
+            );
+            frames += 1;
+
+            let (Some(provider), Some(model)) = (embedder, model.as_deref()) else {
+                continue;
+            };
+            if embedded >= embed_limit as u64 {
+                continue;
+            }
+            let Some(text) = frame
+                .content_text
+                .as_deref()
+                .filter(|t| !t.trim().is_empty())
+            else {
+                continue;
+            };
+            let mut vectors = provider
+                .embed_texts(&[text.to_string()])
+                .await
+                .with_context(|| format!("embedding frame {}", frame.frame_id))?;
+            let vector = vectors.pop().ok_or_else(|| {
+                anyhow!(
+                    "the embedder returned no vector for frame {}",
+                    frame.frame_id
+                )
+            })?;
+            store
+                .upsert_text_embedding(frame.frame_id, 0, text, ChunkSource::Ocr, &vector, model)
+                .await?;
+            embedded += 1;
+            if embedded.is_multiple_of(200) {
+                eprintln!("embedded {embedded}/{embed_limit}");
+            }
+        }
         match page.next_position {
             Some(after) => {
                 continuation = Some(FrameContinuation {
@@ -403,8 +571,22 @@ async fn read_frames(store: &SqliteStore) -> Result<Vec<FrameEvidence>> {
             None => break,
         }
     }
-    frames.sort_by_key(|f| f.frame_id);
-    Ok(frames)
+
+    let sessions = read_sessions(store).await?;
+    for session in &sessions {
+        record(
+            &mut hasher,
+            &[
+                "session".to_string(),
+                session.id.to_string(),
+                session.started_at.to_string(),
+                field(session.ended_at.map(|at| at.to_string()).as_deref()),
+                session.kind.as_str().to_string(),
+                field(Some(&session.context_key)),
+            ],
+        );
+    }
+    Ok((frames, hasher.finalize().to_hex().to_string(), embedded))
 }
 
 /// Every stored session, ascending id.
@@ -442,91 +624,6 @@ fn record(hasher: &mut blake3::Hasher, fields: &[String]) {
     hasher.update(b"\n");
 }
 
-/// blake3 over one tab-separated, newline-terminated record per frame
-/// (`frame id captured_at app_hint window_title browser_url content_text session_id`), then
-/// per session (`session id started_at ended_at kind context_key`), each in ascending id
-/// order, after a version line. Wall-clock columns and the API token are not part of it.
-fn digest(frames: &[FrameEvidence], sessions: &[Session]) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"evalfixture-digest v1\n");
-    for f in frames {
-        record(
-            &mut hasher,
-            &[
-                "frame".to_string(),
-                f.frame_id.to_string(),
-                f.captured_at.to_string(),
-                field(f.app_hint.as_deref()),
-                field(f.window_title.as_deref()),
-                field(f.browser_url.as_deref()),
-                field(f.content_text.as_deref()),
-                field(f.session_id.map(|id| id.to_string()).as_deref()),
-            ],
-        );
-    }
-    for s in sessions {
-        record(
-            &mut hasher,
-            &[
-                "session".to_string(),
-                s.id.to_string(),
-                s.started_at.to_string(),
-                field(s.ended_at.map(|at| at.to_string()).as_deref()),
-                s.kind.as_str().to_string(),
-                field(Some(&s.context_key)),
-            ],
-        );
-    }
-    hasher.finalize().to_hex().to_string()
-}
-
-/// Embeds every frame's non-empty `content_text` (chunk 0, OCR source). Any provider or
-/// store failure aborts the run; nothing falls back to a partial or fake vector.
-async fn embed_frames(
-    store: &SqliteStore,
-    provider: &FastEmbedProvider,
-    frames: &[FrameEvidence],
-) -> Result<u64> {
-    let model = provider.text_model_name().to_string();
-    let todo = frames
-        .iter()
-        .filter(|f| {
-            f.content_text
-                .as_deref()
-                .is_some_and(|t| !t.trim().is_empty())
-        })
-        .count();
-    eprintln!("embedding {todo} frames with {model}");
-    let mut done = 0u64;
-    for frame in frames {
-        let Some(text) = frame
-            .content_text
-            .as_deref()
-            .filter(|t| !t.trim().is_empty())
-        else {
-            continue;
-        };
-        let mut vectors = provider
-            .embed_texts(&[text.to_string()])
-            .await
-            .with_context(|| format!("embedding frame {}", frame.frame_id))?;
-        let vector = vectors.pop().ok_or_else(|| {
-            anyhow!(
-                "the embedder returned no vector for frame {}",
-                frame.frame_id
-            )
-        })?;
-        store
-            .upsert_text_embedding(frame.frame_id, 0, text, ChunkSource::Ocr, &vector, &model)
-            .await?;
-        done += 1;
-        if done.is_multiple_of(200) {
-            eprintln!("embedded {done}/{todo}");
-        }
-    }
-    Ok(done)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,9 +640,11 @@ mod tests {
             GenOptions {
                 out_dir: PathBuf::from("x"),
                 seed: DEFAULT_SEED,
+                start: default_start(),
                 weeks: DEFAULT_WEEKS,
                 frames_per_week: DEFAULT_FRAMES_PER_WEEK,
                 embeddings: true,
+                embed_frames: None,
             }
         );
         let opts = GenOptions::parse(&args(&[
@@ -553,6 +652,8 @@ mod tests {
             "y",
             "--seed",
             "0x5cee_55ee_4152_0004",
+            "--start",
+            "2027-01-04",
             "--weeks",
             "2",
             "--frames-per-week",
@@ -562,8 +663,20 @@ mod tests {
         .unwrap();
         assert_eq!(opts.seed, DEFAULT_SEED);
         assert_eq!(
-            (opts.weeks, opts.frames_per_week, opts.embeddings),
-            (2, 40, false)
+            (
+                opts.start,
+                opts.weeks,
+                opts.frames_per_week,
+                opts.embeddings,
+                opts.embed_frames,
+            ),
+            (
+                NaiveDate::from_ymd_opt(2027, 1, 4).unwrap(),
+                2,
+                40,
+                false,
+                None,
+            )
         );
         assert_eq!(
             GenOptions::parse(&args(&["--out", "z", "--seed", "42"]))
@@ -571,6 +684,30 @@ mod tests {
                 .seed,
             42
         );
+        let bounded = GenOptions::parse(&args(&[
+            "--out",
+            "b",
+            "--weeks",
+            "52",
+            "--frames-per-week",
+            "1000",
+            "--embed-frames",
+            "500",
+        ]))
+        .unwrap();
+        assert_eq!(bounded.embed_frames, Some(500));
+        assert_eq!(bounded.total_frames(), 52_000);
+        let multi_year = GenOptions::parse(&args(&[
+            "--out",
+            "m",
+            "--weeks",
+            "520",
+            "--frames-per-week",
+            "210",
+            "--no-embeddings",
+        ]))
+        .unwrap();
+        assert_eq!(multi_year.total_frames(), 109_200);
     }
 
     #[test]
@@ -595,6 +732,96 @@ mod tests {
         assert!(frames.to_string().contains("--frames-per-week"), "{frames}");
         let seed = GenOptions::parse(&args(&["--out", "x", "--seed", "0xzz"])).unwrap_err();
         assert!(seed.to_string().contains("--seed"), "{seed}");
+        let start_format =
+            GenOptions::parse(&args(&["--out", "x", "--start", "2026-09-07T00:00"])).unwrap_err();
+        assert!(
+            start_format.to_string().contains("--start"),
+            "{start_format}"
+        );
+        let start_weekday =
+            GenOptions::parse(&args(&["--out", "x", "--start", "2026-09-08"])).unwrap_err();
+        assert!(
+            start_weekday.to_string().contains("Monday"),
+            "{start_weekday}"
+        );
+        let weeks_cap = GenOptions::parse(&args(&["--out", "x", "--weeks", "1041"])).unwrap_err();
+        assert!(weeks_cap.to_string().contains("--weeks"), "{weeks_cap}");
+        let frames_cap =
+            GenOptions::parse(&args(&["--out", "x", "--frames-per-week", "50001"])).unwrap_err();
+        assert!(
+            frames_cap.to_string().contains("--frames-per-week"),
+            "{frames_cap}"
+        );
+        let total_cap = GenOptions::parse(&args(&[
+            "--out",
+            "x",
+            "--weeks",
+            "52",
+            "--frames-per-week",
+            "50000",
+            "--no-embeddings",
+        ]))
+        .unwrap_err();
+        assert!(total_cap.to_string().contains("2000000"), "{total_cap}");
+        let embed_conflict = GenOptions::parse(&args(&[
+            "--out",
+            "x",
+            "--weeks",
+            "2",
+            "--frames-per-week",
+            "40",
+            "--no-embeddings",
+            "--embed-frames",
+            "5",
+        ]))
+        .unwrap_err();
+        assert!(
+            embed_conflict.to_string().contains("--embed-frames"),
+            "{embed_conflict}"
+        );
+        let embed_zero = GenOptions::parse(&args(&[
+            "--out",
+            "x",
+            "--weeks",
+            "2",
+            "--frames-per-week",
+            "40",
+            "--embed-frames",
+            "0",
+        ]))
+        .unwrap_err();
+        assert!(
+            embed_zero.to_string().contains("--embed-frames"),
+            "{embed_zero}"
+        );
+        let embed_too_many = GenOptions::parse(&args(&[
+            "--out",
+            "x",
+            "--weeks",
+            "2",
+            "--frames-per-week",
+            "40",
+            "--embed-frames",
+            "81",
+        ]))
+        .unwrap_err();
+        assert!(
+            embed_too_many.to_string().contains("1..=80"),
+            "{embed_too_many}"
+        );
+        let embed_all_cap = GenOptions::parse(&args(&[
+            "--out",
+            "x",
+            "--weeks",
+            "52",
+            "--frames-per-week",
+            "1000",
+        ]))
+        .unwrap_err();
+        assert!(
+            embed_all_cap.to_string().contains("--no-embeddings"),
+            "{embed_all_cap}"
+        );
     }
 
     #[test]

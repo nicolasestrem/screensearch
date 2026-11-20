@@ -1322,3 +1322,46 @@ like at night in the city; what a hypothesis card looks like with no English or 
 what "take it" makes permanent; the ranking signals over ScreenSearch data; the diary format and
 where it lives. Order: the city must read the ScreenSearch export first (repository districts),
 because a dream has nothing to rework without it.
+
+### 2026-11-20 — Off-arc: `evalfixture` synthetic-dataset scale (dev-only, uncommitted)
+
+**Scope.** Dev-only tooling; no shipped crate, schema, setting, IPC or network change. The maintainer
+asked for a tool that generates large synthetic datasets for testing, and in-session chose to extend
+`crates/evalfixture` (the existing `ssv2c-evalfixture gen`) rather than add a generic generator or a
+DSH tool. Working branch `feat/evalfixture-large-datasets`; nothing committed (0.4.5 D18).
+
+**What changed.** `--start <Monday>` (default 2026-09-07), `--weeks` 1-1040 (was 52),
+`--frames-per-week` 2-50,000 (was 10,000), guarded by a 2,000,000-frame ceiling per fixture;
+`--embed-frames <n>` bounds the vector arm and embed-all stays the default only up to 20,000 frames.
+`finish_fixture` streams the production `frame_page` read-back and hashes page by page (memory
+bounded by one page) while embedding in the same pass; progress every 10,000 written frames; store
+calls carry error context; the printed summary gains `start=`. The default fixture remains
+byte-identical: the new pinned test asserts `digest=69dac6e6ae417c0a6bc25590948a4dde8a6e1d500f99bb177f80a6bc794b8ab9`,
+1,260 frames, 218 sessions.
+
+**Verification (raw exits).**
+- `cargo fmt --all -- --check` -> 0.
+- `cargo clippy --workspace --all-targets -- -D warnings` -> 0, `Finished dev profile ... in 23.60s`.
+- `cargo test -p evalfixture` -> 0: unit 17 passed, `fixture_determinism` 6 passed, `serve_api`
+  1 passed, 0 doc-tests.
+- `cargo build --workspace` -> 0, `Finished dev profile ... in 46.75s`.
+- `git diff --exit-code -- ui/src/bindings` -> 0.
+
+**Observed runs.** Ten-year fixture `gen --start 2020-01-06 --weeks 520 --frames-per-week 210
+--no-embeddings` printed `frames=109200`, `sessions=19574`, `embeddings=0`,
+`digest=6d144226ac0faa8d664722f9e6b26b3d70206603ea4afdcb35d76cd464ad0193`, `db=.../big10y/screensearch.db`;
+472.1 s, 1,058,529,280 bytes. SQL over it: `text_spans=8195569`, 2,600 distinct working days,
+2020-01-06 08:18 -> 2029-12-21 13:46 local, 6-9 sessions on every day. Dense week
+`--weeks 1 --frames-per-week 20000`: 20,000 frames, 5 days, hours 8-18, 6-9 sessions/day, 58.3 s
+(the old cap was 10,000/week). Bounded embeddings on an 8-frame week with `--embed-frames 3`:
+`embeddings=3` and 3 `embeddings` rows. The implicit embed-all guard on `--weeks 52
+--frames-per-week 1000` exits 1 naming `--no-embeddings` and `--embed-frames`; a custom Monday start
+(`2027-03-01`, one week) writes 2027-03-01 08:36 -> 2027-03-05 08:14.
+
+**Caveat.** In this session the sandbox denies `%TEMP%`; SQLite temp spills failed with `unable to
+open database file` on dense sessions until `TEMP`/`TMP` were pointed at a workspace directory. That
+is environmental, not the tool: a normal Windows profile has a writable `%TEMP%`. Recorded so a
+future sandbox run does not misread it as a regression.
+
+**Open.** Nothing committed or pushed; no PR. The 2,000,000-frame ceiling and the 20,000-frame
+embed-all default are deliberate guards, not spec values (`07`, 2026-11-20).

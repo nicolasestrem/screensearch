@@ -576,3 +576,18 @@ in `07`.
 
 Not done, recorded in `07`: dreaming, repo districts in the new city, kit people and vehicles in
 Unity, any run on a physical phone, any link to the ScreenSearch export.
+
+### 2026-11-20: `evalfixture` synthetic-dataset scale (dev-only tooling)
+
+`ssv2c-evalfixture gen` now produces multi-year synthetic histories for scale and load testing while
+keeping the committed default fixture byte-identical. New: `--start <Monday>` (default remains
+2026-09-07), `--weeks` 1-1040 (was 52), `--frames-per-week` 2-50,000 (was 10,000), guarded by a
+2,000,000-frame ceiling per fixture; `--embed-frames <n>` bounds the vector arm, and embed-all stays
+the default only up to 20,000 frames. The read-back digest streams the production `frame_page` read
+so a multi-million-frame fixture does not hold its own content text in RAM; the pinned default
+digest `69dac6e6...` still matches. Verification: 24 evalfixture tests (17 unit, 6 determinism, 1
+serve-API), fmt, workspace clippy, workspace build and the bindings guard all exit 0. A 10-year
+fixture (520 weeks from 2020-01-06) wrote 109,200 frames / 19,574 sessions / 8,195,569 text spans
+(1,058,529,280 bytes) in 472 s; a 20,000-frame week verified the density cap lift (5 days, 8-18h,
+6-9 sessions/day). `docs/TESTING.md` documents the commands and `07` records the spec-silent
+decision. No schema, settings, IPC, runtime or network change; no commit, push, PR or merge.
