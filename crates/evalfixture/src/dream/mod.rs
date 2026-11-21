@@ -22,9 +22,10 @@
 //! command runs unchanged on a real profile. `DREAMS.md` and `MEMORY.md` are written from
 //! scratch on every run and never opened for reading: the diary is never an input.
 //!
-//! The diary prose comes from an OpenAI-compatible chat completion (`DREAM_API_BASE`,
+//! Narrative entries come from an OpenAI-compatible chat completion (`DREAM_API_BASE`,
 //! `DREAM_API_MODEL`, `DREAM_API_KEY`, or the same keys in `--env-file`). Without one, or when
-//! the reply fails validation, the entry is the rule-based draft and says so.
+//! the reply fails validation, a narrative entry uses the labelled rule-based draft. A quiet
+//! sweep gets a fixed short line without requesting a completion.
 
 mod data;
 mod diary;
@@ -45,7 +46,7 @@ OPTIONS:
   --db <path>             history database (normal v15 schema), opened read-only
   --out <dir>             output directory; DREAMS.md and MEMORY.md are (re)written there
   --min-gap-mins <n>      shortest absence that counts as a sweep (default 120)
-  --no-model              never call a model: every entry is the labelled degraded draft
+  --no-model              write labelled rule-based drafts for narrative entries
   --env-file <path>       KEY=VALUE file with DREAM_API_BASE / DREAM_API_MODEL / DREAM_API_KEY
                           (process environment wins); the key is never printed
   --max-model-calls <n>   hard cap on completions for the whole run (default 200)
@@ -116,7 +117,7 @@ pub async fn run(args: &[String]) -> Result<()> {
         return Ok(());
     }
     let opts = DreamOptions::parse(args)?;
-    let history = data::History::load(&opts.db)?;
+    let history = data::History::load(&opts.db, opts.min_gap_ms)?;
     let model = if opts.no_model {
         None
     } else {

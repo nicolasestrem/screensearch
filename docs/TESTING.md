@@ -305,6 +305,38 @@ host). Each persona run writes its identity to the `evalfixture.persona` setting
 persona print the same digest, and another persona produces different frames, apps and text
 (proved by `cargo test -p evalfixture --test fixture_determinism`).
 
+### Market gardener dream replay
+
+`--persona market-gardener --weeks 4` picks an authored month for the invented Windows persona,
+Lucía Ferrer. Its screens show the work at different stages, including workbook revisions,
+responses added to existing threads, and related work resumed in another app. The generator writes
+`PLANTED.json` next to the new database with the dates, apps, windows and text for the expected
+story beats and distant links. The `dream` command opens the database read-only and uses its
+captured text, vectors and work graph. The answer key is used after the diary is written.
+The authored month requires at least 14 frames per week. Other month lengths use the generic
+persona generator.
+
+Run from the repo root on Windows. Use a fresh fixture directory. The generator looks for the
+EmbeddingGemma model under `<fixture>/models/fastembed`, so copy the existing cache there for a
+replay without model downloads.
+
+```powershell
+$fixture = 'harness-data/dreams-fixture/market-gardener-v2'
+$diary = 'harness-data/dreams/market-gardener'
+cargo run --locked --offline -p evalfixture -- gen --out $fixture --persona market-gardener --weeks 4 --frames-per-week 700
+cargo run --locked --offline -p evalfixture -- graph --db "$fixture/screensearch.db"
+cargo run --locked --offline -p evalfixture -- dream --db "$fixture/screensearch.db" --out $diary --no-model
+Copy-Item -LiteralPath "$fixture/PLANTED.json" -Destination "$diary/PLANTED.json"
+```
+
+The original diary used a remote completion endpoint. The Windows-only v2 replay uses the same
+locally cached EmbeddingGemma model for recall and passes `--no-model` to keep the diary facts on
+the machine. Narrative entries are labelled degraded. Score the diary against the manifest after
+replay. A storyline is found when the entries together show its start, development and outcome.
+A distant link is found when a comparison cites both specified windows and dates and exposes the
+detail they share. Count sentence recurrence by distinct local dates, so several captures of the
+same screen on one day count once. See `specs/05_BUILD_REVIEW.md` for the observed replay results.
+
 ### JSON export (`export`)
 
 ```sh

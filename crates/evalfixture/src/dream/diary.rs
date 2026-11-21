@@ -188,6 +188,12 @@ fn name_of(names: &Names, p: &Scored) -> String {
         .unwrap_or_else(|| p.label.clone())
 }
 
+fn content_quotes(p: &Scored) -> impl Iterator<Item = (&Evidence, &str)> {
+    p.evidence
+        .iter()
+        .filter_map(|e| e.fragment.as_deref().map(|line| (e, line)))
+}
+
 const NAME_SYSTEM: &str = "You name one long-term memory distilled from a person's screen \
 history. Reply with ONE English sentence of 8 to 22 words stating what keeps recurring in their \
 life or work, using only the facts given (documents, places, on-screen lines, which may be in \
@@ -203,7 +209,7 @@ async fn name_memories(history: &History, outcome: &Outcome, model: &ModelConfig
                 history.persona.role.as_deref().unwrap_or(&history.persona.description),
                 p.label,
                 p.probes.join("; "),
-                p.lines.join(" | "),
+                content_quotes(p).map(|(_, line)| line).collect::<Vec<_>>().join(" | "),
                 p.days.len(),
                 p.days.first().cloned().unwrap_or_default(),
                 p.days.last().cloned().unwrap_or_default(),
@@ -211,7 +217,10 @@ async fn name_memories(history: &History, outcome: &Outcome, model: &ModelConfig
             if let Ok(text) = model.complete(NAME_SYSTEM, &user).await {
                 let text = text.trim().trim_matches('"').trim().to_string();
                 let words = text.split_whitespace().count();
-                if (6..=28).contains(&words) && !text.contains('\n') && !text.contains('[') {
+                if (6..=28).contains(&words)
+                    && !text
+                        .contains(['\n', '[', '{', '}', '"', '\u{2014}', '\u{201c}', '\u{201d}'])
+                {
                     names.insert(p.key, text);
                 }
             }
@@ -239,7 +248,6 @@ fn build_sheet(history: &History, sweep: &SweepOutcome, outcome: &Outcome, names
     ));
 
     // Light
-    let mut occupied = Vec::new();
     for (e, frames) in &l.occupied {
         let m = sheet.cite(e);
         let frag = e
@@ -252,7 +260,6 @@ fn build_sheet(history: &History, sweep: &SweepOutcome, outcome: &Outcome, names
             quote(&e.title),
             e.app
         ));
-        occupied.push((m, e.clone()));
     }
     if let Some(e) = &l.last {
         let m = sheet.cite(e);
@@ -282,22 +289,42 @@ fn build_sheet(history: &History, sweep: &SweepOutcome, outcome: &Outcome, names
             quote(head)
         ));
     }
-    if let Some((m, e)) = occupied.first() {
-        let mut s = format!(
-            "Before stepping away, {who} spent most of the stretch on {} {m}",
-            quote(&e.title)
-        );
-        if let Some((m2, e2)) = occupied.get(1) {
-            let _ = write!(s, ", with {} close behind {m2}", quote(&e2.title));
-        }
-        s.push('.');
-        sheet.draft.push(s);
-    }
-    if let Some(e) = l.brushed.first() {
+    for e in &sweep.fresh {
         let m = sheet.cite(e);
+        if let Some(line) = &e.fragment {
+            sheet.facts.push(format!(
+                "FIRST VISIT {m}: {} showed {}.",
+                e.title,
+                quote(line)
+            ));
+        }
+    }
+    for r in &sweep.revisions {
+        let (Some(before), Some(after)) = (&r.past.fragment, &r.now.fragment) else {
+            continue;
+        };
+        let past = sheet.cite(&r.past);
+        let now = sheet.cite(&r.now);
+        let revision = if r.added {
+            "appeared in the later capture"
+        } else {
+            "was visible instead in the later capture"
+        };
+        sheet.facts.push(format!(
+            "CHANGE in {}: on {} it showed {} {past}; on {} {} {revision} {now}.",
+            r.now.title,
+            history.day(r.past.at),
+            quote(before),
+            history.day(r.now.at),
+            quote(after)
+        ));
         sheet.draft.push(format!(
-            "{} crossed the screen only once {m}.",
-            quote(&e.title)
+            "On {}, {} showed {} {past}. On {}, {} {revision} {now}.",
+            history.day(r.past.at),
+            r.now.title,
+            quote(before),
+            history.day(r.now.at),
+            quote(after)
         ));
     }
 
@@ -316,15 +343,19 @@ fn build_sheet(history: &History, sweep: &SweepOutcome, outcome: &Outcome, names
             echo.past.fragment.as_deref().map(|f| format!(" Then: {}.", quote(f))).unwrap_or_default(),
         ));
     }
-    if let Some(echo) = sweep.echoes.first() {
+    for echo in &sweep.echoes {
+        let (Some(before), Some(after)) = (&echo.past.fragment, &echo.now.fragment) else {
+            continue;
+        };
         let now = sheet.cite(&echo.now);
         let past = sheet.cite(&echo.past);
         sheet.draft.push(format!(
-            "The dream tied {} {now} to {} {past}, {:.0} days apart: close in meaning (cosine {:.2}) while sharing almost nothing on the surface.",
-            quote(&echo.now.title),
-            quote(&echo.past.title),
+            "{:.0} days after {} showed {} {past}, {} showed {} {now}. Their wording suggested a connection.",
             echo.days_apart,
-            echo.similarity
+            echo.past.title,
+            quote(before),
+            echo.now.title,
+            quote(after)
         ));
     }
     for g in &sweep.graph {
@@ -342,14 +373,48 @@ fn build_sheet(history: &History, sweep: &SweepOutcome, outcome: &Outcome, names
         sheet
             .facts
             .push(format!("REM work graph {first} {second}: {what}."));
+        if let (Some(before), Some(after)) = (&g.first.fragment, &g.second.fragment) {
+            sheet.facts.push(format!(
+                "Earlier {first}: {}. Later {second}: {}.",
+                quote(before),
+                quote(after)
+            ));
+            if sheet.draft.is_empty() {
+                sheet.draft.push(format!(
+                    "After {:.0} days, {} and {} still appeared connected. The earlier capture showed {} {first}. The later capture showed {} {second}.",
+                    g.gap_days,
+                    g.first.title,
+                    g.second.title,
+                    quote(before),
+                    quote(after)
+                ));
+            }
+        }
     }
     if sweep.echoes.is_empty() && sweep.graph.is_empty() {
         sheet
             .facts
             .push("REM: nothing from earlier days echoed this stretch.".to_string());
-        sheet
-            .draft
-            .push("Nothing from earlier days echoed this stretch.".to_string());
+    }
+
+    // Bring in one otherwise unlinked new screen even during a busier stretch.
+    for e in sweep
+        .fresh
+        .iter()
+        .filter(|e| {
+            !sweep.echoes.iter().any(|link| link.now.title == e.title)
+                && !sweep.graph.iter().any(|link| link.second.title == e.title)
+        })
+        .take(1)
+    {
+        if let Some(line) = &e.fragment {
+            let m = sheet.cite(e);
+            sheet.draft.push(format!(
+                "{who}'s screen showed {} with the line {} {m}.",
+                e.title,
+                quote(line)
+            ));
+        }
     }
 
     // Deep
@@ -360,68 +425,38 @@ fn build_sheet(history: &History, sweep: &SweepOutcome, outcome: &Outcome, names
             "DEEP promoted to MEMORY.md {marks}: the memory {} (built from {}) with score {:.2} (gates: score >= {:.2}, recalls {} >= {}, distinct queries {} >= {}), seen on {} days. It was reached from: {}. What keeps returning: {}.",
             quote(&name_of(names, p)), quote(&p.label), p.score, g.min_score, p.recall, g.min_recall_count, p.queries, g.min_unique_queries, p.days.len(),
             p.probes.iter().map(|q| quote(q)).collect::<Vec<_>>().join(", "),
-            p.lines.iter().map(|l| quote(l)).collect::<Vec<_>>().join("; ")
+            content_quotes(p).map(|(_, line)| line).collect::<Vec<_>>().join(" | ")
         ));
         sheet.draft.push(format!(
             "A memory was kept: {}, with a score of {:.2}, recalled {} times from {} different directions {marks}.",
-            quote(&name_of(names, p)), p.score, p.recall, p.queries
-        ));
-    }
-    for r in &sweep.reinforced {
-        sheet.facts.push(format!(
-            "DEEP already in memory and reinforced: {} (score now {:.2}).",
-            quote(&r.label),
-            r.score
+            name_of(names, p), p.score, p.recall, p.queries
         ));
     }
     if sweep.promoted.is_empty() {
-        if let Some(best) = sweep.considered.iter().find(|c| c.failed_gate.is_some()) {
-            let marks: String = best
-                .evidence
-                .iter()
-                .take(1)
-                .map(|e| sheet.cite(e))
-                .collect();
-            let gate = best.failed_gate.clone().unwrap_or_default();
-            sheet.facts.push(format!(
-                "DEEP nothing promoted {marks}. Strongest candidate {} scored {:.2} and stopped at the gate: {gate}.",
-                quote(&best.label),
-                best.score
-            ));
-            sheet.draft.push(format!(
-                "Nothing new reached long-term memory; {} came closest at {:.2} and stopped at the gate ({gate}) {marks}.",
-                quote(&best.label),
-                best.score
-            ));
-        } else if sweep.reinforced.is_empty() {
-            sheet
-                .facts
-                .push("DEEP no candidate reached the gates.".to_string());
-        }
+        sheet.facts.push("DEEP nothing new was kept.".to_string());
     }
     sheet
 }
 
-const SYSTEM: &str = "You write one entry of a Dream Diary: what a person's screen history \
-'dreamt' while they were away from it. You receive a fact sheet and an opening instruction. Write \
-ONE paragraph of 4 or 5 sentences, 60 to 110 words, in English, third person, past tense, about \
-the named person only. It must read like a diary a stranger would enjoy: concrete, calm, quietly \
-poetic, never cute, never grand. Hard rules: use ONLY facts from the sheet; never invent people, \
-places, numbers, durations, years, intentions or feelings; every sentence except the first ends \
-with one or two evidence markers exactly as given, like [E2] or [E1][E4], and a marker must point \
-to the fact it supports; quote at most two short on-screen phrases, verbatim in their original \
-language inside curly quotes, with an English gloss; say what filled the stretch, what came back \
-from an earlier day and how far back, and what was kept for the long term or held back and why \
-(give the score when the sheet gives one). Never use the words Light, REM, Deep, phase, sweep, \
-embedding, database, software or model, never address the reader, never use square brackets \
-except for markers. Output only the paragraph.";
+const SYSTEM: &str = "Write one Dream Diary entry in one English paragraph of 60 to 110 words, \
+in third person and past tense. Lead with a concrete change from the sheet: something added, a \
+number that moved, an answer that arrived or an earlier idea taking a new form. Say what the \
+earlier capture showed and what the later one shows, with both citations. A comparison across \
+windows is a possible connection; never present it as a confirmed relationship. If the sheet \
+has only first visits, convey one or two specific details. Mention a memory only if the sheet \
+says one was newly kept. Use only the sheet. Every sentence ends with evidence markers \
+exactly as given, like [E2] or [E1][E4]. Quote at most two short phrases from screen content, \
+verbatim within curly quotation marks and cited to the exact marker that shows the words. \
+Give the English meaning without quotes. Refer to window titles without quotation marks. \
+Never use curly braces, square brackets outside evidence markers, or an em dash. Never name \
+the phases, embeddings, the database or the model. Output only the paragraph.";
 
 /// Opening instructions, picked by sweep number so consecutive entries do not all start the
 /// same way (the diary itself is never read back to avoid repetition).
 const OPENINGS: [&str; 6] = [
     "Open with the hour the screen went dark.",
     "Open with one concrete object or document that was on the screen.",
-    "Open with what came back from an earlier day.",
+    "Open with the details that best distinguish the earlier and later captures.",
     "Open with the length of the absence.",
     "Open with the last thing on the screen before it went dark.",
     "Open with the thread that tied the stretch together, without naming the person first.",
@@ -442,6 +477,43 @@ fn markers_in(text: &str) -> Vec<usize> {
     out
 }
 
+/// Contiguous citation groups outside quoted content, with byte offsets for rendering.
+fn citation_groups(text: &str) -> Vec<(std::ops::Range<usize>, Vec<usize>)> {
+    let mut groups = Vec::new();
+    let mut quote_end = None;
+    let mut end = 0;
+    for (i, c) in text.char_indices() {
+        if i < end {
+            continue;
+        }
+        match c {
+            c if quote_end == Some(c) => quote_end = None,
+            '\u{201c}' if quote_end.is_none() => quote_end = Some('\u{201d}'),
+            '"' if quote_end.is_none() => quote_end = Some('"'),
+            '[' if quote_end.is_none() => {
+                let mut cursor = &text[i..];
+                let mut marks = Vec::new();
+                while let Some(marker) = cursor.trim_start().strip_prefix("[E") {
+                    let Some((digits, remaining)) = marker.split_once(']') else {
+                        break;
+                    };
+                    let Ok(number) = digits.parse::<usize>() else {
+                        break;
+                    };
+                    marks.push(number);
+                    cursor = remaining;
+                }
+                if !marks.is_empty() {
+                    end = text.len() - cursor.len();
+                    groups.push((i..end, marks));
+                }
+            }
+            _ => {}
+        }
+    }
+    groups
+}
+
 /// Accepts a reply only if every marker is known, every sentence after the first has one,
 /// and the length is in budget.
 fn validate(text: &str, known: usize) -> std::result::Result<(), String> {
@@ -455,6 +527,9 @@ fn validate(text: &str, known: usize) -> std::result::Result<(), String> {
         .fold(text.to_string(), |t, n| t.replace(&format!("[E{n}]"), ""));
     if stripped.contains('[') || stripped.contains(']') {
         return Err("square brackets outside evidence markers".to_string());
+    }
+    if stripped.contains(['{', '}', '\u{2014}']) {
+        return Err("braces or em dash in diary prose".to_string());
     }
     for word in ["REM", "Light", "Deep "] {
         if stripped.contains(word) {
@@ -484,40 +559,62 @@ fn validate(text: &str, known: usize) -> std::result::Result<(), String> {
             return Err(format!("mentions `{banned}`"));
         }
     }
-    // A claim that quotes the screen must carry evidence; at most two sentences may go
-    // without (a scene-setting opener and a "nothing echoed" kind of negative).
-    let sentences = sentences(text);
-    let mut bare = 0;
-    for s in &sentences {
-        if markers_in(s).is_empty() {
-            if s.contains('\u{201c}') {
-                return Err(format!("quoted claim without evidence: {s}"));
-            }
-            bare += 1;
-        }
-    }
-    if bare > 2 {
-        return Err(format!(
-            "{bare} sentences without evidence, at most 2 allowed"
-        ));
-    }
     Ok(())
 }
 
+/// Drop each quoted claim unless all its quotes occur verbatim in at least one
+/// of the specific frames it cites. A phrase may be a substring of one screen line.
+fn grounded_claims(text: &str, matches: impl Fn(usize, &str) -> bool) -> String {
+    sentences(text)
+        .into_iter()
+        .filter(|sentence| {
+            let groups = citation_groups(sentence);
+            if groups.is_empty() {
+                return false;
+            }
+            let mut open = None;
+            for (i, c) in sentence.char_indices() {
+                match open {
+                    Some((start, close)) if c == close => {
+                        let phrase: &str = &sentence[start..i];
+                        let cited = groups
+                            .iter()
+                            .find(|(range, _)| range.start > i)
+                            .is_some_and(|(_, marks)| marks.iter().any(|&n| matches(n, phrase)));
+                        if phrase.trim().is_empty() || !cited {
+                            return false;
+                        }
+                        open = None;
+                    }
+                    None if c == '\u{201c}' || c == '"' => {
+                        let close = if c == '"' { '"' } else { '\u{201d}' };
+                        open = Some((i + c.len_utf8(), close));
+                    }
+                    None if c == '\u{201d}' => return false,
+                    _ => {}
+                }
+            }
+            open.is_none()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Splits prose into sentences: a sentence ends at `.`, `!` or `?` followed by whitespace,
-/// outside curly quotes, so file names, decimals and quoted on-screen text do not split.
+/// outside quotes, so file names, decimals and quoted on-screen text do not split.
 /// A marker group written after the full stop stays with its sentence.
 fn sentences(text: &str) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut out: Vec<String> = Vec::new();
     let mut current = String::new();
-    let mut in_quote = false;
+    let mut quote_end = None;
     for (i, &c) in chars.iter().enumerate() {
         current.push(c);
         match c {
-            '\u{201c}' => in_quote = true,
-            '\u{201d}' => in_quote = false,
-            '.' | '!' | '?' if !in_quote => {
+            c if quote_end == Some(c) => quote_end = None,
+            '\u{201c}' if quote_end.is_none() => quote_end = Some('\u{201d}'),
+            '"' if quote_end.is_none() => quote_end = Some('"'),
+            '.' | '!' | '?' if quote_end.is_none() => {
                 let next = chars.get(i + 1);
                 if next.map(|n| n.is_whitespace()).unwrap_or(true) {
                     out.push(std::mem::take(&mut current));
@@ -558,9 +655,6 @@ fn sentences(text: &str) -> Vec<String> {
         }
     }
     merged
-        .into_iter()
-        .filter(|s| s.split_whitespace().count() > 2)
-        .collect()
 }
 
 fn tuple(history: &History, e: &Evidence) -> String {
@@ -575,43 +669,25 @@ fn tuple(history: &History, e: &Evidence) -> String {
 /// Replaces each run of adjacent markers with one parenthesised evidence group.
 fn resolve(history: &History, text: &str, evidence: &[Evidence]) -> String {
     let mut out = String::new();
-    let mut rest = text;
-    loop {
-        let Some(i) = rest.find("[E") else {
-            out.push_str(rest);
-            break;
-        };
-        out.push_str(rest[..i].trim_end());
+    let mut previous_end = 0;
+    for (range, marks) in citation_groups(text) {
+        out.push_str(text[previous_end..range.start].trim_end());
         let mut group = Vec::new();
-        let mut cursor = &rest[i..];
-        while let Some(stripped) = cursor.trim_start().strip_prefix("[E") {
-            let digits: String = stripped
-                .chars()
-                .take_while(|c| c.is_ascii_digit())
-                .collect();
-            let after = &stripped[digits.len()..];
-            let Some(after) = after.strip_prefix(']') else {
-                break;
-            };
-            if let Ok(n) = digits.parse::<usize>() {
-                if let Some(e) = evidence.get(n.wrapping_sub(1)) {
-                    let t = tuple(history, e);
-                    if !group.contains(&t) {
-                        group.push(t);
-                    }
+        for n in marks {
+            if let Some(e) = evidence.get(n.wrapping_sub(1)) {
+                let t = tuple(history, e);
+                if !group.contains(&t) {
+                    group.push(t);
                 }
             }
-            cursor = after;
         }
         if !group.is_empty() {
             let _ = write!(out, " ({})", group.join("; "));
         }
-        rest = cursor;
-        if rest.is_empty() {
-            break;
-        }
+        previous_end = range.end;
     }
-    out.replace(" .", ".").replace(" ,", ",")
+    out.push_str(&text[previous_end..]);
+    out
 }
 
 struct Entry {
@@ -628,6 +704,13 @@ async fn write_entry(
     names: &Names,
 ) -> Entry {
     let sheet = build_sheet(history, sweep, outcome, names);
+    if sheet.draft.is_empty() {
+        return Entry {
+            number: sweep.number,
+            text: "This stretch brought no new connection or change to keep.".to_string(),
+            degraded: None,
+        };
+    }
     let draft = || resolve(history, &sheet.draft.join(" "), &sheet.evidence);
     let Some(model) = model else {
         return Entry {
@@ -657,16 +740,35 @@ async fn write_entry(
             format!("{user}\nYour previous paragraph was rejected: {last_error}. Write it again following every rule.")
         };
         match model.complete(SYSTEM, &prompt).await {
-            Ok(text) => match validate(&text, sheet.evidence.len()) {
-                Ok(()) => {
-                    return Entry {
-                        number: sweep.number,
-                        text: resolve(history, &text, &sheet.evidence),
-                        degraded: None,
+            Ok(text) => {
+                let text = text
+                    .replace("{\u{201c}", "\u{201c}")
+                    .replace("\u{201d}}", "\u{201d}")
+                    .replace('\u{2014}', " - ");
+                match validate(&text, sheet.evidence.len()) {
+                    Ok(()) => {
+                        let grounded = grounded_claims(&text, |marker, phrase| {
+                            sheet.evidence.get(marker.wrapping_sub(1)).is_some_and(|e| {
+                                history.frames[e.frame]
+                                    .lines
+                                    .iter()
+                                    .any(|line| line.contains(phrase))
+                            })
+                        });
+                        if !markers_in(&grounded).is_empty() {
+                            return Entry {
+                                number: sweep.number,
+                                text: resolve(history, &grounded, &sheet.evidence),
+                                degraded: None,
+                            };
+                        }
+                        last_error =
+                            "reply had no grounded claims after unsupported quotes were dropped"
+                                .to_string();
                     }
+                    Err(e) => last_error = format!("reply failed validation ({e})"),
                 }
-                Err(e) => last_error = format!("reply failed validation ({e})"),
-            },
+            }
             Err(e) => last_error = format!("{e:#}"),
         }
     }
@@ -697,7 +799,7 @@ pub async fn write_all(
 
     let who = subject(history);
     let mut diary = String::new();
-    let _ = writeln!(diary, "# Dream Diary \u{2014} {who}\n");
+    let _ = writeln!(diary, "# Dream Diary for {who}\n");
     match &history.persona.role {
         Some(role) => {
             let _ = writeln!(
@@ -748,8 +850,6 @@ pub async fn write_all(
                     .collect::<Vec<_>>()
                     .join(", ")
             )
-        } else if !sweep.reinforced.is_empty() {
-            format!("reinforced {}", quote(&sweep.reinforced[0].label))
         } else {
             "kept nothing".to_string()
         };
@@ -784,7 +884,7 @@ fn memory_md(history: &History, outcome: &Outcome, names: &Names) -> String {
     let who = subject(history);
     let g = &outcome.gates;
     let mut md = String::new();
-    let _ = writeln!(md, "# Long-term memory \u{2014} {who}\n");
+    let _ = writeln!(md, "# Long-term memory for {who}\n");
     let _ = writeln!(
         md,
         "Promoted by Deep sleep. A theme is kept only when its score is at least {:.2}, it was recalled at least {} times and by at least {} distinct queries. Score = {} plus a small Light/REM reinforcement boost (at most 0.10). Recall comes from the stored embeddings of each window ({} episodes in {} themes; echo floor cosine {:.2}, theme floor {:.2}; source: {}) and from the work graph.\n",
@@ -857,19 +957,8 @@ fn entry(
         p.days.first().cloned().unwrap_or_default(),
         p.days.last().cloned().unwrap_or_default(),
     );
-    if !p.lines.is_empty() {
-        let _ = writeln!(
-            md,
-            "- What keeps returning: {}",
-            p.lines
-                .iter()
-                .map(|l| quote(l))
-                .collect::<Vec<_>>()
-                .join("; ")
-        );
-    }
-    for e in &p.evidence {
-        let _ = writeln!(md, "- Source: ({})", tuple(history, e));
+    for (e, line) in content_quotes(p) {
+        let _ = writeln!(md, "- Source: {} ({})", quote(line), tuple(history, e));
     }
     let _ = writeln!(
         md,
@@ -912,7 +1001,7 @@ fn entry(
 
 #[cfg(test)]
 mod tests {
-    use super::{markers_in, sentences, validate};
+    use super::{grounded_claims, markers_in, sentences, validate};
 
     #[test]
     fn sentences_ignore_file_names_decimals_and_quotes() {
@@ -923,15 +1012,38 @@ mod tests {
     }
 
     #[test]
-    fn validation_rejects_unknown_markers_and_unevidenced_quotes() {
+    fn validation_rejects_unknown_markers_and_braces() {
         let filler = "word ".repeat(60);
         assert!(validate(&format!("{filler} closes here [E9]."), 3).is_err());
-        assert!(validate(
-            &format!("{filler}. She read \u{201c}lonja\u{201d} again."),
-            3
-        )
-        .is_err());
+        assert!(validate(&format!("{filler} closes {{here}} [E2]."), 3).is_err());
         assert!(validate(&format!("{filler} closes here [E2]."), 3).is_ok());
         assert_eq!(markers_in("a [E1][E12] b [Ex]"), vec![1, 12]);
+    }
+
+    #[test]
+    fn drops_only_claims_with_quotes_missing_from_the_cited_frames() {
+        let text = "Sky notes showed \u{201c}Precio nominal: 3,20 euros\u{201d} [E2]. The price sheet showed \u{201c}3,20 euros\u{201d} [E1]. Bay forecast showed \"lluvia débil\" [E2]. The stall draft showed \u{201c}precio nominal\u{201d} [E1]. She wrote \u{201c}Precio nominal\u{201d} again.";
+        let frames = [
+            "Precio nominal: 3,20 euros",
+            "Nublado por la mañana, lluvia débil.",
+        ];
+        assert_eq!(
+            grounded_claims(text, |marker, phrase| frames[marker - 1].contains(phrase)),
+            "The price sheet showed \u{201c}3,20 euros\u{201d} [E1]. Bay forecast showed \"lluvia débil\" [E2]."
+        );
+    }
+
+    #[test]
+    fn each_inline_quote_checks_the_citation_for_its_clause() {
+        let earlier = "Earlier the sheet showed \u{201c}3,20 euros\u{201d} [E1]";
+        let later = "later it showed \u{201c}2,80 euros\u{201d} [E2]";
+        let text = format!(
+            "Earlier the sheet showed \u{201c}2,80 euros\u{201d} [E1], later it showed \u{201c}3,20 euros\u{201d} [E2]. {earlier}, {later}."
+        );
+        let frames = ["Precio anterior: 3,20 euros", "Precio nuevo: 2,80 euros"];
+        assert_eq!(
+            grounded_claims(&text, |marker, phrase| frames[marker - 1].contains(phrase)),
+            format!("{earlier}, {later}.")
+        );
     }
 }

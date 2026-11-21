@@ -71,10 +71,18 @@ pub const SIGNALS: [&str; 6] = [
 /// A pointer into the database: the diary's evidence tuple.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Evidence {
+    pub frame: usize,
     pub at: i64,
     pub app: String,
     pub title: String,
     pub fragment: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Revision {
+    pub past: Evidence,
+    pub now: Evidence,
+    pub added: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -118,7 +126,6 @@ pub struct Scored {
     pub probes: Vec<String>,
     pub days: Vec<String>,
     pub tags: Vec<String>,
-    pub lines: Vec<String>,
     pub evidence: Vec<Evidence>,
     /// `None` when every gate passed.
     pub failed_gate: Option<String>,
@@ -132,7 +139,8 @@ pub struct SweepOutcome {
     pub light: Light,
     pub echoes: Vec<Echo>,
     pub graph: Vec<GraphEcho>,
-    pub considered: Vec<Scored>,
+    pub revisions: Vec<Revision>,
+    pub fresh: Vec<Evidence>,
     pub promoted: Vec<Scored>,
     pub reinforced: Vec<Scored>,
 }
@@ -198,34 +206,6 @@ pub fn stem(title: &str) -> String {
     }
 }
 
-/// On-screen text without a leading reference/date header ("FAC-26 · 07/09/2026 — Cada
-/// albarán…" -> "Cada albarán…"): the header is page furniture, the sentence is the content.
-fn content_part(line: &str) -> &str {
-    match line.split_once(" \u{2014} ") {
-        Some((head, tail))
-            if head.chars().count() <= 32
-                && head.chars().any(|c| c.is_ascii_digit())
-                && tail.split_whitespace().count() >= 3 =>
-        {
-            tail
-        }
-        _ => line,
-    }
-}
-
-fn short(line: &str, max: usize) -> String {
-    let line = content_part(line);
-    if line.chars().count() <= max {
-        return line.to_string();
-    }
-    let mut out: String = line.chars().take(max - 1).collect();
-    if let Some(cut) = out.rfind(' ') {
-        out.truncate(cut);
-    }
-    out.push('…');
-    out
-}
-
 fn dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
@@ -248,24 +228,38 @@ fn percentile(mut v: Vec<f32>, p: usize) -> f32 {
 
 /// The episode's evidence: the longest content line it showed, and when.
 fn evidence_of(history: &History, e: &Episode) -> Evidence {
-    let mut best: Option<(i64, &str)> = None;
+    select_evidence(history, e, |_| true).unwrap_or_else(|| evidence_at(history, e.frames[0], None))
+}
+
+fn select_evidence(
+    history: &History,
+    e: &Episode,
+    eligible: impl Fn(&str) -> bool,
+) -> Option<Evidence> {
+    let mut best: Option<(usize, &str)> = None;
     for &fi in &e.frames {
         let f = &history.frames[fi];
         for l in f
             .lines
             .iter()
-            .filter(|l| is_content(l) && !history.common_lines.contains(*l))
+            .filter(|l| eligible(l) && history.content_line(f, l))
         {
-            if best.map(|(_, b)| l.len() > b.len()).unwrap_or(true) {
-                best = Some((f.at, l));
+            if best.is_none_or(|(_, b)| l.len() >= b.len()) {
+                best = Some((fi, l));
             }
         }
     }
+    best.map(|(fi, line)| evidence_at(history, fi, Some(line)))
+}
+
+fn evidence_at(history: &History, frame: usize, fragment: Option<&str>) -> Evidence {
+    let f = &history.frames[frame];
     Evidence {
-        at: best.map(|b| b.0).unwrap_or(e.start),
-        app: friendly_app(&e.app),
-        title: e.title.clone(),
-        fragment: best.map(|b| short(b.1, 90)),
+        frame,
+        at: f.at,
+        app: friendly_app(&f.app),
+        title: f.title.clone(),
+        fragment: fragment.map(str::to_string),
     }
 }
 
@@ -358,13 +352,17 @@ fn graph_echoes(
     let window_end = absence.start + 1;
     let window_start = window_end - GRAPH_LOOKBACK_MS;
     // The episode of a session that names the entity (or its longest one).
-    let pick = |session: i64, name: &str| -> Option<usize> {
+    let pick = |session: i64, name: &str, current: bool| -> Option<usize> {
         let lowered = name.to_lowercase();
         let in_session: Vec<usize> = history
             .episodes
             .iter()
             .enumerate()
-            .filter(|(_, e)| e.session == session)
+            .filter(|(_, e)| {
+                e.session == session
+                    && e.end <= absence.start
+                    && (!current || e.start >= absence.staged_from)
+            })
             .map(|(i, _)| i)
             .collect();
         in_session
@@ -397,7 +395,8 @@ fn graph_echoes(
             ),
             _ => return,
         };
-        let (Some(a), Some(b)) = (pick(first_s, &label), pick(second_s, &label)) else {
+        let (Some(a), Some(b)) = (pick(first_s, &label, false), pick(second_s, &label, true))
+        else {
             return;
         };
         for t in BTreeSet::from([theme_of_episode[a], theme_of_episode[b]]) {
@@ -460,15 +459,15 @@ pub fn dream(history: &History, absences: &[Absence], gates: &Gates) -> Outcome 
         );
     }
     let mut sweeps = Vec::new();
+    let mut latest_windows: BTreeMap<(String, String), usize> = BTreeMap::new();
+    let mut seen_echoes = HashSet::new();
+    let mut seen_graph = HashSet::new();
 
     for absence in absences {
         let now = absence.start;
         let staged: Vec<usize> = (0..episodes.len())
             .filter(|&i| episodes[i].start >= absence.staged_from && episodes[i].start <= now)
             .collect();
-        if staged.is_empty() {
-            continue;
-        }
         let staged_sessions: BTreeSet<i64> = staged.iter().map(|&i| episodes[i].session).collect();
         let mut touched: BTreeSet<usize> = BTreeSet::new();
 
@@ -478,7 +477,7 @@ pub fn dream(history: &History, absences: &[Absence], gates: &Gates) -> Outcome 
             minutes: staged_sessions
                 .iter()
                 .filter_map(|id| history.session(*id))
-                .map(|s| (s.end - s.start).max(0))
+                .map(|s| (s.end.min(now) - s.start.max(absence.staged_from)).max(0))
                 .sum::<i64>()
                 / 60_000,
             ..Light::default()
@@ -504,32 +503,33 @@ pub fn dream(history: &History, absences: &[Absence], gates: &Gates) -> Outcome 
             touched.insert(t);
         }
         // Windows by dwell across the staged range: (frames, first, last, longest episode).
-        let mut windows: BTreeMap<(String, String), (usize, i64, i64, usize)> = BTreeMap::new();
+        let mut windows: BTreeMap<(String, String), (usize, i64, usize)> = BTreeMap::new();
         for &i in &staged {
             let e = &episodes[i];
             let w = windows
                 .entry((e.app.clone(), e.title.clone()))
-                .or_insert((0, e.start, e.end, i));
+                .or_insert((0, e.start, i));
             w.0 += e.frames.len();
-            w.2 = w.2.max(e.end);
-            if episodes[w.3].frames.len() < e.frames.len() {
-                w.3 = i;
+            if episodes[w.2].frames.len() < e.frames.len() {
+                w.2 = i;
             }
         }
         let mut ranked: Vec<_> = windows.values().copied().collect();
         ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        for (n, _, _, i) in ranked.iter().take(3) {
+        for (n, _, i) in ranked.iter().take(3) {
             light
                 .occupied
                 .push((evidence_of(history, &episodes[*i]), *n));
         }
-        if let Some((_, _, last, i)) = ranked.iter().max_by_key(|w| w.2) {
-            let mut e = evidence_of(history, &episodes[*i]);
-            e.at = *last;
-            e.fragment = None;
-            light.last = Some(e);
+        if let Some(fi) = staged
+            .iter()
+            .flat_map(|&i| episodes[i].frames.iter().copied())
+            .filter(|&fi| history.frames[fi].at <= now)
+            .max()
+        {
+            light.last = Some(evidence_at(history, fi, None));
         }
-        for (n, _, _, i) in ranked.iter().rev() {
+        for (n, _, i) in ranked.iter().rev() {
             let ev = evidence_of(history, &episodes[*i]);
             if *n == 1
                 && light.brushed.len() < 2
@@ -542,7 +542,7 @@ pub fn dream(history: &History, absences: &[Absence], gates: &Gates) -> Outcome 
             }
         }
         let mut seen = HashSet::new();
-        for (_, _, _, i) in ranked.iter().take(6) {
+        for (_, _, i) in ranked.iter().take(6) {
             let ev = evidence_of(history, &episodes[*i]);
             if let Some(f) = &ev.fragment {
                 if light.lines.len() < 4 && seen.insert(f.clone()) {
@@ -562,8 +562,44 @@ pub fn dream(history: &History, absences: &[Absence], gates: &Gates) -> Outcome 
                 .unwrap_or("")
                 .trim()
                 .to_string();
-            light.saved.push((saved.label.clone(), short(&head, 120)));
+            light
+                .saved
+                .push((saved.label.clone(), head.chars().take(120).collect()));
         }
+
+        // Compare against the latest earlier visit to this window, before advancing its state.
+        let mut revisions = Vec::new();
+        let mut fresh = Vec::new();
+        for &i in &staged {
+            if !recallable[i] {
+                continue;
+            }
+            let e = &episodes[i];
+            let key = (e.app.clone(), e.title.clone());
+            if let Some(p) = latest_windows.insert(key, i) {
+                let present = |episode: &Episode, line: &str| {
+                    episode
+                        .frames
+                        .iter()
+                        .any(|&fi| history.frames[fi].lines.iter().any(|l| l == line))
+                };
+                let previous = &episodes[p];
+                let Some(current) = select_evidence(history, e, |l| !present(previous, l)) else {
+                    continue;
+                };
+                let removed = select_evidence(history, previous, |l| !present(e, l));
+                revisions.push(Revision {
+                    added: removed.is_none(),
+                    past: removed.unwrap_or_else(|| evidence_of(history, previous)),
+                    now: current,
+                });
+            } else {
+                fresh.push(evidence_of(history, e));
+            }
+        }
+        revisions.sort_by_key(|r| r.added);
+        revisions.truncate(3);
+        fresh.truncate(3);
 
         // ---- REM ------------------------------------------------------------------------
         let mut echoes: Vec<(f32, Echo)> = Vec::new();
@@ -623,11 +659,31 @@ pub fn dream(history: &History, absences: &[Absence], gates: &Gates) -> Outcome 
         let echoes: Vec<Echo> = echoes
             .into_iter()
             .map(|e| e.1)
+            .filter(|e| e.now.fragment != e.past.fragment)
             .filter(|e| seen_pairs.insert((stem(&e.now.title), stem(&e.past.title))))
+            .filter(|e| {
+                seen_echoes.insert((
+                    e.now.title.clone(),
+                    e.past.title.clone(),
+                    e.now.fragment.clone(),
+                    e.past.fragment.clone(),
+                ))
+            })
             .take(3)
             .collect();
 
-        let graph = graph_echoes(history, absence, &staged_sessions, &theme_of, &mut themes);
+        let mut graph = graph_echoes(history, absence, &staged_sessions, &theme_of, &mut themes);
+        graph.retain(|g| {
+            g.first.fragment.is_some()
+                && g.second.fragment.is_some()
+                && g.first.fragment != g.second.fragment
+                && seen_graph.insert((
+                    g.kind,
+                    g.label.clone(),
+                    g.first.fragment.clone(),
+                    g.second.fragment.clone(),
+                ))
+        });
         for (i, t) in themes.iter().enumerate() {
             if t.rem_hits.last() == Some(&now) {
                 touched.insert(i);
@@ -671,14 +727,14 @@ pub fn dream(history: &History, absences: &[Absence], gates: &Gates) -> Outcome 
         for p in &promoted {
             themes[p.key].promoted = true;
         }
-        considered.truncate(5);
         sweeps.push(SweepOutcome {
             number: sweeps.len() + 1,
             absence: *absence,
             light,
             echoes,
             graph,
-            considered,
+            revisions,
+            fresh,
             promoted,
             reinforced,
         });
@@ -744,7 +800,22 @@ fn score(history: &History, key: usize, t: &Theme, now: i64, gates: &Gates, floo
     .min(0.10);
     let total = (base + boost).min(1.0);
     let queries = t.probes.len() as u32;
-    let failed_gate = if total < gates.min_score {
+    let mut evidence: Vec<Evidence> = Vec::new();
+    let mut seen_lines = HashSet::new();
+    for e in t.members.iter().rev().map(|&m| &history.episodes[m]) {
+        if evidence.len() == 3 {
+            break;
+        }
+        if !evidence.iter().any(|x| stem(&x.title) == stem(&e.title)) {
+            if let Some(source) = select_evidence(history, e, |l| !seen_lines.contains(l)) {
+                seen_lines.extend(source.fragment.iter().cloned());
+                evidence.push(source);
+            }
+        }
+    }
+    let failed_gate = if evidence.is_empty() {
+        Some("no content text".to_string())
+    } else if total < gates.min_score {
         Some(format!("score {total:.2} below {:.2}", gates.min_score))
     } else if t.recalls < gates.min_recall_count {
         Some(format!(
@@ -760,19 +831,6 @@ fn score(history: &History, key: usize, t: &Theme, now: i64, gates: &Gates, floo
         None
     };
 
-    let mut lines = Vec::new();
-    let mut evidence: Vec<Evidence> = Vec::new();
-    for &m in t.members.iter().rev() {
-        let e = &history.episodes[m];
-        if evidence.len() < 3 && !evidence.iter().any(|x| stem(&x.title) == stem(&e.title)) {
-            evidence.push(evidence_of(history, e));
-        }
-        for l in history.episode_lines(e, 2) {
-            if lines.len() < 3 && !lines.contains(&l) {
-                lines.push(l);
-            }
-        }
-    }
     let mut tags: Vec<String> = t.tags.iter().take(3).cloned().collect();
     for s in &stems {
         if tags.len() >= 3 {
@@ -794,7 +852,6 @@ fn score(history: &History, key: usize, t: &Theme, now: i64, gates: &Gates, floo
         probes: t.probes.iter().take(6).cloned().collect(),
         days: t.days.iter().cloned().collect(),
         tags,
-        lines,
         evidence,
         failed_gate,
         already_promoted: t.promoted,

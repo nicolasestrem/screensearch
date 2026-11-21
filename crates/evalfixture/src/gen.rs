@@ -18,6 +18,7 @@
 //! ```
 
 mod code;
+mod gardener;
 mod layout;
 mod life;
 pub(crate) mod personas;
@@ -103,6 +104,7 @@ OPTIONS:
   --persona <id>           Generate one catalog persona's life instead of the pinned default
                            fixture. `--persona random` picks one from the seed. The persona's
                            own language, country, timezone, rhythm, apps and content are used.
+                           The four-week market-gardener run also writes PLANTED.json.
                            Every persona runs on Windows: the product is Windows-only, so the
                            fixture never models another desktop. The pinned default digest is
                            unaffected when the flag is absent.
@@ -386,20 +388,35 @@ pub fn generate(opts: &GenOptions) -> Result<GenManifest> {
             let persona = personas::find(id)
                 .with_context(|| format!("persona `{id}` is not in the catalog"))?;
             personas::validate(persona)?;
-            let life_plan = life::plan(
-                opts.seed,
-                opts.weeks,
-                opts.frames_per_week,
-                opts.start,
-                persona,
-            )?;
-            runtime.block_on(write_persona_fixture(
+            let month = (id == gardener::PERSONA_ID && opts.weeks == gardener::WEEKS)
+                .then(|| gardener::Month::new(opts, persona))
+                .transpose()?;
+            let generic_plan;
+            let life_plan = match &month {
+                Some(month) => &month.plan,
+                None => {
+                    generic_plan = life::plan(
+                        opts.seed,
+                        opts.weeks,
+                        opts.frames_per_week,
+                        opts.start,
+                        persona,
+                    )?;
+                    &generic_plan
+                }
+            };
+            let manifest = runtime.block_on(write_persona_fixture(
                 opts,
                 &db,
-                &life_plan,
+                life_plan,
                 persona,
+                month.as_ref(),
                 embedder.as_ref(),
-            ))
+            ))?;
+            if let Some(month) = month {
+                month.write_planted(&opts.out_dir)?;
+            }
+            Ok(manifest)
         }
     }
 }
@@ -583,6 +600,7 @@ async fn write_persona_fixture(
     db: &Path,
     plan: &LifePlan,
     persona: &'static Persona,
+    month: Option<&gardener::Month>,
     embedder: Option<&FastEmbedProvider>,
 ) -> Result<GenManifest> {
     // `life::split_week` activates only `(frames / 2)` of a week's pattern days, so a
@@ -628,7 +646,10 @@ async fn write_persona_fixture(
         let mut frame_ids = Vec::with_capacity(session.frames.len());
         let mut previous_app = None;
         for frame in &session.frames {
-            let mut screen = render::render(&mut renderer, session, frame, &mut sticky);
+            let mut screen = match month {
+                Some(month) => month.screen(session.started_at)?.clone(),
+                None => render::render(&mut renderer, session, frame, &mut sticky),
+            };
             // A body line that repeats the window title would be dropped by the attention
             // filter as a title echo; generated prose must not silently lose content.
             let title = traits::normalize_text(&screen.title);

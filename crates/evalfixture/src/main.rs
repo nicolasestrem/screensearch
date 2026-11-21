@@ -8,6 +8,7 @@
 //! ssv2c-evalfixture export --db <path> --out <file.json>
 //! ssv2c-evalfixture serve  --db <path> --data <dir> [--port <n>] [--embed] [--no-answer]
 //! ssv2c-evalfixture graph  --db <path>
+//! ssv2c-evalfixture dream  --db <path> --out <dir> [--min-gap-mins <n>] [--no-model]
 //! ```
 //!
 //! Exit code 0 on success, 1 when generation, export, serving or the graph backfill fails.
@@ -38,7 +39,8 @@ COMMANDS:
           and --no-embeddings / --embed-frames bound the model work. Re-running with the
           same arguments and seed prints the same digest. --persona generates one catalog
           persona's life instead of the pinned default fixture; --list-personas prints the
-          catalog (`id<TAB>description`, one line each).
+          catalog (`id<TAB>description`, one line each). A four-week market-gardener
+          fixture also writes PLANTED.json for scoring the diary after replay.
   export  Read a fixture database and write one plain UTF-8 JSON file (persona, range,
           projects, sessions, days) any app can parse; same database, byte-identical file.
   serve   Run the product's local HTTP API (/v1/search, /v1/ask) over that database.
@@ -54,8 +56,8 @@ COMMANDS:
           entry per sweep, every claim with its evidence) and <dir>/MEMORY.md (what Deep
           promoted, with its score). Read-only on the database; any normal v15 database
           works. The diary is written by an OpenAI-compatible API (DREAM_API_BASE,
-          DREAM_API_MODEL, DREAM_API_KEY); without one each entry is a labelled degraded
-          draft.
+          DREAM_API_MODEL, DREAM_API_KEY); without one narrative entries are labelled
+          rule-based drafts, and quiet sweeps get one short line.
 ";
 
 fn main() -> ExitCode {

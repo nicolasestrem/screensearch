@@ -554,3 +554,11 @@ prose, with the instruction that no model run on the development PC.
 - `market-gardener` gained content prose and a seven-day rhythm, and the renderer stopped
   writing UI labels into body text, so frame content is no longer dominated by chrome. No schema,
   settings, IPC, runtime or shipped-crate change.
+
+## 2026-11-22: Off-arc market gardener dream replay
+
+The v2 brief calls for a Windows-only replay with no off-machine data transfer. The first run's
+diary completion was configured against a remote DeepSeek endpoint. The local replay computes
+new vectors with the same cached EmbeddingGemma model and uses the labelled rule-based diary path.
+This leaves the same-model prose comparison unmeasured. The dev-only completion interface stays
+compatible with its documented configuration.

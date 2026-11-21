@@ -105,7 +105,7 @@ pub struct Absence {
 }
 
 impl History {
-    pub fn load(db: &Path) -> Result<Self> {
+    pub fn load(db: &Path, min_gap_ms: i64) -> Result<Self> {
         if !db.is_file() {
             bail!("{} does not exist", db.display());
         }
@@ -145,7 +145,7 @@ impl History {
             }
         }
         let vector_source = attach_vectors(&conn, &frame_index, &mut frames, &mut sessions)?;
-        let episodes = build_episodes(&frames, &sessions);
+        let episodes = build_episodes(&frames, &sessions, min_gap_ms);
         attach_graph(&conn, &session_index, &mut sessions)?;
         let common_lines = common_lines(&frames, &sessions);
         let saved = read_saved(&conn)?;
@@ -182,12 +182,21 @@ impl History {
         self.session_index.get(&id).map(|&i| &self.sessions[i])
     }
 
+    pub fn content_line(&self, frame: &Frame, line: &str) -> bool {
+        !matches!(
+            frame.app.to_ascii_lowercase().as_str(),
+            "explorer" | "explorer.exe"
+        ) && is_content(line)
+            && !self.common_lines.contains(line)
+    }
+
     /// Content lines of an episode, most frequent first, residual chrome removed.
     pub fn episode_lines(&self, episode: &Episode, limit: usize) -> Vec<String> {
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
         for &fi in &episode.frames {
-            for line in &self.frames[fi].lines {
-                if is_content(line) && !self.common_lines.contains(line) {
+            let frame = &self.frames[fi];
+            for line in &frame.lines {
+                if self.content_line(frame, line) {
                     *counts.entry(line.as_str()).or_default() += 1;
                 }
             }
@@ -208,9 +217,46 @@ impl History {
 
 /// A content line worth quoting: has letters, is not a bare number/file listing.
 pub fn is_content(line: &str) -> bool {
+    let line = line.trim();
+    let path = line.starts_with(r"\\")
+        || line.as_bytes().get(..3).is_some_and(|start| {
+            start[0].is_ascii_alphabetic() && start[1] == b':' && matches!(start[2], b'\\' | b'/')
+        });
+    let filename = |word: &str| {
+        word.rsplit_once('.').is_some_and(|(name, extension)| {
+            !name.is_empty()
+                && matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "csv"
+                        | "doc"
+                        | "docx"
+                        | "eml"
+                        | "html"
+                        | "jpeg"
+                        | "jpg"
+                        | "json"
+                        | "md"
+                        | "msg"
+                        | "ods"
+                        | "odt"
+                        | "pdf"
+                        | "png"
+                        | "ppt"
+                        | "pptx"
+                        | "rs"
+                        | "txt"
+                        | "xls"
+                        | "xlsx"
+                        | "zip"
+                )
+        })
+    };
+    let mut words = line.split_whitespace();
+    let last = words.next_back();
+    let name_only = last.is_some_and(filename);
+    let listing_row = matches!(last, Some("KB" | "MB" | "GB" | "bytes")) && words.any(filename);
     let letters = line.chars().filter(|c| c.is_alphabetic()).count();
-    let words = line.split_whitespace().count();
-    letters >= 12 && words >= 3
+    !path && !name_only && !listing_row && letters >= 12 && line.split_whitespace().count() >= 3
 }
 
 /// Absences of at least `min_gap_ms` between consecutive frames, oldest first.
@@ -423,19 +469,27 @@ fn attach_graph(
     Ok(())
 }
 
-/// Groups each session's frames by window; an episode's vector is the normalised mean of
-/// its frames' stored embeddings. Episodes without any embedded frame are skipped.
-fn build_episodes(frames: &[Frame], sessions: &[Session]) -> Vec<Episode> {
+/// Groups frames by session and window inside one continuous stretch. Splitting at the
+/// same gaps used by the sweep prevents a previous visit from citing future content.
+fn build_episodes(frames: &[Frame], sessions: &[Session], min_gap_ms: i64) -> Vec<Episode> {
+    let mut stretch = 0;
+    let mut stretches = vec![stretch; frames.len()];
+    for (i, pair) in frames.windows(2).enumerate() {
+        if pair[1].at - pair[0].at >= min_gap_ms {
+            stretch += 1;
+        }
+        stretches[i + 1] = stretch;
+    }
     let mut out = Vec::new();
     for s in sessions {
-        let mut by: BTreeMap<(String, String), Vec<usize>> = BTreeMap::new();
+        let mut by: BTreeMap<(_, _, _), Vec<usize>> = BTreeMap::new();
         for &fi in &s.frames {
             let f = &frames[fi];
-            by.entry((f.app.clone(), f.title.clone()))
+            by.entry((stretches[fi], f.app.clone(), f.title.clone()))
                 .or_default()
                 .push(fi);
         }
-        for ((app, title), idx) in by {
+        for ((_, app, title), idx) in by {
             let mut sum: Vec<f32> = Vec::new();
             for &fi in &idx {
                 if let Some(v) = &frames[fi].vector {
@@ -643,4 +697,46 @@ fn read_thread_rows(conn: &Connection) -> Result<Vec<traits::ThreadSessionInput>
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_episodes, is_content, Frame, Session};
+
+    #[test]
+    fn clips_a_single_window_in_one_session_at_the_sweep_gap() {
+        let frames = [0, 30_000, 7_230_000].map(|at| Frame {
+            id: at,
+            at,
+            app: "Excel".to_string(),
+            title: "Market prices - Excel".to_string(),
+            session: Some(1),
+            lines: Vec::new(),
+            vector: Some(vec![1.0]),
+        });
+        let session = Session {
+            id: 1,
+            start: frames[0].at,
+            end: frames[2].at,
+            frames: vec![0, 1, 2],
+            vector: None,
+            thread: None,
+            entities: Vec::new(),
+        };
+        let episodes = build_episodes(&frames, &[session], 7_200_000);
+        assert_eq!(episodes[0].frames, [0, 1]);
+        assert_eq!(episodes[1].frames, [2]);
+    }
+
+    #[test]
+    fn rejects_file_metadata_keeps_document_content() {
+        assert!(!is_content(r"C:\Users\Lucia\Latest market prices.xlsx"));
+        assert!(!is_content("Latest market prices.xlsx"));
+        assert!(!is_content(
+            "Latest market prices.xlsx 14/09/2026 10:20 Microsoft Excel Worksheet 18 KB"
+        ));
+        assert!(is_content(
+            "The price sheet recorded 1,45 EUR/kg this week."
+        ));
+    }
 }

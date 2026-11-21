@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The dev-only dreaming fixture gives the market gardener a four-week history with evolving
+  screen content and a separate answer key for scoring the diary. The diary cites exact screen
+  excerpts when comparing earlier and later evidence. Existing long-term memories are reinforced
+  in `MEMORY.md`, and quiet sweeps get a short entry.
+
 ## [0.4.6] - 2026-11-10
 
 ### Fixed: updater startup race

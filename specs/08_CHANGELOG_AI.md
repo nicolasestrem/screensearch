@@ -671,3 +671,15 @@ the command now rejects a destination that canonicalises to the source database 
 writing (usage text updated). Verified: direct and `./` spellings exit 1, the database is unchanged,
 and a normal export still succeeds. fmt/clippy clean, `cargo test -p evalfixture` 28 passed with the
 default digest still matching. Fourth commit on the PR; no merge, no bot replies.
+
+### 2026-11-22: Market gardener dream fixture v2 (dev-only)
+
+The four-week market gardener fixture runs an authored calendar through the existing Store and
+OCR writers. Documents, quotes, searches and mail threads have window-specific body text. The
+fixture writes a separate `PLANTED.json` for scoring after the run. The ordinary persona and
+pinned default generation paths continue to use their original scheduling and rendering.
+
+Dream revisions compare content snapshots for the same window and cite earlier and later frames.
+Promotions require content sources, model quotations are checked against the cited frames, and
+reinforcement is recorded in `MEMORY.md`. A quiet sweep gets one line. See `docs/TESTING.md` for
+replay steps and `05` for the Windows verification and score.

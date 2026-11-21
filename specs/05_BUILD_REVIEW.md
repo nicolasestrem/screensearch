@@ -1556,3 +1556,33 @@ replies.
 **Verification (raw).** `cargo fmt --all -- --check` 0; `cargo clippy -p evalfixture --all-targets
 -- -D warnings` 0; `cargo test -p evalfixture` 28 passed, 0 failed (committed default digest still
 matches). Pushed as a fourth commit; PR stays open, no merge, no bot replies.
+
+### 2026-11-22: Off-arc market gardener dream fixture v2
+
+The authored month generated 42 Windows sessions through the existing Store and OCR writers.
+All 22 story beats and all six link endpoints were present in the filtered text on the dates and
+windows named by the separate manifest. The 28-day range had one day with zero frames, three days
+with two frames, and a 21:45 capture on 29 September. The diary scored 5 of 5 storylines and 1 of 3
+exact distant links. It paired the right seed windows without quoting all three varieties from the
+order and paired the pump invoice with the search instead of the manual. `harness-data` holds the
+local evidence and report. Reproduction steps are in `docs/TESTING.md`.
+
+The first-run completion was remote. The v2 Windows-only replay reused the cached EmbeddingGemma
+model and used the labelled rule-based prose path. The fixture database's SHA-256 matched before
+and after the read-only dream. Both the raw and filtered sentence recurrence maxima were three
+distinct dates. The initial package test run could not create a directory in Windows Temp. A rerun
+with process-scoped `TEMP` and `TMP` under the ignored workspace path passed.
+
+```text
+graph backfill returned counts: entities=28 entity_aliases=0 session_entities=48 threads=6 thread_sessions=26
+dream: persona=market-gardener frames=2800 sessions=42 absences=41 sweeps=41 entries=41 degraded=40 promoted=2 first=2026-09-07 last=2026-10-03 out=harness-data/dreams/market-gardener
+sweeps=41 entries=41 degraded=40 promoted=2
+em_dashes=0 left_braces=0 right_braces=0
+diary unknown citation tuples=0
+diary quotes needing manual review=0
+memory source lines=6 unknown citation tuples=0 unmatched quotes=0
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.92s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+```
