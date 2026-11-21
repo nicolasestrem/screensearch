@@ -305,6 +305,60 @@ host). Each persona run writes its identity to the `evalfixture.persona` setting
 persona print the same digest, and another persona produces different frames, apps and text
 (proved by `cargo test -p evalfixture --test fixture_determinism`).
 
+### JSON export (`export`)
+
+```sh
+cargo run -p evalfixture -- export --db harness-data/personas-demo/nurse-shifts/screensearch.db \
+  --out harness-data/personas-demo/nurse-shifts.json
+```
+
+One UTF-8 JSON file readable by any app with a plain JSON parser: **no SQLite, no vectors, no
+images, no full captured text**. The same database always produces a byte-identical file.
+
+```json
+{
+  "persona": { "id": "", "description": "", "language": "", "country": "", "timezone": "", "os": "" },
+  "range":   { "start": "", "end": "" },
+  "projects": [ { "id": "", "name": "", "first_seen": "", "last_seen": "", "session_count": 0 } ],
+  "sessions": [ { "id": 0, "start": "", "end": "", "kind": "", "project_id": null,
+                  "apps": [""], "titles": [""], "words": [""] } ],
+  "days":     [ { "date": "", "active_minutes": 0, "session_count": 0, "top_project_id": null } ]
+}
+```
+
+- Timestamps are ISO 8601 with the persona's fixed UTC offset and millisecond precision
+  (`2026-09-07T08:12:33.500+02:00`); `days[].date` is the local date (`YYYY-MM-DD`).
+- `persona` is read back from the `evalfixture.persona` settings key. A fixture generated
+  without `--persona` has no such key and reports the documented `northwind-tech` identity
+  (`en-US`, `FR`, `+02:00`, `windows`). `os` is always `windows`: the product captures only
+  Windows desktops, so no persona models another platform.
+- `sessions` are ordered by start then id; `apps` are the distinct `app_hint` values sorted
+  alphabetically; `titles` are up to five distinct window titles in frame order; `words` are up
+  to eight distinct one-to-three-word fragments of the session's `content_text` in frame order
+  (lines split on whitespace, URL/path/colon tokens skipped, the first one or two remaining
+  tokens kept).
+- **Project grouping rule.** Each session gets at most one raw context token, taken from its
+  frames in chronological order: a frame with a browser URL contributes its **site** — the host
+  alone, except on a code host (`github.com`, `gitlab.com`, `bitbucket.org`, `codeberg.org`)
+  where it is the repository root: host plus owner and repository, with route words (`pulls`,
+  `issues`, `browse`, …) dropped and the walk stopped before an id-like segment (`418`,
+  `LED-142`, a UUID or hash); otherwise a frame whose window title contains an absolute path
+  contributes that path, with a trailing file name removed when its last component contains a
+  dot, walking up while the last directory is one of `src`, `tests`, `test`, `docs`, `doc`,
+  `content`, `app`, `apps`, `internal`, `cmd`, `pkg`, `packages`, `design`, `assets`, and with
+  separators normalised to `/`. The session token is the most frequent non-empty token among
+  its frames (ties: the earliest frame's token). Sessions sharing a token form one project; ids
+  are `p01`, `p02`, … in first-seen order and the name is the humanised last token component (a
+  site-only token names its host without `www.` or the top-level domain), at most three words.
+  Sessions with no token get `project_id: null`. The rule is deliberately simple: repository
+  and folder sessions land on their checkout/folder root, browser work lands on the site (or
+  repository), and sessions that carry neither (mail, chat) stay ungrouped.
+- `days`: `active_minutes` is the floored sum of the durations of the sessions that start that
+  local day; `top_project_id` is that day's most frequent project (ties go to the smallest
+  project id) or null.
+- Size: two weeks at 300 frames per week stays well under the 1 MB budget (the six-persona demo
+  lives in the git-ignored `harness-data/personas-demo/`).
+
 ## 🟢 The no-orphan gate (P4's must-pass)
 
 Proves the sidecar can't outlive the app:

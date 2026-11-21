@@ -486,3 +486,41 @@ by a 2,000,000-frame ceiling per fixture (~3 h / ~18 GB at the measured rate). T
 streams page by page so memory stays bounded, and model work is bounded by `--no-embeddings` /
 `--embed-frames <n>` (embed-all remains the default only up to 20,000 frames). Dev-only: no schema,
 settings, IPC or shipped-runtime change.
+
+## 2026-11-21 — Off-arc: `evalfixture` personas and JSON export (dev-only)
+
+**Question (spec silent; one contradiction).** Neither `02` nor `03` defines synthetic personas
+or a JSON export, and the repository has no approved arc past 0.4.5; the maintainer asked for
+both as an off-arc extension of the dev-only `evalfixture` crate. The brief's environment axis
+asked for "all three OS flavours" (Windows/macOS/Linux), which contradicts the product's hard
+Windows-only rule (`CLAUDE.md`) and the maintainer's in-session correction of 2026-11-21 ("It's
+a windows only app RTFM").
+
+**Resolution (owner: maintainer; requested 2026-11-21).**
+
+- Personas are **data definitions**: `crates/evalfixture/src/gen/personas/` holds three files of
+  `Persona { .. }` literals plus shared localized label packs. A definition sets who (occupation,
+  age band, invented name, employer or none), environment (language and locale, country, fixed
+  UTC offset, one or two monitors), Windows tools (apps with `app_hint` stems, sites, file types,
+  folders), rhythm (a cycle of weekday patterns so shifts/part-time/weekends are data, the active
+  window, a daily nap, national holidays and whole vacation weeks) and content (contexts with
+  week ranges that encode started/dropped/resumed work, documents, searches, media). Adding a
+  persona later is one literal, no new Rust logic; `gen/life.rs` plans the timeline and
+  `gen/render.rs` draws the screens generically from the data.
+- The catalogue is 33 personas across 14 languages and 25 countries; 29 are non-technical lives
+  (no terminal, no code editor, no code host). **Every persona is a Windows desktop user**: the
+  OS axis was removed after the correction above, and the persisted `os` is always `"windows"`.
+  The brief's "all three OS flavours" coverage is deliberately dropped as contradictory with
+  product scope; the catalogue varies the other axes instead.
+- CLI: `gen --persona <id>`, `gen --persona random` (picked from the seed) and
+  `gen --list-personas` (`id<TAB>description`, one line each). Without `--persona` the pinned
+  default fixture is unchanged (committed digest `69dac6e6...`); the same seed and persona print
+  the same digest, and another persona produces different frames, apps and text.
+- `export --db <path> --out <file.json>` writes one plain UTF-8 JSON file (persona, range,
+  projects, sessions with apps/titles/word fragments, per-day activity): no SQLite, no vectors,
+  no images, no full captured text. The same database always produces a byte-identical file, and
+  the project-grouping rule, timestamps and word rules are documented in `docs/TESTING.md`.
+- The persona identity is persisted in the `evalfixture.persona` settings key; a fixture
+  generated without `--persona` writes no such key and exports with the documented
+  `northwind-tech` identity. Dev-only: no schema, settings, IPC, runtime or network change, and
+  nothing outside the dev-only crate.

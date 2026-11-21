@@ -1422,3 +1422,77 @@ its own diagnosis. Production code is untouched.
 **Verification (raw).** `cargo fmt --all -- --check` 0; `cargo clippy -p kernel --all-targets -- -D
 warnings` 0; `cargo test -p kernel --lib graph_backfill` `9 passed; 0 failed`. Push triggers a fresh
 CI run; the merge gate stays "CI green, then merge" (maintainer instruction, 2026-11-21).
+
+### 2026-11-21 — Off-arc: `evalfixture` personas and JSON export (dev-only)
+
+**What was implemented.** `crates/evalfixture` (dev-only; never bundled) gained two features.
+
+1. **Data-driven personas** under `crates/evalfixture/src/gen/personas/`: `set_a.rs`, `set_b.rs`
+   and `set_c.rs` hold 33 `Persona { .. }` literals plus shared localized label packs in
+   `labels.rs`. A definition sets who (occupation, age band, invented name, employer or none),
+   environment (language/locale, country, fixed UTC offset, one or two monitors), Windows tools
+   (apps with `app_hint` stems, sites, file types, folders), rhythm (a cycle of weekday patterns
+   so rotating shifts, part-time and weekends are data; active window; daily nap; national
+   holidays; whole vacation weeks whose frames are redistributed) and content (contexts with
+   week ranges encoding started/dropped/resumed work, documents, searches, media). New
+   `gen/life.rs` plans the timeline and `gen/render.rs` renders 14 generic application families
+   from the data; there is no per-persona code path. CLI: `gen --persona <id>`,
+   `gen --persona random` (picked from the seed) and `gen --list-personas`
+   (`id<TAB>description`). Multi-monitor personas write `monitor_index` 1 with the second
+   display's resolution. Without `--persona`, `plan.rs`/`screens.rs`/`world.rs` still run the
+   pinned default fixture unchanged.
+2. **`export --db <path> --out <file.json>`**: one plain UTF-8 JSON file (persona, range,
+   projects, sessions with apps/titles/word fragments, days) read through the production Store's
+   `frame_page`/`sessions_in_range`/`get_setting` path and streamed into per-session summaries,
+   so no vectors, images, raw text or bulk content text are retained. Byte-identical for the
+   same database. Project ids/names, timestamps, day activity and the intentional grouping rule
+   are documented in `docs/TESTING.md`.
+
+**Correction during the task (maintainer).** The first pass modelled macOS/Linux persona
+desktops per the brief's "all three OS flavours". The maintainer corrected that ScreenSearch is
+a Windows-only product ("It's a windows only app RTFM"), so the OS axis was removed from the
+schema/renderer and all 33 definitions, paths, apps and chrome were converted to Windows (13
+personas needed app/path conversion; a scan of all 33 generated smoke databases finds zero
+`/Users/`, `/home/`, `macOS` or non-Windows `app_hint` values). `os` is always `windows` in the
+persisted identity and JSON export; the all-three-OS coverage is recorded as dropped in `07` and
+`06`.
+
+**Catalogue coverage.** 33 personas: 14 languages (cs, da, de, en, es, fi, fr, it, nl, pl, pt,
+ro, sv, tr), 25 countries, 29 non-technical lives (no code editor, no terminal, no code host) and
+4 technical lives; occupations range from night-shift nurse, market gardener, retired teacher and
+freelance translator to streamer, livestock farmer and backend engineer. `--list-personas`
+prints 33 lines.
+
+**Skipped / cut / risky.** Per-persona golden digests are deliberately not pinned (only the
+default fixture is); demo fixture files stay git-ignored under `harness-data/personas-demo/`.
+The generic renderer falls back to any context item when a definition lacks a matching
+extension, and validation enforces structure, not content plausibility. Export "words" are
+one-or-two-token fragments (within the brief's 1-to-3-word bound).
+
+**Verification (raw).**
+- `cargo fmt --all -- --check` -> 0; `cargo clippy -p evalfixture --all-targets -- -D warnings`
+  -> 0; `cargo clippy --workspace --all-targets -- -D warnings` -> 0; `cargo build --workspace`
+  -> 0.
+- `cargo test -p evalfixture` -> `17 passed; 0 failed` (unit), `9 passed; 0 failed`
+  (fixture_determinism: includes the committed default digest match and the new persona
+  reproducibility/difference test), `1 passed` (export determinism: two exports of one database
+  are byte-identical), `1 passed` (serve API); 28 total, 0 failed.
+- `cargo test --workspace --exclude harness` -> 80 suites, `1489 passed; 0 failed; 17 ignored`.
+  `cargo test -p harness --lib -- --skip export::tests::backup_snapshots_and_verifies` ->
+  `145 passed; 0 failed`. The skipped test fails in this sandbox for an environmental reason, not
+  a code reason: it requires its temp backup outside the repository tree, but the Windows Temp
+  folder refuses writes and the agent sandbox only permits writes inside the workspace, so any
+  writable tempdir is inside the repo and the test's own guard refuses it (`backup destination
+  ... is inside the repo tree`). Unrelated to this change; same test was not touched.
+- Default fixture digest unchanged: `the_default_fixture_still_matches_the_committed_baseline`
+  passes with the committed `69dac6e6ae417c0a6bc25590948a4dde8a6e1d500f99bb177f80a6bc794b8ab9`.
+- `git diff --exit-code -- ui/src/bindings` -> 0 (no binding change; the crate is dev-only and
+  ships nothing).
+- CLI: `gen --list-personas` -> 33 lines; six demo personas generated with `--weeks 2
+  --frames-per-week 300 --no-embeddings` and exported: `nurse-shifts` 600 frames / 22 sessions /
+  10 projects / 21,346 B, `market-gardener` 600 / 48 / 12 / 40,832 B, `retired-teacher` 600 / 22
+  / 10 / 21,582 B, `translator-freelance` 600 / 46 / 12 / 41,625 B, `streamer-gamer` 600 / 60 /
+  12 / 46,063 B, `backend-engineer` 600 / 48 / 12 / 39,233 B (all well under 1 MB).
+
+**Status.** Committed locally on `feat/evalfixture-personas` (two commits: personas, then the
+JSON export + records/docs), pushed to a PR open for maintainer review. No merge, no tag.

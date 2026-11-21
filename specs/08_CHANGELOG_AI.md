@@ -612,3 +612,29 @@ tokio worker between test binaries did not reproduce it. The test-only fix state
 completion line as a literal, asserts it on both passes, and surfaces the latest capture in the
 failure message for diagnosis. No production code changed; no bot reply; PR #179 is merged only
 after a green CI run.
+
+### 2026-11-21: `evalfixture` personas and JSON export (dev-only tooling)
+
+`ssv2c-evalfixture` gains a data-driven persona catalogue and a plain-JSON export; the pinned
+default fixture stays byte-identical. `gen --persona <id>` / `--persona random` /
+`--list-personas` generate one of 33 invented lives from data literals in
+`crates/evalfixture/src/gen/personas/` (three set files plus shared localized label packs): a
+timeline planner (`gen/life.rs`) derives rhythm, sessions and frames from the definition, and a
+generic renderer (`gen/render.rs`) draws 14 application families in the persona's language. The
+catalogue covers 14 languages, 25 countries and 29 non-technical lives (4 technical). A late
+correction: the first cut modelled macOS/Linux persona desktops, but the product is Windows-only
+(`CLAUDE.md`), so the OS axis was removed, every definition and screen was converted to Windows
+apps, paths and chrome, and `os` is always `windows` (`07`, same date). `export --db <path>
+--out <file.json>` writes one deterministic UTF-8 JSON file (persona, range, projects, sessions,
+days) through the production Store's read API, streaming frames so memory stays bounded; project
+grouping, timestamp and word rules are documented in `docs/TESTING.md`. Six demo personas
+(nurse-shifts, market-gardener, retired-teacher, translator-freelance, streamer-gamer,
+backend-engineer) were generated with `--weeks 2 --frames-per-week 300 --no-embeddings` and
+exported to the git-ignored `harness-data/personas-demo/<id>.json` (21-46 KB each). Verification:
+`cargo test -p evalfixture` 28 passed (17 unit, 9 determinism including the persona
+reproducibility test, 1 export determinism, 1 serve-API) with the committed default digest still
+matching; `cargo fmt --all -- --check`, `cargo clippy -p evalfixture --all-targets -- -D
+warnings`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo build --workspace`
+all exit 0; the full workspace test suite is green. No schema, settings, IPC, runtime or network
+change. Committed locally on eat/evalfixture-personas and opened as a PR for maintainer review;
+not merged, no tag.
