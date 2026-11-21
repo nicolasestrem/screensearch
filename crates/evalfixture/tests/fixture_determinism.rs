@@ -27,6 +27,7 @@ fn options(dir: &Path, seed: u64, weeks: u32, frames_per_week: usize) -> GenOpti
         frames_per_week,
         embeddings: false,
         embed_frames: None,
+        persona: None,
     }
 }
 
@@ -40,6 +41,7 @@ struct Readback {
     frames: Vec<FrameEvidence>,
     sessions: Vec<Session>,
     token: Option<String>,
+    persona: Option<String>,
 }
 
 fn read_back(db: &Path) -> Readback {
@@ -85,11 +87,16 @@ fn read_back(db: &Path) -> Readback {
             .get_setting(API_TOKEN_SETTING)
             .await
             .expect("settings read");
+        let persona = store
+            .get_setting("evalfixture.persona")
+            .await
+            .expect("persona setting read");
         Readback {
             schema_version,
             frames,
             sessions,
             token,
+            persona,
         }
     })
 }
@@ -377,4 +384,56 @@ fn an_existing_fixture_is_never_appended_to() {
     let message = error.to_string();
     assert!(message.contains("already exists"), "{message}");
     assert!(message.contains("--out"), "{message}");
+}
+
+/// 1.5: the same seed and the same persona give the same digest; a different persona gives
+/// clearly different data (and writes its identity for the JSON export).
+#[test]
+fn a_persona_run_is_reproducible_and_persona_sensitive() {
+    let gardener_a = tempfile::tempdir().unwrap();
+    let gardener_b = tempfile::tempdir().unwrap();
+    let analyst = tempfile::tempdir().unwrap();
+
+    let run = |dir: &Path, persona: &'static str| {
+        let mut opts = options(dir, DEFAULT_SEED, 2, 60);
+        opts.persona = Some(persona);
+        generate(&opts).unwrap()
+    };
+    let a = run(gardener_a.path(), "market-gardener");
+    let b = run(gardener_b.path(), "market-gardener");
+    let c = run(analyst.path(), "data-analyst");
+
+    assert_eq!(a.persona, Some("market-gardener"));
+    assert_eq!(c.persona, Some("data-analyst"));
+    assert_eq!((a.frames, a.sessions), (b.frames, b.sessions));
+    assert_eq!(a.frames, 2 * 60, "weeks x frames_per_week");
+    assert_eq!(a.digest, b.digest, "same seed and persona, same digest");
+    assert_ne!(a.digest, c.digest, "another persona, another digest");
+
+    let back = read_back(&a.db);
+    let setting = back.persona.expect("the persona identity is written");
+    assert!(setting.contains("market-gardener"), "{setting}");
+    assert!(!back.frames.is_empty());
+    assert!(back.frames.iter().all(|frame| frame.session_id.is_some()));
+
+    let gardener_apps: BTreeSet<String> = back
+        .frames
+        .iter()
+        .filter_map(|frame| frame.app_hint.clone())
+        .collect();
+    let analyst_apps: BTreeSet<String> = read_back(&c.db)
+        .frames
+        .iter()
+        .filter_map(|frame| frame.app_hint.clone())
+        .collect();
+    assert_ne!(
+        gardener_apps, analyst_apps,
+        "different lives use different applications"
+    );
+    assert!(analytic_app_marks(&analyst_apps), "{analyst_apps:?}");
+}
+
+/// Technical-persona apps that a market gardener's desktop must never show.
+fn analytic_app_marks(apps: &BTreeSet<String>) -> bool {
+    apps.contains("Code") || apps.contains("WindowsTerminal")
 }

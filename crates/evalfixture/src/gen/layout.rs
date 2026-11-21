@@ -184,7 +184,8 @@ pub(crate) fn lay_out(screen: &Screen, clock: (&str, &str)) -> Result<Laid> {
         }
     }
 
-    // Taskbar: search box, input language and the clock, below every window.
+    // Taskbar: search box, input language and the clock, below every window. These are the
+    // Windows system UI labels, dropped by the attention filter as chrome either way.
     for (text, x, y) in [
         ("Search", 0.06, 0.968),
         ("ENG", 0.915, 0.968),

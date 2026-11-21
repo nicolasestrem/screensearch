@@ -1,6 +1,6 @@
 //! # `ssv2c-evalfixture` - dev-only evaluation fixture for 0.4.5 P4/P5/P6
 //!
-//! Three subcommands, all dev-only and none reachable from the app:
+//! Four subcommands, all dev-only and none reachable from the app:
 //!
 //! - `gen` builds a **seeded, synthetic v15 history** through the production Store writers:
 //!   a working-day timeline of frames, sessions, OCR text and optional embeddings across many
@@ -8,6 +8,15 @@
 //!   starting Monday 2026-09-07; `--start`, `--weeks` and `--frames-per-week` scale it to a
 //!   multi-year history (one fixture is capped at 2,000,000 frames). The seed is printed and
 //!   committed ([`DEFAULT_SEED`]), so P4, P5 and P6 measure the same database.
+//!   `--persona <id>` replaces the pinned default worker with one **data-driven persona**
+//!   from the catalog ([`gen::personas`]): a different person, occupation, OS, language,
+//!   country, timezone, monitor count, weekly rhythm, apps and content. `--persona random`
+//!   picks one from the seed and `--list-personas` prints the catalog. Without `--persona`
+//!   the output is exactly the pinned default fixture, byte for byte.
+//! - `export` reads a fixture database and writes **one plain UTF-8 JSON file** - persona,
+//!   time range, projects, sessions (apps/titles/word fragments) and per-day activity - that
+//!   any app with a plain JSON parser can read. No SQLite, no vectors, no images, no full
+//!   captured text. The same database always produces a byte-identical file.
 //! - `serve` runs the **product's own local HTTP API** (`crates/api`: `GET /v1/search`,
 //!   `POST /v1/ask`) over that fixture database, with the real embedding and answer
 //!   providers, so the harness measures the shipped retrieval/answer code instead of a
@@ -29,6 +38,9 @@
 //! ssv2c-evalfixture gen   --out harness-data/fixture
 //! ssv2c-evalfixture serve --db harness-data/fixture/screensearch.db \
 //!                         --data harness-data/fixture --embed --port 43210
+//! ssv2c-evalfixture gen   --out harness-data/nurse --persona nurse-shifts --weeks 2 \
+//!                         --frames-per-week 300 --no-embeddings
+//! ssv2c-evalfixture export --db harness-data/nurse/screensearch.db --out nurse.json
 //! ```
 //!
 //! A multi-year, model-free history for load or scale tests (roughly eight minutes and 1 GB for
@@ -39,6 +51,7 @@
 //!                       --no-embeddings
 //! ```
 
+pub mod export;
 pub mod gen;
 pub mod graph;
 pub mod serve;

@@ -1422,3 +1422,137 @@ its own diagnosis. Production code is untouched.
 **Verification (raw).** `cargo fmt --all -- --check` 0; `cargo clippy -p kernel --all-targets -- -D
 warnings` 0; `cargo test -p kernel --lib graph_backfill` `9 passed; 0 failed`. Push triggers a fresh
 CI run; the merge gate stays "CI green, then merge" (maintainer instruction, 2026-11-21).
+
+### 2026-11-21 — Off-arc: `evalfixture` personas and JSON export (dev-only)
+
+**What was implemented.** `crates/evalfixture` (dev-only; never bundled) gained two features.
+
+1. **Data-driven personas** under `crates/evalfixture/src/gen/personas/`: `set_a.rs`, `set_b.rs`
+   and `set_c.rs` hold 33 `Persona { .. }` literals plus shared localized label packs in
+   `labels.rs`. A definition sets who (occupation, age band, invented name, employer or none),
+   environment (language/locale, country, fixed UTC offset, one or two monitors), Windows tools
+   (apps with `app_hint` stems, sites, file types, folders), rhythm (a cycle of weekday patterns
+   so rotating shifts, part-time and weekends are data; active window; daily nap; national
+   holidays; whole vacation weeks whose frames are redistributed) and content (contexts with
+   week ranges encoding started/dropped/resumed work, documents, searches, media). New
+   `gen/life.rs` plans the timeline and `gen/render.rs` renders 14 generic application families
+   from the data; there is no per-persona code path. CLI: `gen --persona <id>`,
+   `gen --persona random` (picked from the seed) and `gen --list-personas`
+   (`id<TAB>description`). Multi-monitor personas write `monitor_index` 1 with the second
+   display's resolution. Without `--persona`, `plan.rs`/`screens.rs`/`world.rs` still run the
+   pinned default fixture unchanged.
+2. **`export --db <path> --out <file.json>`**: one plain UTF-8 JSON file (persona, range,
+   projects, sessions with apps/titles/word fragments, days) read through the production Store's
+   `frame_page`/`sessions_in_range`/`get_setting` path and streamed into per-session summaries,
+   so no vectors, images, raw text or bulk content text are retained. Byte-identical for the
+   same database. Project ids/names, timestamps, day activity and the intentional grouping rule
+   are documented in `docs/TESTING.md`.
+
+**Correction during the task (maintainer).** The first pass modelled macOS/Linux persona
+desktops per the brief's "all three OS flavours". The maintainer corrected that ScreenSearch is
+a Windows-only product ("It's a windows only app RTFM"), so the OS axis was removed from the
+schema/renderer and all 33 definitions, paths, apps and chrome were converted to Windows (13
+personas needed app/path conversion; a scan of all 33 generated smoke databases finds zero
+`/Users/`, `/home/`, `macOS` or non-Windows `app_hint` values). `os` is always `windows` in the
+persisted identity and JSON export; the all-three-OS coverage is recorded as dropped in `07` and
+`06`.
+
+**Catalogue coverage.** 33 personas: 14 languages (cs, da, de, en, es, fi, fr, it, nl, pl, pt,
+ro, sv, tr), 25 countries, 29 non-technical lives (no code editor, no terminal, no code host) and
+4 technical lives; occupations range from night-shift nurse, market gardener, retired teacher and
+freelance translator to streamer, livestock farmer and backend engineer. `--list-personas`
+prints 33 lines.
+
+**Skipped / cut / risky.** Per-persona golden digests are deliberately not pinned (only the
+default fixture is); demo fixture files stay git-ignored under `harness-data/personas-demo/`.
+The generic renderer falls back to any context item when a definition lacks a matching
+extension, and validation enforces structure, not content plausibility. Export "words" are
+one-or-two-token fragments (within the brief's 1-to-3-word bound).
+
+**Verification (raw).**
+- `cargo fmt --all -- --check` -> 0; `cargo clippy -p evalfixture --all-targets -- -D warnings`
+  -> 0; `cargo clippy --workspace --all-targets -- -D warnings` -> 0; `cargo build --workspace`
+  -> 0.
+- `cargo test -p evalfixture` -> `17 passed; 0 failed` (unit), `9 passed; 0 failed`
+  (fixture_determinism: includes the committed default digest match and the new persona
+  reproducibility/difference test), `1 passed` (export determinism: two exports of one database
+  are byte-identical), `1 passed` (serve API); 28 total, 0 failed.
+- `cargo test --workspace --exclude harness` -> 80 suites, `1489 passed; 0 failed; 17 ignored`.
+  `cargo test -p harness --lib -- --skip export::tests::backup_snapshots_and_verifies` ->
+  `145 passed; 0 failed`. The skipped test fails in this sandbox for an environmental reason, not
+  a code reason: it requires its temp backup outside the repository tree, but the Windows Temp
+  folder refuses writes and the agent sandbox only permits writes inside the workspace, so any
+  writable tempdir is inside the repo and the test's own guard refuses it (`backup destination
+  ... is inside the repo tree`). Unrelated to this change; same test was not touched.
+- Default fixture digest unchanged: `the_default_fixture_still_matches_the_committed_baseline`
+  passes with the committed `69dac6e6ae417c0a6bc25590948a4dde8a6e1d500f99bb177f80a6bc794b8ab9`.
+- `git diff --exit-code -- ui/src/bindings` -> 0 (no binding change; the crate is dev-only and
+  ships nothing).
+- CLI: `gen --list-personas` -> 33 lines; six demo personas generated with `--weeks 2
+  --frames-per-week 300 --no-embeddings` and exported: `nurse-shifts` 600 frames / 22 sessions /
+  10 projects / 21,346 B, `market-gardener` 600 / 48 / 12 / 40,832 B, `retired-teacher` 600 / 22
+  / 10 / 21,582 B, `translator-freelance` 600 / 46 / 12 / 41,625 B, `streamer-gamer` 600 / 60 /
+  12 / 46,063 B, `backend-engineer` 600 / 48 / 12 / 39,233 B (all well under 1 MB).
+
+**Status.** Committed locally on `feat/evalfixture-personas` (two commits: personas, then the
+JSON export + records/docs), pushed to a PR open for maintainer review. No merge, no tag.
+
+### 2026-11-21 — Off-arc review fixes for PR #180 (bot reviews)
+
+**Addressed (Codex P2 findings + Claude review observations; no bot replies).**
+
+1. **Multi-year panic (Codex P2, `render.rs`).** `Code`/`Terminal` renderers unwrapped a session
+   context that can be `None` once a technical persona's last context week range expires (for
+   example `backend-engineer` contexts end at week 60, but `--weeks` supports 1040).
+   `render.rs::code_material` now falls back to the persona's folders, topics and channels when no
+   context is live, so the screen is still a plausible generic repository. Verified:
+   `gen --weeks 62 --frames-per-week 4 --no-embeddings --persona backend-engineer` exits 0 and
+   writes 248 frames / 122 sessions including `Code` and `WindowsTerminal` frames.
+2. **Daily break ignored (Codex P2, `life.rs`).** Frames could run through the persona's
+   `[from, to)` break, and a session starting after it received a second full break delay.
+   `life::lay_day` now places every session around the break: no frame lands inside it, no
+   session's frames cross it, and the break is consumed once. Verified on `retired-teacher`
+   (2 weeks, 300 frames/week, break 12:30–14:00 local): 0 frames inside the break, 0 sessions
+   crossing it or wholly inside it.
+3. **Panic paths on bad input (Claude).** `life::plan` now `ensure!`s `weeks >= 1`, non-empty
+   `rhythm.patterns` and non-reversed `rhythm.sessions`, and a day with fewer than two frames is a
+   hard error instead of a silent `continue` that would break the exact `weeks x frames_per_week`
+   total.
+4. **Windows-only leftovers (Claude).** `export.rs` no longer detects `/Users/`, `/home/` or
+   `/mnt/` paths and the `rooted` token branch is gone: fixture titles are Windows drive paths
+   only. A browser URL that yields no usable token now falls through to the window-title path
+   instead of voting for nothing.
+5. **Project id ordering (Claude).** Ids now zero-pad to the project count's width (at least two
+   digits), so string order matches first-seen order past 99 projects (`p11` < `p100`).
+6. **Docs (Claude).** `docs/TESTING.md` and the export module doc state the URL-token fallback,
+   `active_minutes` start-date attribution and the widened id padding.
+7. Not changed: export `words` remain one-or-two-token fragments (within the brief's 1-to-3-word
+   bound); that is documented behaviour and no review asked otherwise.
+
+**Verification (raw).** `cargo fmt --all -- --check` 0; `cargo clippy -p evalfixture --all-targets
+-- -D warnings` 0; `cargo test -p evalfixture` 28 passed, 0 failed (committed default digest still
+matches, persona/export determinism still green). The six demo fixtures were regenerated with the
+fixed planner/renderer; exports are 21,517 / 41,069 / 23,524 / 43,760 / 48,493 / 41,361 bytes (all
+under 1 MB). Pushed as a third commit; PR stays open for maintainer review, no merge, no bot
+replies.
+
+### 2026-11-21 — PR #180 second review round (Codex comments on `96a0a7f`)
+
+1. **Dense days could accept out-of-hours frames (Codex P2, `life.rs`).** The fit loop stopped at a
+   scaling-factor floor even when the resulting last frame was after `end_min`. For example
+   `--persona retired-teacher --weeks 1 --frames-per-week 50000` stopped at factor ~0.007 and left
+   its last frame at 19:52 against an 18:00 cutoff. The loop now keeps halving the factor until the
+   laid-out day really ends before `end_min`; when the one-second spacing floor still overruns, the
+   day is rejected with a message naming the persona, date, frame count and active window (lower
+   `--frames-per-week` or widen the rhythm). Verified: the same 50000-frame run now ends at 17:16
+   local with 0 frames at/after 18:00 (11 sessions, exit 0).
+2. **`--out` could be the source database (Codex P2, `export.rs`).** `export --db X --out X` read
+   the fixture and then truncated it with JSON, reporting success. The command now rejects a
+   destination that resolves to the same file as `--db` before reading or writing, including
+   equivalent spellings via canonicalisation; the usage text says so. Verified: direct and `./`
+   spellings exit 1 with the message, the database stayed unchanged (600 frames read back), and a
+   normal export still succeeds.
+
+**Verification (raw).** `cargo fmt --all -- --check` 0; `cargo clippy -p evalfixture --all-targets
+-- -D warnings` 0; `cargo test -p evalfixture` 28 passed, 0 failed (committed default digest still
+matches). Pushed as a fourth commit; PR stays open, no merge, no bot replies.

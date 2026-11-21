@@ -263,6 +263,105 @@ cargo run -p evalfixture -- gen --out harness-data/scale --start 2020-01-06 \
 - The default six-week run still prints the committed digest; use `--no-embeddings` in CI-like
   runs so nothing loads or downloads a model. `harness-data/` is git-ignored.
 
+### Personas (`gen --persona`)
+
+Without `--persona` the generator still builds the pinned default fixture (the office software
+engineer at Northwind Labs) and prints the committed digest; `--persona <id>` replaces that
+world with one data-driven persona from
+[`crates/evalfixture/src/gen/personas/`](../crates/evalfixture/src/gen/personas/):
+
+```sh
+# one persona, two weeks, 300 frames per week, model-free
+cargo run -p evalfixture -- gen --out harness-data/personas-demo/nurse-shifts \
+  --persona nurse-shifts --weeks 2 --frames-per-week 300 --no-embeddings
+
+# one persona picked from the seed
+cargo run -p evalfixture -- gen --out harness-data/random --persona random --seed 7
+
+# the catalog: one line per persona, "id<TAB>description"
+cargo run -p evalfixture -- gen --list-personas
+```
+
+A **persona** is one data definition (a `Persona { .. }` literal in `set_a.rs`, `set_b.rs` or
+`set_c.rs`; adding one needs no new Rust logic). It sets:
+
+- **who** — occupation, age band, invented name, employer or none;
+- **environment** — language and locale of titles and text, country, fixed UTC offset, one or
+  two monitors with their resolutions. **Every persona is a Windows desktop user:** the product
+  is Windows-only (`CLAUDE.md` hard rule), so the fixture never models another desktop and the
+  JSON export always reports `os: "windows"`;
+- **tools** — Windows apps with their `app_hint` process stems, sites, file types, folders;
+- **rhythm** — a cycle of weekly weekday patterns (so rotating shifts, part-time and
+  weekend lives are data), active hours, a daily nap/lunch window, national holidays and
+  whole vacation weeks (their frames are redistributed over the other weeks, so the run still
+  writes `--weeks x --frames-per-week` frames);
+- **content** — contexts/projects with week ranges that encode started/dropped/resumed work,
+  documents, what the persona reads, searches and watches.
+
+The catalogue covers ≥ 30 personas across ≥ 10 languages and ≥ 12 countries, on one Windows
+desktop flavour; at least half are non-technical lives (no terminal, no code editor, no code
+host). Each persona run writes its identity to the `evalfixture.persona` settings key so
+`export` can report it. The flag never changes the pinned default digest; the same seed and
+persona print the same digest, and another persona produces different frames, apps and text
+(proved by `cargo test -p evalfixture --test fixture_determinism`).
+
+### JSON export (`export`)
+
+```sh
+cargo run -p evalfixture -- export --db harness-data/personas-demo/nurse-shifts/screensearch.db \
+  --out harness-data/personas-demo/nurse-shifts.json
+```
+
+One UTF-8 JSON file readable by any app with a plain JSON parser: **no SQLite, no vectors, no
+images, no full captured text**. The same database always produces a byte-identical file.
+
+```json
+{
+  "persona": { "id": "", "description": "", "language": "", "country": "", "timezone": "", "os": "" },
+  "range":   { "start": "", "end": "" },
+  "projects": [ { "id": "", "name": "", "first_seen": "", "last_seen": "", "session_count": 0 } ],
+  "sessions": [ { "id": 0, "start": "", "end": "", "kind": "", "project_id": null,
+                  "apps": [""], "titles": [""], "words": [""] } ],
+  "days":     [ { "date": "", "active_minutes": 0, "session_count": 0, "top_project_id": null } ]
+}
+```
+
+- Timestamps are ISO 8601 with the persona's fixed UTC offset and millisecond precision
+  (`2026-09-07T08:12:33.500+02:00`); `days[].date` is the local date (`YYYY-MM-DD`).
+- `persona` is read back from the `evalfixture.persona` settings key. A fixture generated
+  without `--persona` has no such key and reports the documented `northwind-tech` identity
+  (`en-US`, `FR`, `+02:00`, `windows`). `os` is always `windows`: the product captures only
+  Windows desktops, so no persona models another platform.
+- `sessions` are ordered by start then id; `apps` are the distinct `app_hint` values sorted
+  alphabetically; `titles` are up to five distinct window titles in frame order; `words` are up
+  to eight distinct one-to-three-word fragments of the session's `content_text` in frame order
+  (lines split on whitespace, URL/path/colon tokens skipped, the first one or two remaining
+  tokens kept).
+- **Project grouping rule.** Each session gets at most one raw context token, taken from its
+  frames in chronological order: a frame with a browser URL contributes its **site** — the host
+  alone, except on a code host (`github.com`, `gitlab.com`, `bitbucket.org`, `codeberg.org`)
+  where it is the repository root: host plus owner and repository, with route words (`pulls`,
+  `issues`, `browse`, …) dropped and the walk stopped before an id-like segment (`418`,
+  `LED-142`, a UUID or hash); a browser URL that yields no usable token falls through to the
+  window-title path, and otherwise a frame whose window title contains an absolute path
+  contributes that path, with a trailing file name removed when its last component contains a
+  dot, walking up while the last directory is one of `src`, `tests`, `test`, `docs`, `doc`,
+  `content`, `app`, `apps`, `internal`, `cmd`, `pkg`, `packages`, `design`, `assets`, and with
+  separators normalised to `/`. The session token is the most frequent non-empty token among
+  its frames (ties: the earliest frame's token). Sessions sharing a token form one project; ids
+  are `p01`, `p02`, … in first-seen order (zero-padded to the project count's width, so ids
+  keep sorting as strings past 99 projects) and the name is the humanised last token component
+  (a site-only token names its host without `www.` or the top-level domain), at most three
+  words. Sessions with no token get `project_id: null`. The rule is deliberately simple:
+  repository and folder sessions land on their checkout/folder root, browser work lands on the
+  site (or repository), and sessions that carry neither (mail, chat) stay ungrouped.
+- `days`: `active_minutes` is the floored sum of the durations of the sessions that start that
+  local day — a session's whole duration is credited to its start date even if it crosses
+  local midnight (persona hours keep that rare); `top_project_id` is that day's most frequent
+  project (ties go to the smallest project id) or null.
+- Size: two weeks at 300 frames per week stays well under the 1 MB budget (the six-persona demo
+  lives in the git-ignored `harness-data/personas-demo/`).
+
 ## 🟢 The no-orphan gate (P4's must-pass)
 
 Proves the sidecar can't outlive the app:

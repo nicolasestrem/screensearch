@@ -612,3 +612,62 @@ tokio worker between test binaries did not reproduce it. The test-only fix state
 completion line as a literal, asserts it on both passes, and surfaces the latest capture in the
 failure message for diagnosis. No production code changed; no bot reply; PR #179 is merged only
 after a green CI run.
+
+### 2026-11-21: `evalfixture` personas and JSON export (dev-only tooling)
+
+`ssv2c-evalfixture` gains a data-driven persona catalogue and a plain-JSON export; the pinned
+default fixture stays byte-identical. `gen --persona <id>` / `--persona random` /
+`--list-personas` generate one of 33 invented lives from data literals in
+`crates/evalfixture/src/gen/personas/` (three set files plus shared localized label packs): a
+timeline planner (`gen/life.rs`) derives rhythm, sessions and frames from the definition, and a
+generic renderer (`gen/render.rs`) draws 14 application families in the persona's language. The
+catalogue covers 14 languages, 25 countries and 29 non-technical lives (4 technical). A late
+correction: the first cut modelled macOS/Linux persona desktops, but the product is Windows-only
+(`CLAUDE.md`), so the OS axis was removed, every definition and screen was converted to Windows
+apps, paths and chrome, and `os` is always `windows` (`07`, same date). `export --db <path>
+--out <file.json>` writes one deterministic UTF-8 JSON file (persona, range, projects, sessions,
+days) through the production Store's read API, streaming frames so memory stays bounded; project
+grouping, timestamp and word rules are documented in `docs/TESTING.md`. Six demo personas
+(nurse-shifts, market-gardener, retired-teacher, translator-freelance, streamer-gamer,
+backend-engineer) were generated with `--weeks 2 --frames-per-week 300 --no-embeddings` and
+exported to the git-ignored `harness-data/personas-demo/<id>.json` (21-46 KB each). Verification:
+`cargo test -p evalfixture` 28 passed (17 unit, 9 determinism including the persona
+reproducibility test, 1 export determinism, 1 serve-API) with the committed default digest still
+matching; `cargo fmt --all -- --check`, `cargo clippy -p evalfixture --all-targets -- -D
+warnings`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo build --workspace`
+all exit 0; the full workspace test suite is green. No schema, settings, IPC, runtime or network
+change. Committed locally on `feat/evalfixture-personas` and opened as a PR for maintainer
+review; not merged, no tag.
+
+### 2026-11-21: PR #180 review fixes (bot reviews, evalfixture personas/export)
+
+Addressed the automated review findings without replying to the bots: (1) Codex P2 - a multi-year
+run of a technical persona panicked once every context week range had expired because Code/Terminal
+renderers unwrapped the missing context; they now fall back to the persona's folders/topics/
+channels (verified with `--weeks 62`). (2) Codex P2 - the persona's daily break was not honoured
+(frames ran through it and a post-break session got a second full delay); a new `life::lay_day`
+places every session around the break, so no frame or session crosses it and the break is consumed
+once (verified on `retired-teacher`: 0 frames inside 12:30-14:00, 0 crossing sessions). (3) Claude -
+`life::plan` now `ensure`s weeks >= 1, non-empty rhythm patterns and a non-reversed session range,
+and a sub-two-frame day is an error rather than a silent skip that would break the exact frame
+total. (4) Claude - removed the Unix path detection and rooted branch from `export.rs`
+(Windows-only product), and a browser URL without a usable token now falls back to the
+window-title path. (5) Claude - project ids zero-pad to the project count's width so string order
+stays first-seen order past 99 projects. (6) Docs note the URL-token fallback, `active_minutes`
+start-date attribution and the id padding. Verification: fmt/clippy clean, `cargo test -p
+evalfixture` 28 passed with the committed default digest still matching; the six demo fixtures were
+regenerated (exports 21-48 KB). Third commit on the PR; no merge, no bot replies.
+
+### 2026-11-21: PR #180 second review round (Codex comments on 96a0a7f)
+
+Two further Codex P2 findings, both fixed without replying to the bot. (1) Dense-day fitting could
+accept a layout whose last frame was after the persona's end-of-day once the scaling factor fell
+below a floor: `--persona retired-teacher --weeks 1 --frames-per-week 50000` ended at 19:52 against
+18:00. The fit loop now keeps shrinking until the day really ends before `end_min`, and rejects a
+density that cannot fit even at the one-second spacing floor instead of writing out-of-hours
+frames. Verified: that same run now ends at 17:16 local with 0 frames at/after 18:00. (2)
+`export --db X --out X` read the fixture and then truncated it with JSON while reporting success;
+the command now rejects a destination that canonicalises to the source database before reading or
+writing (usage text updated). Verified: direct and `./` spellings exit 1, the database is unchanged,
+and a normal export still succeeds. fmt/clippy clean, `cargo test -p evalfixture` 28 passed with the
+default digest still matching. Fourth commit on the PR; no merge, no bot replies.

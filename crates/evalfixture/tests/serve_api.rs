@@ -34,6 +34,7 @@ fn serve_api_health_auth_search_ask_and_port_release() {
         frames_per_week: TINY_FRAMES_PER_WEEK,
         embeddings: false,
         embed_frames: None,
+        persona: None,
     })
     .expect("generate the tiny fixture");
 
