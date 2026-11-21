@@ -263,6 +263,48 @@ cargo run -p evalfixture -- gen --out harness-data/scale --start 2020-01-06 \
 - The default six-week run still prints the committed digest; use `--no-embeddings` in CI-like
   runs so nothing loads or downloads a model. `harness-data/` is git-ignored.
 
+### Personas (`gen --persona`)
+
+Without `--persona` the generator still builds the pinned default fixture (the office software
+engineer at Northwind Labs) and prints the committed digest; `--persona <id>` replaces that
+world with one data-driven persona from
+[`crates/evalfixture/src/gen/personas/`](../crates/evalfixture/src/gen/personas/):
+
+```sh
+# one persona, two weeks, 300 frames per week, model-free
+cargo run -p evalfixture -- gen --out harness-data/personas-demo/nurse-shifts \
+  --persona nurse-shifts --weeks 2 --frames-per-week 300 --no-embeddings
+
+# one persona picked from the seed
+cargo run -p evalfixture -- gen --out harness-data/random --persona random --seed 7
+
+# the catalog: one line per persona, "id<TAB>description"
+cargo run -p evalfixture -- gen --list-personas
+```
+
+A **persona** is one data definition (a `Persona { .. }` literal in `set_a.rs`, `set_b.rs` or
+`set_c.rs`; adding one needs no new Rust logic). It sets:
+
+- **who** — occupation, age band, invented name, employer or none;
+- **environment** — language and locale of titles and text, country, fixed UTC offset, one or
+  two monitors with their resolutions. **Every persona is a Windows desktop user:** the product
+  is Windows-only (`CLAUDE.md` hard rule), so the fixture never models another desktop and the
+  JSON export always reports `os: "windows"`;
+- **tools** — Windows apps with their `app_hint` process stems, sites, file types, folders;
+- **rhythm** — a cycle of weekly weekday patterns (so rotating shifts, part-time and
+  weekend lives are data), active hours, a daily nap/lunch window, national holidays and
+  whole vacation weeks (their frames are redistributed over the other weeks, so the run still
+  writes `--weeks x --frames-per-week` frames);
+- **content** — contexts/projects with week ranges that encode started/dropped/resumed work,
+  documents, what the persona reads, searches and watches.
+
+The catalogue covers ≥ 30 personas across ≥ 10 languages and ≥ 12 countries, on one Windows
+desktop flavour; at least half are non-technical lives (no terminal, no code editor, no code
+host). Each persona run writes its identity to the `evalfixture.persona` settings key so
+`export` can report it. The flag never changes the pinned default digest; the same seed and
+persona print the same digest, and another persona produces different frames, apps and text
+(proved by `cargo test -p evalfixture --test fixture_determinism`).
+
 ## 🟢 The no-orphan gate (P4's must-pass)
 
 Proves the sidecar can't outlive the app:

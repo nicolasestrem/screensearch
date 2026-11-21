@@ -19,8 +19,11 @@
 
 mod code;
 mod layout;
+mod life;
+pub(crate) mod personas;
 mod plan;
 mod prng;
+mod render;
 mod screens;
 mod world;
 
@@ -40,8 +43,11 @@ use traits::{
 
 use crate::{API_TOKEN_SETTING, DEFAULT_FRAMES_PER_WEEK, DEFAULT_SEED, DEFAULT_WEEKS};
 use layout::lay_out;
+use life::LifePlan;
+use personas::{Persona, PERSONA_SETTING};
 use plan::Plan;
 use prng::{subseed, SplitMix64};
+use render::{Renderer as LifeRenderer, Sticky as LifeSticky};
 use screens::{clock, Renderer, Sticky};
 
 /// Fixture size bounds. The week/density limits are generous enough for a multi-year history;
@@ -74,6 +80,8 @@ const USAGE: &str = "\
 USAGE:
   ssv2c-evalfixture gen --out <dir> [--seed <n>] [--start <YYYY-MM-DD>] [--weeks <n>]
                         [--frames-per-week <n>] [--no-embeddings | --embed-frames <n>]
+                        [--persona <id> | --persona random]
+  ssv2c-evalfixture gen --list-personas
 
 OPTIONS:
   --out <dir>              Fixture directory (required). The database is <dir>/screensearch.db;
@@ -92,6 +100,13 @@ OPTIONS:
                            --no-embeddings or a bound. Text embeddings use the product's
                            fastembed model, cached under <dir>/models/fastembed (downloaded
                            on first use).
+  --persona <id>           Generate one catalog persona's life instead of the pinned default
+                           fixture. `--persona random` picks one from the seed. The persona's
+                           own language, country, timezone, rhythm, apps and content are used.
+                           Every persona runs on Windows: the product is Windows-only, so the
+                           fixture never models another desktop. The pinned default digest is
+                           unaffected when the flag is absent.
+  --list-personas          Print one line per catalog persona (`id<TAB>description`) and exit.
 ";
 
 /// The first working day a run uses when `--start` is absent (Monday 2026-09-07).
@@ -111,6 +126,9 @@ pub struct GenOptions {
     /// Embed only the first `n` frames that have content text; `None` embeds every frame
     /// (when embeddings are on).
     pub embed_frames: Option<usize>,
+    /// The catalog persona to generate, or `None` for the pinned default fixture. `--persona
+    /// random` is resolved to a concrete id at parse time from the seed.
+    pub persona: Option<&'static str>,
 }
 
 impl GenOptions {
@@ -129,6 +147,7 @@ impl GenOptions {
         let mut frames_per_week = DEFAULT_FRAMES_PER_WEEK;
         let mut embeddings = true;
         let mut embed_frames: Option<usize> = None;
+        let mut persona_arg: Option<String> = None;
 
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
@@ -150,9 +169,23 @@ impl GenOptions {
                 "--embed-frames" => {
                     embed_frames = Some(parse_number("--embed-frames", &value("--embed-frames")?)?)
                 }
+                "--persona" => persona_arg = Some(value("--persona")?),
                 other => bail!("unknown flag `{other}`\n\n{USAGE}"),
             }
         }
+        let persona: Option<&'static str> =
+            match persona_arg.as_deref() {
+                None => None,
+                Some("random") => Some(personas::random(seed).id),
+                Some(id) => Some(personas::find(id).map(|persona| persona.id).ok_or_else(
+                    || {
+                        anyhow!(
+                            "unknown persona `{id}`; run `ssv2c-evalfixture gen --list-personas` \
+                             to see the catalog\n\n{USAGE}"
+                        )
+                    },
+                )?),
+            };
         let opts = Self {
             out_dir: out_dir.ok_or_else(|| anyhow!("`--out <dir>` is required\n\n{USAGE}"))?,
             seed,
@@ -161,8 +194,12 @@ impl GenOptions {
             frames_per_week,
             embeddings,
             embed_frames,
+            persona,
         };
         opts.validate()?;
+        if opts.persona.is_some() {
+            personas::validate_all()?;
+        }
         Ok(opts)
     }
 
@@ -256,18 +293,23 @@ pub struct GenManifest {
     pub frames: u64,
     pub sessions: u64,
     pub embeddings: u64,
+    /// The catalog persona this run generated, or `None` for the pinned default fixture.
+    pub persona: Option<&'static str>,
     /// blake3 (hex) over the canonical dump of every stored frame and session row.
     pub digest: String,
 }
 
 impl GenManifest {
-    /// The stable printed summary: `seed=`, `start=`, `weeks=`, `frames=`, `sessions=`,
-    /// `embeddings=`, `digest=`, `db=`, one per line, in that order (the path with forward
-    /// slashes).
+    /// The stable printed summary: `seed=`, optionally `persona=`, `start=`, `weeks=`,
+    /// `frames=`, `sessions=`, `embeddings=`, `digest=`, `db=`, one per line, in that order
+    /// (the path with forward slashes). The pinned default fixture's summary is unchanged.
     pub fn summary(&self) -> String {
-        format!(
-            "seed=0x{:016x}\nstart={}\nweeks={}\nframes={}\nsessions={}\nembeddings={}\ndigest={}\ndb={}\n",
-            self.seed,
+        let mut summary = format!("seed=0x{:016x}\n", self.seed);
+        if let Some(persona) = self.persona {
+            summary.push_str(&format!("persona={persona}\n"));
+        }
+        summary.push_str(&format!(
+            "start={}\nweeks={}\nframes={}\nsessions={}\nembeddings={}\ndigest={}\ndb={}\n",
             self.start,
             self.weeks,
             self.frames,
@@ -275,14 +317,20 @@ impl GenManifest {
             self.embeddings,
             self.digest,
             self.db.display().to_string().replace('\\', "/")
-        )
+        ));
+        summary
     }
 }
 
-/// `gen` entry point: parse, generate, print the summary.
+/// `gen` entry point: parse, generate, print the summary. `--list-personas` prints the
+/// catalog without needing `--out`.
 pub fn run(args: &[String]) -> Result<()> {
     if args.iter().any(|a| a == "-h" || a == "--help") {
         print!("{USAGE}");
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--list-personas") {
+        print!("{}", personas::list_lines()?);
         return Ok(());
     }
     let opts = GenOptions::parse(args)?;
@@ -325,12 +373,35 @@ pub fn generate(opts: &GenOptions) -> Result<GenManifest> {
             None
         };
 
-    let plan = plan::plan(opts.seed, opts.weeks, opts.frames_per_week, opts.start)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("building the generator runtime")?;
-    runtime.block_on(write_fixture(opts, &db, &plan, embedder.as_ref()))
+    match opts.persona {
+        None => {
+            let plan = plan::plan(opts.seed, opts.weeks, opts.frames_per_week, opts.start)?;
+            runtime.block_on(write_fixture(opts, &db, &plan, embedder.as_ref()))
+        }
+        Some(id) => {
+            let persona = personas::find(id)
+                .with_context(|| format!("persona `{id}` is not in the catalog"))?;
+            personas::validate(persona)?;
+            let life_plan = life::plan(
+                opts.seed,
+                opts.weeks,
+                opts.frames_per_week,
+                opts.start,
+                persona,
+            )?;
+            runtime.block_on(write_persona_fixture(
+                opts,
+                &db,
+                &life_plan,
+                persona,
+                embedder.as_ref(),
+            ))
+        }
+    }
 }
 
 /// A fixture directory is written once. Any existing database file (or its WAL/journal
@@ -365,6 +436,13 @@ fn slash(path: &Path) -> String {
 fn image_path(captured_at: i64) -> String {
     let day = captured_at.div_euclid(86_400_000);
     format!("frames/day-{day}/{captured_at}-0.webp")
+}
+
+/// The same layout for a persona frame on `monitor`; multi-monitor personas write the
+/// second display's index into the file name the way the capture loop does.
+fn image_path_on(captured_at: i64, monitor: u8) -> String {
+    let day = captured_at.div_euclid(86_400_000);
+    format!("frames/day-{day}/{captured_at}-{monitor}.webp")
 }
 
 /// A synthetic API bearer token: 32 bytes of the seeded stream as hex, the shape the product
@@ -487,6 +565,147 @@ async fn write_fixture(
         frames,
         sessions: sessions.len() as u64,
         embeddings: embedded,
+        persona: None,
+        digest,
+    })
+}
+
+/// Writes a persona run: the same production Store writers, the same digest and the same
+/// read-back, but every frame is rendered from the persona's data by [`life::LifePlan`] and
+/// `gen::render`. The persona's identity is written to the `evalfixture.persona` setting so
+/// `ssv2c-evalfixture export` can report it; the pinned default fixture writes no such key and
+/// stays byte-identical.
+async fn write_persona_fixture(
+    opts: &GenOptions,
+    db: &Path,
+    plan: &LifePlan,
+    persona: &'static Persona,
+    embedder: Option<&FastEmbedProvider>,
+) -> Result<GenManifest> {
+    let store = SqliteStore::open_path(db).with_context(|| format!("creating {}", slash(db)))?;
+    let mut renderer = LifeRenderer::new(opts.seed, persona);
+    let total_frames = opts.total_frames() as usize;
+    let mut written = 0usize;
+    let offset = persona.offset()?;
+
+    for session in &plan.sessions {
+        let session_id = store
+            .insert_session(NewSession {
+                started_at: session.started_at,
+                ended_at: Some(session.ended_at),
+                kind: session.kind,
+                tool: session.tool.map(str::to_string),
+                host: session.host,
+                context_key: session.context_key.clone(),
+                confidence: session.confidence,
+                frozen: true,
+            })
+            .await
+            .with_context(|| format!("inserting session starting at {}", session.started_at))?;
+        let mut sticky = LifeSticky::default();
+        let mut frame_ids = Vec::with_capacity(session.frames.len());
+        let mut previous_app = None;
+        for frame in &session.frames {
+            let mut screen = render::render(&mut renderer, session, frame, &mut sticky);
+            // A body line that repeats the window title would be dropped by the attention
+            // filter as a title echo; generated prose must not silently lose content.
+            let title = traits::normalize_text(&screen.title);
+            screen
+                .body
+                .retain(|line| traits::normalize_text(line) != title);
+            let (time, date) = life::clock(frame.at, offset, persona.labels);
+            let laid = lay_out(&screen, (&time, &date))?;
+            let trigger = if previous_app == Some(frame.app) {
+                CaptureTrigger::Timer
+            } else {
+                CaptureTrigger::ForegroundChange
+            };
+            previous_app = Some(frame.app);
+            let monitor = persona
+                .monitors
+                .get(frame.monitor as usize)
+                .copied()
+                .unwrap_or(persona.monitors[0]);
+            let frame_id = store
+                .insert_frame(NewFrame {
+                    captured_at: frame.at,
+                    monitor_index: u32::from(frame.monitor),
+                    width: monitor.width,
+                    height: monitor.height,
+                    image_path: image_path_on(frame.at, frame.monitor),
+                    content_hash: blake3::hash(laid.ocr.text.as_bytes()).to_hex().to_string(),
+                    app_hint: Some(screen.app_hint.to_string()),
+                    window_title: Some(screen.title.clone()),
+                    browser_url: screen.url.clone(),
+                    capture_trigger: Some(trigger),
+                })
+                .await
+                .with_context(|| {
+                    format!(
+                        "inserting persona frame {} of session {session_id}",
+                        frame.at
+                    )
+                })?;
+            store
+                .insert_ocr_filtered(frame_id, laid.ocr, laid.ctx)
+                .await
+                .with_context(|| format!("inserting text for frame {frame_id}"))?;
+            frame_ids.push(frame_id);
+            written += 1;
+            if written.is_multiple_of(10_000) {
+                eprintln!("wrote {written}/{total_frames} frames");
+            }
+        }
+        let assigned = store
+            .assign_frames_session(&frame_ids, Some(session_id))
+            .await
+            .with_context(|| {
+                format!(
+                    "assigning {} frames to session {session_id}",
+                    frame_ids.len()
+                )
+            })?;
+        ensure!(
+            assigned == frame_ids.len() as u64,
+            "session {session_id}: assigned {assigned} of {} frames",
+            frame_ids.len()
+        );
+    }
+    ensure!(
+        written == total_frames,
+        "wrote {written} frames, the plan expected {total_frames}"
+    );
+
+    store
+        .set_setting(API_TOKEN_SETTING, &api_token(opts.seed))
+        .await?;
+    let metadata =
+        serde_json::to_string(&persona.metadata()).context("serializing the persona identity")?;
+    store.set_setting(PERSONA_SETTING, &metadata).await?;
+
+    let embed_limit = if opts.embeddings {
+        opts.embed_frames.unwrap_or(total_frames)
+    } else {
+        0
+    };
+    let (frames, digest, embedded) = finish_fixture(&store, embedder, embed_limit).await?;
+    let sessions = read_sessions(&store).await?;
+    ensure!(
+        frames == total_frames as u64 && sessions.len() == plan.sessions.len(),
+        "read back {frames} frames / {} sessions, wrote {total_frames} / {}",
+        sessions.len(),
+        plan.sessions.len()
+    );
+
+    Ok(GenManifest {
+        db: db.to_path_buf(),
+        seed: opts.seed,
+        start: opts.start,
+        weeks: opts.weeks,
+        frames,
+        sessions: sessions.len() as u64,
+        embeddings: embedded,
+        persona: Some(persona.id),
         digest,
     })
 }
@@ -669,6 +888,7 @@ mod tests {
                 frames_per_week: DEFAULT_FRAMES_PER_WEEK,
                 embeddings: true,
                 embed_frames: None,
+                persona: None,
             }
         );
         let opts = GenOptions::parse(&args(&[

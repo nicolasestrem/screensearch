@@ -1,27 +1,33 @@
 //! `ssv2c-evalfixture` CLI - dev-only 0.4.5 evaluation fixture.
 //!
 //! ```text
-//! ssv2c-evalfixture gen   --out <dir> [--seed <n>] [--start <YYYY-MM-DD>] [--weeks <n>]
-//!                        [--frames-per-week <n>] [--no-embeddings | --embed-frames <n>]
-//! ssv2c-evalfixture serve --db <path> --data <dir> [--port <n>] [--embed] [--no-answer]
-//! ssv2c-evalfixture graph --db <path>
+//! ssv2c-evalfixture gen    --out <dir> [--seed <n>] [--start <YYYY-MM-DD>] [--weeks <n>]
+//!                          [--frames-per-week <n>] [--no-embeddings | --embed-frames <n>]
+//!                          [--persona <id> | --persona random]
+//! ssv2c-evalfixture gen    --list-personas
+//! ssv2c-evalfixture export --db <path> --out <file.json>
+//! ssv2c-evalfixture serve  --db <path> --data <dir> [--port <n>] [--embed] [--no-answer]
+//! ssv2c-evalfixture graph  --db <path>
 //! ```
 //!
-//! Exit code 0 on success, 1 when generation, serving or the graph backfill fails.
+//! Exit code 0 on success, 1 when generation, export, serving or the graph backfill fails.
 
 use std::process::ExitCode;
 
 use anyhow::{bail, Result};
-use evalfixture::{gen, graph, serve};
+use evalfixture::{export, gen, graph, serve};
 
 const USAGE: &str = "\
 ssv2c-evalfixture - dev-only 0.4.5 evaluation fixture (never shipped)
 
 USAGE:
-  ssv2c-evalfixture gen   --out <dir> [--seed <n>] [--start <YYYY-MM-DD>] [--weeks <n>]
-                         [--frames-per-week <n>] [--no-embeddings | --embed-frames <n>]
-  ssv2c-evalfixture serve --db <path> --data <dir> [--port <n>] [--embed] [--no-answer]
-  ssv2c-evalfixture graph --db <path>
+  ssv2c-evalfixture gen    --out <dir> [--seed <n>] [--start <YYYY-MM-DD>] [--weeks <n>]
+                           [--frames-per-week <n>] [--no-embeddings | --embed-frames <n>]
+                           [--persona <id> | --persona random]
+  ssv2c-evalfixture gen    --list-personas
+  ssv2c-evalfixture export --db <path> --out <file.json>
+  ssv2c-evalfixture serve  --db <path> --data <dir> [--port <n>] [--embed] [--no-answer]
+  ssv2c-evalfixture graph  --db <path>
 
 COMMANDS:
   gen     Build the seeded synthetic v15 history (frames, sessions, text, embeddings,
@@ -29,7 +35,11 @@ COMMANDS:
           The default is six weeks from Monday 2026-09-07; --start, --weeks and
           --frames-per-week scale it to a multi-year history (at most 2,000,000 frames),
           and --no-embeddings / --embed-frames bound the model work. Re-running with the
-          same arguments and seed prints the same digest.
+          same arguments and seed prints the same digest. --persona generates one catalog
+          persona's life instead of the pinned default fixture; --list-personas prints the
+          catalog (`id<TAB>description`, one line each).
+  export  Read a fixture database and write one plain UTF-8 JSON file (persona, range,
+          projects, sessions, days) any app can parse; same database, byte-identical file.
   serve   Run the product's local HTTP API (/v1/search, /v1/ask) over that database.
           --embed attaches the real text embedder (vector arm); --no-answer skips the
           answer sidecar so /v1/ask answers 503. Both default to off/on respectively:
@@ -54,6 +64,7 @@ fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("gen") => gen::run(&args[1..]),
+        Some("export") => export::run(&args[1..]),
         Some("serve") => {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
