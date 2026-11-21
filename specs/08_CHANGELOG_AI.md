@@ -603,3 +603,12 @@ page-bounded (the plan is still in memory, ~100 MB at the 2M ceiling), say `--em
 the first n frames with text, fix the embed progress denominator, document why embedding between
 keyset pages is safe, and note the fixed +02:00 offset does not model DST. No schema, settings, IPC
 or runtime change; no bot replies, no merge.
+
+### 2026-11-21: PR #179 CI fix — kernel completion-line capture test hardened
+
+CI on `79c8ab2` failed in `kernel` (untouched by this PR): the graph-backfill completion-line test
+captured no line. It passes 100/100 alone and 25/25 in the full kernel lib suite locally; leaking a
+tokio worker between test binaries did not reproduce it. The test-only fix states the expected
+completion line as a literal, asserts it on both passes, and surfaces the latest capture in the
+failure message for diagnosis. No production code changed; no bot reply; PR #179 is merged only
+after a green CI run.

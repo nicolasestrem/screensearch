@@ -1397,3 +1397,28 @@ that the fixed +02:00 offset does not model DST across multi-year spans.
 
 **Status.** New commit on `feat/evalfixture-large-datasets`, pushed to PR #179. No reply to the
 bots, no merge, no review retrigger.
+
+### 2026-11-21 — PR #179 CI: the kernel graph-backfill completion-line test, hardened (not this change's regression)
+
+**Symptom.** The `build & test (windows)` job on `79c8ab2` failed inside kernel, a crate this branch
+never touches: `graph_backfill::tests::run_to_completion_logs_one_post_cluster_line_and_the_second_
+pass_repeats_it` asserted `left: []` against the expected completion line
+`graph backfill complete entities=3 entity_aliases=1 session_entities=6 threads=1 thread_sessions=2`.
+The two previous runs of the same suite were green (`9d002e2` CI success), and the branch diff
+contains no kernel change.
+
+**Investigations (raw).** The target test passes 100/100 locally; the full `-p kernel --lib` suite
+passes 25/25 locally. A reproduction attempt that leaked a tokio multi-thread worker between test
+binaries did not reproduce the miss (10 + 15 runs, all `ok`), so the exact CI mechanism remains
+unproven; what is proven is that the capture is thread-local while a captured event arriving on
+another thread is silently dropped.
+
+**Change (test-only, `#[cfg(test)]`).** The test no longer derives its expectation by reading back
+code under test or from a thread-local-only capture: it states the completion line as a literal
+expectation, asserts it for both the first and the second pass, and reports the latest installed
+capture in the failure message when the scope's own capture is empty, so a future CI failure carries
+its own diagnosis. Production code is untouched.
+
+**Verification (raw).** `cargo fmt --all -- --check` 0; `cargo clippy -p kernel --all-targets -- -D
+warnings` 0; `cargo test -p kernel --lib graph_backfill` `9 passed; 0 failed`. Push triggers a fresh
+CI run; the merge gate stays "CI green, then merge" (maintainer instruction, 2026-11-21).

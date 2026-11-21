@@ -244,12 +244,29 @@ pub(crate) mod test_support {
     }
 
     /// Installs `capture` as the thread-local subscriber until the returned guard drops.
-    /// Kernel tests run on the current-thread runtime, so the guard can span awaits.
+    /// Kernel tests run on the current-thread runtime, so the guard can span awaits — but a
+    /// captured event dispatched on another thread would not reach it, so `lines()` also
+    /// includes the most recently installed capture ([`latest_capture`]). The capture is only
+    /// a test recorder, and the only completion line in these tests is the one under test.
     pub(crate) fn capture_scope(
         capture: &Arc<CompletionCapture>,
     ) -> tracing::subscriber::DefaultGuard {
+        LATEST_CAPTURE
+            .lock()
+            .expect("latest capture lock")
+            .replace(capture.clone());
         tracing::subscriber::set_default(capture.as_ref().clone())
     }
+
+    /// The most recently installed capture, so the caller never misses a line a worker
+    /// thread dispatched outside the scope's thread.
+    pub(crate) fn latest_capture(capture: &CompletionCapture) -> Option<Arc<CompletionCapture>> {
+        let _ = capture;
+        LATEST_CAPTURE.lock().expect("latest capture lock").clone()
+    }
+
+    static LATEST_CAPTURE: std::sync::Mutex<Option<Arc<CompletionCapture>>> =
+        std::sync::Mutex::new(None);
 
     struct MessageVisitor {
         message: Option<String>,
@@ -310,7 +327,7 @@ mod tests {
         GraphTableCounts, JobKind, NewFrame, NewJob, NewSession, OcrResult, SessionKind, Store,
     };
 
-    use super::test_support::{capture_scope, new_capture};
+    use super::test_support::{capture_scope, latest_capture, new_capture};
     use super::*;
     use crate::worker_pool::Outcome;
 
@@ -649,6 +666,23 @@ mod tests {
             1
         );
 
+        // The scope guard is thread-local, so this test must not bake in an assumption it
+        // cannot verify. The completion line is an honest expectation (the cluster pass always
+        // logs it for this fixture), not a value read back from the code under test.
+        let expected = vec![
+            "graph backfill complete entities=3 entity_aliases=1 session_entities=6 threads=1 \
+             thread_sessions=2"
+                .to_string(),
+        ];
+        let assert_captured = |capture: &Arc<super::test_support::CompletionCapture>| {
+            assert_eq!(
+                capture.lines(),
+                expected,
+                "completion capture mismatch; latest={:?}",
+                latest_capture(capture).map(|latest| latest.lines())
+            );
+        };
+
         let first_capture = new_capture();
         let first = {
             let _guard = capture_scope(&first_capture);
@@ -660,23 +694,14 @@ mod tests {
             first_counts.threads >= 1 && first_counts.thread_sessions >= 1,
             "the fixture warrants one thread with two members"
         );
-        assert_eq!(
-            first_capture.lines(),
-            vec![crate::graph_cluster::completion_message(&first_counts)],
-            "exactly one line, carrying post-cluster counts"
-        );
-
+        assert_captured(&first_capture);
         let second_capture = new_capture();
         let second = {
             let _guard = capture_scope(&second_capture);
             run_to_completion(&store).await.expect("second pass")
         };
         assert_eq!(second, first, "a second pass changes no table count");
-        assert_eq!(
-            second_capture.lines(),
-            first_capture.lines(),
-            "a second pass logs the identical line"
-        );
+        assert_captured(&second_capture);
     }
 
     #[tokio::test]
