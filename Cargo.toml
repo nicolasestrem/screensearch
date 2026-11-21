@@ -25,8 +25,8 @@ members = [
     "crates/graph",
     "crates/rebuild",
     "crates/evalfixture",
+    "crates/dreaming",
 ]
-
 [workspace.package]
 version = "0.4.6"
 edition = "2021"

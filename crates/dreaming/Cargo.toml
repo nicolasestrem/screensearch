@@ -1,0 +1,29 @@
+[package]
+name = "dreaming"
+description = "Dev-only dreaming sweep over the real capture database (Light → REM → Deep), read-only — mirrors OpenClaw's model with absence-triggered dreams. Not shipped."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "dreaming"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ssv2c-dreaming"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+sqlite-vec.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

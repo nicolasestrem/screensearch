@@ -1269,6 +1269,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dreaming"
+version = "0.4.6"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sqlite-vec",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "dtoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
