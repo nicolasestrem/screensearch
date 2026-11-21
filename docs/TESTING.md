@@ -342,20 +342,23 @@ images, no full captured text**. The same database always produces a byte-identi
   alone, except on a code host (`github.com`, `gitlab.com`, `bitbucket.org`, `codeberg.org`)
   where it is the repository root: host plus owner and repository, with route words (`pulls`,
   `issues`, `browse`, …) dropped and the walk stopped before an id-like segment (`418`,
-  `LED-142`, a UUID or hash); otherwise a frame whose window title contains an absolute path
+  `LED-142`, a UUID or hash); a browser URL that yields no usable token falls through to the
+  window-title path, and otherwise a frame whose window title contains an absolute path
   contributes that path, with a trailing file name removed when its last component contains a
   dot, walking up while the last directory is one of `src`, `tests`, `test`, `docs`, `doc`,
   `content`, `app`, `apps`, `internal`, `cmd`, `pkg`, `packages`, `design`, `assets`, and with
   separators normalised to `/`. The session token is the most frequent non-empty token among
   its frames (ties: the earliest frame's token). Sessions sharing a token form one project; ids
-  are `p01`, `p02`, … in first-seen order and the name is the humanised last token component (a
-  site-only token names its host without `www.` or the top-level domain), at most three words.
-  Sessions with no token get `project_id: null`. The rule is deliberately simple: repository
-  and folder sessions land on their checkout/folder root, browser work lands on the site (or
-  repository), and sessions that carry neither (mail, chat) stay ungrouped.
+  are `p01`, `p02`, … in first-seen order (zero-padded to the project count's width, so ids
+  keep sorting as strings past 99 projects) and the name is the humanised last token component
+  (a site-only token names its host without `www.` or the top-level domain), at most three
+  words. Sessions with no token get `project_id: null`. The rule is deliberately simple:
+  repository and folder sessions land on their checkout/folder root, browser work lands on the
+  site (or repository), and sessions that carry neither (mail, chat) stay ungrouped.
 - `days`: `active_minutes` is the floored sum of the durations of the sessions that start that
-  local day; `top_project_id` is that day's most frequent project (ties go to the smallest
-  project id) or null.
+  local day — a session's whole duration is credited to its start date even if it crosses
+  local midnight (persona hours keep that rare); `top_project_id` is that day's most frequent
+  project (ties go to the smallest project id) or null.
 - Size: two weeks at 300 frames per week stays well under the 1 MB budget (the six-persona demo
   lives in the git-ignored `harness-data/personas-demo/`).
 

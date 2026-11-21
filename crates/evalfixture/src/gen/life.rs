@@ -253,6 +253,57 @@ fn day_midnight_ms(date: NaiveDate, offset: FixedOffset) -> Result<i64> {
         .timestamp_millis())
 }
 
+/// Frame instants for one day, split per session, with the persona's daily break respected:
+/// no frame ever lands inside `nap = (from, to)`, no session's frames cross it, and the break
+/// is consumed exactly once even when a session has to be started after it.
+fn lay_day(
+    day_start: i64,
+    sizes: &[usize],
+    spacings: &[Vec<i64>],
+    gaps: &[i64],
+    nap: Option<(i64, i64)>,
+) -> Vec<Vec<i64>> {
+    let mut out = Vec::with_capacity(sizes.len());
+    let mut cursor = day_start;
+    let mut napped = nap.is_none();
+    for (session, size) in sizes.iter().enumerate() {
+        if session > 0 {
+            cursor += gaps[session - 1];
+        }
+        if let Some((from, to)) = nap {
+            if !napped {
+                let span: i64 = spacings[session].iter().sum();
+                let last_frame = cursor + span;
+                if cursor >= to {
+                    // The break is already behind us.
+                    napped = true;
+                } else if cursor >= from || last_frame > from {
+                    // This session would start in or cross the break: start it afterwards.
+                    cursor = to;
+                    napped = true;
+                }
+            }
+        }
+        let mut times = Vec::with_capacity(*size);
+        for frame in 0..*size {
+            if frame > 0 {
+                cursor += spacings[session][frame - 1];
+            }
+            if let Some((from, to)) = nap {
+                if !napped && cursor >= from && cursor < to {
+                    cursor = to;
+                    napped = true;
+                } else if !napped && cursor >= to {
+                    napped = true;
+                }
+            }
+            times.push(cursor);
+        }
+        out.push(times);
+    }
+    out
+}
+
 /// Builds the persona timeline for `(seed, weeks, frames_per_week, start)`.
 pub(crate) fn plan(
     seed: u64,
@@ -264,6 +315,20 @@ pub(crate) fn plan(
     let offset = persona.offset()?;
     let rhythm = persona.rhythm;
     let total = weeks as usize * frames_per_week;
+    // `gen` validates its flags and the catalogue validates every persona, but `plan` is also
+    // called directly from tests and future tooling: state the preconditions it relies on
+    // instead of dividing by zero or panicking on a reversed range.
+    ensure!(weeks >= 1, "a persona run needs at least one week");
+    ensure!(
+        !rhythm.patterns.is_empty(),
+        "persona `{}`: rhythm.patterns is empty",
+        persona.id
+    );
+    ensure!(
+        rhythm.sessions.0 <= rhythm.sessions.1,
+        "persona `{}`: rhythm.sessions is reversed",
+        persona.id
+    );
 
     // Weekly budgets: a vacation week writes nothing and lends its budget to the others.
     let mut off = vec![false; weeks as usize];
@@ -331,19 +396,26 @@ pub(crate) fn plan(
         days.dedup();
 
         for (weekday, day_frames) in split_week(&mut rng, *budget, &days)? {
-            if day_frames < 2 {
-                continue;
-            }
+            // `split_week` floors every active day at two frames, so a day never holds fewer;
+            // refuse the impossible case instead of silently dropping frames from the total.
+            ensure!(
+                day_frames >= 2,
+                "persona `{}`: a day received {day_frames} frames",
+                persona.id
+            );
             let date = day_date(start, week as usize * 7 + weekday as usize)?;
             let midnight = day_midnight_ms(date, offset)?;
             let sizes = split_day(&mut rng, day_frames, rhythm.sessions);
 
-            // Day clock: one seeded start, intra-session spacings, inter-session gaps and
-            // the optional nap, scaled to fit before the persona's end of day.
+            // Raw day layout: one seeded start, intra-session spacings, inter-session gaps,
+            // a per-session tail for its recorded end, and the optional daily break.
+            // `lay_day` places the frames around the break (no frame or session ever crosses
+            // it, and the break is consumed exactly once); the fit loop below shrinks the
+            // spacing until the day ends before the persona's end of day.
             let day_start = midnight
                 + (rhythm.start_min + rng.below(START_JITTER_MIN + 1) as i64) * MINUTE_MS
                 + rng.below(60) as i64 * 1000;
-            let mut spacings: Vec<Vec<i64>> = sizes
+            let spacings: Vec<Vec<i64>> = sizes
                 .iter()
                 .map(|count| {
                     (1..*count)
@@ -354,55 +426,62 @@ pub(crate) fn plan(
                         .collect()
                 })
                 .collect();
-            let mut gaps: Vec<i64> = (1..sizes.len())
+            let gaps: Vec<i64> = (1..sizes.len())
                 .map(|_| {
                     (GAP_MIN_MIN + rng.below(GAP_SPAN_MIN as usize) as i64) * MINUTE_MS
                         + rng.below(1000) as i64
                 })
                 .collect();
-            let nap_len = rhythm.nap.map_or(0, |(from, to)| (to - from) * MINUTE_MS);
-            let raw_total: i64 =
-                spacings.iter().flatten().sum::<i64>() + gaps.iter().sum::<i64>() + nap_len;
-            let available = midnight + rhythm.end_min * MINUTE_MS - day_start;
-            if raw_total > available {
-                let scale = |value: i64| {
-                    ((i128::from(value) * i128::from(available) / i128::from(raw_total)) as i64)
-                        .max(1000)
-                };
-                for spacing in spacings.iter_mut().flatten() {
-                    *spacing = scale(*spacing);
-                }
-                for gap in gaps.iter_mut() {
-                    *gap = scale(*gap);
-                }
-            }
-            let nap_at = rhythm
+            let raw_tails: Vec<i64> = (0..sizes.len())
+                .map(|session| {
+                    let next_gap = gaps.get(session).copied().unwrap_or(10 * MINUTE_MS);
+                    ((20 + rng.below(131) as i64) * 1000).min(next_gap / 2)
+                })
+                .collect();
+            let end_of_day = midnight + rhythm.end_min * MINUTE_MS;
+            let available = end_of_day - day_start;
+            let nap = rhythm
                 .nap
-                .map(|(_, to)| midnight + to * MINUTE_MS)
-                .filter(|at| *at > day_start);
+                .map(|(from, to)| (midnight + from * MINUTE_MS, midnight + to * MINUTE_MS))
+                .filter(|(from, _)| *from > day_start);
+            let raw_total: i64 = spacings.iter().flatten().sum::<i64>() + gaps.iter().sum::<i64>();
+            let mut factor = if raw_total > available && raw_total > 0 {
+                (available as f64 / raw_total as f64).min(1.0)
+            } else {
+                1.0
+            };
+            let (times, scaled_tails) = loop {
+                let apply = |value: i64| ((value as f64 * factor) as i64).max(1000);
+                let scaled_spacings: Vec<Vec<i64>> = spacings
+                    .iter()
+                    .map(|row| row.iter().map(|value| apply(*value)).collect())
+                    .collect();
+                let scaled_gaps: Vec<i64> = gaps.iter().map(|value| apply(*value)).collect();
+                let scaled_tails: Vec<i64> = raw_tails
+                    .iter()
+                    .enumerate()
+                    .map(|(session, tail)| {
+                        let next_gap = scaled_gaps.get(session).copied().unwrap_or(10 * MINUTE_MS);
+                        apply(*tail).min(next_gap / 2)
+                    })
+                    .collect();
+                let times = lay_day(day_start, &sizes, &scaled_spacings, &scaled_gaps, nap);
+                let last = times
+                    .iter()
+                    .filter_map(|session| session.last().copied())
+                    .max()
+                    .unwrap_or(day_start);
+                if last < end_of_day || factor <= 0.01 {
+                    break (times, scaled_tails);
+                }
+                factor *= 0.9;
+            };
 
             let live: Vec<usize> = (0..persona.contexts.len())
                 .filter(|index| Persona::context_live(&persona.contexts[*index], week))
                 .collect();
-            let mut cursor = day_start;
             let mut previous: Option<AppKind> = None;
-            let mut napped = false;
             for (session, size) in sizes.iter().enumerate() {
-                if session > 0 {
-                    cursor += gaps[session - 1];
-                    if !napped && nap_at.is_some_and(|at| cursor >= at) {
-                        cursor += nap_len;
-                        napped = true;
-                    }
-                } else if !napped {
-                    if let Some(at) = nap_at {
-                        if cursor >= at {
-                            cursor += nap_len;
-                            napped = true;
-                        }
-                    }
-                }
-
                 // Activity: weighted, favouring a change from the previous session.
                 let activity = {
                     let mut chosen = weighted(&mut rng, persona.activities);
@@ -457,10 +536,7 @@ pub(crate) fn plan(
                     0u8
                 };
                 let mut frames: Vec<LifeFrame> = Vec::with_capacity(*size);
-                for frame in 0..*size {
-                    if frame > 0 {
-                        cursor += spacings[session][frame - 1];
-                    }
+                for (frame, at) in times[session].iter().enumerate() {
                     let app = if frame == 0 || rng.chance(65, 100) || related.is_empty() {
                         primary
                     } else {
@@ -472,15 +548,16 @@ pub(crate) fn plan(
                         u8::from(session_monitor == 0 && persona.monitors.len() > 1)
                     };
                     frames.push(LifeFrame {
-                        at: cursor,
+                        at: *at,
                         app,
                         monitor,
                     });
                 }
                 previous = Some(activity);
-                let last = cursor;
-                let next_gap = gaps.get(session).copied().unwrap_or(10 * MINUTE_MS);
-                let tail = ((20 + rng.below(131) as i64) * 1000).min(next_gap / 2);
+                let last = *times[session]
+                    .last()
+                    .expect("a planned session always holds at least two frames");
+                let tail = scaled_tails[session];
                 let hint = persona.apps[primary].hint.to_ascii_lowercase();
                 let (kind, tool, host, context_key) = match activity {
                     AppKind::Meeting => (

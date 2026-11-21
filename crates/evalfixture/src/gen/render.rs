@@ -289,6 +289,41 @@ impl Renderer {
         format!("{root}\\{item}")
     }
 
+    /// The material a code or terminal screen needs: the root folder, file names, term nouns
+    /// and the short reference. A multi-year run can outlive every defined context (week
+    /// ranges are finite), so when no context is live the screen falls back to the persona's
+    /// own folders, topics and channels instead of panicking on the missing context.
+    fn code_material(
+        &mut self,
+        c: &Ctx,
+    ) -> (&'static str, Vec<String>, &'static [&'static str], String) {
+        match c.context {
+            Some((context, _)) => (
+                context.root,
+                context.items.iter().map(|item| item.to_string()).collect(),
+                context.terms,
+                context.reference.to_string(),
+            ),
+            None => {
+                let root = *pick(&mut self.rng, self.persona.folders);
+                let reference = pick(&mut self.rng, self.persona.channels).to_string();
+                let items: Vec<String> = self
+                    .persona
+                    .topics
+                    .iter()
+                    .take(4)
+                    .enumerate()
+                    .map(|(index, topic)| {
+                        let extension =
+                            self.persona.file_types[index % self.persona.file_types.len()];
+                        format!("{}.{}", topic.replace(' ', "-"), extension)
+                    })
+                    .collect();
+                (root, items, self.persona.topics, reference)
+            }
+        }
+    }
+
     // ----------------------------------------------------------------------------------
     // Apps
     // ----------------------------------------------------------------------------------
@@ -813,34 +848,28 @@ impl Renderer {
     fn code(&mut self, c: &Ctx) -> Screen {
         let labels = self.labels();
         let app = c.app;
-        let (context, _) = c.context.expect("code sessions carry a context");
-        let item_count = context.items.len();
-        let term_count = context.terms.len();
-        let item = context.items[self.below(item_count)];
-        let path = self.path(context.root, item);
+        let (root, items, terms, reference) = self.code_material(c);
+        let item = items[self.below(items.len())].clone();
+        let path = self.path(root, &item);
         let mut body = Vec::new();
         for line in 0..14 {
-            let term = context.terms[line % term_count];
-            let target = context.items[(line * 3) % item_count];
-            let reference = context.reference;
+            let term = terms[line % terms.len()];
+            let target = &items[(line * 3) % items.len()];
             body.push(format!("{:<3} {term} = {target}  # {reference}", line + 1));
         }
         let mut side = vec![labels.file.to_uppercase()];
-        side.extend(context.items.iter().map(|item| item.to_string()));
+        side.extend(items.iter().map(|item| item.to_string()));
         Screen {
             app_hint: app.hint,
             title: format!("{path} - {}", app.name),
             title_bar: true,
             top: vec![
                 self.menu().remove(0),
-                format!("{} {}", labels.save, context.reference),
+                format!("{} {reference}", labels.save),
             ],
             side,
             body,
-            bottom: vec![
-                context.reference.to_string(),
-                format!("{} {} {}", labels.page, 12, labels.of),
-            ],
+            bottom: vec![reference, format!("{} {} {}", labels.page, 12, labels.of)],
             ..Screen::default()
         }
     }
@@ -848,27 +877,27 @@ impl Renderer {
     fn terminal(&mut self, c: &Ctx) -> Screen {
         let labels = self.labels();
         let app = c.app;
-        let (context, _) = c.context.expect("terminal sessions carry a context");
-        let prompt = format!("PS {}>", context.root);
+        let (root, items, terms, reference) = self.code_material(c);
+        let prompt = format!("PS {root}>");
         let mut body = vec![format!("{prompt} ls -1")];
-        for item in context.items {
-            body.push(item.to_string());
+        for item in &items {
+            body.push(item.clone());
         }
-        body.push(format!("{prompt} grep -r \"{}\" .", context.terms[0]));
-        for item in context.items.iter().take(2) {
-            let path = self.path(context.root, item);
+        body.push(format!("{prompt} grep -r \"{}\" .", terms[0]));
+        for item in items.iter().take(2) {
+            let path = self.path(root, item);
             let line = 12 + self.below(40);
-            body.push(format!("{path}:{line}:{}", context.terms[0]));
+            body.push(format!("{path}:{line}:{}", terms[0]));
         }
         body.push(format!("{prompt} {}", labels.search));
         Screen {
             app_hint: app.hint,
-            title: format!("{} - {}", context.root, app.name),
+            title: format!("{root} - {}", app.name),
             title_bar: true,
             top: vec![self.menu().remove(0)],
             side: Vec::new(),
             body,
-            bottom: vec![context.reference.to_string()],
+            bottom: vec![reference],
             ..Screen::default()
         }
     }

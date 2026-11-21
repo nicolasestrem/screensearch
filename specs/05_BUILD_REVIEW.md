@@ -1496,3 +1496,42 @@ one-or-two-token fragments (within the brief's 1-to-3-word bound).
 
 **Status.** Committed locally on `feat/evalfixture-personas` (two commits: personas, then the
 JSON export + records/docs), pushed to a PR open for maintainer review. No merge, no tag.
+
+### 2026-11-21 — Off-arc review fixes for PR #180 (bot reviews)
+
+**Addressed (Codex P2 findings + Claude review observations; no bot replies).**
+
+1. **Multi-year panic (Codex P2, `render.rs`).** `Code`/`Terminal` renderers unwrapped a session
+   context that can be `None` once a technical persona's last context week range expires (for
+   example `backend-engineer` contexts end at week 60, but `--weeks` supports 1040).
+   `render.rs::code_material` now falls back to the persona's folders, topics and channels when no
+   context is live, so the screen is still a plausible generic repository. Verified:
+   `gen --weeks 62 --frames-per-week 4 --no-embeddings --persona backend-engineer` exits 0 and
+   writes 248 frames / 122 sessions including `Code` and `WindowsTerminal` frames.
+2. **Daily break ignored (Codex P2, `life.rs`).** Frames could run through the persona's
+   `[from, to)` break, and a session starting after it received a second full break delay.
+   `life::lay_day` now places every session around the break: no frame lands inside it, no
+   session's frames cross it, and the break is consumed once. Verified on `retired-teacher`
+   (2 weeks, 300 frames/week, break 12:30–14:00 local): 0 frames inside the break, 0 sessions
+   crossing it or wholly inside it.
+3. **Panic paths on bad input (Claude).** `life::plan` now `ensure!`s `weeks >= 1`, non-empty
+   `rhythm.patterns` and non-reversed `rhythm.sessions`, and a day with fewer than two frames is a
+   hard error instead of a silent `continue` that would break the exact `weeks x frames_per_week`
+   total.
+4. **Windows-only leftovers (Claude).** `export.rs` no longer detects `/Users/`, `/home/` or
+   `/mnt/` paths and the `rooted` token branch is gone: fixture titles are Windows drive paths
+   only. A browser URL that yields no usable token now falls through to the window-title path
+   instead of voting for nothing.
+5. **Project id ordering (Claude).** Ids now zero-pad to the project count's width (at least two
+   digits), so string order matches first-seen order past 99 projects (`p11` < `p100`).
+6. **Docs (Claude).** `docs/TESTING.md` and the export module doc state the URL-token fallback,
+   `active_minutes` start-date attribution and the widened id padding.
+7. Not changed: export `words` remain one-or-two-token fragments (within the brief's 1-to-3-word
+   bound); that is documented behaviour and no review asked otherwise.
+
+**Verification (raw).** `cargo fmt --all -- --check` 0; `cargo clippy -p evalfixture --all-targets
+-- -D warnings` 0; `cargo test -p evalfixture` 28 passed, 0 failed (committed default digest still
+matches, persona/export determinism still green). The six demo fixtures were regenerated with the
+fixed planner/renderer; exports are 21,517 / 41,069 / 23,524 / 43,760 / 48,493 / 41,361 bytes (all
+under 1 MB). Pushed as a third commit; PR stays open for maintainer review, no merge, no bot
+replies.

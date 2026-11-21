@@ -636,5 +636,24 @@ reproducibility test, 1 export determinism, 1 serve-API) with the committed defa
 matching; `cargo fmt --all -- --check`, `cargo clippy -p evalfixture --all-targets -- -D
 warnings`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo build --workspace`
 all exit 0; the full workspace test suite is green. No schema, settings, IPC, runtime or network
-change. Committed locally on eat/evalfixture-personas and opened as a PR for maintainer review;
-not merged, no tag.
+change. Committed locally on `feat/evalfixture-personas` and opened as a PR for maintainer
+review; not merged, no tag.
+
+### 2026-11-21: PR #180 review fixes (bot reviews, evalfixture personas/export)
+
+Addressed the automated review findings without replying to the bots: (1) Codex P2 - a multi-year
+run of a technical persona panicked once every context week range had expired because Code/Terminal
+renderers unwrapped the missing context; they now fall back to the persona's folders/topics/
+channels (verified with `--weeks 62`). (2) Codex P2 - the persona's daily break was not honoured
+(frames ran through it and a post-break session got a second full delay); a new `life::lay_day`
+places every session around the break, so no frame or session crosses it and the break is consumed
+once (verified on `retired-teacher`: 0 frames inside 12:30-14:00, 0 crossing sessions). (3) Claude -
+`life::plan` now `ensure`s weeks >= 1, non-empty rhythm patterns and a non-reversed session range,
+and a sub-two-frame day is an error rather than a silent skip that would break the exact frame
+total. (4) Claude - removed the Unix path detection and rooted branch from `export.rs`
+(Windows-only product), and a browser URL without a usable token now falls back to the
+window-title path. (5) Claude - project ids zero-pad to the project count's width so string order
+stays first-seen order past 99 projects. (6) Docs note the URL-token fallback, `active_minutes`
+start-date attribution and the id padding. Verification: fmt/clippy clean, `cargo test -p
+evalfixture` 28 passed with the committed default digest still matching; the six demo fixtures were
+regenerated (exports 21-48 KB). Third commit on the PR; no merge, no bot replies.

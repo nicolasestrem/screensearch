@@ -36,16 +36,19 @@
 //! * `projects` group sessions by the context token their frames vote with: a browser URL
 //!   reduces to its site (the host), except on a code host where it is the repository root
 //!   (host plus owner and repository, route words dropped, the walk stopped before an id-like
-//!   segment), otherwise an absolute path found in the window title is reduced to its project
-//!   root (a trailing file name and build-folder components such as `src` or `docs` are
-//!   stripped). Each session's token is its most frequent frame token (ties go to the earliest
-//!   frame); sessions sharing a token are one project. Ids are `p01`, `p02`, ... in
-//!   `(first_seen, token)` order; names humanise the token's last component. A session whose
-//!   frames vote for no token gets `project_id: null`.
+//!   segment); a URL without a usable token falls through to the title path, otherwise an
+//!   absolute Windows path found in the window title is reduced to its project root (a
+//!   trailing file name and build-folder components such as `src` or `docs` are stripped).
+//!   Each session's token is its most frequent frame token (ties go to the earliest frame);
+//!   sessions sharing a token are one project. Ids are `p01`, `p02`, ... in
+//!   `(first_seen, token)` order, zero-padded to the project count's width so they keep
+//!   sorting as strings; names humanise the token's last component. A session whose frames
+//!   vote for no token gets `project_id: null`.
 //! * `days` are local calendar dates sorted ascending. `active_minutes` is the summed
-//!   session duration on that date in whole minutes, `session_count` counts sessions that
-//!   start on it, and `top_project_id` is the project with the most such sessions (ties go
-//!   to the lexicographically smallest id, and no project means `null`).
+//!   session duration on that date in whole minutes (a session that crosses local midnight
+//!   keeps all its minutes on its start date), `session_count` counts sessions that start on
+//!   it, and `top_project_id` is the project with the most such sessions (ties go to the
+//!   lexicographically smallest id, and no project means `null`).
 //!
 //! A database with sessions but no frames still exports (no projects, days from the
 //! sessions' own timestamps); a database with no sessions is an error, never an empty file.
@@ -448,8 +451,11 @@ fn build_projects(
 
     let mut projects = Vec::with_capacity(seeds.len());
     let mut token_ids: BTreeMap<String, String> = BTreeMap::new();
+    // Zero-pad to the project count's width (at least two digits) so ids keep sorting as
+    // strings even beyond 99 projects: `p11` must stay before `p100`.
+    let width = seeds.len().to_string().len().max(2);
     for (index, (token, group)) in seeds.into_iter().enumerate() {
-        let id = format!("p{:02}", index + 1);
+        let id = format!("p{:0width$}", index + 1, width = width);
         projects.push(ProjectExport {
             id: id.clone(),
             name: humanise_token(&token),
@@ -578,14 +584,18 @@ fn session_end(session: &Session, aggregate: Option<&SessionAggregate>) -> i64 {
 }
 
 /// The context token a frame votes with: its browser URL, otherwise an absolute path in its
-/// window title. Frames with neither cast no vote.
+/// window title. A browser URL that yields no usable token (for example a bare `https://`)
+/// falls through to the title, so the frame still votes for a folder context when it has one.
+/// Frames with neither cast no vote.
 fn frame_token(frame: &FrameEvidence) -> Option<String> {
     if let Some(url) = frame
         .browser_url
         .as_deref()
         .filter(|url| !url.trim().is_empty())
     {
-        return url_token(url);
+        if let Some(token) = url_token(url) {
+            return Some(token);
+        }
     }
     frame.window_title.as_deref().and_then(title_path_token)
 }
@@ -687,9 +697,10 @@ fn looks_like_id(segment: &str) -> bool {
     segment.len() >= 8 && segment.contains('-')
 }
 
-/// An absolute path inside a window title, reduced to its project root.
+/// An absolute path inside a window title, reduced to its project root. The fixture is
+/// Windows-only, so only a drive path (`C:\...`) is recognised.
 fn title_path_token(title: &str) -> Option<String> {
-    let start = drive_path_start(title).or_else(|| unix_path_start(title))?;
+    let start = drive_path_start(title)?;
     let tail = &title[start..];
     let end = tail.find(TITLE_SEPARATOR).unwrap_or(tail.len());
     path_token(tail[..end].trim_end())
@@ -708,21 +719,11 @@ fn drive_path_start(title: &str) -> Option<usize> {
     })
 }
 
-/// The byte index where a `/Users/`, `/home/` or `/mnt/` absolute path starts inside
-/// `title`; the earliest match wins.
-fn unix_path_start(title: &str) -> Option<usize> {
-    ["/Users/", "/home/", "/mnt/"]
-        .into_iter()
-        .filter_map(|prefix| title.find(prefix))
-        .min()
-}
-
-/// Normalises a title's path into a context token: separators become `/`, a trailing file
+/// Normalises a Windows path into a context token: separators become `/`, a trailing file
 /// name (last component containing a `.`) is dropped, then build-folder components are
 /// walked up. Returns `None` for a path with no meaningful component left.
 fn path_token(path: &str) -> Option<String> {
     let normalised = path.replace('\\', "/");
-    let rooted = normalised.starts_with('/');
     let mut components: Vec<&str> = normalised
         .split('/')
         .filter(|component| !component.is_empty())
@@ -740,11 +741,7 @@ fn path_token(path: &str) -> Option<String> {
     if components.is_empty() {
         return None;
     }
-    let mut token = components.join("/");
-    if rooted {
-        token.insert(0, '/');
-    }
-    Some(token)
+    Some(components.join("/"))
 }
 
 /// A project name from its token: `-`/`_` become spaces, the first letter is uppercased and
