@@ -51,6 +51,7 @@
 //!                       --no-embeddings
 //! ```
 
+pub mod dream;
 pub mod export;
 pub mod gen;
 pub mod graph;

@@ -25,11 +25,15 @@ pub(crate) const PERSONAS: &[Persona] = &[Persona {
     }],
     labels: &ES,
     rhythm: Rhythm {
-        patterns: &[&[0, 1, 2, 3, 4, 5]],
+        // Every weekday is active: the verification runs need seven consecutive
+        // active days per week.
+        patterns: &[&[0, 1, 2, 3, 4, 5, 6]],
         start_min: 6 * 60,
         end_min: 20 * 60,
         sessions: (3, 5),
         nap: Some((13 * 60, 14 * 60)),
+        // Both holidays fall outside the default Sep 7 - Oct 4 2026 window, so a
+        // four-week run never loses an active day to them.
         holidays: &[(1, 6), (5, 1)],
         weeks_off: &[4],
     },
@@ -99,15 +103,23 @@ pub(crate) const PERSONAS: &[Persona] = &[Persona {
             terms: &["riego", "tomate", "siembra", "cosecha", "abono"],
             reference: "TEMP-24",
             site: Some("https://www.agroteruel.example/precios-tomate"),
-            weeks: &[(0, 3), (5, 60)],
+            // Live weeks 0-1, paused week 2, resumed from week 3.
+            weeks: &[(0, 2), (3, 60)],
         },
         Context {
             name: "Facturas del huerto",
             root: r"C:\Users\Lucia\Documents\Contabilidad",
             items: &["facturas-2026.xlsx", "proveedores.xlsx", "albaranes.pdf"],
-            terms: &["factura", "proveedor", "albarán", "entrega"],
+            terms: &[
+                "factura",
+                "proveedor",
+                "albarán",
+                "entrega",
+                "IVA",
+                "presupuesto",
+            ],
             reference: "FAC-26",
-            site: None,
+            site: Some("https://www.gestoria-ribera.example/facturas"),
             weeks: &[(0, 60)],
         },
         Context {
@@ -116,7 +128,7 @@ pub(crate) const PERSONAS: &[Persona] = &[Persona {
             items: &["etiquetas-cajas.docx", "logotipo-huerto.pdf", "diseno-caja.png"],
             terms: &["etiqueta", "caja", "logotipo", "imprenta"],
             reference: "ETQ-3",
-            site: None,
+            site: Some("https://www.imprenta-ribera.example/etiquetas"),
             weeks: &[(0, 60)],
         },
         Context {
@@ -125,83 +137,95 @@ pub(crate) const PERSONAS: &[Persona] = &[Persona {
             items: &["solicitud-feria.docx", "plano-puesto.pdf"],
             terms: &["feria", "puesto", "solicitud", "horario"],
             reference: "FER-9",
-            site: None,
-            weeks: &[(6, 12)],
+            site: Some("https://www.feria-otono-valencia.example/puestos"),
+            // Started after week 1, paused, and resumed again for longer runs.
+            weeks: &[(1, 4), (6, 12)],
         },
     ],
     sites: &[
         Site {
+            title: "Precios del tomate - Agroteruel",
+            url: "https://www.agroteruel.example/precios-tomate",
+            lines: &[
+                "La temporada de tomate ramillete va fuerte en la ribera del Turia.",
+                "El precio medio de esta semana se mantiene en 2,05 EUR por kilo.",
+                "La lonja abre de lunes a sábado desde las siete de la mañana.",
+                "Conviene separar los calibres antes de llevar los cajones al mercado.",
+            ],
+        },
+        Site {
             title: "Precios de la lonja - Agroteruel",
             url: "https://www.agroteruel.example/precios-hortofruticola",
             lines: &[
-                "Precios de la lonja, semana 37",
-                "Tomate ramillete: 2,05 EUR/kg",
-                "Tomate pera: 1,40 EUR/kg",
-                "Calabacín: 0,95 EUR/kg",
+                "La lonja publica los precios hortofrutícolas cada martes y viernes.",
+                "Tomate pera: 1,40 EUR por kilo esta semana.",
+                "Calabacín: 0,95 EUR por kilo, con ligera baja respecto a la semana pasada.",
+                "Los cajones de diez kilos siguen siendo el formato habitual del mercado.",
             ],
         },
         Site {
             title: "Calendario de riego - InfoLabranza",
             url: "https://www.infolabranza.example/calendario-riego",
             lines: &[
-                "Calendario de riego por goteo",
-                "Cada cuántos días regar según el tipo de suelo",
-                "Ajustes recomendados para septiembre",
-                "Descargar fichas de campo",
+                "El riego por goteo conviene repartirlo en dos tandas cortas al día.",
+                "En septiembre, con el calor aún fuerte, la parcela pide riego cada dos días.",
+                "Cada cuántos días regar depende del tipo de suelo más que del cultivo.",
+                "Las fichas de campo se pueden descargar para llevar al huerto.",
             ],
         },
         Site {
             title: "El tiempo en la comarca - MeteoCampo",
             url: "https://www.meteocampo.example/valencia-ribera",
             lines: &[
-                "Predicción para los próximos 7 días",
-                "Hoy: 28 °C, viento del este 18 km/h",
-                "Mañana: intervalos nubosos, 25 °C",
-                "Aviso por lluvia débil el jueves",
-            ],
-        },
-        Site {
-            title: "Tutorial de riego por goteo - YouTube",
-            url: "https://www.youtube.com/watch?v=aB3kPq7xQqE",
-            lines: &[
-                "Tutorial de riego por goteo",
-                "Cómo regular la presión del gotero",
-                "Montaje paso a paso en una parcela pequeña",
-                "Siguiente: mantenimiento de filtros",
+                "Hoy: 28 °C, viento del este 18 km/h.",
+                "Mañana: intervalos nubosos, 25 °C.",
+                "El jueves llega lluvia débil, así que conviene adelantar el riego del invernadero.",
+                "El fin de semana suben las temperaturas y el viento rola a poniente.",
             ],
         },
         Site {
             title: "Subvenciones - GVA Agro",
             url: "https://www.gva-agro.example/ayudas/agricultura",
             lines: &[
-                "Ayudas a la agricultura ecológica",
-                "Plazo de presentación abierto hasta el 30 de octubre",
-                "Documentación requerida y formularios",
-                "Preguntas frecuentes",
+                "Ayudas a la agricultura ecológica y a la modernización de regadíos.",
+                "El plazo de presentación está abierto hasta el 30 de octubre de 2026.",
+                "Hay que adjuntar el certificado de producción ecológica y el plano de la parcela.",
+                "La cuantía máxima por hectárea depende del tipo de cultivo y del sistema de riego.",
+                "Preguntas frecuentes sobre la solicitud en línea.",
+            ],
+        },
+        Site {
+            title: "Facturas y gestoría - Ribera",
+            url: "https://www.gestoria-ribera.example/facturas",
+            lines: &[
+                "Portal de facturas de la gestoría para los clientes del campo.",
+                "Cada albarán firmado genera automáticamente la factura correspondiente.",
+                "El IVA agrícola reducido se aplica a las entregas de productos frescos.",
+                "Los presupuestos vencidos se archivan al final de cada temporada.",
+            ],
+        },
+        Site {
+            title: "Imprenta Ribera - etiquetas y cajas",
+            url: "https://www.imprenta-ribera.example/etiquetas",
+            lines: &[
+                "Etiquetas adhesivas para cajas de tomate, calabacín y pimiento.",
+                "El logotipo del huerto se imprime en dos tintas sobre papel kraft.",
+                "Los pedidos de mil etiquetas tardan cuatro días laborables.",
+                "Las cajas de diez kilos llevan el formato que exige la lonja.",
+            ],
+        },
+        Site {
+            title: "Feria de otoño - Valencia",
+            url: "https://www.feria-otono-valencia.example/puestos",
+            lines: &[
+                "La feria de otoño abre los fines de semana de octubre en la ribera.",
+                "Hay que presentar la solicitud de puesto antes del 30 de septiembre.",
+                "El plano del recinto asigna los puestos por orden de solicitud.",
+                "El horario de montaje va del viernes por la tarde al sábado por la mañana.",
             ],
         },
     ],
     docs: &[
-        DocText {
-            name: "manual-bomba-riego.pdf",
-            folder: r"C:\Users\Lucia\Documents",
-            lines: &[
-                "Manual de la bomba de riego",
-                "Puesta en marcha y purga del circuito",
-                "Cambio de filtros cada dos semanas",
-                "Servicio técnico: 900 111 222",
-            ],
-        },
-        DocText {
-            name: "calendario-escolar.pdf",
-            folder: r"C:\Users\Lucia\Downloads",
-            lines: &[
-                "Calendario escolar 2026-2027",
-                "Inicio de curso: 8 de septiembre",
-                "Vacaciones de Navidad: del 23 de diciembre al 7 de enero",
-                "Días festivos y jornadas de puertas abiertas",
-            ],
-        },
         DocText {
             name: "lista-pedidos-proveedor.xlsx",
             folder: r"C:\Users\Lucia\Documents\Contabilidad",
@@ -210,6 +234,41 @@ pub(crate) const PERSONAS: &[Persona] = &[Persona {
                 "Semilla tomate ramillete 12 3,20 Semilleros Turia",
                 "Abono orgánico 40 kg 18,00 Abonos Ribera",
                 "Cinta de riego 200 m 0,35 Riegos Sánchez",
+            ],
+        },
+        DocText {
+            name: "diario-campo.docx",
+            folder: r"C:\Users\Lucia\Documents",
+            lines: &[
+                "Cuaderno de campo, temporada 2026",
+                "12 de septiembre: primer riego largo en la parcela norte y revisión de los \
+                 goteros del bancal dos.",
+                "15 de septiembre: recogida de tomate ramillete para la lonja y separación de \
+                 calibres con Marta.",
+                "20 de septiembre: abonado de fondo en el bancal de siembra y limpieza de \
+                 filtros.",
+                "27 de septiembre: pedido de cinta de riego y etiquetas nuevas para las cajas \
+                 del mercado.",
+            ],
+        },
+        DocText {
+            name: "manual-bomba-riego.pdf",
+            folder: r"C:\Users\Lucia\Documents",
+            lines: &[
+                "Manual de la bomba de riego, modelo Turia-40.",
+                "La puesta en marcha requiere purgar el circuito antes de abrir las líneas.",
+                "Los filtros se cambian cada dos semanas para no obstruir los goteros.",
+                "Servicio técnico: 900 111 222, de lunes a viernes.",
+            ],
+        },
+        DocText {
+            name: "calendario-escolar.pdf",
+            folder: r"C:\Users\Lucia\Downloads",
+            lines: &[
+                "Calendario escolar 2026-2027 del instituto de la ribera.",
+                "El curso empieza el 8 de septiembre y termina el 25 de junio.",
+                "Las vacaciones de Navidad van del 23 de diciembre al 7 de enero.",
+                "Los festivos de otoño no cambian el horario del mercado de los sábados.",
             ],
         },
     ],
@@ -226,6 +285,7 @@ pub(crate) const PERSONAS: &[Persona] = &[Persona {
         "precio del tomate esta semana",
         "subvenciones agrícolas 2026",
         "cómo etiquetar cajas para el mercado",
+        "solicitud de puesto en la feria de otoño",
     ],
     media: &[
         "Riego por goteo: guía práctica (vídeo)",

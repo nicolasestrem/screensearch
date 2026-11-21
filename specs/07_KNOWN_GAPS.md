@@ -524,3 +524,33 @@ a windows only app RTFM").
   generated without `--persona` writes no such key and exports with the documented
   `northwind-tech` identity. Dev-only: no schema, settings, IPC, runtime or network change, and
   nothing outside the dev-only crate.
+
+
+## 2026-11-21 — Off-arc: dev-only `dream` command in `evalfixture`
+
+**Question (spec silent; one boundary).** Neither `02` nor `03` defines memory consolidation
+("dreaming"), and no arc past 0.4.5 is approved. The maintainer asked for a dev-only command that
+makes a history database dream after the OpenClaw model (Light, REM, Deep, Dream Diary, promotion
+gates) over one synthetic persona, and supplied an OpenAI-compatible remote endpoint for the diary
+prose, with the instruction that no model run on the development PC.
+
+**Resolution (owner: maintainer; requested 2026-11-21).**
+
+- `ssv2c-evalfixture dream --db <path> --out <dir>` lives in the dev-only crate only. It opens the
+  database `SQLITE_OPEN_READ_ONLY` + `query_only` and reads only normal v15 tables, so it runs
+  unchanged on a real profile; it writes only `<dir>/DREAMS.md` and `<dir>/MEMORY.md`
+  (`harness-data/`, git-ignored) and never reads either back.
+- Sweeps are absences between captured frames (default 120 min); no fixed hour. Recall uses the
+  stored frame embeddings (session centroids over `embedding_vectors`, `session_vectors` as
+  fallback) with title/line overlap subtracted, plus the kernel's own `derive_recurrence` /
+  `derive_resumption` over the work graph. Deep uses the OpenClaw weights 0.30/0.24/0.15/0.15/
+  0.10/0.06 plus a bounded phase boost and three gates.
+- **Remote completion boundary.** The diary prose is the only model output, requested from an
+  OpenAI-compatible endpoint named by `DREAM_API_BASE` / `DREAM_API_MODEL` / `DREAM_API_KEY`
+  (environment or an untracked env file; never committed, never printed). Only the derived fact
+  sheet of a synthetic persona is sent. This is a dev-tool exception, not product scope: the app,
+  its inference and the shipped runtime remain local-only (0.4.5 D15). Without an endpoint, or
+  when a reply fails validation, the entry is the rule-based draft and is labelled degraded.
+- `market-gardener` gained content prose and a seven-day rhythm, and the renderer stopped
+  writing UI labels into body text, so frame content is no longer dominated by chrome. No schema,
+  settings, IPC, runtime or shipped-crate change.

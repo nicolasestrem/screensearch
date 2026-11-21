@@ -574,7 +574,10 @@ async fn write_fixture(
 /// read-back, but every frame is rendered from the persona's data by [`life::LifePlan`] and
 /// `gen::render`. The persona's identity is written to the `evalfixture.persona` setting so
 /// `ssv2c-evalfixture export` can report it; the pinned default fixture writes no such key and
-/// stays byte-identical.
+/// stays byte-identical. Persona runs also refuse a frame budget that cannot give every day
+/// of the persona's widest weekly pattern its sessions, and suppress edge chrome from its
+/// first sighting: the run places every short edge line itself, so there is no honest
+/// cold-start window to honour.
 async fn write_persona_fixture(
     opts: &GenOptions,
     db: &Path,
@@ -582,6 +585,25 @@ async fn write_persona_fixture(
     persona: &'static Persona,
     embedder: Option<&FastEmbedProvider>,
 ) -> Result<GenManifest> {
+    // `life::split_week` activates only `(frames / 2)` of a week's pattern days, so a
+    // run that wants every weekday of the widest pattern live every week needs at least
+    // two frames for each of those days. Refuse the quietly lossy run instead of
+    // generating a persona whose story silently drops days.
+    let widest = persona
+        .rhythm
+        .patterns
+        .iter()
+        .map(|pattern| pattern.len())
+        .max()
+        .unwrap_or(0);
+    ensure!(
+        opts.frames_per_week >= 2 * widest,
+        "persona `{}` needs --frames-per-week >= {} so every day of its widest weekly \
+         pattern holds sessions, got {}",
+        persona.id,
+        2 * widest,
+        opts.frames_per_week
+    );
     let store = SqliteStore::open_path(db).with_context(|| format!("creating {}", slash(db)))?;
     let mut renderer = LifeRenderer::new(opts.seed, persona);
     let total_frames = opts.total_frames() as usize;
@@ -614,7 +636,13 @@ async fn write_persona_fixture(
                 .body
                 .retain(|line| traits::normalize_text(line) != title);
             let (time, date) = life::clock(frame.at, offset, persona.labels);
-            let laid = lay_out(&screen, (&time, &date))?;
+            let mut laid = lay_out(&screen, (&time, &date))?;
+            // The fixture is written in one seeded pass and every short edge line is
+            // static chrome the generator itself placed, so there is no honest
+            // cold-start window to honour: suppress from the first sighting (the live
+            // app defaults to 9). Long edge lines are never suppressible, which is why
+            // the renderer keeps every edge line under `chrome_protect_min_chars`.
+            laid.ctx.chrome_suppress_min_seen = 1;
             let trigger = if previous_app == Some(frame.app) {
                 CaptureTrigger::Timer
             } else {

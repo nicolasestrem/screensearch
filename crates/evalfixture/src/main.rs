@@ -15,7 +15,7 @@
 use std::process::ExitCode;
 
 use anyhow::{bail, Result};
-use evalfixture::{export, gen, graph, serve};
+use evalfixture::{dream, export, gen, graph, serve};
 
 const USAGE: &str = "\
 ssv2c-evalfixture - dev-only 0.4.5 evaluation fixture (never shipped)
@@ -28,6 +28,7 @@ USAGE:
   ssv2c-evalfixture export --db <path> --out <file.json>
   ssv2c-evalfixture serve  --db <path> --data <dir> [--port <n>] [--embed] [--no-answer]
   ssv2c-evalfixture graph  --db <path>
+  ssv2c-evalfixture dream  --db <path> --out <dir> [--min-gap-mins <n>] [--no-model]
 
 COMMANDS:
   gen     Build the seeded synthetic v15 history (frames, sessions, text, embeddings,
@@ -48,6 +49,13 @@ COMMANDS:
           over the fixture database (read-write), printing the completion log line with the
           five table counts (P5 acceptance evidence). Run it twice over the same database:
           the second pass must print identical counts.
+  dream   Make a history database dream: every long absence in screen activity is one
+          sweep, run Light -> REM -> Deep over it, and write <dir>/DREAMS.md (one diary
+          entry per sweep, every claim with its evidence) and <dir>/MEMORY.md (what Deep
+          promoted, with its score). Read-only on the database; any normal v15 database
+          works. The diary is written by an OpenAI-compatible API (DREAM_API_BASE,
+          DREAM_API_MODEL, DREAM_API_KEY); without one each entry is a labelled degraded
+          draft.
 ";
 
 fn main() -> ExitCode {
@@ -65,6 +73,12 @@ fn run() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("gen") => gen::run(&args[1..]),
         Some("export") => export::run(&args[1..]),
+        Some("dream") => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(dream::run(&args[1..]))
+        }
         Some("serve") => {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
