@@ -54,6 +54,12 @@ const MIN_FRAMES_PER_WEEK: usize = 2;
 const MAX_FRAMES_PER_WEEK: usize = 50_000;
 const MAX_TOTAL_FRAMES: u64 = 2_000_000;
 
+/// The earliest supported `--start` (a Monday). The store records Unix milliseconds and
+/// `frame_page` reads history from 0 upward, so a pre-epoch fixture can be written but never
+/// read back. Rejecting it up front keeps the failure honest (and leaves no unusable database
+/// behind). 1970-01-05 is the first Monday at or after the Unix epoch.
+const MIN_START: (i32, u32, u32) = (1970, 1, 5);
+
 /// Embedding every frame is the default only while the fixture stays at this size. A larger
 /// run must choose `--no-embeddings` or an explicit `--embed-frames` bound: embedding is a
 /// model call per frame, so an unbounded default would turn a fixture run into an hours-long
@@ -73,17 +79,19 @@ OPTIONS:
   --out <dir>              Fixture directory (required). The database is <dir>/screensearch.db;
                            it must not exist yet (a rerun never appends to an old fixture).
   --seed <n>               PRNG seed, decimal or 0x-prefixed hex (default 0x5cee55ee41520004).
-  --start <YYYY-MM-DD>     First working day; must be a Monday (default 2026-09-07).
+  --start <YYYY-MM-DD>     First working day; must be a Monday on or after 1970-01-05
+                           (default 2026-09-07).
   --weeks <n>              Working weeks to synthesize, 1..=1040 (default 6).
   --frames-per-week <n>    Frames per week, 2..=50000 (default 210). One fixture may hold at
                            most 2000000 frames in total.
   --no-embeddings          Skip text embeddings: no model is loaded or downloaded, and the
                            summary reports embeddings=0.
-  --embed-frames <n>       Embed only the first n frames (1..=the run's frame count) instead
-                           of every frame. The default embeds every frame only up to 20000
-                           frames; a larger run must choose --no-embeddings or a bound. Text
-                           embeddings use the product's fastembed model, cached under
-                           <dir>/models/fastembed (downloaded on first use).
+  --embed-frames <n>       Embed only the first n frames that have content text (1..=the
+                           run's frame count) instead of every frame. The default embeds every
+                           frame only up to 20000 frames; a larger run must choose
+                           --no-embeddings or a bound. Text embeddings use the product's
+                           fastembed model, cached under <dir>/models/fastembed (downloaded
+                           on first use).
 ";
 
 /// The first working day a run uses when `--start` is absent (Monday 2026-09-07).
@@ -100,7 +108,8 @@ pub struct GenOptions {
     pub weeks: u32,
     pub frames_per_week: usize,
     pub embeddings: bool,
-    /// Embed only the first `n` frames; `None` embeds every frame (when embeddings are on).
+    /// Embed only the first `n` frames that have content text; `None` embeds every frame
+    /// (when embeddings are on).
     pub embed_frames: Option<usize>,
 }
 
@@ -182,6 +191,14 @@ impl GenOptions {
              {} ({})\n\n{USAGE}",
             self.start,
             self.start.weekday()
+        );
+        let earliest = NaiveDate::from_ymd_opt(MIN_START.0, MIN_START.1, MIN_START.2)
+            .expect("the earliest supported start is a valid date");
+        ensure!(
+            self.start >= earliest,
+            "`--start` must be on or after {earliest} (the store reads history from the Unix \
+             epoch, so an earlier fixture could not be read back), got {}\n\n{USAGE}",
+            self.start
         );
         if !self.embeddings && self.embed_frames.is_some() {
             bail!(
@@ -279,6 +296,10 @@ pub fn run(args: &[String]) -> Result<()> {
 /// Synchronous: it builds its own current-thread Tokio runtime for the async Store API, so it
 /// must be called from synchronous code (a plain `#[test]`, `spawn_blocking`, the CLI), never
 /// from inside another runtime.
+///
+/// The **plan** (every session and frame) is still materialized in memory before writing:
+/// roughly 50 bytes per frame, about 100 MB at the 2,000,000-frame ceiling. Only the read-back
+/// content text is page-bounded. Streaming the plan per week would be a separate change.
 pub fn generate(opts: &GenOptions) -> Result<GenManifest> {
     opts.validate()?;
     if tokio::runtime::Handle::try_current().is_ok() {
@@ -474,11 +495,12 @@ async fn write_fixture(
 /// algorithm, and embeds up to `embed_limit` non-empty frames. Returns
 /// `(frames, digest, embeddings)`.
 ///
-/// Streaming bounds the memory by one page, so a multi-million-frame fixture does not hold its
-/// own content text in RAM. `frame_page` returns frames in `(captured_at, id)` order and the
-/// fixture writes them chronologically, so that is also ascending id — the order the digest's
-/// previous read-all implementation sorted into. Any other order is a bug, not a reshuffle:
-/// the digest would silently change, so the loop refuses it.
+/// Streaming bounds the **read-back** memory by one page, so a multi-million-frame fixture
+/// does not hold its own content text in RAM. The plan is still materialized in full (see
+/// [`generate`]). `frame_page` returns frames in `(captured_at, id)` order and the fixture
+/// writes them chronologically, so that is also ascending id — the order the digest's previous
+/// read-all implementation sorted into. Any other order is a bug, not a reshuffle: the digest
+/// would silently change, so the loop refuses it.
 async fn finish_fixture(
     store: &SqliteStore,
     embedder: Option<&FastEmbedProvider>,
@@ -530,6 +552,8 @@ async fn finish_fixture(
             );
             frames += 1;
 
+            // Embedding writes only the `embeddings` table; the page's keyset position and
+            // snapshot describe the frames read, so a write here cannot disturb pagination.
             let (Some(provider), Some(model)) = (embedder, model.as_deref()) else {
                 continue;
             };
@@ -558,7 +582,7 @@ async fn finish_fixture(
                 .await?;
             embedded += 1;
             if embedded.is_multiple_of(200) {
-                eprintln!("embedded {embedded}/{embed_limit}");
+                eprintln!("embedded {embedded} (limit {embed_limit})");
             }
         }
         match page.next_position {
@@ -744,6 +768,25 @@ mod tests {
             start_weekday.to_string().contains("Monday"),
             "{start_weekday}"
         );
+        let start_epoch =
+            GenOptions::parse(&args(&["--out", "x", "--start", "1969-12-22"])).unwrap_err();
+        assert!(
+            start_epoch.to_string().contains("1970-01-05"),
+            "{start_epoch}"
+        );
+        let earliest = GenOptions::parse(&args(&[
+            "--out",
+            "x",
+            "--start",
+            "1970-01-05",
+            "--weeks",
+            "1",
+            "--frames-per-week",
+            "2",
+            "--no-embeddings",
+        ]))
+        .unwrap();
+        assert_eq!(earliest.start, NaiveDate::from_ymd_opt(1970, 1, 5).unwrap());
         let weeks_cap = GenOptions::parse(&args(&["--out", "x", "--weeks", "1041"])).unwrap_err();
         assert!(weeks_cap.to_string().contains("--weeks"), "{weeks_cap}");
         let frames_cap =

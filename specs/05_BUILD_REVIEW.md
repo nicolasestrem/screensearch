@@ -1365,3 +1365,35 @@ future sandbox run does not misread it as a regression.
 
 **Open.** Nothing committed or pushed; no PR. The 2,000,000-frame ceiling and the 20,000-frame
 embed-all default are deliberate guards, not spec values (`07`, 2026-11-20).
+
+### 2026-11-21 — PR #179 review follow-up: pre-epoch start guard and doc clarifications (dev-only)
+
+**Findings addressed.** Codex P2 at `crates/evalfixture/src/gen.rs`: a valid Monday before 1970
+(`--start 1969-12-22`) passed validation and wrote frames with negative Unix-ms timestamps, but
+`finish_fixture` reads `frame_page` from `0` upward, so the read-back saw 0 frames, the count check
+failed, and the half-written database blocked a retry in the same directory. Reproduced verbatim:
+`ssv2c-evalfixture: read back 0 frames / 4 sessions, wrote 8 / 4`, with the database left behind.
+
+**Fix.** Validation now rejects a `--start` before **1970-01-05** (the first Monday at or after the
+Unix epoch) with a message naming the epoch reason. The refusal happens before any directory or
+database is created, so the same `--out` is reusable: pre-epoch exit 1, then an unchanged retry in
+the same directory exits 0. Two tests pin it: the refusal leaves no database, and the earliest
+supported Monday round-trips with positive timestamps.
+
+**Claude review observations.** No blocking issues; the relevant non-blocking ones were folded in:
+the `generate`/`finish_fixture` docs now say the **plan** is still materialized (~50 B/frame,
+~100 MB at the 2M ceiling) and only the read-back content text is page-bounded; the
+`--embed-frames` help and field docs say "first n frames that have content text"; the embed progress
+prints `embedded N (limit L)` instead of a denominator some frames can never reach; a comment
+explains why embedding writes between keyset pages cannot disturb pagination; and `plan.rs` records
+that the fixed +02:00 offset does not model DST across multi-year spans.
+
+**Verification (raw).** `cargo fmt --all -- --check` 0; `cargo clippy -p evalfixture --all-targets
+-- -D warnings` 0; `cargo test -p evalfixture` 0 (17 unit + 8 determinism + 1 serve-API);
+`cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo build --workspace` 0;
+`git diff --exit-code -- ui/src/bindings` 0. CLI: `--start 1969-12-22` -> exit 1 naming
+`1970-01-05`, no database; `--start 1970-01-05 --weeks 1 --frames-per-week 10` -> exit 0,
+`frames=10`, first `captured_at=368839000` (1970-01-05 08:27:19 local).
+
+**Status.** New commit on `feat/evalfixture-large-datasets`, pushed to PR #179. No reply to the
+bots, no merge, no review retrigger.

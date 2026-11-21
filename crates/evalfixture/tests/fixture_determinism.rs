@@ -148,6 +148,37 @@ fn a_multi_year_timeline_beyond_the_old_cap_is_generated() {
 }
 
 #[test]
+fn the_earliest_supported_start_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    // 1970-01-05 is the first Monday at or after the Unix epoch.
+    let start = chrono::NaiveDate::from_ymd_opt(1970, 1, 5).unwrap();
+    // Ten frames activate all five working days, so the first frame is on the start date.
+    let mut opts = options(dir.path(), DEFAULT_SEED, 1, 10);
+    opts.start = start;
+    let manifest = generate(&opts).unwrap();
+    assert_eq!(manifest.frames, 10);
+    assert_eq!(manifest.start, start);
+
+    let back = read_back(&manifest.db);
+    assert_eq!(back.frames.len(), 10);
+    assert!(back.frames.iter().all(|frame| frame.captured_at > 0));
+    assert_eq!(local_date(back.frames[0].captured_at), start);
+}
+
+#[test]
+fn a_pre_epoch_start_is_refused_before_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut opts = options(dir.path(), DEFAULT_SEED, 1, 8);
+    opts.start = chrono::NaiveDate::from_ymd_opt(1969, 12, 22).unwrap(); // a Monday
+    let error = generate(&opts).unwrap_err().to_string();
+    assert!(error.contains("1970-01-05"), "{error}");
+    assert!(
+        !db_path(dir.path()).exists(),
+        "a refused run must leave no database to block a retry"
+    );
+}
+
+#[test]
 fn the_default_fixture_is_reproducible_and_seed_sensitive() {
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();

@@ -5,7 +5,8 @@
 //! never the machine's zone or the current time: the database and its digest are byte-identical
 //! on every machine, and on the maintainer's machine the history reads as ordinary working days
 //! starting around 08:00. A machine in another zone sees the same instants shifted by its own
-//! offset.
+//! offset. The fixed offset also means a multi-year fixture does not model DST: every day keeps
+//! the same +02:00 wall clock by design.
 //!
 //! **Shape.** `weeks` weeks of five working days; each week holds exactly
 //! `frames_per_week` frames, split over its days. A day with `n` frames holds

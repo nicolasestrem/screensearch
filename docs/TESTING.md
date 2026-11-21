@@ -253,10 +253,13 @@ cargo run -p evalfixture -- gen --out harness-data/scale --start 2020-01-06 \
   --weeks 520 --frames-per-week 210 --no-embeddings
 ```
 
-- `--start` must be a Monday; `--weeks` is 1–1040 and `--frames-per-week` 2–50 000, with at most
-  **2 000 000 frames** per fixture (roughly 3 h and 18 GB at the measured rate).
+- `--start` must be a Monday on or after 1970-01-05; `--weeks` is 1–1040 and
+  `--frames-per-week` 2–50 000, with at most **2 000 000 frames** per fixture (roughly 3 h and
+  18 GB at the measured rate). The timeline uses a fixed UTC+02:00 offset, so it does not model
+  DST across a multi-year span.
 - Embedding every frame stays the default only up to 20 000 frames; a larger run must pass
-  `--no-embeddings` or `--embed-frames <n>` (the first *n* frames, for a bounded vector arm).
+  `--no-embeddings` or `--embed-frames <n>` (the first *n* frames with text, for a bounded
+  vector arm).
 - The default six-week run still prints the committed digest; use `--no-embeddings` in CI-like
   runs so nothing loads or downloads a model. `harness-data/` is git-ignored.
 

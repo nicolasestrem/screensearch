@@ -591,3 +591,15 @@ fixture (520 weeks from 2020-01-06) wrote 109,200 frames / 19,574 sessions / 8,1
 (1,058,529,280 bytes) in 472 s; a 20,000-frame week verified the density cap lift (5 days, 8-18h,
 6-9 sessions/day). `docs/TESTING.md` documents the commands and `07` records the spec-silent
 decision. No schema, settings, IPC, runtime or network change; no commit, push, PR or merge.
+
+### 2026-11-21: PR #179 review fixes — pre-epoch `--start` and documentation
+
+Codex found that a Monday before 1970 passed `--start` validation but could not be read back
+because `frame_page` reads from Unix ms 0; the half-written DB then blocked a retry. Validation now
+requires `--start >= 1970-01-05` (the first Monday after the epoch), before any file is created;
+tests cover the refusal (no DB left) and the earliest boundary (positive timestamps, round-trip).
+Also applied the relevant Claude review observations: clarify that only the read-back is
+page-bounded (the plan is still in memory, ~100 MB at the 2M ceiling), say `--embed-frames` counts
+the first n frames with text, fix the embed progress denominator, document why embedding between
+keyset pages is safe, and note the fixed +02:00 offset does not model DST. No schema, settings, IPC
+or runtime change; no bot replies, no merge.
