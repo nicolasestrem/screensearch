@@ -181,8 +181,16 @@ fn semantic_neighbours(conn: &Connection, staged: &Staged) -> Result<Vec<Candida
 }
 
 fn recurring_themes(conn: &Connection, staged: &Staged) -> Result<Vec<Candidate>> {
-    // Entities whose sessions span >= RECURRENCE_GAP_MS or at least 2 UTC days.
-    // Keep it simple: session_entities grouped by entity.
+    // Only entities that actually appear in the staged dream window are eligible
+    // as "recurring for this dream". An entity that recurs somewhere in the last
+    // 30 days but never in this window is not a theme of this window — without
+    // this scoping every dream surfaces the same global top entities (the 6/7
+    // duplication the review flagged). We keep the 30 d lookback for the gap
+    // measurement but require at least one hit inside the staged window.
+    if staged.sessions.is_empty() {
+        return Ok(Vec::new());
+    }
+    let staged_ids: std::collections::HashSet<i64> = staged.sessions.iter().map(|s| s.id).collect();
     let mut out = Vec::new();
     let entity_days: Vec<(i64, String, i64 /*first*/, i64 /*last*/, i64 /*sessions*/)> = {
         let sql = "SELECT se.entity_id, e.canonical_name, MIN(s.started_at), MAX(s.started_at), COUNT(DISTINCT s.id)
@@ -208,18 +216,79 @@ fn recurring_themes(conn: &Connection, staged: &Staged) -> Result<Vec<Candidate>
     };
 
     for (eid, name, first, last, _cnt) in entity_days {
+        // Must have at least one occurrence inside the staged window.
+        let has_staged_hit = match conn.prepare(
+            "SELECT 1 FROM session_entities se JOIN sessions s ON s.id = se.session_id \
+             WHERE se.entity_id = ?1 AND s.started_at >= ?2 AND s.started_at < ?3 LIMIT 1",
+        ) {
+            Ok(mut q) => q.query_row(rusqlite::params![eid, staged.window_start, staged.window_end], |_| Ok(())).is_ok(),
+            Err(_) => false,
+        };
+        // Fallback set-membership check (covers sessions whose started_at is NULL-ended trick).
+        let has_staged_hit = has_staged_hit
+            || {
+                // Check via in-memory staged_ids: any staged session touches this entity?
+                match conn.prepare("SELECT session_id FROM session_entities WHERE entity_id = ?1") {
+                    Ok(mut q) => {
+                        let rows = q.query_map([eid], |r| r.get::<_, i64>(0)).unwrap();
+                        rows.flatten().any(|sid| staged_ids.contains(&sid))
+                    }
+                    Err(_) => false,
+                }
+            };
+        if !has_staged_hit {
+            continue;
+        }
         let gap = last - first;
         let days = ((gap as f64) / 86_400_000.0).ceil() as usize + 1;
         if gap < RECURRENCE_GAP_MS && days < 2 {
             continue;
         }
-        // Collect the session sample for evidence (2 sessions touching this entity)
-        let sessions: Vec<i64> = {
-            let mut s = conn.prepare("SELECT session_id FROM session_entities WHERE entity_id = ?1 ORDER BY last_seen_at DESC LIMIT 2")?;
-            let rows = s.query_map([eid], |r| r.get(0))?;
-            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        // Prefer evidence that pairs a staged-window session with a prior occurrence
+        // outside (or earliest in) the 30 d window, so the diary shows a checkable
+        // link anchored in this dream's window, not two global-most-recent hits.
+        let staged_sid: Option<i64> = staged
+            .sessions
+            .iter()
+            .find_map(|s| {
+                let sid = s.id;
+                // does this staged session touch eid?
+                conn.query_row(
+                    "SELECT 1 FROM session_entities WHERE entity_id = ?1 AND session_id = ?2",
+                    [eid, sid],
+                    |_| Ok(()),
+                )
+                .ok()
+                .map(|_| sid)
+            });
+        let prior_sid: Option<i64> = (|| {
+            let mut q = conn
+                .prepare(
+                    "SELECT s.id FROM session_entities se JOIN sessions s ON s.id = se.session_id \
+                     WHERE se.entity_id = ?1 AND s.started_at < ?2 \
+                     ORDER BY s.started_at DESC LIMIT 1",
+                )
+                .ok()?;
+            q.query_row([eid, staged.window_start], |r| r.get(0)).ok()
+        })();
+        let pair: Vec<i64> = match (staged_sid, prior_sid) {
+            (Some(a), Some(b)) if a != b => vec![a, b],
+            (Some(a), None) => {
+                let rows: Vec<i64> = if let Ok(mut q) = conn.prepare("SELECT session_id FROM session_entities WHERE entity_id = ?1 ORDER BY last_seen_at DESC LIMIT 2") {
+                    if let Ok(mapped) = q.query_map([eid], |r| r.get(0)) { mapped.flatten().collect() } else { Vec::new() }
+                } else { Vec::new() };
+                if rows.len() >= 2 && rows.contains(&a) { rows } else { vec![a, a] }
+            }
+            _ => {
+                if let Ok(mut q) = conn.prepare("SELECT session_id FROM session_entities WHERE entity_id = ?1 ORDER BY last_seen_at DESC LIMIT 2") {
+                    if let Ok(mapped) = q.query_map([eid], |r| r.get(0)) { mapped.flatten().collect() } else { Vec::new() }
+                } else { Vec::new() }
+            }
         };
-        if sessions.len() < 2 { continue; }
+        if pair.len() < 2 || pair[0] == pair[1] {
+            continue;
+        }
+        let sessions = pair;
         let (apps, titles, snippets) = session_evidence(conn, sessions[0], sessions[1])?;
         out.push(Candidate {
             a: sessions[0],
