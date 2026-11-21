@@ -73,8 +73,9 @@ USAGE:
 
 OPTIONS:
   --db <path>     Fixture database written by `ssv2c-evalfixture gen` (required).
-  --out <file>    Destination JSON file (required). An existing file is overwritten; the same
-                  database always produces a byte-identical file.
+  --out <file>    Destination JSON file (required). It must not name the `--db` file. An
+                  existing file is overwritten; the same database always produces a
+                  byte-identical file.
 ";
 
 /// Distinct window titles reported per session.
@@ -138,6 +139,14 @@ pub fn run(args: &[String]) -> Result<()> {
         options.db.is_file(),
         "`--db` is not an existing file: {}",
         slash(&options.db)
+    );
+    // An `--out` that resolves to the database itself would read the fixture and then truncate
+    // it with JSON, reporting success. Reject the mistake before opening anything, including
+    // other spellings of the same path.
+    ensure!(
+        !same_file(&options.db, &options.out),
+        "`--out` must not be the source database: {}",
+        slash(&options.out)
     );
     ensure!(
         tokio::runtime::Handle::try_current().is_err(),
@@ -814,4 +823,14 @@ fn instant(at_ms: i64) -> Result<DateTime<Utc>> {
 /// A path as documented, persisted and printed: forward slashes.
 fn slash(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
+}
+
+/// Whether two paths resolve to the same existing file. A path that does not exist cannot be
+/// the same file; canonicalisation also catches other spellings of the same target (relative
+/// segments, separators and case on Windows).
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }

@@ -471,10 +471,22 @@ pub(crate) fn plan(
                     .filter_map(|session| session.last().copied())
                     .max()
                     .unwrap_or(day_start);
-                if last < end_of_day || factor <= 0.01 {
+                if last < end_of_day {
                     break (times, scaled_tails);
                 }
-                factor *= 0.9;
+                // Every spacing has a hard one-second floor, so a day that still overruns
+                // with the floor applied cannot be represented inside this rhythm window:
+                // reject the density instead of accepting out-of-hours frames.
+                ensure!(
+                    factor > 1e-12,
+                    "persona `{}`: {day_frames} frames on {date} cannot fit the active \
+                     window {start}..{end} minutes even at the one-second spacing floor; \
+                     lower `--frames-per-week` or widen the persona's rhythm",
+                    persona.id,
+                    start = rhythm.start_min / 60,
+                    end = rhythm.end_min / 60
+                );
+                factor *= 0.5;
             };
 
             let live: Vec<usize> = (0..persona.contexts.len())

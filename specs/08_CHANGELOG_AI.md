@@ -657,3 +657,17 @@ stays first-seen order past 99 projects. (6) Docs note the URL-token fallback, `
 start-date attribution and the id padding. Verification: fmt/clippy clean, `cargo test -p
 evalfixture` 28 passed with the committed default digest still matching; the six demo fixtures were
 regenerated (exports 21-48 KB). Third commit on the PR; no merge, no bot replies.
+
+### 2026-11-21: PR #180 second review round (Codex comments on 96a0a7f)
+
+Two further Codex P2 findings, both fixed without replying to the bot. (1) Dense-day fitting could
+accept a layout whose last frame was after the persona's end-of-day once the scaling factor fell
+below a floor: `--persona retired-teacher --weeks 1 --frames-per-week 50000` ended at 19:52 against
+18:00. The fit loop now keeps shrinking until the day really ends before `end_min`, and rejects a
+density that cannot fit even at the one-second spacing floor instead of writing out-of-hours
+frames. Verified: that same run now ends at 17:16 local with 0 frames at/after 18:00. (2)
+`export --db X --out X` read the fixture and then truncated it with JSON while reporting success;
+the command now rejects a destination that canonicalises to the source database before reading or
+writing (usage text updated). Verified: direct and `./` spellings exit 1, the database is unchanged,
+and a normal export still succeeds. fmt/clippy clean, `cargo test -p evalfixture` 28 passed with the
+default digest still matching. Fourth commit on the PR; no merge, no bot replies.

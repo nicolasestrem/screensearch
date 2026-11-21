@@ -1535,3 +1535,24 @@ matches, persona/export determinism still green). The six demo fixtures were reg
 fixed planner/renderer; exports are 21,517 / 41,069 / 23,524 / 43,760 / 48,493 / 41,361 bytes (all
 under 1 MB). Pushed as a third commit; PR stays open for maintainer review, no merge, no bot
 replies.
+
+### 2026-11-21 — PR #180 second review round (Codex comments on `96a0a7f`)
+
+1. **Dense days could accept out-of-hours frames (Codex P2, `life.rs`).** The fit loop stopped at a
+   scaling-factor floor even when the resulting last frame was after `end_min`. For example
+   `--persona retired-teacher --weeks 1 --frames-per-week 50000` stopped at factor ~0.007 and left
+   its last frame at 19:52 against an 18:00 cutoff. The loop now keeps halving the factor until the
+   laid-out day really ends before `end_min`; when the one-second spacing floor still overruns, the
+   day is rejected with a message naming the persona, date, frame count and active window (lower
+   `--frames-per-week` or widen the rhythm). Verified: the same 50000-frame run now ends at 17:16
+   local with 0 frames at/after 18:00 (11 sessions, exit 0).
+2. **`--out` could be the source database (Codex P2, `export.rs`).** `export --db X --out X` read
+   the fixture and then truncated it with JSON, reporting success. The command now rejects a
+   destination that resolves to the same file as `--db` before reading or writing, including
+   equivalent spellings via canonicalisation; the usage text says so. Verified: direct and `./`
+   spellings exit 1 with the message, the database stayed unchanged (600 frames read back), and a
+   normal export still succeeds.
+
+**Verification (raw).** `cargo fmt --all -- --check` 0; `cargo clippy -p evalfixture --all-targets
+-- -D warnings` 0; `cargo test -p evalfixture` 28 passed, 0 failed (committed default digest still
+matches). Pushed as a fourth commit; PR stays open, no merge, no bot replies.
