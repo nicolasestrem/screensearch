@@ -29,9 +29,11 @@ fn serve_api_health_auth_search_ask_and_port_release() {
     let manifest = gen::generate(&gen::GenOptions {
         out_dir: temp.path().to_path_buf(),
         seed: DEFAULT_SEED,
+        start: gen::default_start(),
         weeks: TINY_WEEKS,
         frames_per_week: TINY_FRAMES_PER_WEEK,
         embeddings: false,
+        embed_frames: None,
     })
     .expect("generate the tiny fixture");
 

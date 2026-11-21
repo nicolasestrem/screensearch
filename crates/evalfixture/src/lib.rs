@@ -1,11 +1,13 @@
 //! # `ssv2c-evalfixture` - dev-only evaluation fixture for 0.4.5 P4/P5/P6
 //!
-//! Two subcommands, both dev-only and neither reachable from the app:
+//! Three subcommands, all dev-only and none reachable from the app:
 //!
 //! - `gen` builds a **seeded, synthetic v15 history** through the production Store writers:
-//!   several weeks of frames, sessions, OCR text and embeddings across many apps,
-//!   repositories, files, domains and ticket references. The seed is printed and committed
-//!   ([`DEFAULT_SEED`]), so P4, P5 and P6 measure the same database.
+//!   a working-day timeline of frames, sessions, OCR text and optional embeddings across many
+//!   apps, repositories, files, domains and ticket references. The default span is six weeks
+//!   starting Monday 2026-09-07; `--start`, `--weeks` and `--frames-per-week` scale it to a
+//!   multi-year history (one fixture is capped at 2,000,000 frames). The seed is printed and
+//!   committed ([`DEFAULT_SEED`]), so P4, P5 and P6 measure the same database.
 //! - `serve` runs the **product's own local HTTP API** (`crates/api`: `GET /v1/search`,
 //!   `POST /v1/ask`) over that fixture database, with the real embedding and answer
 //!   providers, so the harness measures the shipped retrieval/answer code instead of a
@@ -27,6 +29,14 @@
 //! ssv2c-evalfixture gen   --out harness-data/fixture
 //! ssv2c-evalfixture serve --db harness-data/fixture/screensearch.db \
 //!                         --data harness-data/fixture --embed --port 43210
+//! ```
+//!
+//! A multi-year, model-free history for load or scale tests (roughly eight minutes and 1 GB for
+//! 109,200 frames on the maintainer's machine):
+//!
+//! ```text
+//! ssv2c-evalfixture gen --out harness-data/scale --weeks 520 --frames-per-week 210 \
+//!                       --no-embeddings
 //! ```
 
 pub mod gen;

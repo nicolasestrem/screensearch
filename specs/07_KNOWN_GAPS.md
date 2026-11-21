@@ -470,3 +470,19 @@ measurements behind them are in `Your-Universe/ITERATIONS.md`.
 - **City track: city edge, portrait framing, day cycle** (2026-11-14). Owner: Your-Universe owner.
   Status: the city is surrounded by a plain meadow, close to the owner's "nothing rural" rule; the
   Blender city scene has no portrait framing and no day and night cycle.
+
+## 2026-11-20 — Off-arc: synthetic-dataset scale in the dev-only `evalfixture`
+
+**Question (spec silent).** Neither `02` nor `03` defines a synthetic-dataset tool beyond the
+committed P4/P5/P6 fixture, and the repository has no approved arc past 0.4.5. The maintainer asked
+for a tool that builds **large** synthetic datasets for testing, and in this session chose: extend
+`crates/evalfixture` (not a new generic generator or a DSH tool), generate ScreenSearch history, and
+go past the then-current caps (52 weeks, 10,000 frames/week, fixed 2026-09-07 start).
+
+**Resolution (owner: maintainer; requested 2026-11-20).** `ssv2c-evalfixture gen` keeps the
+production-Store-writer path and a byte-identical default fixture, and gains
+`--start <Monday on or after 1970-01-05>`, `--weeks` 1-1040, `--frames-per-week` 2-50,000, guarded
+by a 2,000,000-frame ceiling per fixture (~3 h / ~18 GB at the measured rate). The read-back digest
+streams page by page so memory stays bounded, and model work is bounded by `--no-embeddings` /
+`--embed-frames <n>` (embed-all remains the default only up to 20,000 frames). Dev-only: no schema,
+settings, IPC or shipped-runtime change.

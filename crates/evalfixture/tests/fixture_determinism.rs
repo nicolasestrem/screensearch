@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
-use evalfixture::gen::{generate, world_entities, GenManifest, GenOptions};
+use evalfixture::gen::{default_start, generate, world_entities, GenManifest, GenOptions};
 use evalfixture::{
     db_path, API_TOKEN_SETTING, DEFAULT_FRAMES_PER_WEEK, DEFAULT_SEED, DEFAULT_WEEKS,
 };
@@ -22,9 +22,11 @@ fn options(dir: &Path, seed: u64, weeks: u32, frames_per_week: usize) -> GenOpti
     GenOptions {
         out_dir: dir.to_path_buf(),
         seed,
+        start: default_start(),
         weeks,
         frames_per_week,
         embeddings: false,
+        embed_frames: None,
     }
 }
 
@@ -101,6 +103,79 @@ fn clean(raw: &str) -> &str {
 
 fn day_of(captured_at: i64) -> i64 {
     captured_at.div_euclid(86_400_000)
+}
+
+/// The committed P4 fixture's digest, recorded in
+/// `specs/archive/05_BUILD_REVIEW.v0.4.5.md` (P4 section). The default generator must keep
+/// reproducing it byte for byte.
+const COMMITTED_DEFAULT_DIGEST: &str =
+    "69dac6e6ae417c0a6bc25590948a4dde8a6e1d500f99bb177f80a6bc794b8ab9";
+
+/// The fixture's local calendar date for an instant (fixed UTC+02:00).
+fn local_date(at_ms: i64) -> chrono::NaiveDate {
+    let offset = chrono::FixedOffset::east_opt(2 * 3600).expect("UTC+02:00");
+    chrono::DateTime::from_timestamp_millis(at_ms)
+        .expect("fixture timestamp")
+        .with_timezone(&offset)
+        .date_naive()
+}
+
+#[test]
+fn the_default_fixture_still_matches_the_committed_baseline() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = generate(&default_options(dir.path(), DEFAULT_SEED)).unwrap();
+    assert_eq!(manifest.start, default_start());
+    assert_eq!((manifest.frames, manifest.sessions), (1260, 218));
+    assert_eq!(manifest.digest, COMMITTED_DEFAULT_DIGEST);
+}
+
+#[test]
+fn a_multi_year_timeline_beyond_the_old_cap_is_generated() {
+    let dir = tempfile::tempdir().unwrap();
+    let start = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(); // a Monday
+    let mut opts = options(dir.path(), DEFAULT_SEED, 60, 10);
+    opts.start = start;
+    let manifest = generate(&opts).unwrap();
+    assert_eq!(manifest.frames, 600);
+    assert_eq!(manifest.start, start);
+
+    let back = read_back(&manifest.db);
+    let first = back.frames.iter().map(|f| f.captured_at).min().unwrap();
+    let last = back.frames.iter().map(|f| f.captured_at).max().unwrap();
+    assert_eq!(local_date(first), start);
+    // 60 working weeks: the last (Friday) working day is week 59 + 4 days.
+    assert_eq!(local_date(last), start + chrono::Days::new(417));
+}
+
+#[test]
+fn the_earliest_supported_start_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    // 1970-01-05 is the first Monday at or after the Unix epoch.
+    let start = chrono::NaiveDate::from_ymd_opt(1970, 1, 5).unwrap();
+    // Ten frames activate all five working days, so the first frame is on the start date.
+    let mut opts = options(dir.path(), DEFAULT_SEED, 1, 10);
+    opts.start = start;
+    let manifest = generate(&opts).unwrap();
+    assert_eq!(manifest.frames, 10);
+    assert_eq!(manifest.start, start);
+
+    let back = read_back(&manifest.db);
+    assert_eq!(back.frames.len(), 10);
+    assert!(back.frames.iter().all(|frame| frame.captured_at > 0));
+    assert_eq!(local_date(back.frames[0].captured_at), start);
+}
+
+#[test]
+fn a_pre_epoch_start_is_refused_before_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut opts = options(dir.path(), DEFAULT_SEED, 1, 8);
+    opts.start = chrono::NaiveDate::from_ymd_opt(1969, 12, 22).unwrap(); // a Monday
+    let error = generate(&opts).unwrap_err().to_string();
+    assert!(error.contains("1970-01-05"), "{error}");
+    assert!(
+        !db_path(dir.path()).exists(),
+        "a refused run must leave no database to block a retry"
+    );
 }
 
 #[test]
@@ -272,6 +347,7 @@ fn a_tiny_fixture_reports_no_embeddings_and_downloads_nothing() {
         keys,
         [
             "seed",
+            "start",
             "weeks",
             "frames",
             "sessions",
@@ -282,6 +358,7 @@ fn a_tiny_fixture_reports_no_embeddings_and_downloads_nothing() {
     );
     assert!(summary.contains("embeddings=0\n"), "{summary}");
     assert!(summary.contains("seed=0x5cee55ee41520004\n"), "{summary}");
+    assert!(summary.contains("start=2026-09-07\n"), "{summary}");
     assert!(
         !summary.contains('\\'),
         "summary paths use forward slashes: {summary}"

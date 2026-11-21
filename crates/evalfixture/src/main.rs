@@ -1,7 +1,8 @@
 //! `ssv2c-evalfixture` CLI - dev-only 0.4.5 evaluation fixture.
 //!
 //! ```text
-//! ssv2c-evalfixture gen   --out <dir> [--seed <n>] [--weeks <n>] [--frames-per-week <n>]
+//! ssv2c-evalfixture gen   --out <dir> [--seed <n>] [--start <YYYY-MM-DD>] [--weeks <n>]
+//!                        [--frames-per-week <n>] [--no-embeddings | --embed-frames <n>]
 //! ssv2c-evalfixture serve --db <path> --data <dir> [--port <n>] [--embed] [--no-answer]
 //! ssv2c-evalfixture graph --db <path>
 //! ```
@@ -17,14 +18,18 @@ const USAGE: &str = "\
 ssv2c-evalfixture - dev-only 0.4.5 evaluation fixture (never shipped)
 
 USAGE:
-  ssv2c-evalfixture gen   --out <dir> [--seed <n>] [--weeks <n>] [--frames-per-week <n>]
+  ssv2c-evalfixture gen   --out <dir> [--seed <n>] [--start <YYYY-MM-DD>] [--weeks <n>]
+                         [--frames-per-week <n>] [--no-embeddings | --embed-frames <n>]
   ssv2c-evalfixture serve --db <path> --data <dir> [--port <n>] [--embed] [--no-answer]
   ssv2c-evalfixture graph --db <path>
 
 COMMANDS:
   gen     Build the seeded synthetic v15 history (frames, sessions, text, embeddings,
           settings incl. api.token) in <dir>, printing its counts and content digest.
-          Re-running with the same --seed prints the same digest.
+          The default is six weeks from Monday 2026-09-07; --start, --weeks and
+          --frames-per-week scale it to a multi-year history (at most 2,000,000 frames),
+          and --no-embeddings / --embed-frames bound the model work. Re-running with the
+          same arguments and seed prints the same digest.
   serve   Run the product's local HTTP API (/v1/search, /v1/ask) over that database.
           --embed attaches the real text embedder (vector arm); --no-answer skips the
           answer sidecar so /v1/ask answers 503. Both default to off/on respectively:

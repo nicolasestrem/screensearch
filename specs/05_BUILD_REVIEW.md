@@ -1322,3 +1322,103 @@ like at night in the city; what a hypothesis card looks like with no English or 
 what "take it" makes permanent; the ranking signals over ScreenSearch data; the diary format and
 where it lives. Order: the city must read the ScreenSearch export first (repository districts),
 because a dream has nothing to rework without it.
+
+### 2026-11-20 — Off-arc: `evalfixture` synthetic-dataset scale (dev-only, uncommitted)
+
+**Scope.** Dev-only tooling; no shipped crate, schema, setting, IPC or network change. The maintainer
+asked for a tool that generates large synthetic datasets for testing, and in-session chose to extend
+`crates/evalfixture` (the existing `ssv2c-evalfixture gen`) rather than add a generic generator or a
+DSH tool. Working branch `feat/evalfixture-large-datasets`; nothing committed (0.4.5 D18).
+
+**What changed.** `--start <Monday>` (default 2026-09-07), `--weeks` 1-1040 (was 52),
+`--frames-per-week` 2-50,000 (was 10,000), guarded by a 2,000,000-frame ceiling per fixture;
+`--embed-frames <n>` bounds the vector arm and embed-all stays the default only up to 20,000 frames.
+`finish_fixture` streams the production `frame_page` read-back and hashes page by page (memory
+bounded by one page) while embedding in the same pass; progress every 10,000 written frames; store
+calls carry error context; the printed summary gains `start=`. The default fixture remains
+byte-identical: the new pinned test asserts `digest=69dac6e6ae417c0a6bc25590948a4dde8a6e1d500f99bb177f80a6bc794b8ab9`,
+1,260 frames, 218 sessions.
+
+**Verification (raw exits).**
+- `cargo fmt --all -- --check` -> 0.
+- `cargo clippy --workspace --all-targets -- -D warnings` -> 0, `Finished dev profile ... in 23.60s`.
+- `cargo test -p evalfixture` -> 0: unit 17 passed, `fixture_determinism` 6 passed, `serve_api`
+  1 passed, 0 doc-tests.
+- `cargo build --workspace` -> 0, `Finished dev profile ... in 46.75s`.
+- `git diff --exit-code -- ui/src/bindings` -> 0.
+
+**Observed runs.** Ten-year fixture `gen --start 2020-01-06 --weeks 520 --frames-per-week 210
+--no-embeddings` printed `frames=109200`, `sessions=19574`, `embeddings=0`,
+`digest=6d144226ac0faa8d664722f9e6b26b3d70206603ea4afdcb35d76cd464ad0193`, `db=.../big10y/screensearch.db`;
+472.1 s, 1,058,529,280 bytes. SQL over it: `text_spans=8195569`, 2,600 distinct working days,
+2020-01-06 08:18 -> 2029-12-21 13:46 local, 6-9 sessions on every day. Dense week
+`--weeks 1 --frames-per-week 20000`: 20,000 frames, 5 days, hours 8-18, 6-9 sessions/day, 58.3 s
+(the old cap was 10,000/week). Bounded embeddings on an 8-frame week with `--embed-frames 3`:
+`embeddings=3` and 3 `embeddings` rows. The implicit embed-all guard on `--weeks 52
+--frames-per-week 1000` exits 1 naming `--no-embeddings` and `--embed-frames`; a custom Monday start
+(`2027-03-01`, one week) writes 2027-03-01 08:36 -> 2027-03-05 08:14.
+
+**Caveat.** In this session the sandbox denies `%TEMP%`; SQLite temp spills failed with `unable to
+open database file` on dense sessions until `TEMP`/`TMP` were pointed at a workspace directory. That
+is environmental, not the tool: a normal Windows profile has a writable `%TEMP%`. Recorded so a
+future sandbox run does not misread it as a regression.
+
+**Open.** Nothing committed or pushed; no PR. The 2,000,000-frame ceiling and the 20,000-frame
+embed-all default are deliberate guards, not spec values (`07`, 2026-11-20).
+
+### 2026-11-21 — PR #179 review follow-up: pre-epoch start guard and doc clarifications (dev-only)
+
+**Findings addressed.** Codex P2 at `crates/evalfixture/src/gen.rs`: a valid Monday before 1970
+(`--start 1969-12-22`) passed validation and wrote frames with negative Unix-ms timestamps, but
+`finish_fixture` reads `frame_page` from `0` upward, so the read-back saw 0 frames, the count check
+failed, and the half-written database blocked a retry in the same directory. Reproduced verbatim:
+`ssv2c-evalfixture: read back 0 frames / 4 sessions, wrote 8 / 4`, with the database left behind.
+
+**Fix.** Validation now rejects a `--start` before **1970-01-05** (the first Monday at or after the
+Unix epoch) with a message naming the epoch reason. The refusal happens before any directory or
+database is created, so the same `--out` is reusable: pre-epoch exit 1, then an unchanged retry in
+the same directory exits 0. Two tests pin it: the refusal leaves no database, and the earliest
+supported Monday round-trips with positive timestamps.
+
+**Claude review observations.** No blocking issues; the relevant non-blocking ones were folded in:
+the `generate`/`finish_fixture` docs now say the **plan** is still materialized (~50 B/frame,
+~100 MB at the 2M ceiling) and only the read-back content text is page-bounded; the
+`--embed-frames` help and field docs say "first n frames that have content text"; the embed progress
+prints `embedded N (limit L)` instead of a denominator some frames can never reach; a comment
+explains why embedding writes between keyset pages cannot disturb pagination; and `plan.rs` records
+that the fixed +02:00 offset does not model DST across multi-year spans.
+
+**Verification (raw).** `cargo fmt --all -- --check` 0; `cargo clippy -p evalfixture --all-targets
+-- -D warnings` 0; `cargo test -p evalfixture` 0 (17 unit + 8 determinism + 1 serve-API);
+`cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo build --workspace` 0;
+`git diff --exit-code -- ui/src/bindings` 0. CLI: `--start 1969-12-22` -> exit 1 naming
+`1970-01-05`, no database; `--start 1970-01-05 --weeks 1 --frames-per-week 10` -> exit 0,
+`frames=10`, first `captured_at=368839000` (1970-01-05 08:27:19 local).
+
+**Status.** New commit on `feat/evalfixture-large-datasets`, pushed to PR #179. No reply to the
+bots, no merge, no review retrigger.
+
+### 2026-11-21 — PR #179 CI: the kernel graph-backfill completion-line test, hardened (not this change's regression)
+
+**Symptom.** The `build & test (windows)` job on `79c8ab2` failed inside kernel, a crate this branch
+never touches: `graph_backfill::tests::run_to_completion_logs_one_post_cluster_line_and_the_second_
+pass_repeats_it` asserted `left: []` against the expected completion line
+`graph backfill complete entities=3 entity_aliases=1 session_entities=6 threads=1 thread_sessions=2`.
+The two previous runs of the same suite were green (`9d002e2` CI success), and the branch diff
+contains no kernel change.
+
+**Investigations (raw).** The target test passes 100/100 locally; the full `-p kernel --lib` suite
+passes 25/25 locally. A reproduction attempt that leaked a tokio multi-thread worker between test
+binaries did not reproduce the miss (10 + 15 runs, all `ok`), so the exact CI mechanism remains
+unproven; what is proven is that the capture is thread-local while a captured event arriving on
+another thread is silently dropped.
+
+**Change (test-only, `#[cfg(test)]`).** The test no longer derives its expectation by reading back
+code under test or from a thread-local-only capture: it states the completion line as a literal
+expectation, asserts it for both the first and the second pass, and reports the latest installed
+capture in the failure message when the scope's own capture is empty, so a future CI failure carries
+its own diagnosis. Production code is untouched.
+
+**Verification (raw).** `cargo fmt --all -- --check` 0; `cargo clippy -p kernel --all-targets -- -D
+warnings` 0; `cargo test -p kernel --lib graph_backfill` `9 passed; 0 failed`. Push triggers a fresh
+CI run; the merge gate stays "CI green, then merge" (maintainer instruction, 2026-11-21).

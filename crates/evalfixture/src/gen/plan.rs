@@ -1,10 +1,12 @@
 //! The fixture timeline: working days, sessions, frame instants and apps.
 //!
-//! **Clock.** Everything is laid out from a fixed base date, Monday 2026-09-07, in a fixed
-//! UTC+02:00 offset (the maintainer's CEST in September 2026), never the machine's zone or
-//! the current time: the database and its digest are byte-identical on every machine, and on
-//! the maintainer's machine the history reads as ordinary working days starting around
-//! 08:00. A machine in another zone sees the same instants shifted by its own offset.
+//! **Clock.** Everything is laid out from a base date (the default Monday 2026-09-07, or the
+//! `--start` Monday) in a fixed UTC+02:00 offset (the maintainer's CEST in September 2026),
+//! never the machine's zone or the current time: the database and its digest are byte-identical
+//! on every machine, and on the maintainer's machine the history reads as ordinary working days
+//! starting around 08:00. A machine in another zone sees the same instants shifted by its own
+//! offset. The fixed offset also means a multi-year fixture does not model DST: every day keeps
+//! the same +02:00 wall clock by design.
 //!
 //! **Shape.** `weeks` weeks of five working days; each week holds exactly
 //! `frames_per_week` frames, split over its days. A day with `n` frames holds
@@ -32,10 +34,16 @@ use super::code::{request_id, short_hash, teammate};
 use super::prng::{subseed, SplitMix64};
 use super::world::{ADMIN_DOCS, PROJECTS, RESOURCES};
 
-/// The fixed first working day (a Monday).
+/// The default first working day (a Monday); `--start` may choose another Monday.
 pub(crate) const BASE_DATE: (i32, u32, u32) = (2026, 9, 7);
 /// The fixed UTC offset the working day is laid out in (UTC+02:00).
 pub(crate) const UTC_OFFSET_SECS: i32 = 2 * 3600;
+
+/// The default timeline start as a date.
+pub(crate) fn default_start() -> NaiveDate {
+    let (year, month, day) = BASE_DATE;
+    NaiveDate::from_ymd_opt(year, month, day).expect("the default start is a valid date")
+}
 
 const MINUTE_MS: i64 = 60_000;
 /// Earliest start of a working day (08:00) and the jitter added to it.
@@ -58,12 +66,10 @@ pub(crate) fn local(at_ms: i64) -> DateTime<FixedOffset> {
 }
 
 /// Unix ms of local midnight on working day `day` (0-based, weekends skipped).
-fn day_midnight_ms(day: usize) -> Result<i64> {
-    let (y, m, d) = BASE_DATE;
-    let base = NaiveDate::from_ymd_opt(y, m, d).context("invalid base date")?;
+fn day_midnight_ms(start: NaiveDate, day: usize) -> Result<i64> {
     let week = (day / 5) as u64;
     let weekday = (day % 5) as u64;
-    let date = base
+    let date = start
         .checked_add_days(chrono::Days::new(week * 7 + weekday))
         .context("fixture date overflow")?;
     let midnight = date.and_hms_opt(0, 0, 0).context("invalid midnight")?;
@@ -539,8 +545,13 @@ fn day_clock(rng: &mut SplitMix64, midnight: i64, sizes: &[usize]) -> DayClock {
     }
 }
 
-/// Builds the whole timeline for `(seed, weeks, frames_per_week)`.
-pub(crate) fn plan(seed: u64, weeks: u32, frames_per_week: usize) -> Result<Plan> {
+/// Builds the whole timeline for `(seed, start, weeks, frames_per_week)`.
+pub(crate) fn plan(
+    seed: u64,
+    weeks: u32,
+    frames_per_week: usize,
+    start: NaiveDate,
+) -> Result<Plan> {
     let mut rng = SplitMix64::new(subseed(seed, "timeline"));
     let days = weeks as usize * 5;
 
@@ -567,7 +578,7 @@ pub(crate) fn plan(seed: u64, weeks: u32, frames_per_week: usize) -> Result<Plan
         if sizes.is_empty() {
             continue;
         }
-        let midnight = day_midnight_ms(day)?;
+        let midnight = day_midnight_ms(start, day)?;
         let clock = day_clock(&mut rng, midnight, sizes);
         let mut cursor = clock.start;
         let mut lunched = false;
@@ -802,7 +813,7 @@ mod tests {
 
     #[test]
     fn the_timeline_is_ordered_and_echoes_recur_two_to_five_times() {
-        let plan = plan(7, 2, 210).unwrap();
+        let plan = plan(7, 2, 210, default_start()).unwrap();
         let mut last = i64::MIN;
         for s in &plan.sessions {
             assert!(s.frames.len() >= 2);
@@ -835,12 +846,22 @@ mod tests {
 
     #[test]
     fn a_full_size_fixture_places_every_anchor() {
-        let plan = plan(crate::DEFAULT_SEED, 6, 210).unwrap();
+        let plan = plan(crate::DEFAULT_SEED, 6, 210, default_start()).unwrap();
         let placed = plan
             .sessions
             .iter()
             .filter(|s| s.frames[0].anchor.is_some())
             .count();
         assert_eq!(placed, anchor_count());
+    }
+
+    #[test]
+    fn a_custom_start_moves_the_whole_timeline() {
+        let start = NaiveDate::from_ymd_opt(2027, 3, 1).unwrap(); // a Monday
+        let plan = plan(7, 2, 210, start).unwrap();
+        let first = local(plan.sessions[0].started_at).date_naive();
+        assert_eq!(first, start);
+        let last = local(plan.sessions.last().unwrap().started_at).date_naive();
+        assert_eq!(last, start + chrono::Days::new(11));
     }
 }

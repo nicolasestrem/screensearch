@@ -576,3 +576,39 @@ in `07`.
 
 Not done, recorded in `07`: dreaming, repo districts in the new city, kit people and vehicles in
 Unity, any run on a physical phone, any link to the ScreenSearch export.
+
+### 2026-11-20: `evalfixture` synthetic-dataset scale (dev-only tooling)
+
+`ssv2c-evalfixture gen` now produces multi-year synthetic histories for scale and load testing while
+keeping the committed default fixture byte-identical. New: `--start <Monday>` (default remains
+2026-09-07), `--weeks` 1-1040 (was 52), `--frames-per-week` 2-50,000 (was 10,000), guarded by a
+2,000,000-frame ceiling per fixture; `--embed-frames <n>` bounds the vector arm, and embed-all stays
+the default only up to 20,000 frames. The read-back digest streams the production `frame_page` read
+so a multi-million-frame fixture does not hold its own content text in RAM; the pinned default
+digest `69dac6e6...` still matches. Verification: 24 evalfixture tests (17 unit, 6 determinism, 1
+serve-API), fmt, workspace clippy, workspace build and the bindings guard all exit 0. A 10-year
+fixture (520 weeks from 2020-01-06) wrote 109,200 frames / 19,574 sessions / 8,195,569 text spans
+(1,058,529,280 bytes) in 472 s; a 20,000-frame week verified the density cap lift (5 days, 8-18h,
+6-9 sessions/day). `docs/TESTING.md` documents the commands and `07` records the spec-silent
+decision. No schema, settings, IPC, runtime or network change; no commit, push, PR or merge.
+
+### 2026-11-21: PR #179 review fixes — pre-epoch `--start` and documentation
+
+Codex found that a Monday before 1970 passed `--start` validation but could not be read back
+because `frame_page` reads from Unix ms 0; the half-written DB then blocked a retry. Validation now
+requires `--start >= 1970-01-05` (the first Monday after the epoch), before any file is created;
+tests cover the refusal (no DB left) and the earliest boundary (positive timestamps, round-trip).
+Also applied the relevant Claude review observations: clarify that only the read-back is
+page-bounded (the plan is still in memory, ~100 MB at the 2M ceiling), say `--embed-frames` counts
+the first n frames with text, fix the embed progress denominator, document why embedding between
+keyset pages is safe, and note the fixed +02:00 offset does not model DST. No schema, settings, IPC
+or runtime change; no bot replies, no merge.
+
+### 2026-11-21: PR #179 CI fix — kernel completion-line capture test hardened
+
+CI on `79c8ab2` failed in `kernel` (untouched by this PR): the graph-backfill completion-line test
+captured no line. It passes 100/100 alone and 25/25 in the full kernel lib suite locally; leaking a
+tokio worker between test binaries did not reproduce it. The test-only fix states the expected
+completion line as a literal, asserts it on both passes, and surfaces the latest capture in the
+failure message for diagnosis. No production code changed; no bot reply; PR #179 is merged only
+after a green CI run.
