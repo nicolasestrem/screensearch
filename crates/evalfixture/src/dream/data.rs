@@ -46,8 +46,6 @@ pub struct Episode {
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: i64,
-    pub start: i64,
-    pub end: i64,
     pub frames: Vec<usize>,
     /// L2-normalised centroid of the stored frame embeddings (or the stored session vector).
     pub vector: Option<Vec<f32>>,
@@ -340,15 +338,11 @@ fn read_frames(conn: &Connection) -> Result<Vec<Frame>> {
 }
 
 fn read_sessions(conn: &Connection) -> Result<Vec<Session>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, started_at, COALESCE(ended_at, started_at) FROM sessions
-         ORDER BY started_at, id",
-    )?;
+    let mut stmt = conn.prepare("SELECT id FROM sessions ORDER BY started_at, id")?;
     let rows = stmt.query_map([], |r| {
         Ok(Session {
             id: r.get(0)?,
-            start: r.get(1)?,
-            end: r.get(2)?,
+
             frames: Vec::new(),
             vector: None,
             thread: None,
@@ -716,8 +710,6 @@ mod tests {
         });
         let session = Session {
             id: 1,
-            start: frames[0].at,
-            end: frames[2].at,
             frames: vec![0, 1, 2],
             vector: None,
             thread: None,

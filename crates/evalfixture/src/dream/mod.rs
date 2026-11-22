@@ -19,8 +19,8 @@
 //!   reinforcement boost, applies the three gates and promotes into `MEMORY.md`.
 //!
 //! The database is opened read-only and only the normal v15 schema is read, so the same
-//! command runs unchanged on a real profile. `DREAMS.md` and `MEMORY.md` are written from
-//! scratch on every run and never opened for reading: the diary is never an input.
+//! command runs unchanged on a real profile. `DREAMS.md`, `MEMORY.md` and `DREAMS.json` are
+//! written from scratch on every run and never opened for reading: the diary is never an input.
 //!
 //! Narrative entries come from an OpenAI-compatible chat completion (`DREAM_API_BASE`,
 //! `DREAM_API_MODEL`, `DREAM_API_KEY`, or the same keys in `--env-file`). Without one, or when
@@ -44,7 +44,7 @@ USAGE:
 
 OPTIONS:
   --db <path>             history database (normal v15 schema), opened read-only
-  --out <dir>             output directory; DREAMS.md and MEMORY.md are (re)written there
+  --out <dir>             output directory; DREAMS.md, MEMORY.md and DREAMS.json are (re)written there
   --min-gap-mins <n>      shortest absence that counts as a sweep (default 120)
   --no-model              write labelled rule-based drafts for narrative entries
   --env-file <path>       KEY=VALUE file with DREAM_API_BASE / DREAM_API_MODEL / DREAM_API_KEY
@@ -132,13 +132,15 @@ pub async fn run(args: &[String]) -> Result<()> {
     let outcome = phases::dream(&history, &sweeps, &Gates::default());
     let written = diary::write_all(&history, &outcome, model.as_ref(), &opts.out).await?;
     println!(
-        "dream: persona={} frames={} sessions={} absences={} sweeps={} entries={} degraded={} promoted={} first={} last={} out={}",
+        "dream: persona={} frames={} sessions={} absences={} sweeps={} entries={} model_written={} quiet_shortened={} degraded={} promoted={} first={} last={} out={}",
         history.persona.id,
         history.frames.len(),
         history.sessions.len(),
         sweeps.len(),
         outcome.sweeps.len(),
         written.entries,
+        written.model_written,
+        written.quiet_shortened,
         written.degraded,
         outcome.promoted_total(),
         written.first_day,

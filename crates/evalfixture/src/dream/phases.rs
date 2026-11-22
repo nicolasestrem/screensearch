@@ -89,9 +89,6 @@ pub struct Revision {
 pub struct Echo {
     pub now: Evidence,
     pub past: Evidence,
-    pub similarity: f32,
-    pub line_overlap: f32,
-    pub days_apart: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -105,8 +102,6 @@ pub struct GraphEcho {
 
 #[derive(Debug, Clone, Default)]
 pub struct Light {
-    pub sessions: usize,
-    pub minutes: i64,
     pub occupied: Vec<(Evidence, usize)>,
     pub last: Option<Evidence>,
     pub brushed: Vec<Evidence>,
@@ -472,16 +467,7 @@ pub fn dream(history: &History, absences: &[Absence], gates: &Gates) -> Outcome 
         let mut touched: BTreeSet<usize> = BTreeSet::new();
 
         // ---- Light ----------------------------------------------------------------------
-        let mut light = Light {
-            sessions: staged_sessions.len(),
-            minutes: staged_sessions
-                .iter()
-                .filter_map(|id| history.session(*id))
-                .map(|s| (s.end.min(now) - s.start.max(absence.staged_from)).max(0))
-                .sum::<i64>()
-                / 60_000,
-            ..Light::default()
-        };
+        let mut light = Light::default();
         for &i in &staged {
             let e = &episodes[i];
             let t = theme_of[i];
@@ -609,7 +595,7 @@ pub fn dream(history: &History, absences: &[Absence], gates: &Gates) -> Outcome 
                 continue;
             }
             let e_stem = stem(&e.title);
-            let mut best: Option<(f32, usize, f32)> = None;
+            let mut best: Option<(f32, usize)> = None;
             for (j, p) in episodes.iter().enumerate() {
                 if ((e.start - p.end) as f64) < ECHO_MIN_DAYS * DAY_MS || !recallable[j] {
                     continue;
@@ -626,10 +612,10 @@ pub fn dream(history: &History, absences: &[Absence], gates: &Gates) -> Outcome 
                     continue;
                 }
                 if best.map(|b| sim > b.0).unwrap_or(true) {
-                    best = Some((sim, j, overlap));
+                    best = Some((sim, j));
                 }
             }
-            let Some((sim, j, overlap)) = best else {
+            let Some((sim, j)) = best else {
                 continue;
             };
             let p = &episodes[j];
@@ -648,9 +634,6 @@ pub fn dream(history: &History, absences: &[Absence], gates: &Gates) -> Outcome 
                 Echo {
                     now: evidence_of(history, e),
                     past: evidence_of(history, p),
-                    similarity: sim,
-                    line_overlap: overlap,
-                    days_apart: (e.start - p.end) as f64 / DAY_MS,
                 },
             ));
         }

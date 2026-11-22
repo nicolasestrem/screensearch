@@ -1586,3 +1586,22 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.92s
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
 ```
+
+### 2026-11-22: Reader-facing model diary for the synthetic gardener
+
+The first remote replay removed repeated inline citations but still overstated several plans and
+forecasts. The next pass added the surrounding content from the same frame and distinguished
+current material from older context. A separate editorial completion reduced prompt leakage and
+routine padding. The companion uses a reviewed copy, not an unchecked generation: corrections to
+action status and the planted comparisons were checked against the cited frame IDs.
+
+```text
+dream: persona=market-gardener frames=2800 sessions=42 absences=41 sweeps=41 entries=41 model_written=40 quiet_shortened=18 degraded=0 promoted=2 first=2026-09-07 last=2026-10-03 out=harness-data/dreams/market-gardener-model
+Reviewed: days=28 entries=41 model_origin=40 edited=24 model_verbatim=16 quiet=16 inline_quotes=0 exact_frame_citations=56
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+```
+
+`cargo clippy -p evalfixture --all-targets -- -D warnings` passed. The full integration run
+stopped in the existing export test at `tempfile::tempdir()` with Windows `Access is denied`
+both at the default location and with the process redirected to scratch. The actual Windows
+fixture replay and exact-frame checks above are independent of that test.

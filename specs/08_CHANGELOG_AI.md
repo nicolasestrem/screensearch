@@ -683,3 +683,9 @@ Dream revisions compare content snapshots for the same window and cite earlier a
 Promotions require content sources, model quotations are checked against the cited frames, and
 reinforcement is recorded in `MEMORY.md`. A quiet sweep gets one line. See `docs/TESTING.md` for
 replay steps and `05` for the Windows verification and score.
+
+### 2026-11-22: Reader-facing Dream Diary (dev-only)
+
+The diary leads with developments, shortens quiet stretches, places frame references below the
+prose, and writes a matching `DREAMS.json` with local calendar dates for the gardener companion.
+Promoted summaries describe documented events or plans, not inferred habits.

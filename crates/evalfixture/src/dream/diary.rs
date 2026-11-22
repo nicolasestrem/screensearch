@@ -1,12 +1,6 @@
-//! `DREAMS.md` and `MEMORY.md` writers.
-//!
-//! Each sweep becomes a fact sheet of numbered evidence (`E1`, `E2`, ...) built from the
-//! phases' output. A chat completion turns the sheet into a short narrative whose every
-//! sentence carries `[E#]` markers; the writer validates the reply (known markers only, a
-//! marker in every sentence but the first, a word budget) and replaces each marker group
-//! with its `(date time, app, "window title")` tuple. Without a model, or when the reply
-//! fails validation twice, the same sheet is composed by rule and the entry is labelled
-//! degraded. Both files are created from scratch; neither is ever opened for reading.
+//! Each sweep becomes a fact sheet of numbered evidence. The model writes the prose;
+//! citations are moved below the entry after quotes are checked against their exact frames.
+//! The Markdown and companion JSON are written from scratch and never read back.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -16,7 +10,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use futures_util::stream::{self, StreamExt};
 
-use super::data::History;
+use serde::Serialize;
+
+use super::data::{is_content, History};
 use super::phases::{Evidence, Outcome, Scored, SweepOutcome, SIGNALS, WEIGHTS};
 
 /// An OpenAI-compatible chat endpoint for the diary.
@@ -81,7 +77,7 @@ impl ModelConfig {
         }
         let body = serde_json::json!({
             "model": self.model,
-            "temperature": 0.5,
+            "temperature": 0.2,
             "max_tokens": 700,
             "messages": [
                 {"role": "system", "content": system},
@@ -97,17 +93,8 @@ impl ModelConfig {
             .await
             .context("diary request failed")?;
         let status = resp.status();
-        let value: serde_json::Value = resp.json().await.context("diary reply was not JSON")?;
         if !status.is_success() {
-            let message = value
-                .pointer("/error/message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("no message");
-            let first_line = message.lines().next().unwrap_or("").trim();
-            let reason = format!(
-                "diary model answered HTTP {}: {first_line}",
-                status.as_u16()
-            );
+            let reason = format!("diary model answered HTTP {}", status.as_u16());
             if status.is_client_error() && status.as_u16() != 429 {
                 if let Ok(mut refused) = self.refused.lock() {
                     refused.get_or_insert_with(|| reason.clone());
@@ -115,6 +102,7 @@ impl ModelConfig {
             }
             anyhow::bail!("{reason}");
         }
+        let value: serde_json::Value = resp.json().await.context("diary reply was not JSON")?;
         value
             .pointer("/choices/0/message/content")
             .and_then(|c| c.as_str())
@@ -127,6 +115,8 @@ impl ModelConfig {
 pub struct Written {
     pub entries: usize,
     pub degraded: usize,
+    pub model_written: usize,
+    pub quiet_shortened: usize,
     pub first_day: String,
     pub last_day: String,
 }
@@ -168,13 +158,8 @@ fn hm(history: &History, ms: i64) -> String {
     history.local(ms).format("%H:%M").to_string()
 }
 
-fn duration(ms: i64) -> String {
-    let mins = ms / 60_000;
-    if mins >= 60 {
-        format!("{} h {:02} min", mins / 60, mins % 60)
-    } else {
-        format!("{mins} min")
-    }
+fn calendar_gap(history: &History, earlier: i64, later: i64) -> i64 {
+    (history.local(later).date_naive() - history.local(earlier).date_naive()).num_days()
 }
 
 /// One-sentence names for promoted themes, keyed by theme. Filled by the model when one is
@@ -194,32 +179,48 @@ fn content_quotes(p: &Scored) -> impl Iterator<Item = (&Evidence, &str)> {
         .filter_map(|e| e.fragment.as_deref().map(|line| (e, line)))
 }
 
-const NAME_SYSTEM: &str = "You name one long-term memory distilled from a person's screen \
-history. Reply with ONE English sentence of 8 to 22 words stating what keeps recurring in their \
-life or work, using only the facts given (documents, places, on-screen lines, which may be in \
-another language). No quotes, no markdown, no mention of software, screens or memory.";
+const NAME_SYSTEM: &str = "Write one English sentence about the event in the FIRST source. \
+Use supporting sources only to add detail to that same event. A plan, offer or price quote is not a completed sale, \
+delivery or repair: preserve the status of each action. Never turn a one-time act into a habit or join unrelated stories. \
+Name the thing and what happened to it. No quotes, markdown or discussion of memory.";
 
 async fn name_memories(history: &History, outcome: &Outcome, model: &ModelConfig) -> Names {
     let mut names = Names::new();
     for sweep in &outcome.sweeps {
         for p in &sweep.promoted {
             let user = format!(
-                "Person: {} ({}).\nDocuments and windows in this theme: {}.\nReached from: {}.\nLines that keep returning: {}.\nSeen on {} days between {} and {}.",
+                "Person: {} ({}).\nSources in priority order:\n{}",
                 subject(history),
-                history.persona.role.as_deref().unwrap_or(&history.persona.description),
-                p.label,
-                p.probes.join("; "),
-                content_quotes(p).map(|(_, line)| line).collect::<Vec<_>>().join(" | "),
-                p.days.len(),
-                p.days.first().cloned().unwrap_or_default(),
-                p.days.last().cloned().unwrap_or_default(),
+                history
+                    .persona
+                    .role
+                    .as_deref()
+                    .unwrap_or(&history.persona.description),
+                content_quotes(p)
+                    .map(|(e, line)| format!("{}: {line}", history.day(e.at)))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
             );
             if let Ok(text) = model.complete(NAME_SYSTEM, &user).await {
                 let text = text.trim().trim_matches('"').trim().to_string();
                 let words = text.split_whitespace().count();
+                let lower = text.to_lowercase();
                 if (6..=28).contains(&words)
                     && !text
                         .contains(['\n', '[', '{', '}', '"', '\u{2014}', '\u{201c}', '\u{201d}'])
+                    && ![
+                        "consistently",
+                        "regularly",
+                        "always",
+                        "routinely",
+                        "habitually",
+                    ]
+                    .iter()
+                    .any(|word| {
+                        lower
+                            .split(|c: char| !c.is_alphabetic())
+                            .any(|w| w == *word)
+                    })
                 {
                     names.insert(p.key, text);
                 }
@@ -229,76 +230,12 @@ async fn name_memories(history: &History, outcome: &Outcome, model: &ModelConfig
     names
 }
 
-fn build_sheet(history: &History, sweep: &SweepOutcome, outcome: &Outcome, names: &Names) -> Sheet {
-    let who = subject(history);
+fn build_sheet(history: &History, sweep: &SweepOutcome, names: &Names) -> Sheet {
     let mut sheet = Sheet {
         evidence: Vec::new(),
         facts: Vec::new(),
         draft: Vec::new(),
     };
-    let a = sweep.absence;
-    let l = &sweep.light;
-    sheet.facts.push(format!(
-        "ABSENCE: the screen went dark at {} and woke at {} ({} away). {} sessions, {} of screen time, were staged.",
-        history.local(a.start).format("%a %Y-%m-%d %H:%M"),
-        history.local(a.end).format("%a %Y-%m-%d %H:%M"),
-        duration(a.end - a.start),
-        l.sessions,
-        duration(l.minutes * 60_000)
-    ));
-
-    // Light
-    for (e, frames) in &l.occupied {
-        let m = sheet.cite(e);
-        let frag = e
-            .fragment
-            .as_deref()
-            .map(|f| format!(", text on screen: {}", quote(f)))
-            .unwrap_or_default();
-        sheet.facts.push(format!(
-            "LIGHT occupied {m}: {} in {} for {frames} captures{frag}",
-            quote(&e.title),
-            e.app
-        ));
-    }
-    if let Some(e) = &l.last {
-        let m = sheet.cite(e);
-        sheet.facts.push(format!(
-            "LIGHT last window before leaving {m}: {}",
-            quote(&e.title)
-        ));
-    }
-    for e in &l.brushed {
-        let m = sheet.cite(e);
-        sheet.facts.push(format!(
-            "LIGHT brushed past (one capture only) {m}: {}",
-            quote(&e.title)
-        ));
-    }
-    for e in &l.lines {
-        let m = sheet.cite(e);
-        if let Some(f) = &e.fragment {
-            sheet
-                .facts
-                .push(format!("LIGHT content line {m}: {}", quote(f)));
-        }
-    }
-    for (label, head) in &l.saved {
-        sheet.facts.push(format!(
-            "LIGHT the app's saved {label} for this range opens with: {}",
-            quote(head)
-        ));
-    }
-    for e in &sweep.fresh {
-        let m = sheet.cite(e);
-        if let Some(line) = &e.fragment {
-            sheet.facts.push(format!(
-                "FIRST VISIT {m}: {} showed {}.",
-                e.title,
-                quote(line)
-            ));
-        }
-    }
     for r in &sweep.revisions {
         let (Some(before), Some(after)) = (&r.past.fragment, &r.now.fragment) else {
             continue;
@@ -311,8 +248,9 @@ fn build_sheet(history: &History, sweep: &SweepOutcome, outcome: &Outcome, names
             "was visible instead in the later capture"
         };
         sheet.facts.push(format!(
-            "CHANGE in {}: on {} it showed {} {past}; on {} {} {revision} {now}.",
+            "CHANGE in {} ({} calendar days apart): on {} it showed {} {past}; on {} {} {revision} {now}.",
             r.now.title,
+            calendar_gap(history, r.past.at, r.now.at),
             history.day(r.past.at),
             quote(before),
             history.day(r.now.at),
@@ -333,14 +271,20 @@ fn build_sheet(history: &History, sweep: &SweepOutcome, outcome: &Outcome, names
         let now = sheet.cite(&echo.now);
         let past = sheet.cite(&echo.past);
         sheet.facts.push(format!(
-            "REM echo: {} {now} sat close in meaning to a different document, {} {past}, {:.0} days earlier (cosine {:.2} over stored embeddings; shared lines {:.0}%).{}{}",
+            "POSSIBLE CONNECTION: {} {now} and {} {past}, {} calendar days apart.{}{}",
             quote(&echo.now.title),
             quote(&echo.past.title),
-            echo.days_apart,
-            echo.similarity,
-            echo.line_overlap * 100.0,
-            echo.now.fragment.as_deref().map(|f| format!(" Now: {}.", quote(f))).unwrap_or_default(),
-            echo.past.fragment.as_deref().map(|f| format!(" Then: {}.", quote(f))).unwrap_or_default(),
+            calendar_gap(history, echo.past.at, echo.now.at),
+            echo.now
+                .fragment
+                .as_deref()
+                .map(|f| format!(" Now: {}.", quote(f)))
+                .unwrap_or_default(),
+            echo.past
+                .fragment
+                .as_deref()
+                .map(|f| format!(" Then: {}.", quote(f)))
+                .unwrap_or_default(),
         ));
     }
     for echo in &sweep.echoes {
@@ -350,8 +294,8 @@ fn build_sheet(history: &History, sweep: &SweepOutcome, outcome: &Outcome, names
         let now = sheet.cite(&echo.now);
         let past = sheet.cite(&echo.past);
         sheet.draft.push(format!(
-            "{:.0} days after {} showed {} {past}, {} showed {} {now}. Their wording suggested a connection.",
-            echo.days_apart,
+            "{} days after {} showed {} {past}, {} showed {} {now}.",
+            calendar_gap(history, echo.past.at, echo.now.at),
             echo.past.title,
             quote(before),
             echo.now.title,
@@ -359,30 +303,21 @@ fn build_sheet(history: &History, sweep: &SweepOutcome, outcome: &Outcome, names
         ));
     }
     for g in &sweep.graph {
-        let first = sheet.cite(&g.first);
-        let second = sheet.cite(&g.second);
-        let what = if g.kind == "resumption" {
-            format!(
-                "the work thread {} was picked up again after {:.0} days",
-                quote(&g.label),
-                g.gap_days
-            )
-        } else {
-            format!("{} came back after {:.0} days", quote(&g.label), g.gap_days)
-        };
-        sheet
-            .facts
-            .push(format!("REM work graph {first} {second}: {what}."));
         if let (Some(before), Some(after)) = (&g.first.fragment, &g.second.fragment) {
+            if before == after {
+                continue;
+            }
+            let first = sheet.cite(&g.first);
+            let second = sheet.cite(&g.second);
+            let gap = calendar_gap(history, g.first.at, g.second.at);
             sheet.facts.push(format!(
-                "Earlier {first}: {}. Later {second}: {}.",
+                "POSSIBLE CONNECTION ({gap} calendar days apart). Earlier {first}: {}. Later {second}: {}.",
                 quote(before),
                 quote(after)
             ));
             if sheet.draft.is_empty() {
                 sheet.draft.push(format!(
-                    "After {:.0} days, {} and {} still appeared connected. The earlier capture showed {} {first}. The later capture showed {} {second}.",
-                    g.gap_days,
+                    "After {gap} days, {} and {} still appeared connected. The earlier capture showed {} {first}. The later capture showed {} {second}.",
                     g.first.title,
                     g.second.title,
                     quote(before),
@@ -391,91 +326,82 @@ fn build_sheet(history: &History, sweep: &SweepOutcome, outcome: &Outcome, names
             }
         }
     }
-    if sweep.echoes.is_empty() && sweep.graph.is_empty() {
-        sheet
-            .facts
-            .push("REM: nothing from earlier days echoed this stretch.".to_string());
-    }
-
-    // Bring in one otherwise unlinked new screen even during a busier stretch.
-    for e in sweep
-        .fresh
-        .iter()
-        .filter(|e| {
-            !sweep.echoes.iter().any(|link| link.now.title == e.title)
-                && !sweep.graph.iter().any(|link| link.second.title == e.title)
-        })
-        .take(1)
-    {
+    for e in sweep.fresh.iter().chain(&sweep.light.lines) {
         if let Some(line) = &e.fragment {
+            if sheet.evidence.contains(e) {
+                continue;
+            }
             let m = sheet.cite(e);
-            sheet.draft.push(format!(
-                "{who}'s screen showed {} with the line {} {m}.",
-                e.title,
-                quote(line)
-            ));
+            sheet.facts.push(format!("STAGED {m}: {}", quote(line)));
+            if sheet.draft.is_empty() {
+                sheet
+                    .draft
+                    .push(format!("{}: {} {m}.", e.title, quote(line)));
+            }
         }
     }
 
     // Deep
-    let g = &outcome.gates;
     for p in &sweep.promoted {
-        let marks: String = p.evidence.iter().take(2).map(|e| sheet.cite(e)).collect();
-        sheet.facts.push(format!(
-            "DEEP promoted to MEMORY.md {marks}: the memory {} (built from {}) with score {:.2} (gates: score >= {:.2}, recalls {} >= {}, distinct queries {} >= {}), seen on {} days. It was reached from: {}. What keeps returning: {}.",
-            quote(&name_of(names, p)), quote(&p.label), p.score, g.min_score, p.recall, g.min_recall_count, p.queries, g.min_unique_queries, p.days.len(),
-            p.probes.iter().map(|q| quote(q)).collect::<Vec<_>>().join(", "),
-            content_quotes(p).map(|(_, line)| line).collect::<Vec<_>>().join(" | ")
-        ));
-        sheet.draft.push(format!(
-            "A memory was kept: {}, with a score of {:.2}, recalled {} times from {} different directions {marks}.",
-            name_of(names, p), p.score, p.recall, p.queries
-        ));
+        let marks: String = p.evidence.iter().take(3).map(|e| sheet.cite(e)).collect();
+        if sheet.draft.is_empty() {
+            sheet.draft.push(format!("{} {marks}", name_of(names, p)));
+        }
     }
-    if sweep.promoted.is_empty() {
-        sheet.facts.push("DEEP nothing new was kept.".to_string());
+    // The ranked line finds the window, but can leave out the reason or outcome on the
+    // very same frame. Give the writer a bounded view of that frame, not new evidence.
+    for (i, e) in sheet.evidence.iter().enumerate() {
+        let frame = &history.frames[e.frame];
+        let staged = frame.at >= sweep.absence.staged_from && frame.at <= sweep.absence.start;
+        let mut lines: Vec<&str> = e.fragment.as_deref().into_iter().collect();
+        for line in &frame.lines {
+            if lines.len() >= 5 {
+                break;
+            }
+            if is_content(line)
+                && !history.common_lines.contains(line)
+                && !lines.contains(&line.as_str())
+            {
+                lines.push(line);
+            }
+        }
+        sheet.facts.push(format!(
+            "SOURCE [E{}] {} {}\n  {}",
+            i + 1,
+            if staged { "CURRENT" } else { "EARLIER" },
+            history.day(e.at),
+            lines.join("\n  ")
+        ));
     }
     sheet
 }
 
-const SYSTEM: &str = "Write one Dream Diary entry in one English paragraph of 60 to 110 words, \
-in third person and past tense. Lead with a concrete change from the sheet: something added, a \
-number that moved, an answer that arrived or an earlier idea taking a new form. Say what the \
-earlier capture showed and what the later one shows, with both citations. A comparison across \
-windows is a possible connection; never present it as a confirmed relationship. If the sheet \
-has only first visits, convey one or two specific details. Mention a memory only if the sheet \
-says one was newly kept. Use only the sheet. Every sentence ends with evidence markers \
-exactly as given, like [E2] or [E1][E4]. Quote at most two short phrases from screen content, \
-verbatim within curly quotation marks and cited to the exact marker that shows the words. \
-Give the English meaning without quotes. Refer to window titles without quotation marks. \
-Never use curly braces, square brackets outside evidence markers, or an em dash. Never name \
-the phases, embeddings, the database or the model. Output only the paragraph.";
+const SYSTEM: &str = "Write a small English diary entry about a person's life, not their computer. \
+Begin with Event: for a real development or useful setup in a continuing story, or Quiet: for routine material. \
+An event gets one or two compact sentences; routine forecasts, inventories or errands get ONE short line. \
+Start with a fact from a CURRENT source: what moved, the reply, the deadline, the concrete setback or result. \
+EARLIER sources are context only. When they clarify the change, say how many calendar days apart they were. \
+Don't repeat details from a recycled email unless they matter to the new reply. Don't combine unrelated material. \
+Preserve exactly the stage the source documents: advice is not work done; a listing is not an order; \
+an offer to hold a part is not a reservation; a notice is not an application or an award; \
+a forecast is not observed weather; a plan is not a sale. Don't assign market totals to this person. \
+Don't invent or imply a cause, feeling, habit or action. Use plain English, not filler, and no file names or audit language. \
+Paraphrase without quotation marks. End with the exact [E1]-style markers for the sources you used, including a CURRENT source. \
+Return only the prefix, prose and markers. No markdown or em dashes.";
 
-/// Opening instructions, picked by sweep number so consecutive entries do not all start the
-/// same way (the diary itself is never read back to avoid repetition).
-const OPENINGS: [&str; 6] = [
-    "Open with the hour the screen went dark.",
-    "Open with one concrete object or document that was on the screen.",
-    "Open with the details that best distinguish the earlier and later captures.",
-    "Open with the length of the absence.",
-    "Open with the last thing on the screen before it went dark.",
-    "Open with the thread that tied the stretch together, without naming the person first.",
-];
-
-fn markers_in(text: &str) -> Vec<usize> {
-    let mut out = Vec::new();
-    let mut rest = text;
-    while let Some(i) = rest.find("[E") {
-        rest = &rest[i + 2..];
-        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if rest[digits.len()..].starts_with(']') {
-            if let Ok(n) = digits.parse() {
-                out.push(n);
-            }
-        }
-    }
-    out
-}
+const EDIT_SYSTEM: &str = "You are the final fact-checker and line editor of a short diary. Translate the sources accurately. \
+The draft can contain false statements: never use the draft as evidence. Use only facts stated in the sources. \
+Start with the most consequential NEW fact from a CURRENT source, not a person's name, date, or description of reading. \
+If there is a relevant older source, briefly state how many calendar days apart and why the old detail matters. Otherwise cut it. \
+If an email thread repeats a prior message, use the message new to this date first. Never imply the person acted if it is merely a guide, \
+forecast, listing, deadline, note to self, future appointment or offer. Auction volumes are not the person's sales. \
+Be specific about status: 'the guide points to a 22 mm seal', 'the supplier offered to hold one', 'the forecast called for rain'. \
+Never turn a request, plan, estimate or forecast into an event that already happened. Never infer weather or a response to it. \
+Output exactly one line: start with Event: for a real development or meaningful setup; start with Quiet: for weather, \
+inventory, or a routine side note. A Quiet line is one short fact, no comparisons, at most 20 words. An Event is at most 60 words. \
+Use concise English, no quotes, no titles, no source labels, no repeated text. At the end include only the relevant [E#] markers, at least one CURRENT. \
+Example shape: Event: The spare part arrived. Twelve days earlier, the technician had identified the same part in the service manual. [E2][E1] \
+Example shape: Quiet: The forecast called for rain before noon. [E2]";
 
 /// Contiguous citation groups outside quoted content, with byte offsets for rendering.
 fn citation_groups(text: &str) -> Vec<(std::ops::Range<usize>, Vec<usize>)> {
@@ -514,54 +440,6 @@ fn citation_groups(text: &str) -> Vec<(std::ops::Range<usize>, Vec<usize>)> {
     groups
 }
 
-/// Accepts a reply only if every marker is known, every sentence after the first has one,
-/// and the length is in budget.
-fn validate(text: &str, known: usize) -> std::result::Result<(), String> {
-    let words = text.split_whitespace().count();
-    if !(45..=135).contains(&words) {
-        return Err(format!("{words} words, expected 60-110"));
-    }
-    // Any square bracket outside a well-formed marker is a leaked label like "[DEEP]".
-    let stripped = (1..=99)
-        .rev()
-        .fold(text.to_string(), |t, n| t.replace(&format!("[E{n}]"), ""));
-    if stripped.contains('[') || stripped.contains(']') {
-        return Err("square brackets outside evidence markers".to_string());
-    }
-    if stripped.contains(['{', '}', '\u{2014}']) {
-        return Err("braces or em dash in diary prose".to_string());
-    }
-    for word in ["REM", "Light", "Deep "] {
-        if stripped.contains(word) {
-            return Err(format!("names the phase `{}`", word.trim()));
-        }
-    }
-    let marks = markers_in(text);
-    if marks.is_empty() {
-        return Err("no evidence markers".to_string());
-    }
-    if let Some(bad) = marks.iter().find(|&&m| m == 0 || m > known) {
-        return Err(format!("unknown marker [E{bad}]"));
-    }
-    let lowered = text.to_lowercase();
-    for banned in [
-        "embedding",
-        "database",
-        "fixture",
-        "light phase",
-        "rem phase",
-        "deep phase",
-        "synthetic",
-        "years",
-        "the reader",
-    ] {
-        if lowered.contains(banned) {
-            return Err(format!("mentions `{banned}`"));
-        }
-    }
-    Ok(())
-}
-
 /// Drop each quoted claim unless all its quotes occur verbatim in at least one
 /// of the specific frames it cites. A phrase may be a substring of one screen line.
 fn grounded_claims(text: &str, matches: impl Fn(usize, &str) -> bool) -> String {
@@ -569,9 +447,6 @@ fn grounded_claims(text: &str, matches: impl Fn(usize, &str) -> bool) -> String 
         .into_iter()
         .filter(|sentence| {
             let groups = citation_groups(sentence);
-            if groups.is_empty() {
-                return false;
-            }
             let mut open = None;
             for (i, c) in sentence.char_indices() {
                 match open {
@@ -666,117 +541,196 @@ fn tuple(history: &History, e: &Evidence) -> String {
     )
 }
 
-/// Replaces each run of adjacent markers with one parenthesised evidence group.
-fn resolve(history: &History, text: &str, evidence: &[Evidence]) -> String {
-    let mut out = String::new();
-    let mut previous_end = 0;
-    for (range, marks) in citation_groups(text) {
-        out.push_str(text[previous_end..range.start].trim_end());
-        let mut group = Vec::new();
-        for n in marks {
-            if let Some(e) = evidence.get(n.wrapping_sub(1)) {
-                let t = tuple(history, e);
-                if !group.contains(&t) {
-                    group.push(t);
-                }
-            }
+/// Turns any square bracket that is not an evidence marker into a round one, so a reply
+/// that glosses a phrase in brackets is kept instead of falling back to the draft.
+fn round_stray_brackets(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find('[') {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i + 1..];
+        let digits = tail
+            .strip_prefix('E')
+            .map(|t| t.chars().take_while(|c| c.is_ascii_digit()).count())
+            .unwrap_or(0);
+        if digits > 0 && tail[1 + digits..].starts_with(']') {
+            out.push_str(&rest[i..i + digits + 3]);
+            rest = &rest[i + digits + 3..];
+        } else if let Some(j) = tail.find(']') {
+            out.push('(');
+            out.push_str(&tail[..j]);
+            out.push(')');
+            rest = &tail[j + 1..];
+        } else {
+            out.push('(');
+            rest = tail;
         }
-        if !group.is_empty() {
-            let _ = write!(out, " ({})", group.join("; "));
-        }
-        previous_end = range.end;
     }
-    out.push_str(&text[previous_end..]);
+    out.push_str(rest);
     out
 }
 
+#[derive(Serialize)]
+struct Source {
+    date: String,
+    time: String,
+    app: String,
+    title: String,
+    frame: i64,
+}
+
+#[derive(Serialize)]
 struct Entry {
-    number: usize,
     text: String,
+    quiet: bool,
+    evidence: Vec<Source>,
+    model_written: bool,
+    #[serde(skip)]
     degraded: Option<String>,
+}
+
+fn make_entry(
+    history: &History,
+    text: &str,
+    evidence: &[Evidence],
+    quiet: bool,
+    model_written: bool,
+    degraded: Option<String>,
+) -> Entry {
+    let mut prose = String::new();
+    let mut sources = Vec::<Source>::new();
+    let mut previous_end = 0;
+    for (range, marks) in citation_groups(text) {
+        prose.push_str(text[previous_end..range.start].trim_end());
+        for n in marks {
+            if let Some(e) = evidence.get(n.wrapping_sub(1)) {
+                let frame = history.frames[e.frame].id;
+                if !sources.iter().any(|s| s.frame == frame) {
+                    sources.push(Source {
+                        date: history.day(e.at),
+                        time: hm(history, e.at),
+                        app: e.app.clone(),
+                        title: e.title.replace('\u{2014}', "-"),
+                        frame,
+                    });
+                }
+            }
+        }
+        previous_end = range.end;
+    }
+    prose.push_str(&text[previous_end..]);
+    Entry {
+        text: prose.trim().to_string(),
+        quiet,
+        evidence: sources,
+        model_written,
+        degraded,
+    }
 }
 
 async fn write_entry(
     history: &History,
     sweep: &SweepOutcome,
-    outcome: &Outcome,
     model: Option<&ModelConfig>,
     names: &Names,
 ) -> Entry {
-    let sheet = build_sheet(history, sweep, outcome, names);
+    let sheet = build_sheet(history, sweep, names);
+    let quiet = !sheet
+        .facts
+        .iter()
+        .any(|f| f.starts_with("CHANGE") || f.starts_with("POSSIBLE CONNECTION"));
     if sheet.draft.is_empty() {
-        return Entry {
-            number: sweep.number,
-            text: "This stretch brought no new connection or change to keep.".to_string(),
-            degraded: None,
-        };
+        return make_entry(history, "A quiet stretch.", &[], true, false, None);
     }
-    let draft = || resolve(history, &sheet.draft.join(" "), &sheet.evidence);
+    let draft = |reason| {
+        make_entry(
+            history,
+            &sheet.draft[0],
+            &sheet.evidence,
+            quiet,
+            false,
+            Some(reason),
+        )
+    };
     let Some(model) = model else {
-        return Entry {
-            number: sweep.number,
-            text: draft(),
-            degraded: Some("no diary model was configured".to_string()),
-        };
+        return draft("no diary model was configured".to_string());
     };
     let mut user = format!(
-        "Person: {} ({}).\nOpening: {}\nFact sheet:\n",
+        "Person: {} ({}).\nScene date: {}.\nSource notes follow.\n\n",
         subject(history),
         history
             .persona
             .role
             .as_deref()
             .unwrap_or(&history.persona.description),
-        OPENINGS[sweep.number % OPENINGS.len()]
+        history.day(sweep.absence.start),
     );
     for f in &sheet.facts {
-        let _ = writeln!(user, "- {f}");
+        let _ = writeln!(user, "{f}\n");
     }
     let mut last_error = String::new();
-    for attempt in 0..2 {
-        let prompt = if attempt == 0 {
-            user.clone()
-        } else {
-            format!("{user}\nYour previous paragraph was rejected: {last_error}. Write it again following every rule.")
+    let first = model.complete(SYSTEM, &user).await;
+    for attempt in 0..3 {
+        let prompt = match (&first, attempt) {
+            (Ok(text), 0) => format!(
+                "{user}\nDraft to review (not evidence): {text}\n\nWrite the final diary line now."
+            ),
+            _ => format!("{user}\nIgnore any earlier draft. Write the final diary line now."),
         };
-        match model.complete(SYSTEM, &prompt).await {
+        match model.complete(EDIT_SYSTEM, &prompt).await {
             Ok(text) => {
                 let text = text
-                    .replace("{\u{201c}", "\u{201c}")
-                    .replace("\u{201d}}", "\u{201d}")
-                    .replace('\u{2014}', " - ");
-                match validate(&text, sheet.evidence.len()) {
-                    Ok(()) => {
-                        let grounded = grounded_claims(&text, |marker, phrase| {
-                            sheet.evidence.get(marker.wrapping_sub(1)).is_some_and(|e| {
-                                history.frames[e.frame]
-                                    .lines
-                                    .iter()
-                                    .any(|line| line.contains(phrase))
-                            })
-                        });
-                        if !markers_in(&grounded).is_empty() {
-                            return Entry {
-                                number: sweep.number,
-                                text: resolve(history, &grounded, &sheet.evidence),
-                                degraded: None,
-                            };
-                        }
-                        last_error =
-                            "reply had no grounded claims after unsupported quotes were dropped"
-                                .to_string();
-                    }
-                    Err(e) => last_error = format!("reply failed validation ({e})"),
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.starts_with("```"))
+                    .map(|line| {
+                        line.trim_start_matches(['#', '*', ' '])
+                            .trim_start_matches("- ")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .replace(['{', '}', '*'], "")
+                    .replace('\u{2014}', "; ");
+                let text = round_stray_brackets(&text);
+                let (text, quiet) = if let Some(text) = text.strip_prefix("Quiet:") {
+                    (text.trim(), true)
+                } else if let Some(text) = text.strip_prefix("Event:") {
+                    (text.trim(), false)
+                } else {
+                    (text.as_str(), quiet)
+                };
+                let grounded = grounded_claims(text, |marker, phrase| {
+                    sheet.evidence.get(marker.wrapping_sub(1)).is_some_and(|e| {
+                        history.frames[e.frame]
+                            .lines
+                            .iter()
+                            .any(|line| line.contains(phrase))
+                    })
+                });
+                let entry = make_entry(history, &grounded, &sheet.evidence, quiet, true, None);
+                let has_current = citation_groups(&grounded)
+                    .iter()
+                    .flat_map(|(_, marks)| marks)
+                    .any(|n| {
+                        sheet.evidence.get(n.wrapping_sub(1)).is_some_and(|e| {
+                            e.at >= sweep.absence.staged_from && e.at <= sweep.absence.start
+                        })
+                    });
+                let words = entry.text.split_whitespace().count();
+                let clean = !entry.text.contains(['|', '[', ']'])
+                    && !["CURRENT", "EARLIER", "SOURCE", "Event:", "Quiet:"]
+                        .iter()
+                        .any(|label| entry.text.contains(label));
+                if has_current && clean && words > 0 && (!quiet || words <= 23) {
+                    return entry;
                 }
+                last_error =
+                    "no prose with a valid current source after quote checking".to_string();
             }
             Err(e) => last_error = format!("{e:#}"),
         }
     }
-    Entry {
-        number: sweep.number,
-        text: draft(),
-        degraded: Some(last_error),
-    }
+    draft(last_error)
 }
 
 pub async fn write_all(
@@ -792,7 +746,7 @@ pub async fn write_all(
     };
     let names = &names;
     let entries: Vec<Entry> = stream::iter(outcome.sweeps.iter())
-        .map(|sweep| write_entry(history, sweep, outcome, model, names))
+        .map(|sweep| write_entry(history, sweep, model, names))
         .buffered(4)
         .collect()
         .await;
@@ -811,62 +765,73 @@ pub async fn write_all(
             let _ = writeln!(diary, "{}.\n", history.persona.description);
         }
     }
-    let _ = writeln!(
-        diary,
-        "Each entry is one absence from the screen, whenever it happened. While the screen was dark, the day was sorted, compared with older days and weighed for what is worth keeping. Every claim ends with its evidence: (local date and time, app, window title).\n"
-    );
-    let mut degraded = 0;
+    let mut days: BTreeMap<chrono::NaiveDate, Vec<&Entry>> = BTreeMap::new();
+    if let (Some(first), Some(last)) = (history.frames.first(), history.frames.last()) {
+        let last = history.local(last.at).date_naive();
+        for day in history
+            .local(first.at)
+            .date_naive()
+            .iter_days()
+            .take_while(|&d| d <= last)
+        {
+            days.insert(day, Vec::new());
+        }
+    }
     for (sweep, entry) in outcome.sweeps.iter().zip(&entries) {
-        let a = sweep.absence;
-        let _ = writeln!(diary, "---\n");
-        let _ = writeln!(
-            diary,
-            "## {} \u{00b7} away {} \u{2192} {}{} ({})\n",
-            history.local(a.start).format("%A %-d %B %Y"),
-            hm(history, a.start),
-            if history.day(a.start) == history.day(a.end) {
-                String::new()
-            } else {
-                format!("{} ", history.local(a.end).format("%a"))
-            },
-            hm(history, a.end),
-            duration(a.end - a.start),
-        );
-        if let Some(reason) = &entry.degraded {
-            degraded += 1;
-            let _ = writeln!(
+        days.entry(history.local(sweep.absence.start).date_naive())
+            .or_default()
+            .push(entry);
+    }
+    for (day, day_entries) in &days {
+        if day_entries.is_empty() {
+            continue;
+        }
+        let _ = writeln!(diary, "## {}\n", day.format("%A %-d %B %Y"));
+        for entry in day_entries {
+            if let Some(reason) = &entry.degraded {
+                let _ = writeln!(
                 diary,
                 "> **Degraded entry.** No diary model wrote this one ({reason}); it is the rule-based draft built from the same evidence.\n"
             );
+            }
+            let _ = writeln!(diary, "{}\n", entry.text);
+            if !entry.evidence.is_empty() {
+                let _ = writeln!(diary, "<details>\n<summary>Sources</summary>\n");
+                for source in &entry.evidence {
+                    let _ = writeln!(
+                        diary,
+                        "- {} {} · {} · {}",
+                        source.date,
+                        source.time,
+                        source.app,
+                        source.title.replace('|', "\\|")
+                    );
+                }
+                let _ = writeln!(diary, "\n</details>\n");
+            }
         }
-        let _ = writeln!(diary, "{}\n", entry.text);
-        let deep = if !sweep.promoted.is_empty() {
-            format!(
-                "kept {}",
-                sweep
-                    .promoted
-                    .iter()
-                    .map(|p| format!("{} ({:.2})", quote(&name_of(names, p)), p.score))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        } else {
-            "kept nothing".to_string()
-        };
-        let _ = writeln!(
-            diary,
-            "<sub>Sweep {} \u{00b7} Light: {} sessions staged \u{00b7} REM: {} echoes, {} graph links \u{00b7} Deep: {deep}</sub>\n",
-            entry.number,
-            sweep.light.sessions,
-            sweep.echoes.len(),
-            sweep.graph.len()
-        );
     }
+    let data = serde_json::json!({
+        "persona": who,
+        "role": history.persona.role,
+        "days": days.iter().map(|(day, entries)| serde_json::json!({
+            "date": day.to_string(), "entries": entries,
+        })).collect::<Vec<_>>(),
+    });
     std::fs::write(out.join("DREAMS.md"), diary)?;
     std::fs::write(out.join("MEMORY.md"), memory_md(history, outcome, names))?;
+    std::fs::write(
+        out.join("DREAMS.json"),
+        serde_json::to_string_pretty(&data)? + "\n",
+    )?;
     Ok(Written {
         entries: entries.len(),
-        degraded,
+        degraded: entries
+            .iter()
+            .filter(|entry| entry.degraded.is_some())
+            .count(),
+        model_written: entries.iter().filter(|entry| entry.model_written).count(),
+        quiet_shortened: entries.iter().filter(|entry| entry.quiet).count(),
         first_day: outcome
             .sweeps
             .first()
@@ -1001,7 +966,7 @@ fn entry(
 
 #[cfg(test)]
 mod tests {
-    use super::{grounded_claims, markers_in, sentences, validate};
+    use super::{citation_groups, grounded_claims, round_stray_brackets, sentences};
 
     #[test]
     fn sentences_ignore_file_names_decimals_and_quotes() {
@@ -1012,12 +977,10 @@ mod tests {
     }
 
     #[test]
-    fn validation_rejects_unknown_markers_and_braces() {
-        let filler = "word ".repeat(60);
-        assert!(validate(&format!("{filler} closes here [E9]."), 3).is_err());
-        assert!(validate(&format!("{filler} closes {{here}} [E2]."), 3).is_err());
-        assert!(validate(&format!("{filler} closes here [E2]."), 3).is_ok());
-        assert_eq!(markers_in("a [E1][E12] b [Ex]"), vec![1, 12]);
+    fn formatting_gloss_does_not_hide_valid_citations() {
+        let text = round_stray_brackets("a [E1] [E12] b [gloss]");
+        assert_eq!(text, "a [E1] [E12] b (gloss)");
+        assert_eq!(citation_groups(&text)[0].1, vec![1, 12]);
     }
 
     #[test]

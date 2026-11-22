@@ -56,3 +56,9 @@ The v1 sample exposed mismatched quotations, folder-only promotion and diary ent
 reinforcement. The v2 dev-tool pass addresses these with frame-level quote validation, content
 sources for promotion, and separate handling of quiet sweeps. The remaining model comparison is
 recorded in `07`.
+
+## 2026-11-22: Off-arc diary presentation
+
+Replace the sweep log with change-first prose and one-line quiet stretches. Keep the frame check
+for verbatim quotes, separate sources from prose, and export the same calendar for the companion.
+Compare actual Windows model runs against the planted evidence. This does not retune promotion gates.

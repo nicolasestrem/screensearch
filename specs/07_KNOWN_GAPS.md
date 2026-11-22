@@ -562,3 +562,10 @@ diary completion was configured against a remote DeepSeek endpoint. The local re
 new vectors with the same cached EmbeddingGemma model and uses the labelled rule-based diary path.
 This leaves the same-model prose comparison unmeasured. The dev-only completion interface stays
 compatible with its documented configuration.
+
+## 2026-11-22: Off-arc reader-facing dream diary
+
+The maintainer authorized the configured remote completion endpoint for this synthetic gardener
+fixture. This is a dev-only prose run; the fixture and raw outputs stay under ignored
+`harness-data/`. The companion consumes a copied synthetic diary export, not a profile database,
+and does not call the completion endpoint. No shipped capture or inference pipeline changes.

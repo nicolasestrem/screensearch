@@ -337,6 +337,13 @@ A distant link is found when a comparison cites both specified windows and dates
 detail they share. Count sentence recurrence by distinct local dates, so several captures of the
 same screen on one day count once. See `specs/05_BUILD_REVIEW.md` for the observed replay results.
 
+For the model-written version of this **synthetic** fixture only, omit `--no-model` and pass
+`--env-file "$env:USERPROFILE/.config/screensearch-dream/env"`. Point `--out` at a separate
+ignored directory. `DREAMS.md` groups prose by local day and folds its source details under each
+entry. `DREAMS.json` carries the same prose and source metadata with a continuous range of local
+dates, including days without an entry. It is the companion's data input; it does not contain the
+database or captured images. Do not publish an export from real screen history.
+
 ### JSON export (`export`)
 
 ```sh
