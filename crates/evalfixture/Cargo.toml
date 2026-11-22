@@ -40,7 +40,10 @@ blake3.workspace = true
 # `graph backfill complete ...` acceptance line is emitted by this dev binary.
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# `dream` (dev-only): read-only SQL over the normal v15 schema, and the OpenAI-compatible
+# diary completion over HTTPS. Both crates are already in the tree.
+rusqlite.workspace = true
+reqwest.workspace = true
 
 [dev-dependencies]
-reqwest.workspace = true
 tempfile.workspace = true

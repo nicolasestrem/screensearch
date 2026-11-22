@@ -49,3 +49,16 @@ these rows are its review findings.
 | # | Priority | Issue | Source (spec §, file:line) | Fix | Status |
 |---|---|---|---|---|---|
 | 153 | — | **The off-arc brief's persona environment asked for "all three OS flavours", contradicting the product's Windows-only hard rule.** A fixture simulating macOS/Linux desktop captures for a Windows-only capture app would encode an impossible environment. | Session task brief TASK 1.1/1.2 (not in `specs/`); `CLAUDE.md` hard rule "Windows-only by design"; maintainer in-session correction 2026-11-21 | **Resolved with the maintainer's instruction: personas are Windows-only.** The OS axis was removed from the persona schema and renderer and all definitions were converted to Windows apps, paths and chrome; `os` is always `windows` in the persisted identity and JSON export. The all-three-OS coverage line is dropped; recorded in `07` (same date). No code outside the dev-only crate changed. | resolved — dev-only crate; no shipping impact |
+
+## 2026-11-22: Off-arc market gardener dream replay
+
+The v1 sample exposed mismatched quotations, folder-only promotion and diary entries dominated by
+reinforcement. The v2 dev-tool pass addresses these with frame-level quote validation, content
+sources for promotion, and separate handling of quiet sweeps. The remaining model comparison is
+recorded in `07`.
+
+## 2026-11-22: Off-arc diary presentation
+
+Replace the sweep log with change-first prose and one-line quiet stretches. Keep the frame check
+for verbatim quotes, separate sources from prose, and export the same calendar for the companion.
+Compare actual Windows model runs against the planted evidence. This does not retune promotion gates.

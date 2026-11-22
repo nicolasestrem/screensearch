@@ -129,31 +129,62 @@ impl Renderer {
         (name, lines)
     }
 
-    /// Body prose for a document whose text is not part of the persona's `docs`.
+    /// The full sentences of `context`'s own site page: the persona [`Site`] whose URL
+    /// the context names. This is the persona's **prose bank** - body prose, notes and
+    /// chat messages draw from it, so frames carry meaning instead of UI words. A
+    /// context whose site matches no catalog page has no bank; callers fall back to
+    /// items, terms and the persona's own documents.
+    fn context_lines(&self, context: &Context) -> Vec<&'static str> {
+        match context.site {
+            None => Vec::new(),
+            Some(url) => self
+                .persona
+                .sites
+                .iter()
+                .find(|site| site.url == url)
+                .map(|site| site.lines.to_vec())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// One full sentence about the frame's subject: a line of the live context's own
+    /// site page when there is one, otherwise a line of the persona's own documents.
+    fn note(&mut self, c: &Ctx) -> String {
+        let bank = match c.context {
+            Some((context, _)) => self.context_lines(context),
+            None => Vec::new(),
+        };
+        if !bank.is_empty() {
+            return bank[self.below(bank.len())].to_string();
+        }
+        let docs = self.persona.docs;
+        let doc = &docs[self.below(docs.len())];
+        doc.lines[self.below(doc.lines.len())].to_string()
+    }
+
+    /// `<reference> · <date> — <sentence>`: the frame's own day anchors the note, so
+    /// the same sentence family reads as a different work-log entry on a different
+    /// day, and the date token ties the text to that day in embedding space.
+    fn dated_note(&mut self, c: &Ctx) -> String {
+        let date = local(c.session_at, self.offset)
+            .format(self.labels().date_format)
+            .to_string();
+        match c.context {
+            Some((context, _)) => format!("{} · {date} — {}", context.reference, self.note(c)),
+            None => format!("{date} — {}", self.note(c)),
+        }
+    }
+
+    /// Body prose for a document whose text is not part of the persona's `docs`:
+    /// full sentences about the subject. UI labels never reach the body - the page
+    /// counter lives in the status bar, which the attention filter treats as chrome.
     fn document_lines(&mut self, c: &Ctx, name: &str) -> Vec<String> {
-        let labels = self.labels();
         let mut lines = vec![humanize(name)];
         if let Some((context, _)) = c.context {
             lines.push(format!("{}: {}", context.reference, context.name));
-            for _ in 0..2 {
-                let term_count = context.terms.len();
-                let item_count = context.items.len();
-                let page = 1 + self.below(4);
-                let of = 4 + self.below(14);
-                lines.push(format!(
-                    "{} {} {}",
-                    context.terms[self.below(term_count)],
-                    pick(&mut self.rng, self.persona.topics),
-                    context.items[self.below(item_count)]
-                ));
-                lines.push(format!("{} {} {} {}", labels.page, page, labels.of, of));
-            }
-        } else {
-            let doc = pick(&mut self.rng, self.persona.docs);
-            let line_count = doc.lines.len();
-            lines.push(doc.lines[self.below(line_count)].to_string());
-            lines.push(format!("{}: {}", labels.settings, self.persona.occupation));
         }
+        lines.push(self.note(c));
+        lines.push(self.dated_note(c));
         lines
     }
 
@@ -187,14 +218,14 @@ impl Renderer {
                 let site = &self.persona.sites[index];
                 let mut body: Vec<String> =
                     site.lines.iter().map(|line| line.to_string()).collect();
-                if let Some((context, _)) = c.context {
-                    body.push(format!("{}: {}", labels.search, context.reference));
+                if c.context.is_some() {
+                    body.push(self.dated_note(c));
                 }
                 (site.title.to_string(), site.url.to_string(), body)
             }
             Page::Search(index) => {
                 let query = self.persona.searches[index];
-                let mut body = vec![format!("{} \"{}\"", labels.search, query)];
+                let mut body = vec![query.to_string()];
                 let mut used: Vec<usize> = Vec::new();
                 for _ in 0..3 {
                     let count = self.persona.sites.len();
@@ -214,7 +245,7 @@ impl Renderer {
                 (format!("{} - {}", query, labels.search), url, body)
             }
             Page::Context(index) => {
-                let context = &self.persona.contexts[index];
+                let context = self.persona.contexts[index];
                 let url = match context.site {
                     Some(site) => site.to_string(),
                     None => {
@@ -223,31 +254,28 @@ impl Renderer {
                         format!("https://{host}/{}", url_encode(context.name))
                     }
                 };
-                let mut body = vec![
-                    format!("{}: {} {}", labels.search, context.reference, context.name),
-                    format!("{} {}", context.terms.join(" · "), context.name),
-                ];
-                for item in context.items.iter().take(3) {
-                    body.push(format!("{} - {}", humanize(item), context.terms[0]));
+                let mut body = vec![format!("{} · {}", context.reference, context.name)];
+                let bank = self.context_lines(&context);
+                if bank.is_empty() {
+                    body.push(format!("{} {}", context.terms.join(" · "), context.name));
+                    for item in context.items.iter().take(3) {
+                        body.push(format!("{} — {}", humanize(item), context.terms[0]));
+                    }
+                } else {
+                    body.extend(bank.into_iter().map(|line| line.to_string()));
                 }
                 (context.name.to_string(), url, body)
             }
         }
     }
 
-    /// The window chrome every office-style app shares.
+    /// The window chrome every office-style app shares. Three entries only: the line
+    /// must stay under `chrome_protect_min_chars` (48) in every label pack, so the
+    /// attention filter can classify it as edge chrome - a seven-entry menu is 49-57
+    /// characters in ES/FR/IT/NL/PT/RO/CS and always survives into `content_text`.
     fn menu(&self) -> Vec<String> {
         let labels = self.labels();
-        vec![format!(
-            "{} {} {} {} {} {} {}",
-            labels.file,
-            labels.edit,
-            labels.view,
-            labels.insert,
-            labels.format,
-            labels.tools,
-            labels.help
-        )]
+        vec![format!("{} {} {}", labels.file, labels.edit, labels.view)]
     }
 
     fn background(&mut self) -> Vec<String> {
@@ -332,12 +360,14 @@ impl Renderer {
         let app = c.app;
         let page = self.choose_page(c, sticky);
         let (page_title, url, body) = self.page(c, page);
+        // Edge lines stay under `chrome_protect_min_chars` so the attention filter can
+        // classify them as chrome; the full URL lives in the frame's `browser_url`.
         let bookmarks: Vec<String> = self
             .persona
             .sites
             .iter()
-            .take(3)
-            .map(|site| site.title.to_string())
+            .take(2)
+            .map(|site| truncate_chars(site.title, 20))
             .collect();
         let windowed = self.chance(1, 6);
         let background = if windowed {
@@ -350,7 +380,11 @@ impl Renderer {
             title: format!("{} - {}", page_title, app.name),
             url: Some(url.clone()),
             title_bar: false,
-            top: vec![truncate_chars(&page_title, 34), url, bookmarks.join("  ")],
+            top: vec![
+                truncate_chars(&page_title, 32),
+                truncate_chars(&url, 40),
+                bookmarks.join("  "),
+            ],
             side: Vec::new(),
             body,
             bottom: Vec::new(),
@@ -365,7 +399,7 @@ impl Renderer {
         let sender = self.person();
         let subject = match c.context {
             Some((context, _)) => format!("{}: {}", context.reference, humanize(&self.item(c))),
-            None => format!("{} {}", labels.settings, self.persona.occupation),
+            None => self.note(c),
         };
         let mut body = Vec::new();
         let mut minutes_ago = 0i64;
@@ -398,7 +432,7 @@ impl Renderer {
         ));
         for line in 0..3 {
             let line = match line {
-                0 => format!("{} {}, {}", labels.view, self.term(c), self.item(c)),
+                0 => self.dated_note(c),
                 1 => format!("{}: {}", self.term(c), humanize(&self.item(c))),
                 _ => {
                     let topic_count = self.persona.topics.len();
@@ -443,7 +477,6 @@ impl Renderer {
         let labels = self.labels();
         let app = c.app;
         let (name, mut body) = self.document_data(c, &["xlsx", "csv", "ods", "numbers"]);
-        body.insert(0, "A B C D E F".to_string());
         if let Some((context, _)) = c.context {
             body.push(format!(
                 "{} {} {} {}",
@@ -504,7 +537,7 @@ impl Renderer {
         let labels = self.labels();
         let app = c.app;
         let (name, mut body) = self.document_data(c, &["pptx", "odp", "key"]);
-        body.insert(0, format!("{} - {}", humanize(&name), labels.slide));
+        body.insert(0, self.dated_note(c));
         if let Some((context, _)) = c.context {
             for item in context.items.iter().take(3) {
                 body.push(format!("- {} ({})", humanize(item), context.terms[0]));
@@ -583,23 +616,12 @@ impl Renderer {
                     let term = self.term(c);
                     format!("{term} -> {}", self.item(c))
                 }
-                2 => {
-                    let topic_count = self.persona.topics.len();
-                    let index = self.below(topic_count);
-                    let topic = self.persona.topics[index];
-                    format!("{}, {}", self.term(c), topic)
-                }
+                2 => self.note(c),
                 3 => match c.context {
                     Some((context, _)) => format!("{} {}", context.reference, context.terms[0]),
                     None => self.term(c),
                 },
-                _ => {
-                    let reference = c
-                        .context
-                        .map(|(context, _)| context.reference.to_string())
-                        .unwrap_or_else(|| self.persona.channels[0].to_string());
-                    format!("{} {}", self.term(c), reference)
-                }
+                _ => self.dated_note(c),
             };
             body.push(line);
         }
@@ -708,10 +730,13 @@ impl Renderer {
             body.push(self.person().to_string());
         }
         body.push(self.persona.name.to_string());
-        let peer = self.person();
-        body.push(format!("{}: {peer}", labels.view));
+        body.push(self.dated_note(c));
         if let Some((context, _)) = c.context {
-            body.push(format!("{}: {}", labels.open, humanize(&self.item(c))));
+            body.push(format!(
+                "{} — {}",
+                humanize(&self.item(c)),
+                context.terms[0]
+            ));
             body.push(format!("{} {}", context.reference, context.terms[0]));
         }
         let windowed = self.chance(1, 3);
@@ -742,12 +767,12 @@ impl Renderer {
             Some((context, _)) => format!("{} · {topic}", context.name),
             None => format!("{} · {topic}", self.persona.occupation),
         };
-        let mut body = vec![format!("{}: {topic}", labels.settings)];
+        let mut body = vec![self.note(c)];
         for _ in 0..3 {
-            body.push(format!("- {}: {}", self.term(c), self.item(c)));
+            body.push(format!("- {}: {}", self.term(c), humanize(&self.item(c))));
         }
-        let peer = self.person();
-        body.push(format!("{}: {peer}", labels.view));
+        body.push(self.person().to_string());
+        body.push(self.dated_note(c));
         let mut side = vec![labels.search.to_string(), labels.home.to_string()];
         side.extend(
             self.persona
@@ -781,14 +806,11 @@ impl Renderer {
         let app = c.app;
         let item = self.item(c);
         let name = humanize(&item);
-        let mut body = vec![format!("{} - {name}", labels.view)];
-        for _ in 0..3 {
-            let number = self.below(16);
-            body.push(format!("{} {number:>3} {}", labels.insert, self.term(c)));
-        }
+        let mut body = vec![self.dated_note(c), self.note(c)];
         if let Some((context, _)) = c.context {
-            body.push(format!("{}: {}", context.reference, context.terms[0]));
+            body.push(format!("{} — {}", context.reference, self.term(c)));
         }
+        body.push(format!("{} — {}", humanize(&self.item(c)), self.term(c)));
         let mut side: Vec<String> = vec![labels.view.to_string()];
         if let Some((context, _)) = c.context {
             side.extend(context.items.iter().take(4).map(|item| humanize(item)));
@@ -819,11 +841,12 @@ impl Renderer {
         let title = pick(&mut self.rng, self.persona.media);
         let mut body = vec![title.to_string()];
         for media in self.persona.media {
-            body.push(format!("{}  {}", media, labels.view));
+            body.push(media.to_string());
         }
+        body.push(self.note(c));
+        body.push(self.dated_note(c));
         for _ in 0..2 {
-            let peer = self.person();
-            body.push(format!("{peer} {}", labels.home));
+            body.push(self.person().to_string());
         }
         let mut side = vec![labels.home.to_string(), labels.settings.to_string()];
         side.extend(
@@ -875,7 +898,6 @@ impl Renderer {
     }
 
     fn terminal(&mut self, c: &Ctx) -> Screen {
-        let labels = self.labels();
         let app = c.app;
         let (root, items, terms, reference) = self.code_material(c);
         let prompt = format!("PS {root}>");
@@ -889,7 +911,6 @@ impl Renderer {
             let line = 12 + self.below(40);
             body.push(format!("{path}:{line}:{}", terms[0]));
         }
-        body.push(format!("{prompt} {}", labels.search));
         Screen {
             app_hint: app.hint,
             title: format!("{root} - {}", app.name),

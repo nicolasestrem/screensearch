@@ -18,6 +18,7 @@
 //! ```
 
 mod code;
+mod gardener;
 mod layout;
 mod life;
 pub(crate) mod personas;
@@ -103,6 +104,7 @@ OPTIONS:
   --persona <id>           Generate one catalog persona's life instead of the pinned default
                            fixture. `--persona random` picks one from the seed. The persona's
                            own language, country, timezone, rhythm, apps and content are used.
+                           The four-week market-gardener run also writes PLANTED.json.
                            Every persona runs on Windows: the product is Windows-only, so the
                            fixture never models another desktop. The pinned default digest is
                            unaffected when the flag is absent.
@@ -386,20 +388,35 @@ pub fn generate(opts: &GenOptions) -> Result<GenManifest> {
             let persona = personas::find(id)
                 .with_context(|| format!("persona `{id}` is not in the catalog"))?;
             personas::validate(persona)?;
-            let life_plan = life::plan(
-                opts.seed,
-                opts.weeks,
-                opts.frames_per_week,
-                opts.start,
-                persona,
-            )?;
-            runtime.block_on(write_persona_fixture(
+            let month = (id == gardener::PERSONA_ID && opts.weeks == gardener::WEEKS)
+                .then(|| gardener::Month::new(opts, persona))
+                .transpose()?;
+            let generic_plan;
+            let life_plan = match &month {
+                Some(month) => &month.plan,
+                None => {
+                    generic_plan = life::plan(
+                        opts.seed,
+                        opts.weeks,
+                        opts.frames_per_week,
+                        opts.start,
+                        persona,
+                    )?;
+                    &generic_plan
+                }
+            };
+            let manifest = runtime.block_on(write_persona_fixture(
                 opts,
                 &db,
-                &life_plan,
+                life_plan,
                 persona,
+                month.as_ref(),
                 embedder.as_ref(),
-            ))
+            ))?;
+            if let Some(month) = month {
+                month.write_planted(&opts.out_dir)?;
+            }
+            Ok(manifest)
         }
     }
 }
@@ -574,14 +591,37 @@ async fn write_fixture(
 /// read-back, but every frame is rendered from the persona's data by [`life::LifePlan`] and
 /// `gen::render`. The persona's identity is written to the `evalfixture.persona` setting so
 /// `ssv2c-evalfixture export` can report it; the pinned default fixture writes no such key and
-/// stays byte-identical.
+/// stays byte-identical. Persona runs also refuse a frame budget that cannot give every day
+/// of the persona's widest weekly pattern its sessions, and suppress edge chrome from its
+/// first sighting: the run places every short edge line itself, so there is no honest
+/// cold-start window to honour.
 async fn write_persona_fixture(
     opts: &GenOptions,
     db: &Path,
     plan: &LifePlan,
     persona: &'static Persona,
+    month: Option<&gardener::Month>,
     embedder: Option<&FastEmbedProvider>,
 ) -> Result<GenManifest> {
+    // `life::split_week` activates only `(frames / 2)` of a week's pattern days, so a
+    // run that wants every weekday of the widest pattern live every week needs at least
+    // two frames for each of those days. Refuse the quietly lossy run instead of
+    // generating a persona whose story silently drops days.
+    let widest = persona
+        .rhythm
+        .patterns
+        .iter()
+        .map(|pattern| pattern.len())
+        .max()
+        .unwrap_or(0);
+    ensure!(
+        opts.frames_per_week >= 2 * widest,
+        "persona `{}` needs --frames-per-week >= {} so every day of its widest weekly \
+         pattern holds sessions, got {}",
+        persona.id,
+        2 * widest,
+        opts.frames_per_week
+    );
     let store = SqliteStore::open_path(db).with_context(|| format!("creating {}", slash(db)))?;
     let mut renderer = LifeRenderer::new(opts.seed, persona);
     let total_frames = opts.total_frames() as usize;
@@ -606,7 +646,10 @@ async fn write_persona_fixture(
         let mut frame_ids = Vec::with_capacity(session.frames.len());
         let mut previous_app = None;
         for frame in &session.frames {
-            let mut screen = render::render(&mut renderer, session, frame, &mut sticky);
+            let mut screen = match month {
+                Some(month) => month.screen(session.started_at)?.clone(),
+                None => render::render(&mut renderer, session, frame, &mut sticky),
+            };
             // A body line that repeats the window title would be dropped by the attention
             // filter as a title echo; generated prose must not silently lose content.
             let title = traits::normalize_text(&screen.title);
@@ -614,7 +657,13 @@ async fn write_persona_fixture(
                 .body
                 .retain(|line| traits::normalize_text(line) != title);
             let (time, date) = life::clock(frame.at, offset, persona.labels);
-            let laid = lay_out(&screen, (&time, &date))?;
+            let mut laid = lay_out(&screen, (&time, &date))?;
+            // The fixture is written in one seeded pass and every short edge line is
+            // static chrome the generator itself placed, so there is no honest
+            // cold-start window to honour: suppress from the first sighting (the live
+            // app defaults to 9). Long edge lines are never suppressible, which is why
+            // the renderer keeps every edge line under `chrome_protect_min_chars`.
+            laid.ctx.chrome_suppress_min_seen = 1;
             let trigger = if previous_app == Some(frame.app) {
                 CaptureTrigger::Timer
             } else {
